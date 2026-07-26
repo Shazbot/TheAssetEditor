@@ -5,6 +5,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:vm="clr-namespace:Editors.CscEditor.ViewModels"
              xmlns:views="clr-namespace:Editors.CscEditor.Views"
+             xmlns:resources="clr-namespace:Shared.EmbeddedResources;assembly=Shared.EmbeddedResources"
              mc:Ignorable="d"
              d:DesignHeight="800" d:DesignWidth="1200">
 
@@ -53,10 +54,18 @@
             </Menu>
             <Button Content="Delete" Command="{Binding DeleteSelectedCommand}" IsEnabled="{Binding HasSelection}" Padding="8,3"/>
             <Separator/>
-            <Button Content="Move" Command="{Binding GizmoTranslateCommand}" IsEnabled="{Binding HasSelection}" Padding="8,3"/>
-            <Button Content="Rotate" Command="{Binding GizmoRotateCommand}" IsEnabled="{Binding HasSelection}" Padding="8,3"/>
-            <Button Content="Scale" Command="{Binding GizmoScaleCommand}" IsEnabled="{Binding HasSelection}" Padding="8,3"/>
-            <Button Content="Gizmo off" Command="{Binding GizmoOffCommand}" Padding="8,3"/>
+            <Button Command="{Binding GizmoTranslateCommand}" IsEnabled="{Binding HasSelection}" Padding="6,3" ToolTip="Move">
+                <Image Width="20" Height="20" Source="{Binding Source={x:Static resources:IconLibrary.Gizmo_MoveIcon}, UpdateSourceTrigger=PropertyChanged}"/>
+            </Button>
+            <Button Command="{Binding GizmoRotateCommand}" IsEnabled="{Binding HasSelection}" Padding="6,3" ToolTip="Rotate">
+                <Image Width="20" Height="20" Source="{Binding Source={x:Static resources:IconLibrary.Gizmo_RotateIcon}, UpdateSourceTrigger=PropertyChanged}"/>
+            </Button>
+            <Button Command="{Binding GizmoScaleCommand}" IsEnabled="{Binding HasSelection}" Padding="6,3" ToolTip="Scale">
+                <Image Width="20" Height="20" Source="{Binding Source={x:Static resources:IconLibrary.Gizmo_ScaleIcon}, UpdateSourceTrigger=PropertyChanged}"/>
+            </Button>
+            <Button Command="{Binding GizmoOffCommand}" Padding="6,3" ToolTip="Gizmo off (selection only)">
+                <Image Width="20" Height="20" Source="{Binding Source={x:Static resources:IconLibrary.Gizmo_CursorIcon}, UpdateSourceTrigger=PropertyChanged}"/>
+            </Button>
             <Separator/>
             <Button Content="Focus" Command="{Binding FocusSelectedCommand}" IsEnabled="{Binding HasSelection}" Padding="8,3"/>
             <Button Content="Look through camera" Command="{Binding LookThroughCameraCommand}"

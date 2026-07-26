@@ -171,14 +171,29 @@ namespace Editors.CscEditor.Services
                 ApplyElementFrame(element, Matrix.Identity, localTimes[element.Id], worlds);
 
             // Root-ref sub-scenes render under their host element's transform, at their own
-            // (possibly looped) local time - see BuildTimeContext.
+            // (possibly looped) local time - see BuildTimeContext. Unlike a normal element's own
+            // children (whose visibility never inherits from a parent - see ApplyElementFrame's own
+            // remarks), an embedded Composite Scene's entire contents are gated by the ROOT_REF
+            // host's own aliveness: the referenced scene isn't a set of independently-timed nodes
+            // the user placed here, it's a single embedded unit that's either "there" (host inside
+            // its own Begin/End window) or not - so every element inside it is forced hidden
+            // whenever the host itself isn't alive, regardless of the sub-element's own window.
+            // Cascades through nested root-refs too, via subSceneContentVisible.
+            var subSceneContentVisible = new Dictionary<int, bool>();
             foreach (var sub in _sceneBuilder.SubScenes)
             {
                 if (!worlds.TryGetValue(sub.Host.Id, out var hostWorld))
                     continue;
 
+                var hostTime = localTimes.GetValueOrDefault(sub.Host.Id, _context.CurrentTime);
+                var ancestorVisible = !subSceneContentVisible.TryGetValue(sub.Host.Id, out var parentVisible) || parentVisible;
+                var contentVisible = sub.Host.IsAliveAt(hostTime) && ancestorVisible;
+
                 foreach (var element in sub.Scene.DfsOrder(includeNested: true))
-                    ApplyElementFrame(element, hostWorld, localTimes.GetValueOrDefault(element.Id, _context.CurrentTime), worlds);
+                {
+                    subSceneContentVisible[element.Id] = contentVisible;
+                    ApplyElementFrame(element, hostWorld, localTimes.GetValueOrDefault(element.Id, _context.CurrentTime), worlds, contentVisible);
+                }
             }
 
             if (_context.LookThroughElementId >= 0 &&
@@ -238,7 +253,7 @@ namespace Editors.CscEditor.Services
         /// chd_drill_head_01.csc has ELEMENT_PERIOD speed 0 (freeze) with both type-channels at 1.0
         /// too - so ELEMENT_PERIOD is the actual mechanism, not the named channels. Wrapped by the
         /// referenced scene's own Duration so it loops for as long as the host stays alive.</summary>
-        static float ComputeSubSceneTime(CscSubScene sub, float hostTime)
+        internal static float ComputeSubSceneTime(CscSubScene sub, float hostTime)
         {
             var host = sub.Host;
             var speed = host.PeriodSpeedMultiplier;
@@ -246,13 +261,18 @@ namespace Editors.CscEditor.Services
             // speed == 0 is a legitimate authored value (freeze the sub-scene on its first frame,
             // e.g. a static prop reusing a .csc that's normally animated) - it must NOT be treated
             // as "unset" and defaulted back to 1 (unlike SampleBindingTime's use of this same field
-            // for ANIMATION_ELEMENT clip speed, where 0 does mean "unset").
+            // for ANIMATION_ELEMENT clip speed, where 0 does mean "unset"). A negative speed plays
+            // the referenced scene in reverse - elapsed then counts down, so this needs floored
+            // modulo (not C#'s remainder operator, which returns negative for a negative dividend)
+            // to wrap that into a continuous reverse loop through [0, duration) instead of clamping
+            // to a permanent freeze at 0.
             var elapsed = (hostTime - host.NormalizedBegin) * speed;
-            if (elapsed < 0)
-                elapsed = 0;
 
             var duration = sub.Scene.Duration;
-            return duration > 0 ? elapsed % duration : 0;
+            if (duration <= 0)
+                return 0;
+
+            return elapsed - duration * MathF.Floor(elapsed / duration);
         }
 
         /// <summary>Composes one element's world matrix at its own local time <paramref name="t"/>
@@ -267,8 +287,10 @@ namespace Editors.CscEditor.Services
         /// <para/>
         /// Visibility is each element's own <see cref="CscElement.IsAliveAt"/>, not inherited from
         /// its attach-tree parent - a parent outside its own window does not hide children that
-        /// are still inside theirs.</summary>
-        void ApplyElementFrame(CscElement element, Matrix rootWorld, float t, Dictionary<int, Matrix> worlds)
+        /// are still inside theirs. The one exception is <paramref name="hostVisible"/>, used only
+        /// for embedded Composite Scene contents (see the sub-scene loop in <see cref="ApplyFrame"/>),
+        /// which forces the whole embedded tree hidden while its ROOT_REF host isn't alive.</summary>
+        void ApplyElementFrame(CscElement element, Matrix rootWorld, float t, Dictionary<int, Matrix> worlds, bool hostVisible = true)
         {
             var parentWorld = rootWorld;
             if (element.Parent != null && worlds.TryGetValue(element.Parent.Id, out var pw))
@@ -283,7 +305,7 @@ namespace Editors.CscEditor.Services
                 return;
 
             node.WorldMatrix = world;
-            node.IsVisible = element.IsAliveAt(t) || element.Id == _context.SelectedElementId;
+            node.IsVisible = (hostVisible && element.IsAliveAt(t)) || element.Id == _context.SelectedElementId;
 
             PushWorldToContent(node, world);
         }
