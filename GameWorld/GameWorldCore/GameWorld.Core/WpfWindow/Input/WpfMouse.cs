@@ -112,8 +112,7 @@ namespace GameWorld.Core.WpfWindow.Input
                     var res = LogicalTreeHelperEx.FindParent<Grid>(_focusElement);
                     if (res != null)
                     {
-                        var result = VisualTreeHelper.HitTest(res, pos);
-                        if (result?.VisualHit == _focusElement)
+                        if (res.InputHitTest(pos) == _focusElement)
                         {
                             _focusElement.Focus();
                         }
@@ -129,8 +128,11 @@ namespace GameWorld.Core.WpfWindow.Input
                 //if (res == null) return; <-- please see: https://github.com/donkeyProgramming/TheAssetEditor/pull/90#:~:text=Monogame.WpfInterop/Input/WpfMouse.cs
                 if (res != null)
                 {
-                    var result = VisualTreeHelper.HitTest(res, pos);
-                    if (result?.VisualHit == _focusElement)
+                    // InputHitTest (not VisualTreeHelper.HitTest) - the latter is a raw-geometry
+                    // test that ignores Visibility/IsHitTestVisible entirely, so a Collapsed,
+                    // non-hit-test-visible overlay sharing _focusElement's cell (e.g. CSC's porthole
+                    // preview) can still come back as the "hit" even though it's fully invisible.
+                    if (res.InputHitTest(pos) == _focusElement)
                         hit = true;
                 }
 
@@ -138,23 +140,19 @@ namespace GameWorld.Core.WpfWindow.Input
                 {
                     if (_focusElement.IsMouseCaptured)
                     {
-                        // Once capture is held (left-button drags only - see CaptureMouse() below),
-                        // a single missed hit-test here must not freeze position tracking for the
-                        // rest of the drag: fast mouse movement routinely lands this per-move
-                        // hit-test outside _focusElement even though the drag is still legitimately
-                        // in progress (capture already guarantees events keep routing here
-                        // regardless of position). Only release capture on button-up; otherwise fall
-                        // through to the normal position/button update below instead of returning.
+                        _mouseState = new MouseState(_mouseState.X, _mouseState.Y, _mouseState.ScrollWheelValue,
+                            (ButtonState)e.LeftButton, (ButtonState)e.MiddleButton, (ButtonState)e.RightButton, (ButtonState)e.XButton1,
+                            (ButtonState)e.XButton2);
+                        // only release if LeftMouse is up
                         if (e.LeftButton == MouseButtonState.Released)
                         {
                             _focusElement.ReleaseMouseCapture();
                         }
+                        e.Handled = true;
                     }
-                    else
-                    {
-                        // mouse is outside the control and not captured, so don't update the mouse state
-                        return;
-                    }
+
+                    // mouse is outside the control and not captured, so don't update the mouse state
+                    return;
                 }
             }
 

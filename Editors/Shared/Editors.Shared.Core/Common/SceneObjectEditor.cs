@@ -217,7 +217,7 @@ namespace Editors.Shared.Core.Common
         /// origin becomes the bone regardless of where its vertices were authored. Called both
         /// after the mesh loads and after the skeleton changes (e.g. an ad-hoc "building" skeleton
         /// created lazily the first time an animation binds), since either can happen first.</summary>
-        static void WireAttachmentResolvers(SceneObject sceneObject)
+        internal static void WireAttachmentResolvers(SceneObject sceneObject)
         {
             if (sceneObject.ModelNode == null)
                 return;

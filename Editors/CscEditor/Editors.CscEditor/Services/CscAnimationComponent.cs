@@ -4,6 +4,7 @@ using System.Linq;
 using Editors.CscEditor.Data;
 using GameWorld.Core.Animation;
 using GameWorld.Core.Components;
+using GameWorld.Core.Components.Grid;
 using GameWorld.Core.Components.Rendering;
 using GameWorld.Core.SceneNodes;
 using GameWorld.Core.Utility;
@@ -25,13 +26,8 @@ namespace Editors.CscEditor.Services
         readonly CscSceneGraphBuilder _sceneBuilder;
         readonly ArcBallCamera _camera;
         readonly RenderEngineComponent _renderEngine;
+        readonly GridComponent _gridComponent;
         CscScene? _scene;
-
-        /// <summary>Fixed square render resolution for the look-through/porthole preview -
-        /// independent of the host panel's own (possibly non-square, resizable) pixel dimensions,
-        /// so neither the projection (aspect=1 below) nor CapturePortholeFrame's crop have to guess
-        /// at or react to the panel's current orientation. See RenderEngineComponent.SquareRenderSize.</summary>
-        const int PortholeRenderSize = 512;
 
         double _captureAccumulator;
         const double CaptureInterval = 0.1; // throttle CPU readback to ~10fps - GetData() stalls the GPU pipeline
@@ -46,12 +42,13 @@ namespace Editors.CscEditor.Services
         public event Action? PortholeFrameUpdated;
 
         public CscAnimationComponent(CscPlaybackContext context, CscSceneGraphBuilder sceneBuilder,
-            ArcBallCamera camera, RenderEngineComponent renderEngine)
+            ArcBallCamera camera, RenderEngineComponent renderEngine, GridComponent gridComponent)
         {
             _context = context;
             _sceneBuilder = sceneBuilder;
             _camera = camera;
             _renderEngine = renderEngine;
+            _gridComponent = gridComponent;
             UpdateOrder = (int)ComponentUpdateOrderEnum.Default;
         }
 
@@ -74,8 +71,8 @@ namespace Editors.CscEditor.Services
             _context.LookThroughElementId = -1;
             _camera.ViewMatrixOverride = null;
             _camera.ProjectionMatrixOverride = null;
-            _renderEngine.HideGrid = false;
-            _renderEngine.SquareRenderSize = null;
+            _gridComponent.ShowGrid = true;
+            _renderEngine.SquareViewport = false;
             PortholeLiveFrame = null;
             PortholeFrameUpdated?.Invoke();
         }
@@ -318,20 +315,13 @@ namespace Editors.CscEditor.Services
             var near = Math.Max(0.01f, camElement.CameraNear?.Evaluate(t) ?? 0.1f);
             var far = Math.Max(near + 0.1f, camElement.CameraFar?.Evaluate(t) ?? 10000f);
 
-            // Force the whole pipeline to render at a fixed square resolution (see
-            // RenderEngineComponent.SquareRenderSize) instead of the panel's own live, resizable,
-            // generally non-square viewport - so aspect=1 here always exactly matches the render
-            // target's real shape (no stretch), and CapturePortholeFrame's crop always sees an
-            // already-square frame regardless of how the editor panel is sized or oriented.
-            // Faking this with aspect tricks alone (square projection into a non-square target)
-            // stretches the render instead.
-            _renderEngine.SquareRenderSize = PortholeRenderSize;
+            // Projection uses a fixed 1:1 aspect, so the rasterized viewport must be square too, else the render stretches.
+            _renderEngine.SquareViewport = true;
             _camera.ProjectionMatrixOverride =
                 Matrix.CreatePerspectiveFieldOfView(MathHelper.ToRadians(fovDegrees), 1f, near, far) * Matrix.CreateScale(-1, 1, 1);
 
-            // Nothing but the porthole itself is visible in-game (see CscEditorView.xaml's overlay) -
-            // hide the normal-editing grid so it doesn't show through the transparent background.
-            _renderEngine.HideGrid = true;
+            // The editing grid shouldn't show through the transparent background (see CscEditorView.xaml's overlay).
+            _gridComponent.ShowGrid = false;
         }
 
         /// <summary>World transform of the parent's attach bone (in the parent's local space) when

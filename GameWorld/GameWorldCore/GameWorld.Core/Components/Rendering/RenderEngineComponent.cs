@@ -47,26 +47,10 @@ namespace GameWorld.Core.Components.Rendering
         public SpriteBatch CommonSpriteBatch { get; private set; }
         public SpriteFont DefaultFont { get; private set; }
 
-        /// <summary>When true, skips the editing-grid render bucket (see Render3DObjects) - for
-        /// consumers that want the normal-editing grid hidden, e.g. a "look through a scene camera"
-        /// preview where nothing but the in-game content should show.</summary>
-        public bool HideGrid { get; set; }
+        // Confines the 3D pass to a centred square instead of the full viewport, for a fixed-aspect (1:1) projection.
+        public bool SquareViewport { get; set; }
 
-        /// <summary>When set, renders at this fixed square pixel size instead of the live (and
-        /// generally non-square) panel/viewport size - for consumers that need an undistorted
-        /// square render independent of how the host panel is resized/oriented (e.g. a square
-        /// "look through a scene camera" preview), since a square *projection* rendered into a
-        /// non-square *target* stretches non-uniformly. The final blit still targets the real
-        /// backbuffer at (0,0,size,size) - whatever's outside that square is left at the plain
-        /// background colour, so consumers relying on this should cover the rest of their panel
-        /// themselves (e.g. an opaque overlay) rather than showing it.</summary>
-        public int? SquareRenderSize { get; set; }
-
-        /// <summary>The last frame's fully-composited render, before it's flattened onto the opaque
-        /// viewport surface (see Draw) - unlike that final surface, this still has real per-pixel
-        /// alpha (SurfaceFormat.Color), so consumers needing transparency (e.g. a CPU-readback
-        /// preview) should read from here instead. Valid until the next Draw call; null before the
-        /// first frame.</summary>
+        // Still has real alpha, unlike the final composited surface. Null before the first frame.
         public RenderTarget2D? LastFrame => _screenRenderTarget;
 
         public RenderEngineComponent(IWpfGame wpfGame, ResourceLibrary resourceLibrary, ArcBallCamera camera, IDeviceResolver deviceResolverComponent, ApplicationSettingsService applicationSettingsService, SceneRenderParametersStore sceneLightParametersStore, IEventHub eventHub, IGraphicsResourceCreator graphicsResourceCreator, IScopedLogger scopedLogger)
@@ -160,8 +144,8 @@ namespace GameWorld.Core.Components.Rendering
         {
             var device = _deviceResolverComponent.Device;
             var spriteBatch = CommonSpriteBatch;
-            var screenWidth = SquareRenderSize ?? device.Viewport.Width;
-            var screenHeight = SquareRenderSize ?? device.Viewport.Height;
+            var screenWidth = device.Viewport.Width;
+            var screenHeight = device.Viewport.Height;
             var drawLines = _saveRenderImageSettings == null ? true: _saveRenderImageSettings.DrawLines;
             var imageUpScale = _saveRenderImageSettings == null ? 1 : _saveRenderImageSettings.ImageUpScaleFactor;
 
@@ -270,6 +254,13 @@ namespace GameWorld.Core.Components.Rendering
         void Render3DObjects(CommonShaderParameters commonShaderParameters, RenderingTechnique renderingTechnique, bool drawLines)
         {
             var device = _deviceResolverComponent.Device;
+
+            if (SquareViewport)
+            {
+                var size = Math.Min(device.Viewport.Width, device.Viewport.Height);
+                device.Viewport = new Viewport((device.Viewport.Width - size) / 2, (device.Viewport.Height - size) / 2, size, size);
+            }
+
             device.RasterizerState = _rasterStates[RasterizerStateEnum.Normal];
 
             if (renderingTechnique == RenderingTechnique.Normal && _renderLines.Count != 0 && drawLines)
@@ -289,7 +280,7 @@ namespace GameWorld.Core.Components.Rendering
             foreach (var item in _renderItems[RenderBuckedId.Normal])
                 item.Draw(device, commonShaderParameters, renderingTechnique);
 
-            if (drawLines && !HideGrid)
+            if (drawLines)
             {
                 foreach (var item in _renderItems[RenderBuckedId.Grid])
                     item.Draw(device, commonShaderParameters, renderingTechnique);
