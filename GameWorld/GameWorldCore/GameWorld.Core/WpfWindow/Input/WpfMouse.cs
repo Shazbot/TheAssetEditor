@@ -112,8 +112,7 @@ namespace GameWorld.Core.WpfWindow.Input
                     var res = LogicalTreeHelperEx.FindParent<Grid>(_focusElement);
                     if (res != null)
                     {
-                        var result = VisualTreeHelper.HitTest(res, pos);
-                        if (result?.VisualHit == _focusElement)
+                        if (res.InputHitTest(pos) == _focusElement)
                         {
                             _focusElement.Focus();
                         }
@@ -129,8 +128,11 @@ namespace GameWorld.Core.WpfWindow.Input
                 //if (res == null) return; <-- please see: https://github.com/donkeyProgramming/TheAssetEditor/pull/90#:~:text=Monogame.WpfInterop/Input/WpfMouse.cs
                 if (res != null)
                 {
-                    var result = VisualTreeHelper.HitTest(res, pos);
-                    if (result?.VisualHit == _focusElement)
+                    // InputHitTest (not VisualTreeHelper.HitTest) - the latter is a raw-geometry
+                    // test that ignores Visibility/IsHitTestVisible entirely, so a Collapsed,
+                    // non-hit-test-visible overlay sharing _focusElement's cell (e.g. CSC's porthole
+                    // preview) can still come back as the "hit" even though it's fully invisible.
+                    if (res.InputHitTest(pos) == _focusElement)
                         hit = true;
                 }
 

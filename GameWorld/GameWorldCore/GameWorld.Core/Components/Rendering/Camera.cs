@@ -115,10 +115,21 @@ namespace GameWorld.Core.Components.Rendering
             }
         }
 
+        /// <summary>When set, completely replaces the arc-ball view matrix - used by editors that
+        /// look through a scene-defined camera. The arc-ball state is untouched, so clearing the
+        /// override returns to the previous user view.</summary>
+        public Matrix? ViewMatrixOverride { get; set; }
+
+        /// <summary>When set, completely replaces the computed projection matrix (see <see cref="ViewMatrixOverride"/>).</summary>
+        public Matrix? ProjectionMatrixOverride { get; set; }
+
         public Matrix ViewMatrix
         {
             get
             {
+                if (ViewMatrixOverride.HasValue)
+                    return ViewMatrixOverride.Value;
+
                 if (_viewMatrixDirty)
                 {
                     ReCreateViewMatrix();
@@ -133,6 +144,9 @@ namespace GameWorld.Core.Components.Rendering
         {
             get
             {
+                if (ProjectionMatrixOverride.HasValue)
+                    return ProjectionMatrixOverride.Value;
+
                 // Check if viewport size changed (happens when window/viewport is resized)
                 if (_deviceResolver != null)
                 {

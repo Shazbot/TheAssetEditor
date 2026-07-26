@@ -190,6 +190,11 @@ namespace GameWorld.Core.Animation
             return (int)fps;
         }
 
+        /// <summary>Directly overrides the sampled frame for this tick (e.g. cross-fade blending
+        /// across multiple clips) - bypasses SetAnimation/CurrentFrame's normal single-clip
+        /// sampling. Overwritten again on the next call that touches CurrentFrame/Refresh.</summary>
+        public void SetManualFrame(AnimationFrame frame) => _currentAnimFrame = frame;
+
         public AnimationFrame GetCurrentAnimationFrame() => _currentAnimFrame;
         public int FrameCount() => _animationClip != null ? _animationClip.DynamicFrames.Count() : 0;
         public long GetAnimationLengthUs() => _animationClip?.PlayTimeUs ?? 0;

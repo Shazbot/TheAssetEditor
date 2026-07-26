@@ -99,17 +99,7 @@ namespace Editors.Shared.Core.Common
             sceneObject.ShowMesh.Value = sceneObject.ShowMesh.Value;
             sceneObject.ShowSkeleton.Value = sceneObject.ShowSkeleton.Value;
 
-            loadedNode.ForeachNodeRecursive((node) =>
-            {
-                if (node is Rmv2MeshNode mesh && string.IsNullOrWhiteSpace(mesh.AttachmentPointName) == false)
-                {
-                    if (sceneObject.Skeleton != null)
-                    {
-                        var boneIndex = sceneObject.Skeleton.GetBoneIndexByName(mesh.AttachmentPointName);
-                        mesh.AttachmentBoneResolver = new SkeletonBoneAnimationResolver(sceneObject, boneIndex);
-                    }
-                }
-            });
+            WireAttachmentResolvers(sceneObject);
 
             _eventHub.Publish(new SceneObjectUpdateEvent(sceneObject, true, skeletonChanged, skeletonChanged, metaDataChanged));
             sceneObject.TriggerMeshChanged();
@@ -205,8 +195,52 @@ namespace Editors.Shared.Core.Common
             
             var file = _packFileService.FindFile(animationFileName);
             var animation = AnimationFile.Create(file);
+
+            if (assetViewModel.Skeleton == null)
+            {
+                // Ad-hoc skeleton ("building" destruction anims etc.): no skeleton file exists
+                // under animations/skeletons, the anim's own bone table is the only definition.
+                assetViewModel.Skeleton = GameSkeleton.CreateFromAnimationFile(animation, assetViewModel.Player);
+                assetViewModel.SkeletonSceneNode.Skeleton = assetViewModel.Skeleton;
+            }
+
+            WireAttachmentResolvers(assetViewModel);
+
             var animationClip = new AnimationClip(animation, assetViewModel.Skeleton);
             SetAnimationClip(assetViewModel, animationClip, animationFileName);
+        }
+
+        /// <summary>Points every attach_point mesh (variantmesh SLOT weapons/shields, loaded with
+        /// <see cref="Rmv2MeshNode.AttachmentPointName"/> set) at its bone on this model's current
+        /// skeleton, and every rigid-bone mesh (RMV2's own <see cref="Rmv2MeshNode.AnimationMatrixOverride"/>
+        /// - "building" destruction pieces) at the same bone on this model's OWN skeleton, so its
+        /// origin becomes the bone regardless of where its vertices were authored. Called both
+        /// after the mesh loads and after the skeleton changes (e.g. an ad-hoc "building" skeleton
+        /// created lazily the first time an animation binds), since either can happen first.</summary>
+        internal static void WireAttachmentResolvers(SceneObject sceneObject)
+        {
+            if (sceneObject.ModelNode == null)
+                return;
+
+            sceneObject.ModelNode.ForeachNodeRecursive(node =>
+            {
+                if (node is not Rmv2MeshNode mesh)
+                    return;
+
+                if (!string.IsNullOrWhiteSpace(mesh.AttachmentPointName))
+                {
+                    var boneIndex = sceneObject.Skeleton?.GetBoneIndexByName(mesh.AttachmentPointName) ?? -1;
+                    mesh.AttachmentBoneResolver = boneIndex >= 0
+                        ? new SkeletonBoneAnimationResolver(sceneObject, boneIndex)
+                        : null;
+                }
+                else if (mesh.AnimationMatrixOverride >= 0)
+                {
+                    mesh.AttachmentBoneResolver = sceneObject.Skeleton != null && mesh.AnimationMatrixOverride < sceneObject.Skeleton.BoneCount
+                        ? new SkeletonBoneAnimationResolver(sceneObject, mesh.AnimationMatrixOverride)
+                        : null;
+                }
+            });
         }
 
         public void SetAnimationClip(SceneObject assetViewModel, AnimationClip? clip, string animationName)

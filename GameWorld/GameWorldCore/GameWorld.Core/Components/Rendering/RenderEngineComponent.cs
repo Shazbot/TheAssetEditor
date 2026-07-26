@@ -47,6 +47,12 @@ namespace GameWorld.Core.Components.Rendering
         public SpriteBatch CommonSpriteBatch { get; private set; }
         public SpriteFont DefaultFont { get; private set; }
 
+        // Confines the 3D pass to a centred square instead of the full viewport, for a fixed-aspect (1:1) projection.
+        public bool SquareViewport { get; set; }
+
+        // Still has real alpha, unlike the final composited surface. Null before the first frame.
+        public RenderTarget2D? LastFrame => _screenRenderTarget;
+
         public RenderEngineComponent(IWpfGame wpfGame, ResourceLibrary resourceLibrary, ArcBallCamera camera, IDeviceResolver deviceResolverComponent, ApplicationSettingsService applicationSettingsService, SceneRenderParametersStore sceneLightParametersStore, IEventHub eventHub, IGraphicsResourceCreator graphicsResourceCreator, IScopedLogger scopedLogger)
         {
             _logger = scopedLogger.ForContext<RenderEngineComponent>();
@@ -153,9 +159,9 @@ namespace GameWorld.Core.Components.Rendering
             var commonShaderParameters = CommonShaderParameterBuilder.Build(_camera, _sceneLightParameters, screenWidth, screenHeight);
             var backgroundColour = ApplicationSettingsHelper.GetEnumAsColour(_applicationSettingsService.CurrentSettings.RenderEngineBackgroundColour);
 
-            _normalRenderTarget = RenderTargetHelper.GetRenderTarget(device, _normalRenderTarget, imageUpScale, _graphicsResourceCreator);
-            _emissiveRenderTarget = RenderTargetHelper.GetRenderTarget(device, _emissiveRenderTarget, imageUpScale, _graphicsResourceCreator);
-            _screenRenderTarget = RenderTargetHelper.GetRenderTarget(device, _screenRenderTarget, imageUpScale, _graphicsResourceCreator);
+            _normalRenderTarget = RenderTargetHelper.GetRenderTarget(device, _normalRenderTarget, imageUpScale, _graphicsResourceCreator, screenWidth, screenHeight);
+            _emissiveRenderTarget = RenderTargetHelper.GetRenderTarget(device, _emissiveRenderTarget, imageUpScale, _graphicsResourceCreator, screenWidth, screenHeight);
+            _screenRenderTarget = RenderTargetHelper.GetRenderTarget(device, _screenRenderTarget, imageUpScale, _graphicsResourceCreator, screenWidth, screenHeight);
 
             // Configure render targets
             var backBufferRenderTarget = device.GetRenderTargets()[0].RenderTarget as RenderTarget2D;
@@ -248,6 +254,13 @@ namespace GameWorld.Core.Components.Rendering
         void Render3DObjects(CommonShaderParameters commonShaderParameters, RenderingTechnique renderingTechnique, bool drawLines)
         {
             var device = _deviceResolverComponent.Device;
+
+            if (SquareViewport)
+            {
+                var size = Math.Min(device.Viewport.Width, device.Viewport.Height);
+                device.Viewport = new Viewport((device.Viewport.Width - size) / 2, (device.Viewport.Height - size) / 2, size, size);
+            }
+
             device.RasterizerState = _rasterStates[RasterizerStateEnum.Normal];
 
             if (renderingTechnique == RenderingTechnique.Normal && _renderLines.Count != 0 && drawLines)

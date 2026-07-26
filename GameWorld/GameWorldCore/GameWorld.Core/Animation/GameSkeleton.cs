@@ -58,6 +58,66 @@ namespace GameWorld.Core.Animation
 
         GameSkeleton() { }
 
+        /// <summary>
+        /// Builds a skeleton directly from an animation file's own bone table, using the anim's
+        /// first frame as the bind pose. This is how ad-hoc skeletons work ("building" destruction
+        /// animations and other rigidmodel anims): they have no matching skeleton file under
+        /// animations/skeletons - the .anim itself is the only definition of the bone hierarchy.
+        /// </summary>
+        public static GameSkeleton CreateFromAnimationFile(AnimationFile animFile, AnimationPlayer animationPlayer)
+        {
+            var boneCount = animFile.Bones.Length;
+            var skeleton = new GameSkeleton
+            {
+                SkeletonName = animFile.Header.SkeletonName,
+                AnimationPlayer = animationPlayer,
+                Translation = new List<Vector3>(new Vector3[boneCount]),
+                Rotation = new List<Quaternion>(new Quaternion[boneCount]),
+                Scale = new List<float>(new float[boneCount]),
+                _parentBoneIds = new List<int>(new int[boneCount]),
+                BoneNames = new List<string>(new string[boneCount]),
+            };
+
+            var part = animFile.AnimationParts.FirstOrDefault();
+            var firstFrame = part?.DynamicFrames.FirstOrDefault() ?? part?.StaticFrame;
+
+            for (var i = 0; i < boneCount; i++)
+            {
+                skeleton._parentBoneIds[i] = animFile.Bones[i].ParentId;
+                skeleton.BoneNames[i] = animFile.Bones[i].Name;
+                skeleton.Translation[i] = Vector3.Zero;
+                skeleton.Rotation[i] = Quaternion.Identity;
+                skeleton.Scale[i] = 1;
+
+                if (part == null || i >= part.TranslationMappings.Count || i >= part.RotationMappings.Count)
+                    continue;
+
+                var translationMapping = part.TranslationMappings[i];
+                if (translationMapping.IsDynamic && firstFrame != null && translationMapping.Id < firstFrame.Transforms.Count)
+                    skeleton.Translation[i] = ToVector3(firstFrame.Transforms[translationMapping.Id]);
+                else if (translationMapping.IsStatic && part.StaticFrame != null && translationMapping.Id < part.StaticFrame.Transforms.Count)
+                    skeleton.Translation[i] = ToVector3(part.StaticFrame.Transforms[translationMapping.Id]);
+
+                var rotationMapping = part.RotationMappings[i];
+                if (rotationMapping.IsDynamic && firstFrame != null && rotationMapping.Id < firstFrame.Quaternion.Count)
+                    skeleton.Rotation[i] = ToQuaternion(firstFrame.Quaternion[rotationMapping.Id]);
+                else if (rotationMapping.IsStatic && part.StaticFrame != null && rotationMapping.Id < part.StaticFrame.Quaternion.Count)
+                    skeleton.Rotation[i] = ToQuaternion(part.StaticFrame.Quaternion[rotationMapping.Id]);
+            }
+
+            skeleton.RebuildSkeletonMatrix();
+            return skeleton;
+        }
+
+        static Vector3 ToVector3(Shared.GameFormats.RigidModel.Transforms.RmvVector3 v) => new(v.X, v.Y, v.Z);
+
+        static Quaternion ToQuaternion(Shared.GameFormats.RigidModel.Transforms.RmvVector4 v)
+        {
+            var q = new Quaternion(v.X, v.Y, v.Z, v.W);
+            q.Normalize();
+            return q;
+        }
+
         public void RebuildSkeletonMatrix()
         {
             _worldTransform = new List<Matrix>(new Matrix[BoneCount]);

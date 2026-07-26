@@ -22,6 +22,7 @@
         Audio_Editor,
         Twui_Editor,
         BMD_Editor,
+        Csc_Editor,
         None,
     }
 }

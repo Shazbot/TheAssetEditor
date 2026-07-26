@@ -41,6 +41,17 @@ namespace GameWorld.Core.SceneNodes
         public AnimationPlayer? AnimationPlayer { get; set; }                               // This is a hack - remove at some point
         public SkeletonBoneAnimationResolver? AttachmentBoneResolver { get; set; } = null;  // This is a hack - remove at some point
 
+        /// <summary>Extra outer-world factor composed AFTER the resolved attachment bone, applied
+        /// only when <see cref="AttachmentBoneResolver"/> is set. Exists because flat scene designs
+        /// (the CSC editor) push a leaf's full world transform directly into <see cref="ModelMatrix"/>
+        /// instead of relying on the engine's ancestor-chain accumulation (needed so picking, which
+        /// reads a node's own ModelMatrix with no parent chain, still works) - for an attach-resolved
+        /// mesh that world belongs here, one step further out than the bone, not in ModelMatrix
+        /// (which would then be applied on the wrong side of the bone transform). Identity - a
+        /// no-op - for every other caller (e.g. Kitbasher's normal nested scenegraph, where the
+        /// bone's outer world already arrives correctly through the ordinary parentWorld chain).</summary>
+        public Matrix AttachmentOuterWorld { get; set; } = Matrix.Identity;
+
     
         public Rmv2MeshNode(MeshObject meshObject, IRmvMaterial material, CapabilityMaterial shader, AnimationPlayer animationPlayer)
         {
@@ -60,6 +71,31 @@ namespace GameWorld.Core.SceneNodes
        
         public void Render(RenderEngineComponent renderEngine, Matrix parentWorld)
         {
+            var frame = AnimationPlayer?.GetCurrentAnimationFrame();
+
+            // Bone attachment: either a variantmesh attach_point (a bone on a DIFFERENT model's
+            // skeleton this prop is attached to) or RMV2's own rigid-bone id
+            // (WeightedMaterial.MatrixIndex, AnimationMatrixOverride - how "building" destruction
+            // pieces attach to their OWN skeleton regardless of vertex format). Either way the
+            // resolved bone's current world transform places this mesh's own origin at the bone -
+            // applied AFTER ModelMatrix/pivot (the mesh's own local content) but BEFORE the outer
+            // world (AttachmentOuterWorld, then parentWorld): the bone's transform is defined in
+            // the attached-to model's own local space, so it must be placed within that model's
+            // world, not the other way around - getting this order backwards is what sends
+            // attached meshes flying off to the wrong place under any non-trivial rotation.
+            var followsBoneRigidly = AttachmentBoneResolver != null && AnimationMatrixOverride >= 0;
+            var boneMatrix = AttachmentBoneResolver?.GetWorldTransformIfAnimating() ?? Matrix.Identity;
+
+            // PivotPoint is a LOCAL-space offset (the RMV2's own "attachment point") and must be
+            // composed first, before ModelMatrix - it needs to inherit whatever scale/rotation the
+            // mesh itself is placed with, same as any other local geometry feature. Composing it
+            // after ModelMatrix (as before) added it as a fixed, unscaled world-space nudge instead
+            // - correct only for the (extremely common) PivotPoint == zero case, but wrong by
+            // exactly (scale - 1) * PivotPoint whenever a CSC/scene element scales the mesh - e.g.
+            // a scaled-up destruct piece with a real pivot ended up too low by the un-applied
+            // portion of Scale * PivotPoint (confirmed against a real file: a 6x-scaled train piece
+            // with PivotPoint.Y ~2.7 sat ~14 units too low - within rounding of PivotPoint.Y * (6 - 1)).
+
             var animationCapability = Material.TryGetCapability<AnimationCapability>();
             if (animationCapability != null)
             {
@@ -67,25 +103,19 @@ namespace GameWorld.Core.SceneNodes
                 for (var i = 0; i < 256; i++)
                     data[i] = Matrix.Identity;
 
-                if (AnimationPlayer != null)
+                if (frame != null)
                 {
-                    var frame = AnimationPlayer.GetCurrentAnimationFrame();
-                    if (frame != null)
-                    {
-                        for (var i = 0; i < frame.BoneTransforms.Count(); i++)
-                            data[i] = frame.BoneTransforms[i].WorldTransform;
-                    }
+                    for (var i = 0; i < frame.BoneTransforms.Count(); i++)
+                        data[i] = frame.BoneTransforms[i].WorldTransform;
                 }
 
                 animationCapability.AnimationTransforms = data;
                 animationCapability.AnimationWeightCount = Geometry.WeightCount;
-                animationCapability.ApplyAnimation = AnimationPlayer != null && AnimationPlayer.IsEnabled && Geometry.VertexFormat != UiVertexFormat.Static;
+                animationCapability.ApplyAnimation = AnimationPlayer != null && AnimationPlayer.IsEnabled
+                    && Geometry.VertexFormat != UiVertexFormat.Static && !followsBoneRigidly;
             }
 
-            if (AttachmentBoneResolver != null)
-                parentWorld = parentWorld * AttachmentBoneResolver.GetWorldTransformIfAnimating();
-
-            var modelWithOffset = ModelMatrix * Matrix.CreateTranslation(PivotPoint);
+            var modelWithOffset = Matrix.CreateTranslation(PivotPoint) * ModelMatrix * boneMatrix * AttachmentOuterWorld;
             RenderMatrix = modelWithOffset;
 
             renderEngine.AddRenderItem(RenderBuckedId.Normal, new GeometryRenderItem(Geometry, Material, modelWithOffset * parentWorld));

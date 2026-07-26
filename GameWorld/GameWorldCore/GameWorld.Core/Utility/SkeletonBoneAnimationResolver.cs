@@ -19,18 +19,26 @@ namespace GameWorld.Core.Utility
             return _animationProvider.Skeleton.GetAnimatedWorldTranform(_boneIndex);
         }
 
+        /// <summary>
+        /// World transform of the attach bone. Falls back to the skeleton's bind pose when no
+        /// animation frame is available (player paused, scrubbed, or no clip loaded) so attached
+        /// meshes (variantmesh attach_point weapons/shields) still sit on their bone instead of
+        /// collapsing to the model origin.
+        /// </summary>
         public Matrix GetWorldTransformIfAnimating()
         {
-            if (_animationProvider.Skeleton != null && _animationProvider.Skeleton.AnimationPlayer.IsEnabled && _animationProvider.Skeleton.AnimationPlayer.IsPlaying && _boneIndex != -1)
-                return _animationProvider.Skeleton.GetAnimatedWorldTranform(_boneIndex);
-            return Matrix.Identity;
+            var skeleton = _animationProvider.Skeleton;
+            if (skeleton == null || _boneIndex < 0 || _boneIndex >= skeleton.BoneCount)
+                return Matrix.Identity;
+            return skeleton.GetAnimatedWorldTranform(_boneIndex);
         }
 
         public Matrix GetTransformIfAnimating()
         {
-            if (_animationProvider.Skeleton != null && _animationProvider.Skeleton.AnimationPlayer.IsEnabled && _animationProvider.Skeleton.AnimationPlayer.IsPlaying && _boneIndex != -1)
-                return _animationProvider.Skeleton.GetAnimatedTranform(_boneIndex);
-            return Matrix.Identity;
+            var skeleton = _animationProvider.Skeleton;
+            if (skeleton == null || _boneIndex < 0 || _boneIndex >= skeleton.BoneCount)
+                return Matrix.Identity;
+            return skeleton.GetAnimatedTranform(_boneIndex);
         }
     }
 }
