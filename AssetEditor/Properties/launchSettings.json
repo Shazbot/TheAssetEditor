@@ -2,7 +2,6 @@
   "profiles": {
     "AssetEditor": {
       "commandName": "Project",
-      "commandLineArgs": "Start_IPC",
       "nativeDebugging": false
     },
     "AE-KitbashKarl": {
