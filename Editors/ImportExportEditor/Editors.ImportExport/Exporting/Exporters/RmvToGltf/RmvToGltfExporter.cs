@@ -11,7 +11,13 @@ using SharpGLTF.Schema2;
 
 namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 {
-    public class RmvToGltfExporter
+    internal interface IRmvToGltfExporter
+    {
+        ExportSupportEnum CanExportFile(PackFile file);
+        void Export(RmvToGltfExporterSettings settings);
+    }
+
+    public class RmvToGltfExporter : IRmvToGltfExporter
     {
         private readonly ILogger _logger = Logging.Create<RmvToGltfExporter>();
         private readonly IGltfSceneSaver _gltfSaver;
@@ -73,6 +79,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 return ExportSupportEnum.HighPriority;
             return ExportSupportEnum.NotSupported;
         }
+
+        ExportSupportEnum IRmvToGltfExporter.CanExportFile(PackFile file) => CanExportFile(file);
+
+        void IRmvToGltfExporter.Export(RmvToGltfExporterSettings settings) => Export(settings);
 
         public void Export(RmvToGltfExporterSettings settings)
         {
@@ -185,23 +195,15 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         {
             skeletonFile = null;
             exportCancelled = false;
-            var skeletonName = modelParts
-                .Select(x => x.Asset.Model.Header.SkeletonName)
-                .FirstOrDefault(x => string.IsNullOrWhiteSpace(x) == false);
+            var skeletonDiagnostics = new List<string>();
+            var skeletonName = GltfAnimationCatalogResolver.SelectSharedSkeletonName(
+                modelParts.Select(x => x.Asset),
+                skeletonDiagnostics);
             if (string.IsNullOrWhiteSpace(skeletonName))
                 return null;
 
-            foreach (var otherSkeletonName in modelParts
-                .Select(x => x.Asset.Model.Header.SkeletonName)
-                .Where(x => string.IsNullOrWhiteSpace(x) == false)
-                .Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (!string.Equals(otherSkeletonName, skeletonName, StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.Here().Warning($"Composed models use different skeletons ('{skeletonName}' and '{otherSkeletonName}'); using '{skeletonName}' for the shared glTF skeleton.");
-                    break;
-                }
-            }
+            foreach (var diagnostic in skeletonDiagnostics)
+                _logger.Here().Warning(diagnostic);
 
             skeletonFile = _skeletonLookUpHelper.GetSkeletonFileFromName(skeletonName);
             if (skeletonFile == null)
@@ -227,38 +229,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         {
             var output = new List<ExportModelPart>();
             var nextIndex = 0;
-            AppendModelParts(node, string.Empty, ref nextIndex, output);
-            return output;
-        }
-
-        private void AppendModelParts(
-            ResolvedVariantMeshNode node,
-            string attachmentPoint,
-            ref int nextIndex,
-            List<ExportModelPart> output)
-        {
-            if (node.ModelAsset != null)
+            foreach (var component in GltfAnimationCatalogResolver.EnumerateComponents(node))
             {
                 output.Add(new ExportModelPart(
-                    node.ModelAsset,
-                    attachmentPoint,
+                    component.Asset,
+                    component.AttachmentPoint,
                     $"vmd_part_{nextIndex++:D3}",
                     false,
                     true));
             }
-
-            if (node.ResolvedModelReference != null)
-            {
-                AppendModelParts(node.ResolvedModelReference, attachmentPoint, ref nextIndex, output);
-            }
-
-            foreach (var slot in node.Slots)
-            {
-                if (slot.SelectedChild == null)
-                    continue;
-
-                AppendModelParts(slot.SelectedChild, slot.AttachmentPoint, ref nextIndex, output);
-            }
+            return output;
         }
 
         private List<ExportedMesh> BuildMeshes(
@@ -374,9 +354,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             if (skeleton == null)
                 return modelParts;
 
-            var sharedSkeletonName = modelParts
-                .Select(x => x.Asset.Model.Header.SkeletonName)
-                .FirstOrDefault(x => string.IsNullOrWhiteSpace(x) == false);
+            var sharedSkeletonName = GltfAnimationCatalogResolver.SelectSharedSkeletonName(
+                modelParts.Select(x => x.Asset));
             if (string.IsNullOrWhiteSpace(sharedSkeletonName))
                 return modelParts;
 

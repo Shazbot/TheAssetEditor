@@ -37,6 +37,9 @@ namespace Editors.ImportExport.Exporting.Presentation
         public void Initialize(PackFile packFile)
         {
             _inputFile = packFile;
+            PossibleExporters.Clear();
+            SelectedExporter = null;
+
             foreach (var viewModel in _exporterViewModels)
             {
                 var supported = viewModel.CanExportFile(packFile);
@@ -44,6 +47,7 @@ namespace Editors.ImportExport.Exporting.Presentation
                     continue;
 
                 PossibleExporters.Add(viewModel);
+                viewModel.Initialize(packFile);
                 if(supported == ExportSupportEnum.HighPriority)
                     SelectedExporter = viewModel;
             }
