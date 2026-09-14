@@ -61,7 +61,7 @@ namespace Editors.ImportExport.Exporting.Presentation
             {
                 FileName = Path.GetFileNameWithoutExtension(_inputFile!.Name),
                 DefaultExt = SelectedExporter!.OutputExtension,
-                Filter = $"File ({SelectedExporter!.OutputExtension})|*{SelectedExporter!.OutputExtension}"
+                Filter = SelectedExporter!.OutputFilter
             };
 
             if (dlg.ShowDialog() == true)

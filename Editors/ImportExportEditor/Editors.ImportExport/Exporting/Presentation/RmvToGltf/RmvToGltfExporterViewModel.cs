@@ -13,6 +13,7 @@ namespace Editors.ImportExport.Exporting.Presentation.RmvToGltf
 
         public string DisplayName => "Rmv_to_Gltf";
         public string OutputExtension => ".gltf";
+        public string OutputFilter => "glTF (*.gltf)|*.gltf|Binary glTF (*.glb)|*.glb";
 
         [ObservableProperty] bool _exportTextures = true;
         [ObservableProperty] bool _convertMaterialTextureToBlender = true;
