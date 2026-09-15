@@ -11,9 +11,8 @@ AssetEditor can export the following pack-file model sources through the existin
 
 Both `.gltf` and `.glb` outputs are supported. The implementation was audited against the
 feature scope in September 2026. No release-blocking defect was found in the implemented
-paths, and the full Windows solution suite and manual exports pass. The branch is suitable
-for a draft upstream PR. Before final upstream submission, preferably add the two full-stack
-asset tests described under **Recommended follow-ups**.
+paths, and the full Windows solution suite, real-asset integration tests, and manual exports
+pass. The branch is suitable for upstream PR preparation.
 
 ## User workflow
 
@@ -132,7 +131,11 @@ Focused tests cover:
 - animation catalog resolution, UI initialization, default idle selection, and passing only
   selected clips;
 - texture conversion reuse, basename collision avoidance, mask/base-color separation,
-  DDS red/blue channel order, and successful/failed GLB cleanup.
+  DDS red/blue channel order, and successful/failed GLB cleanup;
+- a full-stack Karl Franz WSModel export using the production DDS converters, including exact
+  decoded RGBA preservation, mask separation, GLB reloadability, and sidecar cleanup;
+- a full-stack animated Throt VMD export, including component coverage, shared joint bindings,
+  animation channels, and declared attachment-bone parenting after GLB reload.
 
 Run the full suite on Windows from the repository root:
 
@@ -143,7 +146,7 @@ dotnet test .\AssetEditor.sln --configuration Release --no-restore --verbosity n
 Focused exporter tests:
 
 ```powershell
-dotnet test .\Editors\ImportExportEditor\Test.ImportExport\Test.ImportExport.csproj --configuration Release --no-restore --filter "FullyQualifiedName~RmvToGltfExporterTests|FullyQualifiedName~GltfSceneSaverTests|FullyQualifiedName~GltfTextureExportSessionTests|FullyQualifiedName~GltfSceneAttachmentTests|FullyQualifiedName~VmdSkeletonExportTests|FullyQualifiedName~GltfAnimationCatalogTests|FullyQualifiedName~TextureHelperTests"
+dotnet test .\Editors\ImportExportEditor\Test.ImportExport\Test.ImportExport.csproj --configuration Release --no-restore --filter "FullyQualifiedName~RmvToGltfExporterTests|FullyQualifiedName~GltfSceneSaverTests|FullyQualifiedName~GltfTextureExportSessionTests|FullyQualifiedName~GltfSceneAttachmentTests|FullyQualifiedName~VmdSkeletonExportTests|FullyQualifiedName~GltfAnimationCatalogTests|FullyQualifiedName~RealAssetGltfExportTests|FullyQualifiedName~TextureHelperTests"
 ```
 
 Focused resolver tests:
@@ -153,11 +156,11 @@ dotnet test .\GameWorld\GameWorldCore\GameWorld.CoreTest\GameWorld.CoreTest.cspr
 ```
 
 The focused Windows reruns recorded during implementation passed (GLB cleanup 5/5, resolver
-11/11, and the six initially failing path-dependent VMD tests 6/6). The final Windows
-solution run discovered 920 tests across the test projects: 914 passed, 6 were skipped, and
-none failed. Manual VMD export with several selected animations also passed. WSL is not a
-valid substitute for this checkout's existing Windows restore artifacts: their NuGet assets
-contain the Windows-only fallback folder `D:\Microsoft Visual Studio\Shared\NuGetPackages`.
+11/11, the six initially failing path-dependent VMD tests 6/6, and the two real-asset export
+tests 2/2). The latest full Windows solution suite also passed. Manual VMD export with several
+selected animations passed. WSL is not a valid substitute for this checkout's existing
+Windows restore artifacts: their NuGet assets contain the Windows-only fallback folder
+`D:\Microsoft Visual Studio\Shared\NuGetPackages`.
 
 ### Tracked sample assets
 
@@ -167,6 +170,7 @@ contain the Windows-only fallback folder `D:\Microsoft Visual Studio\Shared\NuGe
 - VMD:
   `Data/Rome_Man_And_Shield_Pack/variantmeshes/_variantmodels/man/shield/celtic_oval_patterns.variantmeshdefinition`.
 - Animation lookup fixture: `Data/Karl_and_celestialgeneral.pack`.
+- Animated VMD integration fixture: `Data/Throt.pack`.
 
 ### Manual release matrix
 
@@ -182,8 +186,9 @@ Khronos glTF Sample Viewer or Blender and record the exact pack path used:
 - weapon or shield attached to an animated bone;
 - both `.gltf` and `.glb` for representative textured assets.
 
-Confirm component count, texture identity and RGB order, one shared skin, clip names,
-attachment motion, output reloadability, and expected sidecar cleanup.
+Confirm component count, texture identity and RGB order, compatible skin bindings sharing one
+ordered joint hierarchy, clip names, attachment motion, output reloadability, and expected
+sidecar cleanup.
 
 ## Known limitations
 
@@ -221,7 +226,7 @@ attachment motion, output reloadability, and expected sidecar cleanup.
 
 ### Review risks
 
-1. The feature range is large (41 files, roughly 3,800 additions) because renderer/exporter
+1. The feature range is large (47 files, roughly 4,600 additions) because renderer/exporter
    parity and VMD tests cross project boundaries. Submit it as a small stacked series rather
    than one unstructured PR.
 2. The global export window is taller to accommodate animation selection. This affects every
@@ -254,16 +259,10 @@ tag exists.
 
 ## Recommended follow-ups
 
-These are hardening items, not evidence that the manually validated feature is broken:
+These are hardening items, not evidence that the validated feature is broken:
 
-1. Add a full-stack tracked WSModel texture test that uses the real DDS converters, saves and
-   reloads GLB, and asserts the effective override image, RGB order, mask separation, and
-   intermediate cleanup in one path.
-2. Add a full-stack tracked animated VMD test that loads the fixture packs, selects real `.anim`
-   files, saves and reloads GLB, and asserts component count, one skin, clip presence, and an
-   animated attachment hierarchy.
-3. Run upstream CI again after history is split/rebased.
-4. Translate the remaining dynamic status strings if maintainers require full localization.
-5. If a headless consumer is built later, separate save-error reporting from WPF dialogs and
+1. Run upstream CI again after history is split/rebased.
+2. Translate the remaining dynamic status strings if maintainers require full localization.
+3. If a headless consumer is built later, separate save-error reporting from WPF dialogs and
    expose a result/exception-based service boundary. The current resolvers can already be
    reused without MonoGame.
