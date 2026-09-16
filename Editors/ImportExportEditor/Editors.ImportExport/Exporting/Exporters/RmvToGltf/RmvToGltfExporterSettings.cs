@@ -21,5 +21,12 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         bool Export16BitDisplacement = true,
         bool UseMultiScaleProcessing = true,
         bool UsePoissonReconstruction = true
-    );
+    )
+    {
+        /// <summary>
+        /// Controls whether a skeleton is emitted independently of animation clips.
+        /// Keeping this an init-only property preserves the existing positional API.
+        /// </summary>
+        public bool IncludeSkeleton { get; init; } = true;
+    }
 }

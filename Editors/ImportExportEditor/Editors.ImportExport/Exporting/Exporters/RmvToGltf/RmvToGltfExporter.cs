@@ -17,6 +17,30 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         void Export(RmvToGltfExporterSettings settings);
     }
 
+    /// <summary>
+    /// Decides what to do when an asset names a skeleton which is not present in the loaded packs.
+    /// The editor supplies a dialog implementation; a headless caller supplies a non-interactive one.
+    /// </summary>
+    public interface IMissingSkeletonDecision
+    {
+        bool ContinueWithoutSkeleton(string skeletonName);
+    }
+
+    public sealed class DialogMissingSkeletonDecision : IMissingSkeletonDecision
+    {
+        public bool ContinueWithoutSkeleton(string skeletonName)
+            => MessageBox.Show(
+                "Skeleton file not found, \n(Have you loaded all CA pakcs for the right game?)\n Do you want to continue exporting without skeleton/animations?",
+                "Warning!",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) == MessageBoxResult.Yes;
+    }
+
+    public sealed class HeadlessMissingSkeletonDecision : IMissingSkeletonDecision
+    {
+        public bool ContinueWithoutSkeleton(string skeletonName) => true;
+    }
+
     public class RmvToGltfExporter : IRmvToGltfExporter
     {
         private readonly ILogger _logger = Logging.Create<RmvToGltfExporter>();
@@ -28,6 +52,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         private readonly ISkeletonAnimationLookUpHelper _skeletonLookUpHelper;
         private readonly IModelAssetResolver _modelAssetResolver;
         private readonly IVariantMeshCompositionResolver? _variantMeshResolver;
+        private readonly IMissingSkeletonDecision _missingSkeletonDecision;
 
         // Keep the pre-composition constructor signature intact. The
         // composition resolver is an additive dependency for VMD exports.
@@ -47,6 +72,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 gltfAnimationCreator,
                 skeletonLookUpHelper,
                 modelAssetResolver,
+                null,
                 null)
         {
         }
@@ -59,7 +85,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             GltfAnimationBuilder gltfAnimationCreator,
             ISkeletonAnimationLookUpHelper skeletonLookUpHelper,
             IModelAssetResolver? modelAssetResolver,
-            IVariantMeshCompositionResolver? variantMeshResolver)
+            IVariantMeshCompositionResolver? variantMeshResolver,
+            IMissingSkeletonDecision? missingSkeletonDecision = null)
         {
             _gltfSaver = gltfSaver;
             _gltfMeshBuilder = gltfMeshBuilder;
@@ -69,6 +96,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             _skeletonLookUpHelper = skeletonLookUpHelper;
             _modelAssetResolver = modelAssetResolver ?? new ModelAssetResolver();
             _variantMeshResolver = variantMeshResolver;
+            _missingSkeletonDecision = missingSkeletonDecision ?? new DialogMissingSkeletonDecision();
         }
 
         internal ExportSupportEnum CanExportFile(PackFile file)
@@ -106,7 +134,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             // attachments can still use a shared skeleton without clips.
             ProcessedGltfSkeleton? skeleton = null;
             global::Shared.GameFormats.Animation.AnimationFile? skeletonFile = null;
-            if (settings.ExportAnimations)
+            if (settings.IncludeSkeleton)
             {
                 skeleton = CreateSharedSkeleton(
                     [modelPart],
@@ -156,13 +184,18 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 throw new InvalidOperationException($"VariantMeshDefinition '{settings.InputModelFile.Name}' contains no renderable models.");
 
             var outputScene = ModelRoot.CreateModel();
-            var skeleton = CreateSharedSkeleton(
-                modelParts,
-                settings,
-                outputScene,
-                warnWhenMissing: false,
-                out var skeletonFile,
-                out _);
+            ProcessedGltfSkeleton? skeleton = null;
+            global::Shared.GameFormats.Animation.AnimationFile? skeletonFile = null;
+            if (settings.IncludeSkeleton)
+            {
+                skeleton = CreateSharedSkeleton(
+                    modelParts,
+                    settings,
+                    outputScene,
+                    warnWhenMissing: false,
+                    out skeletonFile,
+                    out _);
+            }
             modelParts = ApplySharedSkeletonCompatibility(modelParts, skeleton);
             var textureSession = new GltfTextureExportSession(collisionSafe: true);
             var meshes = new List<ExportedMesh>();
@@ -211,9 +244,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 var message = $"Skeleton '{skeletonName}' was not found; exporting without a glTF skeleton.";
                 _logger.Here().Warning(message);
                 if (warnWhenMissing && settings.ExportAnimations
-                    && MessageBox.Show(
-                        "Skeleton file not found, \n(Have you loaded all CA pakcs for the right game?)\n Do you want to continue exporting without skeleton/animations?",
-                        "Warning!", MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.No)
+                    && !_missingSkeletonDecision.ContinueWithoutSkeleton(skeletonName))
                 {
                     exportCancelled = true;
                     return null;

@@ -67,4 +67,42 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             }
         }
     }
+
+    /// <summary>
+    /// Scene saver for console/service callers. It intentionally contains no
+    /// dialog dependency and lets the caller observe save failures.
+    /// </summary>
+    public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
+    {
+        public void Save(ModelRoot modelRoot, string fullSystemPath)
+            => Save(modelRoot, fullSystemPath, Array.Empty<string>());
+
+        public void Save(
+            ModelRoot modelRoot,
+            string fullSystemPath,
+            IReadOnlyCollection<string> generatedTexturePaths)
+        {
+            var outputDirectory = Path.GetDirectoryName(fullSystemPath);
+            if (string.IsNullOrWhiteSpace(outputDirectory) == false)
+                Directory.CreateDirectory(outputDirectory);
+
+            // SharpGLTF chooses the container from the requested extension.
+            // Exceptions deliberately propagate to HeadlessGltfExportService.
+            modelRoot.Save(fullSystemPath);
+
+            if (string.Equals(Path.GetExtension(fullSystemPath), ".glb", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var texturePath in generatedTexturePaths
+                    .Where(x => string.Equals(Path.GetExtension(x), ".png", StringComparison.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    // Delete only paths explicitly returned by the texture
+                    // handler. Auxiliary mask files are intentionally not
+                    // returned and therefore remain discoverable by the host.
+                    if (File.Exists(texturePath))
+                        File.Delete(texturePath);
+                }
+            }
+        }
+    }
 }

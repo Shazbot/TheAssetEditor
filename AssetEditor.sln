@@ -142,6 +142,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Editors.CampaignAnimationSe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Test.CampaignAnimationSetEditor", "Editors\CampaignAnimationSetEditor\Test.CampaignAnimationSetEditor\Test.CampaignAnimationSetEditor.csproj", "{32582784-3E26-44C1-9375-ECE044B4CB4A}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tools", "Tools", "{D8C14565-6B68-46E4-8A41-E9A0BA995D33}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WH3AssetHost", "Tools\WH3AssetHost\WH3AssetHost.csproj", "{A48F4141-10A7-4B98-9484-4A4F87B41F6A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -152,6 +156,18 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Debug|x64.Build.0 = Debug|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Debug|x86.Build.0 = Debug|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Release|x64.ActiveCfg = Release|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Release|x64.Build.0 = Release|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Release|x86.ActiveCfg = Release|Any CPU
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A}.Release|x86.Build.0 = Release|Any CPU
 		{FB2E6959-32F9-4F01-848B-21B38BDE98CC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{FB2E6959-32F9-4F01-848B-21B38BDE98CC}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FB2E6959-32F9-4F01-848B-21B38BDE98CC}.Debug|x64.ActiveCfg = Debug|Any CPU
@@ -758,6 +774,7 @@ Global
 		{AA14F125-E7D2-8CBC-FC94-A1A6F78D9FAF} = {07AC615B-A8FC-4E1A-BDD5-BC11452429A0}
 		{417FAB39-3269-4D1C-981B-DD9965E1B26C} = {AA14F125-E7D2-8CBC-FC94-A1A6F78D9FAF}
 		{32582784-3E26-44C1-9375-ECE044B4CB4A} = {AA14F125-E7D2-8CBC-FC94-A1A6F78D9FAF}
+		{A48F4141-10A7-4B98-9484-4A4F87B41F6A} = {D8C14565-6B68-46E4-8A41-E9A0BA995D33}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {AB5968F3-98ED-4AFF-98EA-0DBEDCACADF2}

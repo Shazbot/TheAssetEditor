@@ -186,7 +186,13 @@ namespace Editors.ImportExport.Exporting.Presentation.RmvToGltf
                 ConvertMaterialTextureToBlender,
                 ConvertNormalTextureToBlue,
                 ExportAnimations,
-                true);
+                true)
+            {
+                // Preserve the editor's established behavior for direct RMV/WSModel exports:
+                // the skeleton is requested when animation export is enabled. VMD exports can
+                // still use the setting independently through non-UI callers.
+                IncludeSkeleton = ExportAnimations
+            };
             _exporter.Export(settings);
         }
 
