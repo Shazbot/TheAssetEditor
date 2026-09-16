@@ -182,8 +182,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             animationFiles,
             Path.GetFullPath(request.OutputPath),
             request.ExportMaterials,
-            ConvertMaterialTextureToBlender: false,
-            ConvertNormalTextureToBlue: false,
+            ConvertMaterialTextureToBlender: true,
+            ConvertNormalTextureToBlue: true,
             ExportAnimations: animationFiles.Count > 0,
             MirrorMesh: request.MirrorMesh)
         {
