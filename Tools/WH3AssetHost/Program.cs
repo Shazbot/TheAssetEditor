@@ -128,15 +128,25 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         var eventHub = new NoOpGlobalEventHub();
         var packFileService = HeadlessPackFileServiceFactory.Create(eventHub);
         var loader = new HeadlessPackFileLoader();
-        foreach (var container in loader.LoadOrdered(packPaths))
+        var loadedPacks = loader.LoadOrderedWithMetadata(packPaths);
+        var vanillaPackContainers = loadedPacks
+            .Where(x => x.IsVanillaPack)
+            .Select(x => x.Container)
+            .ToHashSet();
+        foreach (var loadedPack in loadedPacks)
         {
-            if (packFileService.AddContainer(container) == null)
-                throw new InvalidOperationException($"Unable to add pack container '{container.Name}'.");
+            if (packFileService.AddContainer(loadedPack.Container) == null)
+                throw new InvalidOperationException($"Unable to add pack container '{loadedPack.Container.Name}'.");
         }
 
         var modelResolver = new ModelAssetResolver(packFileService);
         var compositionResolver = new VariantMeshCompositionResolver(packFileService, modelResolver);
-        var skeletonLookup = new SkeletonAnimationLookUpHelper(packFileService, eventHub);
+        var skeletonLookup = new SkeletonAnimationLookUpHelper(
+            packFileService,
+            eventHub,
+            new SkeletonAnimationLookupCacheOptions(
+                GetAnimationIndexCacheDirectory(),
+                vanillaPackContainers));
         var animationCatalogResolver = new GltfAnimationCatalogResolver(
             modelResolver,
             compositionResolver,
@@ -160,6 +170,15 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             skeletonLookup,
             new HeadlessGltfExportService(exporter),
             animationCatalogResolver);
+    }
+
+    private static string GetAnimationIndexCacheDirectory()
+    {
+        var localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var cacheRoot = string.IsNullOrWhiteSpace(localApplicationData)
+            ? Path.GetTempPath()
+            : localApplicationData;
+        return Path.Combine(cacheRoot, "WH3AssetHost", "AnimationIndex");
     }
 
     public AssetHostAnimationCatalog GetAnimationCatalog(string assetPath)

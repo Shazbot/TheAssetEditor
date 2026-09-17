@@ -28,6 +28,7 @@ namespace GameWorld.Core.Services
 
         private readonly IPackFileService _packFileService;
         private readonly IGlobalEventHub _globalEventHub;
+        private readonly SkeletonAnimationLookupCache? _animationIndexCache;
         private readonly Task _initialIndexTask;
         private volatile bool _isDisposed;
 
@@ -50,10 +51,16 @@ namespace GameWorld.Core.Services
             "animations\\battle\\humanoid01c\\sayl_staff_and_skull\\stand\\props\\hu1c_sayl_staff_and_skull_staff_stand_idle_02.anim"
         };
 
-        public SkeletonAnimationLookUpHelper(IPackFileService packFileService, IGlobalEventHub globalEventHub)
+        public SkeletonAnimationLookUpHelper(
+            IPackFileService packFileService,
+            IGlobalEventHub globalEventHub,
+            SkeletonAnimationLookupCacheOptions? cacheOptions = null)
         {
             _packFileService = packFileService;
             _globalEventHub = globalEventHub;
+            _animationIndexCache = cacheOptions == null
+                ? null
+                : new SkeletonAnimationLookupCache(cacheOptions);
 
             _globalEventHub.Register<PackFileContainerAddedEvent>(this, x => PackfileContainerRefresh(x.Container));
             _globalEventHub.Register<PackFileContainerFilesAddedEvent>(this, x => PackfileContainerRefresh(x.Container));
@@ -178,6 +185,10 @@ namespace GameWorld.Core.Services
 
         (List<string> SkeletonFileNames, Dictionary<string, List<AnimationReference>> AnimationsBySkeletonName) DiscoverFromPackFileContainer(IPackFileContainer packFileContainer)
         {
+            var cached = _animationIndexCache?.TryLoad(packFileContainer);
+            if (cached.HasValue)
+                return cached.Value;
+
             var stopwatch = Stopwatch.StartNew();
             var skeletonFileNameList = new ConcurrentBag<string>();
             var animationList = new ConcurrentDictionary<string, ConcurrentBag<AnimationReference>>(StringComparer.OrdinalIgnoreCase);
@@ -239,7 +250,9 @@ namespace GameWorld.Core.Services
                 resultAnimations.Values.Sum(x => x.Count),
                 skeletonFileNameList.Count);
 
-            return (skeletonFileNameList.ToList(), resultAnimations);
+            var result = (skeletonFileNameList.ToList(), resultAnimations);
+            _animationIndexCache?.Save(packFileContainer, result);
+            return result;
         }
 
         void FileDiscovered(

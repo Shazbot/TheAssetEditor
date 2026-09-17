@@ -17,11 +17,49 @@ namespace Shared.Core.PackFiles.Utility
         IReadOnlyList<IPackFileContainer> LoadOrdered(
             IReadOnlyList<string> packFilePaths,
             bool firstPackIsCaPack = true);
+
+        IReadOnlyList<HeadlessPackFileLoadResult> LoadOrderedWithMetadata(
+            IReadOnlyList<string> packFilePaths,
+            bool firstPackIsCaPack = true);
     }
+
+    public sealed record HeadlessPackFileLoadResult(
+        IPackFileContainer Container,
+        bool IsVanillaPack);
 
     public sealed class HeadlessPackFileLoader : IHeadlessPackFileLoader
     {
         public IPackFileContainer LoadPack(string packFilePath, bool isCaPackFile = false)
+            => LoadPackWithMetadata(packFilePath, isCaPackFile).Container;
+
+        public IReadOnlyList<HeadlessPackFileLoadResult> LoadOrderedWithMetadata(
+            IReadOnlyList<string> packFilePaths,
+            bool firstPackIsCaPack = true)
+        {
+            ArgumentNullException.ThrowIfNull(packFilePaths);
+
+            var normalizedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var containers = new List<HeadlessPackFileLoadResult>(packFilePaths.Count);
+            for (var index = 0; index < packFilePaths.Count; index++)
+            {
+                var fullPath = Path.GetFullPath(packFilePaths[index]);
+                if (normalizedPaths.Add(fullPath) == false)
+                    throw new InvalidOperationException($"Pack file '{fullPath}' was supplied more than once.");
+
+                containers.Add(LoadPackWithMetadata(fullPath, firstPackIsCaPack && index == 0));
+            }
+
+            return containers;
+        }
+
+        public IReadOnlyList<IPackFileContainer> LoadOrdered(
+            IReadOnlyList<string> packFilePaths,
+            bool firstPackIsCaPack = true)
+            => LoadOrderedWithMetadata(packFilePaths, firstPackIsCaPack)
+                .Select(x => x.Container)
+                .ToList();
+
+        private static HeadlessPackFileLoadResult LoadPackWithMetadata(string packFilePath, bool isCaPackFile)
         {
             if (string.IsNullOrWhiteSpace(packFilePath))
                 throw new ArgumentException("A pack file path is required.", nameof(packFilePath));
@@ -41,27 +79,17 @@ namespace Shared.Core.PackFiles.Utility
             // read-only host load must not write editor metadata beside packs.
             container.IsCaPackFile = isCaPackFile;
             container.IsReadOnly = true;
-            return container;
-        }
 
-        public IReadOnlyList<IPackFileContainer> LoadOrdered(
-            IReadOnlyList<string> packFilePaths,
-            bool firstPackIsCaPack = true)
-        {
-            ArgumentNullException.ThrowIfNull(packFilePaths);
-
-            var normalizedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var containers = new List<IPackFileContainer>(packFilePaths.Count);
-            for (var index = 0; index < packFilePaths.Count; index++)
-            {
-                var fullPath = Path.GetFullPath(packFilePaths[index]);
-                if (normalizedPaths.Add(fullPath) == false)
-                    throw new InvalidOperationException($"Pack file '{fullPath}' was supplied more than once.");
-
-                containers.Add(LoadPack(fullPath, firstPackIsCaPack && index == 0));
-            }
-
-            return containers;
+            // CA's pack header identifies user-created packs as MOD. The
+            // remaining known CA header types are the game's own packs. Keep
+            // this classification here, next to header parsing, so callers do
+            // not have to guess from paths or filenames.
+            var isVanillaPack = container.Header.PackFileType is
+                PackFileCAType.BOOT or
+                PackFileCAType.RELEASE or
+                PackFileCAType.PATCH or
+                PackFileCAType.MOVIE;
+            return new HeadlessPackFileLoadResult(container, isVanillaPack);
         }
     }
 
