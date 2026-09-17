@@ -109,6 +109,122 @@ public class GltfTextureExportSessionTests
     }
 
     [Test]
+    public void HandlerCachesConvertedPngAcrossExportSessions()
+    {
+        var rootDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-textures-{Guid.NewGuid():N}");
+        var firstDirectory = Path.Combine(rootDirectory, "first");
+        var secondDirectory = Path.Combine(rootDirectory, "second");
+        Directory.CreateDirectory(firstDirectory);
+        Directory.CreateDirectory(secondDirectory);
+
+        try
+        {
+            var materialExporter = new Mock<IDdsToMaterialPngExporter>();
+            materialExporter
+                .Setup(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns((string source, string output, bool _) =>
+                {
+                    var path = Path.Combine(Path.GetDirectoryName(output)!, "cache.png");
+                    File.WriteAllBytes(path, OnePixelPng);
+                    return path;
+                });
+
+            var handler = new GltfTextureHandler(new Mock<IDdsToNormalPngExporter>().Object, materialExporter.Object);
+            var asset = CreateAsset("textures/cache.dds", "textures/cache.dds");
+            var firstSettings = new RmvToGltfExporterSettings(
+                asset.InputFile,
+                [],
+                Path.Combine(firstDirectory, "model.glb"),
+                true,
+                false,
+                false,
+                false,
+                false);
+            var secondSettings = firstSettings with
+            {
+                OutputPath = Path.Combine(secondDirectory, "model.glb")
+            };
+
+            handler.HandleTextures(asset, firstSettings, new GltfTextureExportSession(collisionSafe: false));
+            var secondTextures = handler.HandleTextures(
+                asset,
+                secondSettings,
+                new GltfTextureExportSession(collisionSafe: false));
+
+            materialExporter.Verify(
+                x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()),
+                Times.Once);
+            Assert.That(secondTextures, Has.Count.EqualTo(2));
+            Assert.That(secondTextures.Select(x => x.SystemFilePath).Distinct().Single(),
+                Is.EqualTo(Path.Combine(secondDirectory, "cache.png")));
+            Assert.That(File.Exists(Path.Combine(secondDirectory, "cache.png")), Is.True);
+        }
+        finally
+        {
+            if (Directory.Exists(rootDirectory))
+                Directory.Delete(rootDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void AuxiliaryMaskExportCanBeDisabled()
+    {
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-textures-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+
+        try
+        {
+            var baseColourPath = Path.Combine(outputDirectory, "body_base_colour.png");
+            File.WriteAllBytes(baseColourPath, OnePixelPng);
+            var materialExporter = new Mock<IDdsToMaterialPngExporter>();
+            materialExporter
+                .Setup(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns((string source, string output, bool convertToBlender) =>
+                    source.EndsWith("base_colour.dds", StringComparison.OrdinalIgnoreCase)
+                        ? baseColourPath
+                        : throw new InvalidOperationException("The auxiliary mask should not be exported."));
+
+            var asset = CreateTexturedAsset(
+                "textures/body_base_colour.dds",
+                "textures/body_mask.dds");
+            var settings = new RmvToGltfExporterSettings(
+                asset.InputFile,
+                [],
+                Path.Combine(outputDirectory, "model.glb"),
+                true,
+                false,
+                false,
+                false,
+                false)
+            {
+                ExportAuxiliaryMasks = false
+            };
+            var handler = new GltfTextureHandler(
+                new Mock<IDdsToNormalPngExporter>().Object,
+                materialExporter.Object);
+
+            var textures = handler.HandleTextures(
+                asset,
+                settings,
+                new GltfTextureExportSession(collisionSafe: false));
+
+            Assert.That(textures, Has.Count.EqualTo(1));
+            Assert.That(textures[0].GlftTexureType, Is.EqualTo(KnownChannel.BaseColor));
+            materialExporter.Verify(
+                x => x.Export(
+                    It.Is<string>(path => path.EndsWith("body_mask.dds", StringComparison.OrdinalIgnoreCase)),
+                    It.IsAny<string>(),
+                    It.IsAny<bool>()),
+                Times.Never);
+        }
+        finally
+        {
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
+    [Test]
     public void MaskExportDoesNotReplaceBaseColourInFinalGlbMaterial()
     {
         var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-textures-{Guid.NewGuid():N}");

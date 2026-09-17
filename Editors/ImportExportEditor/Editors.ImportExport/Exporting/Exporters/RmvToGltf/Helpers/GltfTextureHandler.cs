@@ -7,6 +7,7 @@ using GameWorld.Core.Services;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.Types;
 using Shared.Core.PackFiles;
+using Editors.ImportExport.Misc;
 using SharpGLTF.Materials;
 
 namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
@@ -49,6 +50,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         private readonly IDdsToNormalPngExporter _ddsToNormalPngExporter;
         private readonly IDdsToMaterialPngExporter _ddsToMaterialPngExporter;
         private readonly IPackFileService? _packFileService;
+        private readonly TexturePngCache _convertedTextureCache = new();
 
         public GltfTextureHandler(IDdsToNormalPngExporter ddsToNormalPngExporter, IDdsToMaterialPngExporter ddsToMaterialPngExporter, IPackFileService? packFileService = null)
         {
@@ -141,6 +143,84 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         private static string NormalizeTexturePath(string path)
             => path.Replace('\\', '/').Trim().ToLowerInvariant();
 
+        private static string GetTextureStem(string sourcePath)
+            => Path.GetFileNameWithoutExtension(
+                sourcePath.Replace('\\', Path.DirectorySeparatorChar));
+
+        private static string GetMaterialTexturePath(string outputPath, string sourcePath)
+        {
+            var outputDirectory = Path.GetDirectoryName(outputPath) ?? string.Empty;
+            return Path.Combine(outputDirectory, GetTextureStem(sourcePath) + ".png");
+        }
+
+        private static string GetNormalTexturePath(
+            string outputPath,
+            string sourcePath,
+            bool convertToBlueNormalMap)
+        {
+            var outputDirectory = Path.GetDirectoryName(outputPath) ?? string.Empty;
+            var suffix = convertToBlueNormalMap ? string.Empty : "_raw";
+            return Path.Combine(outputDirectory, GetTextureStem(sourcePath) + suffix + ".png");
+        }
+
+        private static string GetAuxiliaryMaskPath(string outputPath, string sourcePath)
+        {
+            var materialPath = GetMaterialTexturePath(outputPath, sourcePath);
+            var directory = Path.GetDirectoryName(materialPath) ?? string.Empty;
+            var stem = Path.GetFileNameWithoutExtension(materialPath);
+            return Path.Combine(directory, stem + "_mask.png");
+        }
+
+        private string ExportCachedTexture(
+            string cacheKey,
+            string expectedOutputPath,
+            Func<string> exporter)
+        {
+            if (_convertedTextureCache.TryGet(cacheKey, out var cachedPng))
+            {
+                EnsureParentDirectory(expectedOutputPath);
+                File.WriteAllBytes(expectedOutputPath, cachedPng);
+                return expectedOutputPath;
+            }
+
+            var exportedPath = exporter();
+            CacheExportedTexture(cacheKey, exportedPath);
+            return exportedPath;
+        }
+
+        private void CacheExportedTexture(string cacheKey, string? exportedPath)
+        {
+            if (string.IsNullOrWhiteSpace(exportedPath) || File.Exists(exportedPath) == false)
+                return;
+
+            try
+            {
+                _convertedTextureCache.Store(cacheKey, File.ReadAllBytes(exportedPath));
+            }
+            catch (IOException)
+            {
+                // Caching is an optimization; an unavailable cache read must
+                // not turn a successful export into a failed one.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // See the IOException case above.
+            }
+        }
+
+        private static void WriteCachedTexture(string outputPath, byte[] pngData)
+        {
+            EnsureParentDirectory(outputPath);
+            File.WriteAllBytes(outputPath, pngData);
+        }
+
+        private static void EnsureParentDirectory(string filePath)
+        {
+            var directory = Path.GetDirectoryName(filePath);
+            if (string.IsNullOrWhiteSpace(directory) == false)
+                Directory.CreateDirectory(directory);
+        }
+
         private static string FinalizeTexturePath(
             GltfTextureExportSession session,
             string cacheKey,
@@ -230,7 +310,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             var cacheKey = CacheKey(text, "material", settings.ConvertMaterialTextureToBlender);
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
-                var exportedPath = _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, settings.ConvertMaterialTextureToBlender);
+                var exportedPath = ExportCachedTexture(
+                    cacheKey,
+                    GetMaterialTexturePath(settings.OutputPath, text.Path),
+                    () => _ddsToMaterialPngExporter.Export(
+                        text.Path,
+                        settings.OutputPath,
+                        settings.ConvertMaterialTextureToBlender));
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
             }
 
@@ -244,7 +330,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             var cacheKey = CacheKey(text, "default");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
-                var exportedPath = _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false);
+                var exportedPath = ExportCachedTexture(
+                    cacheKey,
+                    GetMaterialTexturePath(settings.OutputPath, text.Path),
+                    () => _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false));
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
 
                 // For 3D printing: Export alpha channel as a separate mask for base color/diffuse
@@ -266,33 +355,51 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private void DoTextureMask(RmvToGltfExporterSettings settings, GltfTextureExportSession session, MaterialBuilderTextureInput text)
         {
+            if (!settings.ExportAuxiliaryMasks)
+                return;
+
             var cacheKey = CacheKey(text, "mask");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
-                // Export mask as separate PNG - name it with _mask suffix for clarity
-                var exportedPath = _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false);
-
-                if (exportedPath != null)
+                // Export mask as separate PNG - name it with _mask suffix for clarity.
+                // Unlike the regular material conversions, cache the final
+                // inverted mask so a later export does not repeat either DDS
+                // decoding or the pixel transform.
+                var maskPath = GetAuxiliaryMaskPath(settings.OutputPath, text.Path);
+                string? exportedPath;
+                if (_convertedTextureCache.TryGet(cacheKey, out var cachedPng))
                 {
-                    // Invert the mask values for proper alpha channel usage
-                    // Game masks are often inverted (black=show, white=hide)
-                    // Alpha channels need (black=transparent, white=opaque)
-                    if (File.Exists(exportedPath))
-                        InvertMaskImage(exportedPath);
+                    WriteCachedTexture(maskPath, cachedPng);
+                    exportedPath = maskPath;
+                }
+                else
+                {
+                    exportedPath = _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false);
 
-                    // Rename to have _mask suffix
-                    var directory = Path.GetDirectoryName(exportedPath) ?? string.Empty;
-                    var fileNameWithoutExt = Path.GetFileNameWithoutExtension(exportedPath);
-                    var newFileName = fileNameWithoutExt + "_mask.png";
-                    var newPath = Path.Combine(directory, newFileName);
-
-                    if (File.Exists(exportedPath))
+                    if (!string.IsNullOrWhiteSpace(exportedPath))
                     {
-                        if (File.Exists(newPath))
-                            File.Delete(newPath);
-                        File.Move(exportedPath, newPath);
-                        exportedPath = newPath;
+                        // Invert the mask values for proper alpha channel usage
+                        // Game masks are often inverted (black=show, white=hide)
+                        // Alpha channels need (black=transparent, white=opaque)
+                        if (File.Exists(exportedPath))
+                            InvertMaskImage(exportedPath);
+
+                        // Rename to have _mask suffix
+                        var directory = Path.GetDirectoryName(exportedPath) ?? string.Empty;
+                        var fileNameWithoutExt = Path.GetFileNameWithoutExtension(exportedPath);
+                        var newFileName = fileNameWithoutExt + "_mask.png";
+                        var newPath = Path.Combine(directory, newFileName);
+
+                        if (File.Exists(exportedPath))
+                        {
+                            if (File.Exists(newPath))
+                                File.Delete(newPath);
+                            File.Move(exportedPath, newPath);
+                            exportedPath = newPath;
+                        }
                     }
+
+                    CacheExportedTexture(cacheKey, exportedPath);
                 }
 
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
@@ -321,21 +428,17 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             using var imageStream = new MemoryStream(imageBytes);
             using var image = System.Drawing.Image.FromStream(imageStream);
             using var bitmap = new System.Drawing.Bitmap(image);
+            var pixels = BitmapPixelBuffer.ReadBgra(bitmap);
 
             // Invert all pixel values (255 - value)
-            for (int x = 0; x < bitmap.Width; x++)
+            for (var index = 0; index < pixels.Length; index += 4)
             {
-                for (int y = 0; y < bitmap.Height; y++)
-                {
-                    var pixel = bitmap.GetPixel(x, y);
-                    var invertedR = 255 - pixel.R;
-                    var invertedG = 255 - pixel.G;
-                    var invertedB = 255 - pixel.B;
-                    var invertedColor = System.Drawing.Color.FromArgb(pixel.A, invertedR, invertedG, invertedB);
-                    bitmap.SetPixel(x, y, invertedColor);
-                }
+                pixels[index] = (byte)(255 - pixels[index]);
+                pixels[index + 1] = (byte)(255 - pixels[index + 1]);
+                pixels[index + 2] = (byte)(255 - pixels[index + 2]);
             }
 
+            BitmapPixelBuffer.WriteBgra(bitmap, pixels);
             // Save back to the same file
             bitmap.Save(imagePath, System.Drawing.Imaging.ImageFormat.Png);
         }
@@ -365,7 +468,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 else
                 {
                     // Regular export: use the standard DDS to PNG exporter
-                    var exportedPath = _ddsToNormalPngExporter.Export(text.Path, settings.OutputPath, settings.ConvertNormalTextureToBlue);
+                    var exportedPath = ExportCachedTexture(
+                        cacheKey,
+                        GetNormalTexturePath(
+                            settings.OutputPath,
+                            text.Path,
+                            settings.ConvertNormalTextureToBlue),
+                        () => _ddsToNormalPngExporter.Export(
+                            text.Path,
+                            settings.OutputPath,
+                            settings.ConvertNormalTextureToBlue));
                     session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
                 }
             }
@@ -969,6 +1081,63 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             var displacementPngPath = Path.Combine(outDirectory, fileName + ".png");
             displacementBitmap.Save(displacementPngPath, System.Drawing.Imaging.ImageFormat.Png);
+        }
+
+        /// <summary>
+        /// Caches converted PNG bytes for the lifetime of this texture handler.
+        /// The headless host creates one handler per initialized pack set, so
+        /// replacing the pack set naturally starts a fresh cache. The size cap
+        /// prevents browsing many units from retaining unbounded image data.
+        /// </summary>
+        private sealed class TexturePngCache
+        {
+            private const long MaximumBytes = 128L * 1024 * 1024;
+            private readonly object _sync = new();
+            private readonly Dictionary<string, CacheEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
+            private long _totalBytes;
+            private long _usageClock;
+
+            public bool TryGet(string key, out byte[] pngData)
+            {
+                lock (_sync)
+                {
+                    if (_entries.TryGetValue(key, out var entry))
+                    {
+                        _entries[key] = entry with { LastUsed = ++_usageClock };
+                        pngData = entry.Data;
+                        return true;
+                    }
+                }
+
+                pngData = Array.Empty<byte>();
+                return false;
+            }
+
+            public void Store(string key, byte[] pngData)
+            {
+                if (pngData.Length == 0 || pngData.LongLength > MaximumBytes)
+                    return;
+
+                lock (_sync)
+                {
+                    if (_entries.Remove(key, out var previous))
+                        _totalBytes -= previous.Data.LongLength;
+
+                    while (_totalBytes + pngData.LongLength > MaximumBytes && _entries.Count > 0)
+                    {
+                        var oldest = _entries
+                            .OrderBy(pair => pair.Value.LastUsed)
+                            .First();
+                        _entries.Remove(oldest.Key);
+                        _totalBytes -= oldest.Value.Data.LongLength;
+                    }
+
+                    _entries[key] = new CacheEntry(pngData, ++_usageClock);
+                    _totalBytes += pngData.LongLength;
+                }
+            }
+
+            private sealed record CacheEntry(byte[] Data, long LastUsed);
         }
     }
 }

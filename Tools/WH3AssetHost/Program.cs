@@ -187,7 +187,11 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             ExportAnimations: animationFiles.Count > 0,
             MirrorMesh: request.MirrorMesh)
         {
-            IncludeSkeleton = request.IncludeSkeleton
+            IncludeSkeleton = request.IncludeSkeleton,
+            // The masks are auxiliary files and are not referenced by the
+            // glTF scene. The mod-manager render only needs embedded material
+            // channels, so avoid converting and inverting them.
+            ExportAuxiliaryMasks = false
         };
         return ExportService.Export(settings);
     }

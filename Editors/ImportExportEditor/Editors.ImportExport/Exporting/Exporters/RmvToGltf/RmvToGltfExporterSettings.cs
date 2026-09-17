@@ -28,5 +28,12 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         /// Keeping this an init-only property preserves the existing positional API.
         /// </summary>
         public bool IncludeSkeleton { get; init; } = true;
+
+        /// <summary>
+        /// Controls whether RMV mask textures are emitted as auxiliary PNGs.
+        /// They are not part of the glTF material channels, but the editor's
+        /// export workflow historically preserves them for manual use.
+        /// </summary>
+        public bool ExportAuxiliaryMasks { get; init; } = true;
     }
 }
