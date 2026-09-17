@@ -1,5 +1,4 @@
 ﻿using System.Collections.Concurrent;
-using System.Reflection;
 using System.Text;
 using Shared.Core.Events;
 using Shared.Core.PackFiles.ErrorHandling;
@@ -64,9 +63,8 @@ namespace Shared.Core.PackFiles.Utility
         {
             if (Directory.Exists(packFileSystemPath) == false)
             {
-                var location = Assembly.GetEntryAssembly()!.Location;
-                var loactionDir = Path.GetDirectoryName(location);
-                throw new Exception($"Unable to find folder {packFileSystemPath}. Curret systempath is {loactionDir}");
+                var applicationDirectory = AppContext.BaseDirectory;
+                throw new Exception($"Unable to find folder {packFileSystemPath}. Current application directory is {applicationDirectory}");
             }
 
             var container = _systemFolderContainerFactory.Create(packFileSystemPath);

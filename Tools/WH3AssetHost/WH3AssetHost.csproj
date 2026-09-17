@@ -9,6 +9,28 @@
     <LangVersion>preview</LangVersion>
   </PropertyGroup>
 
+  <!-- Release builds are distributed with the mod manager as one self-contained file. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+
+    <DebugType>None</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+    <AllowedReferenceRelatedFileExtensions>.xml</AllowedReferenceRelatedFileExtensions>
+
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebuggerSupport>false</DebuggerSupport>
+    <EnableDiagnostics>false</EnableDiagnostics>
+    <EventSourceSupport>false</EventSourceSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\Editors\ImportExportEditor\Editors.ImportExport\Editors.ImportExport.csproj" />
     <ProjectReference Include="..\..\GameWorld\GameWorldCore\GameWorld.Core\GameWorld.Core.csproj" />
