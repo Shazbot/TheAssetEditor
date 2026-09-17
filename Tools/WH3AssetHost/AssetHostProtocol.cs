@@ -12,9 +12,20 @@ public sealed record AssetHostExportRequest(
     bool IncludeSkeleton = true,
     bool MirrorMesh = true);
 
+public sealed record AssetHostAnimationReference(string Path);
+
+public sealed record AssetHostAnimationCatalog(
+    bool Success,
+    string AssetPath,
+    string? SkeletonName,
+    bool HasSkeletonFile,
+    IReadOnlyList<AssetHostAnimationReference> Animations,
+    IReadOnlyList<string> Diagnostics);
+
 public interface IAssetHostRuntime : IDisposable
 {
     ExportResult ExportModel(AssetHostExportRequest request);
+    AssetHostAnimationCatalog GetAnimationCatalog(string assetPath);
 }
 
 public interface IAssetHostRuntimeFactory
@@ -62,7 +73,7 @@ public static class AssetHostProtocol
         ?? "unknown";
 
     public static readonly IReadOnlyList<string> Capabilities =
-        ["hello", "initialize", "exportModel", "shutdown"];
+        ["hello", "initialize", "getAnimationCatalog", "exportModel", "shutdown"];
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -137,6 +148,7 @@ public sealed class AssetHostDispatcher : IDisposable
             {
                 "hello" => HandleHello(requestId),
                 "initialize" => HandleInitialize(request, requestId),
+                "getAnimationCatalog" => HandleGetAnimationCatalog(request, requestId),
                 "exportModel" => HandleExportModel(request, requestId),
                 "shutdown" => HandleShutdown(requestId),
                 _ => AssetHostResponse.Fail(requestId, command, "UnknownCommand", $"Unknown command '{command}'.")
@@ -149,9 +161,11 @@ public sealed class AssetHostDispatcher : IDisposable
             // decide whether to retry or repair their pack set.
             var code = string.Equals(command, "initialize", StringComparison.Ordinal)
                 ? "InitializationFailed"
-                : string.Equals(command, "exportModel", StringComparison.Ordinal)
-                    ? "ExportFailed"
-                    : "RequestFailed";
+                : string.Equals(command, "getAnimationCatalog", StringComparison.Ordinal)
+                    ? "AnimationCatalogFailed"
+                    : string.Equals(command, "exportModel", StringComparison.Ordinal)
+                        ? "ExportFailed"
+                        : "RequestFailed";
             return AssetHostResponse.Fail(requestId, command, code, exception.Message, exception.ToString());
         }
     }
@@ -196,6 +210,30 @@ public sealed class AssetHostDispatcher : IDisposable
         previous?.Dispose();
 
         return AssetHostResponse.Ok(requestId, "initialize", new { outputRoot, packPaths });
+    }
+
+    private AssetHostResponse HandleGetAnimationCatalog(JsonElement request, string requestId)
+    {
+        if (_runtime == null || _outputRoot == null)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "getAnimationCatalog",
+                "NotInitialized",
+                "initialize must succeed before getAnimationCatalog.");
+        }
+
+        var assetPath = ReadString(request, "assetPath");
+        if (string.IsNullOrWhiteSpace(assetPath))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "getAnimationCatalog",
+                "MissingAssetPath",
+                "getAnimationCatalog requires assetPath.");
+        }
+
+        return AssetHostResponse.Ok(requestId, "getAnimationCatalog", _runtime.GetAnimationCatalog(assetPath));
     }
 
     private AssetHostResponse HandleExportModel(JsonElement request, string requestId)

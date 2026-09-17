@@ -101,15 +101,18 @@ internal static class Program
 internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 {
     private readonly SkeletonAnimationLookUpHelper _skeletonLookup;
+    private readonly IGltfAnimationCatalogResolver _animationCatalogResolver;
 
     private HeadlessExportRuntime(
         IPackFileService packFileService,
         SkeletonAnimationLookUpHelper skeletonLookup,
-        HeadlessGltfExportService exportService)
+        HeadlessGltfExportService exportService,
+        IGltfAnimationCatalogResolver animationCatalogResolver)
     {
         PackFileService = packFileService;
         _skeletonLookup = skeletonLookup;
         ExportService = exportService;
+        _animationCatalogResolver = animationCatalogResolver;
     }
 
     public IPackFileService PackFileService { get; }
@@ -134,6 +137,10 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         var modelResolver = new ModelAssetResolver(packFileService);
         var compositionResolver = new VariantMeshCompositionResolver(packFileService, modelResolver);
         var skeletonLookup = new SkeletonAnimationLookUpHelper(packFileService, eventHub);
+        var animationCatalogResolver = new GltfAnimationCatalogResolver(
+            modelResolver,
+            compositionResolver,
+            skeletonLookup);
         var imageSaveHandler = new SystemImageSaveHandler();
         var materialExporter = new DdsToMaterialPngExporter(packFileService, imageSaveHandler);
         var normalExporter = new DdsToNormalPngExporter(packFileService, imageSaveHandler);
@@ -151,7 +158,40 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         return new HeadlessExportRuntime(
             packFileService,
             skeletonLookup,
-            new HeadlessGltfExportService(exporter));
+            new HeadlessGltfExportService(exporter),
+            animationCatalogResolver);
+    }
+
+    public AssetHostAnimationCatalog GetAnimationCatalog(string assetPath)
+    {
+        var inputModel = PackFileService.FindFile(assetPath);
+        if (inputModel == null)
+        {
+            return new AssetHostAnimationCatalog(
+                false,
+                assetPath,
+                null,
+                false,
+                [],
+                [$"Asset '{assetPath}' was not found in the supplied packs."]);
+        }
+
+        var catalog = _animationCatalogResolver.Resolve(inputModel);
+        var animations = catalog.Animations
+            .Select(animation => animation.AnimationFile)
+            .Where(path => string.IsNullOrWhiteSpace(path) == false)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Select(path => new AssetHostAnimationReference(path))
+            .ToList();
+
+        return new AssetHostAnimationCatalog(
+            true,
+            assetPath,
+            catalog.SkeletonName,
+            catalog.HasSkeletonFile,
+            animations,
+            catalog.Diagnostics);
     }
 
     public ExportResult ExportModel(AssetHostExportRequest request)
