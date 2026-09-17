@@ -105,14 +105,17 @@ namespace GameWorld.Core.Services
 
         void LoadVariantMesh(VariantMesh mesh, SceneNode root, AnimationPlayer player, string? attachmentPointName, bool onlyLoadRootNode, bool onlyLoadFirstMesh)
         {
-            if (mesh.ChildSlots.Count != 0)
+            var renderableSlots = mesh.ChildSlots
+                .Where(slot => IsStumpSlot(slot.Name) == false)
+                .ToList();
+            if (renderableSlots.Count != 0)
                 root = root.AddObject(new SlotsNode("Slots"));
 
             // Load model
             if (string.IsNullOrWhiteSpace(mesh.ModelReference) != true)
                 Load(mesh.ModelReference.ToLower(), root, player, attachmentPointName, onlyLoadRootNode, onlyLoadFirstMesh);
 
-            foreach (var slot in mesh.ChildSlots)
+            foreach (var slot in renderableSlots)
             {
                 var slotNode = root.AddObject(new SlotNode(slot.Name + " " + slot.AttachmentPoint, slot.AttachmentPoint));
 
@@ -146,14 +149,12 @@ namespace GameWorld.Core.Services
                     slotNode.Children[i].IsVisible = i == 0;
                     slotNode.Children[i].IsExpanded = false;
 
-                    if (slotNode.Name.Contains("stump_"))
-                    {
-                        slotNode.IsVisible = false;
-                        slotNode.IsExpanded = false;
-                    }
                 }
             }
         }
+
+        static bool IsStumpSlot(string? name)
+            => name?.StartsWith("stump_", StringComparison.OrdinalIgnoreCase) == true;
 
         Rmv2ModelNode LoadRigidMesh(PackFile file, ref SceneNode? parent, AnimationPlayer player, string? attachmentPointName, bool onlyLoadRootNode)
         {

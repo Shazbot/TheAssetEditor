@@ -120,14 +120,15 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 
     public static HeadlessExportRuntime Create(
         IReadOnlyList<string> packPaths,
-        string? outputRoot = null)
+        string? outputRoot = null,
+        string? vanillaPackFilesCachePath = null)
     {
         if (packPaths.Count == 0)
             throw new InvalidOperationException("At least one --pack path is required.");
 
         var eventHub = new NoOpGlobalEventHub();
         var packFileService = HeadlessPackFileServiceFactory.Create(eventHub);
-        var loader = new HeadlessPackFileLoader();
+        var loader = new HeadlessPackFileLoader(vanillaPackFilesCachePath);
         var loadedPacks = loader.LoadOrderedWithMetadata(packPaths);
         var vanillaPackContainers = loadedPacks
             .Where(x => x.IsVanillaPack)
@@ -271,10 +272,13 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 
 internal sealed class HeadlessExportRuntimeFactory : IAssetHostRuntimeFactory
 {
-    public IAssetHostRuntime Create(IReadOnlyList<string> packPaths, string outputRoot)
+    public IAssetHostRuntime Create(
+        IReadOnlyList<string> packPaths,
+        string outputRoot,
+        string? vanillaPackFilesCachePath = null)
     {
         Directory.CreateDirectory(outputRoot);
-        return HeadlessExportRuntime.Create(packPaths, outputRoot);
+        return HeadlessExportRuntime.Create(packPaths, outputRoot, vanillaPackFilesCachePath);
     }
 }
 

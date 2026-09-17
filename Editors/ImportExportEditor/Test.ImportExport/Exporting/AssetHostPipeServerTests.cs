@@ -146,7 +146,10 @@ public sealed class AssetHostPipeServerTests
     {
         public List<FakeRuntime> Created { get; } = [];
 
-        public IAssetHostRuntime Create(IReadOnlyList<string> packPaths, string outputRoot)
+        public IAssetHostRuntime Create(
+            IReadOnlyList<string> packPaths,
+            string outputRoot,
+            string? vanillaPackFilesCachePath = null)
         {
             var runtime = new FakeRuntime();
             Created.Add(runtime);

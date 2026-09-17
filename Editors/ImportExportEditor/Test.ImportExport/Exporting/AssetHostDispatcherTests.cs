@@ -228,7 +228,10 @@ public sealed class AssetHostDispatcherTests
         public ExportResult? NextResult { get; set; }
         public bool FailNextCreate { get; set; }
 
-        public IAssetHostRuntime Create(IReadOnlyList<string> packPaths, string outputRoot)
+        public IAssetHostRuntime Create(
+            IReadOnlyList<string> packPaths,
+            string outputRoot,
+            string? vanillaPackFilesCachePath = null)
         {
             if (FailNextCreate)
             {

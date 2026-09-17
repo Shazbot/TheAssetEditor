@@ -53,6 +53,9 @@ public class VariantMeshCompositionResolverTests
     {
         var root = PackFile.CreateFromASCII("root.variantmeshdefinition", """
             <VARIANT_MESH>
+              <SLOT name="stump_neck">
+                <VARIANT_MESH model="missing_stump.rigid_model_v2" />
+              </SLOT>
               <SLOT name="head">
                 <VARIANT_MESH model="head_0.rigid_model_v2" />
                 <VARIANT_MESH model="head_1.rigid_model_v2" />
@@ -110,6 +113,7 @@ public class VariantMeshCompositionResolverTests
         var selectedWeapon = result.Root.Slots[2].SelectedChild!.Slots[0].SelectedChild!
             .ResolvedModelReference!.ModelAsset!.InputFile;
 
+        Assert.That(result.Root.Slots, Has.Count.EqualTo(3));
         Assert.That(selectedHead, Is.SameAs(models[4]));
         Assert.That(selectedBody, Is.SameAs(models[7]));
         Assert.That(selectedWeapon, Is.SameAs(models[9]));

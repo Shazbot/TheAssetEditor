@@ -256,7 +256,9 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         string nodePath,
         IReadOnlyDictionary<string, int> selectedChoices)
     {
-        foreach (var (slot, slotIndex) in (definition.ChildSlots ?? []).Select((slot, index) => (slot, index)))
+        foreach (var (slot, slotIndex) in (definition.ChildSlots ?? [])
+                     .Where(slot => IsStumpSlot(slot.Name) == false)
+                     .Select((slot, index) => (slot, index)))
         {
             var resolvedSlot = new ResolvedVariantMeshSlot(
                 slot.Name ?? string.Empty,
@@ -346,6 +348,9 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
             node.Slots.Add(resolvedSlot);
         }
     }
+
+    private static bool IsStumpSlot(string? name)
+        => name?.StartsWith("stump_", StringComparison.OrdinalIgnoreCase) == true;
 
     private PackFile? FindReference(string reference)
     {

@@ -1,4 +1,5 @@
-﻿using Shared.ByteParsing;
+﻿using System.Buffers.Binary;
+using Shared.ByteParsing;
 using Shared.Core.PackFiles.Utility;
 
 namespace Shared.Core.PackFiles.Models.FileSources
@@ -53,9 +54,10 @@ namespace Shared.Core.PackFiles.Models.FileSources
 
             if (IsCompressed)
             {
-                data = FileCompression.Decompress(data, (int)UncompressedSize, CompressionFormat);
-                if (data.Length != UncompressedSize)
-                    throw new InvalidDataException($"Decompressed bytes {data.Length:N0} does not match the expected uncompressed bytes {UncompressedSize:N0}.");
+                var compressionInfo = ResolveCompressionInfo(data);
+                data = FileCompression.Decompress(data, compressionInfo.UncompressedSize, compressionInfo.Format);
+                if (data.Length != compressionInfo.UncompressedSize)
+                    throw new InvalidDataException($"Decompressed bytes {data.Length:N0} does not match the expected uncompressed bytes {compressionInfo.UncompressedSize:N0}.");
             }
 
             return data;
@@ -84,7 +86,8 @@ namespace Shared.Core.PackFiles.Models.FileSources
 
                     if (IsCompressed)
                     {
-                        data = FileCompression.Decompress(data, size, CompressionFormat);
+                        var compressionInfo = ResolveCompressionInfo(data);
+                        data = FileCompression.Decompress(data, size, compressionInfo.Format);
                         if (data.Length != size)
                             throw new InvalidDataException($"Decompressed bytes {data.Length:N0} does not match the expected uncompressed bytes {size:N0}.");
                     }
@@ -92,6 +95,30 @@ namespace Shared.Core.PackFiles.Models.FileSources
             }           
 
             return data;
+        }
+
+        private (CompressionFormat Format, int UncompressedSize) ResolveCompressionInfo(byte[] data)
+        {
+            if (CompressionFormat != CompressionFormat.None && UncompressedSize > 0)
+            {
+                if (UncompressedSize > int.MaxValue)
+                    throw new InvalidDataException($"Uncompressed bytes {UncompressedSize:N0} exceed the supported size.");
+
+                return (CompressionFormat, (int)UncompressedSize);
+            }
+
+            if (data.Length < 8)
+                throw new InvalidDataException("Compressed data does not contain a compression header.");
+
+            var uncompressedSize = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(0, 4));
+            if (uncompressedSize > int.MaxValue)
+                throw new InvalidDataException($"Uncompressed bytes {uncompressedSize:N0} exceed the supported size.");
+
+            var compressionFormat = FileCompression.GetCompressionFormat(data.AsSpan(4, 4).ToArray());
+            if (compressionFormat == CompressionFormat.None)
+                throw new InvalidDataException("Compressed data has an unknown compression format.");
+
+            return (compressionFormat, (int)uncompressedSize);
         }
 
         public byte[] ReadDataWithoutDecompressing()

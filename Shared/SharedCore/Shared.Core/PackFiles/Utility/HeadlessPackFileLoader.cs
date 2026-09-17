@@ -1,6 +1,8 @@
 using System.Text;
 using Shared.Core.Events;
 using Shared.Core.PackFiles.Models;
+using Shared.Core.PackFiles.Models.Containers;
+using Shared.Core.PackFiles.Models.FileSources;
 using Shared.Core.PackFiles.Serialization;
 
 namespace Shared.Core.PackFiles.Utility
@@ -29,6 +31,14 @@ namespace Shared.Core.PackFiles.Utility
 
     public sealed class HeadlessPackFileLoader : IHeadlessPackFileLoader
     {
+        private readonly VanillaPackFilesCacheReader? _vanillaPackFilesCache;
+
+        public HeadlessPackFileLoader(string? vanillaPackFilesCachePath = null)
+        {
+            if (string.IsNullOrWhiteSpace(vanillaPackFilesCachePath) == false)
+                _vanillaPackFilesCache = new VanillaPackFilesCacheReader(vanillaPackFilesCachePath);
+        }
+
         public IPackFileContainer LoadPack(string packFilePath, bool isCaPackFile = false)
             => LoadPackWithMetadata(packFilePath, isCaPackFile).Container;
 
@@ -59,7 +69,7 @@ namespace Shared.Core.PackFiles.Utility
                 .Select(x => x.Container)
                 .ToList();
 
-        private static HeadlessPackFileLoadResult LoadPackWithMetadata(string packFilePath, bool isCaPackFile)
+        private HeadlessPackFileLoadResult LoadPackWithMetadata(string packFilePath, bool isCaPackFile)
         {
             if (string.IsNullOrWhiteSpace(packFilePath))
                 throw new ArgumentException("A pack file path is required.", nameof(packFilePath));
@@ -67,6 +77,16 @@ namespace Shared.Core.PackFiles.Utility
                 throw new FileNotFoundException($"Pack file '{packFilePath}' was not found.", packFilePath);
 
             var fullPath = Path.GetFullPath(packFilePath);
+            var fileInfo = new FileInfo(fullPath);
+            var cachedIndex = _vanillaPackFilesCache?.TryGet(fileInfo);
+            if (cachedIndex != null)
+            {
+                var cachedContainer = CreateContainerFromCachedIndex(fullPath, fileInfo.Length, cachedIndex);
+                cachedContainer.IsCaPackFile = isCaPackFile;
+                cachedContainer.IsReadOnly = true;
+                return new HeadlessPackFileLoadResult(cachedContainer, true);
+            }
+
             using var fileStream = File.OpenRead(fullPath);
             using var reader = new BinaryReader(fileStream, Encoding.ASCII);
             var container = PackFileSerializerLoader.Load(
@@ -90,6 +110,57 @@ namespace Shared.Core.PackFiles.Utility
                 PackFileCAType.PATCH or
                 PackFileCAType.MOVIE;
             return new HeadlessPackFileLoadResult(container, isVanillaPack);
+        }
+
+        private static PackFileContainer CreateContainerFromCachedIndex(
+            string fullPath,
+            long fileSize,
+            VanillaPackFilesCacheReader.CachedPackIndex cachedIndex)
+        {
+            var header = new PFHeader(
+                cachedIndex.Header.Version,
+                cachedIndex.Header.ByteMask,
+                cachedIndex.Header.ReferenceFileCount)
+            {
+                Buffer = cachedIndex.Header.Buffer,
+                FileCount = (uint)cachedIndex.PackedFiles.Count,
+                DataStart = cachedIndex.PackedFiles.Count == 0
+                    ? 0
+                    : cachedIndex.PackedFiles[0].StartPos
+            };
+            header.DependantFiles.AddRange(cachedIndex.DependencyPacks);
+
+            var container = PackFileContainer.CreatePackFile(
+                Path.GetFileNameWithoutExtension(fullPath),
+                fullPath,
+                header);
+            container.OriginalLoadByteSize = fileSize;
+            container.FileList = new Dictionary<string, PackFile>(cachedIndex.PackedFiles.Count);
+
+            var parent = new PackedFileSourceParent { FilePath = fullPath };
+            foreach (var cachedFile in cachedIndex.PackedFiles)
+            {
+                var normalizedPath = cachedFile.Name.ToLowerInvariant();
+                var source = new PackedFileSource(
+                    parent,
+                    cachedFile.StartPos,
+                    cachedFile.FileSize,
+                    header.HasEncryptedData,
+                    cachedFile.IsCompressed,
+                    CompressionFormat.None,
+                    0);
+                container.AddOrUpdateFile(
+                    normalizedPath,
+                    new PackFile(GetFileName(normalizedPath), source));
+            }
+
+            return container;
+        }
+
+        private static string GetFileName(string path)
+        {
+            var separator = path.LastIndexOfAny(['\\', '/']);
+            return separator < 0 ? path : path[(separator + 1)..];
         }
     }
 

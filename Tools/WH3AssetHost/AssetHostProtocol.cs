@@ -33,7 +33,10 @@ public interface IAssetHostRuntime : IDisposable
 
 public interface IAssetHostRuntimeFactory
 {
-    IAssetHostRuntime Create(IReadOnlyList<string> packPaths, string outputRoot);
+    IAssetHostRuntime Create(
+        IReadOnlyList<string> packPaths,
+        string outputRoot,
+        string? vanillaPackFilesCachePath = null);
 }
 
 public sealed record AssetHostError(string Code, string Message, string? Details = null);
@@ -204,9 +207,11 @@ public sealed class AssetHostDispatcher : IDisposable
                 outputError!);
         }
 
+        var vanillaPackFilesCachePath = ReadString(request, "vanillaPackFilesCachePath");
+
         // Build first. If a pack is corrupt, the previous runtime remains
         // usable and is not disposed by a failed replacement.
-        var replacement = _runtimeFactory.Create(packPaths, outputRoot);
+        var replacement = _runtimeFactory.Create(packPaths, outputRoot, vanillaPackFilesCachePath);
         var previous = _runtime;
         _runtime = replacement;
         _outputRoot = outputRoot;
