@@ -112,10 +112,89 @@ public sealed class DdsTextureExporterTests
         Assert.That(blenderPixel.A, Is.EqualTo(255));
     }
 
+    [Test]
+    public void MaterialExportSwapsEveryPixelAcrossRowsAndMakesItOpaque()
+    {
+        var source = new[]
+        {
+            new Pixel(11, 22, 33, 44),
+            new Pixel(55, 66, 77, 88),
+            new Pixel(99, 111, 122, 133),
+            new Pixel(144, 155, 166, 177),
+            new Pixel(188, 199, 210, 221),
+            new Pixel(232, 243, 14, 25)
+        };
+
+        var raw = ReadPixels(ExportMaterial(source, 3, 2, convertToBlenderFormat: false).PngData);
+        var actual = ReadPixels(ExportMaterial(source, 3, 2, convertToBlenderFormat: true).PngData);
+        var expected = raw
+            .Select(pixel => Color.FromArgb(255, pixel.B, pixel.G, pixel.R))
+            .ToArray();
+
+        Assert.That(actual.Select(pixel => pixel.ToArgb()), Is.EqualTo(expected.Select(pixel => pixel.ToArgb())));
+    }
+
+    [Test]
+    public void NormalExportConvertsEveryPixelAcrossRows()
+    {
+        var source = new[]
+        {
+            new Pixel(17, 34, 201, 255),
+            new Pixel(96, 128, 160, 160),
+            new Pixel(255, 128, 128, 128),
+            new Pixel(128, 128, 191, 191),
+            new Pixel(44, 213, 91, 37),
+            new Pixel(255, 255, 255, 255)
+        };
+
+        var raw = ReadPixels(ExportNormal(source, 3, 2, convertToBlueNormalMap: false).PngData);
+        var actual = ReadPixels(ExportNormal(source, 3, 2, convertToBlueNormalMap: true).PngData);
+        var expected = raw.Select(DecodePackedNormal).ToArray();
+
+        Assert.That(actual.Select(pixel => pixel.ToArgb()), Is.EqualTo(expected.Select(pixel => pixel.ToArgb())));
+    }
+
+    [Test]
+    public void SystemImageSaveHandlerWritesPngDataWithoutReencoding()
+    {
+        var source = new[]
+        {
+            new Pixel(11, 22, 33, 44),
+            new Pixel(55, 66, 77, 88),
+            new Pixel(99, 111, 122, 133),
+            new Pixel(144, 155, 166, 177),
+            new Pixel(188, 199, 210, 221),
+            new Pixel(232, 243, 14, 25)
+        };
+        var pngData = CreatePng(3, 2, source);
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-save-{Guid.NewGuid():N}");
+        var outputPath = Path.Combine(outputDirectory, "texture.png");
+        Directory.CreateDirectory(outputDirectory);
+
+        try
+        {
+            new SystemImageSaveHandler().Save(pngData, outputPath);
+
+            Assert.That(File.ReadAllBytes(outputPath), Is.EqualTo(pngData));
+        }
+        finally
+        {
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
     private static CapturedImage ExportNormal(Pixel pixel, bool convertToBlueNormalMap)
+        => ExportNormal(new[] { pixel }, 1, 1, convertToBlueNormalMap);
+
+    private static CapturedImage ExportNormal(
+        IReadOnlyList<Pixel> pixels,
+        int width,
+        int height,
+        bool convertToBlueNormalMap)
     {
         const string sourcePath = "textures/normal.dds";
-        var packFileService = CreatePackFileService(sourcePath, CreateA8R8G8B8Dds(pixel));
+        var packFileService = CreatePackFileService(sourcePath, CreateA8R8G8B8Dds(width, height, pixels));
         var capture = new CapturedImage();
         var exporter = new DdsToNormalPngExporter(packFileService.Object, capture);
 
@@ -125,9 +204,16 @@ public sealed class DdsTextureExporterTests
     }
 
     private static CapturedImage ExportMaterial(Pixel pixel, bool convertToBlenderFormat)
+        => ExportMaterial(new[] { pixel }, 1, 1, convertToBlenderFormat);
+
+    private static CapturedImage ExportMaterial(
+        IReadOnlyList<Pixel> pixels,
+        int width,
+        int height,
+        bool convertToBlenderFormat)
     {
         const string sourcePath = "textures/material.dds";
-        var packFileService = CreatePackFileService(sourcePath, CreateA8R8G8B8Dds(pixel));
+        var packFileService = CreatePackFileService(sourcePath, CreateA8R8G8B8Dds(width, height, pixels));
         var capture = new CapturedImage();
         var exporter = new DdsToMaterialPngExporter(packFileService.Object, capture);
 
@@ -146,13 +232,24 @@ public sealed class DdsTextureExporterTests
     }
 
     private static Color ReadPixel(byte[]? pngData)
+        => ReadPixels(pngData)[0];
+
+    private static Color[] ReadPixels(byte[]? pngData)
     {
         Assert.That(pngData, Is.Not.Null);
         Assert.That(pngData, Is.Not.Empty);
         using var stream = new MemoryStream(pngData!);
         using var image = Image.FromStream(stream);
         using var bitmap = new Bitmap(image);
-        return bitmap.GetPixel(0, 0);
+
+        var pixels = new Color[checked(bitmap.Width * bitmap.Height)];
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+                pixels[y * bitmap.Width + x] = bitmap.GetPixel(x, y);
+        }
+
+        return pixels;
     }
 
     private static Color DecodePackedNormal(Color packed)
@@ -176,16 +273,22 @@ public sealed class DdsTextureExporterTests
     }
 
     private static byte[] CreateA8R8G8B8Dds(Pixel pixel)
+        => CreateA8R8G8B8Dds(1, 1, new[] { pixel });
+
+    private static byte[] CreateA8R8G8B8Dds(int width, int height, IReadOnlyList<Pixel> pixels)
     {
+        if (pixels.Count != checked(width * height))
+            throw new ArgumentException("The pixel count must match the DDS dimensions.", nameof(pixels));
+
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
 
         writer.Write(Encoding.ASCII.GetBytes("DDS "));
         writer.Write(124); // DDS_HEADER.dwSize
         writer.Write(0x0000100f); // CAPS | HEIGHT | WIDTH | PIXELFORMAT | PITCH
-        writer.Write(1); // dwHeight
-        writer.Write(1); // dwWidth
-        writer.Write(4); // dwPitchOrLinearSize
+        writer.Write(height); // dwHeight
+        writer.Write(width); // dwWidth
+        writer.Write(checked(width * 4)); // dwPitchOrLinearSize
         writer.Write(0); // dwDepth
         writer.Write(0); // dwMipMapCount
 
@@ -208,10 +311,33 @@ public sealed class DdsTextureExporterTests
         writer.Write(0); // dwReserved2
 
         // A8R8G8B8 is stored little-endian as B, G, R, A.
-        writer.Write(pixel.B);
-        writer.Write(pixel.G);
-        writer.Write(pixel.R);
-        writer.Write(pixel.A);
+        foreach (var pixel in pixels)
+        {
+            writer.Write(pixel.B);
+            writer.Write(pixel.G);
+            writer.Write(pixel.R);
+            writer.Write(pixel.A);
+        }
+        return stream.ToArray();
+    }
+
+    private static byte[] CreatePng(int width, int height, IReadOnlyList<Pixel> pixels)
+    {
+        if (pixels.Count != checked(width * height))
+            throw new ArgumentException("The pixel count must match the PNG dimensions.", nameof(pixels));
+
+        using var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var pixel = pixels[y * width + x];
+                bitmap.SetPixel(x, y, Color.FromArgb(pixel.A, pixel.R, pixel.G, pixel.B));
+            }
+        }
+
+        using var stream = new MemoryStream();
+        bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
         return stream.ToArray();
     }
 
