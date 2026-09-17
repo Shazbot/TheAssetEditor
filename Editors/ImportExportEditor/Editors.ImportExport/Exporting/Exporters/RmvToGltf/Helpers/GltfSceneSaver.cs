@@ -1,93 +1,35 @@
-﻿using System.IO;
 using System.Linq;
-using System.Windows;
-using Shared.Core.ErrorHandling.Exceptions;
+using System.IO;
 using Shared.Core.Services;
 using SharpGLTF.Schema2;
 
-namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
+namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers;
+
+/// <summary>
+/// WPF editor adapter for the WPF-free scene-saving contract in the exporter
+/// core. Service and CLI callers use HeadlessGltfSceneSaver instead.
+/// </summary>
+public sealed class GltfSceneSaver : IGltfSceneSaver
 {
+    private readonly IStandardDialogs _exceptionService;
 
-    public interface IGltfSceneSaver
+    public GltfSceneSaver(IStandardDialogs exceptionService)
     {
-        public void Save(ModelRoot modelRoot, string fullSystemPath);
-
-        /// <summary>
-        /// Saves a scene and, for binary glTF output, removes the exact
-        /// generated texture intermediates supplied by the exporter after the
-        /// save succeeds. The default implementation preserves compatibility
-        /// with existing saver implementations.
-        /// </summary>
-        public void Save(
-            ModelRoot modelRoot,
-            string fullSystemPath,
-            IReadOnlyCollection<string> generatedTexturePaths)
-            => Save(modelRoot, fullSystemPath);
+        _exceptionService = exceptionService;
     }
 
-    public class GltfSceneSaver : IGltfSceneSaver
+    public void Save(ModelRoot modelRoot, string fullSystemPath)
+        => Save(modelRoot, fullSystemPath, Array.Empty<string>());
+
+    public void Save(
+        ModelRoot modelRoot,
+        string fullSystemPath,
+        IReadOnlyCollection<string> generatedTexturePaths)
     {
-        private readonly IStandardDialogs _exceptionService;
-
-        public GltfSceneSaver(IStandardDialogs exceptionService)
+        try
         {
-            _exceptionService = exceptionService;
-        }
-
-        public void Save(ModelRoot modelRoot, string fullSystemPath)
-            => Save(modelRoot, fullSystemPath, Array.Empty<string>());
-
-        public void Save(
-            ModelRoot modelRoot,
-            string fullSystemPath,
-            IReadOnlyCollection<string> generatedTexturePaths)
-        {
-            try
-            {
-                // SharpGLTF selects the container from the requested extension:
-                // .gltf produces the JSON/sidecar form and .glb is embedded.
-                modelRoot.Save(fullSystemPath);
-
-                if (string.Equals(Path.GetExtension(fullSystemPath), ".glb", StringComparison.OrdinalIgnoreCase))
-                {
-                    foreach (var texturePath in generatedTexturePaths
-                        .Where(x => string.Equals(Path.GetExtension(x), ".png", StringComparison.OrdinalIgnoreCase))
-                        .Distinct(StringComparer.OrdinalIgnoreCase))
-                    {
-                        // These are exact paths returned by the texture
-                        // handler. Never infer or wildcard-delete filenames.
-                        if (File.Exists(texturePath))
-                            File.Delete(texturePath);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _exceptionService.ShowExceptionWindow(ex);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Scene saver for console/service callers. It intentionally contains no
-    /// dialog dependency and lets the caller observe save failures.
-    /// </summary>
-    public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
-    {
-        public void Save(ModelRoot modelRoot, string fullSystemPath)
-            => Save(modelRoot, fullSystemPath, Array.Empty<string>());
-
-        public void Save(
-            ModelRoot modelRoot,
-            string fullSystemPath,
-            IReadOnlyCollection<string> generatedTexturePaths)
-        {
-            var outputDirectory = Path.GetDirectoryName(fullSystemPath);
-            if (string.IsNullOrWhiteSpace(outputDirectory) == false)
-                Directory.CreateDirectory(outputDirectory);
-
-            // SharpGLTF chooses the container from the requested extension.
-            // Exceptions deliberately propagate to HeadlessGltfExportService.
+            // SharpGLTF selects the container from the requested extension:
+            // .gltf produces the JSON/sidecar form and .glb is embedded.
             modelRoot.Save(fullSystemPath);
 
             if (string.Equals(Path.GetExtension(fullSystemPath), ".glb", StringComparison.OrdinalIgnoreCase))
@@ -96,13 +38,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                     .Where(x => string.Equals(Path.GetExtension(x), ".png", StringComparison.OrdinalIgnoreCase))
                     .Distinct(StringComparer.OrdinalIgnoreCase))
                 {
-                    // Delete only paths explicitly returned by the texture
-                    // handler. Auxiliary mask files are intentionally not
-                    // returned and therefore remain discoverable by the host.
+                    // These are exact paths returned by the texture handler.
+                    // Never infer or wildcard-delete filenames.
                     if (File.Exists(texturePath))
                         File.Delete(texturePath);
                 }
             }
+        }
+        catch (Exception exception)
+        {
+            _exceptionService.ShowExceptionWindow(exception);
         }
     }
 }

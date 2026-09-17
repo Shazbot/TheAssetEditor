@@ -2,10 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Automation;
 using Editors.ImportExport.Common;
 using GameWorld.Core.Animation;
 using Shared.Core.PackFiles;
@@ -35,7 +31,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         private void CreateFromTWAnim(string animationName, ProcessedGltfSkeleton gltfSkeleton, AnimationFile skeletonAnimFile, AnimationFile animationToExport, ModelRoot modelRoot, RmvToGltfExporterSettings settings)
         {
             var doMirror = settings.MirrorMesh;
-            var gameSkeleton = new GameSkeleton(skeletonAnimFile, null);
+            var gameSkeleton = new GameSkeleton(skeletonAnimFile, null!);
             var animationClip = new AnimationClip(animationToExport, gameSkeleton);
 
             var secondsPerFrame = animationClip.PlayTimeInSec / animationClip.DynamicFrames.Count;            

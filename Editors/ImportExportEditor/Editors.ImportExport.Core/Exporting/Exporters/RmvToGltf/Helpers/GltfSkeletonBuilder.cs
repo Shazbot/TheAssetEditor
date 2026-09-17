@@ -1,6 +1,5 @@
 ﻿using System.Numerics;
 using Editors.ImportExport.Common;
-using Editors.Shared.Core.Services;
 using GameWorld.Core.Animation;
 using GameWorld.Core.SceneNodes;
 using Shared.Core.PackFiles;

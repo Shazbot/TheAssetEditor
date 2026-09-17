@@ -58,16 +58,13 @@ namespace MeshImportExport
             using var bitmap = new Bitmap(m);
 
             PixelFormat pixelFormat = PixelFormat.Format32bppArgb;
-            Pfim.ImageFormat imageFormat = Pfim.ImageFormat.Rgba32;
             if (bitmap.PixelFormat == PixelFormat.Format32bppArgb)
             {
                 pixelFormat = PixelFormat.Format32bppArgb;
-                imageFormat = Pfim.ImageFormat.Rgba32;
             }
             else if (bitmap.PixelFormat == PixelFormat.Format24bppRgb)
             {
                 pixelFormat = PixelFormat.Format24bppRgb;
-                imageFormat = Pfim.ImageFormat.Rgb24;
             }
             else
             {

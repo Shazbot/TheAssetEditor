@@ -39,6 +39,20 @@ public interface IAssetHostRuntimeFactory
         string? vanillaPackFilesCachePath = null);
 }
 
+/// <summary>
+/// Optional factory extension used by the named-pipe server. Keeping the
+/// extension separate preserves the deterministic factory contract used by
+/// CLI callers and existing protocol tests.
+/// </summary>
+public interface IAssetHostInteractiveRuntimeFactory
+{
+    IAssetHostRuntime Create(
+        IReadOnlyList<string> packPaths,
+        string outputRoot,
+        string? vanillaPackFilesCachePath,
+        IMissingSkeletonDecision missingSkeletonDecision);
+}
+
 public sealed record AssetHostError(string Code, string Message, string? Details = null);
 
 public sealed record AssetHostResponse(
@@ -79,7 +93,7 @@ public static class AssetHostProtocol
         ?? "unknown";
 
     public static readonly IReadOnlyList<string> Capabilities =
-        ["hello", "initialize", "getAnimationCatalog", "exportModel", "variantMeshSelections", "shutdown"];
+        ["hello", "initialize", "getAnimationCatalog", "exportModel", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -99,11 +113,15 @@ public sealed class AssetHostDispatcher : IDisposable
     private readonly IAssetHostRuntimeFactory _runtimeFactory;
     private IAssetHostRuntime? _runtime;
     private string? _outputRoot;
+    private readonly IMissingSkeletonDecision? _missingSkeletonDecision;
     private bool _shutdownRequested;
 
-    public AssetHostDispatcher(IAssetHostRuntimeFactory runtimeFactory)
+    public AssetHostDispatcher(
+        IAssetHostRuntimeFactory runtimeFactory,
+        IMissingSkeletonDecision? missingSkeletonDecision = null)
     {
         _runtimeFactory = runtimeFactory ?? throw new ArgumentNullException(nameof(runtimeFactory));
+        _missingSkeletonDecision = missingSkeletonDecision;
     }
 
     public bool ShutdownRequested => _shutdownRequested;
@@ -211,13 +229,31 @@ public sealed class AssetHostDispatcher : IDisposable
 
         // Build first. If a pack is corrupt, the previous runtime remains
         // usable and is not disposed by a failed replacement.
-        var replacement = _runtimeFactory.Create(packPaths, outputRoot, vanillaPackFilesCachePath);
+        var replacement = CreateRuntime(packPaths, outputRoot, vanillaPackFilesCachePath);
         var previous = _runtime;
         _runtime = replacement;
         _outputRoot = outputRoot;
         previous?.Dispose();
 
         return AssetHostResponse.Ok(requestId, "initialize", new { outputRoot, packPaths });
+    }
+
+    private IAssetHostRuntime CreateRuntime(
+        IReadOnlyList<string> packPaths,
+        string outputRoot,
+        string? vanillaPackFilesCachePath)
+    {
+        if (_missingSkeletonDecision != null
+            && _runtimeFactory is IAssetHostInteractiveRuntimeFactory interactiveFactory)
+        {
+            return interactiveFactory.Create(
+                packPaths,
+                outputRoot,
+                vanillaPackFilesCachePath,
+                _missingSkeletonDecision);
+        }
+
+        return _runtimeFactory.Create(packPaths, outputRoot, vanillaPackFilesCachePath);
     }
 
     private AssetHostResponse HandleGetAnimationCatalog(JsonElement request, string requestId)

@@ -40,6 +40,7 @@ namespace Editors.ImportExport
             services.AddTransient<IDdsToMaterialPngExporter, DdsToMaterialPngExporter>();
             services.AddTransient<DdsToPngExporter>();
             services.AddTransient<IDdsToNormalPngExporter, DdsToNormalPngExporter>();
+            services.AddTransient<IMissingSkeletonDecision, DialogMissingSkeletonDecision>();
             services.AddTransient<RmvToGltfExporter>();
             services.AddTransient<IRmvToGltfExporter>(x => x.GetRequiredService<RmvToGltfExporter>());
             services.AddTransient<RmvToGltfStaticExporter>();

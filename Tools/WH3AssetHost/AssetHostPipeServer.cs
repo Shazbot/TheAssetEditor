@@ -44,7 +44,9 @@ public sealed class AssetHostPipeServer
             try
             {
                 await pipe.WaitForConnectionAsync(stop.Token);
-                using var dispatcher = new AssetHostDispatcher(_runtimeFactory);
+                using var dispatcher = new AssetHostDispatcher(
+                    _runtimeFactory,
+                    new HostMissingSkeletonDecision(pipe, stop.Token));
                 await ServeClientAsync(pipe, dispatcher, stop.Token);
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested)

@@ -2,7 +2,7 @@
 
 namespace Editors.ImportExport.Common
 {
-    class VecConv
+    public class VecConv
     {
         public static Vector4 NormalizeTangentVector4(Vector4 tangent)
         {
@@ -27,4 +27,3 @@ namespace Editors.ImportExport.Common
     }
 
 }
-

@@ -121,7 +121,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
     public static HeadlessExportRuntime Create(
         IReadOnlyList<string> packPaths,
         string? outputRoot = null,
-        string? vanillaPackFilesCachePath = null)
+        string? vanillaPackFilesCachePath = null,
+        IMissingSkeletonDecision? missingSkeletonDecision = null)
     {
         if (packPaths.Count == 0)
             throw new InvalidOperationException("At least one --pack path is required.");
@@ -160,7 +161,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             skeletonLookup,
             modelResolver,
             compositionResolver,
-            new HeadlessMissingSkeletonDecision());
+            missingSkeletonDecision ?? new HeadlessMissingSkeletonDecision());
 
         return new HeadlessExportRuntime(
             packFileService,
@@ -266,7 +267,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
     public void Dispose() => _skeletonLookup.Dispose();
 }
 
-internal sealed class HeadlessExportRuntimeFactory : IAssetHostRuntimeFactory
+internal sealed class HeadlessExportRuntimeFactory : IAssetHostRuntimeFactory, IAssetHostInteractiveRuntimeFactory
 {
     public IAssetHostRuntime Create(
         IReadOnlyList<string> packPaths,
@@ -275,6 +276,20 @@ internal sealed class HeadlessExportRuntimeFactory : IAssetHostRuntimeFactory
     {
         Directory.CreateDirectory(outputRoot);
         return HeadlessExportRuntime.Create(packPaths, outputRoot, vanillaPackFilesCachePath);
+    }
+
+    public IAssetHostRuntime Create(
+        IReadOnlyList<string> packPaths,
+        string outputRoot,
+        string? vanillaPackFilesCachePath,
+        IMissingSkeletonDecision missingSkeletonDecision)
+    {
+        Directory.CreateDirectory(outputRoot);
+        return HeadlessExportRuntime.Create(
+            packPaths,
+            outputRoot,
+            vanillaPackFilesCachePath,
+            missingSkeletonDecision);
     }
 }
 

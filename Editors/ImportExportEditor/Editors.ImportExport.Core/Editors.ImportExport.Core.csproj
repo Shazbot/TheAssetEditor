@@ -4,23 +4,22 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <UseWPF>true</UseWPF>
-    <WarningsAsErrors>true</WarningsAsErrors>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>preview</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Editors.ImportExport.Core\Editors.ImportExport.Core.csproj" />
     <ProjectReference Include="..\..\..\GameWorld\GameWorldCore\GameWorld.Core\GameWorld.Core.csproj" />
     <ProjectReference Include="..\..\..\Shared\SharedCore\Shared.Core\Shared.Core.csproj" />
-     <ProjectReference Include="..\..\..\Shared\GameFiles\Shared.GameFormats.csproj" />
-     <ProjectReference Include="..\..\..\Shared\SharedUI\Shared.Ui\Shared.Ui.csproj" />
-     <ProjectReference Include="..\..\Shared\Editors.Shared.Core\Editors.Shared.Core.csproj" />
+    <ProjectReference Include="..\..\..\Shared\GameFiles\Shared.GameFormats.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="DirectXTexNet" Version="1.0.7" />
+    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.4.1" />
+    <PackageReference Include="Pfim" Version="0.11.4" />
     <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
     <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.6" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.1" />
   </ItemGroup>
 
 </Project>

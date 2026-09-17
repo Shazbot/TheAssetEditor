@@ -1,5 +1,4 @@
-﻿using System.Windows;
-using Editors.ImportExport.Common;
+﻿using Editors.ImportExport.Common;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers;
 using Editors.ImportExport.Misc;
 using GameWorld.Core.Services;
@@ -11,33 +10,45 @@ using SharpGLTF.Schema2;
 
 namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 {
-    internal interface IRmvToGltfExporter
+    public interface IRmvToGltfExporter
     {
         ExportSupportEnum CanExportFile(PackFile file);
         void Export(RmvToGltfExporterSettings settings);
     }
 
+    public enum MissingSkeletonAction
+    {
+        ContinueWithoutSkeleton,
+        CancelExport
+    }
+
+    public sealed record MissingSkeletonContext(
+        string SkeletonName,
+        string? Message = null);
+
     /// <summary>
-    /// Decides what to do when an asset names a skeleton which is not present in the loaded packs.
-    /// The editor supplies a dialog implementation; a headless caller supplies a non-interactive one.
+    /// Decides what to do when an asset names a skeleton which is not present
+    /// in the loaded packs. The default members preserve the original
+    /// bool-based seam while allowing new callers to exchange a neutral
+    /// context and action without knowing about WPF or IPC.
     /// </summary>
     public interface IMissingSkeletonDecision
     {
-        bool ContinueWithoutSkeleton(string skeletonName);
-    }
+        MissingSkeletonAction Decide(MissingSkeletonContext context)
+            => ContinueWithoutSkeleton(context.SkeletonName)
+                ? MissingSkeletonAction.ContinueWithoutSkeleton
+                : MissingSkeletonAction.CancelExport;
 
-    public sealed class DialogMissingSkeletonDecision : IMissingSkeletonDecision
-    {
-        public bool ContinueWithoutSkeleton(string skeletonName)
-            => MessageBox.Show(
-                "Skeleton file not found, \n(Have you loaded all CA pakcs for the right game?)\n Do you want to continue exporting without skeleton/animations?",
-                "Warning!",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning) == MessageBoxResult.Yes;
+        bool ContinueWithoutSkeleton(string skeletonName)
+            => Decide(new MissingSkeletonContext(skeletonName))
+                == MissingSkeletonAction.ContinueWithoutSkeleton;
     }
 
     public sealed class HeadlessMissingSkeletonDecision : IMissingSkeletonDecision
     {
+        public MissingSkeletonAction Decide(MissingSkeletonContext context)
+            => MissingSkeletonAction.ContinueWithoutSkeleton;
+
         public bool ContinueWithoutSkeleton(string skeletonName) => true;
     }
 
@@ -96,10 +107,12 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             _skeletonLookUpHelper = skeletonLookUpHelper;
             _modelAssetResolver = modelAssetResolver ?? new ModelAssetResolver();
             _variantMeshResolver = variantMeshResolver;
-            _missingSkeletonDecision = missingSkeletonDecision ?? new DialogMissingSkeletonDecision();
+            // Core is deliberately deterministic. Interactive callers must
+            // supply their own decision adapter.
+            _missingSkeletonDecision = missingSkeletonDecision ?? new HeadlessMissingSkeletonDecision();
         }
 
-        internal ExportSupportEnum CanExportFile(PackFile file)
+        public ExportSupportEnum CanExportFile(PackFile file)
         {
             if (FileExtensionHelper.IsRmvFile(file.Name)
                 || FileExtensionHelper.IsWsModelFile(file.Name)
@@ -246,7 +259,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 var message = $"Skeleton '{skeletonName}' was not found; exporting without a glTF skeleton.";
                 _logger.Here().Warning(message);
                 if (warnWhenMissing && settings.ExportAnimations
-                    && !_missingSkeletonDecision.ContinueWithoutSkeleton(skeletonName))
+                    && _missingSkeletonDecision.Decide(new MissingSkeletonContext(skeletonName, message))
+                        == MissingSkeletonAction.CancelExport)
                 {
                     exportCancelled = true;
                     return null;
