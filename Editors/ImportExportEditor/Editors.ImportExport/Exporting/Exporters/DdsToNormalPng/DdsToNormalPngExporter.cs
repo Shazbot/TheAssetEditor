@@ -68,33 +68,31 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             using var inputStream = new MemoryStream(pngBytes);
             using var image = Image.FromStream(inputStream);
             using var source = new Bitmap(image);
-            using var output = new Bitmap(source.Width, source.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            var sourcePixels = BitmapPixelBuffer.ReadBgra(source);
+            var outputPixels = new byte[sourcePixels.Length];
 
-            for (var y = 0; y < source.Height; y++)
+            for (var index = 0; index < sourcePixels.Length; index += 4)
             {
-                for (var x = 0; x < source.Width; x++)
-                {
-                    var packed = source.GetPixel(x, y);
-                    // WH3 stores tangent-space X as R*A and Y as G.  Keep
-                    // the shader's Y orientation; only reconstruct Z and
-                    // emit a conventional opaque RGB normal texture.
-                    var x01 = (packed.R / 255d) * (packed.A / 255d);
-                    var y01 = packed.G / 255d;
-                    var normalX = Math.Clamp(2d * x01 - 1d, -1d, 1d);
-                    var normalY = Math.Clamp(2d * y01 - 1d, -1d, 1d);
-                    var normalZ = Math.Sqrt(Math.Max(0d, 1d - normalX * normalX - normalY * normalY));
+                var packedR = sourcePixels[index + 2];
+                var packedG = sourcePixels[index + 1];
+                var packedA = sourcePixels[index + 3];
 
-                    output.SetPixel(
-                        x,
-                        y,
-                        Color.FromArgb(
-                            255,
-                            EncodeNormalComponent(normalX),
-                            EncodeNormalComponent(normalY),
-                            EncodeNormalComponent(normalZ)));
-                }
+                // WH3 stores tangent-space X as R*A and Y as G. Keep the
+                // shader's Y orientation; only reconstruct Z and emit a
+                // conventional opaque RGB normal texture.
+                var x01 = (packedR / 255d) * (packedA / 255d);
+                var y01 = packedG / 255d;
+                var normalX = Math.Clamp(2d * x01 - 1d, -1d, 1d);
+                var normalY = Math.Clamp(2d * y01 - 1d, -1d, 1d);
+                var normalZ = Math.Sqrt(Math.Max(0d, 1d - normalX * normalX - normalY * normalY));
+
+                outputPixels[index] = EncodeNormalComponent(normalZ);
+                outputPixels[index + 1] = EncodeNormalComponent(normalY);
+                outputPixels[index + 2] = EncodeNormalComponent(normalX);
+                outputPixels[index + 3] = 255;
             }
 
+            using var output = BitmapPixelBuffer.CreateBitmap(source.Width, source.Height, outputPixels);
             using var outputStream = new MemoryStream();
             output.Save(outputStream, System.Drawing.Imaging.ImageFormat.Png);
             return outputStream.ToArray();

@@ -7,6 +7,7 @@ using GameWorld.Core.Services;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.Types;
 using Shared.Core.PackFiles;
+using Editors.ImportExport.Misc;
 using SharpGLTF.Materials;
 
 namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
@@ -321,21 +322,17 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             using var imageStream = new MemoryStream(imageBytes);
             using var image = System.Drawing.Image.FromStream(imageStream);
             using var bitmap = new System.Drawing.Bitmap(image);
+            var pixels = BitmapPixelBuffer.ReadBgra(bitmap);
 
             // Invert all pixel values (255 - value)
-            for (int x = 0; x < bitmap.Width; x++)
+            for (var index = 0; index < pixels.Length; index += 4)
             {
-                for (int y = 0; y < bitmap.Height; y++)
-                {
-                    var pixel = bitmap.GetPixel(x, y);
-                    var invertedR = 255 - pixel.R;
-                    var invertedG = 255 - pixel.G;
-                    var invertedB = 255 - pixel.B;
-                    var invertedColor = System.Drawing.Color.FromArgb(pixel.A, invertedR, invertedG, invertedB);
-                    bitmap.SetPixel(x, y, invertedColor);
-                }
+                pixels[index] = (byte)(255 - pixels[index]);
+                pixels[index + 1] = (byte)(255 - pixels[index + 1]);
+                pixels[index + 2] = (byte)(255 - pixels[index + 2]);
             }
 
+            BitmapPixelBuffer.WriteBgra(bitmap, pixels);
             // Save back to the same file
             bitmap.Save(imagePath, System.Drawing.Imaging.ImageFormat.Png);
         }
