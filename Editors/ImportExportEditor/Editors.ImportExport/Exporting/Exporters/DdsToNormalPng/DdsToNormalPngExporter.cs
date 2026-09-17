@@ -16,12 +16,12 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
 
     public class DdsToNormalPngExporter : IDdsToNormalPngExporter
     {
-        private readonly IPackFileService _pfs;
+        private readonly IPackedFileLookup _packFileLookup;
         private readonly IImageSaveHandler _imageSaveHandler;
 
-        public DdsToNormalPngExporter(IPackFileService packFileService, IImageSaveHandler imageSaveHandler) 
+        public DdsToNormalPngExporter(IPackedFileLookup packFileLookup, IImageSaveHandler imageSaveHandler)
         {
-            _pfs = packFileService;
+            _packFileLookup = packFileLookup;
             _imageSaveHandler = imageSaveHandler;
         }
 
@@ -36,7 +36,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
 
         public string Export(string filePath, string outputPath, bool convertToBlueNormalMap)
         {
-            var packFile = _pfs.FindFile(filePath);
+            var packFile = _packFileLookup.FindFile(filePath);
             if (packFile == null)
                 return "";
 

@@ -104,7 +104,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
     private readonly IGltfAnimationCatalogResolver _animationCatalogResolver;
 
     private HeadlessExportRuntime(
-        IPackFileService packFileService,
+        IHeadlessPackFileService packFileService,
         SkeletonAnimationLookUpHelper skeletonLookup,
         HeadlessGltfExportService exportService,
         IGltfAnimationCatalogResolver animationCatalogResolver)
@@ -115,7 +115,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         _animationCatalogResolver = animationCatalogResolver;
     }
 
-    public IPackFileService PackFileService { get; }
+    public IHeadlessPackFileService PackFileService { get; }
     public HeadlessGltfExportService ExportService { get; }
 
     public static HeadlessExportRuntime Create(
@@ -127,18 +127,14 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             throw new InvalidOperationException("At least one --pack path is required.");
 
         var eventHub = new NoOpGlobalEventHub();
-        var packFileService = HeadlessPackFileServiceFactory.Create(eventHub);
         var loader = new HeadlessPackFileLoader(vanillaPackFilesCachePath);
         var loadedPacks = loader.LoadOrderedWithMetadata(packPaths);
         var vanillaPackContainers = loadedPacks
             .Where(x => x.IsVanillaPack)
             .Select(x => x.Container)
             .ToHashSet();
-        foreach (var loadedPack in loadedPacks)
-        {
-            if (packFileService.AddContainer(loadedPack.Container) == null)
-                throw new InvalidOperationException($"Unable to add pack container '{loadedPack.Container.Name}'.");
-        }
+        var packFileService = HeadlessPackFileServiceFactory.Create(
+            loadedPacks.Select(x => x.Container));
 
         var modelResolver = new ModelAssetResolver(packFileService);
         var compositionResolver = new VariantMeshCompositionResolver(packFileService, modelResolver);
@@ -159,8 +155,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             new HeadlessGltfSceneSaver(),
             new GltfMeshBuilder(),
             new GltfTextureHandler(normalExporter, materialExporter, packFileService),
-            new GltfSkeletonBuilder(packFileService),
-            new GltfAnimationBuilder(packFileService),
+            new GltfSkeletonBuilder(),
+            new GltfAnimationBuilder(),
             skeletonLookup,
             modelResolver,
             compositionResolver,

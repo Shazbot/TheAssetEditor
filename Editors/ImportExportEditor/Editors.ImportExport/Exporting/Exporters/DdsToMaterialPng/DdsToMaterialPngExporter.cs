@@ -16,17 +16,17 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
 
     public class DdsToMaterialPngExporter : IDdsToMaterialPngExporter
     {
-        private readonly IPackFileService _pfs;
+        private readonly IPackedFileLookup _packFileLookup;
         private readonly IImageSaveHandler _imageSaveHandler;
-        public DdsToMaterialPngExporter(IPackFileService packFileService, IImageSaveHandler imageSaveHandler)
+        public DdsToMaterialPngExporter(IPackedFileLookup packFileLookup, IImageSaveHandler imageSaveHandler)
         {
-            _pfs = packFileService;
+            _packFileLookup = packFileLookup;
             _imageSaveHandler = imageSaveHandler;
         }
 
         public string Export(string filePath, string outputPath, bool convertToBlenderFormat)
         {
-            var packFile = _pfs.FindFile(filePath);
+            var packFile = _packFileLookup.FindFile(filePath);
             if (packFile == null)            
                 return "";
 

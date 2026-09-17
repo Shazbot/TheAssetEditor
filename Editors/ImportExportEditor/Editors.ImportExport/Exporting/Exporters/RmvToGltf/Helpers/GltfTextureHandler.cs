@@ -49,15 +49,15 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
     {
         private readonly IDdsToNormalPngExporter _ddsToNormalPngExporter;
         private readonly IDdsToMaterialPngExporter _ddsToMaterialPngExporter;
-        private readonly IPackFileService? _packFileService;
+        private readonly IPackedFileLookup? _packFileLookup;
         private readonly TexturePngCache _convertedTextureCache = new();
 
-        public GltfTextureHandler(IDdsToNormalPngExporter ddsToNormalPngExporter, IDdsToMaterialPngExporter ddsToMaterialPngExporter, IPackFileService? packFileService = null)
+        public GltfTextureHandler(IDdsToNormalPngExporter ddsToNormalPngExporter, IDdsToMaterialPngExporter ddsToMaterialPngExporter, IPackedFileLookup? packFileLookup = null)
         {
             _ddsToNormalPngExporter = ddsToNormalPngExporter;
             _ddsToMaterialPngExporter = ddsToMaterialPngExporter;
 
-            _packFileService = packFileService;
+            _packFileLookup = packFileLookup;
         }
 
         public List<TextureResult> HandleTextures(RmvFile rmvFile, RmvToGltfExporterSettings settings)
@@ -489,10 +489,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private void ExportNormalMapVariants(string packFilePath, string outputPath, string? outputStem = null)
         {
-            if (_packFileService == null)
+            if (_packFileLookup == null)
                 return;
 
-            var packFile = _packFileService.FindFile(packFilePath);
+            var packFile = _packFileLookup.FindFile(packFilePath);
             if (packFile == null)
                 return;
 
@@ -509,10 +509,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private void ExportAlphaMask(string packFilePath, string outputPath, string? outputStem = null)
         {
-            if (_packFileService == null)
+            if (_packFileLookup == null)
                 return;
 
-            var packFile = _packFileService.FindFile(packFilePath);
+            var packFile = _packFileLookup.FindFile(packFilePath);
             if (packFile == null)
                 return;
 
@@ -580,10 +580,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             var fileName = outputStem ?? Path.GetFileNameWithoutExtension(normalMapPath);
             var outDirectory = Path.GetDirectoryName(outputPath) ?? string.Empty;
 
-            if (_packFileService == null)
+            if (_packFileLookup == null)
                 return;
 
-            var packFile = _packFileService.FindFile(normalMapPath);
+            var packFile = _packFileLookup.FindFile(normalMapPath);
             if (packFile == null)
                 return;
 

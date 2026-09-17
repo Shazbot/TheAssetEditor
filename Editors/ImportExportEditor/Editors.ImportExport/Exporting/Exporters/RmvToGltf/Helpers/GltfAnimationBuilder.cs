@@ -18,12 +18,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 {
     public class GltfAnimationBuilder
     {
-        private readonly IPackFileService _packFileService;
-        
-
-        public GltfAnimationBuilder(IPackFileService packFileServoce)
+        public GltfAnimationBuilder(IPackedFileLookup? packFileLookup = null)
         {
-            _packFileService = packFileServoce;            
+            _ = packFileLookup;
         }
 
         public virtual void Build(AnimationFile animSkeleton, RmvToGltfExporterSettings settings, ProcessedGltfSkeleton gltfSkeleton, ModelRoot outputScene)

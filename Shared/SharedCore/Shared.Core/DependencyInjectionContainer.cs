@@ -27,6 +27,11 @@ namespace Shared.Core
             services.AddSingleton<IEditorDatabase, EditorDatabase>();
             services.AddSingleton<CopyPasteManager>();
             services.AddSingleton<IPackFileService, PackFileService>();
+            services.AddSingleton<IHeadlessPackFileService>(x => x.GetRequiredService<IPackFileService>());
+            services.AddSingleton<IPackedFileLookup>(x => x.GetRequiredService<IPackFileService>());
+            services.AddSingleton<IPackCollection>(x => x.GetRequiredService<IPackFileService>());
+            services.AddSingleton<IPackFileLocationLookup>(x => x.GetRequiredService<IPackFileService>());
+            services.AddSingleton<IPackFileExtensionLookup>(x => x.GetRequiredService<IPackFileService>());
             services.AddScoped<IFileSaveService, FileSaveService>();
             services.AddScoped<ScopeToken>();
             services.AddScoped<IScopedLogger, ScopedLogger>();
@@ -54,4 +59,3 @@ namespace Shared.Core
     }
 
 }
-

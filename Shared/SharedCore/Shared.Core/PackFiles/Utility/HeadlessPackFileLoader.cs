@@ -1,5 +1,4 @@
 using System.Text;
-using Shared.Core.Events;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Models.Containers;
 using Shared.Core.PackFiles.Models.FileSources;
@@ -164,31 +163,4 @@ namespace Shared.Core.PackFiles.Utility
         }
     }
 
-    /// <summary>
-    /// Creates the internal PackFileService with all interactive safeguards
-    /// disabled. The service still preserves its normal lookup rule: the last
-    /// added container wins.
-    /// </summary>
-    public static class HeadlessPackFileServiceFactory
-    {
-        public static IPackFileService Create(IGlobalEventHub? globalEventHub = null)
-        {
-            var service = new PackFileService(globalEventHub)
-            {
-                EnforceGameFilesMustBeLoaded = false,
-                MessageBoxProvider = new NoOpSimpleMessageBox()
-            };
-            return service;
-        }
-
-        private sealed class NoOpSimpleMessageBox : ISimpleMessageBox
-        {
-            public void ShowDialogBox(string message, string title)
-            {
-                // Headless callers receive load failures through exceptions;
-                // this guard prevents an unexpected UI if a future service
-                // path attempts to display a duplicate/rejection message.
-            }
-        }
-    }
 }

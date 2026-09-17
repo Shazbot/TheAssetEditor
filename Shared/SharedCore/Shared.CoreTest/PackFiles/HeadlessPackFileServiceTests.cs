@@ -1,3 +1,4 @@
+using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Models.Containers;
 using Shared.Core.PackFiles.Utility;
@@ -10,6 +11,7 @@ public sealed class HeadlessPackFileServiceTests
     public void Factory_UsesLastExplicitlyAddedContainerAsWinner()
     {
         var service = HeadlessPackFileServiceFactory.Create();
+        Assert.That(service, Is.TypeOf<HeadlessPackFileService>());
         var lowPriority = PackFileContainer.CreateReadOnlyPackFile("low-priority");
         lowPriority.AddOrUpdateFile("shared\\file.txt", PackFile.CreateFromBytes("file.txt", [1]));
         var highPriority = PackFileContainer.CreateReadOnlyPackFile("high-priority");

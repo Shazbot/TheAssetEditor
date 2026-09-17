@@ -30,15 +30,18 @@ public sealed record VariantMeshSelection(string SlotPath, int ChoiceIndex);
 
 public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionResolver
 {
-    private readonly IPackFileService _packFileService;
+    private readonly IPackedFileLookup _packFileLookup;
+    private readonly IPackFileLocationLookup? _packFileLocationLookup;
     private readonly IModelAssetResolver _modelAssetResolver;
 
     public VariantMeshCompositionResolver(
-        IPackFileService packFileService,
-        IModelAssetResolver? modelAssetResolver = null)
+        IPackedFileLookup packFileLookup,
+        IModelAssetResolver? modelAssetResolver = null,
+        IPackFileLocationLookup? packFileLocationLookup = null)
     {
-        _packFileService = packFileService;
-        _modelAssetResolver = modelAssetResolver ?? new ModelAssetResolver(packFileService);
+        _packFileLookup = packFileLookup;
+        _packFileLocationLookup = packFileLocationLookup ?? packFileLookup as IPackFileLocationLookup;
+        _modelAssetResolver = modelAssetResolver ?? new ModelAssetResolver(packFileLookup, _packFileLocationLookup);
     }
 
     public ResolvedVariantMeshComposition Resolve(PackFile inputFile)
@@ -359,7 +362,7 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         // pack-root-relative, not relative to the definition's containing
         // folder.  This also makes the default-candidate order deterministic
         // across the viewport and export paths.
-        return _packFileService.FindFile(normalizedReference);
+        return _packFileLookup.FindFile(normalizedReference);
     }
 
     private string GetDefinitionKey(PackFile file)
@@ -369,7 +372,7 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
     {
         try
         {
-            var fullPath = _packFileService.GetFullPath(file);
+            var fullPath = _packFileLocationLookup?.GetFullPath(file);
             return string.IsNullOrWhiteSpace(fullPath) ? file.Name : fullPath;
         }
         catch

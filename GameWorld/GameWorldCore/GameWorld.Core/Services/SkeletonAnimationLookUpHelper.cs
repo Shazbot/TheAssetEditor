@@ -26,7 +26,7 @@ namespace GameWorld.Core.Services
         private readonly ILogger _logger = Logging.Create<SkeletonAnimationLookUpHelper>();
         private readonly object _threadLock = new object();
 
-        private readonly IPackFileService _packFileService;
+        private readonly IHeadlessPackFileService _packFiles;
         private readonly IGlobalEventHub _globalEventHub;
         private readonly SkeletonAnimationLookupCache? _animationIndexCache;
         private readonly Task _initialIndexTask;
@@ -52,11 +52,11 @@ namespace GameWorld.Core.Services
         };
 
         public SkeletonAnimationLookUpHelper(
-            IPackFileService packFileService,
+            IHeadlessPackFileService packFiles,
             IGlobalEventHub globalEventHub,
             SkeletonAnimationLookupCacheOptions? cacheOptions = null)
         {
-            _packFileService = packFileService;
+            _packFiles = packFiles;
             _globalEventHub = globalEventHub;
             _animationIndexCache = cacheOptions == null
                 ? null
@@ -97,7 +97,7 @@ namespace GameWorld.Core.Services
         void LoadAllContainersInBackground()
         {
             var stopwatch = Stopwatch.StartNew();
-            var containers = _packFileService.GetAllPackfileContainers();
+            var containers = _packFiles.GetAllPackfileContainers();
             foreach (var container in containers)
             {
                 if (_isDisposed)
@@ -193,7 +193,7 @@ namespace GameWorld.Core.Services
             var skeletonFileNameList = new ConcurrentBag<string>();
             var animationList = new ConcurrentDictionary<string, ConcurrentBag<AnimationReference>>(StringComparer.OrdinalIgnoreCase);
 
-            var allAnimations = PackFileServiceUtility.FindAllWithExtentionIncludePaths(_packFileService, ".anim", packFileContainer);
+            var allAnimations = PackFileServiceUtility.FindAllWithExtentionIncludePaths(_packFiles, ".anim", packFileContainer);
 
             // Split animations in to two categories.
             // One for packfiles which are saved to disk, and one for in memory. 
@@ -369,12 +369,12 @@ namespace GameWorld.Core.Services
                     foreach (var name in skeletonPaths)
                     {
                         var fullName = Path.GetFileNameWithoutExtension(name);
-                        var file = _packFileService.FindFile(name);
+                        var file = _packFiles.FindFile(name);
                         if (file != null && fullName == lookUpFullName)
                         {
                             // Make sure its not a tech skeleton
-                            if (_packFileService.GetFullPath(file).Contains("tech", StringComparison.OrdinalIgnoreCase) == false && 
-                                _packFileService.GetFullPath(file).Contains("reference_poses", StringComparison.OrdinalIgnoreCase ) == false)
+                            if (_packFiles.GetFullPath(file).Contains("tech", StringComparison.OrdinalIgnoreCase) == false &&
+                                _packFiles.GetFullPath(file).Contains("reference_poses", StringComparison.OrdinalIgnoreCase ) == false)
                                 return AnimationFile.Create(file);
                         }
                     }
@@ -382,7 +382,7 @@ namespace GameWorld.Core.Services
 
                 // Try loading from path as a backup in case loading failed. Looking at you wh3...
                 var path = $"animations\\skeletons\\{skeletonName}.anim";
-                var animationFile = _packFileService.FindFile(path);
+                var animationFile = _packFiles.FindFile(path);
                 if (animationFile != null)
                     return AnimationFile.Create(animationFile);
                 return null;
@@ -395,14 +395,14 @@ namespace GameWorld.Core.Services
 
             lock (_threadLock)
             {
-                var fullPath = _packFileService.GetFullPath(animation);
+                var fullPath = _packFiles.GetFullPath(animation);
                 if (_animationPathToReference.TryGetValue(fullPath, out var existingReference))
                     return existingReference;
 
-                var f = _packFileService.FindFile(fullPath);
+                var f = _packFiles.FindFile(fullPath);
                 if (f != null)
                 {
-                    var pf = _packFileService.GetPackFileContainer(animation);
+                    var pf = _packFiles.GetPackFileContainer(animation);
                     if (pf != null)
                         return new AnimationReference(fullPath, pf);
                 }

@@ -28,11 +28,15 @@ public interface IModelAssetResolver
 
 public sealed class ModelAssetResolver : IModelAssetResolver
 {
-    private readonly IPackFileService? _packFileService;
+    private readonly IPackedFileLookup? _packFileLookup;
+    private readonly IPackFileLocationLookup? _packFileLocationLookup;
 
-    public ModelAssetResolver(IPackFileService? packFileService = null)
+    public ModelAssetResolver(
+        IPackedFileLookup? packFileLookup = null,
+        IPackFileLocationLookup? packFileLocationLookup = null)
     {
-        _packFileService = packFileService;
+        _packFileLookup = packFileLookup;
+        _packFileLocationLookup = packFileLocationLookup ?? packFileLookup as IPackFileLocationLookup;
     }
 
     public ResolvedModelAsset Resolve(PackFile inputFile)
@@ -123,7 +127,7 @@ public sealed class ModelAssetResolver : IModelAssetResolver
         // path rather than the source PackFile. Discover the sibling through
         // the pack service so nested models keep their directory context.
         if (resolvedWsModel == null
-            && _packFileService != null
+            && _packFileLookup != null
             && string.IsNullOrWhiteSpace(modelPath) == false
             && IsRmvFile(modelPath))
         {
@@ -236,17 +240,17 @@ public sealed class ModelAssetResolver : IModelAssetResolver
 
     private PackFile? FindSiblingWsModel(PackFile rmvFile)
     {
-        if (_packFileService == null)
+        if (_packFileLookup == null || _packFileLocationLookup == null)
             return null;
 
-        var rmvPath = _packFileService.GetFullPath(rmvFile);
+        var rmvPath = _packFileLocationLookup.GetFullPath(rmvFile);
         var siblingPath = Path.ChangeExtension(rmvPath, ".wsmodel");
         return FindFile(siblingPath);
     }
 
     private PackFile? FindFile(string path)
     {
-        return _packFileService?.FindFile(path);
+        return _packFileLookup?.FindFile(path);
     }
 
     private static bool IsRmvFile(string path) => path.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase);

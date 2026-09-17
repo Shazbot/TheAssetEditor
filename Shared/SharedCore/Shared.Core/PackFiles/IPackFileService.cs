@@ -3,7 +3,7 @@ using Shared.Core.Settings;
 
 namespace Shared.Core.PackFiles
 {
-    public interface IPackFileService
+    public interface IPackFileService : IHeadlessPackFileService
     {
         bool EnableFileLookUpEvents { get; set; }
         bool EnforceGameFilesMustBeLoaded { get; set; }
@@ -14,12 +14,8 @@ namespace Shared.Core.PackFiles
         IPackFileContainer CreateNewPackFileContainer(string name, PackFileVersion packFileVersion, PackFileCAType type, bool setEditablePack = false);
         void DeleteFile(IPackFileContainer pf, PackFile file);
         void DeleteFolder(IPackFileContainer pf, string folder);
-        PackFile? FindFile(string path, IPackFileContainer? container = null);
-        List<IPackFileContainer> GetAllPackfileContainers();
         bool IsPackFileLoaded(string packFilePath);
         IPackFileContainer? GetEditablePack();
-        string GetFullPath(PackFile file, IPackFileContainer? container = null);
-        IPackFileContainer? GetPackFileContainer(PackFile file);
         void MoveFile(IPackFileContainer pf, PackFile file, string newFolderPath);
         void RenameDirectory(IPackFileContainer pf, string currentNodeName, string newName);
         void RenameFile(IPackFileContainer pf, PackFile file, string newName);
@@ -27,6 +23,5 @@ namespace Shared.Core.PackFiles
         void SavePackContainer(IPackFileContainer pf, string path, bool createBackup, GameInformation gameInformation);
         void SetEditablePack(IPackFileContainer? pf);
         void UnloadPackContainer(IPackFileContainer pf);
-        List<(string FileName, PackFile Pack)> FindAllWithExtention(string extention, IPackFileContainer? container = null);
     }
 }

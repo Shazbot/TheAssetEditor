@@ -15,7 +15,7 @@ namespace Shared.Core.PackFiles
         private readonly ILogger _logger = Logging.Create<PackFileService>();
         private readonly IGlobalEventHub? _globalEventHub;
 
-        private readonly List<IPackFileContainerInternal> _packFileContainers = [];
+        private readonly PackFileRepository _repository = new();
         private IPackFileContainerInternal? _packFileContainerSelectedForEdit;
 
         // We use this instead of the standard dialog helper, to avaid a circular dependency
@@ -30,31 +30,13 @@ namespace Shared.Core.PackFiles
 
         internal static IPackFileContainerInternal CastContainer(IPackFileContainer container) => (IPackFileContainerInternal)container;
 
-        public List<IPackFileContainer> GetAllPackfileContainers() => _packFileContainers.Cast<IPackFileContainer>().ToList();
+        public IReadOnlyList<IPackFileContainer> Packs => _repository.Packs;
+
+        public List<IPackFileContainer> GetAllPackfileContainers() => _repository.Packs.ToList();
 
         public bool IsPackFileLoaded(string packFilePath)
         {
-            if (string.IsNullOrWhiteSpace(packFilePath))
-                return false;
-
-            var normalizedPath = NormalizeSystemPath(packFilePath);
-            foreach (var container in _packFileContainers)
-            {
-                if (PathsEqual(container.SystemFilePath, normalizedPath))
-                    return true;
-
-                var sourcePackFilePaths = container switch
-                {
-                    PackFileContainer packFileContainer => packFileContainer.SourcePackFilePaths,
-                    CachedPackFileContainer cachedPackFileContainer => cachedPackFileContainer.SourcePackFilePaths,
-                    _ => []
-                };
-
-                if (sourcePackFilePaths.Any(path => PathsEqual(path, normalizedPath)))
-                    return true;
-            }
-
-            return false;
+            return _repository.IsPackFileLoaded(packFilePath);
         }
 
         public IPackFileContainer? AddContainer(IPackFileContainer container, bool setToMainPackIfFirst = false)
@@ -62,7 +44,7 @@ namespace Shared.Core.PackFiles
             var pf = CastContainer(container);
             if (EnforceGameFilesMustBeLoaded)
             {
-                var caPacksLoaded = _packFileContainers.Count(x => x.IsCaPackFile);
+                var caPacksLoaded = _repository.Packs.Count(x => x.IsCaPackFile);
                 if (caPacksLoaded == 0 && pf.IsCaPackFile == false)
                 {
                     _logger.Here().Warning($"Rejected loading pack file '{DescribeContainer(pf)}' because no CA pack files are loaded yet");
@@ -75,18 +57,11 @@ namespace Shared.Core.PackFiles
             // differently-cased or non-canonical path is still detected as a duplicate.
             if (string.IsNullOrEmpty(pf.SystemFilePath) == false)
             {
-                var newPath = NormalizeSystemPath(pf.SystemFilePath);
-                foreach (var packFile in _packFileContainers)
+                if (_repository.ContainsSystemPath(pf.SystemFilePath))
                 {
-                    if (string.IsNullOrEmpty(packFile.SystemFilePath))
-                        continue;
-
-                    if (NormalizeSystemPath(packFile.SystemFilePath) == newPath)
-                    {
-                        _logger.Here().Warning($"Rejected loading duplicate pack file '{packFile.SystemFilePath}'");
-                        MessageBoxProvider.ShowDialogBox($"Pack file \"{packFile.SystemFilePath}\" is already loaded.", "Error");
-                        return null;
-                    }
+                    _logger.Here().Warning($"Rejected loading duplicate pack file '{pf.SystemFilePath}'");
+                    MessageBoxProvider.ShowDialogBox($"Pack file \"{pf.SystemFilePath}\" is already loaded.", "Error");
+                    return null;
                 }
             }
 
@@ -96,15 +71,16 @@ namespace Shared.Core.PackFiles
 
         void AddContainerInternal(IPackFileContainerInternal container, bool setToMainPackIfFirst = false)
         {
-            _packFileContainers.Add(container);
+            if (_repository.TryAdd(container) == false)
+                throw new InvalidOperationException($"Pack file '{DescribeContainer(container)}' is already loaded.");
             if (container is SystemFolderContainer systemFolderContainer)
             {
                 systemFolderContainer.FilesAddedExternally += OnSystemFolderContainerFilesAddedExternally;
                 systemFolderContainer.FilesRemovedExternally += OnSystemFolderContainerFilesRemovedExternally;
             }
 
-            var notCaPacksLoaded = _packFileContainers.Count(x => !x.IsCaPackFile);
-            _logger.Here().Information($"Added pack file container '{DescribeContainer(container)}' (CA:{container.IsCaPackFile}). Loaded containers: {_packFileContainers.Count}, editable containers: {notCaPacksLoaded}");
+            var notCaPacksLoaded = _repository.Packs.Count(x => !x.IsCaPackFile);
+            _logger.Here().Information($"Added pack file container '{DescribeContainer(container)}' (CA:{container.IsCaPackFile}). Loaded containers: {_repository.Packs.Count}, editable containers: {notCaPacksLoaded}");
             _globalEventHub?.PublishGlobalEvent(new PackFileContainerAddedEvent(container));
 
             if (container.IsCaPackFile == false && setToMainPackIfFirst)
@@ -198,11 +174,11 @@ namespace Shared.Core.PackFiles
                 systemFolderContainer.FilesRemovedExternally -= OnSystemFolderContainerFilesRemovedExternally;
             }
 
-            _packFileContainers.Remove(container);
+            _repository.Remove(container);
             if (_packFileContainerSelectedForEdit == container)
                 SetEditablePack(null);
 
-            _logger.Here().Information($"Unloaded pack file container '{DescribeContainer(container)}'. Remaining containers: {_packFileContainers.Count}");
+            _logger.Here().Information($"Unloaded pack file container '{DescribeContainer(container)}'. Remaining containers: {_repository.Packs.Count}");
             _globalEventHub?.PublishGlobalEvent(new PackFileContainerRemovedEvent(container));
 
             if (container is IDisposable disposable)
@@ -226,13 +202,10 @@ namespace Shared.Core.PackFiles
             if (pf != null)
             {
                 var container = CastContainer(pf);
-                return container.FindAllWithExtention(extention);
+                return _repository.FindAllWithExtention(extention, container);
             }
 
-            var output = new List<(string, PackFile)>();
-            foreach (var instance in _packFileContainers)
-                output.AddRange(instance.FindAllWithExtention(extention));
-            return output;
+            return _repository.FindAllWithExtention(extention);
         }
 
         public void DeleteFolder(IPackFileContainer pf, string folder)
@@ -327,41 +300,24 @@ namespace Shared.Core.PackFiles
 
         public IPackFileContainer? GetPackFileContainer(PackFile file)
         {
-            foreach (var pf in _packFileContainers)
-            {
-                var path = pf.GetFullPath(file);
-                if (path != null)
-                    return pf;
-            }
+            var container = _repository.GetPackFileContainer(file);
+            if (container != null)
+                return container;
+
             _logger.Here().Warning($"Unknown packfile container for file '{file.Name}'");
             return null;
         }
 
+        public PackFile? FindFile(string path) => FindFile(path, null);
+
         public PackFile? FindFile(string path, IPackFileContainer? container = null)
         {
-            if (container == null)
+            var found = _repository.FindFileWithContainer(path, container);
+            if (found != null)
             {
-                for (var i = _packFileContainers.Count - 1; i >= 0; i--)
-                {
-                    var result = _packFileContainers[i].FindFile(path);
-                    if (result != null)
-                    {
-                        if (EnableFileLookUpEvents)
-                            _globalEventHub?.PublishGlobalEvent(new PackFileLookUpEvent(path, _packFileContainers[i], true));
-                        return result;
-                    }
-                }
-            }
-            else
-            {
-                var concreteContainer = CastContainer(container);
-                var result = concreteContainer.FindFile(path);
-                if (result != null)
-                {
-                    if (EnableFileLookUpEvents)
-                        _globalEventHub?.PublishGlobalEvent(new PackFileLookUpEvent(path, concreteContainer, true));
-                    return result;
-                }
+                if (EnableFileLookUpEvents)
+                    _globalEventHub?.PublishGlobalEvent(new PackFileLookUpEvent(path, found.Value.Container, true));
+                return found.Value.File;
             }
 
             if (EnableFileLookUpEvents)
@@ -371,22 +327,8 @@ namespace Shared.Core.PackFiles
 
         public string GetFullPath(PackFile file, IPackFileContainer? container = null)
         {
-            if (container == null)
-            {
-                foreach (var pf in _packFileContainers)
-                {
-                    var res = pf.GetFullPath(file);
-                    if (res != null)
-                        return res;
-                }
-            }
-            else
-            {
-                var concreteContainer = CastContainer(container);
-                var res = concreteContainer.GetFullPath(file);
-                if (res != null)
-                    return res;
-            }
+            if (_repository.TryGetFullPath(file, container, out var path))
+                return path!;
 
             _logger.Here().Warning($"Unable to resolve full path for file '{file.Name}'");
             throw new Exception("Unknown path for " + file.Name);
@@ -399,24 +341,6 @@ namespace Shared.Core.PackFiles
 
             var concreteContainer = CastContainer(container);
             return concreteContainer.SystemFilePath ?? concreteContainer.Name;
-        }
-
-        private static string NormalizeSystemPath(string path)
-        {
-            try
-            {
-                return Path.GetFullPath(path).TrimEnd('\\', '/').ToLowerInvariant();
-            }
-            catch
-            {
-                return path.Replace('/', '\\').TrimEnd('\\').Trim().ToLowerInvariant();
-            }
-        }
-
-        private static bool PathsEqual(string? path, string normalizedPath)
-        {
-            return string.IsNullOrWhiteSpace(path) == false
-                && NormalizeSystemPath(path) == normalizedPath;
         }
 
         private static string DescribeFile(IPackFileContainer container, PackFile file)

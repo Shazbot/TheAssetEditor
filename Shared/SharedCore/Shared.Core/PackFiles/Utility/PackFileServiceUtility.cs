@@ -14,26 +14,23 @@ namespace Shared.Core.PackFiles.Utility
             return animPacks;
         }
 
-        public static List<PackFile> FindAllWithExtention(IPackFileService pfs, string extention, IPackFileContainer? packFileContainer = null)
+        public static List<PackFile> FindAllWithExtention(IPackFileExtensionLookup pfs, string extention, IPackFileContainer? packFileContainer = null)
         {
             return FindAllWithExtentionIncludePaths(pfs, extention, packFileContainer).Select(x => x.Item2).ToList();
         }
 
-        public static List<(string FileName, PackFile Pack)> FindAllWithExtentionIncludePaths(IPackFileService pfs, string extention, IPackFileContainer? packFileContainer = null)
+        public static List<(string FileName, PackFile Pack)> FindAllWithExtentionIncludePaths(IPackFileExtensionLookup pfs, string extention, IPackFileContainer? packFileContainer = null)
         {
             if (packFileContainer != null)
             {
-                var container = PackFileService.CastContainer(packFileContainer);
-                return container.FindAllWithExtention(extention);
+                var normalizedExtension = extention.ToLower();
+                return packFileContainer.GetAllFiles()
+                    .Where(x => Path.GetExtension(x.Key) == normalizedExtension)
+                    .Select(x => (x.Key, x.Value))
+                    .ToList();
             }
 
-            var output = new List<(string, PackFile)>();
-            foreach (var pf in pfs.GetAllPackfileContainers())
-            {
-                var container = PackFileService.CastContainer(pf);
-                output.AddRange(container.FindAllWithExtention(extention));
-            }
-            return output;
+            return pfs.FindAllWithExtention(extention, packFileContainer);
         }
 
 

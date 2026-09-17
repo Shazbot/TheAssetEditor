@@ -8,12 +8,11 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToPng
 {
     public class DdsToPngExporter
     {
-        private readonly IPackFileService _packFileService;
         private readonly IImageSaveHandler _imageSaveHandler;
 
-        public DdsToPngExporter(IPackFileService pfs, IImageSaveHandler imageSaveHandler)
+        public DdsToPngExporter(IPackedFileLookup packFileLookup, IImageSaveHandler imageSaveHandler)
         {
-            _packFileService = pfs;
+            _ = packFileLookup;
             _imageSaveHandler = imageSaveHandler;
         }
         internal ExportSupportEnum CanExportFile(PackFile file)
