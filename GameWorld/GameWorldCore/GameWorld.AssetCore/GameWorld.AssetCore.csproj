@@ -9,17 +9,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\GameWorld\GameWorldCore\GameWorld.AssetCore\GameWorld.AssetCore.csproj" />
     <ProjectReference Include="..\..\..\Shared\SharedCore\Shared.Core\Shared.Core.csproj" />
     <ProjectReference Include="..\..\..\Shared\GameFiles\Shared.GameFormats.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.4.1" />
-    <PackageReference Include="Pfim" Version="0.11.4" />
-    <PackageReference Include="SharpGLTF.Core" Version="1.0.6" />
-    <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.6" />
-    <PackageReference Include="System.Drawing.Common" Version="10.0.1" />
   </ItemGroup>
 
 </Project>

@@ -128,7 +128,7 @@ namespace GameWorld.Core.Animation
                         if (translationLookup.IsDynamic)
                             newKeyframe.Position.Add(animationPart.DynamicFrames[frameIndex].Transforms[translationLookup.Id].ToVector3());
                         else if (translationLookup.IsStatic)
-                            newKeyframe.Position.Add(animationPart.StaticFrame.Transforms[translationLookup.Id].ToVector3());
+                            newKeyframe.Position.Add(animationPart.StaticFrame!.Transforms[translationLookup.Id].ToVector3());
                         else
                             newKeyframe.Position.Add(skeleton.Translation[animationSkeletonBoneIndex]);
 
@@ -136,7 +136,7 @@ namespace GameWorld.Core.Animation
                         if (rotationLookup.IsDynamic)
                             newKeyframe.Rotation.Add(animationPart.DynamicFrames[frameIndex].Quaternion[rotationLookup.Id].ToQuaternion());
                         else if (rotationLookup.IsStatic)
-                            newKeyframe.Rotation.Add(animationPart.StaticFrame.Quaternion[rotationLookup.Id].ToQuaternion());
+                            newKeyframe.Rotation.Add(animationPart.StaticFrame!.Quaternion[rotationLookup.Id].ToQuaternion());
                         else
                             newKeyframe.Rotation.Add(skeleton.Rotation[animationSkeletonBoneIndex]);
 

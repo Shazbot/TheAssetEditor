@@ -9,19 +9,19 @@ namespace GameWorld.Core.Animation
 {
     public class GameSkeleton
     {
-        List<Matrix> _worldTransform { get; set; }
-        List<int> _parentBoneIds { get; set; }
+        List<Matrix> _worldTransform { get; set; } = [];
+        List<int> _parentBoneIds { get; set; } = [];
 
-        public List<Vector3> Translation { get; private set; }
-        public List<Quaternion> Rotation { get; private set; }
-        public List<float> Scale { get; private set; }
-        public List<string> BoneNames { get; private set; }
+        public List<Vector3> Translation { get; private set; } = [];
+        public List<Quaternion> Rotation { get; private set; } = [];
+        public List<float> Scale { get; private set; } = [];
+        public List<string> BoneNames { get; private set; } = [];
         public int BoneCount { get => BoneNames.Count; }
-        public string SkeletonName { get; set; }
+        public string SkeletonName { get; set; } = string.Empty;
 
-        public AnimationPlayer AnimationPlayer { get; private set; }
+        public IAnimationPlayer? AnimationPlayer { get; private set; }
 
-        public GameSkeleton(AnimationFile skeletonFile, AnimationPlayer animationPlayer)
+        public GameSkeleton(AnimationFile skeletonFile, IAnimationPlayer? animationPlayer)
         {
             var boneCount = skeletonFile.Bones.Count();
             Translation = new List<Vector3>(new Vector3[boneCount]);
@@ -63,7 +63,7 @@ namespace GameWorld.Core.Animation
         /// animations and other rigidmodel anims): they have no matching skeleton file under
         /// animations/skeletons - the .anim itself is the only definition of the bone hierarchy.
         /// </summary>
-        public static GameSkeleton CreateFromAnimationFile(AnimationFile animFile, AnimationPlayer animationPlayer)
+        public static GameSkeleton CreateFromAnimationFile(AnimationFile animFile, IAnimationPlayer? animationPlayer)
         {
             var boneCount = animFile.Bones.Length;
             var skeleton = new GameSkeleton
@@ -166,8 +166,8 @@ namespace GameWorld.Core.Animation
             }
         }
 
-        AnimationFrame _frame;
-        public void SetAnimationFrame(AnimationFrame frame)
+        AnimationFrame? _frame;
+        public void SetAnimationFrame(AnimationFrame? frame)
         {
             _frame = frame;
         }

@@ -8,6 +8,7 @@
 	</PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\GameWorld.AssetCore\GameWorld.AssetCore.csproj" />
     <ProjectReference Include="..\..\..\Shared\SharedUI\Shared.Ui\Shared.Ui.csproj" />
     <ProjectReference Include="..\..\..\Shared\GameFiles\Shared.GameFormats.csproj" />
     <ProjectReference Include="..\..\ContentProject\ContentProject.csproj" />

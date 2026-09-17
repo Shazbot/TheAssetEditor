@@ -23,6 +23,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\..\GameWorld\GameWorldCore\GameWorld.AssetCore\GameWorld.AssetCore.csproj" />
     <ProjectReference Include="..\..\..\Testing\Shared\Test.TestingUtility.csproj" />
     <ProjectReference Include="..\Editors.ImportExport.Core\Editors.ImportExport.Core.csproj" />
     <ProjectReference Include="..\Editors.ImportExport\Editors.ImportExport.csproj" />

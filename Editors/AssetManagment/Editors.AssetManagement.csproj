@@ -28,6 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\GameWorld\GameWorldCore\GameWorld.Core\GameWorld.Core.csproj" />
+    <ProjectReference Include="..\..\GameWorld\GameWorldCore\GameWorld.AssetCore\GameWorld.AssetCore.csproj" />
     <ProjectReference Include="..\..\Shared\SharedUI\Shared.Ui\Shared.Ui.csproj" />
   </ItemGroup>
 

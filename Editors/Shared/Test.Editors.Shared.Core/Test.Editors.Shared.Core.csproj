@@ -24,6 +24,7 @@
     </ItemGroup>
 
     <ItemGroup>
+        <ProjectReference Include="..\..\..\GameWorld\GameWorldCore\GameWorld.AssetCore\GameWorld.AssetCore.csproj" />
         <ProjectReference Include="..\Editors.Shared.Core\Editors.Shared.Core.csproj" />
     </ItemGroup>
 

@@ -1,7 +1,5 @@
 ﻿using System.Numerics;
 using Editors.ImportExport.Common;
-using GameWorld.Core.Animation;
-using GameWorld.Core.SceneNodes;
 using Shared.Core.PackFiles;
 using Shared.GameFormats.Animation;
 using SharpGLTF.Schema2;
