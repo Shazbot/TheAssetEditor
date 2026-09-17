@@ -27,11 +27,11 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
     public sealed class HeadlessGltfExportService
     {
         private static readonly ConcurrentDictionary<string, object> OutputDirectoryLocks = new(StringComparer.OrdinalIgnoreCase);
-        private readonly RmvToGltfExporter _exporter;
+        private readonly IRmvToGltfExporter _exporter;
 
-        public HeadlessGltfExportService(RmvToGltfExporter exporter)
+        public HeadlessGltfExportService(IRmvToGltfExporter exporter)
         {
-            _exporter = exporter;
+            _exporter = exporter ?? throw new ArgumentNullException(nameof(exporter));
         }
 
         public ExportResult Export(RmvToGltfExporterSettings settings)
@@ -70,7 +70,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 
             try
             {
-                _exporter.Export(settings with { OutputPath = outputPath });
+                var execution = _exporter.Export(settings with { OutputPath = outputPath });
+                if (execution.Status == ExportExecutionStatus.Cancelled)
+                {
+                    return new ExportResult(
+                        false,
+                        null,
+                        CaptureAuxiliaryFiles(outputDirectory, before, outputPath),
+                        Array.Empty<ExportWarning>(),
+                        [new ExportError("ExportCancelled", "The export was cancelled.")]);
+                }
             }
             catch (Exception exception)
             {
@@ -92,6 +101,18 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                     [new ExportError(
                         "OutputMissing",
                         $"The exporter completed without creating the requested output '{outputPath}'.")]);
+            }
+
+            if (WasCreatedOrUpdated(outputPath, before) == false)
+            {
+                return new ExportResult(
+                    false,
+                    null,
+                    CaptureAuxiliaryFiles(outputDirectory, before, outputPath),
+                    Array.Empty<ExportWarning>(),
+                    [new ExportError(
+                        "OutputNotUpdated",
+                        "The exporter completed without producing a new or updated output file.")]);
             }
 
             return new ExportResult(
@@ -130,6 +151,19 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 .Select(pair => pair.Key)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+        }
+
+        private static bool WasCreatedOrUpdated(
+            string outputPath,
+            IReadOnlyDictionary<string, FileStamp> before)
+        {
+            var fullPath = Path.GetFullPath(outputPath);
+            if (!File.Exists(fullPath))
+                return false;
+
+            var fileInfo = new FileInfo(fullPath);
+            var current = new FileStamp(fileInfo.Length, fileInfo.LastWriteTimeUtc);
+            return before.TryGetValue(fullPath, out var previous) == false || previous != current;
         }
 
         private readonly record struct FileStamp(long Length, DateTime LastWriteUtc);

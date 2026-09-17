@@ -204,6 +204,10 @@ public class GltfAnimationCatalogTests
 
         public ExportSupportEnum CanExportFile(PackFile file) => ExportSupportEnum.HighPriority;
 
-        public void Export(RmvToGltfExporterSettings settings) => Settings = settings;
+        public ExportExecutionResult Export(RmvToGltfExporterSettings settings)
+        {
+            Settings = settings;
+            return ExportExecutionResult.Completed();
+        }
     }
 }

@@ -13,7 +13,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
     public interface IRmvToGltfExporter
     {
         ExportSupportEnum CanExportFile(PackFile file);
-        void Export(RmvToGltfExporterSettings settings);
+        ExportExecutionResult Export(RmvToGltfExporterSettings settings);
     }
 
     public enum MissingSkeletonAction
@@ -123,17 +123,15 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 
         ExportSupportEnum IRmvToGltfExporter.CanExportFile(PackFile file) => CanExportFile(file);
 
-        void IRmvToGltfExporter.Export(RmvToGltfExporterSettings settings) => Export(settings);
+        ExportExecutionResult IRmvToGltfExporter.Export(RmvToGltfExporterSettings settings)
+            => Export(settings);
 
-        public void Export(RmvToGltfExporterSettings settings)
+        public ExportExecutionResult Export(RmvToGltfExporterSettings settings)
         {
             LogSettings(settings);
 
             if (IsVariantMeshDefinition(settings.InputModelFile))
-            {
-                ExportVariantMesh(settings);
-                return;
-            }
+                return ExportVariantMesh(settings);
 
             var resolvedAsset = _modelAssetResolver.Resolve(settings.InputModelFile);
             foreach (var diagnostic in resolvedAsset.Diagnostics)
@@ -159,7 +157,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 // Preserve the direct exporter behavior: choosing No in the
                 // missing-skeleton warning aborts without saving an output.
                 if (exportCancelled)
-                    return;
+                    return ExportExecutionResult.Cancelled();
             }
             if (skeleton != null && skeletonFile != null && settings.ExportAnimations)
                 _gltfAnimationBuilder.Build(skeletonFile, settings, skeleton, outputScene);
@@ -173,9 +171,11 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 settings,
                 outputScene,
                 textures.Select(x => x.SystemFilePath).ToArray());
+
+            return ExportExecutionResult.Completed();
         }
 
-        private void ExportVariantMesh(RmvToGltfExporterSettings settings)
+        private ExportExecutionResult ExportVariantMesh(RmvToGltfExporterSettings settings)
         {
             if (_variantMeshResolver == null)
                 throw new InvalidOperationException("VariantMeshDefinition export requires the variant mesh composition resolver.");
@@ -231,6 +231,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 
             _logger.Here().Information($"VMD Export - Parts={modelParts.Count} MeshCount={meshes.Count} Skeleton={skeleton?.Data.Count}");
             BuildGltfScene(meshes, skeleton, settings, outputScene, generatedTexturePaths);
+
+            return ExportExecutionResult.Completed();
         }
 
         private ProcessedGltfSkeleton? CreateSharedSkeleton(

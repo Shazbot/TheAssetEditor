@@ -88,6 +88,96 @@ public sealed class HostMissingSkeletonDecisionTests
         }
     }
 
+    [Test]
+    public async Task ServeReportsExportCancelledAfterDecisionResponse_WhenOutputAlreadyExists()
+    {
+        var factory = new InteractiveRuntimeFactory();
+        var pipeName = "wh3-asset-host-cancelled-" + Guid.NewGuid().ToString("N");
+        var outputRoot = Path.Combine(
+            Path.GetTempPath(),
+            "asset-host-cancelled",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outputRoot);
+        var oldOutputPath = Path.Combine(outputRoot, "model.glb");
+        File.WriteAllText(oldOutputPath, "old output");
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var serverTask = new AssetHostPipeServer(factory)
+            .RunAsync(pipeName, cancellationToken: cancellation.Token);
+
+        try
+        {
+            await using var client = new NamedPipeClientStream(
+                ".",
+                pipeName,
+                PipeDirection.InOut,
+                PipeOptions.Asynchronous);
+            await client.ConnectAsync(cancellation.Token);
+
+            await SendAsync(client, new
+            {
+                protocolVersion = AssetHostProtocol.ProtocolVersion,
+                requestId = "init-cancelled",
+                command = "initialize",
+                packPaths = new[] { "base.pack" },
+                outputRoot
+            });
+            var initialize = await ReadJsonAsync(client);
+            Assert.That(initialize.RootElement.GetProperty("success").GetBoolean(), Is.True);
+
+            await SendAsync(client, new
+            {
+                protocolVersion = AssetHostProtocol.ProtocolVersion,
+                requestId = "export-cancelled",
+                command = "exportModel",
+                assetPath = "model.rigid_model_v2",
+                outputPath = "model.glb"
+            });
+
+            var decisionRequest = await ReadJsonAsync(client);
+            Assert.That(decisionRequest.RootElement.GetProperty("command").GetString(), Is.EqualTo("decisionRequest"));
+            var decisionRequestId = decisionRequest.RootElement.GetProperty("requestId").GetString();
+            await SendAsync(client, new
+            {
+                protocolVersion = AssetHostProtocol.ProtocolVersion,
+                requestId = decisionRequestId,
+                command = "decisionResponse",
+                action = "cancelExport"
+            });
+
+            var export = await ReadJsonAsync(client);
+            Assert.That(export.RootElement.GetProperty("success").GetBoolean(), Is.False);
+            Assert.That(export.RootElement.GetProperty("error").GetProperty("code").GetString(), Is.EqualTo("ExportCancelled"));
+            Assert.That(export.RootElement.GetProperty("result").GetProperty("success").GetBoolean(), Is.False);
+            Assert.That(export.RootElement.GetProperty("result").GetProperty("primaryFile").ValueKind, Is.EqualTo(JsonValueKind.Null));
+            Assert.That(File.ReadAllText(oldOutputPath), Is.EqualTo("old output"));
+
+            await SendAsync(client, new
+            {
+                protocolVersion = AssetHostProtocol.ProtocolVersion,
+                requestId = "shutdown-cancelled",
+                command = "shutdown"
+            });
+            var shutdown = await ReadJsonAsync(client);
+            Assert.That(shutdown.RootElement.GetProperty("success").GetBoolean(), Is.True);
+
+            await serverTask;
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try
+            {
+                await serverTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            if (Directory.Exists(outputRoot))
+                Directory.Delete(outputRoot, recursive: true);
+        }
+    }
+
     private static Task SendAsync(Stream stream, object request)
         => NamedPipeFrameProtocol.WriteJsonFrameAsync(stream, request);
 
@@ -138,8 +228,18 @@ public sealed class HostMissingSkeletonDecisionTests
         {
             Decision = _missingSkeletonDecision.Decide(
                 new MissingSkeletonContext("missing_skeleton", "A skeleton is not present."));
+            if (Decision == MissingSkeletonAction.CancelExport)
+            {
+                return new ExportResult(
+                    false,
+                    null,
+                    [],
+                    [],
+                    [new ExportError("ExportCancelled", "The export was cancelled.")]);
+            }
+
             return new ExportResult(
-                Decision == MissingSkeletonAction.ContinueWithoutSkeleton,
+                true,
                 request.OutputPath,
                 [],
                 [],
