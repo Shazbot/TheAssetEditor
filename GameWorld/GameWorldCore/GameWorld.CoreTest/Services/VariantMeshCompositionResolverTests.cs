@@ -49,6 +49,74 @@ public class VariantMeshCompositionResolverTests
     }
 
     [Test]
+    public void SelectsRequestedCandidatesAtEveryNestedSlot()
+    {
+        var root = PackFile.CreateFromASCII("root.variantmeshdefinition", """
+            <VARIANT_MESH>
+              <SLOT name="head">
+                <VARIANT_MESH model="head_0.rigid_model_v2" />
+                <VARIANT_MESH model="head_1.rigid_model_v2" />
+                <VARIANT_MESH model="head_2.rigid_model_v2" />
+                <VARIANT_MESH model="head_3.rigid_model_v2" />
+                <VARIANT_MESH model="head_4.rigid_model_v2" />
+              </SLOT>
+              <SLOT name="body">
+                <VARIANT_MESH model="body_0.rigid_model_v2" />
+                <VARIANT_MESH model="body_1.rigid_model_v2" />
+                <VARIANT_MESH model="body_2.rigid_model_v2" />
+              </SLOT>
+              <SLOT name="weapon_1">
+                <VARIANT_MESH_REFERENCE definition="weapon_1.variantmeshdefinition" />
+              </SLOT>
+            </VARIANT_MESH>
+            """);
+        var weaponDefinition = PackFile.CreateFromASCII("weapon_1.variantmeshdefinition", """
+            <VARIANT_MESH>
+              <SLOT name="weapon">
+                <VARIANT_MESH model="weapon_0.rigid_model_v2" />
+                <VARIANT_MESH model="weapon_1.rigid_model_v2" />
+              </SLOT>
+            </VARIANT_MESH>
+            """);
+        var models = new[]
+        {
+            PackFile.CreateFromASCII("head_0.rigid_model_v2", "head0"),
+            PackFile.CreateFromASCII("head_1.rigid_model_v2", "head1"),
+            PackFile.CreateFromASCII("head_2.rigid_model_v2", "head2"),
+            PackFile.CreateFromASCII("head_3.rigid_model_v2", "head3"),
+            PackFile.CreateFromASCII("head_4.rigid_model_v2", "head4"),
+            PackFile.CreateFromASCII("body_0.rigid_model_v2", "body0"),
+            PackFile.CreateFromASCII("body_1.rigid_model_v2", "body1"),
+            PackFile.CreateFromASCII("body_2.rigid_model_v2", "body2"),
+            PackFile.CreateFromASCII("weapon_0.rigid_model_v2", "weapon0"),
+            PackFile.CreateFromASCII("weapon_1.rigid_model_v2", "weapon1")
+        };
+        var packFileService = CreatePackFileService([root, weaponDefinition, .. models]);
+        var modelResolver = new Mock<IModelAssetResolver>(MockBehavior.Strict);
+        modelResolver
+            .Setup(x => x.Resolve(It.IsAny<PackFile>()))
+            .Returns((PackFile file) => CreatePlaceholderAsset(file));
+
+        var result = new VariantMeshCompositionResolver(packFileService.Object, modelResolver.Object).Resolve(
+            root,
+            [
+                new VariantMeshSelection("root/slot[0]", 4),
+                new VariantMeshSelection("root/slot[1]", 2),
+                new VariantMeshSelection("root/slot[2]/choice[0]/slot[0]", 1)
+            ]);
+
+        var selectedHead = result.Root!.Slots[0].SelectedChild!.ResolvedModelReference!.ModelAsset!.InputFile;
+        var selectedBody = result.Root.Slots[1].SelectedChild!.ResolvedModelReference!.ModelAsset!.InputFile;
+        var selectedWeapon = result.Root.Slots[2].SelectedChild!.Slots[0].SelectedChild!
+            .ResolvedModelReference!.ModelAsset!.InputFile;
+
+        Assert.That(selectedHead, Is.SameAs(models[4]));
+        Assert.That(selectedBody, Is.SameAs(models[7]));
+        Assert.That(selectedWeapon, Is.SameAs(models[9]));
+        Assert.That(result.Diagnostics, Is.Empty);
+    }
+
+    [Test]
     public void DetectsNestedCaseInsensitiveCycleWithDiagnostic()
     {
         var root = PackFile.CreateFromASCII("Models\\Root.variantmeshdefinition", """

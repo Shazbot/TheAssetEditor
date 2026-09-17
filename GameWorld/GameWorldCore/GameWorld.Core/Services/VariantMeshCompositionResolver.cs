@@ -16,7 +16,17 @@ namespace GameWorld.Core.Services;
 public interface IVariantMeshCompositionResolver
 {
     ResolvedVariantMeshComposition Resolve(PackFile inputFile);
+
+    ResolvedVariantMeshComposition Resolve(
+        PackFile inputFile,
+        IReadOnlyList<VariantMeshSelection> selections);
 }
+
+/// <summary>
+/// Identifies one selected candidate in a VariantMeshDefinition slot.
+/// Slot paths are structural so selections remain stable when display labels change.
+/// </summary>
+public sealed record VariantMeshSelection(string SlotPath, int ChoiceIndex);
 
 public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionResolver
 {
@@ -33,11 +43,26 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
 
     public ResolvedVariantMeshComposition Resolve(PackFile inputFile)
     {
+        return Resolve(inputFile, []);
+    }
+
+    public ResolvedVariantMeshComposition Resolve(
+        PackFile inputFile,
+        IReadOnlyList<VariantMeshSelection> selections)
+    {
         ArgumentNullException.ThrowIfNull(inputFile);
 
         var diagnostics = new List<string>();
         var activeDefinitions = new List<string>();
-        var root = ResolveDefinition(inputFile, diagnostics, activeDefinitions, "root");
+        var selectedChoices = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var selection in selections ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(selection.SlotPath) || selection.ChoiceIndex < 0)
+                continue;
+            selectedChoices[selection.SlotPath.Trim()] = selection.ChoiceIndex;
+        }
+
+        var root = ResolveDefinition(inputFile, diagnostics, activeDefinitions, "root", "root", selectedChoices);
 
         return new ResolvedVariantMeshComposition(inputFile, root, diagnostics);
     }
@@ -46,7 +71,9 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         PackFile file,
         List<string> diagnostics,
         List<string> activeDefinitions,
-        string context)
+        string context,
+        string nodePath,
+        IReadOnlyDictionary<string, int> selectedChoices)
     {
         var definitionKey = GetDefinitionKey(file);
         var activeIndex = activeDefinitions.FindIndex(x => string.Equals(x, definitionKey, StringComparison.OrdinalIgnoreCase));
@@ -77,7 +104,9 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
                 diagnostics,
                 activeDefinitions,
                 context,
-                definitionKey);
+                definitionKey,
+                nodePath,
+                selectedChoices);
         }
         finally
         {
@@ -91,7 +120,9 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         List<string> diagnostics,
         List<string> activeDefinitions,
         string context,
-        string definitionKey)
+        string definitionKey,
+        string nodePath,
+        IReadOnlyDictionary<string, int> selectedChoices)
     {
         var node = new ResolvedVariantMeshNode(
             definitionKey,
@@ -104,58 +135,12 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
                 definition.ModelReference,
                 diagnostics,
                 activeDefinitions,
-                $"model reference in {context}");
+                $"model reference in {context}",
+                $"{nodePath}/model",
+                selectedChoices);
         }
 
-        foreach (var slot in definition.ChildSlots ?? [])
-        {
-            var resolvedSlot = new ResolvedVariantMeshSlot(
-                slot.Name ?? string.Empty,
-                slot.AttachmentPoint ?? string.Empty);
-
-            // VariantMeshDefinitionLoader preserves these as two collections
-            // and the viewport visits inline meshes before references. Keep
-            // that order so default selection matches the normal preview.
-            foreach (var childMesh in slot.ChildMeshes ?? [])
-            {
-                var candidate = ResolveCandidate(
-                    childMesh,
-                    ownerFile,
-                    diagnostics,
-                    activeDefinitions,
-                    $"slot '{resolvedSlot.Name}' in {context}");
-                if (candidate?.HasRenderableContent == true)
-                {
-                    resolvedSlot.SelectedChild = candidate;
-                    break;
-                }
-            }
-
-            if (resolvedSlot.SelectedChild == null)
-            {
-                foreach (var childReference in slot.ChildReferences ?? [])
-                {
-                    var candidate = ResolveCandidate(
-                        childReference.Reference,
-                        diagnostics,
-                        activeDefinitions,
-                        $"slot '{resolvedSlot.Name}' in {context}");
-                    if (candidate?.HasRenderableContent == true)
-                    {
-                        resolvedSlot.SelectedChild = candidate;
-                        break;
-                    }
-                }
-            }
-
-            if (resolvedSlot.SelectedChild == null
-                && ((slot.ChildMeshes?.Count ?? 0) > 0 || (slot.ChildReferences?.Count ?? 0) > 0))
-            {
-                diagnostics.Add($"No candidate could be resolved for slot '{resolvedSlot.Name}' in {context}.");
-            }
-
-            node.Slots.Add(resolvedSlot);
-        }
+        ResolveSlots(node, definition, ownerFile, diagnostics, activeDefinitions, context, nodePath, selectedChoices);
 
         return node;
     }
@@ -165,9 +150,18 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         PackFile ownerFile,
         List<string> diagnostics,
         List<string> activeDefinitions,
-        string context)
+        string context,
+        string nodePath,
+        IReadOnlyDictionary<string, int> selectedChoices)
     {
-        var node = ResolveInlineDefinition(definition, ownerFile, diagnostics, activeDefinitions, context);
+        var node = ResolveInlineDefinition(
+            definition,
+            ownerFile,
+            diagnostics,
+            activeDefinitions,
+            context,
+            nodePath,
+            selectedChoices);
         if (node?.HasRenderableContent != true)
             return null;
         return node;
@@ -178,7 +172,9 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         PackFile ownerFile,
         List<string> diagnostics,
         List<string> activeDefinitions,
-        string context)
+        string context,
+        string nodePath,
+        IReadOnlyDictionary<string, int> selectedChoices)
     {
         var node = new ResolvedVariantMeshNode(
             $"{GetDefinitionKey(ownerFile)}::{context}",
@@ -191,46 +187,12 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
                 definition.ModelReference,
                 diagnostics,
                 activeDefinitions,
-                $"model reference in {context}");
+                $"model reference in {context}",
+                $"{nodePath}/model",
+                selectedChoices);
         }
 
-        foreach (var slot in definition.ChildSlots ?? [])
-        {
-            var resolvedSlot = new ResolvedVariantMeshSlot(
-                slot.Name ?? string.Empty,
-                slot.AttachmentPoint ?? string.Empty);
-
-            foreach (var childMesh in slot.ChildMeshes ?? [])
-            {
-                var candidate = ResolveCandidate(childMesh, ownerFile, diagnostics, activeDefinitions, $"slot '{resolvedSlot.Name}' in {context}");
-                if (candidate?.HasRenderableContent == true)
-                {
-                    resolvedSlot.SelectedChild = candidate;
-                    break;
-                }
-            }
-
-            if (resolvedSlot.SelectedChild == null)
-            {
-                foreach (var childReference in slot.ChildReferences ?? [])
-                {
-                    var candidate = ResolveCandidate(childReference.Reference, diagnostics, activeDefinitions, $"slot '{resolvedSlot.Name}' in {context}");
-                    if (candidate?.HasRenderableContent == true)
-                    {
-                        resolvedSlot.SelectedChild = candidate;
-                        break;
-                    }
-                }
-            }
-
-            if (resolvedSlot.SelectedChild == null
-                && ((slot.ChildMeshes?.Count ?? 0) > 0 || (slot.ChildReferences?.Count ?? 0) > 0))
-            {
-                diagnostics.Add($"No candidate could be resolved for slot '{resolvedSlot.Name}' in {context}.");
-            }
-
-            node.Slots.Add(resolvedSlot);
-        }
+        ResolveSlots(node, definition, ownerFile, diagnostics, activeDefinitions, context, nodePath, selectedChoices);
 
         return node;
     }
@@ -239,7 +201,9 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         string? reference,
         List<string> diagnostics,
         List<string> activeDefinitions,
-        string context)
+        string context,
+        string nodePath,
+        IReadOnlyDictionary<string, int> selectedChoices)
     {
         if (string.IsNullOrWhiteSpace(reference))
         {
@@ -255,7 +219,7 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         }
 
         if (IsVmd(candidateFile))
-            return ResolveDefinition(candidateFile, diagnostics, activeDefinitions, context);
+            return ResolveDefinition(candidateFile, diagnostics, activeDefinitions, context, nodePath, selectedChoices);
 
         if (!IsModel(candidateFile))
         {
@@ -279,6 +243,107 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         {
             diagnostics.Add($"Candidate '{DescribeFile(candidateFile)}' in {context} could not be loaded; trying the next candidate. {exception.Message}");
             return null;
+        }
+    }
+
+    private void ResolveSlots(
+        ResolvedVariantMeshNode node,
+        VariantMesh definition,
+        PackFile ownerFile,
+        List<string> diagnostics,
+        List<string> activeDefinitions,
+        string context,
+        string nodePath,
+        IReadOnlyDictionary<string, int> selectedChoices)
+    {
+        foreach (var (slot, slotIndex) in (definition.ChildSlots ?? []).Select((slot, index) => (slot, index)))
+        {
+            var resolvedSlot = new ResolvedVariantMeshSlot(
+                slot.Name ?? string.Empty,
+                slot.AttachmentPoint ?? string.Empty);
+            var slotPath = $"{nodePath}/slot[{slotIndex}]";
+            var candidates = new List<(int Index, Func<ResolvedVariantMeshNode?> Resolve)>();
+            var candidateIndex = 0;
+
+            // VariantMeshDefinitionLoader preserves these as two collections
+            // and the viewport visits inline meshes before references. Keep
+            // that order so default selection matches the normal preview.
+            foreach (var childMesh in slot.ChildMeshes ?? [])
+            {
+                var index = candidateIndex++;
+                var candidatePath = $"{slotPath}/choice[{index}]";
+                candidates.Add((
+                    index,
+                    () => ResolveCandidate(
+                        childMesh,
+                        ownerFile,
+                        diagnostics,
+                        activeDefinitions,
+                        $"slot '{resolvedSlot.Name}' in {context}",
+                        candidatePath,
+                        selectedChoices)));
+            }
+
+            foreach (var childReference in slot.ChildReferences ?? [])
+            {
+                var index = candidateIndex++;
+                var candidatePath = $"{slotPath}/choice[{index}]";
+                candidates.Add((
+                    index,
+                    () => ResolveCandidate(
+                        childReference.Reference,
+                        diagnostics,
+                        activeDefinitions,
+                        $"slot '{resolvedSlot.Name}' in {context}",
+                        candidatePath,
+                        selectedChoices)));
+            }
+
+            var hasRequestedChoice = selectedChoices.TryGetValue(slotPath, out var requestedChoice);
+            if (hasRequestedChoice)
+            {
+                var requestedCandidate = candidates.FirstOrDefault(x => x.Index == requestedChoice);
+                if (requestedCandidate.Resolve == null)
+                {
+                    diagnostics.Add(
+                        $"Selected candidate {requestedChoice} is not available for slot '{resolvedSlot.Name}' in {context}; "
+                        + "using the default candidate.");
+                }
+                else
+                {
+                    var selected = requestedCandidate.Resolve();
+                    if (selected?.HasRenderableContent == true)
+                    {
+                        resolvedSlot.SelectedChild = selected;
+                    }
+                    else
+                    {
+                        diagnostics.Add(
+                            $"Selected candidate {requestedChoice} could not be resolved for slot '{resolvedSlot.Name}' in {context}; "
+                            + "using the default candidate.");
+                    }
+                }
+            }
+
+            if (resolvedSlot.SelectedChild == null)
+            {
+                foreach (var candidate in candidates)
+                {
+                    if (hasRequestedChoice && candidate.Index == requestedChoice)
+                        continue;
+                    var resolved = candidate.Resolve();
+                    if (resolved?.HasRenderableContent == true)
+                    {
+                        resolvedSlot.SelectedChild = resolved;
+                        break;
+                    }
+                }
+            }
+
+            if (resolvedSlot.SelectedChild == null && candidates.Count > 0)
+                diagnostics.Add($"No candidate could be resolved for slot '{resolvedSlot.Name}' in {context}.");
+
+            node.Slots.Add(resolvedSlot);
         }
     }
 

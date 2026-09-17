@@ -139,6 +139,33 @@ public sealed class AssetHostDispatcherTests
     }
 
     [Test]
+    public void Export_PassesVariantMeshSelectionsToRuntime()
+    {
+        var factory = new FakeRuntimeFactory();
+        using var dispatcher = new AssetHostDispatcher(factory);
+        var root = Path.Combine(Path.GetTempPath(), "asset-host-root", Guid.NewGuid().ToString("N"));
+        dispatcher.Dispatch(Initialize(root, "base.pack"));
+
+        var response = dispatcher.Dispatch(Request(
+            "exportModel",
+            "variant-selection",
+            "assetPath", "unit.variantmeshdefinition",
+            "outputPath", "unit.glb",
+            "variantSelections", new[]
+            {
+                new { slotPath = "root/slot[0]", choiceIndex = 4 },
+                new { slotPath = "root/slot[2]/choice[0]/slot[0]", choiceIndex = 1 }
+            }));
+
+        Assert.That(response.Success, Is.True);
+        Assert.That(factory.Created.Single().Exports.Single().VariantSelections, Is.EqualTo(new[]
+        {
+            new AssetHostVariantMeshSelection("root/slot[0]", 4),
+            new AssetHostVariantMeshSelection("root/slot[2]/choice[0]/slot[0]", 1)
+        }));
+    }
+
+    [Test]
     public void Export_PropagatesStableMissingAssetAndAnimationCodes()
     {
         var factory = new FakeRuntimeFactory
@@ -225,6 +252,9 @@ public sealed class AssetHostDispatcherTests
             Exports.Add(request);
             return factory.NextResult ?? new ExportResult(true, request.OutputPath, [], [], []);
         }
+
+        public AssetHostAnimationCatalog GetAnimationCatalog(string assetPath)
+            => new(true, assetPath, null, false, [], []);
 
         public void Dispose() => Disposed = true;
     }

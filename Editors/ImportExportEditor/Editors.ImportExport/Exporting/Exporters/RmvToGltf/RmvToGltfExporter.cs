@@ -167,7 +167,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             if (_variantMeshResolver == null)
                 throw new InvalidOperationException("VariantMeshDefinition export requires the variant mesh composition resolver.");
 
-            var composition = _variantMeshResolver.Resolve(settings.InputModelFile);
+            var composition = settings.VariantMeshSelections.Count > 0
+                ? _variantMeshResolver.Resolve(settings.InputModelFile, settings.VariantMeshSelections)
+                : _variantMeshResolver.Resolve(settings.InputModelFile);
             foreach (var diagnostic in composition.Diagnostics)
                 _logger.Here().Warning(diagnostic);
 

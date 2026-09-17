@@ -1,4 +1,5 @@
 using Shared.Core.PackFiles.Models;
+using GameWorld.Core.Services;
 
 namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 {
@@ -23,6 +24,12 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         bool UsePoissonReconstruction = true
     )
     {
+        /// <summary>
+        /// Explicit candidate choices for composed VariantMeshDefinition exports.
+        /// Empty keeps the normal first-renderable-candidate behavior.
+        /// </summary>
+        public IReadOnlyList<VariantMeshSelection> VariantMeshSelections { get; init; } = [];
+
         /// <summary>
         /// Controls whether a skeleton is emitted independently of animation clips.
         /// Keeping this an init-only property preserves the existing positional API.

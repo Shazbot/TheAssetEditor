@@ -10,7 +10,10 @@ public sealed record AssetHostExportRequest(
     IReadOnlyList<string> AnimationPaths,
     bool ExportMaterials = true,
     bool IncludeSkeleton = true,
-    bool MirrorMesh = true);
+    bool MirrorMesh = true,
+    IReadOnlyList<AssetHostVariantMeshSelection>? VariantSelections = null);
+
+public sealed record AssetHostVariantMeshSelection(string SlotPath, int ChoiceIndex);
 
 public sealed record AssetHostAnimationReference(string Path);
 
@@ -73,7 +76,7 @@ public static class AssetHostProtocol
         ?? "unknown";
 
     public static readonly IReadOnlyList<string> Capabilities =
-        ["hello", "initialize", "getAnimationCatalog", "exportModel", "shutdown"];
+        ["hello", "initialize", "getAnimationCatalog", "exportModel", "variantMeshSelections", "shutdown"];
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -276,6 +279,15 @@ public sealed class AssetHostDispatcher : IDisposable
                 "animationPaths must be an array of virtual paths.");
         }
 
+        if (!TryReadVariantMeshSelections(request, out var variantSelections, allowMissing: true))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportModel",
+                "InvalidVariantMeshSelections",
+                "variantSelections must be an array of slotPath/choiceIndex objects.");
+        }
+
         if (!TryReadBoolean(request, true, out var exportMaterials, "exportMaterials", "materials")
             || !TryReadBoolean(request, true, out var includeSkeleton, "includeSkeleton", "skeleton")
             || !TryReadBoolean(request, true, out var mirrorMesh, "mirrorMesh", "mirror"))
@@ -293,7 +305,8 @@ public sealed class AssetHostDispatcher : IDisposable
             animationPaths,
             exportMaterials,
             includeSkeleton,
-            mirrorMesh);
+            mirrorMesh,
+            variantSelections);
         var result = _runtime.ExportModel(exportRequest);
         if (result.Success)
             return AssetHostResponse.Ok(requestId, "exportModel", result);
@@ -445,6 +458,36 @@ public sealed class AssetHostDispatcher : IDisposable
                 return false;
             values.Add(item.GetString()!);
         }
+        return true;
+    }
+
+    private static bool TryReadVariantMeshSelections(
+        JsonElement request,
+        out List<AssetHostVariantMeshSelection> values,
+        bool allowMissing = false)
+    {
+        values = [];
+        if (!request.TryGetProperty("variantSelections", out var property))
+            return allowMissing;
+        if (property.ValueKind != JsonValueKind.Array)
+            return false;
+
+        var seenSlotPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in property.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+                return false;
+
+            var slotPath = ReadString(item, "slotPath")?.Trim();
+            if (string.IsNullOrWhiteSpace(slotPath)
+                || !TryReadInt32(item, "choiceIndex", out var choiceIndex)
+                || choiceIndex < 0
+                || !seenSlotPaths.Add(slotPath))
+                return false;
+
+            values.Add(new AssetHostVariantMeshSelection(slotPath, choiceIndex));
+        }
+
         return true;
     }
 

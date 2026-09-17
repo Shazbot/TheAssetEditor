@@ -165,6 +165,9 @@ public sealed class AssetHostPipeServerTests
             return new ExportResult(true, request.OutputPath, [], [], []);
         }
 
+        public AssetHostAnimationCatalog GetAnimationCatalog(string assetPath)
+            => new(true, assetPath, null, false, [], []);
+
         public void Dispose() => Disposed = true;
     }
 }

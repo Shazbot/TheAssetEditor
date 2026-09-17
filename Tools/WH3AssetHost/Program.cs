@@ -247,6 +247,9 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             MirrorMesh: request.MirrorMesh)
         {
             IncludeSkeleton = request.IncludeSkeleton,
+            VariantMeshSelections = request.VariantSelections?
+                .Select(selection => new VariantMeshSelection(selection.SlotPath, selection.ChoiceIndex))
+                .ToList() ?? [],
             // The masks are auxiliary files and are not referenced by the
             // glTF scene. The mod-manager render only needs embedded material
             // channels, so avoid converting and inverting them.
