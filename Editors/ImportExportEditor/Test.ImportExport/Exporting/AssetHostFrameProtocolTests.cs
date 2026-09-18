@@ -51,7 +51,9 @@ public sealed class AssetHostFrameProtocolTests
     public async Task WriteAndReadFrameAsync_RoundTripsUtf8Json()
     {
         using var stream = new MemoryStream();
-        var value = new { message = "čarobno", number = 7 };
+        var value = JsonSerializer.SerializeToElement(
+            new { message = "čarobno", number = 7 },
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
         await NamedPipeFrameProtocol.WriteJsonFrameAsync(stream, value);
         stream.Position = 0;

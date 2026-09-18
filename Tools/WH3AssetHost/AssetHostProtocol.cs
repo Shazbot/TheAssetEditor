@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Reflection;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf;
 
@@ -24,6 +25,26 @@ public sealed record AssetHostAnimationCatalog(
     bool HasSkeletonFile,
     IReadOnlyList<AssetHostAnimationReference> Animations,
     IReadOnlyList<string> Diagnostics);
+
+public sealed record AssetHostHelloResult(
+    string HostVersion,
+    int ProtocolVersion,
+    IReadOnlyList<string> Capabilities,
+    int MaxFrameBytes);
+
+public sealed record AssetHostInitializationResult(
+    string OutputRoot,
+    IReadOnlyList<string> PackPaths);
+
+public sealed record AssetHostShutdownResult(bool ShuttingDown);
+
+public sealed record AssetHostMissingSkeletonDecisionRequest(
+    int ProtocolVersion,
+    string RequestId,
+    string Command,
+    string DecisionType,
+    string SkeletonName,
+    string? Message);
 
 public interface IAssetHostRuntime : IDisposable
 {
@@ -60,7 +81,7 @@ public sealed record AssetHostResponse(
     string RequestId,
     bool Success,
     string? Command,
-    object? Result,
+    [property: JsonConverter(typeof(AssetHostResponseResultJsonConverter))] object? Result,
     AssetHostError? Error)
 {
     public static AssetHostResponse Ok(string requestId, string command, object? result = null)
@@ -94,12 +115,6 @@ public static class AssetHostProtocol
 
     public static readonly IReadOnlyList<string> Capabilities =
         ["hello", "initialize", "getAnimationCatalog", "exportModel", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
-
-    public static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
-    };
 }
 
 /// <summary>
@@ -195,13 +210,14 @@ public sealed class AssetHostDispatcher : IDisposable
     }
 
     private static AssetHostResponse HandleHello(string requestId)
-        => AssetHostResponse.Ok(requestId, "hello", new
-        {
-            hostVersion = AssetHostProtocol.HostVersion,
-            protocolVersion = AssetHostProtocol.ProtocolVersion,
-            capabilities = AssetHostProtocol.Capabilities,
-            maxFrameBytes = AssetHostProtocol.MaxFramePayloadBytes
-        });
+        => AssetHostResponse.Ok(
+            requestId,
+            "hello",
+            new AssetHostHelloResult(
+                AssetHostProtocol.HostVersion,
+                AssetHostProtocol.ProtocolVersion,
+                AssetHostProtocol.Capabilities,
+                AssetHostProtocol.MaxFramePayloadBytes));
 
     private AssetHostResponse HandleInitialize(JsonElement request, string requestId)
     {
@@ -235,7 +251,10 @@ public sealed class AssetHostDispatcher : IDisposable
         _outputRoot = outputRoot;
         previous?.Dispose();
 
-        return AssetHostResponse.Ok(requestId, "initialize", new { outputRoot, packPaths });
+        return AssetHostResponse.Ok(
+            requestId,
+            "initialize",
+            new AssetHostInitializationResult(outputRoot, packPaths));
     }
 
     private IAssetHostRuntime CreateRuntime(
@@ -366,7 +385,10 @@ public sealed class AssetHostDispatcher : IDisposable
     {
         _shutdownRequested = true;
         DisposeRuntime();
-        return AssetHostResponse.Ok(requestId, "shutdown", new { shuttingDown = true });
+        return AssetHostResponse.Ok(
+            requestId,
+            "shutdown",
+            new AssetHostShutdownResult(ShuttingDown: true));
     }
 
     private static bool TryNormalizeOutputRoot(string? rawRoot, out string outputRoot, out string? error)

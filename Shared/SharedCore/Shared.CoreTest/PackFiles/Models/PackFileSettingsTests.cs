@@ -79,6 +79,35 @@ namespace Shared.CoreTest.PackFiles.Models
         }
 
         [Test]
+        public void SaveAndLoad_RoundTripsAllSerializedSettings()
+        {
+            var fileSystem = new Mock<IFileSystemAccess>();
+            byte[]? savedBytes = null;
+            fileSystem.Setup(x => x.FileWriteAllBytes("settings.json", It.IsAny<byte[]>()))
+                .Callback<string, byte[]>((_, bytes) => savedBytes = bytes);
+
+            var settings = new PackFileSettings
+            {
+                SerializeToDisk = true,
+                SaveLocationPath = @"c:\output\test.pack",
+                GameVersion = GameTypeEnum.Warhammer3,
+                EnablePackFileCorruptionDetection = true,
+                IgnoredFilesWhenSerializing = new ObservableCollection<string>(["Folder/IGNORE.txt", ""])
+            };
+
+            settings.Save("settings.json", fileSystem.Object);
+            fileSystem.Setup(x => x.FileReadAllBytes("settings.json")).Returns(savedBytes!);
+
+            var loaded = PackFileSettings.Load("settings.json", fileSystem.Object);
+
+            Assert.That(loaded, Is.Not.Null);
+            Assert.That(loaded!.SaveLocationPath, Is.EqualTo(settings.SaveLocationPath));
+            Assert.That(loaded.GameVersion, Is.EqualTo(settings.GameVersion));
+            Assert.That(loaded.EnablePackFileCorruptionDetection, Is.EqualTo(settings.EnablePackFileCorruptionDetection));
+            Assert.That(loaded.IgnoredFilesWhenSerializing, Is.EqualTo(new[] { @"folder\ignore.txt" }));
+        }
+
+        [Test]
         public void Load_ReadsLegacyOutputPackFilePath()
         {
             var fileSystem = new Mock<IFileSystemAccess>();

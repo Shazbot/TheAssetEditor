@@ -3,6 +3,7 @@ using System.Collections.Specialized;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Shared.Core.PackFiles.Serialization;
 using Shared.Core.PackFiles.Utility;
 using Shared.Core.Services;
 using Shared.Core.Settings;
@@ -11,12 +12,6 @@ namespace Shared.Core.PackFiles.Models
 {
     public class PackFileSettings
     {
-        private static readonly JsonSerializerOptions JsonOptions = new()
-        {
-            WriteIndented = true,
-            Converters = { new JsonStringEnumConverter() }
-        };
-
         private string? _saveLocationPath;
         private GameTypeEnum? _gameVersion;
         private bool _enablePackFileCorruptionDetection;
@@ -101,7 +96,9 @@ namespace Shared.Core.PackFiles.Models
                 IgnoredFilesWhenSerializing = new ObservableCollection<string>(NormalizeIgnoredFiles(IgnoredFilesWhenSerializing))
             };
 
-            var json = JsonSerializer.Serialize(settingsToSerialize, JsonOptions);
+            var json = JsonSerializer.Serialize(
+                settingsToSerialize,
+                PackFileSettingsJsonContext.Default.PackFileSettings);
             fileSystemAccess.FileWriteAllBytes(path, Encoding.UTF8.GetBytes(json));
         }
 
@@ -117,7 +114,9 @@ namespace Shared.Core.PackFiles.Models
         {
             var settingsBytes = fileSystemAccess.FileReadAllBytes(path);
             var json = Encoding.UTF8.GetString(settingsBytes);
-            var settings = JsonSerializer.Deserialize<PackFileSettings>(json, JsonOptions);
+            var settings = JsonSerializer.Deserialize(
+                json,
+                PackFileSettingsJsonContext.Default.PackFileSettings);
             if (settings == null || !string.IsNullOrWhiteSpace(settings.SaveLocationPath))
                 return settings;
 

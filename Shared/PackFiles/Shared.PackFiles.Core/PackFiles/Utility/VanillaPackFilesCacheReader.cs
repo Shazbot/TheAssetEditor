@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Shared.Core.PackFiles.Models;
+using Shared.Core.PackFiles.Serialization;
 using ZstdSharp;
 
 namespace Shared.Core.PackFiles.Utility;
@@ -77,7 +78,9 @@ internal sealed class VanillaPackFilesCacheReader
 
             using var compressedStream = File.OpenRead(cachePath);
             using var decompressionStream = new DecompressionStream(compressedStream);
-            var document = JsonSerializer.Deserialize<CacheDocument>(decompressionStream, JsonOptions);
+            var document = JsonSerializer.Deserialize(
+                decompressionStream,
+                VanillaPackFilesCacheJsonContext.Default.CacheDocument);
             if (document?.Version != CurrentVersion || document.Entries == null)
                 return new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
 
@@ -162,11 +165,6 @@ internal sealed class VanillaPackFilesCacheReader
     private static double GetNodeMtimeMilliseconds(FileInfo packFile)
         => (packFile.LastWriteTimeUtc - DateTime.UnixEpoch).TotalMilliseconds;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     internal sealed record CachedPackIndex(
         CachedPackFileHeader Header,
         IReadOnlyList<CachedPackedFile> PackedFiles,
@@ -186,7 +184,7 @@ internal sealed class VanillaPackFilesCacheReader
         long StartPos,
         bool IsCompressed);
 
-    private sealed class CacheDocument
+    internal sealed class CacheDocument
     {
         [JsonPropertyName("version")]
         public int Version { get; set; }
@@ -195,7 +193,7 @@ internal sealed class VanillaPackFilesCacheReader
         public Dictionary<string, CacheEntry>? Entries { get; set; }
     }
 
-    private sealed class CacheEntry
+    internal sealed class CacheEntry
     {
         [JsonPropertyName("size")]
         public long Size { get; set; }
@@ -213,7 +211,7 @@ internal sealed class VanillaPackFilesCacheReader
         public List<string>? DependencyPacks { get; set; }
     }
 
-    private sealed class CachedPackedFileDto
+    internal sealed class CachedPackedFileDto
     {
         [JsonPropertyName("name")]
         public string? Name { get; set; }
@@ -228,7 +226,7 @@ internal sealed class VanillaPackFilesCacheReader
         public bool IsCompressed { get; set; }
     }
 
-    private sealed class CachePackHeader
+    internal sealed class CachePackHeader
     {
         [JsonPropertyName("header")]
         public string? Header { get; set; }

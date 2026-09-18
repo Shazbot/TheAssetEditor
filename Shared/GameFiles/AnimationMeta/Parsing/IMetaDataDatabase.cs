@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 
 namespace Shared.GameFormats.AnimationMeta.Parsing
 {
@@ -11,6 +12,9 @@ namespace Shared.GameFormats.AnimationMeta.Parsing
         List<Type> GetDefinition(string metadataName);
     }
 
+    // This database deliberately discovers editor metadata types and their layouts at runtime.
+    // It is consumed by the animation-metadata editor, not by the headless asset host.
+    [RequiresUnreferencedCode("Animation metadata definitions are discovered dynamically for the editor.")]
     public class MetaDataDatabase : IMetaDataDatabase
     {
         private readonly ILogger _logger = Logging.Create<MetaDataDatabase>();

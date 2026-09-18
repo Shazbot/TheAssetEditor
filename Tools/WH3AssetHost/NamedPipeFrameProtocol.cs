@@ -69,10 +69,30 @@ public static class NamedPipeFrameProtocol
 
     public static Task WriteJsonFrameAsync(
         Stream stream,
-        object value,
+        AssetHostResponse value,
         CancellationToken cancellationToken = default)
     {
-        var json = JsonSerializer.Serialize(value, AssetHostProtocol.JsonOptions);
+        var json = JsonSerializer.Serialize(value, AssetHostJsonContext.Default.AssetHostResponse);
+        return WriteFrameAsync(stream, Encoding.UTF8.GetBytes(json), cancellationToken);
+    }
+
+    public static Task WriteJsonFrameAsync(
+        Stream stream,
+        AssetHostMissingSkeletonDecisionRequest value,
+        CancellationToken cancellationToken = default)
+    {
+        var json = JsonSerializer.Serialize(
+            value,
+            AssetHostJsonContext.Default.AssetHostMissingSkeletonDecisionRequest);
+        return WriteFrameAsync(stream, Encoding.UTF8.GetBytes(json), cancellationToken);
+    }
+
+    public static Task WriteJsonFrameAsync(
+        Stream stream,
+        JsonElement value,
+        CancellationToken cancellationToken = default)
+    {
+        var json = value.GetRawText();
         return WriteFrameAsync(stream, Encoding.UTF8.GetBytes(json), cancellationToken);
     }
 

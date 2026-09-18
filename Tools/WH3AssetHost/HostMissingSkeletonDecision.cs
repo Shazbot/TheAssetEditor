@@ -39,15 +39,13 @@ public sealed class HostMissingSkeletonDecision : IMissingSkeletonDecision
             {
                 NamedPipeFrameProtocol.WriteJsonFrameAsync(
                     _stream,
-                    new
-                    {
-                        protocolVersion = AssetHostProtocol.ProtocolVersion,
+                    new AssetHostMissingSkeletonDecisionRequest(
+                        AssetHostProtocol.ProtocolVersion,
                         requestId,
-                        command = "decisionRequest",
-                        decisionType = "missingSkeleton",
-                        skeletonName = context.SkeletonName,
-                        message = context.Message
-                    },
+                        "decisionRequest",
+                        "missingSkeleton",
+                        context.SkeletonName,
+                        context.Message),
                     _cancellationToken).GetAwaiter().GetResult();
 
                 while (true)

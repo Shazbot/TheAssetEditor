@@ -10,6 +10,57 @@ namespace Shared.CoreTest.PackFiles.Utility;
 public sealed class VanillaPackFilesCacheReaderTests
 {
     [Test]
+    public void InvalidCompressedCache_FallsBackToEmptyCache()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VanillaPackFilesCacheReaderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var cachePath = Path.Combine(root, "vanilla-pack-files-cache.bin");
+        var packPath = Path.Combine(root, "release.pack");
+
+        try
+        {
+            File.WriteAllBytes(cachePath, [1, 2, 3, 4, 5]);
+
+            var reader = new VanillaPackFilesCacheReader(cachePath);
+
+            Assert.That(reader.TryGet(new FileInfo(packPath)), Is.Null);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void WrongCacheVersion_FallsBackToEmptyCache()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VanillaPackFilesCacheReaderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var cachePath = Path.Combine(root, "vanilla-pack-files-cache.bin");
+        var packPath = Path.Combine(root, "release.pack");
+
+        try
+        {
+            using (var cacheStream = File.Create(cachePath))
+            using (var compressor = new CompressionStream(cacheStream, 1))
+            {
+                var json = Encoding.UTF8.GetBytes("{\"version\":1,\"entries\":{}}");
+                compressor.Write(json);
+            }
+
+            var reader = new VanillaPackFilesCacheReader(cachePath);
+
+            Assert.That(reader.TryGet(new FileInfo(packPath)), Is.Null);
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public void HeadlessLoader_UsesExpandedCacheAndReadsCompressedPayloads()
     {
         var root = Path.Combine(Path.GetTempPath(), "VanillaPackFilesCacheReaderTests", Guid.NewGuid().ToString("N"));

@@ -179,7 +179,11 @@ public sealed class HostMissingSkeletonDecisionTests
     }
 
     private static Task SendAsync(Stream stream, object request)
-        => NamedPipeFrameProtocol.WriteJsonFrameAsync(stream, request);
+        => NamedPipeFrameProtocol.WriteJsonFrameAsync(
+            stream,
+            JsonSerializer.SerializeToElement(
+                request,
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
 
     private static async Task<JsonDocument> ReadJsonAsync(Stream stream)
     {

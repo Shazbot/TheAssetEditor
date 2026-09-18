@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Serilog;
 using Shared.Core.PackFiles.Models;
+using GameWorld.Core.Serialization;
 
 namespace GameWorld.Core.Services;
 
@@ -33,10 +34,6 @@ public sealed class SkeletonAnimationLookupCacheOptions
 internal sealed class SkeletonAnimationLookupCache
 {
     private const int CurrentSchemaVersion = 1;
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
 
     private readonly ILogger _logger = Logging.Create<SkeletonAnimationLookupCache>();
     private readonly SkeletonAnimationLookupCacheOptions _options;
@@ -63,7 +60,7 @@ internal sealed class SkeletonAnimationLookupCache
         {
             var document = JsonSerializer.Deserialize<CacheDocument>(
                 File.ReadAllText(cachePath, Encoding.UTF8),
-                JsonOptions);
+                SkeletonAnimationLookupCacheJsonContext.Default.CacheDocument);
             if (document == null
                 || document.SchemaVersion != CurrentSchemaVersion
                 || !string.Equals(document.PackPath, packStamp.PackPath, StringComparison.OrdinalIgnoreCase)
@@ -148,7 +145,9 @@ internal sealed class SkeletonAnimationLookupCache
             temporaryPath = string.Concat(cachePath, ".", Guid.NewGuid().ToString("N"), ".tmp");
             File.WriteAllText(
                 temporaryPath,
-                JsonSerializer.Serialize(document, JsonOptions),
+                JsonSerializer.Serialize(
+                    document,
+                    SkeletonAnimationLookupCacheJsonContext.Default.CacheDocument),
                 Encoding.UTF8);
             File.Move(temporaryPath, cachePath, overwrite: true);
             temporaryPath = null;
@@ -211,7 +210,7 @@ internal sealed class SkeletonAnimationLookupCache
         long Length,
         long LastWriteTimeUtcTicks);
 
-    private sealed class CacheDocument
+    internal sealed class CacheDocument
     {
         public int SchemaVersion { get; set; }
         public string PackPath { get; set; } = string.Empty;
@@ -221,7 +220,7 @@ internal sealed class SkeletonAnimationLookupCache
         public List<CachedAnimation> Animations { get; set; } = [];
     }
 
-    private sealed class CachedAnimation
+    internal sealed class CachedAnimation
     {
         public string SkeletonName { get; set; } = string.Empty;
         public string AnimationPath { get; set; } = string.Empty;

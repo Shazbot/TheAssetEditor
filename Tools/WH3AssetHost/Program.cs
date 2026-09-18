@@ -14,12 +14,6 @@ namespace WH3AssetHost;
 
 internal static class Program
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
-    };
-
     public static int Main(string[] args)
     {
         if (args.Length > 0 && string.Equals(args[0], "serve", StringComparison.OrdinalIgnoreCase))
@@ -39,7 +33,7 @@ internal static class Program
                 request.ExportMaterials,
                 request.IncludeSkeleton,
                 request.MirrorMesh));
-            Console.Out.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            Console.Out.WriteLine(JsonSerializer.Serialize(result, AssetHostJsonContext.Default.ExportResult));
             if (result.Success)
                 return 0;
 
@@ -85,7 +79,7 @@ internal static class Program
             Array.Empty<string>(),
             Array.Empty<ExportWarning>(),
             [new ExportError(code, message)]);
-        Console.Out.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        Console.Out.WriteLine(JsonSerializer.Serialize(result, AssetHostJsonContext.Default.ExportResult));
         return exitCode;
     }
 

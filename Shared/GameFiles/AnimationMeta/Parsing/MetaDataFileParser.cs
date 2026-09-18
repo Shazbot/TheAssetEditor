@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using CommunityToolkit.Diagnostics;
 using Shared.ByteParsing;
@@ -7,6 +8,9 @@ using Shared.Core.PackFiles.Models;
 
 namespace Shared.GameFormats.AnimationMeta.Parsing
 {
+    // Metadata layouts are intentionally discovered and instantiated dynamically by the editor.
+    // Keep this editor-only parser out of trim-safe host call paths.
+    [RequiresUnreferencedCode("Animation metadata layouts are discovered dynamically for the editor.")]
     public class MetaDataFileParser
     {
         private readonly ILogger _logger = Logging.Create<MetaDataFileParser>();
@@ -205,7 +209,7 @@ namespace Shared.GameFormats.AnimationMeta.Parsing
             var data = new List<byte>();
             foreach (var proptery in classLayout.Properties)
             {
-                var propertyValue = ReflectionHelper.GetMemberValue(entry, proptery.Name);
+                var propertyValue = proptery.GetValue(entry);
                 var parser = ByteParserFactory.Create(proptery.PropertyType);
                 var attributeByteValue = parser.Encode(propertyValue);
                 data.AddRange(attributeByteValue);

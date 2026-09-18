@@ -1,0 +1,60 @@
+<linker>
+  <assembly fullname="Newtonsoft.Json" preserve="all" />
+  <assembly fullname="Serilog" preserve="all" />
+  <assembly fullname="SharpGLTF.Core" preserve="all" />
+  <assembly fullname="SharpGLTF.Runtime" preserve="all" />
+  <assembly fullname="SharpGLTF.Toolkit" preserve="all" />
+  <assembly fullname="System.Collections" preserve="all" />
+  <assembly fullname="System.IO.FileSystem" preserve="all">
+    <type fullname="System.IO.FileInfo" preserve="all" />
+    <type fullname="System.IO.DirectoryInfo" preserve="all" />
+  </assembly>
+  <assembly fullname="System.IO" preserve="all" />
+  <assembly fullname="System.Linq" preserve="all" />
+  <assembly fullname="System.Numerics" preserve="all">
+    <type fullname="System.Numerics.Vector4" preserve="all" />
+  </assembly>
+  <assembly fullname="System.Numerics.Vectors" preserve="all" />
+  <assembly fullname="System.Runtime" preserve="all" />
+  <assembly fullname="System.Text.Json">
+    <type fullname="System.Text.Json.JsonWriterOptions" preserve="all" />
+    <type fullname="System.Text.Json.Utf8JsonWriter" preserve="all" />
+  </assembly>
+  <assembly fullname="System.Text.Encodings.Web">
+    <type fullname="System.Text.Encodings.Web.JavaScriptEncoder" preserve="all" />
+  </assembly>
+  <assembly fullname="System.IO.Pipelines">
+    <type fullname="System.IO.Pipelines.Pipe" preserve="all" />
+    <type fullname="System.IO.Pipelines.PipeReader" preserve="all" />
+    <type fullname="System.IO.Pipelines.PipeWriter" preserve="all" />
+  </assembly>
+  <!-- SharpGLTF 1.0.6 is not trim-aware and exercises these framework APIs
+       through its binary/JSON serializer. Keep only the closed runtime graph
+       observed by the headless export smoke; these are roots, not warning suppressions. -->
+  <assembly fullname="System.Private.CoreLib">
+    <type fullname="System.ArraySegment`1" preserve="all" />
+    <type fullname="System.ArgumentException" preserve="all" />
+    <type fullname="System.Collections.Generic.Dictionary`2" preserve="all" />
+    <type fullname="System.Collections.Generic.Dictionary`2/Enumerator" preserve="all" />
+    <type fullname="System.Collections.Generic.IReadOnlyCollection`1" preserve="all" />
+    <type fullname="System.Collections.Generic.IReadOnlyDictionary`2" preserve="all" />
+    <type fullname="System.Collections.Generic.IReadOnlyList`1" preserve="all" />
+    <type fullname="System.Collections.Generic.List`1" preserve="all" />
+    <type fullname="System.Collections.Generic.List`1/Enumerator" preserve="all" />
+    <type fullname="System.IO.BinaryWriter" preserve="all" />
+    <type fullname="System.IO.FileInfo" preserve="all" />
+    <type fullname="System.IO.DirectoryInfo" preserve="all" />
+    <type fullname="System.IO.MemoryStream" preserve="all" />
+    <type fullname="System.IO.Path" preserve="all" />
+    <type fullname="System.IO.Stream" preserve="all" />
+    <type fullname="System.String" preserve="all" />
+    <type fullname="System.Text.Encoding" preserve="all" />
+    <type fullname="System.Text.UTF8Encoding" preserve="all" />
+    <type fullname="System.Numerics.Vector2" preserve="all" />
+    <type fullname="System.Numerics.Vector3" preserve="all" />
+    <type fullname="System.Numerics.Vector4" preserve="all" />
+    <type fullname="System.Numerics.Quaternion" preserve="all" />
+    <type fullname="System.Numerics.Matrix3x2" preserve="all" />
+    <type fullname="System.Numerics.Matrix4x4" preserve="all" />
+  </assembly>
+</linker>
