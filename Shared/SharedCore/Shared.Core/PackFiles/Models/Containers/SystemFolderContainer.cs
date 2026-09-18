@@ -69,7 +69,7 @@ namespace Shared.Core.PackFiles.Models.Containers
 
                 var fileName = Path.GetFileName(absolutePath);
                 var packFile = new PackFile(fileName, new FileSystemSource(absolutePath));
-                _fileList[normalizedPath] = packFile;
+                StoreFile(normalizedPath, packFile);
             }
         }
 
@@ -149,17 +149,10 @@ namespace Shared.Core.PackFiles.Models.Containers
 
         public string? GetFullPath(PackFile file)
         {
-            var pathByReference = _fileList.FirstOrDefault(x => ReferenceEquals(x.Value, file)).Key;
-            if (!string.IsNullOrWhiteSpace(pathByReference))
-                return pathByReference;
-
-            // Fallback: match by name, but only when it is unambiguous. Matching by name
-            // when several files share the same name could resolve to the wrong file.
-            var matchesByName = _fileList.Where(x => string.Equals(x.Value.Name, file.Name, StringComparison.OrdinalIgnoreCase)).ToList();
-            return matchesByName.Count == 1 ? matchesByName[0].Key : null;
+            return ReferenceEquals(file.Container, this) ? file.VirtualPath : null;
         }
 
-        public Dictionary<string, PackFile> GetAllFiles() => _fileList;
+        public IReadOnlyDictionary<string, PackFile> GetAllFiles() => _fileList;
 
         public SortedDictionary<string, List<string>> GetAllFilesByFolder()
         {
@@ -247,7 +240,7 @@ namespace Shared.Core.PackFiles.Models.Containers
                 _fileSystemAccess.FileWriteAllBytes(absolutePath, data);
 
             var newPackFile = new PackFile(file.Name, new FileSystemSource(absolutePath));
-            _fileList[normalizedPath] = newPackFile;
+            StoreFile(normalizedPath, newPackFile);
         }
 
         public List<PackFile> AddFiles(List<NewPackFileEntry> newFiles)
@@ -278,7 +271,7 @@ namespace Shared.Core.PackFiles.Models.Containers
                     _fileSystemAccess.FileWriteAllBytes(absolutePath, data);
 
                     var newPackFile = new PackFile(fileName, new FileSystemSource(absolutePath));
-                    _fileList[normalizedPath] = newPackFile;
+                    StoreFile(normalizedPath, newPackFile);
                     added.Add(newPackFile);
                 }
             }
@@ -288,8 +281,7 @@ namespace Shared.Core.PackFiles.Models.Containers
 
         public PackFile? DeleteFile(PackFile file)
         {
-            var key = _fileList.FirstOrDefault(x => ReferenceEquals(x.Value, file)).Key;
-            if (key == null)
+            if (!TryGetOwnedPath(file, out var key))
                 return null;
 
             var absolutePath = Path.Combine(SystemFilePath!, key);
@@ -299,7 +291,7 @@ namespace Shared.Core.PackFiles.Models.Containers
                     _fileSystemAccess.FileDelete(absolutePath);
             }
 
-            _fileList.Remove(key);
+            RemoveFile(key);
             return file;
         }
 
@@ -324,13 +316,12 @@ namespace Shared.Core.PackFiles.Models.Containers
                 .ToList();
 
             foreach (var key in keysToRemove)
-                _fileList.Remove(key);
+                RemoveFile(key);
         }
 
         public void MoveFile(PackFile file, string newFolderPath)
         {
-            var oldKey = _fileList.FirstOrDefault(x => ReferenceEquals(x.Value, file)).Key;
-            if (oldKey == null)
+            if (!TryGetOwnedPath(file, out var oldKey))
                 throw new Exception($"File '{file.Name}' not found in container.");
 
             var normalizedDir = PathNormalization.NormalizeDirectoryPath(newFolderPath);
@@ -352,7 +343,7 @@ namespace Shared.Core.PackFiles.Models.Containers
             // can still be resolved by reference (avoids ambiguous name matching).
             _fileList.Remove(oldKey);
             file.DataSource = new FileSystemSource(newAbsolutePath);
-            _fileList[newRelativePath] = file;
+            StoreFile(newRelativePath, file);
         }
 
         public string RenameDirectory(string currentNodeName, string newName)
@@ -388,8 +379,8 @@ namespace Shared.Core.PackFiles.Models.Containers
                 newPath = PathNormalization.NormalizeFileName(newPath);
 
                 var newFileAbsolutePath = Path.Combine(SystemFilePath!, newPath);
-                var updatedPackFile = new PackFile(packFile.Name, new FileSystemSource(newFileAbsolutePath));
-                _fileList[newPath] = updatedPackFile;
+                packFile.DataSource = new FileSystemSource(newFileAbsolutePath);
+                StoreFile(newPath, packFile);
             }
 
             return newNodePath;
@@ -397,8 +388,7 @@ namespace Shared.Core.PackFiles.Models.Containers
 
         public void RenameFile(PackFile file, string newName)
         {
-            var key = _fileList.FirstOrDefault(x => ReferenceEquals(x.Value, file)).Key;
-            if (key == null)
+            if (!TryGetOwnedPath(file, out var key))
                 throw new Exception($"File '{file.Name}' not found in container.");
 
             var dir = Path.GetDirectoryName(key);
@@ -417,13 +407,12 @@ namespace Shared.Core.PackFiles.Models.Containers
             _fileList.Remove(key);
             file.Name = newName;
             file.DataSource = new FileSystemSource(newAbsolutePath);
-            _fileList[newRelativePath] = file;
+            StoreFile(newRelativePath, file);
         }
 
         public void SaveFileData(PackFile file, byte[] data)
         {
-            var key = _fileList.FirstOrDefault(x => ReferenceEquals(x.Value, file)).Key;
-            if (key == null)
+            if (!TryGetOwnedPath(file, out var key))
                 throw new Exception($"File '{file.Name}' not found in container.");
 
             var absolutePath = Path.Combine(SystemFilePath!, key);
@@ -594,13 +583,16 @@ namespace Shared.Core.PackFiles.Models.Containers
             // Deduplicate keys: chatty/duplicate watcher events (or a folder delete
             // combined with a child delete) can collect the same key more than once.
             var distinctKeysToRemove = keysToRemove.Distinct().ToList();
-            var removedFiles = distinctKeysToRemove.Select(k => _fileList[k]).ToList();
+            var removedFiles = distinctKeysToRemove
+                .Where(_fileList.ContainsKey)
+                .Select(k => _fileList[k])
+                .ToList();
             if (removedFiles.Count > 0)
                 FilesRemovedExternally?.Invoke(this, new SystemFolderContainerFilesChangedEventArgs(removedFiles));
 
             // Now actually remove the entries
             foreach (var key in distinctKeysToRemove)
-                _fileList.Remove(key);
+                RemoveFile(key);
 
             if (addedFiles.Count > 0)
                 FilesAddedExternally?.Invoke(this, new SystemFolderContainerFilesChangedEventArgs(addedFiles));
@@ -638,7 +630,7 @@ namespace Shared.Core.PackFiles.Models.Containers
             {
                 var fileName = Path.GetFileName(absolutePath);
                 var packFile = new PackFile(fileName, new FileSystemSource(absolutePath));
-                _fileList[normalizedPath] = packFile;
+                StoreFile(normalizedPath, packFile);
                 addedFiles.Add(packFile);
             }
             catch (Exception ex)
@@ -669,6 +661,52 @@ namespace Shared.Core.PackFiles.Models.Containers
                 .ToList();
 
             keysToRemove.AddRange(matchingKeys);
+        }
+
+        private void StoreFile(string normalizedPath, PackFile file)
+        {
+            if (file.Container != null && !ReferenceEquals(file.Container, this))
+                throw new InvalidOperationException("A PackFile cannot belong to multiple containers.");
+
+            if (file.Container != null
+                && ReferenceEquals(file.Container, this)
+                && file.VirtualPath != null
+                && !string.Equals(file.VirtualPath, normalizedPath, StringComparison.Ordinal)
+                && _fileList.TryGetValue(file.VirtualPath, out var oldFile)
+                && ReferenceEquals(oldFile, file))
+            {
+                _fileList.Remove(file.VirtualPath);
+            }
+
+            if (_fileList.TryGetValue(normalizedPath, out var replaced)
+                && !ReferenceEquals(replaced, file))
+            {
+                replaced.DetachFromContainer(this);
+            }
+
+            file.AttachToContainer(this, normalizedPath);
+            _fileList[normalizedPath] = file;
+        }
+
+        private bool TryGetOwnedPath(PackFile file, out string path)
+        {
+            path = string.Empty;
+            if (!ReferenceEquals(file.Container, this)
+                || string.IsNullOrWhiteSpace(file.VirtualPath)
+                || !_fileList.TryGetValue(file.VirtualPath, out var storedFile)
+                || !ReferenceEquals(storedFile, file))
+            {
+                return false;
+            }
+
+            path = file.VirtualPath;
+            return true;
+        }
+
+        private void RemoveFile(string path)
+        {
+            if (_fileList.Remove(path, out var file))
+                file.DetachFromContainer(this);
         }
 
         // --- Watcher suppression ---
@@ -703,6 +741,8 @@ namespace Shared.Core.PackFiles.Models.Containers
             }
             _debounceTimer?.Dispose();
             _debounceTimer = null;
+            foreach (var file in _fileList.Values)
+                file.DetachFromContainer(this);
             _fileList.Clear();
         }
     }

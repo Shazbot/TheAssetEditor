@@ -10,6 +10,7 @@ namespace Shared.Core.PackFiles;
 public sealed class PackFileRepository
 {
     private readonly List<IPackFileContainer> _packs = [];
+    private readonly HashSet<IPackFileContainer> _loadedPackFileContainers = new(ReferenceEqualityComparer.Instance);
 
     public PackFileRepository(IEnumerable<IPackFileContainer>? packs = null)
     {
@@ -29,15 +30,24 @@ public sealed class PackFileRepository
     {
         ArgumentNullException.ThrowIfNull(pack);
 
+        if (_loadedPackFileContainers.Contains(pack))
+            return false;
+
         if (ContainsSystemPath(pack.SystemFilePath))
             return false;
 
         _packs.Add(pack);
+        _loadedPackFileContainers.Add(pack);
         return true;
     }
 
     public bool Remove(IPackFileContainer pack)
-        => _packs.Remove(pack);
+    {
+        var removed = _packs.Remove(pack);
+        if (removed)
+            _loadedPackFileContainers.Remove(pack);
+        return removed;
+    }
 
     public bool IsPackFileLoaded(string packFilePath)
     {
@@ -100,15 +110,23 @@ public sealed class PackFileRepository
 
         if (container != null)
         {
-            path = container.GetFullPath(file);
-            return path != null;
+            if (ReferenceEquals(file.Container, container)
+                && !string.IsNullOrWhiteSpace(file.VirtualPath))
+            {
+                path = file.VirtualPath;
+                return true;
+            }
+
+            path = null;
+            return false;
         }
 
-        foreach (var pack in _packs)
+        if (file.Container is IPackFileContainer owner
+            && _loadedPackFileContainers.Contains(owner)
+            && !string.IsNullOrWhiteSpace(file.VirtualPath))
         {
-            path = pack.GetFullPath(file);
-            if (path != null)
-                return true;
+            path = file.VirtualPath;
+            return true;
         }
 
         path = null;
@@ -119,10 +137,11 @@ public sealed class PackFileRepository
     {
         ArgumentNullException.ThrowIfNull(file);
 
-        foreach (var pack in _packs)
+        if (file.Container is IPackFileContainer owner
+            && _loadedPackFileContainers.Contains(owner)
+            && !string.IsNullOrWhiteSpace(file.VirtualPath))
         {
-            if (pack.GetFullPath(file) != null)
-                return pack;
+            return owner;
         }
 
         return null;

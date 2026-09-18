@@ -23,7 +23,7 @@
         bool ContainsFile(string path);
         string? GetFullPath(PackFile file);
   
-        Dictionary<string, PackFile> GetAllFiles();
+        IReadOnlyDictionary<string, PackFile> GetAllFiles();
         SortedDictionary<string, List<string>> GetAllFilesByFolder();
 
         List<(string Path, PackFile File)> SearchFiles(string? textFilter, IReadOnlyList<string>? extensions);

@@ -25,6 +25,9 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
             var deleted = _container.DeleteFile(file);
             Assert.That(deleted, Is.EqualTo(file));
             Assert.That(_container.ContainsFile("folder\\file.txt"), Is.False);
+            Assert.That(file.Container, Is.Null);
+            Assert.That(file.VirtualPath, Is.Null);
+            Assert.That(_container.GetFullPath(file), Is.Null);
         }
 
         [Test]

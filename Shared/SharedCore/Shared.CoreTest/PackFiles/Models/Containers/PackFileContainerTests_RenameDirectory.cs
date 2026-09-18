@@ -18,9 +18,13 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
                 return;
             }
 
+            var file = _container.FindFile("models\\unit.model")!;
             var newPath = _container.RenameDirectory("models", "newmodels");
             Assert.That(newPath, Is.EqualTo("newmodels"));
             Assert.That(_container.ContainsFile("newmodels\\unit.model"), Is.True);
+            Assert.That(file.Container, Is.SameAs(_container));
+            Assert.That(file.VirtualPath, Is.EqualTo("newmodels\\unit.model"));
+            Assert.That(_container.GetFullPath(file), Is.EqualTo("newmodels\\unit.model"));
         }
     }
 }

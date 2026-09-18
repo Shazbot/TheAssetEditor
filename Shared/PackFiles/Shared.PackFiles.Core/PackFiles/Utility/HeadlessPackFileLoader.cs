@@ -134,7 +134,7 @@ namespace Shared.Core.PackFiles.Utility
                 fullPath,
                 header);
             container.OriginalLoadByteSize = fileSize;
-            container.FileList = new Dictionary<string, PackFile>(cachedIndex.PackedFiles.Count);
+            container.EnsureFileCapacity(cachedIndex.PackedFiles.Count);
 
             var parent = new PackedFileSourceParent { FilePath = fullPath };
             foreach (var cachedFile in cachedIndex.PackedFiles)

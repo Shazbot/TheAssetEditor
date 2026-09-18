@@ -21,6 +21,17 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
         }
 
         [Test]
+        public void GetAllFiles_AttachesEveryFileToItsPath()
+        {
+            foreach (var (path, file) in _container.GetAllFiles())
+            {
+                Assert.That(file.Container, Is.SameAs(_container));
+                Assert.That(file.VirtualPath, Is.EqualTo(path));
+                Assert.That(_container.GetFullPath(file), Is.EqualTo(path));
+            }
+        }
+
+        [Test]
         public void GetAllFiles_PreservesCompressionMetadata()
         {
             if (IsSystemFolderContainer)

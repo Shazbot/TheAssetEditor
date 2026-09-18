@@ -16,6 +16,9 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
         {
             var file = _container.FindFile("folder\\file.txt")!;
             var path = _container.GetFullPath(file);
+
+            Assert.That(file.Container, Is.SameAs(_container));
+            Assert.That(file.VirtualPath, Is.EqualTo("folder\\file.txt"));
             Assert.That(path, Is.EqualTo("folder\\file.txt"));
         }
 
@@ -49,13 +52,13 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
         }
 
         [Test]
-        public void GetFullPath_UniqueFileName_WithUnknownSource_UsesNameFallback()
+        public void GetFullPath_UniqueFileName_WithUnknownSource_ReturnsNull()
         {
             var unknownSourceFile = PackFile.CreateFromBytes("file.txt", [1, 2, 3]);
 
             var path = _container.GetFullPath(unknownSourceFile);
 
-            Assert.That(path, Is.EqualTo("folder\\file.txt"));
+            Assert.That(path, Is.Null);
         }
     }
 }

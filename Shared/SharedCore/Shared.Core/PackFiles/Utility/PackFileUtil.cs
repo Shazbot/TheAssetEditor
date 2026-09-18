@@ -73,8 +73,7 @@ namespace Shared.Core.PackFiles.Utility
 
             var editablePack = pfs.GetEditablePack();
             Guard.IsNotNull(editablePack, "EditablePack returns null");
-            pfs.AddFilesToPack(editablePack, packFileList);
-            return packFileList.Select(x=>x.PackFile).ToList();
+            return pfs.AddFilesToPack(editablePack, packFileList);
         }
 
         public static List<PackFile> LoadFileFromDisk(IPackFileService pfs, FileRef fileRef) => LoadFilesFromDisk(pfs, new FileRef[] { fileRef });

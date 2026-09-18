@@ -89,7 +89,7 @@ namespace Shared.CoreTest.PackFiles
 
             pfs.AddContainer(caContainer);
             pfs.AddContainer(customContainer, true);
-            pfs.AddContainer(customContainer);
+            pfs.AddContainer(PackFileContainer.CreatePackFile("Duplicate", "SystemPath2"));
 
             var containers = pfs.GetAllPackfileContainers();
             Assert.That(containers.Count, Is.EqualTo(2));
@@ -344,6 +344,32 @@ namespace Shared.CoreTest.PackFiles
         }
 
         [Test]
+        public void DeleteFile_RemovalEvent_CanResolveOldPath()
+        {
+            var eventHub = new Mock<IGlobalEventHub>();
+            var pfs = CreateServiceWithCaPack(eventHub);
+            var container = PackFileContainer.CreatePackFile("Custom", "path");
+            container.AddOrUpdateFile("folder\\test.txt", new PackFile("test.txt", new MemorySource([1])));
+            pfs.AddContainer(container, true);
+
+            var file = container.FindFile("folder\\test.txt")!;
+            string? pathDuringRemoval = null;
+            eventHub
+                .Setup(m => m.PublishGlobalEvent(It.IsAny<PackFileContainerFilesRemovedEvent>()))
+                .Callback<PackFileContainerFilesRemovedEvent>(e =>
+                {
+                    if (ReferenceEquals(e.Container, container) && e.RemovedFiles.Contains(file))
+                        pathDuringRemoval = pfs.GetFullPath(file);
+                });
+
+            pfs.DeleteFile(container, file);
+
+            Assert.That(pathDuringRemoval, Is.EqualTo("folder\\test.txt"));
+            Assert.That(file.Container, Is.Null);
+            Assert.That(file.VirtualPath, Is.Null);
+        }
+
+        [Test]
         public void DeleteFile_CaPack_Throws()
         {
             var pfs = CreateServiceWithCaPack();
@@ -394,6 +420,42 @@ namespace Shared.CoreTest.PackFiles
 
             Assert.That(container.FindFile("old\\test.txt"), Is.Null);
             Assert.That(container.FindFile("new\\test.txt"), Is.Not.Null);
+        }
+
+        [Test]
+        public void MoveFile_EventsExposeOldThenNewPath()
+        {
+            var eventHub = new Mock<IGlobalEventHub>();
+            var pfs = CreateServiceWithCaPack(eventHub);
+            var container = PackFileContainer.CreatePackFile("Custom", "path");
+            container.AddOrUpdateFile("old\\test.txt", new PackFile("test.txt", new MemorySource([1, 2])));
+            pfs.AddContainer(container, true);
+
+            var file = container.FindFile("old\\test.txt")!;
+            string? pathDuringRemoval = null;
+            string? pathDuringAdd = null;
+
+            eventHub
+                .Setup(m => m.PublishGlobalEvent(It.IsAny<PackFileContainerFilesRemovedEvent>()))
+                .Callback<PackFileContainerFilesRemovedEvent>(e =>
+                {
+                    if (ReferenceEquals(e.Container, container) && e.RemovedFiles.Contains(file))
+                        pathDuringRemoval = pfs.GetFullPath(file);
+                });
+
+            eventHub
+                .Setup(m => m.PublishGlobalEvent(It.IsAny<PackFileContainerFilesAddedEvent>()))
+                .Callback<PackFileContainerFilesAddedEvent>(e =>
+                {
+                    if (ReferenceEquals(e.Container, container) && e.AddedFiles.Contains(file))
+                        pathDuringAdd = pfs.GetFullPath(file);
+                });
+
+            pfs.MoveFile(container, file, "new");
+
+            Assert.That(pathDuringRemoval, Is.EqualTo("old\\test.txt"));
+            Assert.That(pathDuringAdd, Is.EqualTo("new\\test.txt"));
+            Assert.That(pfs.GetFullPath(file), Is.EqualTo("new\\test.txt"));
         }
 
         [Test]
@@ -598,6 +660,39 @@ namespace Shared.CoreTest.PackFiles
             var file = container.FindFile("file.txt")!;
             var result = pfs.GetPackFileContainer(file);
             Assert.That(result, Is.EqualTo(container));
+        }
+
+        [Test]
+        public void AddContainer_SameInstanceTwice_IsRejected()
+        {
+            var pfs = CreateServiceWithCaPack();
+            var container = PackFileContainer.CreatePackFile("Custom");
+
+            var firstResult = pfs.AddContainer(container);
+            var secondResult = pfs.AddContainer(container);
+
+            Assert.That(firstResult, Is.SameAs(container));
+            Assert.That(secondResult, Is.Null);
+            Assert.That(pfs.GetAllPackfileContainers().Count(x => ReferenceEquals(x, container)), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ReverseLookup_UsesOwnerMetadataAndStopsAfterUnload()
+        {
+            var pfs = CreateServiceWithCaPack();
+            var container = PackFileContainer.CreatePackFile("Custom", "path");
+            container.AddOrUpdateFile("folder\\file.txt", new PackFile("file.txt", new MemorySource([1])));
+            pfs.AddContainer(container, true);
+
+            var file = container.FindFile("folder\\file.txt")!;
+            Assert.That(pfs.GetPackFileContainer(file), Is.SameAs(container));
+            Assert.That(pfs.GetFullPath(file), Is.EqualTo("folder\\file.txt"));
+            Assert.That(pfs.GetFullPath(file, container), Is.EqualTo("folder\\file.txt"));
+
+            pfs.UnloadPackContainer(container);
+
+            Assert.That(pfs.GetPackFileContainer(file), Is.Null);
+            Assert.Throws<Exception>(() => pfs.GetFullPath(file));
         }
 
         [Test]

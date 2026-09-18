@@ -41,7 +41,7 @@ namespace Shared.Core.PackFiles.Serialization
                 if (output.Header.FileCount > int.MaxValue)
                     throw new Exception("Too many files in packfile!");
 
-                output.FileList = new Dictionary<string, PackFile>((int)output.Header.FileCount);
+                output.EnsureFileCapacity((int)output.Header.FileCount);
 
                 var packedFileSourceParent = new PackedFileSourceParent()
                 {

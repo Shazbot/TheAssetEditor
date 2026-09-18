@@ -210,6 +210,12 @@ namespace Shared.Core.PackFiles.Utility
                 return packList.First();
 
             var mergedPackFile = PackFileContainer.CreatePackFile(createdPackFileName);
+            var estimatedFileCount = packList.Sum(x => (long)x.GetFileCount());
+            if (estimatedFileCount > int.MaxValue)
+                throw new InvalidDataException("Too many files in merged pack container.");
+
+            mergedPackFile.EnsureFileCapacity((int)estimatedFileCount);
+
             var packFilesOrderedByGroup = packList.GroupBy(x => x.Header.LoadOrder).OrderBy(x => x.Key);
 
             foreach (var group in packFilesOrderedByGroup)
