@@ -1,21 +1,11 @@
 <linker>
-  <assembly fullname="Newtonsoft.Json" preserve="all" />
-  <assembly fullname="Serilog" preserve="all" />
-  <assembly fullname="SharpGLTF.Core" preserve="all" />
-  <assembly fullname="SharpGLTF.Runtime" preserve="all" />
-  <assembly fullname="SharpGLTF.Toolkit" preserve="all" />
-  <assembly fullname="System.Collections" preserve="all" />
   <assembly fullname="System.IO.FileSystem" preserve="all">
     <type fullname="System.IO.FileInfo" preserve="all" />
     <type fullname="System.IO.DirectoryInfo" preserve="all" />
   </assembly>
-  <assembly fullname="System.IO" preserve="all" />
-  <assembly fullname="System.Linq" preserve="all" />
-  <assembly fullname="System.Numerics" preserve="all">
+  <assembly fullname="System.Numerics">
     <type fullname="System.Numerics.Vector4" preserve="all" />
   </assembly>
-  <assembly fullname="System.Numerics.Vectors" preserve="all" />
-  <assembly fullname="System.Runtime" preserve="all" />
   <assembly fullname="System.Text.Json">
     <type fullname="System.Text.Json.JsonWriterOptions" preserve="all" />
     <type fullname="System.Text.Json.Utf8JsonWriter" preserve="all" />

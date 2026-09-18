@@ -47,29 +47,4 @@
     <TrimmerRootDescriptor Include="Trim/WH3AssetHost.Linker.xml" />
   </ItemGroup>
 
-  <!-- These dependencies are not trim-aware. Partial trimming keeps them intact; excluding
-       them from linker post-processing avoids treating their internal reflection as host code. -->
-  <Target Name="KeepTrimIncompatibleDependencies" BeforeTargets="_ComputeManagedAssemblyToLink">
-    <ItemGroup>
-      <ResolvedFileToPublish Condition="'%(Filename)' == 'Newtonsoft.Json'">
-        <PostprocessAssembly>false</PostprocessAssembly>
-      </ResolvedFileToPublish>
-      <ResolvedFileToPublish Condition="'%(Filename)' == 'Serilog'">
-        <PostprocessAssembly>false</PostprocessAssembly>
-      </ResolvedFileToPublish>
-      <ResolvedFileToPublish Condition="'%(Filename)' == 'SharpGLTF.Core'">
-        <PostprocessAssembly>false</PostprocessAssembly>
-      </ResolvedFileToPublish>
-      <ResolvedFileToPublish Condition="'%(Filename)' == 'SharpGLTF.Toolkit'">
-        <PostprocessAssembly>false</PostprocessAssembly>
-      </ResolvedFileToPublish>
-      <ResolvedFileToPublish Condition="'%(Filename)' == 'System.Private.Windows.Core'">
-        <PostprocessAssembly>false</PostprocessAssembly>
-      </ResolvedFileToPublish>
-      <ResolvedFileToPublish Condition="'%(Filename)' == 'SharpGLTF.Runtime'">
-        <PostprocessAssembly>false</PostprocessAssembly>
-      </ResolvedFileToPublish>
-    </ItemGroup>
-  </Target>
-
 </Project>
