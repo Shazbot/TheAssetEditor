@@ -15,10 +15,10 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
-    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>partial</TrimMode>
+    <PublishReadyToRun>true</PublishReadyToRun>
 
     <!-- IL2104 is the linker summary emitted by non-trim-aware package assemblies that
          remain copied intact in partial mode. Keep the underlying diagnostics visible while
