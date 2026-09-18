@@ -212,9 +212,7 @@ namespace GameWorld.Core.Services
                 
                 foreach (var file in group)
                 {
-                    var bytes = file.DataSource.ReadData(stream);
-                    if (bytes.Length > 100)
-                        Array.Resize(ref bytes, 100);
+                    var bytes = file.DataSource.PeekData(100, stream);
 
                     FileDiscovered(bytes, packFileContainer, file.FullPath, skeletonFileNameList, animationList);
                 }

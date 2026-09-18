@@ -63,35 +63,42 @@ namespace Shared.Core.PackFiles.Models.FileSources
 
         public byte[] PeekData(int size)
         {
-            byte[] data;
+            ArgumentOutOfRangeException.ThrowIfNegative(size);
 
-            using (var stream = File.Open(Parent.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using var stream = File.Open(Parent.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            return PeekData(size, stream);
+        }
+
+        public byte[] PeekData(int size, Stream knownStream)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(size);
+            ArgumentNullException.ThrowIfNull(knownStream);
+
+            // The current encryption API only supports whole-entry decryption. Keep this
+            // fallback correct while allowing the common unencrypted path to stay streamed.
+            if (IsEncrypted)
             {
-                stream.Seek(Offset, SeekOrigin.Begin);
+                var data = ReadData(knownStream);
+                return data.AsSpan(0, Math.Min(size, data.Length)).ToArray();
+            }
 
-                if (!IsEncrypted && !IsCompressed)
-                {
-                    data = new byte[size];
-                    stream.ReadExactly(data);
-                }
-                else
-                {
-                    data = new byte[Size];
-                    stream.ReadExactly(data);
+            if (!IsCompressed)
+            {
+                var prefixSize = checked((int)Math.Min((long)size, Size));
+                var data = new byte[prefixSize];
 
-                    if (IsEncrypted)
-                        data = FileEncryption.Decrypt(data);
+                knownStream.Seek(Offset, SeekOrigin.Begin);
+                knownStream.ReadExactly(data);
+                return data;
+            }
 
-                    if (IsCompressed)
-                    {
-                        data = FileCompression.Decompress(data, size, CompressionFormat);
-                        if (data.Length != size)
-                            throw new InvalidDataException($"Decompressed bytes {data.Length:N0} does not match the expected uncompressed bytes {size:N0}.");
-                    }
-                }
-            }           
+            var decompressedPrefixSize = checked((int)Math.Min((long)size, UncompressedSize));
+            using var boundedStream = new BoundedReadStream(knownStream, Offset, Size);
+            var decompressedData = FileCompression.Decompress(boundedStream, decompressedPrefixSize, CompressionFormat);
+            if (decompressedData.Length != decompressedPrefixSize)
+                throw new InvalidDataException($"Decompressed bytes {decompressedData.Length:N0} does not match the expected prefix bytes {decompressedPrefixSize:N0}.");
 
-            return data;
+            return decompressedData;
         }
 
         public byte[] ReadDataWithoutDecompressing()

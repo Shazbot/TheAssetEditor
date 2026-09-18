@@ -110,7 +110,15 @@ namespace Shared.Core.PackFiles.Utility
         public static byte[] Decompress(byte[] data, int outputSize, CompressionFormat compressionFormat)
         {
             using var stream = new MemoryStream(data, false);
-            using var reader = new BinaryReader(stream);
+            return Decompress(stream, outputSize, compressionFormat);
+        }
+
+        public static byte[] Decompress(Stream compressedDataStream, int outputSize, CompressionFormat compressionFormat)
+        {
+            ArgumentNullException.ThrowIfNull(compressedDataStream);
+            ArgumentOutOfRangeException.ThrowIfNegative(outputSize);
+
+            using var reader = new BinaryReader(compressedDataStream, System.Text.Encoding.UTF8, leaveOpen: true);
 
             var uncompressedSize = reader.ReadUInt32();
             if (outputSize > uncompressedSize)
