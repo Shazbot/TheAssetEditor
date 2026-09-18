@@ -4,9 +4,11 @@
 
 .DESCRIPTION
     The smoke test starts a published host, sends hello/initialize/
-    getAnimationCatalog/exportModel/shutdown requests, and verifies that a
-    real GLB is written. By default it uses the vanilla ui.pack and the
-    vanilla pack-file cache, then removes its temporary output.
+    getAnimationCatalog/exportModel/shutdown requests, and verifies that
+    real GLBs are written. It first checks the lightweight ui.pack path, then
+    resolves and exports one vanilla VariantMeshDefinition with its skeleton,
+    material textures, and one catalogued animation. Temporary output is
+    removed by default.
 
 .EXAMPLE
     pwsh -File .\Tools\WH3AssetHost\SmokeTest.ps1
@@ -24,6 +26,8 @@ param(
     [string]$VanillaPackFilesCachePath,
     [string]$OutputRoot,
     [string]$AssetPath = 'ui\3dui\models\default\ground_plane_1m.rigid_model_v2',
+    [string]$RichAssetPath = 'variantmeshes\variantmeshdefinitions\emp_ch_karl.variantmeshdefinition',
+    [string[]]$RichPackPaths,
     [switch]$KeepOutput
 )
 
@@ -52,11 +56,23 @@ if ([string]::IsNullOrWhiteSpace($VanillaPackFilesCachePath)) {
 }
 
 $packPath = Join-Path $GameDataPath 'ui.pack'
+if ($null -eq $RichPackPaths -or $RichPackPaths.Count -eq 0) {
+    $RichPackPaths = @(
+        (Join-Path $GameDataPath 'variants.pack'),
+        (Join-Path $GameDataPath 'variants4.pack'),
+        (Join-Path $GameDataPath 'variants_dds4.pack'),
+        (Join-Path $GameDataPath 'anim.pack'),
+        (Join-Path $GameDataPath 'anim2.pack'),
+        (Join-Path $GameDataPath 'anim_3.pack')
+    )
+}
+
 $temporaryOutput = [string]::IsNullOrWhiteSpace($OutputRoot)
 if ($temporaryOutput) {
     $OutputRoot = Join-Path ([IO.Path]::GetTempPath()) ('WH3AssetHost-smoke-' + [Guid]::NewGuid().ToString('N'))
 }
-$outputPath = Join-Path $OutputRoot 'smoke-ground-plane.glb'
+$groundPlaneOutputPath = Join-Path $OutputRoot 'smoke-ground-plane.glb'
+$richOutputPath = Join-Path $OutputRoot 'smoke-vmd-skeleton-material-animation.glb'
 $pipeName = 'wh3asset-smoke-' + $PID + '-' + [Guid]::NewGuid().ToString('N')
 
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
@@ -147,6 +163,11 @@ try {
     if (-not (Test-Path -LiteralPath $packPath -PathType Leaf)) {
         throw "Vanilla ui.pack was not found: $packPath"
     }
+    foreach ($richPackPath in $RichPackPaths) {
+        if (-not (Test-Path -LiteralPath $richPackPath -PathType Leaf)) {
+            throw "Rich smoke-test pack was not found: $richPackPath"
+        }
+    }
     if ((-not [string]::IsNullOrWhiteSpace($VanillaPackFilesCachePath)) -and (-not (Test-Path -LiteralPath $VanillaPackFilesCachePath -PathType Leaf))) {
         throw "Vanilla pack-file cache was not found: $VanillaPackFilesCachePath"
     }
@@ -199,14 +220,65 @@ try {
         throw 'The host reported an unsuccessful export.'
     }
 
-    if (-not (Test-Path -LiteralPath $outputPath -PathType Leaf)) {
-        throw "The export output was not created: $outputPath"
+    if (-not (Test-Path -LiteralPath $groundPlaneOutputPath -PathType Leaf)) {
+        throw "The export output was not created: $groundPlaneOutputPath"
     }
-    $outputLength = (Get-Item -LiteralPath $outputPath).Length
+    $outputLength = (Get-Item -LiteralPath $groundPlaneOutputPath).Length
     if ($outputLength -le 0) {
-        throw "The export output is empty: $outputPath"
+        throw "The export output is empty: $groundPlaneOutputPath"
     }
-    Write-Host "PASS export output ($outputLength bytes): $outputPath"
+    Write-Host "PASS export output ($outputLength bytes): $groundPlaneOutputPath"
+
+    Invoke-HostRequest -Command 'initialize' -Fields @{
+        packPaths = @($RichPackPaths)
+        outputRoot = $OutputRoot
+        vanillaPackFilesCachePath = $VanillaPackFilesCachePath
+    } | Out-Null
+
+    $richCatalog = Invoke-HostRequest -Command 'getAnimationCatalog' -Fields @{
+        assetPath = $RichAssetPath
+    }
+    if ($richCatalog.result.success -ne $true) {
+        throw "The rich smoke asset was not found: $RichAssetPath"
+    }
+    if ($richCatalog.result.hasSkeletonFile -ne $true) {
+        throw "The rich smoke asset has no resolved skeleton: $($richCatalog.result.skeletonName)"
+    }
+    $richAnimations = @($richCatalog.result.animations)
+    if ($richAnimations.Count -eq 0) {
+        throw "The rich smoke asset has no catalogued animations: $RichAssetPath"
+    }
+    $richAnimationPath = [string]$richAnimations[0].path
+    if ([string]::IsNullOrWhiteSpace($richAnimationPath)) {
+        throw "The rich smoke catalog returned an empty animation path."
+    }
+    Write-Host "PASS rich catalog (VMD, skeleton '$($richCatalog.result.skeletonName)', animation '$richAnimationPath')"
+
+    $richExport = Invoke-HostRequest -Command 'exportModel' -Fields @{
+        assetPath = $RichAssetPath
+        outputPath = 'smoke-vmd-skeleton-material-animation.glb'
+        animationPaths = @($richAnimationPath)
+        exportMaterials = $true
+        includeSkeleton = $true
+        mirrorMesh = $false
+    }
+    if ($richExport.result.success -ne $true) {
+        throw "The rich smoke export was unsuccessful: $RichAssetPath"
+    }
+    if (-not (Test-Path -LiteralPath $richOutputPath -PathType Leaf)) {
+        throw "The rich export output was not created: $richOutputPath"
+    }
+    $richOutputLength = (Get-Item -LiteralPath $richOutputPath).Length
+    if ($richOutputLength -le 0) {
+        throw "The rich export output is empty: $richOutputPath"
+    }
+    $richGltfText = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($richOutputPath))
+    foreach ($requiredGltfSection in @('"materials"', '"images"', '"skins"', '"animations"')) {
+        if (-not $richGltfText.Contains($requiredGltfSection)) {
+            throw "The rich GLB is missing the expected glTF section $requiredGltfSection."
+        }
+    }
+    Write-Host "PASS rich export ($richOutputLength bytes; material textures, skeleton, animation): $richOutputPath"
 
     Invoke-HostRequest -Command 'shutdown' | Out-Null
     $shutdownSent = $true
