@@ -23,7 +23,7 @@ namespace Shared.Core.PackFiles.Serialization
         public static PackFileVersion GetEnum(string versionStr) => s_values.First(x => x.StringValue == versionStr.ToUpper()).EnumValue;
     }
 
-    static class PackFileSerializerLoader
+    public static class PackFileSerializerLoader
     {
         static readonly ILogger s_logger = Logging.CreateStatic(typeof(PackFileSerializerLoader));
 

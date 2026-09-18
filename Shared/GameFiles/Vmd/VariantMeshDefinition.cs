@@ -1,7 +1,6 @@
 ﻿using System.Text;
 using System.Xml;
 using System.Xml.Serialization;
-using Shared.Core.ErrorHandling;
 using Shared.Core.PackFiles.Models;
 using static Shared.GameFormats.Vmd.VariantMeshDefinition;
 

@@ -16,7 +16,7 @@ namespace AssetEditor.Services
                 // Shared
                 new Shared.Core.DependencyInjectionContainer(),
                 new Shared.Ui.DependencyInjectionContainer(),
-                new Shared.GameFormats.DependencyInjectionContainer(),
+                new GameFormatsDependencyInjectionContainer(),
                 new Shared.EmbeddedResources.DependencyInjectionContainer(loadResources),
                 new GameWorld.Core.DependencyInjectionContainer(),
 

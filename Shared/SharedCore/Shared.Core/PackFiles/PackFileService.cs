@@ -350,8 +350,6 @@ namespace Shared.Core.PackFiles
         }
     }
 
-    public record NewPackFileEntry(string DirectoyPath, PackFile PackFile);
-
     public interface ISimpleMessageBox
     {
         void ShowDialogBox(string message, string title);

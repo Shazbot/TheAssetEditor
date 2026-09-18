@@ -2,7 +2,7 @@
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Utility;
 using Shared.Core.Settings;
-using Shared.EmbeddedResources;
+using Shared.GameFormats.Resources;
 
 namespace Shared.GameFormats.AnimationPack
 {
@@ -59,12 +59,12 @@ namespace Shared.GameFormats.AnimationPack
         void Load(string resourcePath)
         {
             Values = new();
-            var strings = ResourceLoader.LoadStringArray(resourcePath);
+            var strings = GameFormatsResourceLoader.LoadStringArray(resourcePath);
             for (var i = 0; i < strings.Length; i++)
                 Values.Add(new AnimationSlotType(i, strings[i].Trim()));
         }
 
-        public void ExportAnimationDebugList(IPackFileService pfs, string outputName)
+        public void ExportAnimationDebugList(IHeadlessPackFileService pfs, string outputName)
         {
             var data = new Dictionary<string, List<string>>();
             var indexList = new Dictionary<string, int>();
@@ -249,4 +249,3 @@ namespace Shared.GameFormats.AnimationPack
         }
     }
 }
-

@@ -15,7 +15,7 @@ namespace Shared.Core.PackFiles.Models.Containers
         InMemory
     }
 
-    internal class CachedPackFileContainer : IPackFileContainerInternal, IDisposable
+    internal class CachedPackFileContainer : IPackFileContainerInternal, IPackFileContainerWithSourcePaths, IDisposable
     {
         private static readonly ILogger _logger = Logging.CreateStatic(typeof(CachedPackFileContainer));
         private const int CurrentSchemaVersion = 4;
@@ -34,6 +34,7 @@ namespace Shared.Core.PackFiles.Models.Containers
         public PackFileSettings PackFileSettings { get; } = new();
         public PackFileContainerType ContainerType => PackFileContainerType.Database;
         public HashSet<string> SourcePackFilePaths { get; set; } = [];
+        IReadOnlyCollection<string> IPackFileContainerWithSourcePaths.SourcePackFilePaths => SourcePackFilePaths;
 
         public void SaveSettings()
         {

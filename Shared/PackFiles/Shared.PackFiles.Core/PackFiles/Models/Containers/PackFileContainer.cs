@@ -1,5 +1,4 @@
-﻿using CommunityToolkit.Diagnostics;
-using Shared.Core.Misc;
+﻿using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Models.FileSources;
 using Shared.Core.PackFiles.Serialization;
 using Shared.Core.PackFiles.Utility;
@@ -7,7 +6,7 @@ using Shared.Core.Settings;
 
 namespace Shared.Core.PackFiles.Models.Containers
 {
-    internal class PackFileContainer : IPackFileContainerInternal
+    public class PackFileContainer : IPackFileContainerInternal, IPackFileContainerWithSourcePaths
     {
         private static readonly ILogger _logger = Logging.Create<PackFileContainer>();    
         private string? _systemFilePath;
@@ -29,6 +28,7 @@ namespace Shared.Core.PackFiles.Models.Containers
         public PackFileContainerType ContainerType => PackFileContainerType.Normal;
         public long OriginalLoadByteSize { get; set; } = -1;
         public HashSet<string> SourcePackFilePaths { get; set; } = [];
+        IReadOnlyCollection<string> IPackFileContainerWithSourcePaths.SourcePackFilePaths => SourcePackFilePaths;
         
         public Dictionary<string, PackFile> FileList { get; set; } = [];
 
@@ -299,14 +299,14 @@ namespace Shared.Core.PackFiles.Models.Containers
 
             _logger.Here().Information("Saving pack file to disk at {Path}, createBackup = {createBackup} Game = {game}", path, createBackup, effectiveGameInformation.DisplayName);
 
-            if (File.Exists(path) && DirectoryHelper.IsFileLocked(path))
+            if (File.Exists(path) && IsFileLocked(path))
             {
                 var msg = $"Cannot access {path} because another process has locked it, most likely the game.";
                 _logger.Here().Error(msg);
                 throw new IOException(msg);
             }
 
-            if (File.Exists(path + "_temp") && DirectoryHelper.IsFileLocked(path + "_temp"))
+            if (File.Exists(path + "_temp") && IsFileLocked(path + "_temp"))
             {
                 var msg = $"Cannot access {path + "_temp"} because another process has locked it, most likely the game.";
                 _logger.Here().Error(msg);
@@ -314,11 +314,12 @@ namespace Shared.Core.PackFiles.Models.Containers
             }
 
             if (createBackup)
-                SaveUtility.CreateFileBackup(path);
+                PackFileBackupUtility.CreateFileBackup(path);
 
             if (OriginalLoadByteSize != -1)
             {
-                Guard.IsNotNull(SystemFilePath, "SystemFilePath must be set if saving to disk");
+                if (string.IsNullOrWhiteSpace(SystemFilePath))
+                    throw new InvalidOperationException("SystemFilePath must be set if saving to disk");
                 var fileInfo = new FileInfo(SystemFilePath);
                 var byteSize = fileInfo.Length;
                 if (byteSize != OriginalLoadByteSize)
@@ -356,6 +357,19 @@ namespace Shared.Core.PackFiles.Models.Containers
                 : normalizedDirectory + "\\" + normalizedFileName;
 
             return PathNormalization.NormalizeFileName(fullPath);
+        }
+
+        private static bool IsFileLocked(string path)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                return false;
+            }
+            catch (IOException)
+            {
+                return true;
+            }
         }
 
         public SortedDictionary<string, List<string>> GetAllFilesByFolder()

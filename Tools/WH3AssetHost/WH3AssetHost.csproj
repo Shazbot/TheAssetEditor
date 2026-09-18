@@ -34,7 +34,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Editors\ImportExportEditor\Editors.ImportExport.Core\Editors.ImportExport.Core.csproj" />
     <ProjectReference Include="..\..\GameWorld\GameWorldCore\GameWorld.AssetCore\GameWorld.AssetCore.csproj" />
-    <ProjectReference Include="..\..\Shared\SharedCore\Shared.Core\Shared.Core.csproj" />
+    <ProjectReference Include="..\..\Shared\PackFiles\Shared.PackFiles.Core\Shared.PackFiles.Core.csproj" />
   </ItemGroup>
 
 </Project>

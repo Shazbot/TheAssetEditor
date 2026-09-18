@@ -9,7 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\Shared\SharedCore\Shared.Core\Shared.Core.csproj" />
+    <ProjectReference Include="..\..\..\Shared\PackFiles\Shared.PackFiles.Core\Shared.PackFiles.Core.csproj" />
+    <ProjectReference Include="..\..\..\Shared\Logging\Shared.Core.Logging\Shared.CoreLog.csproj" />
     <ProjectReference Include="..\..\..\Shared\GameFiles\Shared.GameFormats.csproj" />
   </ItemGroup>
 

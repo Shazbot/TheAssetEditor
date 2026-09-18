@@ -2,7 +2,12 @@
 
 namespace Shared.Core.PackFiles.Models
 {
-    internal interface IPackFileContainerInternal : IPackFileContainer
+    public interface IPackFileContainerWithSourcePaths
+    {
+        IReadOnlyCollection<string> SourcePackFilePaths { get; }
+    }
+
+    public interface IPackFileContainerInternal : IPackFileContainer
     {
         void AddOrUpdateFile(string path, PackFile file);
         List<PackFile> AddFiles(List<NewPackFileEntry> newFiles);

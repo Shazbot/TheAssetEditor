@@ -4,7 +4,7 @@ namespace Shared.Core.PackFiles.Utility
 {
     public static class PackFileServiceUtility
     {
-        public static List<PackFile> GetAllAnimPacks(IPackFileService pfs)
+        public static List<PackFile> GetAllAnimPacks(IHeadlessPackFileService pfs)
         {
             var animPacks = FindAllWithExtention(pfs, @".animpack");
             var itemsToRemove = animPacks.Where(x => pfs.GetFullPath(x).Contains("animation_culture_packs", StringComparison.InvariantCultureIgnoreCase)).ToList();

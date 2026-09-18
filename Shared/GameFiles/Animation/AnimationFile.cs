@@ -533,7 +533,7 @@ namespace Shared.GameFormats.Animation
         }
 
         // Move this somewhere else - something like an animationManipulationService/AnimationEditor.
-        public void ConvertToVersion(uint newAnimFormat, AnimationFile skeleton, IPackFileService pfs)
+        public void ConvertToVersion(uint newAnimFormat, AnimationFile skeleton, IHeadlessPackFileService pfs)
         {
             Header.Version = newAnimFormat;
             RemoveOptimizations(skeleton);

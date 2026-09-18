@@ -1,5 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
-using Shared.ByteParsing;
+﻿using Shared.ByteParsing;
 
 namespace Shared.GameFormats.RigidModel.LodHeader
 {

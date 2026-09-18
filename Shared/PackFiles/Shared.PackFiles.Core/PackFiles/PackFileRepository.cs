@@ -50,14 +50,8 @@ public sealed class PackFileRepository
             if (PathsEqual(container.SystemFilePath, normalizedPath))
                 return true;
 
-            var sourcePackFilePaths = container switch
-            {
-                PackFileContainer packFileContainer => packFileContainer.SourcePackFilePaths,
-                CachedPackFileContainer cachedPackFileContainer => cachedPackFileContainer.SourcePackFilePaths,
-                _ => []
-            };
-
-            if (sourcePackFilePaths.Any(path => PathsEqual(path, normalizedPath)))
+            if (container is IPackFileContainerWithSourcePaths sourceContainer
+                && sourceContainer.SourcePackFilePaths.Any(path => PathsEqual(path, normalizedPath)))
                 return true;
         }
 

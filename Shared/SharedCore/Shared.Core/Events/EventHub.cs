@@ -13,13 +13,6 @@ namespace Shared.Core.Events
     }
 
 
-    public interface IGlobalEventHub
-    {
-        void PublishGlobalEvent<T>(T e);
-        void Register<T>(object owner, Action<T> action);
-        void UnRegister(object owner);
-    }
-
     class GlobalEventHub : EventHub, IGlobalEventHub
     {
         public GlobalEventHub(IScopeRepository scopeRepository) 

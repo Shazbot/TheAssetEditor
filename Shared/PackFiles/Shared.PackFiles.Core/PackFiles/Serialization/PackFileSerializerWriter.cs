@@ -8,9 +8,9 @@ using Shared.Core.Settings;
 
 namespace Shared.Core.PackFiles.Serialization
 {
-    record FileCompressionInfo(CompressionFormat IntendedCompressionFormat, bool DecompressBeforeSaving);
+    public record FileCompressionInfo(CompressionFormat IntendedCompressionFormat, bool DecompressBeforeSaving);
 
-    class PackFileWriteInformation(PackFile pf, string fullFileName, long sizePosition, FileCompressionInfo compressionInfo)
+    public class PackFileWriteInformation(PackFile pf, string fullFileName, long sizePosition, FileCompressionInfo compressionInfo)
     {
         public PackFile PackFile { get; set; } = pf;
         public string FullFileName { get; set; } = fullFileName;
@@ -18,7 +18,7 @@ namespace Shared.Core.PackFiles.Serialization
         public FileCompressionInfo CompressionInfo { get; set; } = compressionInfo;
     }
 
-    static class PackFileSerializerWriter
+    public static class PackFileSerializerWriter
     {
         private static readonly ILogger _logger = Logging.CreateStatic(typeof(PackFileSerializerWriter));
         private static readonly IReadOnlyList<(string Path, string Content)> PackFileCorruptionDetectionFiles =
@@ -101,7 +101,7 @@ namespace Shared.Core.PackFiles.Serialization
 
             var originalPosition = stream.Position;
             stream.Position = 0;
-            var loadedPack = PackFileSerializerLoader.Load(outputFileName, stream.Length, new BinaryReader(stream, Encoding.UTF8, leaveOpen: true), new CustomPackDuplicateFileResolver());
+            var loadedPack = PackFileSerializerLoader.Load(outputFileName, stream.Length, new BinaryReader(stream, Encoding.UTF8, leaveOpen: true), new CaPackDuplicateFileResolver());
             stream.Position = originalPosition;
 
             foreach (var detectionFile in PackFileCorruptionDetectionFiles)

@@ -1,11 +1,13 @@
-﻿using Shared.Core.Misc;
-
-namespace Shared.GameFormats.RigidModel.MaterialHeaders
+﻿namespace Shared.GameFormats.RigidModel.MaterialHeaders
 {
     public class MaterialFactory
     {
         private readonly ILogger _logger = Logging.Create<MaterialFactory>();
         private readonly Dictionary<ModelMaterialEnum, IMaterialCreator> _materialCreators = [];
+        private static string TempDirectory => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "AssetEditor",
+            "Temp");
 
         public static MaterialFactory Create() => new MaterialFactory();
 
@@ -34,7 +36,8 @@ namespace Shared.GameFormats.RigidModel.MaterialHeaders
                     {
                         var outputArray = new byte[expectedMaterialSize - actualMaterialSize];
                         Array.ConstrainedCopy(data, (int)(offset + actualMaterialSize), outputArray, 0, (int)(expectedMaterialSize - actualMaterialSize));
-                        File.WriteAllBytes(DirectoryHelper.Temp + "\\ExtraData_" + modelTypeEnum + "_Start_" + offset + actualMaterialSize + "_Size_" + (expectedMaterialSize - actualMaterialSize) + ".data", outputArray);
+                        Directory.CreateDirectory(TempDirectory);
+                        File.WriteAllBytes(Path.Combine(TempDirectory, $"ExtraData_{modelTypeEnum}_Start_{offset}{actualMaterialSize}_Size_{expectedMaterialSize - actualMaterialSize}.data"), outputArray);
                         throw new Exception($"Part of material {modelTypeEnum} header not read - {bytesLeft} bytes left in header.");
                     }
 
@@ -51,7 +54,8 @@ namespace Shared.GameFormats.RigidModel.MaterialHeaders
                     {
                         var outputArray = new byte[expectedMaterialSize - actualMaterialSize];
                         Array.ConstrainedCopy(data, (int)(offset + actualMaterialSize), outputArray, 0, (int)(expectedMaterialSize - actualMaterialSize));
-                        File.WriteAllBytes(DirectoryHelper.Temp + "\\ExtraData_" + modelTypeEnum + "_Start_" + offset + actualMaterialSize + "_Size_" + (expectedMaterialSize - actualMaterialSize) + ".data", outputArray);
+                        Directory.CreateDirectory(TempDirectory);
+                        File.WriteAllBytes(Path.Combine(TempDirectory, $"ExtraData_{modelTypeEnum}_Start_{offset}{actualMaterialSize}_Size_{expectedMaterialSize - actualMaterialSize}.data"), outputArray);
                         throw new Exception($"Uknown material - {modelTypeEnum} header not read. Expected Size = {expectedMaterialSize} Actual Size = {actualMaterialSize}");
                     }
 

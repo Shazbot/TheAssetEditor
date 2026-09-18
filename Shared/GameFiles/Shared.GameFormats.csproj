@@ -8,13 +8,23 @@
     </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Diagnostics" Version="8.4.0" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.4.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="NVorbis" Version="0.10.5" />
     <PackageReference Include="OggVorbisEncoder" Version="1.2.2" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\EmbeddedResources\Shared.EmbeddedResources.csproj" />
-    <ProjectReference Include="..\SharedCore\Shared.Core\Shared.Core.csproj" />
+    <ProjectReference Include="..\ByteParsing\Shared.ByteParsing\Shared.ByteParsing.csproj" />
+    <ProjectReference Include="..\Logging\Shared.Core.Logging\Shared.CoreLog.csproj" />
+    <ProjectReference Include="..\PackFiles\Shared.PackFiles.Core\Shared.PackFiles.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\EmbeddedResources\Resources\AnimationSlots\*.txt" Link="Resources\AnimationSlots\%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\EmbeddedResources\Resources\Wwise\packed_codebooks_aoTuV_603.bin" Link="Resources\Wwise\packed_codebooks_aoTuV_603.bin" />
   </ItemGroup>
 
 </Project>

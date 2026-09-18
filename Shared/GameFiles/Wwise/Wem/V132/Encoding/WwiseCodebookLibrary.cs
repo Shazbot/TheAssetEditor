@@ -1,6 +1,6 @@
 ﻿using System.Buffers.Binary;
 using Shared.ByteParsing;
-using Shared.EmbeddedResources;
+using Shared.GameFormats.Resources;
 
 namespace Shared.GameFormats.Wwise.Wem.V132.Encoding
 {
@@ -12,7 +12,7 @@ namespace Shared.GameFormats.Wwise.Wem.V132.Encoding
 
         public WwiseCodebookLibrary()
         {
-            _packedCodebooks = ResourceLoader.LoadBytes("Resources.Wwise.packed_codebooks_aoTuV_603.bin");
+            _packedCodebooks = GameFormatsResourceLoader.LoadBytes("Resources.Wwise.packed_codebooks_aoTuV_603.bin");
             _codebookOffsets = ParseCodebookOffsets(_packedCodebooks);
             _libraryIdByCodebookBits = BuildLibraryIdLookup();
         }
