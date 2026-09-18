@@ -1,6 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using System.Xml.Linq;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 
 namespace Shared.GameFormats.Twui
 {
@@ -83,5 +83,4 @@ namespace Shared.GameFormats.Twui
         }
     }
 }
-
 

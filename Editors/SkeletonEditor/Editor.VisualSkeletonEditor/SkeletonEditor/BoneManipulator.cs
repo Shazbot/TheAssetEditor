@@ -1,7 +1,6 @@
 ﻿using System.Windows;
 using Editors.Shared.Core.Common.ReferenceModel;
 using GameWorld.Core.Animation;
-using Microsoft.Xna.Framework;
 using Shared.Core.Misc;
 
 namespace Editor.VisualSkeletonEditor.SkeletonEditor
@@ -94,10 +93,13 @@ namespace Editor.VisualSkeletonEditor.SkeletonEditor
                 var parentTransform = target.GetWorldTransform(targetIndex);
                 var world = source.GetWorldTransform(sourceIndex);
 
-                var localSpaceMatrix = world * Matrix.Invert(parentTransform);
-                localSpaceMatrix.Decompose(out _, out var quaternionValue, out var translationValue);
+                if (!System.Numerics.Matrix4x4.Invert(parentTransform, out var inverseParent))
+                    throw new InvalidOperationException("Unable to invert the target parent bone transform.");
+                var localSpaceMatrix = world * inverseParent;
+                if (!System.Numerics.Matrix4x4.Decompose(localSpaceMatrix, out _, out var quaternionValue, out _))
+                    throw new InvalidOperationException("Unable to decompose the pasted bone transform.");
 
-                target.Translation[newBoneIndex] = Vector3.Zero;
+                target.Translation[newBoneIndex] = System.Numerics.Vector3.Zero;
                 target.Rotation[newBoneIndex] = quaternionValue;
             }
 

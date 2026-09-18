@@ -344,7 +344,7 @@ namespace Test.KitbashEditor.PinTool
 
             var materialMock = new Mock<IRmvMaterial>();
             materialMock.Setup(m => m.ModelName).Returns("test_mesh");
-            materialMock.Setup(m => m.PivotPoint).Returns(Vector3.Zero);
+            materialMock.Setup(m => m.PivotPoint).Returns(System.Numerics.Vector3.Zero);
             materialMock.Setup(m => m.Clone()).Returns(() => materialMock.Object);
 
             var shaderMock = new Mock<CapabilityMaterial>(

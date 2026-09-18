@@ -138,7 +138,7 @@ namespace Shared.GameFormats.Twui
 
                 if (stateImage.This == "0AEA8085-AA18-4BA8-B1A2045FAA47A0E8")
                 {
-                    //stateImage.Dock_offset = new Microsoft.Xna.Framework.Vector2(0, 0);
+                    //stateImage.Dock_offset = new Vector2(0, 0);
                 }
 
 

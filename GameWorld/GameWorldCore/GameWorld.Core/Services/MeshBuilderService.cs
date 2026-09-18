@@ -27,12 +27,12 @@ namespace GameWorld.Core.Services
             for (var i = 0; i < rmvModel.Mesh.VertexList.Length; i++)
             {
                 var vertex = rmvModel.Mesh.VertexList[i];
-                mesh.VertexArray[i].Position = vertex.Position;
-                mesh.VertexArray[i].Normal = vertex.Normal;
-                mesh.VertexArray[i].BiNormal = vertex.BiNormal;
-                mesh.VertexArray[i].Tangent = vertex.Tangent;
-                mesh.VertexArray[i].TextureCoordinate = vertex.Uv;
-                mesh.VertexArray[i].TextureCoordinate1 = vertex.Uv1;
+                mesh.VertexArray[i].Position = NumericsXnaConverter.ToXna(vertex.Position);
+                mesh.VertexArray[i].Normal = NumericsXnaConverter.ToXna(vertex.Normal);
+                mesh.VertexArray[i].BiNormal = NumericsXnaConverter.ToXna(vertex.BiNormal);
+                mesh.VertexArray[i].Tangent = NumericsXnaConverter.ToXna(vertex.Tangent);
+                mesh.VertexArray[i].TextureCoordinate = NumericsXnaConverter.ToXna(vertex.Uv);
+                mesh.VertexArray[i].TextureCoordinate1 = NumericsXnaConverter.ToXna(vertex.Uv1);
 
                 if (mesh.VertexFormat == UiVertexFormat.Static)
                 {
@@ -76,14 +76,14 @@ namespace GameWorld.Core.Services
             mesh.VertexList = geometry.VertexArray.
                 Select(x => new CommonVertex()
                 {
-                    Position = x.Position,
-                    Normal = x.Normal,
-                    BiNormal = x.BiNormal,
-                    Tangent = x.Tangent,
+                    Position = NumericsXnaConverter.ToNumerics(x.Position),
+                    Normal = NumericsXnaConverter.ToNumerics(x.Normal),
+                    BiNormal = NumericsXnaConverter.ToNumerics(x.BiNormal),
+                    Tangent = NumericsXnaConverter.ToNumerics(x.Tangent),
 
-                    Colour = new Vector4(0, 0, 0, 1),
-                    Uv = x.TextureCoordinate,
-                    Uv1 = x.TextureCoordinate1,
+                    Colour = new System.Numerics.Vector4(0, 0, 0, 1),
+                    Uv = NumericsXnaConverter.ToNumerics(x.TextureCoordinate),
+                    Uv1 = NumericsXnaConverter.ToNumerics(x.TextureCoordinate1),
 
                     BoneIndex = x.GetBoneIndexs().Take(geometry.WeightCount).Select(x => (byte)x).ToArray(),
                     BoneWeight = x.GetBoneWeights().Take(geometry.WeightCount).ToArray(),

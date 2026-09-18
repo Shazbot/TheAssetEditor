@@ -2,6 +2,7 @@
 using GameWorld.Core.Commands;
 using GameWorld.Core.Commands.Object;
 using GameWorld.Core.Components;
+using GameWorld.Core.Rendering;
 using GameWorld.Core.SceneNodes;
 using Microsoft.Xna.Framework;
 using Shared.Core.Events;
@@ -10,6 +11,8 @@ using Shared.Core.Services;
 using Shared.GameFormats.Animation;
 using Shared.Ui.BaseDialogs.MathViews;
 using Shared.Ui.Editors.BoneMapping;
+using NumericsMatrix = System.Numerics.Matrix4x4;
+using NumericsVector3 = System.Numerics.Vector3;
 
 namespace Editors.KitbasherEditor.ChildEditors.MeshFitter
 {
@@ -75,7 +78,7 @@ namespace Editors.KitbasherEditor.ChildEditors.MeshFitter
             {
                 _animationClip.DynamicFrames[PreviewFrameIndex].Rotation.Add(_fromSkeleton.Rotation[i]);
                 _animationClip.DynamicFrames[PreviewFrameIndex].Position.Add(_fromSkeleton.Translation[i]);
-                _animationClip.DynamicFrames[PreviewFrameIndex].Scale.Add(Vector3.One);
+                _animationClip.DynamicFrames[PreviewFrameIndex].Scale.Add(NumericsVector3.One);
             }
 
             _animationPlayer.SetAnimation(_animationClip, _fromSkeleton);
@@ -174,12 +177,12 @@ namespace Editors.KitbasherEditor.ChildEditors.MeshFitter
             {
                 _animationClip.DynamicFrames[PreviewFrameIndex].Rotation[i] = _fromSkeleton.Rotation[i];
                 _animationClip.DynamicFrames[PreviewFrameIndex].Position[i] = _fromSkeleton.Translation[i];
-                _animationClip.DynamicFrames[PreviewFrameIndex].Scale[i] = Vector3.One;
+                _animationClip.DynamicFrames[PreviewFrameIndex].Scale[i] = NumericsVector3.One;
             }
 
             // Set the base scale for the mesh and apply the animation
             var baseScale = (float)ScaleFactor.Value;
-            _animationClip.DynamicFrames[PreviewFrameIndex].Scale[0] = new Vector3(baseScale);
+            _animationClip.DynamicFrames[PreviewFrameIndex].Scale[0] = new NumericsVector3(baseScale);
             _animationPlayer!.Refresh();
 
             if (baseScale == 0)
@@ -199,9 +202,9 @@ namespace Editors.KitbasherEditor.ChildEditors.MeshFitter
                     : _fromSkeleton.GetAnimatedWorldTranform(i);
 
                 // Apply the offset values to the bone in worldspace
-                var desiredBonePosWorldWithOffsets = MathUtil.CreateRotation(boneValuesObject.BoneRotOffset) *
+                var desiredBonePosWorldWithOffsets = NumericsXnaConverter.ToNumerics(MathUtil.CreateRotation(boneValuesObject.BoneRotOffset)) *
                     desiredBonePosWorld *
-                    Matrix.CreateTranslation(boneValuesObject.BonePosOffset);
+                    NumericsMatrix.CreateTranslation(NumericsXnaConverter.ToNumerics(boneValuesObject.BonePosOffset));
 
                 // Apply relative scale if applicable 
                 float relativeScale = 1;
@@ -215,11 +218,11 @@ namespace Editors.KitbasherEditor.ChildEditors.MeshFitter
                     {
                         var toBone0 = _targetSkeleton.GetWorldTransform(targetBoneIndex);
                         var toBone1 = _targetSkeleton.GetWorldTransform(targetParentBoneIndex);
-                        var targetBoneLength = Vector3.Distance(toBone0.Translation, toBone1.Translation);
+                        var targetBoneLength = NumericsVector3.Distance(toBone0.Translation, toBone1.Translation);
 
                         var fromBone0 = _fromSkeleton.GetWorldTransform(fromBoneIndex);
                         var fromBone1 = _fromSkeleton.GetWorldTransform(fromParentBoneIndex);
-                        var fromBoneLength = Vector3.Distance(fromBone0.Translation, fromBone1.Translation);
+                        var fromBoneLength = NumericsVector3.Distance(fromBone0.Translation, fromBone1.Translation);
 
                         relativeScale = fromBoneLength / targetBoneLength;
                     }
@@ -232,23 +235,25 @@ namespace Editors.KitbasherEditor.ChildEditors.MeshFitter
                 if (scale <= 0 || float.IsNaN(scale))
                     scale = 0.00001f;
 
-                var parentWorld = Matrix.Identity;
+                var parentWorld = NumericsMatrix.Identity;
                 if (fromParentBoneIndex != -1)
                     parentWorld = _fromSkeleton.GetAnimatedWorldTranform(fromParentBoneIndex);
-                var bonePositionLocalSpace = desiredBonePosWorldWithOffsets * Matrix.Invert(parentWorld);
-                bonePositionLocalSpace.Decompose(out var _, out var boneRotation, out var bonePosition);
+                if (!NumericsMatrix.Invert(parentWorld, out var parentInverse))
+                    throw new InvalidOperationException("Unable to invert mesh fitting parent transform.");
+                var bonePositionLocalSpace = desiredBonePosWorldWithOffsets * parentInverse;
+                NumericsMatrix.Decompose(bonePositionLocalSpace, out var _, out var boneRotation, out var bonePosition);
 
                 // Apply the values to the animation
                 _animationClip.DynamicFrames[PreviewFrameIndex].Rotation[i] = boneRotation;
                 _animationClip.DynamicFrames[PreviewFrameIndex].Position[i] = bonePosition;
-                _animationClip.DynamicFrames[PreviewFrameIndex].Scale[i] *= new Vector3(scale);
+                _animationClip.DynamicFrames[PreviewFrameIndex].Scale[i] *= new NumericsVector3(scale);
 
                 // Apply the inv scale to all children to avoid the mesh growing out of control
                 var childBones = _fromSkeleton.GetDirectChildBones(i);
                 foreach (var childBoneIndex in childBones)
                 {
                     var invScale = 1 / scale;
-                    _animationClip.DynamicFrames[PreviewFrameIndex].Scale[childBoneIndex] *= new Vector3(invScale);
+                    _animationClip.DynamicFrames[PreviewFrameIndex].Scale[childBoneIndex] *= new NumericsVector3(invScale);
                 }
 
                 _animationPlayer.Refresh();

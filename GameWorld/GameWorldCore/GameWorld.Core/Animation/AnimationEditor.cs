@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
 using Shared.GameFormats.Animation;
 using System;
 using System.Linq;

@@ -1,5 +1,5 @@
 ﻿using System.Runtime.InteropServices;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 
 namespace Shared.GameFormats.RigidModel.Transforms
 {
@@ -14,15 +14,15 @@ namespace Shared.GameFormats.RigidModel.Transforms
         public float MaximumY;
         public float MaximumZ;
 
-        public void UpdateBoundingBox(BoundingBox newBB)
+        public void UpdateBoundingBox(Vector3 min, Vector3 max)
         {
-            MinimumX = newBB.Min.X;
-            MinimumY = newBB.Min.Y;
-            MinimumZ = newBB.Min.Z;
+            MinimumX = min.X;
+            MinimumY = min.Y;
+            MinimumZ = min.Z;
 
-            MaximumX = newBB.Max.X;
-            MaximumY = newBB.Max.Y;
-            MaximumZ = newBB.Max.Z;
+            MaximumX = max.X;
+            MaximumY = max.Y;
+            MaximumZ = max.Z;
         }
 
         public float Width { get => Math.Abs(MinimumX - MaximumX); }

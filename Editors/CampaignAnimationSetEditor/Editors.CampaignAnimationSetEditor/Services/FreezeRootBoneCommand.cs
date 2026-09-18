@@ -1,5 +1,5 @@
 using GameWorld.Core.Animation;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.Core.Services;
 
 namespace Editors.CampaignAnimationSetEditor.Services

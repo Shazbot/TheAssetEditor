@@ -1,17 +1,22 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
 using Shared.ByteParsing;
 using Shared.GameFormats.RigidModel.Transforms;
-using Half = SharpDX.Half;
+using Half = System.Half;
 namespace Shared.GameFormats.RigidModel.Vertex
 {
     public static class VertexLoadHelper
     {
         static public RmvVector4 CreatVector4HalfFloat(byte[] data)
         {
-            ByteParsers.Float16.TryDecodeValue(data, 0, out var x, out _, out _);
-            ByteParsers.Float16.TryDecodeValue(data, 2, out var y, out _, out _);
-            ByteParsers.Float16.TryDecodeValue(data, 4, out var z, out _, out _);
-            ByteParsers.Float16.TryDecodeValue(data, 6, out var w, out _, out _);
+            ByteParsers.Float16.TryDecodeValue(data, 0, out var xHalf, out _, out _);
+            ByteParsers.Float16.TryDecodeValue(data, 2, out var yHalf, out _, out _);
+            ByteParsers.Float16.TryDecodeValue(data, 4, out var zHalf, out _, out _);
+            ByteParsers.Float16.TryDecodeValue(data, 6, out var wHalf, out _, out _);
+
+            var x = (float)xHalf;
+            var y = (float)yHalf;
+            var z = (float)zHalf;
+            var w = (float)wHalf;
 
             if (w != 0.0f)
             {
@@ -32,19 +37,23 @@ namespace Shared.GameFormats.RigidModel.Vertex
 
         static public Vector4 CreatVector4HalfFloat2(Half x, Half y, Half z, Half w)
         {
-            if (w != 0.0f)
+            var xValue = (float)x;
+            var yValue = (float)y;
+            var zValue = (float)z;
+            var wValue = (float)w;
+
+            if (wValue != 0.0f)
             {
-                x *= w;
-                y *= w;
-                z *= w;
-                w = 0;
+                xValue *= wValue;
+                yValue *= wValue;
+                zValue *= wValue;
             }
 
             return new Vector4()
             {
-                X = x,
-                Y = y,
-                Z = z,
+                X = xValue,
+                Y = yValue,
+                Z = zValue,
                 W = 1
             };
         }
@@ -145,12 +154,12 @@ namespace Shared.GameFormats.RigidModel.Vertex
 
         static public RmvVector2 CreatVector2HalfFloat(byte[] data)
         {
-            ByteParsers.Float16.TryDecodeValue(data, 0, out var x, out _, out _);
-            ByteParsers.Float16.TryDecodeValue(data, 2, out var y, out _, out _);
+            ByteParsers.Float16.TryDecodeValue(data, 0, out var xHalf, out _, out _);
+            ByteParsers.Float16.TryDecodeValue(data, 2, out var yHalf, out _, out _);
             return new RmvVector2()
             {
-                X = x,
-                Y = y
+                X = (float)xHalf,
+                Y = (float)yHalf
             };
         }
 
@@ -171,6 +180,49 @@ namespace Shared.GameFormats.RigidModel.Vertex
             return (byte)Math.Round(truncatedFloat);
         }
         public struct MyHalfVector4 { public Half X; public Half Y; public Half Z; public Half W; }
+
+        /// <summary>
+        /// Converts a single to the truncating half-float representation used by the
+        /// previous vertex serializers, without bringing the renderer math package
+        /// back into the headless format layer.
+        /// </summary>
+        public static Half ConvertFloatToHalf(float value)
+        {
+            var bits = BitConverter.SingleToUInt32Bits(value);
+            var exponent = (int)((bits >> 23) & 0xff) - 127;
+            var sign = (bits & 0x80000000) == 0 ? 0u : 0x8000u;
+            var mantissa = bits & 0x007fffff;
+
+            ushort baseValue;
+            int shift;
+            if (exponent < -24)
+            {
+                baseValue = (ushort)sign;
+                shift = 24;
+            }
+            else if (exponent < -14)
+            {
+                baseValue = (ushort)(sign | (0x0400 >> (-exponent - 14)));
+                shift = -exponent - 1;
+            }
+            else if (exponent <= 15)
+            {
+                baseValue = (ushort)(sign | ((exponent + 15) << 10));
+                shift = 13;
+            }
+            else if (exponent < 128)
+            {
+                baseValue = (ushort)(sign | 0x7c00);
+                shift = 24;
+            }
+            else
+            {
+                baseValue = (ushort)(sign | 0x7c00);
+                shift = 13;
+            }
+
+            return BitConverter.UInt16BitsToHalf((ushort)(baseValue + (mantissa >> shift)));
+        }
 
         public static (Half X, Half Y, Half Z, Half W) ConvertertVertexToHalfExtraPrecision(Vector4 vertexOriginal)
         {
@@ -201,10 +253,10 @@ namespace Shared.GameFormats.RigidModel.Vertex
                 // Convert normalized values to half-float            
                 var halfVertexNormalized = new MyHalfVector4()
                 {
-                    X = (Half)normalizedVertex.X,
-                    Y = (Half)normalizedVertex.Y,
-                    Z = (Half)normalizedVertex.Z,
-                    W = (Half)testW
+                    X = ConvertFloatToHalf(normalizedVertex.X),
+                    Y = ConvertFloatToHalf(normalizedVertex.Y),
+                    Z = ConvertFloatToHalf(normalizedVertex.Z),
+                    W = ConvertFloatToHalf(testW)
                 };   
 
                 // Recover the original values by multiplying by w
@@ -237,10 +289,10 @@ namespace Shared.GameFormats.RigidModel.Vertex
 
             // Convert normalized values and W to half-float
             var outHalfVertex = new MyHalfVector4();
-            outHalfVertex.X = (Half)normalizedFinal.X;
-            outHalfVertex.Y = (Half)normalizedFinal.Y;
-            outHalfVertex.Z = (Half)normalizedFinal.Z;
-            outHalfVertex.W = (Half)bestValueForW;
+            outHalfVertex.X = ConvertFloatToHalf(normalizedFinal.X);
+            outHalfVertex.Y = ConvertFloatToHalf(normalizedFinal.Y);
+            outHalfVertex.Z = ConvertFloatToHalf(normalizedFinal.Z);
+            outHalfVertex.W = ConvertFloatToHalf(bestValueForW);
 
             return (outHalfVertex.X, outHalfVertex.Y, outHalfVertex.Z, outHalfVertex.W);
         }
@@ -260,7 +312,7 @@ namespace Shared.GameFormats.RigidModel.Vertex
 
         private static bool IsWithingFloat16Range(Vector4 vertexOriginal)
         {
-            if (vertexOriginal.X >= Half.MaxValue || vertexOriginal.Y >= Half.MaxValue || vertexOriginal.Z >= Half.MaxValue)
+            if (vertexOriginal.X >= (float)Half.MaxValue || vertexOriginal.Y >= (float)Half.MaxValue || vertexOriginal.Z >= (float)Half.MaxValue)
             {
                 return false;
             }
@@ -268,10 +320,16 @@ namespace Shared.GameFormats.RigidModel.Vertex
             return true;
         }
 
-        static public byte[] CreatePositionVector4(Microsoft.Xna.Framework.Vector4 vector)
+        static public byte[] CreatePositionVector4(Vector4 vector)
         {
             var output = new byte[8];
-            ushort[] halfs = { new Half(vector.X).RawValue, new Half(vector.Y).RawValue, new Half(vector.Z).RawValue, new Half(vector.W).RawValue };
+            ushort[] halfs =
+            {
+                BitConverter.HalfToUInt16Bits(ConvertFloatToHalf(vector.X)),
+                BitConverter.HalfToUInt16Bits(ConvertFloatToHalf(vector.Y)),
+                BitConverter.HalfToUInt16Bits(ConvertFloatToHalf(vector.Z)),
+                BitConverter.HalfToUInt16Bits(ConvertFloatToHalf(vector.W))
+            };
             for (var i = 0; i < 4; i++)
             {
                 var bytes = BitConverter.GetBytes(halfs[i]);
@@ -282,12 +340,18 @@ namespace Shared.GameFormats.RigidModel.Vertex
             return output;
         }
 
-        static public byte[] CreatePositionVector4ExtraPrecision(Microsoft.Xna.Framework.Vector4 vector)
+        static public byte[] CreatePositionVector4ExtraPrecision(Vector4 vector)
         {
             var output = new byte[8];
 
             var v = ConvertertVertexToHalfExtraPrecision(vector);            
-            ushort[] halfs = { v.X.RawValue, v.Y.RawValue, v.Z.RawValue, v.W.RawValue };
+            ushort[] halfs =
+            {
+                BitConverter.HalfToUInt16Bits(v.X),
+                BitConverter.HalfToUInt16Bits(v.Y),
+                BitConverter.HalfToUInt16Bits(v.Z),
+                BitConverter.HalfToUInt16Bits(v.W)
+            };
 
             for (var i = 0; i < 4; i++)
             {
@@ -299,7 +363,7 @@ namespace Shared.GameFormats.RigidModel.Vertex
             return output;
         }
 
-        static public HalfVector4 CreatePositionVector4ExtraPrecision_v2(Microsoft.Xna.Framework.Vector4 vector)
+        static public HalfVector4 CreatePositionVector4ExtraPrecision_v2(Vector4 vector)
         {
             var v = ConvertertVertexToHalfExtraPrecision(vector);
             return new HalfVector4()
@@ -311,10 +375,14 @@ namespace Shared.GameFormats.RigidModel.Vertex
             };
         }
 
-        static public byte[] CreatePositionVector2(Microsoft.Xna.Framework.Vector2 vector)
+        static public byte[] CreatePositionVector2(Vector2 vector)
         {
             var output = new byte[4];
-            ushort[] halfs = { new Half(vector.X).RawValue, new Half(vector.Y).RawValue };
+            ushort[] halfs =
+            {
+                BitConverter.HalfToUInt16Bits(ConvertFloatToHalf(vector.X)),
+                BitConverter.HalfToUInt16Bits(ConvertFloatToHalf(vector.Y))
+            };
             for (var i = 0; i < 2; i++)
             {
                 var bytes = BitConverter.GetBytes(halfs[i]);
@@ -325,7 +393,7 @@ namespace Shared.GameFormats.RigidModel.Vertex
             return output;
         }
 
-        static public byte[] CreateNormalVector3(Microsoft.Xna.Framework.Vector3 vector)
+        static public byte[] CreateNormalVector3(Vector3 vector)
         {
             var output = new byte[4];
             output[0] = NormalToByte(vector.X);
@@ -335,7 +403,7 @@ namespace Shared.GameFormats.RigidModel.Vertex
             return output;
         }
 
-        static public ByteVector4 CreateNormalVector3_v2(Microsoft.Xna.Framework.Vector3 vector)
+        static public ByteVector4 CreateNormalVector3_v2(Vector3 vector)
         {
             return new ByteVector4()
             {
@@ -347,7 +415,7 @@ namespace Shared.GameFormats.RigidModel.Vertex
         }
 
 
-        static public byte[] Create4BytesFromVector4(Microsoft.Xna.Framework.Vector4 vector)
+        static public byte[] Create4BytesFromVector4(Vector4 vector)
         {
             var output = new byte[4];
             output[0] = NormalToByte(vector.X);
@@ -357,7 +425,7 @@ namespace Shared.GameFormats.RigidModel.Vertex
             return output;            
         }
 
-        static public ByteVector4 Create4BytesFromVector4_v2(Microsoft.Xna.Framework.Vector4 vector)
+        static public ByteVector4 Create4BytesFromVector4_v2(Vector4 vector)
         {
             return new ByteVector4()
             {

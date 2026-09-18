@@ -126,7 +126,7 @@ namespace GameWorld.Core.Test.Selection
 
             var materialMock = new Mock<IRmvMaterial>();
             materialMock.Setup(m => m.ModelName).Returns("test_mesh");
-            materialMock.Setup(m => m.PivotPoint).Returns(Vector3.Zero);
+            materialMock.Setup(m => m.PivotPoint).Returns(System.Numerics.Vector3.Zero);
 
             var shader = new CapabilityMaterialMock(CapabilityMaterialsEnum.SpecGlossPbr_Default);
 

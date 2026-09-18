@@ -1,5 +1,5 @@
 ﻿using GameWorld.Core.Animation.AnimationChange;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.Core.Misc;
 
 namespace GameWorld.Core.Animation
@@ -54,8 +54,9 @@ namespace GameWorld.Core.Animation
                 // This is applied again in the animation shader.
                 for (var boneIndex = 0; boneIndex < skeleton.BoneCount; boneIndex++)
                 {
-                    var inv = Matrix.Invert(skeleton.GetWorldTransform(boneIndex));
-                    currentFrame.BoneTransforms[boneIndex].WorldTransform = Matrix.Multiply(inv, currentFrame.BoneTransforms[boneIndex].WorldTransform);
+                    if (!Matrix4x4.Invert(skeleton.GetWorldTransform(boneIndex), out var inv))
+                        throw new InvalidOperationException($"Unable to invert skeleton world transform for bone {boneIndex}.");
+                    currentFrame.BoneTransforms[boneIndex].WorldTransform = inv * currentFrame.BoneTransforms[boneIndex].WorldTransform;
                 }
 
                 return currentFrame;
@@ -117,8 +118,9 @@ namespace GameWorld.Core.Animation
                 // This is applied again in the animation shader.
                 for (var boneIndex = 0; boneIndex < skeleton.BoneCount; boneIndex++)
                 {
-                    var inv = Matrix.Invert(skeleton.GetWorldTransform(boneIndex));
-                    currentFrame.BoneTransforms[boneIndex].WorldTransform = Matrix.Multiply(inv, currentFrame.BoneTransforms[boneIndex].WorldTransform);
+                    if (!Matrix4x4.Invert(skeleton.GetWorldTransform(boneIndex), out var inv))
+                        throw new InvalidOperationException($"Unable to invert skeleton world transform for bone {boneIndex}.");
+                    currentFrame.BoneTransforms[boneIndex].WorldTransform = inv * currentFrame.BoneTransforms[boneIndex].WorldTransform;
                 }
 
                 return currentFrame;
@@ -175,8 +177,7 @@ namespace GameWorld.Core.Animation
             var animationValueCurrentFrame = currentFrame.Rotation[boneIndex];
             if (nextFrame != null)
                 animationValueCurrentFrame = Quaternion.Slerp(animationValueCurrentFrame, nextFrame.Rotation[boneIndex], animationInterpolation);
-            animationValueCurrentFrame.Normalize();
-            return animationValueCurrentFrame;
+            return Quaternion.Normalize(animationValueCurrentFrame);
         }
 
         static Vector3 ComputeTranslationCurrentFrame(int boneIndex, AnimationClip.KeyFrame currentFrame, AnimationClip.KeyFrame nextFrame, float animationInterpolation)

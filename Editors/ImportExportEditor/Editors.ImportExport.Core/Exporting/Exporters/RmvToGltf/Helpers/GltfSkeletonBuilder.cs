@@ -57,11 +57,11 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 parentIdToGltfNode[boneIndex] = parentNode.CreateNode(animSkeletonFil.Bones[boneIndex].Name);
 
                 parentIdToGltfNode[boneIndex].
-                    WithLocalTranslation(VecConv.GetSys(GlobalSceneTransforms.FlipVector(frame.Transforms[boneIndex].ToVector3(), doMirror))).
-                    WithLocalRotation(VecConv.GetSys(GlobalSceneTransforms.FlipQuaternion(frame.Quaternion[boneIndex].ToQuaternion(), doMirror))).
+                    WithLocalTranslation(GlobalSceneTransforms.FlipVector(frame.Transforms[boneIndex].ToVector3(), doMirror)).
+                    WithLocalRotation(GlobalSceneTransforms.FlipQuaternion(frame.Quaternion[boneIndex].ToQuaternion(), doMirror)).
                     WithLocalScale(new System.Numerics.Vector3(1, 1, 1));
 
-                var invBindPoseMatrix4x4 = VecConv.GetSys(invMatrices[boneIndex]);
+                var invBindPoseMatrix4x4 = invMatrices[boneIndex];
 
                 outputGltfBindings.Add((parentIdToGltfNode[boneIndex], invBindPoseMatrix4x4));
             }

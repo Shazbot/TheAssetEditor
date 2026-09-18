@@ -1,6 +1,6 @@
 ﻿using System.Text;
 using System.Xml;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.Types;

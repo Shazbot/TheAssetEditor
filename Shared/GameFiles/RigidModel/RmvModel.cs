@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
 
 namespace Shared.GameFormats.RigidModel
@@ -19,10 +19,10 @@ namespace Shared.GameFormats.RigidModel
             CommonHeader = header;
         }
 
-        public void UpdateBoundingBox(BoundingBox bb)
+        public void UpdateBoundingBox(Vector3 min, Vector3 max)
         {
             var header = CommonHeader;
-            header.BoundingBox.UpdateBoundingBox(bb);
+            header.BoundingBox.UpdateBoundingBox(min, max);
             CommonHeader = header;
         }
     }

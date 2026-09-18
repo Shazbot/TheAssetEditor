@@ -1,6 +1,6 @@
 ﻿using Editor.CampaignAnimationCreator.CampaignAnimationCreator.Commands;
 using GameWorld.Core.Animation;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Moq;
 using Shared.ByteParsing;
 using Shared.Core.PackFiles.Utility;

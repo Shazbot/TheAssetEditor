@@ -1,5 +1,5 @@
 ﻿using Shared.ByteParsing.Parsers;
-using Half = SharpDX.Half;
+using System;
 
 namespace Shared.ByteParsing
 {

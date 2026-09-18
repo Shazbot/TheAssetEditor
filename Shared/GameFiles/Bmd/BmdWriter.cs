@@ -1,5 +1,5 @@
 using System.Text;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.GameFormats.RigidModel.Transforms;
 
 namespace Shared.GameFormats.Bmd
@@ -272,7 +272,8 @@ namespace Shared.GameFormats.Bmd
                 // Inverse of the old raw position/rotation/scale composition
                 // (scaleMatrix * rotationMatrix * translationMatrix) - Matrix.Decompose assumes
                 // exactly this row-vector TRS order, so it exactly undoes it.
-                building.Transform.Decompose(out var scale, out var rotation, out var translation);
+                if (!Matrix4x4.Decompose(building.Transform, out var scale, out var rotation, out var translation))
+                    throw new InvalidDataException("Unable to decompose battlefield building transform.");
                 WriteVector3(writer, translation);
                 writer.Write(rotation.X);
                 writer.Write(rotation.Y);
@@ -920,7 +921,7 @@ namespace Shared.GameFormats.Bmd
             writer.Write(v.Z);
         }
 
-        private static void WriteRowMajorMatrix(BinaryWriter writer, Matrix m, bool is4x4)
+        private static void WriteRowMajorMatrix(BinaryWriter writer, Matrix4x4 m, bool is4x4)
         {
             writer.Write(m.M11);
             writer.Write(m.M12);

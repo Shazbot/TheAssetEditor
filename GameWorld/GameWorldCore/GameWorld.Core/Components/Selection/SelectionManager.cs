@@ -201,8 +201,9 @@ namespace GameWorld.Core.Components.Selection
                     foreach (var boneIdx in bones)
                     {
                         var bone = currentFrame.GetSkeletonAnimatedWorld(skeleton, boneIdx);
-                        bone.Decompose(out var _, out var _, out var trans);
-                        _renderEngine.AddRenderLines(LineHelper.CreateCube(Matrix.CreateScale(0.06f) * bone * renderMatrix * parentWorld, Color.Red));
+                        _renderEngine.AddRenderLines(LineHelper.CreateCube(
+                            Matrix.CreateScale(0.06f) * NumericsXnaConverter.ToXna(bone) * renderMatrix * parentWorld,
+                            Color.Red));
                     }
                 }
             }
@@ -380,4 +381,3 @@ namespace GameWorld.Core.Components.Selection
         }
     }
 }
-

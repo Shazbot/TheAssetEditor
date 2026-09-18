@@ -1,5 +1,6 @@
 ﻿using GameWorld.Core.Animation;
 using GameWorld.Core.Rendering.Geometry;
+using GameWorld.Core.Rendering;
 using GameWorld.Core.SceneNodes;
 using Microsoft.Xna.Framework;
 using System.Collections.Generic;
@@ -331,8 +332,9 @@ namespace GameWorld.Core.Utility
             for (var boneIdx = 0; boneIdx < totalBones; boneIdx++)
             {
                 var bone = currentFrame.GetSkeletonAnimatedWorld(skeleton, boneIdx);
-                bone.Decompose(out var _, out var _, out var trans);
-                if (boundingFrustum.Contains(Vector3.Transform(trans, matrix)) != ContainmentType.Disjoint)
+                if (!System.Numerics.Matrix4x4.Decompose(bone, out _, out _, out var trans))
+                    continue;
+                if (boundingFrustum.Contains(Vector3.Transform(NumericsXnaConverter.ToXna(trans), matrix)) != ContainmentType.Disjoint)
                     bones.Add(boneIdx);
             }
 

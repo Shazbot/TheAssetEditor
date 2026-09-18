@@ -1,7 +1,7 @@
 ﻿using GameWorld.Core.Animation;
 using GameWorld.Core.Animation.AnimationChange;
 using GameWorld.Core.SceneNodes;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 
 namespace Editors.AnimationMeta.SuperView.Visualisation.Rules
 {
@@ -16,7 +16,7 @@ namespace Editors.AnimationMeta.SuperView.Visualisation.Rules
         float _startTime;
         float _endTime;
         int _dockTargetkBoneId;
-        Matrix _offset;
+        Matrix4x4 _offset;
 
         public DockEquipmentRule(int dockTargetkBoneId, int equipmentSlotToDock, AnimationClip dockAnimation, ISkeletonProvider skeletonProvider, float startTime, float endTime)
         {

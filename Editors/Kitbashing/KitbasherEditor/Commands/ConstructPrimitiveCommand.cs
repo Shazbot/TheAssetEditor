@@ -115,7 +115,7 @@ namespace Editors.KitbasherEditor.Commands
             {
                 var rmvMaterial = templateMesh.RmvMaterial.Clone();
                 rmvMaterial.ModelName = "construct_primitive";
-                rmvMaterial.PivotPoint = Vector3.Zero;
+                rmvMaterial.PivotPoint = System.Numerics.Vector3.Zero;
 
                 var vertexFormat = templateMesh.Geometry.VertexFormat;
                 rmvMaterial.UpdateInternalState(vertexFormat);
@@ -130,7 +130,7 @@ namespace Editors.KitbasherEditor.Commands
 
             var fallbackMaterial = MaterialFactory.Create().CreateMaterial(ModelMaterialEnum.weighted);
             fallbackMaterial.ModelName = "construct_primitive";
-            fallbackMaterial.PivotPoint = Vector3.Zero;
+            fallbackMaterial.PivotPoint = System.Numerics.Vector3.Zero;
             fallbackMaterial.UpdateInternalState(UiVertexFormat.Weighted);
 
             var shader = _capabilityMaterialFactory.Create(fallbackMaterial, null);

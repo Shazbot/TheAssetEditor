@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
 using Shared.GameFormats.RigidModel.Vertex.Formats;
 
 namespace Shared.GameFormats.RigidModel.Vertex
@@ -92,4 +92,3 @@ namespace Shared.GameFormats.RigidModel.Vertex
         }
     }
 }
-

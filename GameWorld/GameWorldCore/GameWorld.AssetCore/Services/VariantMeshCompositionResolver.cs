@@ -11,7 +11,7 @@ namespace GameWorld.Core.Services;
 /// Resolves a VariantMeshDefinition into the default, renderable composition
 /// without creating scene nodes.  The viewport still owns its scene-node
 /// layout; exporters and other consumers can use this representation when
-/// they need the same asset-selection rules without depending on MonoGame.
+/// they need the same asset-selection rules without depending on the renderer.
 /// </summary>
 public interface IVariantMeshCompositionResolver
 {

@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
 using Shared.ByteParsing;
 using Shared.GameFormats.RigidModel.Transforms;
 
@@ -74,7 +74,7 @@ namespace Shared.GameFormats.RigidModel.Vertex.Formats
                     Normal = VertexLoadHelper.CreatVector3_FromByte(item.Normal),
                     BiNormal = VertexLoadHelper.CreatVector3_FromByte(item.BiNormal),
                     Tangent = VertexLoadHelper.CreatVector3_FromByte(item.Tangent),
-                    Uv = new Vector2(item.Uv.X, item.Uv.Y),
+                    Uv = new Vector2((float)item.Uv.X, (float)item.Uv.Y),
                     Colour = VertexLoadHelper.CreatVector4_FromByte(item.Colour),
 
                     BoneIndex = [item.BoneIndex.X, item.BoneIndex.Y],
@@ -91,10 +91,10 @@ namespace Shared.GameFormats.RigidModel.Vertex.Formats
                 {
                     Position = new HalfVector4()
                     {
-                        X = new SharpDX.Half(vertex.Position.X),
-                        Y = new SharpDX.Half(vertex.Position.Y),
-                        Z = new SharpDX.Half(vertex.Position.Z),
-                        W = new SharpDX.Half(vertex.Position.W)
+                        X = VertexLoadHelper.ConvertFloatToHalf(vertex.Position.X),
+                        Y = VertexLoadHelper.ConvertFloatToHalf(vertex.Position.Y),
+                        Z = VertexLoadHelper.ConvertFloatToHalf(vertex.Position.Z),
+                        W = VertexLoadHelper.ConvertFloatToHalf(vertex.Position.W)
                     },
                     BoneIndex = new ByteVector2()
                     {
@@ -112,8 +112,8 @@ namespace Shared.GameFormats.RigidModel.Vertex.Formats
 
                     Uv = new HalfVector2()
                     {
-                        X = vertex.Uv.X,
-                        Y = vertex.Uv.Y,
+                        X = VertexLoadHelper.ConvertFloatToHalf(vertex.Uv.X),
+                        Y = VertexLoadHelper.ConvertFloatToHalf(vertex.Uv.Y),
                     },
 
                     BiNormal = VertexLoadHelper.CreateNormalVector3_v2(vertex.BiNormal),
@@ -142,7 +142,7 @@ namespace Shared.GameFormats.RigidModel.Vertex.Formats
                     Normal = VertexLoadHelper.CreatVector3_FromByte(item.Normal),
                     BiNormal = VertexLoadHelper.CreatVector3_FromByte(item.BiNormal),
                     Tangent = VertexLoadHelper.CreatVector3_FromByte(item.Tangent),
-                    Uv = new Vector2(item.Uv.X, item.Uv.Y),
+                    Uv = new Vector2((float)item.Uv.X, (float)item.Uv.Y),
                     Colour = new Vector4(0, 0, 0, 1),
 
                     BoneIndex = [item.BoneIndex.X, item.BoneIndex.Y],
@@ -157,7 +157,13 @@ namespace Shared.GameFormats.RigidModel.Vertex.Formats
                 newPos.W = 0;
                 HalfVector4 pos;
                 if (version == RmvVersionEnum.RMV2_V6)
-                    pos = new HalfVector4() { X = vertex.Position.X, Y = vertex.Position.Y, Z = vertex.Position.Z, W = 1 };
+                    pos = new HalfVector4()
+                    {
+                        X = VertexLoadHelper.ConvertFloatToHalf(vertex.Position.X),
+                        Y = VertexLoadHelper.ConvertFloatToHalf(vertex.Position.Y),
+                        Z = VertexLoadHelper.ConvertFloatToHalf(vertex.Position.Z),
+                        W = VertexLoadHelper.ConvertFloatToHalf(1f)
+                    };
                 else
                     pos = VertexLoadHelper.CreatePositionVector4ExtraPrecision_v2(newPos);
 
@@ -180,8 +186,8 @@ namespace Shared.GameFormats.RigidModel.Vertex.Formats
 
                     Uv = new HalfVector2()
                     {
-                        X = vertex.Uv.X,
-                        Y = vertex.Uv.Y,
+                        X = VertexLoadHelper.ConvertFloatToHalf(vertex.Uv.X),
+                        Y = VertexLoadHelper.ConvertFloatToHalf(vertex.Uv.Y),
                     },
 
                     BiNormal = VertexLoadHelper.CreateNormalVector3_v2(vertex.BiNormal),

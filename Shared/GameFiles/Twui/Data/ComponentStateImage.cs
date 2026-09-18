@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
 using Shared.GameFormats.Twui.Data.DataTypes;
 
 namespace Shared.GameFormats.Twui.Data
@@ -21,5 +21,4 @@ namespace Shared.GameFormats.Twui.Data
         public string Colour { get; set; } = string.Empty;
     }
 }
-
 

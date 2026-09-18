@@ -63,9 +63,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 glTfvertex.Material.TexCoord = new Vector2(vertex.Uv.X, vertex.Uv.Y);
 
                 // Apply geometric transformations
-                glTfvertex.Geometry.Position = VecConv.GetSys(GlobalSceneTransforms.FlipVector(VecConv.GetXna(glTfvertex.Geometry.Position), doMirror));
-                glTfvertex.Geometry.Normal = VecConv.GetSys(GlobalSceneTransforms.FlipVector(VecConv.GetXna(glTfvertex.Geometry.Normal), doMirror));
-                glTfvertex.Geometry.Tangent = VecConv.GetSys(GlobalSceneTransforms.FlipVector(VecConv.GetXna(glTfvertex.Geometry.Tangent), doMirror));
+                glTfvertex.Geometry.Position = GlobalSceneTransforms.FlipVector(glTfvertex.Geometry.Position, doMirror);
+                glTfvertex.Geometry.Normal = GlobalSceneTransforms.FlipVector(glTfvertex.Geometry.Normal, doMirror);
+                glTfvertex.Geometry.Tangent = GlobalSceneTransforms.FlipVector(glTfvertex.Geometry.Tangent, doMirror);
 
                 // Validate and fix normals and tangents for quality
                 glTfvertex.Geometry.Normal = ValidateAndFixNormal(glTfvertex.Geometry.Normal);

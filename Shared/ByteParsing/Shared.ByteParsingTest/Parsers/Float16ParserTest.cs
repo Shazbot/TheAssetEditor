@@ -1,7 +1,7 @@
 ﻿using NUnit.Framework;
 using Shared.ByteParsing.Parsers;
-using SharpDX;
-using Half = SharpDX.Half;
+using System;
+using Half = System.Half;
 
 namespace Shared.ByteParsingTest.Parsers
 {
@@ -15,7 +15,7 @@ namespace Shared.ByteParsingTest.Parsers
         public void EncodeValue_RoundTrips(float input)
         {
             var parser = new Float16Parser();
-            var bytes = parser.EncodeValue(new Half(input), out var error);
+            var bytes = parser.EncodeValue((Half)input, out var error);
 
             Assert.That(error, Is.Null);
             Assert.That(bytes, Is.Not.Null);

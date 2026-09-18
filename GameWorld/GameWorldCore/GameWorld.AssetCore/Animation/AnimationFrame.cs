@@ -1,4 +1,4 @@
-using Microsoft.Xna.Framework;
+using System.Numerics;
 
 namespace GameWorld.Core.Animation;
 
@@ -15,33 +15,35 @@ public class AnimationFrame
         public Quaternion Rotation { get; set; }
         public Vector3 Translation { get; set; }
         public Vector3 Scale { get; set; }
-        public Matrix WorldTransform { get; set; }
+        public Matrix4x4 WorldTransform { get; set; }
 
         public void ComputeWorldMatrixFromComponents()
         {
             var rotation = Rotation;
             var translation = Translation;
             var scale = Scale;
-            WorldTransform = Matrix.CreateScale(scale)
-                * Matrix.CreateFromQuaternion(rotation)
-                * Matrix.CreateTranslation(translation);
+            WorldTransform = Matrix4x4.CreateScale(scale)
+                * Matrix4x4.CreateFromQuaternion(rotation)
+                * Matrix4x4.CreateTranslation(translation);
         }
     }
 
     public List<BoneKeyFrame> BoneTransforms = new();
 
-    public Matrix GetSkeletonAnimatedWorld(GameSkeleton gameSkeleton, int boneIndex)
+    public Matrix4x4 GetSkeletonAnimatedWorld(GameSkeleton gameSkeleton, int boneIndex)
     {
         var output = gameSkeleton.GetWorldTransform(boneIndex) * BoneTransforms[boneIndex].WorldTransform;
         return output;
     }
 
-    public Matrix GetSkeletonAnimatedWorldDiff(GameSkeleton gameSkeleton, int boneIndex0, int boneIndex1)
+    public Matrix4x4 GetSkeletonAnimatedWorldDiff(GameSkeleton gameSkeleton, int boneIndex0, int boneIndex1)
     {
         var bone0Transform = GetSkeletonAnimatedWorld(gameSkeleton, boneIndex0);
         var bone1Transform = GetSkeletonAnimatedWorld(gameSkeleton, boneIndex1);
 
-        return bone1Transform * Matrix.Invert(bone0Transform);
+        if (!Matrix4x4.Invert(bone0Transform, out var inverse))
+            throw new InvalidOperationException($"Unable to invert animated bone transform {boneIndex0}.");
+        return bone1Transform * inverse;
     }
 
     public int GetParentBoneIndex(GameSkeleton gameSkeleton, int boneIndex)

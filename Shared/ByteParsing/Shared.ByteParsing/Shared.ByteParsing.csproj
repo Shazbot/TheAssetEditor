@@ -11,9 +11,6 @@
 
     <ItemGroup>
 
-        <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.4.1" />
-        <!-- Libs to override stuff that gives error related to monogame-->
-        <PackageReference Include="Libuv" Version="1.10.0" />
     </ItemGroup>
 
 </Project>

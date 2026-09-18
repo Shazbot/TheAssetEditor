@@ -1,6 +1,7 @@
 ﻿using System.Text;
 using System.Windows;
 using GameWorld.Core.Animation;
+using GameWorld.Core.Rendering;
 using GameWorld.Core.Rendering.Geometry;
 using GameWorld.Core.Rendering.Materials.Serialization;
 using GameWorld.Core.Rendering.Materials.Shaders;
@@ -91,7 +92,7 @@ namespace GameWorld.Core.Services.SceneSaving.Geometry
         {
             var newRmvMaterial = new MaterialToRmvSerializer().CreateMaterialFromCapabilityMaterial(capabilityMaterial);
             newRmvMaterial.UpdateInternalState(geometry.VertexFormat);
-            newRmvMaterial.PivotPoint = pivotPoint;
+            newRmvMaterial.PivotPoint = NumericsXnaConverter.ToNumerics(pivotPoint);
             newRmvMaterial.ModelName = modelName;
 
             var newModel = new RmvModel()
@@ -101,7 +102,9 @@ namespace GameWorld.Core.Services.SceneSaving.Geometry
                 Mesh = _meshBuilderService.CreateRmvMeshFromGeometry(geometry, lodIndex, meshId, modelName)
             };
 
-            newModel.UpdateBoundingBox(geometry.BoundingBox);
+            newModel.UpdateBoundingBox(
+                NumericsXnaConverter.ToNumerics(geometry.BoundingBox.Min),
+                NumericsXnaConverter.ToNumerics(geometry.BoundingBox.Max));
             newModel.UpdateModelTypeFlag(newModel.Material.MaterialId);
 
      

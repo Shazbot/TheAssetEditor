@@ -3,6 +3,7 @@ using GameWorld.Core.Commands.Bone;
 using GameWorld.Core.Commands.Vertex;
 using GameWorld.Core.Components.Selection;
 using GameWorld.Core.Rendering.Geometry;
+using GameWorld.Core.Rendering;
 using GameWorld.Core.SceneNodes;
 using GameWorld.Core.Services;
 using Microsoft.Xna.Framework;
@@ -83,12 +84,16 @@ namespace GameWorld.Core.Components.Gizmo
             foreach (var boneIdx in bones)
             {
                 var bone = currentFrame.GetSkeletonAnimatedWorld(skeleton, boneIdx);
-                bone.Decompose(out var scale, out var rot, out var trans);
-                Position += trans;
-                Scale += scale;
-                rotations.Add(rot);
+                if (!System.Numerics.Matrix4x4.Decompose(bone, out var scale, out var rot, out var trans))
+                    continue;
+                Position += NumericsXnaConverter.ToXna(trans);
+                Scale += NumericsXnaConverter.ToXna(scale);
+                rotations.Add(NumericsXnaConverter.ToXna(rot));
 
             }
+
+            if (rotations.Count == 0)
+                return;
 
             Orientation = AverageOrientation(rotations);
             Position = Position / totalBones;

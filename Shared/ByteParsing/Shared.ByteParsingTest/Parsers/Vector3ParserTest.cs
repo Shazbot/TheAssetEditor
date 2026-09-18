@@ -1,6 +1,6 @@
 ﻿using NUnit.Framework;
 using Shared.ByteParsing.Parsers;
-using Vector3 = Microsoft.Xna.Framework.Vector3;
+using System.Numerics;
 
 namespace Shared.ByteParsingTest.Parsers
 {

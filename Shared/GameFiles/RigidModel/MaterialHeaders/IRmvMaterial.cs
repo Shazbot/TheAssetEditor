@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
 using Shared.GameFormats.RigidModel.Types;
 
 namespace Shared.GameFormats.RigidModel.MaterialHeaders

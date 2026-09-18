@@ -1,6 +1,6 @@
 ﻿using GameWorld.Core.Animation;
 using GameWorld.Core.Animation.AnimationChange;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.GameFormats.AnimationMeta.Definitions;
 
 namespace Editors.AnimationMeta.SuperView.Visualisation.Rules
@@ -25,8 +25,8 @@ namespace Editors.AnimationMeta.SuperView.Visualisation.Rules
 
             try
             {
-                var quat = new Quaternion(_metadata.Orientation);
-                var m = Matrix.CreateFromQuaternion(quat) * Matrix.CreateTranslation(_metadata.Position) * frame.BoneTransforms[_metadata.TargetNode].WorldTransform;
+                var quat = new Quaternion(_metadata.Orientation.X, _metadata.Orientation.Y, _metadata.Orientation.Z, _metadata.Orientation.W);
+                var m = Matrix4x4.CreateFromQuaternion(quat) * Matrix4x4.CreateTranslation(_metadata.Position) * frame.BoneTransforms[_metadata.TargetNode].WorldTransform;
                 frame.BoneTransforms[_metadata.TargetNode].WorldTransform = m;
             }
             catch (Exception e)

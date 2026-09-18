@@ -25,15 +25,23 @@ namespace Editor.VisualSkeletonEditor.SkeletonEditor
 
                     var rotationWorld = MathUtil.EulerDegreesToQuaternion(rotation);
                     var translationWorld = translationValue;
-                    var currentMatrixWorld = Matrix.CreateFromQuaternion(rotationWorld) * Matrix.CreateTranslation(translationWorld);
+                    var currentMatrixWorld = System.Numerics.Matrix4x4.CreateFromQuaternion(
+                            new System.Numerics.Quaternion(rotationWorld.X, rotationWorld.Y, rotationWorld.Z, rotationWorld.W))
+                        * System.Numerics.Matrix4x4.CreateTranslation(
+                            new System.Numerics.Vector3(translationWorld.X, translationWorld.Y, translationWorld.Z));
 
-                    var localSpaceMatrix = currentMatrixWorld * Matrix.Invert(parentTransform);
-                    localSpaceMatrix.Decompose(out _, out quaternionValue, out translationValue);
+                    if (!System.Numerics.Matrix4x4.Invert(parentTransform, out var inverseParent))
+                        throw new InvalidOperationException("Unable to invert the parent bone transform.");
+                    var localSpaceMatrix = currentMatrixWorld * inverseParent;
+                    if (!System.Numerics.Matrix4x4.Decompose(localSpaceMatrix, out _, out var numericsQuaternion, out var numericsTranslation))
+                        throw new InvalidOperationException("Unable to decompose the local bone transform.");
+                    quaternionValue = new Quaternion(numericsQuaternion.X, numericsQuaternion.Y, numericsQuaternion.Z, numericsQuaternion.W);
+                    translationValue = new Vector3(numericsTranslation.X, numericsTranslation.Y, numericsTranslation.Z);
                 }
             }
 
-            Skeleton.Translation[boneIndex] = translationValue;
-            Skeleton.Rotation[boneIndex] = quaternionValue;
+            Skeleton.Translation[boneIndex] = new System.Numerics.Vector3(translationValue.X, translationValue.Y, translationValue.Z);
+            Skeleton.Rotation[boneIndex] = new System.Numerics.Quaternion(quaternionValue.X, quaternionValue.Y, quaternionValue.Z, quaternionValue.W);
             Skeleton.RebuildSkeletonMatrix();
         }
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using GameWorld.Core.Animation;
 using GameWorld.Core.Commands;
 using GameWorld.Core.Components.Gizmo;
+using GameWorld.Core.Rendering;
 using GameWorld.Core.Components.Selection;
 using GameWorld.Core.SceneNodes;
 using Microsoft.Xna.Framework;
@@ -66,7 +67,8 @@ namespace GameWorld.Core.Commands.Bone
                 var node = _boneSelectionState.RenderObject as Rmv2MeshNode;
                 var animationPlayer = node.AnimationPlayer;
                 var currentAnimFrame = animationPlayer.GetCurrentAnimationFrame();
-                var currentBoneWorldTransform = currentAnimFrame.GetSkeletonAnimatedWorld(_boneSelectionState.Skeleton, selectedBone);
+                var currentBoneWorldTransform = NumericsXnaConverter.ToXna(
+                    currentAnimFrame.GetSkeletonAnimatedWorld(_boneSelectionState.Skeleton, selectedBone));
                 currentBoneWorldTransform.Translation += matrixDelta.Translation;
                 var newBoneTransform = GetSkeletonAnimatedBoneFromWorld(currentAnimFrame, _boneSelectionState.Skeleton, selectedBone, currentBoneWorldTransform);
 
@@ -77,14 +79,14 @@ namespace GameWorld.Core.Commands.Bone
                 switch (gizmoMode)
                 {
                     case GizmoMode.Translate:
-                        modifiedTransform.Position[selectedBone] += trans;
+                        modifiedTransform.Position[selectedBone] += NumericsXnaConverter.ToNumerics(trans);
                         break;
                     case GizmoMode.Rotate:
-                        modifiedTransform.Rotation[selectedBone] *= rot2;
+                        modifiedTransform.Rotation[selectedBone] *= NumericsXnaConverter.ToNumerics(rot2);
                         break;
                     case GizmoMode.NonUniformScale:
                     case GizmoMode.UniformScale:
-                        modifiedTransform.Scale[selectedBone] = scale;
+                        modifiedTransform.Scale[selectedBone] = NumericsXnaConverter.ToNumerics(scale);
                         break;
                     default:
                         throw new InvalidOperationException("unknown gizmo mode");
@@ -98,8 +100,10 @@ namespace GameWorld.Core.Commands.Bone
 
         public Matrix GetSkeletonAnimatedBoneFromWorld(AnimationFrame frame, GameSkeleton gameSkeleton, int boneIndex, Matrix objectInWorldTransform)
         {
-            var output = objectInWorldTransform * Matrix.Invert(frame.GetSkeletonAnimatedWorld(gameSkeleton, boneIndex));
-            return output;
+            var animatedWorld = frame.GetSkeletonAnimatedWorld(gameSkeleton, boneIndex);
+            if (!System.Numerics.Matrix4x4.Invert(animatedWorld, out var inverse))
+                throw new InvalidOperationException($"Unable to invert animated world transform for bone {boneIndex}.");
+            return NumericsXnaConverter.ToXna(NumericsXnaConverter.ToNumerics(objectInWorldTransform) * inverse);
         }
 
         //TODO: FIX ME
@@ -129,7 +133,8 @@ namespace GameWorld.Core.Commands.Bone
             {
                 var transform = Matrix.CreateScale(1);
                 // Get the current bone world transform
-                var currentBoneWorldTransform = currentAnimFrame.GetSkeletonAnimatedWorld(_boneSelectionState.Skeleton, boneIndex);
+                var currentBoneWorldTransform = NumericsXnaConverter.ToXna(
+                    currentAnimFrame.GetSkeletonAnimatedWorld(_boneSelectionState.Skeleton, boneIndex));
 
                 // Store the position and rotation of the current bone
                 positions[i] = currentBoneWorldTransform.Translation;
@@ -176,7 +181,7 @@ namespace GameWorld.Core.Commands.Bone
                 // Update the position and rotation of each bone in the chain
                 for (var i = 0; i < boneCount - 1; i++)
                 {
-                    _boneSelectionState.CurrentAnimation.DynamicFrames[_currentFrame].Position[boneIndices[i]] = positions[i];
+                    _boneSelectionState.CurrentAnimation.DynamicFrames[_currentFrame].Position[boneIndices[i]] = NumericsXnaConverter.ToNumerics(positions[i]);
                     continue;
                     //if (i < boneCount - 1)
                     //{
@@ -218,9 +223,13 @@ namespace GameWorld.Core.Commands.Bone
             for (var j = 0; j < A.Position.Count; j++)
             {
                 var posDiff = A.Position[j] - B.Position[j];
-                var rotDiff = A.Rotation[j].ToVector4() - B.Rotation[j].ToVector4();
+                var rotDiff = new System.Numerics.Vector4(
+                    A.Rotation[j].X - B.Rotation[j].X,
+                    A.Rotation[j].Y - B.Rotation[j].Y,
+                    A.Rotation[j].Z - B.Rotation[j].Z,
+                    A.Rotation[j].W - B.Rotation[j].W);
                 var scaleDiff = A.Scale[j] - B.Scale[j];
-                if (posDiff != new Vector3(0) || rotDiff != new Vector4(0) || scaleDiff != new Vector3(0))
+                if (posDiff != System.Numerics.Vector3.Zero || rotDiff != System.Numerics.Vector4.Zero || scaleDiff != System.Numerics.Vector3.Zero)
                     Console.WriteLine($"Bone {j}: Position difference: {posDiff}, Rotation difference: {rotDiff}, Scale difference: {scaleDiff}");
             }
         }

@@ -187,10 +187,10 @@ public class VmdSkeletonExportTests
     {
         var vertex = new CommonVertex
         {
-            Position = new Microsoft.Xna.Framework.Vector4(position.X, position.Y, position.Z, 1),
-            Normal = Microsoft.Xna.Framework.Vector3.UnitZ,
-            Tangent = Microsoft.Xna.Framework.Vector3.UnitX,
-            Uv = Microsoft.Xna.Framework.Vector2.Zero,
+            Position = new Vector4(position.X, position.Y, position.Z, 1),
+            Normal = Vector3.UnitZ,
+            Tangent = Vector3.UnitX,
+            Uv = Vector2.Zero,
             BoneIndex = new byte[4],
             BoneWeight = new float[4]
         };
@@ -211,7 +211,7 @@ public class VmdSkeletonExportTests
         file.Header.SkeletonName = "test_skeleton";
         file.Bones = [new AnimationFile.BoneInfo { Id = 0, Name = "root", ParentId = AnimationFile.BoneIndexNoParent }];
         var frame = new AnimationFile.Frame();
-        frame.Transforms.Add(new RmvVector3(Microsoft.Xna.Framework.Vector3.Zero));
+        frame.Transforms.Add(new RmvVector3(Vector3.Zero));
         frame.Quaternion.Add(new RmvVector4(0, 0, 0, 1));
         var part = new AnimationFile.AnimationPart();
         part.DynamicFrames.Add(frame);

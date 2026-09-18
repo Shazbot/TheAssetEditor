@@ -31,7 +31,11 @@ namespace Editors.AnimationMeta.SuperView.Visualisation.Rules
             try
             {
                 var transform = _skeletonProvider.Skeleton.GetAnimatedWorldTranform(_boneId);
-                var m = Matrix.CreateFromQuaternion(_offsetRot) * Matrix.CreateTranslation(_offsetPos) * transform;
+                var offsetRotation = new System.Numerics.Quaternion(_offsetRot.X, _offsetRot.Y, _offsetRot.Z, _offsetRot.W);
+                var offsetPosition = new System.Numerics.Vector3(_offsetPos.X, _offsetPos.Y, _offsetPos.Z);
+                var m = System.Numerics.Matrix4x4.CreateFromQuaternion(offsetRotation)
+                    * System.Numerics.Matrix4x4.CreateTranslation(offsetPosition)
+                    * transform;
                 frame.BoneTransforms[0].WorldTransform = m;
             }
             catch (Exception e)

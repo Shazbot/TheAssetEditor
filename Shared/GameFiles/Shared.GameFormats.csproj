@@ -10,7 +10,6 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Diagnostics" Version="8.4.0" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
-    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.4.1" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="NVorbis" Version="0.10.5" />
     <PackageReference Include="OggVorbisEncoder" Version="1.2.2" />

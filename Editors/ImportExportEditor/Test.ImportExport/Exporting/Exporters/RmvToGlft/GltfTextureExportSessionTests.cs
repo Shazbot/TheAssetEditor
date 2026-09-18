@@ -1,4 +1,5 @@
 using System.IO;
+using System.Numerics;
 using Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng;
 using Editors.ImportExport.Exporting.Exporters.DdsToNormalPng;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf;
@@ -392,10 +393,10 @@ public class GltfTextureExportSessionTests
     private static CommonVertex CreateVertex(float x, float y, float z)
         => new()
         {
-            Position = new Microsoft.Xna.Framework.Vector4(x, y, z, 1),
-            Normal = Microsoft.Xna.Framework.Vector3.UnitZ,
-            Tangent = Microsoft.Xna.Framework.Vector3.UnitX,
-            Uv = Microsoft.Xna.Framework.Vector2.Zero,
+            Position = new Vector4(x, y, z, 1),
+            Normal = Vector3.UnitZ,
+            Tangent = Vector3.UnitX,
+            Uv = Vector2.Zero,
             BoneIndex = new byte[4],
             BoneWeight = new float[4]
         };

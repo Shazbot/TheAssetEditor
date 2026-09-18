@@ -14,8 +14,4 @@
     <ProjectReference Include="..\..\..\Shared\GameFiles\Shared.GameFormats.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.4.1" />
-  </ItemGroup>
-
 </Project>

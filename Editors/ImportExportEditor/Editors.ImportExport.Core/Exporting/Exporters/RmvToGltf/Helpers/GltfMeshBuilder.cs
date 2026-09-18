@@ -83,10 +83,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 glTfvertex.Geometry.Tangent = new Vector4(vertex.Tangent.X, vertex.Tangent.Y, vertex.Tangent.Z, 1);
                 glTfvertex.Material.TexCoord = new Vector2(vertex.Uv.X, vertex.Uv.Y);
 
-                glTfvertex.Geometry.Position = VecConv.GetSys(GlobalSceneTransforms.FlipVector(VecConv.GetXna(glTfvertex.Geometry.Position), doMirror));
+                glTfvertex.Geometry.Position = GlobalSceneTransforms.FlipVector(glTfvertex.Geometry.Position, doMirror);
 
-                glTfvertex.Geometry.Normal = Vector3.Normalize(VecConv.GetSys(GlobalSceneTransforms.FlipVector(VecConv.GetXna(glTfvertex.Geometry.Normal), doMirror)));
-                glTfvertex.Geometry.Tangent = VecConv.NormalizeTangentVector4(VecConv.GetSys(GlobalSceneTransforms.FlipVector(VecConv.GetXna(glTfvertex.Geometry.Tangent), doMirror)));
+                glTfvertex.Geometry.Normal = Vector3.Normalize(GlobalSceneTransforms.FlipVector(glTfvertex.Geometry.Normal, doMirror));
+                glTfvertex.Geometry.Tangent = VecConv.NormalizeTangentVector4(GlobalSceneTransforms.FlipVector(glTfvertex.Geometry.Tangent, doMirror));
 
                 if (hasSkeleton)
                 {

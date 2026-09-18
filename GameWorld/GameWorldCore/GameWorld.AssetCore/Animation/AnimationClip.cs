@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.GameFormats.Animation;
 using Shared.GameFormats.RigidModel.Transforms;
 using static Shared.GameFormats.Animation.AnimationFile;

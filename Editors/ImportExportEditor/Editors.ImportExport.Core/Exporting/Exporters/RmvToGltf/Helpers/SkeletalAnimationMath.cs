@@ -1,5 +1,5 @@
-﻿using Editors.ImportExport.Common;
-using Microsoft.Xna.Framework;
+﻿using System.Numerics;
+using Editors.ImportExport.Common;
 using Shared.GameFormats.Animation;
 using SharpGLTF.Animations;
 using SharpGLTF.Schema2;
@@ -23,12 +23,12 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         public int Id { get; set; }
         public TransformData Transform { get; set; } = new TransformData();
 
-        public Matrix GlobalTransform
+        public Matrix4x4 GlobalTransform
         {
             get
             {
-                var translationMatrix = Matrix.CreateTranslation(Transform.GlobalTranslation);
-                var rotationMatrix = Matrix.CreateFromQuaternion(Transform.GlobalRotation);
+                var translationMatrix = Matrix4x4.CreateTranslation(Transform.GlobalTranslation);
+                var rotationMatrix = Matrix4x4.CreateFromQuaternion(Transform.GlobalRotation);
                 var framePoseMatrix = translationMatrix * rotationMatrix;
                 return framePoseMatrix;
             }
@@ -83,7 +83,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
     {
         private readonly AnimationFile _animationFile;
         private readonly SkeletonFrameNode[] _nodeList;
-        private Matrix[] _worldTransform;
+        private Matrix4x4[] _worldTransform;
 
         public FramePoseMatrixCalculator(AnimationFile file)
         {
@@ -91,7 +91,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             _animationFile = file;
             _nodeList = new SkeletonFrameNode[file.Bones.Length];
-            _worldTransform = Enumerable.Repeat(Matrix.Identity, file.Bones.Length).ToArray();
+            _worldTransform = Enumerable.Repeat(Matrix4x4.Identity, file.Bones.Length).ToArray();
 
             for (var boneIndex = 0; boneIndex < file.Bones.Length; boneIndex++)
             {
@@ -103,14 +103,15 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             }
         }
 
-        public List<Matrix> GetInverseBindPoseMatrices(bool doMirror)
+        public List<Matrix4x4> GetInverseBindPoseMatrices(bool doMirror)
         {
             RebuildSkeletonGlobalMatrices(doMirror);
 
-            var output = new List<Matrix>();
+            var output = new List<Matrix4x4>();
             for (var i = 0; i < _worldTransform.Length; i++)
             {
-                var invBindPoseMatrix = Matrix.Invert(_worldTransform[i]);
+                if (!Matrix4x4.Invert(_worldTransform[i], out var invBindPoseMatrix))
+                    throw new InvalidOperationException($"Unable to invert inverse-bind pose matrix {i}.");
                 output.Add(invBindPoseMatrix);
             }
 
@@ -140,12 +141,12 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private void RebuildSkeletonGlobalMatrices(bool doMirror)
         {
-            _worldTransform = new Matrix[_animationFile.Bones.Length];
+            _worldTransform = new Matrix4x4[_animationFile.Bones.Length];
             for (var boneIndex = 0; boneIndex < _animationFile.Bones.Length; boneIndex++)
             {
-                var translationMatrix = Matrix.CreateTranslation(GlobalSceneTransforms.FlipVector(_animationFile.AnimationParts[0].DynamicFrames[0].Transforms[boneIndex].ToVector3(), doMirror));
-                var rotationMatrix = Matrix.CreateFromQuaternion(GlobalSceneTransforms.FlipQuaternion(_animationFile.AnimationParts[0].DynamicFrames[0].Quaternion[boneIndex].ToQuaternion(), doMirror));
-                var scaleMatrix = Matrix.CreateScale(1, 1, 1);
+                var translationMatrix = Matrix4x4.CreateTranslation(GlobalSceneTransforms.FlipVector(_animationFile.AnimationParts[0].DynamicFrames[0].Transforms[boneIndex].ToVector3(), doMirror));
+                var rotationMatrix = Matrix4x4.CreateFromQuaternion(GlobalSceneTransforms.FlipQuaternion(_animationFile.AnimationParts[0].DynamicFrames[0].Quaternion[boneIndex].ToQuaternion(), doMirror));
+                var scaleMatrix = Matrix4x4.CreateScale(1, 1, 1);
                 var transform = scaleMatrix * rotationMatrix * translationMatrix;
                 _worldTransform[boneIndex] = transform;
             }

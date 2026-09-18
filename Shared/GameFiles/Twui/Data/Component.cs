@@ -1,5 +1,5 @@
 ﻿using System.Diagnostics;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.GameFormats.Twui.Data.DataTypes;
 
 namespace Shared.GameFormats.Twui.Data
@@ -36,5 +36,4 @@ namespace Shared.GameFormats.Twui.Data
         //LayoutEngine
     }
 }
-
 

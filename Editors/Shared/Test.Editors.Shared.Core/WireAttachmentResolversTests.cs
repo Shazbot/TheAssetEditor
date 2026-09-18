@@ -2,11 +2,12 @@ using Editors.Shared.Core.Common;
 using GameWorld.Core.Animation;
 using GameWorld.Core.SceneNodes;
 using GameWorld.Core.Utility;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Moq;
 using Shared.GameFormats.Animation;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
 using Shared.GameFormats.RigidModel.Transforms;
+using XnaVector3 = Microsoft.Xna.Framework.Vector3;
 
 namespace Test.Editors.Shared.Core
 {
@@ -30,7 +31,7 @@ namespace Test.Editors.Shared.Core
             SceneObjectEditor.WireAttachmentResolvers(sceneObject);
 
             Assert.That(mesh.AttachmentBoneResolver, Is.Not.Null);
-            Assert.That(mesh.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new Vector3(4, 5, 6)));
+            Assert.That(mesh.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new XnaVector3(4, 5, 6)));
         }
 
         [Test]
@@ -70,7 +71,7 @@ namespace Test.Editors.Shared.Core
             SceneObjectEditor.WireAttachmentResolvers(sceneObject);
 
             Assert.That(mesh.AttachmentBoneResolver, Is.Not.Null);
-            Assert.That(mesh.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new Vector3(7, 8, 9)));
+            Assert.That(mesh.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new XnaVector3(7, 8, 9)));
         }
 
         [Test]
@@ -137,8 +138,8 @@ namespace Test.Editors.Shared.Core
 
             SceneObjectEditor.WireAttachmentResolvers(sceneObject);
 
-            Assert.That(meshA.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new Vector3(1, 0, 0)));
-            Assert.That(meshB.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new Vector3(0, 1, 0)));
+            Assert.That(meshA.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new XnaVector3(1, 0, 0)));
+            Assert.That(meshB.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new XnaVector3(0, 1, 0)));
         }
 
         [Test]
@@ -150,13 +151,13 @@ namespace Test.Editors.Shared.Core
 
             sceneObject.Skeleton = CreateSkeleton(("root", Vector3.Zero), ("hand_l", new Vector3(1, 0, 0)));
             SceneObjectEditor.WireAttachmentResolvers(sceneObject);
-            Assert.That(mesh.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new Vector3(1, 0, 0)));
+            Assert.That(mesh.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new XnaVector3(1, 0, 0)));
 
             // Same attach-point name, but now at a different index with a different position -
             // e.g. an ad-hoc "building" skeleton created lazily after the mesh already loaded.
             sceneObject.Skeleton = CreateSkeleton(("root", Vector3.Zero), ("other", Vector3.Zero), ("hand_l", new Vector3(9, 9, 9)));
             SceneObjectEditor.WireAttachmentResolvers(sceneObject);
-            Assert.That(mesh.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new Vector3(9, 9, 9)));
+            Assert.That(mesh.AttachmentBoneResolver!.GetWorldTransformIfAnimating().Translation, Is.EqualTo(new XnaVector3(9, 9, 9)));
         }
 
         private static Rmv2MeshNode CreateMeshNode(string attachmentPointName = "", int animationMatrixOverride = -1)

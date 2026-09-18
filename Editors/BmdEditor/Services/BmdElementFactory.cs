@@ -1,4 +1,4 @@
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.GameFormats.Bmd;
 using Shared.GameFormats.RigidModel.Transforms;
 
@@ -34,7 +34,7 @@ namespace Editors.BmdEditor.Services
         {
             PropInfoVersion = 25,
             Rmv2Path = rmv2Path,
-            Transform = Matrix.Identity,
+            Transform = Matrix4x4.Identity,
             IsDecal = isDecal,
             Flags = AllSeasonsFlags(),
             HeightMode = "BHM_PARENT",
@@ -46,7 +46,7 @@ namespace Editors.BmdEditor.Services
         {
             VfxInfoVersion = 10,
             VfxString = vfxString,
-            Transform = Matrix.Identity,
+            Transform = Matrix4x4.Identity,
             Flags = DefaultFlags(),
             HeightMode = DefaultHeightMode,
             CultureMask = WildcardCultureMaskBytes(),
@@ -102,7 +102,7 @@ namespace Editors.BmdEditor.Services
             MaterialString = materialString,
             HeightMode = DefaultHeightMode,
             Flags = DefaultFlags(),
-            Transform = Matrix.Identity,
+            Transform = Matrix4x4.Identity,
             Booleans = new byte[4],
             MoreBooleans = new byte[1],
         };
@@ -130,7 +130,7 @@ namespace Editors.BmdEditor.Services
         {
             Version = 12,
             SceneFile = sceneFile,
-            Transform = Matrix.Identity,
+            Transform = Matrix4x4.Identity,
             HeightMode = DefaultHeightMode,
         };
     }

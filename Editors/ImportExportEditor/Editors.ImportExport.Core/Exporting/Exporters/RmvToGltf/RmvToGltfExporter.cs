@@ -314,9 +314,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 var hasWeights = i < modelPart.Asset.FirstLod.Count
                     && modelPart.Asset.FirstLod[i].Model.Mesh.VertexList.Any(x => x.WeightCount > 0);
                 var pivotPoint = i < modelPart.Asset.FirstLod.Count
-                    ? VecConv.GetSys(GlobalSceneTransforms.FlipVector(
+                    ? GlobalSceneTransforms.FlipVector(
                         modelPart.Asset.FirstLod[i].Material.SourceMaterial.PivotPoint,
-                        settings.MirrorMesh))
+                        settings.MirrorMesh)
                     : System.Numerics.Vector3.Zero;
                 output.Add(new ExportedMesh(
                     meshBuilders[i],

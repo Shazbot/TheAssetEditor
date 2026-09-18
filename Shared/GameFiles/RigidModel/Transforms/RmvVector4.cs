@@ -1,4 +1,5 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
+using Half = System.Half;
 
 namespace Shared.GameFormats.RigidModel.Transforms
 {
@@ -27,16 +28,16 @@ namespace Shared.GameFormats.RigidModel.Transforms
 
     public struct HalfVector4
     {
-        public SharpDX.Half X { get; set; }     // 4 x 2
-        public SharpDX.Half Y { get; set; }     // 4 x 2
-        public SharpDX.Half Z { get; set; }     // 4 x 2
-        public SharpDX.Half W { get; set; }     // 4 x 2
+        public Half X { get; set; }     // 4 x 2
+        public Half Y { get; set; }     // 4 x 2
+        public Half Z { get; set; }     // 4 x 2
+        public Half W { get; set; }     // 4 x 2
     }
 
     public struct HalfVector2
     {
-        public SharpDX.Half X { get; set; }     // 4 x 2
-        public SharpDX.Half Y { get; set; }     // 4 x 2
+        public Half X { get; set; }     // 4 x 2
+        public Half Y { get; set; }     // 4 x 2
     }
 
 

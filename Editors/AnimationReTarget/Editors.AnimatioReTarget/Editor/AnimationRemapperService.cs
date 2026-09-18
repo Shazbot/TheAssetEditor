@@ -1,8 +1,7 @@
 ﻿using Editors.AnimatioReTarget.Editor.BoneHandling;
 using Editors.AnimatioReTarget.Editor.Settings;
 using GameWorld.Core.Animation;
-using Microsoft.Xna.Framework;
-using Shared.Core.Misc;
+using System.Numerics;
 
 namespace Editors.AnimatioReTarget.Editor
 {
@@ -62,7 +61,7 @@ namespace Editors.AnimatioReTarget.Editor
                     if (mappedIndex != null)
                     {
                         var targetBoneIndex = mappedIndex.Value;
-                        desiredBonePosWorld = copyFromFrame.GetSkeletonAnimatedWorld(copyFromSkeleton, targetBoneIndex) * Matrix.CreateScale(1);
+                        desiredBonePosWorld = copyFromFrame.GetSkeletonAnimatedWorld(copyFromSkeleton, targetBoneIndex) * Matrix4x4.CreateScale(1);
                     }
 
                     var fromParentBoneIndex = copyToSkeleton.GetParentBoneIndex(i);
@@ -70,10 +69,10 @@ namespace Editors.AnimatioReTarget.Editor
                     {
                         // Convert to local space 
                         var parentWorld = currentCopyToFrame.GetSkeletonAnimatedWorld(copyToSkeleton, fromParentBoneIndex);
-                        desiredBonePosWorld = desiredBonePosWorld * Matrix.Invert(parentWorld);
+                        desiredBonePosWorld = desiredBonePosWorld * Invert(parentWorld);
                     }
 
-                    desiredBonePosWorld.Decompose(out var _, out var boneRotation, out var bonePosition);
+                    Matrix4x4.Decompose(desiredBonePosWorld, out var _, out var boneRotation, out var bonePosition);
 
                     var boneSettings = BoneHelper_new.GetBoneFromId(_bones, i);
                     if (boneSettings == null)
@@ -153,12 +152,12 @@ namespace Editors.AnimatioReTarget.Editor
                         continue;
 
                     var targetBoneIndex = mappedIndex.Value;
-                    var desiredBonePosWorld = copyFromFrame.GetSkeletonAnimatedWorld(copyFromSkeleton, targetBoneIndex) * Matrix.CreateScale(1);
+                    var desiredBonePosWorld = copyFromFrame.GetSkeletonAnimatedWorld(copyFromSkeleton, targetBoneIndex) * Matrix4x4.CreateScale(1);
 
                     var parentWorld = currentFrame.GetSkeletonAnimatedWorld(copyToSkeleton, fromParentBoneIndex);
 
-                    var bonePositionLocalSpace = desiredBonePosWorld * Matrix.Invert(parentWorld);
-                    bonePositionLocalSpace.Decompose(out var _, out var boneRotation, out var bonePosition);
+                    var bonePositionLocalSpace = desiredBonePosWorld * Invert(parentWorld);
+                    Matrix4x4.Decompose(bonePositionLocalSpace, out var _, out var boneRotation, out var bonePosition);
 
                     // Apply the values to the animation
                     animationToScale.DynamicFrames[frameIndex].Rotation[i] = boneRotation;
@@ -184,13 +183,13 @@ namespace Editors.AnimatioReTarget.Editor
                     if (boneSettings == null)
                         continue;
 
-                    var desiredBonePosWorld = MathUtil.CreateRotation(new Vector3((float)boneSettings.RotationOffset.X.Value, (float)boneSettings.RotationOffset.Y.Value, (float)boneSettings.RotationOffset.Z.Value)) *
+                    var desiredBonePosWorld = CreateEulerRotation((float)boneSettings.RotationOffset.X.Value, (float)boneSettings.RotationOffset.Y.Value, (float)boneSettings.RotationOffset.Z.Value) *
                         currentFrame.GetSkeletonAnimatedWorld(copyToSkeleton, i) *
-                        Matrix.CreateTranslation(new Vector3((float)boneSettings.TranslationOffset.X.Value, (float)boneSettings.TranslationOffset.Y.Value, (float)boneSettings.TranslationOffset.Z.Value));
+                        Matrix4x4.CreateTranslation(new Vector3((float)boneSettings.TranslationOffset.X.Value, (float)boneSettings.TranslationOffset.Y.Value, (float)boneSettings.TranslationOffset.Z.Value));
 
                     var parentWorld = currentFrame.GetSkeletonAnimatedWorld(copyToSkeleton, fromParentBoneIndex);
-                    var bonePositionLocalSpace = desiredBonePosWorld * Matrix.Invert(parentWorld);
-                    bonePositionLocalSpace.Decompose(out var _, out var boneRotation, out var bonePosition);
+                    var bonePositionLocalSpace = desiredBonePosWorld * Invert(parentWorld);
+                    Matrix4x4.Decompose(bonePositionLocalSpace, out var _, out var boneRotation, out var bonePosition);
 
                     animationToScale.DynamicFrames[frameIndex].Rotation[i] = boneRotation;
                     animationToScale.DynamicFrames[frameIndex].Position[i] = bonePosition;
@@ -244,8 +243,8 @@ namespace Editors.AnimatioReTarget.Editor
                     var self = copyFromFrame.GetSkeletonAnimatedWorld(copyFromSkeleton, boneIndexAttachmentPointSource);
                     var hand = copyFromFrame.GetSkeletonAnimatedWorld(copyFromSkeleton, boneIndexHandSource.Value);
 
-                    self.Decompose(out var _, out var _, out var bone0);
-                    hand.Decompose(out var _, out var _, out var bone1);
+                    Matrix4x4.Decompose(self, out var _, out var _, out var bone0);
+                    Matrix4x4.Decompose(hand, out var _, out var _, out var bone1);
 
                     var diff = bone0 - bone1;
 
@@ -253,12 +252,12 @@ namespace Editors.AnimatioReTarget.Editor
 
                     desiredBonePosWorld = /*MathUtil.CreateRotation(new Vector3((float)boneSettings.RotationOffset.X.Value, (float)boneSettings.RotationOffset.Y.Value, (float)boneSettings.RotationOffset.Z.Value)) **/
                       desiredBonePosWorld *
-                       Matrix.CreateTranslation(diff);
+                       Matrix4x4.CreateTranslation(diff);
 
                     // Reapply offsets
-                    desiredBonePosWorld = MathUtil.CreateRotation(new Vector3((float)boneSettings.RotationOffset.X.Value, (float)boneSettings.RotationOffset.Y.Value, (float)boneSettings.RotationOffset.Z.Value)) *
+                    desiredBonePosWorld = CreateEulerRotation((float)boneSettings.RotationOffset.X.Value, (float)boneSettings.RotationOffset.Y.Value, (float)boneSettings.RotationOffset.Z.Value) *
                         desiredBonePosWorld *
-                        Matrix.CreateTranslation(new Vector3((float)boneSettings.TranslationOffset.X.Value, (float)boneSettings.TranslationOffset.Y.Value, (float)boneSettings.TranslationOffset.Z.Value));
+                        Matrix4x4.CreateTranslation(new Vector3((float)boneSettings.TranslationOffset.X.Value, (float)boneSettings.TranslationOffset.Y.Value, (float)boneSettings.TranslationOffset.Z.Value));
 
                     //   desiredBonePosWorld = copyFromFrame.GetSkeletonAnimatedWorld(copyFromSkeleton, targetBoneIndex) * Matrix.CreateScale(1);
 
@@ -267,8 +266,8 @@ namespace Editors.AnimatioReTarget.Editor
 
                     var parentWorld = currentCopyToFrame.GetSkeletonAnimatedWorld(copyToSkeleton, fromParentBoneIndex);
 
-                    var bonePositionLocalSpace = desiredBonePosWorld * Matrix.Invert(parentWorld);
-                    bonePositionLocalSpace.Decompose(out var _, out var boneRotation, out var bonePosition);
+                    var bonePositionLocalSpace = desiredBonePosWorld * Invert(parentWorld);
+                    Matrix4x4.Decompose(bonePositionLocalSpace, out var _, out var boneRotation, out var bonePosition);
 
                     //animationToFix.DynamicFrames[frameIndex].Rotation[i] = boneRotation;
                     animationToFix.DynamicFrames[frameIndex].Position[i] = bonePosition;
@@ -281,7 +280,7 @@ namespace Editors.AnimatioReTarget.Editor
             var frameCount = animation.DynamicFrames.Count;
             for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
             {
-                animation.DynamicFrames[frameIndex].Scale[0] = new Vector3((float)_settings.SkeletonScale);
+                    animation.DynamicFrames[frameIndex].Scale[0] = new Vector3((float)_settings.SkeletonScale);
             }
 
 
@@ -360,6 +359,21 @@ namespace Editors.AnimatioReTarget.Editor
                     newAnimation.DynamicFrames[0].Scale[0] = Vector3.One;
             }
             return newAnimation;
+        }
+
+        private static Matrix4x4 Invert(Matrix4x4 matrix)
+        {
+            if (!Matrix4x4.Invert(matrix, out var inverse))
+                throw new InvalidOperationException("Unable to invert animation transform.");
+            return inverse;
+        }
+
+        private static Matrix4x4 CreateEulerRotation(float xDegrees, float yDegrees, float zDegrees)
+        {
+            const float degreesToRadians = MathF.PI / 180f;
+            return Matrix4x4.CreateRotationX(xDegrees * degreesToRadians) *
+                Matrix4x4.CreateRotationY(yDegrees * degreesToRadians) *
+                Matrix4x4.CreateRotationZ(zDegrees * degreesToRadians);
         }
     }
 

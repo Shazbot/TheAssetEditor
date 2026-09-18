@@ -1,4 +1,4 @@
-﻿using Vector3 = Microsoft.Xna.Framework.Vector3;
+﻿using System.Numerics;
 
 namespace Shared.ByteParsing.Parsers
 {

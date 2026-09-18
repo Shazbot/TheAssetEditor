@@ -33,13 +33,35 @@ namespace Editors.BmdEditor.Exporting
             return new Decomposed(position, eulerDegrees, scale);
         }
 
+        public static Decomposed Decompose(System.Numerics.Matrix4x4 m)
+        {
+            var position = new Vector3(m.M41, m.M42, m.M43);
+
+            var row1 = new Vector3(m.M11, m.M12, m.M13);
+            var row2 = new Vector3(m.M21, m.M22, m.M23);
+            var row3 = new Vector3(m.M31, m.M32, m.M33);
+
+            var scale = new Vector3(row1.Length(), row2.Length(), row3.Length());
+
+            var a = scale.X > 1e-8f ? row1 / scale.X : row1;
+            var d = scale.Y > 1e-8f ? row2 / scale.Y : row2;
+            var g = scale.Z > 1e-8f ? row3 / scale.Z : row3;
+
+            var yRad = MathF.Asin(Math.Clamp(g.X, -1f, 1f));
+            var xRad = MathF.Atan2(-g.Y, g.Z);
+            var zRad = MathF.Atan2(-d.X, a.X);
+
+            var eulerDegrees = new Vector3(MathHelper.ToDegrees(xRad), MathHelper.ToDegrees(yRad), MathHelper.ToDegrees(zRad));
+            return new Decomposed(position, eulerDegrees, scale);
+        }
+
         /// <summary>
         /// Inverse of <see cref="Decompose"/>: builds the row-vector transform matrix Terry's
         /// position/XYZ-euler-degrees/scale triple represents. The rotation part is
         /// M = Rz(z) * Ry(y) * Rx(x) (row-vector composition) - verified by substituting its rows
         /// back into Decompose's own asin/atan2 formulas and recovering x, y, z exactly.
         /// </summary>
-        public static Matrix Compose(Vector3 position, Vector3 eulerDegrees, Vector3 scale)
+        public static System.Numerics.Matrix4x4 Compose(Vector3 position, Vector3 eulerDegrees, Vector3 scale)
         {
             var x = MathHelper.ToRadians(eulerDegrees.X);
             var y = MathHelper.ToRadians(eulerDegrees.Y);
@@ -53,7 +75,7 @@ namespace Editors.BmdEditor.Exporting
             var row2 = new Vector3(-sz * cy, cz * cx - sz * sy * sx, cz * sx + sz * sy * cx) * scale.Y;
             var row3 = new Vector3(sy, -cy * sx, cy * cx) * scale.Z;
 
-            return new Matrix(
+            return new System.Numerics.Matrix4x4(
                 row1.X, row1.Y, row1.Z, 0,
                 row2.X, row2.Y, row2.Z, 0,
                 row3.X, row3.Y, row3.Z, 0,

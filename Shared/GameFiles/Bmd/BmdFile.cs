@@ -1,4 +1,4 @@
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.GameFormats.RigidModel.Transforms;
 
 namespace Shared.GameFormats.Bmd
@@ -135,7 +135,7 @@ namespace Shared.GameFormats.Bmd
         public int ParentId { get; set; }
         public string BuildingKey { get; set; } = string.Empty;
         public string PositionType { get; set; } = string.Empty;
-        public Matrix Transform { get; set; } = Matrix.Identity;
+        public Matrix4x4 Transform { get; set; } = Matrix4x4.Identity;
         
         // Properties
         public ushort PropertiesVersion { get; set; }
@@ -213,13 +213,13 @@ namespace Shared.GameFormats.Bmd
         public string EntityFormationTemplateName { get; set; } = string.Empty;
         public uint LinesLength { get; set; }
         public byte[] LinesData { get; set; } = []; // Raw data since Lines structure is unknown
-        public Matrix Transform { get; set; } = Matrix.Identity;} //4x4
+        public Matrix4x4 Transform { get; set; } = Matrix4x4.Identity;} //4x4
     
     public class BmdInfo
     {
         public ushort Version { get; set; }
         public string BmdString { get; set; } = string.Empty;
-        public Matrix Transform { get; set; } = Matrix.Identity;
+        public Matrix4x4 Transform { get; set; } = Matrix4x4.Identity;
         public uint PropertyOverrides { get; set; } //this has to correspond to <property_overrides/>
         public CultureMask CultureMask { get; set; } //"campaign_type_mask"?
         public string RegionString { get; set; } = string.Empty;
@@ -277,7 +277,7 @@ namespace Shared.GameFormats.Bmd
         /// string-identical) table slot on an unedited save.
         /// </summary>
         public int? PropIndex { get; set; }
-        public Matrix Transform { get; set; } = Matrix.Identity;
+        public Matrix4x4 Transform { get; set; } = Matrix4x4.Identity;
         public bool IsDecal { get; set; }
         public bool LogicalDecal { get; set; }
         public bool IsFauna { get; set; }
@@ -318,7 +318,7 @@ namespace Shared.GameFormats.Bmd
     {
         public ushort VfxInfoVersion { get; set; }
         public string VfxString { get; set; } = string.Empty;
-        public Matrix Transform { get; set; } = Matrix.Identity;
+        public Matrix4x4 Transform { get; set; } = Matrix4x4.Identity;
         public float EmissionRate { get; set; }
         public string InstanceName { get; set; } = string.Empty;
         
@@ -452,7 +452,7 @@ namespace Shared.GameFormats.Bmd
         public string MaterialString { get; set; } = string.Empty;
         public string HeightMode { get; set; } = string.Empty;
         public BmdComponentFlags Flags { get; set; } = new();
-        public Matrix Transform { get; set; } = Matrix.Identity;
+        public Matrix4x4 Transform { get; set; } = Matrix4x4.Identity;
         public byte[] Booleans { get; set; } = new byte[4];
         public bool VisibleInShroud { get; set; }
         public byte[] MoreBooleans { get; set; } = new byte[1];
@@ -518,7 +518,7 @@ namespace Shared.GameFormats.Bmd
     {
         public ushort Version { get; set; }
         public string SceneFile { get; set; } = string.Empty;
-        public Matrix Transform { get; set; } = Matrix.Identity;
+        public Matrix4x4 Transform { get; set; } = Matrix4x4.Identity;
         public string HeightMode { get; set; } = string.Empty;
         public ulong PdlcMask { get; set; }
         public bool Autoplay { get; set; }

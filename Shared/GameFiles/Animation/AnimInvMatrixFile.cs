@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
 using Shared.ByteParsing;
 
 namespace Shared.GameFormats.Animation
@@ -6,7 +6,7 @@ namespace Shared.GameFormats.Animation
     public class AnimInvMatrixFile
     {
         public uint Version { get; set; }
-        public Matrix[] MatrixList { get; set; }
+        public Matrix4x4[] MatrixList { get; set; }
 
         public static AnimInvMatrixFile Create(ByteChunk chunk)
         {
@@ -17,12 +17,12 @@ namespace Shared.GameFormats.Animation
             var output = new AnimInvMatrixFile
             {
                 Version = chunk.ReadUInt32(),
-                MatrixList = new Matrix[chunk.ReadUInt32()]
+                MatrixList = new Matrix4x4[chunk.ReadUInt32()]
             };
 
             for (var i = 0; i < output.MatrixList.Length; i++)
             {
-                output.MatrixList[i] = Matrix.Identity;
+                output.MatrixList[i] = Matrix4x4.Identity;
 
                 output.MatrixList[i].M11 = chunk.ReadSingle();
                 output.MatrixList[i].M21 = chunk.ReadSingle();

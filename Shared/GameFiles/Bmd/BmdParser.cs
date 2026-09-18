@@ -1,5 +1,5 @@
 ﻿using System.Text;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.GameFormats.RigidModel.Transforms;
 
 namespace Shared.GameFormats.Bmd
@@ -352,17 +352,17 @@ namespace Shared.GameFormats.Bmd
             {
                 // Raw position / rotation / scale
                 var position = ReadRmvVector3();
-                var translationMatrix = Matrix.CreateTranslation(position.ToVector3());
+                var translationMatrix = Matrix4x4.CreateTranslation(position.ToVector3());
 
                 var rotation = new Quaternion(
                     _reader.ReadSingle(),
                     _reader.ReadSingle(),
                     _reader.ReadSingle(),
                     _reader.ReadSingle());
-                var rotationMatrix = Matrix.CreateFromQuaternion(rotation);
+                var rotationMatrix = Matrix4x4.CreateFromQuaternion(rotation);
 
                 var scale = ReadRmvVector3();
-                var scaleMatrix = Matrix.CreateScale(scale.ToVector3());
+                var scaleMatrix = Matrix4x4.CreateScale(scale.ToVector3());
 
                 building.Transform = scaleMatrix * rotationMatrix * translationMatrix;
             }
@@ -1383,9 +1383,9 @@ namespace Shared.GameFormats.Bmd
             };
         }
 
-        private Matrix ReadRowMajorMatrix(bool is4x4 = false)
+        private Matrix4x4 ReadRowMajorMatrix(bool is4x4 = false)
         {
-            var matrix = new Matrix();
+            var matrix = new Matrix4x4();
             
             // Row 1
             matrix.M11 = _reader.ReadSingle();  // Row 1, Column 1

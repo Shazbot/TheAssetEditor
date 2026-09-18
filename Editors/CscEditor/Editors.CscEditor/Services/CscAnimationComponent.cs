@@ -6,9 +6,13 @@ using GameWorld.Core.Animation;
 using GameWorld.Core.Components;
 using GameWorld.Core.Components.Grid;
 using GameWorld.Core.Components.Rendering;
+using GameWorld.Core.Rendering;
 using GameWorld.Core.SceneNodes;
 using GameWorld.Core.Utility;
 using Microsoft.Xna.Framework;
+using NumericsMatrix = System.Numerics.Matrix4x4;
+using NumericsQuaternion = System.Numerics.Quaternion;
+using NumericsVector3 = System.Numerics.Vector3;
 
 namespace Editors.CscEditor.Services
 {
@@ -518,10 +522,12 @@ namespace Editors.CscEditor.Services
                 return null;
 
             var (_, _, loopsAtBegin) = SampleBindingTime(binding, animElement, effectiveEnd, animElement.NormalizedBegin);
-            var placement = MatrixPower(binding.LoopRootMotion, loops - loopsAtBegin);
+            var placement = MatrixPower(
+                NumericsXnaConverter.ToNumerics(binding.LoopRootMotion),
+                loops - loopsAtBegin);
             var selfBound = modelElement != null && animElement.Id == modelElement.Id;
             if (!selfBound)
-                placement *= animElement.LocalTransform(sampleTime);
+                placement *= NumericsXnaConverter.ToNumerics(animElement.LocalTransform(sampleTime));
             return ApplyRigidOffset(pose, placement);
         }
 
@@ -593,7 +599,7 @@ namespace Editors.CscEditor.Services
             if (spliceBoneId < 0 || spliceBoneId >= skeleton.BoneCount)
                 return;
 
-            var overriddenWorlds = new Dictionary<int, Matrix>();
+            var overriddenWorlds = new Dictionary<int, NumericsMatrix>();
             foreach (var boneIndex in BoneAndDescendantsTopDown(skeleton, spliceBoneId))
             {
                 if (boneIndex >= merged.BoneTransforms.Count || boneIndex >= splicePose.BoneTransforms.Count)
@@ -601,17 +607,18 @@ namespace Editors.CscEditor.Services
 
                 var parentIndex = skeleton.GetParentBoneIndex(boneIndex);
                 var parentWorld = parentIndex < 0
-                    ? Matrix.Identity
+                    ? NumericsMatrix.Identity
                     : overriddenWorlds.TryGetValue(parentIndex, out var overriddenParent)
                         ? overriddenParent
                         : merged.GetSkeletonAnimatedWorld(skeleton, parentIndex);
 
                 var spliceKey = splicePose.BoneTransforms[boneIndex];
-                var localSplice = Matrix.CreateScale(spliceKey.Scale) * Matrix.CreateFromQuaternion(spliceKey.Rotation) * Matrix.CreateTranslation(spliceKey.Translation);
+                var localSplice = NumericsMatrix.CreateScale(spliceKey.Scale) * NumericsMatrix.CreateFromQuaternion(spliceKey.Rotation) * NumericsMatrix.CreateTranslation(spliceKey.Translation);
                 var animatedWorld = localSplice * parentWorld;
                 overriddenWorlds[boneIndex] = animatedWorld;
 
-                var bindInverse = Matrix.Invert(skeleton.GetWorldTransform(boneIndex));
+                if (!NumericsMatrix.Invert(skeleton.GetWorldTransform(boneIndex), out var bindInverse))
+                    throw new InvalidOperationException($"Unable to invert skeleton world transform for bone {boneIndex}.");
                 merged.BoneTransforms[boneIndex] = new AnimationFrame.BoneKeyFrame
                 {
                     BoneIndex = spliceKey.BoneIndex,
@@ -721,19 +728,22 @@ namespace Editors.CscEditor.Services
         {
             var blended = new AnimationFrame();
             var count = Math.Min(Math.Min(a.BoneTransforms.Count, b.BoneTransforms.Count), skeleton.BoneCount);
-            var animatedWorlds = new Matrix[count];
+            var animatedWorlds = new NumericsMatrix[count];
             for (var i = 0; i < count; i++)
             {
                 var boneA = a.BoneTransforms[i];
                 var boneB = b.BoneTransforms[i];
 
-                var scale = Vector3.Lerp(boneA.Scale, boneB.Scale, weightB);
-                var rotation = Quaternion.Slerp(boneA.Rotation, boneB.Rotation, weightB);
-                var translation = Vector3.Lerp(boneA.Translation, boneB.Translation, weightB);
+                var scale = NumericsVector3.Lerp(boneA.Scale, boneB.Scale, weightB);
+                var rotation = NumericsQuaternion.Slerp(boneA.Rotation, boneB.Rotation, weightB);
+                var translation = NumericsVector3.Lerp(boneA.Translation, boneB.Translation, weightB);
 
-                var local = Matrix.CreateScale(scale) * Matrix.CreateFromQuaternion(rotation) * Matrix.CreateTranslation(translation);
+                var local = NumericsMatrix.CreateScale(scale) * NumericsMatrix.CreateFromQuaternion(rotation) * NumericsMatrix.CreateTranslation(translation);
                 var parent = boneA.ParentBoneIndex;
                 animatedWorlds[i] = parent >= 0 && parent < i ? local * animatedWorlds[parent] : local;
+
+                if (!NumericsMatrix.Invert(skeleton.GetWorldTransform(i), out var bindInverse))
+                    throw new InvalidOperationException($"Unable to invert skeleton world transform for bone {i}.");
 
                 blended.BoneTransforms.Add(new AnimationFrame.BoneKeyFrame
                 {
@@ -742,7 +752,7 @@ namespace Editors.CscEditor.Services
                     Rotation = rotation,
                     Translation = translation,
                     Scale = scale,
-                    WorldTransform = Matrix.Invert(skeleton.GetWorldTransform(i)) * animatedWorlds[i],
+                    WorldTransform = bindInverse * animatedWorlds[i],
                 });
             }
             return blended;
@@ -766,9 +776,9 @@ namespace Editors.CscEditor.Services
         /// Identity offset is a no-op fast path (skips reallocating a whole frame every tick for
         /// the common case of a binding placed at its model's origin with no completed
         /// loops).</summary>
-        static AnimationFrame ApplyRigidOffset(AnimationFrame frame, Matrix offset)
+        static AnimationFrame ApplyRigidOffset(AnimationFrame frame, NumericsMatrix offset)
         {
-            if (offset == Matrix.Identity)
+            if (offset == NumericsMatrix.Identity)
                 return frame;
 
             var result = new AnimationFrame();
@@ -779,8 +789,9 @@ namespace Editors.CscEditor.Services
                 var scale = bone.Scale;
                 if (bone.ParentBoneIndex < 0)
                 {
-                    var local = Matrix.CreateScale(scale) * Matrix.CreateFromQuaternion(rotation) * Matrix.CreateTranslation(translation);
-                    (local * offset).Decompose(out scale, out rotation, out translation);
+                    var local = NumericsMatrix.CreateScale(scale) * NumericsMatrix.CreateFromQuaternion(rotation) * NumericsMatrix.CreateTranslation(translation);
+                    if (!NumericsMatrix.Decompose(local * offset, out scale, out rotation, out translation))
+                        throw new InvalidOperationException("Unable to decompose the rigid animation offset.");
                 }
 
                 result.BoneTransforms.Add(new AnimationFrame.BoneKeyFrame
@@ -809,15 +820,19 @@ namespace Editors.CscEditor.Services
         /// visible backward teleport right at the start before playback evened out (e.g. several
         /// characters each carrying a distinct negative ELEMENT_PERIOD offset so they don't all
         /// step in lockstep).</summary>
-        static Matrix MatrixPower(Matrix m, int exponent)
+        static NumericsMatrix MatrixPower(NumericsMatrix m, int exponent)
         {
-            if (exponent == 0 || m == Matrix.Identity)
-                return Matrix.Identity;
+            if (exponent == 0 || m == NumericsMatrix.Identity)
+                return NumericsMatrix.Identity;
 
             if (exponent < 0)
-                return Matrix.Invert(MatrixPower(m, -exponent));
+            {
+                if (!NumericsMatrix.Invert(MatrixPower(m, -exponent), out var inverse))
+                    throw new InvalidOperationException("Unable to invert animation loop transform.");
+                return inverse;
+            }
 
-            var result = Matrix.Identity;
+            var result = NumericsMatrix.Identity;
             var basePower = m;
             while (exponent > 0)
             {

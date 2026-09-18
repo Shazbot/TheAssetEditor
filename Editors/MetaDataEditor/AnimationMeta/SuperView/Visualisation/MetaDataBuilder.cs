@@ -219,41 +219,43 @@ namespace Editors.AnimationMeta.SuperView.Visualisation
 
         private IMetaDataInstance CreateSplashAttack(SplashAttack_v10 splashAttack, SceneNode root, string displayName, float scale, ParsedMetadataAttribute? selectedAttribute)
         {
-            var distance = Vector3.Distance(splashAttack.StartPosition, splashAttack.EndPosition);
+            var startPosition = NumericsXnaConverter.ToXna(splashAttack.StartPosition);
+            var endPosition = NumericsXnaConverter.ToXna(splashAttack.EndPosition);
+            var distance = System.Numerics.Vector3.Distance(splashAttack.StartPosition, splashAttack.EndPosition);
             if (MathUtil.CompareEqualFloats(distance))
                 throw new ConstraintException($"{displayName}: the distance between StartPosition {splashAttack.StartPosition} and EndPosition {splashAttack.EndPosition} is close to 0");
 
             var color = selectedAttribute == splashAttack ? s_selectedColor : s_color;
 
             var node = new SimpleDrawableNode(displayName);
-            var textPos = (splashAttack.EndPosition + splashAttack.StartPosition) / 2;
+            var textPos = (startPosition + endPosition) / 2;
             
-            node.AddItem( new WorldTextRenderItem(_resourceLibrary, "StartPos", splashAttack.StartPosition, color));
-            node.AddItem(LineHelper.AddLocator(splashAttack.StartPosition, scale, color));
+            node.AddItem( new WorldTextRenderItem(_resourceLibrary, "StartPos", startPosition, color));
+            node.AddItem(LineHelper.AddLocator(startPosition, scale, color));
             
-            node.AddItem( new WorldTextRenderItem(_resourceLibrary, "EndPos", splashAttack.EndPosition, color));
-            node.AddItem(LineHelper.AddLocator(splashAttack.EndPosition, scale, color));
+            node.AddItem( new WorldTextRenderItem(_resourceLibrary, "EndPos", endPosition, color));
+            node.AddItem(LineHelper.AddLocator(endPosition, scale, color));
             
             node.AddItem(new WorldTextRenderItem(_resourceLibrary, displayName, textPos, color));
-            node.AddItem(LineHelper.AddLine(splashAttack.StartPosition, splashAttack.EndPosition, color));
+            node.AddItem(LineHelper.AddLine(startPosition, endPosition, color));
 
             var normal = splashAttack.EndPosition - splashAttack.StartPosition;  // corresponds to Z
-            normal.Normalize();
+            normal = System.Numerics.Vector3.Normalize(normal);
             var random = new Random(1);
             Func<Random, float> RandomFloat = r => (float)(2 * r.NextDouble() - 1);
-            var vectorP = new Vector3(RandomFloat(random), RandomFloat(random), RandomFloat(random));
-            vectorP.Normalize();
+            var vectorP = new System.Numerics.Vector3(RandomFloat(random), RandomFloat(random), RandomFloat(random));
+            vectorP = System.Numerics.Vector3.Normalize(vectorP);
 
-            var planeVectorP = Vector3.Cross(normal, Vector3.Cross(vectorP, normal)); // corresponds to X
-            var planeVectorPN = Vector3.Cross(vectorP, normal); // corresponds to Y
-            planeVectorP.Normalize();
-            planeVectorPN.Normalize();
+            var planeVectorP = System.Numerics.Vector3.Cross(normal, System.Numerics.Vector3.Cross(vectorP, normal)); // corresponds to X
+            var planeVectorPN = System.Numerics.Vector3.Cross(vectorP, normal); // corresponds to Y
+            planeVectorP = System.Numerics.Vector3.Normalize(planeVectorP);
+            planeVectorPN = System.Numerics.Vector3.Normalize(planeVectorPN);
 
             var rotationM = MathUtil.CreateRotation(
             [
-                planeVectorP,
-                planeVectorPN,
-                normal
+                NumericsXnaConverter.ToXna(planeVectorP),
+                NumericsXnaConverter.ToXna(planeVectorPN),
+                NumericsXnaConverter.ToXna(normal)
             ]);
 
             if (splashAttack.AoeShape == 0) // Cone or Sphere
@@ -262,8 +264,8 @@ namespace Editors.AnimationMeta.SuperView.Visualisation
                 {
                     throw new ConstraintException($"{displayName}: the half-angle {splashAttack.AngleForCone / 2} of the cone is close to 0");
                 }
-                var transformationM = rotationM * Matrix.CreateScale(distance) * Matrix.CreateTranslation(splashAttack.StartPosition);
-                node.AddItem(LineHelper.AddConeSplash(splashAttack.StartPosition, splashAttack.EndPosition, transformationM, splashAttack.AngleForCone, color));
+                var transformationM = rotationM * Matrix.CreateScale(distance) * Matrix.CreateTranslation(startPosition);
+                node.AddItem(LineHelper.AddConeSplash(startPosition, endPosition, transformationM, splashAttack.AngleForCone, color));
             }
             if (splashAttack.AoeShape == 1) // Corridor
             {
@@ -271,8 +273,8 @@ namespace Editors.AnimationMeta.SuperView.Visualisation
                 {
                     throw new ConstraintException($"{displayName}: the WidthForCorridor {splashAttack.WidthForCorridor} of the corridor is close to 0");
                 }
-                var transformationM = rotationM * Matrix.CreateScale(splashAttack.WidthForCorridor / 2) * Matrix.CreateTranslation(splashAttack.StartPosition);
-                node.AddItem(LineHelper.AddCorridorSplash(splashAttack.StartPosition, splashAttack.EndPosition, transformationM, color));
+                var transformationM = rotationM * Matrix.CreateScale(splashAttack.WidthForCorridor / 2) * Matrix.CreateTranslation(startPosition);
+                node.AddItem(LineHelper.AddCorridorSplash(startPosition, endPosition, transformationM, color));
             }
             
             root.AddObject(node);

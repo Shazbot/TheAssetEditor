@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Numerics;
 using Shared.GameFormats.Animation;
 using System;
 using System.Collections.Generic;
@@ -9,7 +9,7 @@ namespace GameWorld.Core.Animation
 {
     public class GameSkeleton
     {
-        List<Matrix> _worldTransform { get; set; } = [];
+        List<Matrix4x4> _worldTransform { get; set; } = [];
         List<int> _parentBoneIds { get; set; } = [];
 
         public List<Vector3> Translation { get; private set; } = [];
@@ -113,18 +113,17 @@ namespace GameWorld.Core.Animation
         static Quaternion ToQuaternion(Shared.GameFormats.RigidModel.Transforms.RmvVector4 v)
         {
             var q = new Quaternion(v.X, v.Y, v.Z, v.W);
-            q.Normalize();
-            return q;
+            return Quaternion.Normalize(q);
         }
 
         public void RebuildSkeletonMatrix()
         {
-            _worldTransform = new List<Matrix>(new Matrix[BoneCount]);
+            _worldTransform = new List<Matrix4x4>(new Matrix4x4[BoneCount]);
             for (var i = 0; i < BoneCount; i++)
             {
-                var translationMatrix = Matrix.CreateTranslation(Translation[i]);
-                var rotationMatrix = Matrix.CreateFromQuaternion(Rotation[i]);
-                var scaleMatrix = Matrix.CreateScale(Scale[i]);
+                var translationMatrix = Matrix4x4.CreateTranslation(Translation[i]);
+                var rotationMatrix = Matrix4x4.CreateFromQuaternion(Rotation[i]);
+                var scaleMatrix = Matrix4x4.CreateScale(Scale[i]);
                 var transform = scaleMatrix * rotationMatrix * translationMatrix;
                 _worldTransform[i] = transform;
             }
@@ -190,19 +189,19 @@ namespace GameWorld.Core.Animation
             return -1;
         }
 
-        public Matrix GetWorldTransform(int boneIndex)
+        public Matrix4x4 GetWorldTransform(int boneIndex)
         {
             return _worldTransform[boneIndex];
         }
 
-        public Matrix GetAnimatedWorldTranform(int boneIndex)
+        public Matrix4x4 GetAnimatedWorldTranform(int boneIndex)
         {
             if (_frame != null)
                 return _frame.GetSkeletonAnimatedWorld(this, boneIndex);
 
             return GetWorldTransform(boneIndex); ;
         }
-        public Matrix GetAnimatedTranform(int boneIndex)
+        public Matrix4x4 GetAnimatedTranform(int boneIndex)
         {
             if (_frame != null)
                 return _frame.BoneTransforms[boneIndex].WorldTransform;
@@ -268,9 +267,13 @@ namespace GameWorld.Core.Animation
             var output = new AnimInvMatrixFile();
 
             output.Version = 1;
-            output.MatrixList = new Matrix[_worldTransform.Count];
+            output.MatrixList = new Matrix4x4[_worldTransform.Count];
             for (var i = 0; i < _worldTransform.Count; i++)
-                output.MatrixList[i] = Matrix.Transpose(Matrix.Invert(_worldTransform[i]));
+            {
+                if (!Matrix4x4.Invert(_worldTransform[i], out var inverse))
+                    throw new InvalidOperationException($"Unable to invert bone transform {i}.");
+                output.MatrixList[i] = Matrix4x4.Transpose(inverse);
+            }
 
             return output;
         }

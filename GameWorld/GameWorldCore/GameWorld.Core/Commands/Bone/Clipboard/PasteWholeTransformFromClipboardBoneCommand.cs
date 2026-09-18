@@ -7,7 +7,7 @@ using System.Linq;
 using System.Text.Json.Serialization;
 using GameWorld.Core.Animation;
 using GameWorld.Core.Commands;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.Core.Events;
 
 namespace GameWorld.Core.Commands.Bone.Clipboard

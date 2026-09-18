@@ -1,6 +1,6 @@
 ﻿using Editors.Shared.Core.Common.ReferenceModel;
 using GameWorld.Core.Animation;
-using Microsoft.Xna.Framework;
+using System.Numerics;
 using Shared.Core.Events;
 using Shared.Core.Services;
 

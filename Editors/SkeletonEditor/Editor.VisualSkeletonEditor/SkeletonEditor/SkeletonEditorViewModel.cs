@@ -147,7 +147,8 @@ namespace Editor.VisualSkeletonEditor.SkeletonEditor
                 if (ShowBonesAsWorldTransform)
                 {
                     var worldMatrix = _techSkeletonNode.Skeleton.GetWorldTransform(boneIndex);
-                    worldMatrix.Decompose(out _, out rotation, out position);
+                    if (!System.Numerics.Matrix4x4.Decompose(worldMatrix, out _, out rotation, out position))
+                        throw new InvalidOperationException("Unable to decompose the selected bone world transform.");
                 }
 
                 var eulerRotation = MathUtil.QuaternionToEulerDegree(rotation);

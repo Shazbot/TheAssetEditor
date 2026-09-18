@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Shared.GameFormats.RigidModel;
 using SharpGLTF.Geometry.VertexTypes;
 using SharpGLTF.Schema2;
-using XNA = Microsoft.Xna.Framework;
 using Xceed.Wpf.Toolkit.PropertyGrid.Editors;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers;
 using Shared.GameFormats.RigidModel.Vertex;
@@ -26,6 +25,7 @@ using SharpDX.MediaFoundation;
 using Editors.ImportExport.Common;
 using Pfim;
 using Shared.GameFormats.RigidModel.Types;
+using System.Numerics;
 
 namespace Editors.ImportExport.Importing.Importers.GltfToRmv.Helper
 {
@@ -118,11 +118,11 @@ namespace Editors.ImportExport.Importing.Importers.GltfToRmv.Helper
         {
             var rmv2Vertex = new CommonVertex();            
 
-            rmv2Vertex.Position = new XNA.Vector4(-vertexBuilder.Geometry.Position.X, vertexBuilder.Geometry.Position.Y, vertexBuilder.Geometry.Position.Z, 1);
-            rmv2Vertex.Uv = VecConv.GetXna(vertexBuilder.Material.TexCoord);
-            rmv2Vertex.Normal = new XNA.Vector3(-vertexBuilder.Geometry.Normal.X, vertexBuilder.Geometry.Normal.Y, vertexBuilder.Geometry.Normal.Z);
-            rmv2Vertex.Tangent = new XNA.Vector3(-vertexBuilder.Geometry.Tangent.X, vertexBuilder.Geometry.Tangent.Y, vertexBuilder.Geometry.Tangent.Z);
-            rmv2Vertex.BiNormal = XNA.Vector3.Cross(rmv2Vertex.Normal, rmv2Vertex.Tangent) * vertexBuilder.Geometry.Tangent.W; // should produce th correct bitangent
+            rmv2Vertex.Position = new Vector4(-vertexBuilder.Geometry.Position.X, vertexBuilder.Geometry.Position.Y, vertexBuilder.Geometry.Position.Z, 1);
+            rmv2Vertex.Uv = new Vector2(vertexBuilder.Material.TexCoord.X, vertexBuilder.Material.TexCoord.Y);
+            rmv2Vertex.Normal = new Vector3(-vertexBuilder.Geometry.Normal.X, vertexBuilder.Geometry.Normal.Y, vertexBuilder.Geometry.Normal.Z);
+            rmv2Vertex.Tangent = new Vector3(-vertexBuilder.Geometry.Tangent.X, vertexBuilder.Geometry.Tangent.Y, vertexBuilder.Geometry.Tangent.Z);
+            rmv2Vertex.BiNormal = Vector3.Cross(rmv2Vertex.Normal, rmv2Vertex.Tangent) * vertexBuilder.Geometry.Tangent.W; // should produce th correct bitangent
 
             rmv2Vertex.WeightCount = vertexBuilder.Skinning.MaxBindings;
             rmv2Vertex.BoneIndex = new byte[rmv2Vertex.WeightCount];
@@ -164,16 +164,19 @@ namespace Editors.ImportExport.Importing.Importers.GltfToRmv.Helper
 
         void UpdateBoundBox(RmvModel newModel)
         {
-            var points = new XNA.Vector3[newModel.Mesh.VertexList.Length];
+            if (newModel.Mesh.VertexList.Length == 0)
+                throw new InvalidOperationException("Cannot calculate a bounding box for an empty mesh.");
 
-            for (var i = 0; i < newModel.Mesh.VertexList.Length; i++)
+            var min = new Vector3(float.MaxValue);
+            var max = new Vector3(float.MinValue);
+            foreach (var vertex in newModel.Mesh.VertexList)
             {
-                points[i].X = newModel.Mesh.VertexList[i].Position.X;
-                points[i].Y = newModel.Mesh.VertexList[i].Position.Y;
-                points[i].Z = newModel.Mesh.VertexList[i].Position.Z;
+                var position = vertex.GetPosistionAsVec3();
+                min = Vector3.Min(min, position);
+                max = Vector3.Max(max, position);
             }
 
-            newModel.UpdateBoundingBox(XNA.BoundingBox.CreateFromPoints(points));
+            newModel.UpdateBoundingBox(min, max);
             newModel.UpdateModelTypeFlag(newModel.Material.MaterialId);
         }
     }
