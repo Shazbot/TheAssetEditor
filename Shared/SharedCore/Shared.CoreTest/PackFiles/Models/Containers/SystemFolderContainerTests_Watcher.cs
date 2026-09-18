@@ -1,6 +1,7 @@
 ﻿using Moq;
 using Shared.Core.Events;
 using Shared.Core.PackFiles.Events;
+using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Models.Containers;
 using Shared.Core.PackFiles.Utility;
 using Shared.Core.Services;
@@ -89,11 +90,25 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
             )), Times.Once);
 
             Assert.That(_container.ContainsFile("newfile.txt"), Is.True);
+            var added = _container.FindFile("newfile.txt")!;
+            Assert.That(added.Container, Is.SameAs(_container));
+            Assert.That(added.VirtualPath, Is.EqualTo("newfile.txt"));
         }
 
         [Test]
         public void ExternalFileDeleted_PublishesFilesRemovedEvent()
         {
+            var trackedFile = _container.FindFile("existing.txt")!;
+            PackFile? fileDuringRemovalEvent = null;
+            IPackFileContainer? containerDuringRemovalEvent = null;
+            string? pathDuringRemovalEvent = null;
+            _container.FilesRemovedExternally += (_, e) =>
+            {
+                fileDuringRemovalEvent = e.Files.Single();
+                containerDuringRemovalEvent = fileDuringRemovalEvent.Container;
+                pathDuringRemovalEvent = fileDuringRemovalEvent.VirtualPath;
+            };
+
             // Simulate deletion of the existing file
             _mockWatcher.Raise(w => w.Deleted += null, new FileSystemEventArgs(WatcherChangeTypes.Deleted, _tempDir, "existing.txt"));
 
@@ -104,6 +119,11 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
             )), Times.Once);
 
             Assert.That(_container.ContainsFile("existing.txt"), Is.False);
+            Assert.That(fileDuringRemovalEvent, Is.SameAs(trackedFile));
+            Assert.That(containerDuringRemovalEvent, Is.SameAs(_container));
+            Assert.That(pathDuringRemovalEvent, Is.EqualTo("existing.txt"));
+            Assert.That(trackedFile.Container, Is.Null);
+            Assert.That(trackedFile.VirtualPath, Is.Null);
         }
 
         [Test]

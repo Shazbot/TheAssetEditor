@@ -129,10 +129,16 @@ namespace Shared.CoreTest.PackFiles
             var newFile = new PackFile("added.txt", new MemorySource("new content"u8.ToArray()));
             var entries = new List<NewPackFileEntry> { new("newdir", newFile) };
 
-            _pfs.AddFilesToPack(container, entries);
+            var addedFiles = _pfs.AddFilesToPack(container, entries);
 
             Assert.That(container.ContainsFile(@"newdir\added.txt"), Is.True);
             Assert.That(File.Exists(Path.Combine(_tempDir, "newdir", "added.txt")), Is.True);
+            Assert.That(addedFiles, Has.Count.EqualTo(1));
+            Assert.That(addedFiles[0], Is.Not.SameAs(newFile));
+            Assert.That(addedFiles[0], Is.SameAs(container.FindFile(@"newdir\added.txt")));
+            Assert.That(addedFiles[0].Container, Is.SameAs(container));
+            Assert.That(addedFiles[0].VirtualPath, Is.EqualTo(@"newdir\added.txt"));
+            Assert.That(_pfs.GetFullPath(addedFiles[0]), Is.EqualTo(@"newdir\added.txt"));
         }
 
         [Test]

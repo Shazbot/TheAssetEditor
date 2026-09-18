@@ -39,5 +39,31 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
             _container.AddOrUpdateFile("folder\\file.txt", new PackFile("file.txt", new MemorySource([2])));
             Assert.That(_container.GetFileCount(), Is.EqualTo(before));
         }
+
+        [Test]
+        public void AddOrUpdateFile_ReplacementDetachesOldFile()
+        {
+            if (IsCachedContainer)
+            {
+                Assert.Throws<InvalidOperationException>(() =>
+                    _container.AddOrUpdateFile("folder\\file.txt", new PackFile("file.txt", new MemorySource([1]))));
+                return;
+            }
+
+            var oldFile = _container.FindFile("folder\\file.txt")!;
+            var replacement = new PackFile("file.txt", new MemorySource([9]));
+
+            _container.AddOrUpdateFile("folder\\file.txt", replacement);
+            var storedReplacement = _container.FindFile("folder\\file.txt")!;
+
+            Assert.That(oldFile.Container, Is.Null);
+            Assert.That(oldFile.VirtualPath, Is.Null);
+            Assert.That(storedReplacement.Container, Is.SameAs(_container));
+            Assert.That(storedReplacement.VirtualPath, Is.EqualTo("folder\\file.txt"));
+            if (IsSystemFolderContainer)
+                Assert.That(replacement.Container, Is.Null);
+            else
+                Assert.That(storedReplacement, Is.SameAs(replacement));
+        }
     }
 }

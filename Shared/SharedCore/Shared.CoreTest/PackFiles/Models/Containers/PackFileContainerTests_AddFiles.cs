@@ -31,6 +31,10 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
             Assert.That(added.Count, Is.EqualTo(2));
             Assert.That(_container.ContainsFile("dir\\a.txt"), Is.True);
             Assert.That(_container.ContainsFile("root.txt"), Is.True);
+            Assert.That(added[0].Container, Is.SameAs(_container));
+            Assert.That(added[0].VirtualPath, Is.EqualTo("dir\\a.txt"));
+            Assert.That(added[1].Container, Is.SameAs(_container));
+            Assert.That(added[1].VirtualPath, Is.EqualTo("root.txt"));
         }
 
         [Test]

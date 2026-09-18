@@ -23,6 +23,9 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
             _container.MoveFile(file, "other");
             Assert.That(_container.ContainsFile("other\\file.txt"), Is.True);
             Assert.That(_container.ContainsFile("folder\\file.txt"), Is.False);
+            Assert.That(file.Container, Is.SameAs(_container));
+            Assert.That(file.VirtualPath, Is.EqualTo("other\\file.txt"));
+            Assert.That(_container.GetFullPath(file), Is.EqualTo("other\\file.txt"));
         }
 
         [Test]

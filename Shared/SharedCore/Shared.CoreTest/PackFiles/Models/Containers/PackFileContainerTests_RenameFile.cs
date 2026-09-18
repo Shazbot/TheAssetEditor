@@ -23,6 +23,9 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
             _container.RenameFile(file, "renamed.txt");
             Assert.That(_container.ContainsFile("folder\\renamed.txt"), Is.True);
             Assert.That(_container.ContainsFile("folder\\file.txt"), Is.False);
+            Assert.That(file.Name, Is.EqualTo("renamed.txt"));
+            Assert.That(file.Container, Is.SameAs(_container));
+            Assert.That(file.VirtualPath, Is.EqualTo("folder\\renamed.txt"));
         }
     }
 }

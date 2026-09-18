@@ -18,9 +18,15 @@ namespace Shared.CoreTest.PackFiles.Models.Containers
                 return;
             }
 
+            var removedFile = _container.FindFile("models\\unit.model")!;
+            var unaffectedFile = _container.FindFile("folder\\file.txt")!;
+
             _container.DeleteFolder("models");
             Assert.That(_container.ContainsFile("models\\unit.model"), Is.False);
             Assert.That(_container.ContainsFile("models\\textures\\diffuse.dds"), Is.False);
+            Assert.That(removedFile.Container, Is.Null);
+            Assert.That(removedFile.VirtualPath, Is.Null);
+            Assert.That(unaffectedFile.Container, Is.SameAs(_container));
         }
     }
 }

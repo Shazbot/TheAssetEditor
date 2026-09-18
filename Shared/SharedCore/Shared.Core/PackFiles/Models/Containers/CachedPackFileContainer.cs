@@ -379,37 +379,7 @@ namespace Shared.Core.PackFiles.Models.Containers
 
         public string? GetFullPath(PackFile file)
         {
-            if (file.DataSource is PackedFileSource source)
-            {
-                CachedFileEntity? entry;
-                lock (_dbLock)
-                {
-                    entry = _db.Files.FirstOrDefault(f =>
-                        f.SourcePackFilePath == source.Parent.FilePath &&
-                        f.Offset == source.Offset &&
-                        f.Size == source.Size &&
-                        f.IsEncrypted == source.IsEncrypted &&
-                        f.IsCompressed == source.IsCompressed &&
-                        f.CompressionFormat == (int)source.CompressionFormat &&
-                        f.UncompressedSize == source.UncompressedSize &&
-                        f.FileName.ToLower() == file.Name.ToLower());
-                }
-
-                if (entry != null)
-                    return entry.RelativePath;
-            }
-
-            List<string> matchingPaths;
-            lock (_dbLock)
-            {
-                matchingPaths = _db.Files
-                    .Where(f => f.FileName.ToLower() == file.Name.ToLower())
-                    .Select(f => f.RelativePath)
-                    .Take(2)
-                    .ToList();
-            }
-
-            return matchingPaths.Count == 1 ? matchingPaths[0] : null;
+            return ReferenceEquals(file.Container, this) ? file.VirtualPath : null;
         }
 
         public List<(string FileName, PackFile Pack)> FindAllWithExtention(string extention)
@@ -423,7 +393,8 @@ namespace Shared.Core.PackFiles.Models.Containers
                     .ToList();
             }
 
-            return entries.Select(e => (e.RelativePath, ToPackFile(e))).ToList();
+            var parentCache = new Dictionary<string, PackedFileSourceParent>(StringComparer.OrdinalIgnoreCase);
+            return entries.Select(e => (e.RelativePath, ToPackFile(e, parentCache))).ToList();
         }
 
         public List<(string Path, PackFile File)> SearchFiles(string? textFilter, IReadOnlyList<string>? extensions)
@@ -448,7 +419,8 @@ namespace Shared.Core.PackFiles.Models.Containers
                 entries = query.OrderBy(f => f.RelativePath).ToList();
             }
 
-            return entries.Select(e => (e.RelativePath, ToPackFile(e))).ToList();
+            var parentCache = new Dictionary<string, PackedFileSourceParent>(StringComparer.OrdinalIgnoreCase);
+            return entries.Select(e => (e.RelativePath, ToPackFile(e, parentCache))).ToList();
         }
 
         public SortedDictionary<string, List<string>> GetAllFilesByFolder()
@@ -473,7 +445,7 @@ namespace Shared.Core.PackFiles.Models.Containers
             }
         }
 
-        public Dictionary<string, PackFile> GetAllFiles()
+        public IReadOnlyDictionary<string, PackFile> GetAllFiles()
         {
             var time = Stopwatch.StartNew();
             List<CachedFileEntity> entries;
@@ -487,20 +459,7 @@ namespace Shared.Core.PackFiles.Models.Containers
             var result = new Dictionary<string, PackFile>(entries.Count);
 
             foreach (var entry in entries)
-            {
-                if (!parentCache.TryGetValue(entry.SourcePackFilePath, out var parent))
-                {
-                    parent = new PackedFileSourceParent { FilePath = entry.SourcePackFilePath };
-                    parentCache[entry.SourcePackFilePath] = parent;
-                }
-
-                var source = new PackedFileSource(
-                    parent, entry.Offset, entry.Size,
-                    entry.IsEncrypted, entry.IsCompressed,
-                    (Utility.CompressionFormat)entry.CompressionFormat, entry.UncompressedSize);
-
-                result[entry.RelativePath] = new PackFile(entry.FileName, source);
-            }
+                result[entry.RelativePath] = ToPackFile(entry, parentCache);
 
             _logger.Here().Information("Getting all files and processing from cached container took {ElapsedMilliseconds} ms", time.ElapsedMilliseconds);
 
@@ -518,6 +477,7 @@ namespace Shared.Core.PackFiles.Models.Containers
                     .Where(f => f.FolderPath == directoryPath)
                     .Select(f => new DirectoryFileRow
                     {
+                        RelativePath = f.RelativePath,
                         FolderPath = f.FolderPath,
                         FileName = f.FileName,
                         SourcePackFilePath = f.SourcePackFilePath,
@@ -535,15 +495,7 @@ namespace Shared.Core.PackFiles.Models.Containers
             var files = directFileRows
                 .Select(f =>
                 {
-                    if (!packedFileSourceParentCache.TryGetValue(f.SourcePackFilePath, out var parent))
-                    {
-                        parent = new PackedFileSourceParent { FilePath = f.SourcePackFilePath };
-                        packedFileSourceParentCache[f.SourcePackFilePath] = parent;
-                    }
-
-                    var source = new PackedFileSource(parent, f.Offset, f.Size, f.IsEncrypted, f.IsCompressed, (Utility.CompressionFormat)f.CompressionFormat, f.UncompressedSize);
-                    var relativePath = string.IsNullOrEmpty(f.FolderPath) ? f.FileName : $"{f.FolderPath}\\{f.FileName}";
-                    return (Path: relativePath, File: new PackFile(f.FileName, source));
+                    return (Path: f.RelativePath, File: ToPackFile(f, packedFileSourceParentCache));
                 })
                 .OrderBy(x => x.Path, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
@@ -578,18 +530,48 @@ namespace Shared.Core.PackFiles.Models.Containers
         public void SaveToDisk(string path, bool createBackup, GameInformation gameInformation) =>
             throw new InvalidOperationException("Cannot modify a cached CA pack file container.");
 
-        private static PackFile ToPackFile(CachedFileEntity entry)
+        private PackFile ToPackFile(CachedFileEntity entry, Dictionary<string, PackedFileSourceParent>? parentCache = null)
         {
-            var parent = new PackedFileSourceParent { FilePath = entry.SourcePackFilePath };
+            PackedFileSourceParent parent;
+            if (parentCache != null && parentCache.TryGetValue(entry.SourcePackFilePath, out var cachedParent))
+            {
+                parent = cachedParent;
+            }
+            else
+            {
+                parent = new PackedFileSourceParent { FilePath = entry.SourcePackFilePath };
+                parentCache?.Add(entry.SourcePackFilePath, parent);
+            }
+
             var source = new PackedFileSource(
                 parent, entry.Offset, entry.Size,
                 entry.IsEncrypted, entry.IsCompressed,
                 (Utility.CompressionFormat)entry.CompressionFormat, entry.UncompressedSize);
-            return new PackFile(entry.FileName, source);
+            var file = new PackFile(entry.FileName, source);
+            file.AttachToContainer(this, entry.RelativePath);
+            return file;
+        }
+
+        private PackFile ToPackFile(DirectoryFileRow entry, Dictionary<string, PackedFileSourceParent> parentCache)
+        {
+            if (!parentCache.TryGetValue(entry.SourcePackFilePath, out var parent))
+            {
+                parent = new PackedFileSourceParent { FilePath = entry.SourcePackFilePath };
+                parentCache[entry.SourcePackFilePath] = parent;
+            }
+
+            var source = new PackedFileSource(
+                parent, entry.Offset, entry.Size,
+                entry.IsEncrypted, entry.IsCompressed,
+                (Utility.CompressionFormat)entry.CompressionFormat, entry.UncompressedSize);
+            var file = new PackFile(entry.FileName, source);
+            file.AttachToContainer(this, entry.RelativePath);
+            return file;
         }
 
         private sealed class DirectoryFileRow
         {
+            public string RelativePath { get; init; } = string.Empty;
             public string FolderPath { get; init; } = string.Empty;
             public string FileName { get; init; } = string.Empty;
             public string SourcePackFilePath { get; init; } = string.Empty;
