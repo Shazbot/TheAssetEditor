@@ -227,7 +227,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             int outputCount,
             TextureTimingAccumulator timing)
         {
-            Logger.Here().Information(
+            Logger.Here().Debug(
                 "GLTF texture handling timing for {AssetName}: total={TotalMs:F1}ms, parallelism={MaxParallelism}, requests={RequestCount}, outputs={OutputCount}, sessionHits={SessionHitCount}, conversionCacheHits={ConversionCacheHitCount}, conversionCacheMisses={ConversionCacheMissCount}, cacheLookup={CacheLookupMs:F1}ms, cachedWrite={CachedWriteMs:F1}ms, exporter={ExporterMs:F1}ms, postProcess={PostProcessMs:F1}ms, cacheStore={CacheStoreMs:F1}ms, finalize={FinalizeMs:F1}ms",
                 assetName,
                 totalMs,
