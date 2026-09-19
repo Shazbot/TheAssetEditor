@@ -17,7 +17,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
     public record TextureResult(
         int MeshIndex,
         string SystemFilePath,
-        KnownChannel GlftTexureType,
+        KnownChannel GltfTextureType,
         bool HasAlphaChannel = false)
     {
         /// <summary>
@@ -74,7 +74,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         private readonly IDdsToNormalPngExporter _ddsToNormalPngExporter;
         private readonly IDdsToMaterialPngExporter _ddsToMaterialPngExporter;
         private readonly IPackedFileLookup? _packFileLookup;
-        private readonly TexturePngCache _convertedTextureCache = new();
+        private readonly TextureImageCache _convertedTextureCache = new();
 
         public GltfTextureHandler(IDdsToNormalPngExporter ddsToNormalPngExporter, IDdsToMaterialPngExporter ddsToMaterialPngExporter, IPackedFileLookup? packFileLookup = null)
         {
@@ -95,19 +95,14 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             var timing = new TextureTimingAccumulator();
             var session = new GltfTextureExportSession(collisionSafe: false);
 
-            int lodICounnt = 1;
-            for (var lodIndex = 0; lodIndex < lodICounnt; lodIndex++)
+            const int lodIndex = 0;
+            for (var meshIndex = 0; meshIndex < rmvFile.ModelList[lodIndex].Length; meshIndex++)
             {
-                for (var meshIndex = 0; meshIndex < rmvFile.ModelList[lodIndex].Length; meshIndex++)
-                {
-                    var model = rmvFile.ModelList[lodIndex][meshIndex];
-                    var textures = ExtractTextures(model);
+                var model = rmvFile.ModelList[lodIndex][meshIndex];
+                var textures = ExtractTextures(model);
 
-                    foreach (var tex in textures)
-                    {
-                        HandleTexture(settings, output, session, meshIndex, tex, timing);
-                    }
-                }
+                foreach (var tex in textures)
+                    HandleTexture(settings, output, session, meshIndex, tex, timing);
             }
 
             totalStopwatch.Stop();
@@ -244,15 +239,6 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 timing.CacheStoreMs,
                 timing.FinalizeMs);
         }
-        interface IDDsToPngExporter
-        {
-            public string Export(string path, string outputPath, bool convertToBlender)
-            {
-                throw new System.NotImplementedException();
-            }
-        }
-
-
         List<MaterialBuilderTextureInput> ExtractTextures(RmvModel model)
         {
             var textures = model.Material.GetAllTextures();
@@ -1421,7 +1407,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         /// replacing the pack set naturally starts a fresh cache. The size cap
         /// prevents browsing many units from retaining unbounded image data.
         /// </summary>
-        private sealed class TexturePngCache
+        private sealed class TextureImageCache
         {
             private const long MaximumBytes = 128L * 1024 * 1024;
             private readonly object _sync = new();
