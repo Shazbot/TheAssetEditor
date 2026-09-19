@@ -1,52 +1,100 @@
-using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using Editors.ImportExport.Misc;
 using Pfim;
 
 namespace MeshImportExport
 {
     public class TextureHelper
     {
-        public static byte[] ConvertDdsToPng(byte[] ddsbyteSteam)
+        public readonly record struct DecodedDdsImage(int Width, int Height, byte[] BgraPixels);
+
+        public static DecodedDdsImage DecodeDdsToBgra(byte[] ddsBytes)
         {
-            using var m = new MemoryStream();
-            using var w = new BinaryWriter(m);
-            w.Write(ddsbyteSteam);
-            m.Seek(0, SeekOrigin.Begin);
-            var image = Pfimage.FromStream(m);
+            ArgumentNullException.ThrowIfNull(ddsBytes);
 
-            PixelFormat pixelFormat = PixelFormat.Format32bppArgb;
-            if (image.Format == Pfim.ImageFormat.Rgba32)
+            using var stream = new MemoryStream(ddsBytes, writable: false);
+            using var image = Pfimage.FromStream(stream);
+
+            var width = image.Width;
+            var height = image.Height;
+            var destinationStride = checked(width * 4);
+            var pixels = new byte[checked(destinationStride * height)];
+
+            switch (image.Format)
             {
-                pixelFormat = PixelFormat.Format32bppArgb;
+                case Pfim.ImageFormat.Rgba32:
+                    CopyRgba32ToBgra(image, pixels, destinationStride);
+                    break;
+
+                case Pfim.ImageFormat.Rgb24:
+                    CopyRgb24ToBgra(image, pixels, destinationStride);
+                    break;
+
+                default:
+                    throw new NotSupportedException($"Unsupported DDS format: {image.Format}");
             }
-            else if (image.Format == Pfim.ImageFormat.Rgb24)
+
+            return new DecodedDdsImage(width, height, pixels);
+        }
+
+        public static byte[] EncodeBgraToPng(DecodedDdsImage image)
+            => EncodeBgraToPng(image.Width, image.Height, image.BgraPixels);
+
+        public static byte[] EncodeBgraToPng(int width, int height, byte[] bgraPixels)
+        {
+            ArgumentNullException.ThrowIfNull(bgraPixels);
+
+            using var bitmap = BitmapPixelBuffer.CreateBitmap(width, height, bgraPixels);
+            using var output = new MemoryStream();
+            bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+            return output.ToArray();
+        }
+
+        public static byte[] ConvertDdsToPng(byte[] ddsbyteSteam)
+            => EncodeBgraToPng(DecodeDdsToBgra(ddsbyteSteam));
+
+        private static void CopyRgba32ToBgra(IImage image, byte[] destination, int destinationStride)
+        {
+            var sourceStride = image.Stride;
+            var rowBytes = checked(image.Width * 4);
+            if (sourceStride < rowBytes)
+                throw new InvalidDataException($"DDS stride {sourceStride} is smaller than the expected row size {rowBytes}.");
+
+            for (var row = 0; row < image.Height; row++)
             {
-                pixelFormat = PixelFormat.Format24bppRgb;
+                Buffer.BlockCopy(
+                    image.Data,
+                    checked(row * sourceStride),
+                    destination,
+                    checked(row * destinationStride),
+                    rowBytes);
             }
-            else
+        }
+
+        private static void CopyRgb24ToBgra(IImage image, byte[] destination, int destinationStride)
+        {
+            var sourceStride = image.Stride;
+            var sourceRowBytes = checked(image.Width * 3);
+            if (sourceStride < sourceRowBytes)
+                throw new InvalidDataException($"DDS stride {sourceStride} is smaller than the expected row size {sourceRowBytes}.");
+
+            for (var row = 0; row < image.Height; row++)
             {
-                throw new NotSupportedException($"Unsupported DDS format: {image.Format}");
+                var sourceRow = checked(row * sourceStride);
+                var destinationRow = checked(row * destinationStride);
+                for (var x = 0; x < image.Width; x++)
+                {
+                    var sourceIndex = checked(sourceRow + x * 3);
+                    var destinationIndex = checked(destinationRow + x * 4);
+
+                    // Pfim's decoded RGB24 bytes are BGR, matching GDI+'s in-memory ordering.
+                    destination[destinationIndex] = image.Data[sourceIndex];
+                    destination[destinationIndex + 1] = image.Data[sourceIndex + 1];
+                    destination[destinationIndex + 2] = image.Data[sourceIndex + 2];
+                    destination[destinationIndex + 3] = 255;
+                }
             }
-
-            using var bitmap = new Bitmap(image.Width, image.Height, pixelFormat);
-
-            var bitmapData = bitmap.LockBits(new Rectangle(0, 0, image.Width, image.Height), ImageLockMode.WriteOnly, pixelFormat);
-            // Pfim's decoded data is already laid out in the byte order expected by
-            // the corresponding Bitmap pixel format (BGRA for Format32bppArgb and
-            // BGR for Format24bppRgb). The bitmap encoder interprets the locked
-            // memory using that same layout, so swapping R/B here would invert the
-            // exported image channels.
-            System.Runtime.InteropServices.Marshal.Copy(image.Data, 0, bitmapData.Scan0, image.DataLen);
-            bitmap.UnlockBits(bitmapData);
-
-            using var b = new MemoryStream();
-            bitmap.Save(b, System.Drawing.Imaging.ImageFormat.Png);
-
-            using var byteSteam = new BinaryReader(b);
-            b.Seek(0, SeekOrigin.Begin);
-            var binData = byteSteam.ReadBytes((int)b.Length);
-            return binData;
         }
 
         public static byte[] ConvertPngToDds(byte[] png)
@@ -55,7 +103,7 @@ namespace MeshImportExport
             using var w = new BinaryWriter(m);
             w.Write(png);
             m.Seek(0, SeekOrigin.Begin);
-            using var bitmap = new Bitmap(m);
+            using var bitmap = new System.Drawing.Bitmap(m);
 
             PixelFormat pixelFormat = PixelFormat.Format32bppArgb;
             if (bitmap.PixelFormat == PixelFormat.Format32bppArgb)
@@ -71,12 +119,10 @@ namespace MeshImportExport
                 throw new NotSupportedException($"Unsupported PNG format: {bitmap.PixelFormat}");
             }
 
-            BitmapData bitmapData = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, pixelFormat);
+            BitmapData bitmapData = bitmap.LockBits(new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, pixelFormat);
             byte[] imageData = new byte[bitmapData.Stride * bitmapData.Height];
             System.Runtime.InteropServices.Marshal.Copy(bitmapData.Scan0, imageData, 0, imageData.Length);
             bitmap.UnlockBits(bitmapData);
-
-            //var image = Pfim.Pfim.FromStream(//Create(imageData, bitmap.Width, bitmap.Height, imageFormat);
 
             using var b = new MemoryStream();
             var imageNew = Pfimage.FromStream(b);

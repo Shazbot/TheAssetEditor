@@ -21,6 +21,28 @@ public class TextureHelperTests
         Assert.That(pixel.B, Is.LessThan(20));
     }
 
+    [Test]
+    public void DecodeAndEncodeDdsPreservesRgbaChannelsWithoutIntermediatePng()
+    {
+        var dds = CreateA8R8G8B8Dds(17, 34, 201, 77);
+
+        var decoded = TextureHelper.DecodeDdsToBgra(dds);
+
+        Assert.That(decoded.Width, Is.EqualTo(1));
+        Assert.That(decoded.Height, Is.EqualTo(1));
+        Assert.That(decoded.BgraPixels, Is.EqualTo(new byte[] { 201, 34, 17, 77 }));
+
+        var png = TextureHelper.EncodeBgraToPng(decoded);
+        using var pngStream = new MemoryStream(png);
+        using var bitmap = new Bitmap(pngStream);
+        var pixel = bitmap.GetPixel(0, 0);
+
+        Assert.That(pixel.R, Is.EqualTo(17));
+        Assert.That(pixel.G, Is.EqualTo(34));
+        Assert.That(pixel.B, Is.EqualTo(201));
+        Assert.That(pixel.A, Is.EqualTo(77));
+    }
+
     private static byte[] CreateSolidRedDxt1Dds()
     {
         using var stream = new MemoryStream();
@@ -61,4 +83,43 @@ public class TextureHelperTests
 
         return stream.ToArray();
     }
+    private static byte[] CreateA8R8G8B8Dds(byte red, byte green, byte blue, byte alpha)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+
+        writer.Write(Encoding.ASCII.GetBytes("DDS "));
+        writer.Write(124);
+        writer.Write(0x0000100f);
+        writer.Write(1);
+        writer.Write(1);
+        writer.Write(4);
+        writer.Write(0);
+        writer.Write(0);
+
+        for (var i = 0; i < 11; i++)
+            writer.Write(0);
+
+        writer.Write(32);
+        writer.Write(0x41);
+        writer.Write(0);
+        writer.Write(32);
+        writer.Write(0x00ff0000);
+        writer.Write(0x0000ff00);
+        writer.Write(0x000000ff);
+        writer.Write(unchecked((int)0xff000000));
+
+        writer.Write(0x00001000);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+
+        writer.Write(blue);
+        writer.Write(green);
+        writer.Write(red);
+        writer.Write(alpha);
+        return stream.ToArray();
+    }
+
 }

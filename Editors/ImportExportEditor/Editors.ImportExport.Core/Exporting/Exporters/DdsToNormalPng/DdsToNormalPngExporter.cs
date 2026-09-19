@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
 using Editors.ImportExport.Misc;
 using MeshImportExport;
@@ -70,20 +69,25 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                 throw new Exception($"Could not read file data. bytes.Count = {bytes?.Length}");
 
             phaseStopwatch.Restart();
-            var imgBytes = TextureHelper.ConvertDdsToPng(bytes);
+            var decoded = TextureHelper.DecodeDdsToBgra(bytes);
             phaseStopwatch.Stop();
-            var ddsToPngMs = phaseStopwatch.Elapsed.TotalMilliseconds;
-            if (imgBytes == null || !imgBytes.Any())
-                throw new Exception($"image data invalid/empty. imgBytes.Count = {imgBytes?.Length}");
+            var ddsDecodeMs = phaseStopwatch.Elapsed.TotalMilliseconds;
 
             var normalConvertMs = 0.0;
             if (convertToBlueNormalMap)
             {
                 phaseStopwatch.Restart();
-                imgBytes = ConvertPackedNormalToStandard(imgBytes);
+                ConvertPackedNormalToStandardInPlace(decoded.BgraPixels);
                 phaseStopwatch.Stop();
                 normalConvertMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             }
+
+            phaseStopwatch.Restart();
+            var imgBytes = TextureHelper.EncodeBgraToPng(decoded);
+            phaseStopwatch.Stop();
+            var pngEncodeMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            if (imgBytes == null || !imgBytes.Any())
+                throw new Exception($"image data invalid/empty. imgBytes.Count = {imgBytes?.Length}");
 
             phaseStopwatch.Restart();
             _imageSaveHandler.Save(imgBytes, outputFilePath);
@@ -92,13 +96,14 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             totalStopwatch.Stop();
 
             Logger.Here().Information(
-                "DDS normal texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsToPng={DdsToPngMs:F1}ms, normalConvert={NormalConvertMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
+                "DDS normal texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, normalConvert={NormalConvertMs:F1}ms, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
                 filePath,
                 totalStopwatch.Elapsed.TotalMilliseconds,
                 lookupMs,
                 readMs,
-                ddsToPngMs,
+                ddsDecodeMs,
                 normalConvertMs,
+                pngEncodeMs,
                 saveMs,
                 bytes.Length,
                 imgBytes.Length,
@@ -107,19 +112,13 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             return outputFilePath;
         }
 
-        private static byte[] ConvertPackedNormalToStandard(byte[] pngBytes)
+        private static void ConvertPackedNormalToStandardInPlace(byte[] pixels)
         {
-            using var inputStream = new MemoryStream(pngBytes);
-            using var image = Image.FromStream(inputStream);
-            using var source = new Bitmap(image);
-            var sourcePixels = BitmapPixelBuffer.ReadBgra(source);
-            var outputPixels = new byte[sourcePixels.Length];
-
-            for (var index = 0; index < sourcePixels.Length; index += 4)
+            for (var index = 0; index < pixels.Length; index += 4)
             {
-                var packedR = sourcePixels[index + 2];
-                var packedG = sourcePixels[index + 1];
-                var packedA = sourcePixels[index + 3];
+                var packedR = pixels[index + 2];
+                var packedG = pixels[index + 1];
+                var packedA = pixels[index + 3];
 
                 // WH3 stores tangent-space X as R*A and Y as G. Keep the
                 // shader's Y orientation; only reconstruct Z and emit a
@@ -130,16 +129,11 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                 var normalY = Math.Clamp(2d * y01 - 1d, -1d, 1d);
                 var normalZ = Math.Sqrt(Math.Max(0d, 1d - normalX * normalX - normalY * normalY));
 
-                outputPixels[index] = EncodeNormalComponent(normalZ);
-                outputPixels[index + 1] = EncodeNormalComponent(normalY);
-                outputPixels[index + 2] = EncodeNormalComponent(normalX);
-                outputPixels[index + 3] = 255;
+                pixels[index] = EncodeNormalComponent(normalZ);
+                pixels[index + 1] = EncodeNormalComponent(normalY);
+                pixels[index + 2] = EncodeNormalComponent(normalX);
+                pixels[index + 3] = 255;
             }
-
-            using var output = BitmapPixelBuffer.CreateBitmap(source.Width, source.Height, outputPixels);
-            using var outputStream = new MemoryStream();
-            output.Save(outputStream, System.Drawing.Imaging.ImageFormat.Png);
-            return outputStream.ToArray();
         }
 
         private static byte EncodeNormalComponent(double component)
