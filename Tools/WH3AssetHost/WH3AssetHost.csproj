@@ -44,10 +44,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="MonoGame.Tool.Basisu" Version="2.0.2.3" />
-  </ItemGroup>
-
-  <ItemGroup>
     <TrimmerRootDescriptor Include="Trim/WH3AssetHost.Linker.xml" />
   </ItemGroup>
 

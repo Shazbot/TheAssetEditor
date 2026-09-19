@@ -61,11 +61,13 @@ public class TextureHelperTests
     }
 
     [TestCase(4, 4, true)]
+    [TestCase(510, 512, true)]
     [TestCase(512, 512, true)]
-    [TestCase(1024, 1024, false)]
-    [TestCase(2048, 2048, false)]
-    [TestCase(510, 512, false)]
-    public void RawKtx2CompatibilityGuardUsesOnlyProvenPreviewSizes(
+    [TestCase(1024, 1024, true)]
+    [TestCase(2048, 2048, true)]
+    [TestCase(0, 512, false)]
+    [TestCase(512, 0, false)]
+    public void RawKtx2CompatibilityGuardAcceptsPositiveDimensions(
         int width,
         int height,
         bool expected)

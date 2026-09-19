@@ -148,20 +148,17 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 {
     private readonly SkeletonAnimationLookUpHelper _skeletonLookup;
     private readonly IGltfAnimationCatalogResolver _animationCatalogResolver;
-    private readonly UastcTextureBenchmarkProbe _textureEncodingProbe;
 
     private HeadlessExportRuntime(
         IHeadlessPackFileService packFileService,
         SkeletonAnimationLookUpHelper skeletonLookup,
         HeadlessGltfExportService exportService,
-        IGltfAnimationCatalogResolver animationCatalogResolver,
-        UastcTextureBenchmarkProbe textureEncodingProbe)
+        IGltfAnimationCatalogResolver animationCatalogResolver)
     {
         PackFileService = packFileService;
         _skeletonLookup = skeletonLookup;
         ExportService = exportService;
         _animationCatalogResolver = animationCatalogResolver;
-        _textureEncodingProbe = textureEncodingProbe;
     }
 
     public IHeadlessPackFileService PackFileService { get; }
@@ -209,15 +206,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             compositionResolver,
             skeletonLookup);
         var imageSaveHandler = new SystemImageSaveHandler();
-        var textureEncodingProbe = new UastcTextureBenchmarkProbe();
-        var materialExporter = new DdsToMaterialPngExporter(
-            packFileService,
-            imageSaveHandler,
-            textureEncodingProbe: textureEncodingProbe);
-        var normalExporter = new DdsToNormalPngExporter(
-            packFileService,
-            imageSaveHandler,
-            textureEncodingProbe: textureEncodingProbe);
+        var materialExporter = new DdsToMaterialPngExporter(packFileService, imageSaveHandler);
+        var normalExporter = new DdsToNormalPngExporter(packFileService, imageSaveHandler);
         var exporter = new RmvToGltfExporter(
             new HeadlessGltfSceneSaver(),
             new GltfMeshBuilder(),
@@ -232,8 +222,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             packFileService,
             skeletonLookup,
             new HeadlessGltfExportService(exporter),
-            animationCatalogResolver,
-            textureEncodingProbe);
+            animationCatalogResolver);
         phaseStopwatch.Stop();
         var exportPipelineMs = phaseStopwatch.ElapsedMilliseconds;
         totalStopwatch.Stop();
@@ -384,33 +373,25 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             // glTF scene. The mod-manager render only needs embedded material
             // channels, so avoid converting and inverting them.
             ExportAuxiliaryMasks = false,
-            // Raw RGBA KTX2 is not valid KHR_texture_basisu content. Keep the
-            // production preview on the known-good PNG path until the host
-            // emits standards-compliant Basis/UASTC KTX2 textures.
-            UseKtx2Textures = false
+            // WHMM has a dedicated raw RGBA + Zstd KTX2 compatibility loader
+            // for this low-latency headless preview format.
+            UseKtx2Textures = true
         };
-
-        _textureEncodingProbe.BeginExport(request.AssetPath);
 
         phaseStopwatch.Restart();
         var result = ExportService.Export(settings);
         phaseStopwatch.Stop();
         var exportMs = phaseStopwatch.ElapsedMilliseconds;
-
-        var benchmarkStopwatch = Stopwatch.StartNew();
-        _textureEncodingProbe.Flush(request.AssetPath);
-        benchmarkStopwatch.Stop();
         totalStopwatch.Stop();
 
         Log.ForContext<HeadlessExportRuntime>().Information(
-            "Asset host export completed in {TotalMs}ms for {AssetPath}: success={Success}, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, gltfExport={ExportMs}ms, uastcBenchmark={UastcBenchmarkMs:F1}ms, animations={AnimationCount}, variantSelections={VariantSelectionCount}, materials={ExportMaterials}, skeleton={IncludeSkeleton}",
-            totalStopwatch.Elapsed.TotalMilliseconds,
+            "Asset host export completed in {TotalMs}ms for {AssetPath}: success={Success}, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, gltfExport={ExportMs}ms, animations={AnimationCount}, variantSelections={VariantSelectionCount}, materials={ExportMaterials}, skeleton={IncludeSkeleton}",
+            totalStopwatch.ElapsedMilliseconds,
             request.AssetPath,
             result.Success,
             assetLookupMs,
             animationLookupMs,
             exportMs,
-            benchmarkStopwatch.Elapsed.TotalMilliseconds,
             animationFiles.Count,
             request.VariantSelections?.Count ?? 0,
             request.ExportMaterials,

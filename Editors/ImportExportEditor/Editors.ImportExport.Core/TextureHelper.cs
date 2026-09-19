@@ -88,24 +88,12 @@ namespace MeshImportExport
         }
 
         /// <summary>
-        /// Encodes the exact transformed BGRA pixels as a single-level KTX2
-        /// R8G8B8A8 texture with Zstd supercompression. This is intentionally
-        /// lossless: unlike Basis/UASTC there is no additional texture-quality
-        /// tradeoff, and Three.js can inflate the raw Vulkan-format payload.
-        ///
-        /// Three.js r186 currently renders some single-level raw RGBA KTX2
-        /// textures at 1024x1024 and above as black when they are loaded through
-        /// glTF's KHR_texture_basisu plumbing. Keep the proven 512x512-and-smaller
-        /// fast path, and fall back to PNG for larger textures until the preview
-        /// uses a standards-compliant Basis/UASTC KTX2 path.
+        /// Returns whether the transformed image can be encoded as the
+        /// headless preview's single-level raw RGBA + Zstd KTX2 payload.
+        /// Raw R8G8B8A8 KTX2 has no block-size restriction.
         /// </summary>
         public static bool CanEncodeKtx2ForSharpGltf(DecodedDdsImage image)
-            => image.Width > 0
-                && image.Height > 0
-                && image.Width <= 512
-                && image.Height <= 512
-                && image.Width % 4 == 0
-                && image.Height % 4 == 0;
+            => image.Width > 0 && image.Height > 0;
 
         public static TextureKtx2EncodeResult EncodeBgraToKtx2(
             DecodedDdsImage image,
