@@ -82,7 +82,7 @@ namespace MeshImportExport
             }
 
             using var compressed = new MemoryStream();
-            using (var zlib = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
+            using (var zlib = new ZLibStream(compressed, CompressionLevel.Fastest, leaveOpen: true))
                 zlib.Write(scanlines, 0, scanlines.Length);
 
             using var output = new MemoryStream();
@@ -97,38 +97,12 @@ namespace MeshImportExport
             header[11] = 0; // filter method
             header[12] = 0; // no interlace
             WritePngChunk(output, "IHDR", header);
-            WritePngChunk(output, "IDAT", compressed.ToArray());
+            WritePngChunk(
+                output,
+                "IDAT",
+                compressed.GetBuffer().AsSpan(0, checked((int)compressed.Length)));
             WritePngChunk(output, "IEND", ReadOnlySpan<byte>.Empty);
             return output.ToArray();
-        }
-
-        /// <summary>
-        /// Returns the BGRA values that a PNG consumer using GDI+ will read
-        /// from the encoded image. GDI+ applies its alpha representation while
-        /// loading semi-transparent PNGs, so conversions that operate before
-        /// PNG encoding must use the same values as the exported raw texture.
-        /// </summary>
-        public static DecodedDdsImage NormalizeBgraForPng(DecodedDdsImage image)
-        {
-            var png = EncodeBgraToPng(image);
-            using var stream = new MemoryStream(png, writable: false);
-            using var decodedImage = System.Drawing.Image.FromStream(stream);
-            using var bitmap = new System.Drawing.Bitmap(decodedImage);
-            var pixels = new byte[checked(image.Width * image.Height * 4)];
-            for (var y = 0; y < image.Height; y++)
-            {
-                for (var x = 0; x < image.Width; x++)
-                {
-                    var color = bitmap.GetPixel(x, y);
-                    var index = checked((y * image.Width + x) * 4);
-                    pixels[index] = color.B;
-                    pixels[index + 1] = color.G;
-                    pixels[index + 2] = color.R;
-                    pixels[index + 3] = color.A;
-                }
-            }
-
-            return image with { BgraPixels = pixels };
         }
 
         private static void WritePngChunk(Stream output, string type, ReadOnlySpan<byte> data)
@@ -140,11 +114,10 @@ namespace MeshImportExport
             output.Write(typeBytes);
             output.Write(data);
 
-            var crcInput = new byte[checked(typeBytes.Length + data.Length)];
-            typeBytes.CopyTo(crcInput, 0);
-            data.CopyTo(crcInput.AsSpan(typeBytes.Length));
+            var crcValue = UpdateCrc32(0xffffffffu, typeBytes);
+            crcValue = UpdateCrc32(crcValue, data);
             Span<byte> crc = stackalloc byte[4];
-            WriteBigEndian(crc, ComputeCrc32(crcInput));
+            WriteBigEndian(crc, ~crcValue);
             output.Write(crc);
         }
 
@@ -156,9 +129,8 @@ namespace MeshImportExport
             destination[3] = (byte)value;
         }
 
-        private static uint ComputeCrc32(ReadOnlySpan<byte> data)
+        private static uint UpdateCrc32(uint crc, ReadOnlySpan<byte> data)
         {
-            var crc = 0xffffffffu;
             foreach (var value in data)
             {
                 crc ^= value;
@@ -166,7 +138,7 @@ namespace MeshImportExport
                     crc = (crc >> 1) ^ (0xedb88320u & unchecked((uint)-(int)(crc & 1)));
             }
 
-            return ~crc;
+            return crc;
         }
 
         public static byte[] ConvertDdsToPng(byte[] ddsbyteSteam)

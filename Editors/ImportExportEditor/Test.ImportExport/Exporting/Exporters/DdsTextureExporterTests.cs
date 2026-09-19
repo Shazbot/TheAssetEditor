@@ -1,4 +1,3 @@
-using System.Drawing;
 using System.IO;
 using System.Text;
 using Editors.ImportExport;
@@ -7,6 +6,7 @@ using Editors.ImportExport.Exporting.Exporters.DdsToNormalPng;
 using Moq;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
+using Test.ImportExport;
 
 namespace Test.ImportExport.Exporting.Exporters;
 
@@ -145,28 +145,25 @@ public sealed class DdsTextureExporterTests
         return service;
     }
 
-    private static Color ReadPixel(byte[]? pngData)
+    private static ExactPngPixel ReadPixel(byte[]? pngData)
     {
         Assert.That(pngData, Is.Not.Null);
         Assert.That(pngData, Is.Not.Empty);
-        using var stream = new MemoryStream(pngData!);
-        using var image = Image.FromStream(stream);
-        using var bitmap = new Bitmap(image);
-        return bitmap.GetPixel(0, 0);
+        return PngTestHelper.ReadFirstPixelRgba(pngData!);
     }
 
-    private static Color DecodePackedNormal(Color packed)
+    private static ExactPngPixel DecodePackedNormal(ExactPngPixel packed)
     {
         var x01 = (packed.R / 255d) * (packed.A / 255d);
         var y01 = packed.G / 255d;
         var normalX = Math.Clamp(2d * x01 - 1d, -1d, 1d);
         var normalY = Math.Clamp(2d * y01 - 1d, -1d, 1d);
         var normalZ = Math.Sqrt(Math.Max(0d, 1d - normalX * normalX - normalY * normalY));
-        return Color.FromArgb(
-            255,
+        return new ExactPngPixel(
             EncodeNormalComponent(normalX),
             EncodeNormalComponent(normalY),
-            EncodeNormalComponent(normalZ));
+            EncodeNormalComponent(normalZ),
+            255);
     }
 
     private static byte EncodeNormalComponent(double component)

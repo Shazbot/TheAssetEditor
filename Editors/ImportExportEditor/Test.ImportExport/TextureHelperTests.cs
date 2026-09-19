@@ -1,4 +1,3 @@
-using System.Drawing;
 using System.IO;
 using System.Text;
 using MeshImportExport;
@@ -12,9 +11,7 @@ public class TextureHelperTests
     {
         var png = TextureHelper.ConvertDdsToPng(CreateSolidRedDxt1Dds());
 
-        using var pngStream = new MemoryStream(png);
-        using var bitmap = new Bitmap(pngStream);
-        var pixel = bitmap.GetPixel(0, 0);
+        var pixel = PngTestHelper.ReadFirstPixelRgba(png);
 
         Assert.That(pixel.R, Is.GreaterThan(200));
         Assert.That(pixel.G, Is.LessThan(20));
@@ -33,9 +30,7 @@ public class TextureHelperTests
         Assert.That(decoded.BgraPixels, Is.EqualTo(new byte[] { 201, 34, 17, 77 }));
 
         var png = TextureHelper.EncodeBgraToPng(decoded);
-        using var pngStream = new MemoryStream(png);
-        using var bitmap = new Bitmap(pngStream);
-        var pixel = bitmap.GetPixel(0, 0);
+        var pixel = PngTestHelper.ReadFirstPixelRgba(png);
 
         Assert.That(pixel.R, Is.EqualTo(17));
         Assert.That(pixel.G, Is.EqualTo(34));

@@ -215,7 +215,6 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             string cacheKey,
             string expectedOutputPath,
             Func<MeshImportExport.TexturePngExportResult> exporter,
-            Func<string>? legacyExporter,
             TextureTimingAccumulator timing)
         {
             var cacheLookupStopwatch = Stopwatch.StartNew();
@@ -236,34 +235,19 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             timing.ConversionCacheMissCount++;
             var exporterStopwatch = Stopwatch.StartNew();
-            var exported = ExportTexture(exporter, legacyExporter);
+            var exported = exporter();
             exporterStopwatch.Stop();
             timing.ExporterMs += exporterStopwatch.Elapsed.TotalMilliseconds;
 
+            ArgumentNullException.ThrowIfNull(exported.PngData);
+            ArgumentNullException.ThrowIfNull(exported.Path);
+
             var cacheStoreStopwatch = Stopwatch.StartNew();
-            var pngData = exported.PngData ?? Array.Empty<byte>();
-            if (pngData.Length > 0)
-                _convertedTextureCache.Store(cacheKey, pngData);
+            if (exported.PngData.Length > 0)
+                _convertedTextureCache.Store(cacheKey, exported.PngData);
             cacheStoreStopwatch.Stop();
             timing.CacheStoreMs += cacheStoreStopwatch.Elapsed.TotalMilliseconds;
-            return exported.Path ?? string.Empty;
-        }
-
-        private static MeshImportExport.TexturePngExportResult ExportTexture(
-            Func<MeshImportExport.TexturePngExportResult> exporter,
-            Func<string>? legacyExporter)
-        {
-            // ExportWithData is the preferred API because it allows the
-            // conversion cache to be populated without rereading the file.
-            // Keep the older path-only API as a fallback for exporters that
-            // have not implemented the data-returning overload yet.
-            var exported = exporter();
-            if (exported.PngData == null && legacyExporter != null)
-                return new MeshImportExport.TexturePngExportResult(
-                    legacyExporter() ?? string.Empty,
-                    Array.Empty<byte>());
-
-            return exported;
+            return exported.Path;
         }
 
         private static void WriteCachedTexture(string outputPath, byte[] pngData)
@@ -377,10 +361,6 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                         text.Path,
                         settings.OutputPath,
                         settings.ConvertMaterialTextureToBlender),
-                    () => _ddsToMaterialPngExporter.Export(
-                        text.Path,
-                        settings.OutputPath,
-                        settings.ConvertMaterialTextureToBlender),
                     timing);
                 var finalizeStopwatch = Stopwatch.StartNew();
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
@@ -406,7 +386,6 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                     cacheKey,
                     GetMaterialTexturePath(settings.OutputPath, text.Path),
                     () => _ddsToMaterialPngExporter.ExportWithData(text.Path, settings.OutputPath, false),
-                    () => _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false),
                     timing);
                 var finalizeStopwatch = Stopwatch.StartNew();
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
@@ -466,14 +445,17 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 {
                     timing.ConversionCacheMissCount++;
                     var exporterStopwatch = Stopwatch.StartNew();
-                    var exported = ExportTexture(
-                        () => _ddsToMaterialPngExporter.ExportWithData(text.Path, settings.OutputPath, false),
-                        () => _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false));
+                    var exported = _ddsToMaterialPngExporter.ExportWithData(
+                        text.Path,
+                        settings.OutputPath,
+                        false);
                     exporterStopwatch.Stop();
                     timing.ExporterMs += exporterStopwatch.Elapsed.TotalMilliseconds;
 
-                    var processedPng = exported.PngData ?? Array.Empty<byte>();
-                    exportedPath = exported.Path ?? string.Empty;
+                    ArgumentNullException.ThrowIfNull(exported.PngData);
+                    ArgumentNullException.ThrowIfNull(exported.Path);
+                    var processedPng = exported.PngData;
+                    exportedPath = exported.Path;
 
                     var postProcessStopwatch = Stopwatch.StartNew();
                     if (!string.IsNullOrWhiteSpace(exportedPath) && processedPng.Length > 0)
@@ -569,10 +551,6 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                             text.Path,
                             settings.ConvertNormalTextureToBlue),
                         () => _ddsToNormalPngExporter.ExportWithData(
-                            text.Path,
-                            settings.OutputPath,
-                            settings.ConvertNormalTextureToBlue),
-                        () => _ddsToNormalPngExporter.Export(
                             text.Path,
                             settings.OutputPath,
                             settings.ConvertNormalTextureToBlue),
