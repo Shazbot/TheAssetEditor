@@ -10,6 +10,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
     public interface IDdsToMaterialPngExporter
     {
         public string Export(string filePath, string outputPath, bool convertToBlenderFormat);
+        public TexturePngExportResult ExportWithData(string filePath, string outputPath, bool convertToBlenderFormat);
         public ExportSupportEnum CanExportFile(PackFile file);
     }
 
@@ -25,6 +26,9 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
         }
 
         public string Export(string filePath, string outputPath, bool convertToBlenderFormat)
+            => ExportWithData(filePath, outputPath, convertToBlenderFormat).Path;
+
+        public TexturePngExportResult ExportWithData(string filePath, string outputPath, bool convertToBlenderFormat)
         {
             var totalStopwatch = Stopwatch.StartNew();
             var phaseStopwatch = Stopwatch.StartNew();
@@ -40,7 +44,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
                     filePath,
                     totalStopwatch.Elapsed.TotalMilliseconds,
                     lookupMs);
-                return "";
+                return new TexturePngExportResult("", Array.Empty<byte>());
             }
 
             var fileName = Path.GetFileNameWithoutExtension(
@@ -96,7 +100,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
                 imgBytes.Length,
                 convertToBlenderFormat);
 
-            return outFilePath;
+            return new TexturePngExportResult(outFilePath, imgBytes);
         }
 
         public ExportSupportEnum CanExportFile(PackFile file)

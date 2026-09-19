@@ -5,6 +5,8 @@ using Pfim;
 
 namespace MeshImportExport
 {
+    public readonly record struct TexturePngExportResult(string Path, byte[] PngData);
+
     public class TextureHelper
     {
         public readonly record struct DecodedDdsImage(int Width, int Height, byte[] BgraPixels);

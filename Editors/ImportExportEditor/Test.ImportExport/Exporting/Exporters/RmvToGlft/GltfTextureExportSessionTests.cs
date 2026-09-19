@@ -5,6 +5,7 @@ using Editors.ImportExport.Exporting.Exporters.DdsToNormalPng;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers;
 using GameWorld.Core.Services;
+using MeshImportExport;
 using Moq;
 using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;
@@ -29,12 +30,13 @@ public class GltfTextureExportSessionTests
         {
             var materialExporter = new Mock<IDdsToMaterialPngExporter>();
             materialExporter
-                .Setup(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Setup(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
                 .Returns((string source, string output, bool _) =>
                 {
                     var path = Path.Combine(Path.GetDirectoryName(output)!, "shared.png");
-                    File.WriteAllBytes(path, System.Text.Encoding.UTF8.GetBytes(source));
-                    return path;
+                    var pngData = System.Text.Encoding.UTF8.GetBytes(source);
+                    File.WriteAllBytes(path, pngData);
+                    return new TexturePngExportResult(path, pngData);
                 });
 
             var handler = new GltfTextureHandler(new Mock<IDdsToNormalPngExporter>().Object, materialExporter.Object);
@@ -53,7 +55,7 @@ public class GltfTextureExportSessionTests
 
             Assert.That(textures, Has.Count.EqualTo(2));
             Assert.That(textures.Select(x => x.SystemFilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count(), Is.EqualTo(1));
-            materialExporter.Verify(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Once);
+            materialExporter.Verify(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Once);
         }
         finally
         {
@@ -72,12 +74,13 @@ public class GltfTextureExportSessionTests
         {
             var materialExporter = new Mock<IDdsToMaterialPngExporter>();
             materialExporter
-                .Setup(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Setup(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
                 .Returns((string source, string output, bool _) =>
                 {
                     var path = Path.Combine(Path.GetDirectoryName(output)!, "shared.png");
-                    File.WriteAllBytes(path, System.Text.Encoding.UTF8.GetBytes(source));
-                    return path;
+                    var pngData = System.Text.Encoding.UTF8.GetBytes(source);
+                    File.WriteAllBytes(path, pngData);
+                    return new TexturePngExportResult(path, pngData);
                 });
 
             var normalExporter = new Mock<IDdsToNormalPngExporter>();
@@ -100,7 +103,7 @@ public class GltfTextureExportSessionTests
             Assert.That(textures, Has.Count.EqualTo(2));
             Assert.That(textures.Select(x => x.SystemFilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count(), Is.EqualTo(2));
             Assert.That(textures.All(x => File.Exists(x.SystemFilePath)), Is.True);
-            materialExporter.Verify(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Exactly(2));
+            materialExporter.Verify(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Exactly(2));
         }
         finally
         {
@@ -122,12 +125,13 @@ public class GltfTextureExportSessionTests
         {
             var materialExporter = new Mock<IDdsToMaterialPngExporter>();
             materialExporter
-                .Setup(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Setup(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
                 .Returns((string source, string output, bool _) =>
                 {
                     var path = Path.Combine(Path.GetDirectoryName(output)!, "cache.png");
-                    File.WriteAllBytes(path, OnePixelPng);
-                    return path;
+                    // Deliberately do not write the first export to disk. The
+                    // conversion cache must be populated from returned bytes.
+                    return new TexturePngExportResult(path, OnePixelPng);
                 });
 
             var handler = new GltfTextureHandler(new Mock<IDdsToNormalPngExporter>().Object, materialExporter.Object);
@@ -153,7 +157,7 @@ public class GltfTextureExportSessionTests
                 new GltfTextureExportSession(collisionSafe: false));
 
             materialExporter.Verify(
-                x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()),
+                x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()),
                 Times.Once);
             Assert.That(secondTextures, Has.Count.EqualTo(2));
             Assert.That(secondTextures.Select(x => x.SystemFilePath).Distinct().Single(),
@@ -179,10 +183,10 @@ public class GltfTextureExportSessionTests
             File.WriteAllBytes(baseColourPath, OnePixelPng);
             var materialExporter = new Mock<IDdsToMaterialPngExporter>();
             materialExporter
-                .Setup(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Setup(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
                 .Returns((string source, string output, bool convertToBlender) =>
                     source.EndsWith("base_colour.dds", StringComparison.OrdinalIgnoreCase)
-                        ? baseColourPath
+                        ? new TexturePngExportResult(baseColourPath, OnePixelPng)
                         : throw new InvalidOperationException("The auxiliary mask should not be exported."));
 
             var asset = CreateTexturedAsset(
@@ -212,7 +216,7 @@ public class GltfTextureExportSessionTests
             Assert.That(textures, Has.Count.EqualTo(1));
             Assert.That(textures[0].GlftTexureType, Is.EqualTo(KnownChannel.BaseColor));
             materialExporter.Verify(
-                x => x.Export(
+                x => x.ExportWithData(
                     It.Is<string>(path => path.EndsWith("body_mask.dds", StringComparison.OrdinalIgnoreCase)),
                     It.IsAny<string>(),
                     It.IsAny<bool>()),
@@ -240,14 +244,13 @@ public class GltfTextureExportSessionTests
         {
             var materialExporter = new Mock<IDdsToMaterialPngExporter>();
             materialExporter
-                .Setup(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Setup(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
                 .Returns((string source, string output, bool convertToBlender) =>
                     source.EndsWith("base_colour.dds", StringComparison.OrdinalIgnoreCase)
-                        ? baseColourPath
-                        // Deliberately leave this path absent. The production
-                        // handler still invokes the exporter, while avoiding a
-                        // platform image decoder in this channel-binding test.
-                        : maskPath);
+                        ? new TexturePngExportResult(baseColourPath, OnePixelPng)
+                        // Keep the auxiliary path absent and return no image bytes,
+                        // so this channel-binding test does not invoke GDI+.
+                        : new TexturePngExportResult(maskPath, Array.Empty<byte>()));
 
             var normalExporter = new Mock<IDdsToNormalPngExporter>();
             var handler = new GltfTextureHandler(normalExporter.Object, materialExporter.Object);
@@ -270,13 +273,13 @@ public class GltfTextureExportSessionTests
                 new GltfTextureExportSession(collisionSafe: false));
 
             materialExporter.Verify(
-                x => x.Export(
+                x => x.ExportWithData(
                     It.Is<string>(path => path.EndsWith("base_colour.dds", StringComparison.OrdinalIgnoreCase)),
                     It.IsAny<string>(),
                     It.IsAny<bool>()),
                 Times.Once);
             materialExporter.Verify(
-                x => x.Export(
+                x => x.ExportWithData(
                     It.Is<string>(path => path.EndsWith("body_mask.dds", StringComparison.OrdinalIgnoreCase)),
                     It.IsAny<string>(),
                     It.IsAny<bool>()),

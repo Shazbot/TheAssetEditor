@@ -11,6 +11,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
     public interface IDdsToNormalPngExporter
     {
         public string Export(string filePath, string outputPath, bool convertToBlueNormalMap);
+        public TexturePngExportResult ExportWithData(string filePath, string outputPath, bool convertToBlueNormalMap);
         public ExportSupportEnum CanExportFile(PackFile file);
     }
 
@@ -36,6 +37,9 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
         }
 
         public string Export(string filePath, string outputPath, bool convertToBlueNormalMap)
+            => ExportWithData(filePath, outputPath, convertToBlueNormalMap).Path;
+
+        public TexturePngExportResult ExportWithData(string filePath, string outputPath, bool convertToBlueNormalMap)
         {
             var totalStopwatch = Stopwatch.StartNew();
             var phaseStopwatch = Stopwatch.StartNew();
@@ -51,7 +55,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                     filePath,
                     totalStopwatch.Elapsed.TotalMilliseconds,
                     lookupMs);
-                return "";
+                return new TexturePngExportResult("", Array.Empty<byte>());
             }
 
             var fileName = Path.GetFileNameWithoutExtension(
@@ -109,7 +113,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                 imgBytes.Length,
                 convertToBlueNormalMap);
 
-            return outputFilePath;
+            return new TexturePngExportResult(outputFilePath, imgBytes);
         }
 
         private static void ConvertPackedNormalToStandardInPlace(byte[] pixels)

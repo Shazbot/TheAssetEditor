@@ -214,7 +214,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         private string ExportCachedTexture(
             string cacheKey,
             string expectedOutputPath,
-            Func<string> exporter,
+            Func<MeshImportExport.TexturePngExportResult> exporter,
             TextureTimingAccumulator timing)
         {
             var cacheLookupStopwatch = Stopwatch.StartNew();
@@ -235,35 +235,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             timing.ConversionCacheMissCount++;
             var exporterStopwatch = Stopwatch.StartNew();
-            var exportedPath = exporter();
+            var exported = exporter();
             exporterStopwatch.Stop();
             timing.ExporterMs += exporterStopwatch.Elapsed.TotalMilliseconds;
 
             var cacheStoreStopwatch = Stopwatch.StartNew();
-            CacheExportedTexture(cacheKey, exportedPath);
+            if (exported.PngData.Length > 0)
+                _convertedTextureCache.Store(cacheKey, exported.PngData);
             cacheStoreStopwatch.Stop();
             timing.CacheStoreMs += cacheStoreStopwatch.Elapsed.TotalMilliseconds;
-            return exportedPath;
-        }
-
-        private void CacheExportedTexture(string cacheKey, string? exportedPath)
-        {
-            if (string.IsNullOrWhiteSpace(exportedPath) || File.Exists(exportedPath) == false)
-                return;
-
-            try
-            {
-                _convertedTextureCache.Store(cacheKey, File.ReadAllBytes(exportedPath));
-            }
-            catch (IOException)
-            {
-                // Caching is an optimization; an unavailable cache read must
-                // not turn a successful export into a failed one.
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // See the IOException case above.
-            }
+            return exported.Path;
         }
 
         private static void WriteCachedTexture(string outputPath, byte[] pngData)
@@ -373,7 +354,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 var exportedPath = ExportCachedTexture(
                     cacheKey,
                     GetMaterialTexturePath(settings.OutputPath, text.Path),
-                    () => _ddsToMaterialPngExporter.Export(
+                    () => _ddsToMaterialPngExporter.ExportWithData(
                         text.Path,
                         settings.OutputPath,
                         settings.ConvertMaterialTextureToBlender),
@@ -401,7 +382,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 var exportedPath = ExportCachedTexture(
                     cacheKey,
                     GetMaterialTexturePath(settings.OutputPath, text.Path),
-                    () => _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false),
+                    () => _ddsToMaterialPngExporter.ExportWithData(text.Path, settings.OutputPath, false),
                     timing);
                 var finalizeStopwatch = Stopwatch.StartNew();
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
@@ -461,15 +442,17 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 {
                     timing.ConversionCacheMissCount++;
                     var exporterStopwatch = Stopwatch.StartNew();
-                    exportedPath = _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false);
+                    var exported = _ddsToMaterialPngExporter.ExportWithData(text.Path, settings.OutputPath, false);
                     exporterStopwatch.Stop();
                     timing.ExporterMs += exporterStopwatch.Elapsed.TotalMilliseconds;
 
+                    var processedPng = exported.PngData;
+                    exportedPath = exported.Path;
+
                     var postProcessStopwatch = Stopwatch.StartNew();
-                    if (!string.IsNullOrWhiteSpace(exportedPath))
+                    if (!string.IsNullOrWhiteSpace(exportedPath) && processedPng.Length > 0)
                     {
-                        if (File.Exists(exportedPath))
-                            InvertMaskImage(exportedPath);
+                        processedPng = InvertMaskPng(processedPng);
 
                         var directory = Path.GetDirectoryName(exportedPath) ?? string.Empty;
                         var fileNameWithoutExt = Path.GetFileNameWithoutExtension(exportedPath);
@@ -477,18 +460,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                         var newPath = Path.Combine(directory, newFileName);
 
                         if (File.Exists(exportedPath))
-                        {
-                            if (File.Exists(newPath))
-                                File.Delete(newPath);
-                            File.Move(exportedPath, newPath);
-                            exportedPath = newPath;
-                        }
+                            File.Delete(exportedPath);
+                        WriteCachedTexture(newPath, processedPng);
+                        exportedPath = newPath;
                     }
                     postProcessStopwatch.Stop();
                     timing.PostProcessMs += postProcessStopwatch.Elapsed.TotalMilliseconds;
 
                     var cacheStoreStopwatch = Stopwatch.StartNew();
-                    CacheExportedTexture(cacheKey, exportedPath);
+                    if (processedPng.Length > 0)
+                        _convertedTextureCache.Store(cacheKey, processedPng);
                     cacheStoreStopwatch.Stop();
                     timing.CacheStoreMs += cacheStoreStopwatch.Elapsed.TotalMilliseconds;
                 }
@@ -510,25 +491,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             // remains available at the cached path for manual downstream use.
         }
 
-        private void InvertMaskImage(string imagePath)
+        private static byte[] InvertMaskPng(byte[] pngData)
         {
-            byte[] imageBytes;
-
-            // Load image into memory to avoid file lock
-            using (var fs = File.OpenRead(imagePath))
-            using (var ms = new MemoryStream())
-            {
-                fs.CopyTo(ms);
-                imageBytes = ms.ToArray();
-            }
-
-            // Process the image from memory
-            using var imageStream = new MemoryStream(imageBytes);
+            using var imageStream = new MemoryStream(pngData);
             using var image = System.Drawing.Image.FromStream(imageStream);
             using var bitmap = new System.Drawing.Bitmap(image);
             var pixels = BitmapPixelBuffer.ReadBgra(bitmap);
 
-            // Invert all pixel values (255 - value)
             for (var index = 0; index < pixels.Length; index += 4)
             {
                 pixels[index] = (byte)(255 - pixels[index]);
@@ -537,8 +506,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             }
 
             BitmapPixelBuffer.WriteBgra(bitmap, pixels);
-            // Save back to the same file
-            bitmap.Save(imagePath, System.Drawing.Imaging.ImageFormat.Png);
+            using var output = new MemoryStream();
+            bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+            return output.ToArray();
         }
 
         private void DoTextureConversionNormalMap(RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
@@ -572,7 +542,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                             settings.OutputPath,
                             text.Path,
                             settings.ConvertNormalTextureToBlue),
-                        () => _ddsToNormalPngExporter.Export(
+                        () => _ddsToNormalPngExporter.ExportWithData(
                             text.Path,
                             settings.OutputPath,
                             settings.ConvertNormalTextureToBlue),
