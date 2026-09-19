@@ -12,6 +12,8 @@ using Shared.Core.Events;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Utility;
+using Shared.GameFormats.RigidModel;
+using Shared.GameFormats.WsModel;
 
 namespace WH3AssetHost;
 
@@ -153,21 +155,73 @@ internal static class Program
     }
 }
 
+internal sealed class CurrentAssetModelResolverCache : IModelAssetResolver
+{
+    private readonly IModelAssetResolver _inner;
+    private readonly Dictionary<PackFile, ResolvedModelAsset> _cache =
+        new(ReferenceEqualityComparer.Instance);
+
+    public CurrentAssetModelResolverCache(IModelAssetResolver inner)
+    {
+        _inner = inner;
+    }
+
+    public int CachedAssetCount => _cache.Count;
+    public long CacheHits { get; private set; }
+    public long CacheMisses { get; private set; }
+
+    public ResolvedModelAsset Resolve(PackFile inputFile)
+    {
+        ArgumentNullException.ThrowIfNull(inputFile);
+
+        if (_cache.TryGetValue(inputFile, out var cached))
+        {
+            CacheHits++;
+            return cached;
+        }
+
+        var resolved = _inner.Resolve(inputFile);
+        _cache[inputFile] = resolved;
+        CacheMisses++;
+        return resolved;
+    }
+
+    public ResolvedModelMaterials ResolveMaterials(
+        RmvFile model,
+        WsModelFile? wsModel = null,
+        string? modelPath = null)
+        => _inner.ResolveMaterials(model, wsModel, modelPath);
+
+    public void Clear()
+    {
+        _cache.Clear();
+        CacheHits = 0;
+        CacheMisses = 0;
+    }
+}
+
 internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 {
     private readonly SkeletonAnimationLookUpHelper _skeletonLookup;
     private readonly IGltfAnimationCatalogResolver _animationCatalogResolver;
+    private readonly CurrentAssetModelResolverCache _modelResolverCache;
+    private readonly VariantMeshCompositionResolver _compositionResolver;
+    private string? _currentAssetSessionKey;
 
     private HeadlessExportRuntime(
         IHeadlessPackFileService packFileService,
         SkeletonAnimationLookUpHelper skeletonLookup,
         HeadlessGltfExportService exportService,
-        IGltfAnimationCatalogResolver animationCatalogResolver)
+        IGltfAnimationCatalogResolver animationCatalogResolver,
+        CurrentAssetModelResolverCache modelResolverCache,
+        VariantMeshCompositionResolver compositionResolver)
     {
         PackFileService = packFileService;
         _skeletonLookup = skeletonLookup;
         ExportService = exportService;
         _animationCatalogResolver = animationCatalogResolver;
+        _modelResolverCache = modelResolverCache;
+        _compositionResolver = compositionResolver;
     }
 
     public IHeadlessPackFileService PackFileService { get; }
@@ -206,8 +260,11 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         var packServiceMs = phaseStopwatch.ElapsedMilliseconds;
 
         phaseStopwatch.Restart();
-        var modelResolver = new ModelAssetResolver(packFileService);
-        var compositionResolver = new VariantMeshCompositionResolver(packFileService, modelResolver);
+        var modelResolver = new CurrentAssetModelResolverCache(new ModelAssetResolver(packFileService));
+        var compositionResolver = new VariantMeshCompositionResolver(
+            packFileService,
+            modelResolver,
+            cacheParsedDefinitions: true);
         var skeletonLookup = new SkeletonAnimationLookUpHelper(
             packFileService,
             eventHub,
@@ -239,7 +296,9 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             packFileService,
             skeletonLookup,
             new HeadlessGltfExportService(exporter),
-            animationCatalogResolver);
+            animationCatalogResolver,
+            modelResolver,
+            compositionResolver);
         phaseStopwatch.Stop();
         var exportPipelineMs = phaseStopwatch.ElapsedMilliseconds;
         totalStopwatch.Stop();
@@ -275,8 +334,32 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         return Path.Combine(cacheRoot, "WH3AssetHost", "AnimationMetadata");
     }
 
+    private void EnsureAssetSession(string assetPath)
+    {
+        var sessionKey = assetPath.Replace('/', '\\').Trim().TrimStart('\\').ToLowerInvariant();
+        if (string.Equals(_currentAssetSessionKey, sessionKey, StringComparison.Ordinal))
+            return;
+
+        if (_currentAssetSessionKey != null)
+        {
+            Log.ForContext<HeadlessExportRuntime>().Debug(
+                "Clearing current-asset caches while switching from {PreviousAsset} to {AssetPath}: parsedModels={ParsedModelCount}, parsedVmdDefinitions={ParsedVmdDefinitionCount}, modelCacheHits={ModelCacheHits}, modelCacheMisses={ModelCacheMisses}",
+                _currentAssetSessionKey,
+                sessionKey,
+                _modelResolverCache.CachedAssetCount,
+                _compositionResolver.CachedDefinitionCount,
+                _modelResolverCache.CacheHits,
+                _modelResolverCache.CacheMisses);
+        }
+
+        _modelResolverCache.Clear();
+        _compositionResolver.ClearParsedDefinitionCache();
+        _currentAssetSessionKey = sessionKey;
+    }
+
     public AssetHostAnimationCatalog GetAnimationCatalog(string assetPath)
     {
+        EnsureAssetSession(assetPath);
         var totalStopwatch = Stopwatch.StartNew();
         var phaseStopwatch = Stopwatch.StartNew();
 
@@ -339,6 +422,9 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 
     public ExportResult ExportModel(AssetHostExportRequest request)
     {
+        EnsureAssetSession(request.AssetPath);
+        var modelCacheHitsBefore = _modelResolverCache.CacheHits;
+        var modelCacheMissesBefore = _modelResolverCache.CacheMisses;
         var totalStopwatch = Stopwatch.StartNew();
         var phaseStopwatch = Stopwatch.StartNew();
 
@@ -416,7 +502,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         totalStopwatch.Stop();
 
         Log.ForContext<HeadlessExportRuntime>().Information(
-            "Asset host export completed in {TotalMs}ms for {AssetPath}: success={Success}, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, gltfExport={ExportMs}ms, animations={AnimationCount}, variantSelections={VariantSelectionCount}, materials={ExportMaterials}, skeleton={IncludeSkeleton}",
+            "Asset host export completed in {TotalMs}ms for {AssetPath}: success={Success}, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, gltfExport={ExportMs}ms, animations={AnimationCount}, variantSelections={VariantSelectionCount}, materials={ExportMaterials}, skeleton={IncludeSkeleton}, modelCacheHits={ModelCacheHits}, modelCacheMisses={ModelCacheMisses}, cachedModels={CachedModelCount}, cachedVmdDefinitions={CachedVmdDefinitionCount}",
             totalStopwatch.ElapsedMilliseconds,
             request.AssetPath,
             result.Success,
@@ -426,7 +512,11 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             animationFiles.Count,
             request.VariantSelections?.Count ?? 0,
             request.ExportMaterials,
-            request.IncludeSkeleton);
+            request.IncludeSkeleton,
+            _modelResolverCache.CacheHits - modelCacheHitsBefore,
+            _modelResolverCache.CacheMisses - modelCacheMissesBefore,
+            _modelResolverCache.CachedAssetCount,
+            _compositionResolver.CachedDefinitionCount);
 
         return result;
     }
