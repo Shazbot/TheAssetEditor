@@ -117,7 +117,7 @@ internal sealed class GltfAnimationMetadataLookupCache
             using var decompressor = new Decompressor();
             var payload = decompressor.Unwrap(
                 cachedPack.CompressedPayload,
-                cachedPack.UncompressedLength);
+                cachedPack.UncompressedLength).ToArray();
             phaseStopwatch.Stop();
             var decompressMs = phaseStopwatch.Elapsed.TotalMilliseconds;
 
@@ -184,7 +184,7 @@ internal sealed class GltfAnimationMetadataLookupCache
         var binaryBytes = payload.Length;
 
         using var compressor = new Compressor(1);
-        var compressedPayload = compressor.Wrap(payload);
+        var compressedPayload = compressor.Wrap(payload).ToArray();
         stopwatch.Stop();
 
         var cachedPack = new CachedPackEnvelope
