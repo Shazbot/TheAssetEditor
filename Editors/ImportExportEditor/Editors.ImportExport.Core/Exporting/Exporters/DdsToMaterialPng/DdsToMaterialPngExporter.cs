@@ -194,7 +194,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
                 totalStopwatch.Stop();
 
                 Logger.Here().Information(
-                    "KTX2 material texture fallback for {TexturePath}: reason=dimensions, width={Width}, height={Height}, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, srgb={Srgb}, blender={ConvertToBlender}",
+                    "KTX2 material texture fallback for {TexturePath}: reason=rawKtx2Compatibility, width={Width}, height={Height}, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, srgb={Srgb}, blender={ConvertToBlender}",
                     filePath,
                     decoded.Width,
                     decoded.Height,

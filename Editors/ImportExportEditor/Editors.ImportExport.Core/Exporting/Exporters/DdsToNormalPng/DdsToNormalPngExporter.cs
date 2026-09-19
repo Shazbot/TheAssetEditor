@@ -205,7 +205,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                 totalStopwatch.Stop();
 
                 Logger.Here().Information(
-                    "KTX2 normal texture fallback for {TexturePath}: reason=dimensions, width={Width}, height={Height}, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
+                    "KTX2 normal texture fallback for {TexturePath}: reason=rawKtx2Compatibility, width={Width}, height={Height}, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
                     filePath,
                     decoded.Width,
                     decoded.Height,

@@ -60,6 +60,21 @@ public class TextureHelperTests
         Assert.That(result.ZstdMs, Is.GreaterThanOrEqualTo(0));
     }
 
+    [TestCase(4, 4, true)]
+    [TestCase(512, 512, true)]
+    [TestCase(1024, 1024, false)]
+    [TestCase(2048, 2048, false)]
+    [TestCase(510, 512, false)]
+    public void RawKtx2CompatibilityGuardUsesOnlyProvenPreviewSizes(
+        int width,
+        int height,
+        bool expected)
+    {
+        var image = new TextureHelper.DecodedDdsImage(width, height, Array.Empty<byte>());
+
+        Assert.That(TextureHelper.CanEncodeKtx2ForSharpGltf(image), Is.EqualTo(expected));
+    }
+
     [Test]
     public void EncodeBgraToKtx2WritesLosslessLinearRgbaPayload()
     {
