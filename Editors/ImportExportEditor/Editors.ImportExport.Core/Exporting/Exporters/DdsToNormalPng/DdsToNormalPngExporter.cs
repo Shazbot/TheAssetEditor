@@ -168,33 +168,6 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                 normalConvertMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             }
 
-            if (!TextureHelper.CanEncodeKtx2ForSharpGltf(decoded))
-            {
-                phaseStopwatch.Restart();
-                var pngData = TextureHelper.EncodeBgraToPng(decoded);
-                phaseStopwatch.Stop();
-                var pngEncodeMs = phaseStopwatch.Elapsed.TotalMilliseconds;
-                var pngPath = Path.Combine(outDirectory, fileName + suffix + ".png");
-
-                phaseStopwatch.Restart();
-                _imageSaveHandler.Save(pngData, pngPath);
-                phaseStopwatch.Stop();
-                var pngSaveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
-                totalStopwatch.Stop();
-
-                Logger.Here().Debug(
-                    "KTX2 normal texture fallback for {TexturePath}: reason=rawKtx2Compatibility, width={Width}, height={Height}, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
-                    filePath,
-                    decoded.Width,
-                    decoded.Height,
-                    pngEncodeMs,
-                    pngSaveMs,
-                    pngData.Length,
-                    convertToBlueNormalMap);
-
-                return new TextureImageExportResult(pngPath, pngData);
-            }
-
             var encoded = TextureHelper.EncodeBgraToKtx2(decoded, srgb: false);
 
             phaseStopwatch.Restart();
