@@ -17,10 +17,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         private static readonly ILogger Logger = Logging.Create<GltfAnimationBuilder>();
         private readonly GltfAnimationMetadataContextResolver? _metadataResolver;
 
-        public GltfAnimationBuilder(IPackedFileLookup? packFileLookup = null)
+        public GltfAnimationBuilder(
+            IPackedFileLookup? packFileLookup = null,
+            GltfAnimationMetadataLookupCacheOptions? metadataCacheOptions = null)
         {
             if (packFileLookup is IHeadlessPackFileService headlessPackFileService)
-                _metadataResolver = new GltfAnimationMetadataContextResolver(headlessPackFileService);
+            {
+                _metadataResolver = new GltfAnimationMetadataContextResolver(
+                    headlessPackFileService,
+                    metadataCacheOptions);
+            }
         }
 
         public virtual void Build(AnimationFile animSkeleton, RmvToGltfExporterSettings settings, ProcessedGltfSkeleton gltfSkeleton, ModelRoot outputScene)

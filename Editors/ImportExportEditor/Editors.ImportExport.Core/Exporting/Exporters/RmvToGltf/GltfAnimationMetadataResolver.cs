@@ -41,12 +41,18 @@ internal sealed class GltfAnimationMetadataContextResolver
     private static readonly ILogger Logger = Logging.Create<GltfAnimationMetadataContextResolver>();
 
     private readonly IHeadlessPackFileService _packFileService;
+    private readonly GltfAnimationMetadataLookupCache? _cache;
     private readonly object _indexLock = new();
     private Dictionary<string, List<FragmentEntryContext>>? _contextsByAnimation;
 
-    public GltfAnimationMetadataContextResolver(IHeadlessPackFileService packFileService)
+    public GltfAnimationMetadataContextResolver(
+        IHeadlessPackFileService packFileService,
+        GltfAnimationMetadataLookupCacheOptions? cacheOptions = null)
     {
         _packFileService = packFileService;
+        _cache = cacheOptions == null
+            ? null
+            : new GltfAnimationMetadataLookupCache(cacheOptions);
     }
 
     public GltfAnimationMetadataContext? Resolve(PackFile animationFile, GameSkeleton skeleton)
@@ -146,76 +152,254 @@ internal sealed class GltfAnimationMetadataContextResolver
             var animPacks = PackFileServiceUtility.GetAllAnimPacks(_packFileService);
             var fragmentCount = 0;
             var entryCount = 0;
+            var cachedVanillaPackCount = 0;
+            var parsedVanillaAnimPackCount = 0;
+            var parsedUncachedAnimPackCount = 0;
+
+            var animPacksByContainer = new Dictionary<IPackFileContainer, List<PackFile>>(
+                ReferenceEqualityComparer.Instance);
+            var unownedAnimPacks = new List<PackFile>();
 
             foreach (var animPack in animPacks)
             {
-                try
+                var container = _packFileService.GetPackFileContainer(animPack);
+                if (container == null)
                 {
-                    var database = AnimationPackSerializer.Load(animPack, _packFileService);
-                    foreach (var fragment in database.GetGenericAnimationSets())
-                    {
-                        fragmentCount++;
-                        var entries = fragment.Entries;
-                        var persistentMetaPath =
-                            entries.FirstOrDefault(x => x.SlotName == "PERSISTENT_METADATA_ALIVE")?.MetaFile;
-                        if (string.IsNullOrWhiteSpace(persistentMetaPath))
-                        {
-                            persistentMetaPath =
-                                entries.FirstOrDefault(x => x.SlotName == "PERSISTENT_METADATA_FLYING")?.MetaFile;
-                        }
-
-                        var slotAnimations = new Dictionary<string, string>(StringComparer.Ordinal);
-                        foreach (var entry in entries)
-                        {
-                            if (string.IsNullOrWhiteSpace(entry.SlotName)
-                                || string.IsNullOrWhiteSpace(entry.AnimationFile)
-                                || slotAnimations.ContainsKey(entry.SlotName))
-                                continue;
-
-                            slotAnimations.Add(entry.SlotName, NormalizePath(entry.AnimationFile));
-                        }
-
-                        foreach (var entry in entries)
-                        {
-                            if (string.IsNullOrWhiteSpace(entry.AnimationFile))
-                                continue;
-
-                            entryCount++;
-                            var animationPath = NormalizePath(entry.AnimationFile);
-                            if (!index.TryGetValue(animationPath, out var contexts))
-                            {
-                                contexts = [];
-                                index.Add(animationPath, contexts);
-                            }
-
-                            contexts.Add(new FragmentEntryContext(
-                                fragment.FullPath,
-                                fragment.SkeletonName,
-                                entry.MetaFile,
-                                persistentMetaPath,
-                                slotAnimations));
-                        }
-                    }
+                    unownedAnimPacks.Add(animPack);
+                    continue;
                 }
-                catch (Exception exception)
+
+                if (!animPacksByContainer.TryGetValue(container, out var containerAnimPacks))
                 {
-                    Logger.Here().Warning(
-                        $"Unable to index animation metadata from '{_packFileService.GetFullPath(animPack)}': {exception.Message}");
+                    containerAnimPacks = [];
+                    animPacksByContainer.Add(container, containerAnimPacks);
                 }
+
+                containerAnimPacks.Add(animPack);
             }
+
+            foreach (var pair in animPacksByContainer)
+            {
+                var container = pair.Key;
+                var cachedFragments = _cache?.TryLoad(container);
+                if (cachedFragments != null)
+                {
+                    AddCachedFragments(
+                        cachedFragments,
+                        index,
+                        ref fragmentCount,
+                        ref entryCount);
+                    cachedVanillaPackCount++;
+                    continue;
+                }
+
+                var cacheFragments = _cache?.IsCacheable(container) == true
+                    ? new List<GltfAnimationMetadataLookupCache.CachedFragment>()
+                    : null;
+
+                foreach (var animPack in pair.Value)
+                {
+                    ParseAnimPack(
+                        animPack,
+                        index,
+                        cacheFragments,
+                        ref fragmentCount,
+                        ref entryCount);
+
+                    if (cacheFragments != null)
+                        parsedVanillaAnimPackCount++;
+                    else
+                        parsedUncachedAnimPackCount++;
+                }
+
+                if (cacheFragments != null)
+                    _cache!.Save(container, cacheFragments);
+            }
+
+            foreach (var animPack in unownedAnimPacks)
+            {
+                ParseAnimPack(
+                    animPack,
+                    index,
+                    cacheFragments: null,
+                    ref fragmentCount,
+                    ref entryCount);
+                parsedUncachedAnimPackCount++;
+            }
+
+            _cache?.Flush();
 
             stopwatch.Stop();
             Logger.Here().Information(
-                "GLTF animation metadata index built in {ElapsedMs:F1}ms: animPacks={AnimPackCount}, fragments={FragmentCount}, entries={EntryCount}, uniqueAnimations={AnimationCount}",
+                "GLTF animation metadata index built in {ElapsedMs:F1}ms: animPacks={AnimPackCount}, fragments={FragmentCount}, entries={EntryCount}, uniqueAnimations={AnimationCount}, cachedVanillaPacks={CachedVanillaPackCount}, parsedVanillaAnimPacks={ParsedVanillaAnimPackCount}, parsedUncachedAnimPacks={ParsedUncachedAnimPackCount}",
                 stopwatch.Elapsed.TotalMilliseconds,
                 animPacks.Count,
                 fragmentCount,
                 entryCount,
-                index.Count);
+                index.Count,
+                cachedVanillaPackCount,
+                parsedVanillaAnimPackCount,
+                parsedUncachedAnimPackCount);
 
             _contextsByAnimation = index;
             return index;
         }
+    }
+
+    private void ParseAnimPack(
+        PackFile animPack,
+        Dictionary<string, List<FragmentEntryContext>> index,
+        List<GltfAnimationMetadataLookupCache.CachedFragment>? cacheFragments,
+        ref int fragmentCount,
+        ref int entryCount)
+    {
+        try
+        {
+            var database = AnimationPackSerializer.Load(animPack, _packFileService);
+            foreach (var fragment in database.GetGenericAnimationSets())
+            {
+                fragmentCount++;
+                var entries = fragment.Entries;
+                var persistentMetaPath =
+                    entries.FirstOrDefault(x => x.SlotName == "PERSISTENT_METADATA_ALIVE")?.MetaFile;
+                if (string.IsNullOrWhiteSpace(persistentMetaPath))
+                {
+                    persistentMetaPath =
+                        entries.FirstOrDefault(x => x.SlotName == "PERSISTENT_METADATA_FLYING")?.MetaFile;
+                }
+
+                var slotAnimations = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var entry in entries)
+                {
+                    if (!IsRelevantDockingSlot(entry.SlotName)
+                        || string.IsNullOrWhiteSpace(entry.AnimationFile)
+                        || slotAnimations.ContainsKey(entry.SlotName))
+                        continue;
+
+                    slotAnimations.Add(entry.SlotName, NormalizePath(entry.AnimationFile));
+                }
+
+                GltfAnimationMetadataLookupCache.CachedFragment? cachedFragment = null;
+                if (cacheFragments != null)
+                {
+                    cachedFragment = new GltfAnimationMetadataLookupCache.CachedFragment
+                    {
+                        FragmentPath = fragment.FullPath,
+                        SkeletonName = fragment.SkeletonName,
+                        PersistentMetaPath = persistentMetaPath,
+                        SlotAnimations = slotAnimations
+                            .Select(pair => new GltfAnimationMetadataLookupCache.CachedSlotAnimation
+                            {
+                                SlotName = pair.Key,
+                                AnimationPath = pair.Value
+                            })
+                            .ToList()
+                    };
+                }
+
+                foreach (var entry in entries)
+                {
+                    if (string.IsNullOrWhiteSpace(entry.AnimationFile))
+                        continue;
+
+                    entryCount++;
+                    var animationPath = NormalizePath(entry.AnimationFile);
+                    AddContext(
+                        index,
+                        animationPath,
+                        new FragmentEntryContext(
+                            fragment.FullPath,
+                            fragment.SkeletonName,
+                            entry.MetaFile,
+                            persistentMetaPath,
+                            slotAnimations));
+
+                    cachedFragment?.Entries.Add(
+                        new GltfAnimationMetadataLookupCache.CachedEntry
+                        {
+                            AnimationPath = animationPath,
+                            MetaPath = entry.MetaFile
+                        });
+                }
+
+                if (cachedFragment != null)
+                    cacheFragments!.Add(cachedFragment);
+            }
+        }
+        catch (Exception exception)
+        {
+            Logger.Here().Warning(
+                $"Unable to index animation metadata from '{_packFileService.GetFullPath(animPack)}': {exception.Message}");
+        }
+    }
+
+    private static void AddCachedFragments(
+        IReadOnlyList<GltfAnimationMetadataLookupCache.CachedFragment> fragments,
+        Dictionary<string, List<FragmentEntryContext>> index,
+        ref int fragmentCount,
+        ref int entryCount)
+    {
+        foreach (var fragment in fragments)
+        {
+            fragmentCount++;
+
+            var slotAnimations = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var slot in fragment.SlotAnimations ?? [])
+            {
+                if (string.IsNullOrWhiteSpace(slot.SlotName)
+                    || string.IsNullOrWhiteSpace(slot.AnimationPath)
+                    || slotAnimations.ContainsKey(slot.SlotName))
+                    continue;
+
+                slotAnimations.Add(slot.SlotName, slot.AnimationPath);
+            }
+
+            foreach (var entry in fragment.Entries ?? [])
+            {
+                if (string.IsNullOrWhiteSpace(entry.AnimationPath))
+                    continue;
+
+                entryCount++;
+                AddContext(
+                    index,
+                    entry.AnimationPath,
+                    new FragmentEntryContext(
+                        fragment.FragmentPath,
+                        fragment.SkeletonName,
+                        entry.MetaPath,
+                        fragment.PersistentMetaPath,
+                        slotAnimations));
+            }
+        }
+    }
+
+    private static void AddContext(
+        Dictionary<string, List<FragmentEntryContext>> index,
+        string animationPath,
+        FragmentEntryContext context)
+    {
+        if (!index.TryGetValue(animationPath, out var contexts))
+        {
+            contexts = [];
+            index.Add(animationPath, contexts);
+        }
+
+        contexts.Add(context);
+    }
+
+    private static bool IsRelevantDockingSlot(string? slotName)
+    {
+        return slotName is
+            "DOCK_EQUIPMENT_RIGHT_HAND" or
+            "DOCK_EQUIPMENT_RIGHT_HAND_2" or
+            "DOCK_EQUIPMENT_LEFT_HAND" or
+            "DOCK_EQUIPMENT_LEFT_HAND_2" or
+            "DOCK_EQUIPMENT_RIGHT_WAIST" or
+            "DOCK_EQUIPMENT_RIGHT_WAIST_2" or
+            "DOCK_EQUIPMENT_LEFT_WAIST" or
+            "DOCK_EQUIPMENT_LEFT_WAIST_2" or
+            "DOCK_EQUIPMENT_BACK" or
+            "DOCK_EQUIPMENT_BACK_2";
     }
 
     private DecodedAnimationMetadata ReadMetadata(string? path, List<string> diagnostics)

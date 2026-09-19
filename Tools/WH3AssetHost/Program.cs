@@ -222,7 +222,11 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             new GltfMeshBuilder(),
             new GltfTextureHandler(normalExporter, materialExporter, packFileService),
             new GltfSkeletonBuilder(),
-            new GltfAnimationBuilder(packFileService),
+            new GltfAnimationBuilder(
+                packFileService,
+                new GltfAnimationMetadataLookupCacheOptions(
+                    GetAnimationMetadataCacheDirectory(),
+                    vanillaPackContainers)),
             skeletonLookup,
             modelResolver,
             compositionResolver,
@@ -255,6 +259,15 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             ? Path.GetTempPath()
             : localApplicationData;
         return Path.Combine(cacheRoot, "WH3AssetHost", "AnimationIndex");
+    }
+
+    private static string GetAnimationMetadataCacheDirectory()
+    {
+        var localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var cacheRoot = string.IsNullOrWhiteSpace(localApplicationData)
+            ? Path.GetTempPath()
+            : localApplicationData;
+        return Path.Combine(cacheRoot, "WH3AssetHost", "AnimationMetadata");
     }
 
     public AssetHostAnimationCatalog GetAnimationCatalog(string assetPath)
