@@ -55,7 +55,7 @@ internal sealed class SkeletonAnimationLookupCache
     {
         if (!_options.CacheableContainers.Contains(container))
         {
-            _logger.Here().Information(
+            _logger.Here().Debug(
                 "Skeleton animation cache SKIP for [{ContainerName}]: container is not cacheable",
                 container.Name);
             return null;
@@ -63,7 +63,7 @@ internal sealed class SkeletonAnimationLookupCache
 
         if (!TryGetPackStamp(container, out var packStamp))
         {
-            _logger.Here().Information(
+            _logger.Here().Debug(
                 "Skeleton animation cache SKIP for [{ContainerName}]: pack metadata is unavailable",
                 container.Name);
             return null;
@@ -123,7 +123,7 @@ internal sealed class SkeletonAnimationLookupCache
             .ToList();
 
         stopwatch.Stop();
-        _logger.Here().Information(
+        _logger.Here().Debug(
             "Skeleton animation cache HIT for [{ContainerName}] in {ElapsedMs}ms with {AnimationCount} animation refs and {SkeletonCount} skeleton files",
             container.Name,
             stopwatch.ElapsedMilliseconds,
@@ -222,7 +222,7 @@ internal sealed class SkeletonAnimationLookupCache
 
                 stopwatch.Stop();
                 var compressedBytes = new FileInfo(cachePath).Length;
-                _logger.Here().Information(
+                _logger.Here().Debug(
                     "Skeleton animation cache SAVED combined index in {ElapsedMs}ms: {PackCount} packs, {AnimationCount} animation refs, {SkeletonCount} skeleton files, {CompressedBytes} bytes compressed",
                     stopwatch.ElapsedMilliseconds,
                     document.Packs.Count,
@@ -265,7 +265,7 @@ internal sealed class SkeletonAnimationLookupCache
             var cachePath = GetCacheFilePath();
             if (!File.Exists(cachePath))
             {
-                _logger.Here().Information(
+                _logger.Here().Debug(
                     "Skeleton animation combined cache not found at '{CachePath}'",
                     cachePath);
                 return;
@@ -320,7 +320,7 @@ internal sealed class SkeletonAnimationLookupCache
                     _isDirty = true;
 
                 stopwatch.Stop();
-                _logger.Here().Information(
+                _logger.Here().Debug(
                     "Skeleton animation combined cache LOADED in {ElapsedMs}ms with {PackCount} pack entries ({RemovedPackCount} stale entries removed)",
                     stopwatch.ElapsedMilliseconds,
                     _packsByPath.Count,
@@ -339,7 +339,7 @@ internal sealed class SkeletonAnimationLookupCache
 
     private void LogMiss(IPackFileContainer container, string reason)
     {
-        _logger.Here().Information(
+        _logger.Here().Debug(
             "Skeleton animation cache MISS for [{ContainerName}]: {Reason}",
             container.Name,
             reason);
