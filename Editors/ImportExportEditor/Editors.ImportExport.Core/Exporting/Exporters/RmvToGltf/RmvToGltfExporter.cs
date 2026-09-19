@@ -193,19 +193,17 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             phaseStopwatch.Stop();
             var meshesMs = phaseStopwatch.ElapsedMilliseconds;
 
-            phaseStopwatch.Restart();
-            BuildGltfScene(
+            var sceneTiming = BuildGltfScene(
                 meshes,
                 skeleton,
                 settings,
                 outputScene,
                 textures.Select(x => x.SystemFilePath).ToArray());
-            phaseStopwatch.Stop();
-            var sceneAndSaveMs = phaseStopwatch.ElapsedMilliseconds;
+            var sceneAndSaveMs = sceneTiming.TotalMs;
             totalStopwatch.Stop();
 
             _logger.Here().Information(
-                "RMV/WS export timing for {AssetName}: status=completed, total={TotalMs}ms, resolve={ResolveMs}ms, skeleton={SkeletonMs}ms, animations={AnimationMs}ms, textures={TexturesMs}ms, meshes={MeshesMs}ms, sceneAndSave={SceneAndSaveMs}ms, meshCount={MeshCount}, textureCount={TextureCount}",
+                "RMV/WS export timing for {AssetName}: status=completed, total={TotalMs}ms, resolve={ResolveMs}ms, skeleton={SkeletonMs}ms, animations={AnimationMs}ms, textures={TexturesMs}ms, meshes={MeshesMs}ms, sceneAndSave={SceneAndSaveMs}ms (sceneBuild={SceneBuildMs}ms, save={SaveMs}ms), meshCount={MeshCount}, textureCount={TextureCount}",
                 settings.InputModelFile.Name,
                 totalStopwatch.ElapsedMilliseconds,
                 resolveMs,
@@ -214,6 +212,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 texturesMs,
                 meshesMs,
                 sceneAndSaveMs,
+                sceneTiming.SceneBuildMs,
+                sceneTiming.SaveMs,
                 meshes.Count,
                 textures.Count);
 
@@ -305,14 +305,17 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 
             _logger.Here().Information($"VMD Export - Parts={modelParts.Count} MeshCount={meshes.Count} Skeleton={skeleton?.Data.Count}");
 
-            phaseStopwatch.Restart();
-            BuildGltfScene(meshes, skeleton, settings, outputScene, generatedTexturePaths);
-            phaseStopwatch.Stop();
-            var sceneAndSaveMs = phaseStopwatch.ElapsedMilliseconds;
+            var sceneTiming = BuildGltfScene(
+                meshes,
+                skeleton,
+                settings,
+                outputScene,
+                generatedTexturePaths);
+            var sceneAndSaveMs = sceneTiming.TotalMs;
             totalStopwatch.Stop();
 
             _logger.Here().Information(
-                "VMD export timing for {AssetName}: total={TotalMs}ms, composition={CompositionMs}ms, flatten={FlattenMs}ms, skeleton={SkeletonMs}ms, skeletonCompatibility={SkeletonCompatibilityMs}ms, textures={TexturesMs}ms, meshes={MeshesMs}ms, animations={AnimationMs}ms, sceneAndSave={SceneAndSaveMs}ms, parts={PartCount}, meshCount={MeshCount}, textureCount={TextureCount}",
+                "VMD export timing for {AssetName}: total={TotalMs}ms, composition={CompositionMs}ms, flatten={FlattenMs}ms, skeleton={SkeletonMs}ms, skeletonCompatibility={SkeletonCompatibilityMs}ms, textures={TexturesMs}ms, meshes={MeshesMs}ms, animations={AnimationMs}ms, sceneAndSave={SceneAndSaveMs}ms (sceneBuild={SceneBuildMs}ms, save={SaveMs}ms), parts={PartCount}, meshCount={MeshCount}, textureCount={TextureCount}",
                 settings.InputModelFile.Name,
                 totalStopwatch.ElapsedMilliseconds,
                 compositionMs,
@@ -323,6 +326,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 meshesMs,
                 animationMs,
                 sceneAndSaveMs,
+                sceneTiming.SceneBuildMs,
+                sceneTiming.SaveMs,
                 modelParts.Count,
                 meshes.Count,
                 generatedTexturePaths.Count);
@@ -426,13 +431,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             return output;
         }
 
-        internal void BuildGltfScene(
+        internal GltfSceneTiming BuildGltfScene(
             List<ExportedMesh> meshes,
             ProcessedGltfSkeleton? gltfSkeleton,
             RmvToGltfExporterSettings settings,
             ModelRoot outputScene,
             IReadOnlyCollection<string>? generatedTexturePaths = null)
         {
+            var totalStopwatch = Stopwatch.StartNew();
+            var sceneBuildStopwatch = Stopwatch.StartNew();
+
             var scene = outputScene.UseScene("default");
             foreach (var exportedMesh in meshes)
             {
@@ -466,7 +474,31 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                     node.WithMesh(mesh);
             }
 
-            _gltfSaver.Save(outputScene, settings.OutputPath, generatedTexturePaths ?? Array.Empty<string>());
+            sceneBuildStopwatch.Stop();
+
+            var saveStopwatch = Stopwatch.StartNew();
+            _gltfSaver.Save(
+                outputScene,
+                settings.OutputPath,
+                generatedTexturePaths ?? Array.Empty<string>());
+            saveStopwatch.Stop();
+            totalStopwatch.Stop();
+
+            var timing = new GltfSceneTiming(
+                totalStopwatch.ElapsedMilliseconds,
+                sceneBuildStopwatch.ElapsedMilliseconds,
+                saveStopwatch.ElapsedMilliseconds);
+
+            _logger.Here().Information(
+                "GLTF scene/save timing for {OutputName}: total={TotalMs}ms, sceneBuild={SceneBuildMs}ms, save={SaveMs}ms, meshes={MeshCount}, generatedTextures={GeneratedTextureCount}",
+                Path.GetFileName(settings.OutputPath),
+                timing.TotalMs,
+                timing.SceneBuildMs,
+                timing.SaveMs,
+                meshes.Count,
+                generatedTexturePaths?.Count ?? 0);
+
+            return timing;
         }
 
         internal static Node? FindAttachmentBone(
@@ -554,6 +586,11 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             string NamePrefix,
             bool UseSharedSkeleton,
             bool AllowMatrixAttachment);
+
+        internal sealed record GltfSceneTiming(
+            long TotalMs,
+            long SceneBuildMs,
+            long SaveMs);
 
         internal sealed record ExportedMesh(
             IMeshBuilder<MaterialBuilder> MeshBuilder,

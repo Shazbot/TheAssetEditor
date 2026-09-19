@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Linq;
 using SharpGLTF.Schema2;
 
@@ -26,6 +27,8 @@ public interface IGltfSceneSaver
 /// </summary>
 public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
 {
+    private static readonly ILogger Logger = Logging.Create<HeadlessGltfSceneSaver>();
+
     public void Save(ModelRoot modelRoot, string fullSystemPath)
         => Save(modelRoot, fullSystemPath, Array.Empty<string>());
 
@@ -34,25 +37,215 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
         string fullSystemPath,
         IReadOnlyCollection<string> generatedTexturePaths)
     {
-        var outputDirectory = Path.GetDirectoryName(fullSystemPath);
-        if (string.IsNullOrWhiteSpace(outputDirectory) == false)
-            Directory.CreateDirectory(outputDirectory);
+        ArgumentNullException.ThrowIfNull(modelRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(fullSystemPath);
+        ArgumentNullException.ThrowIfNull(generatedTexturePaths);
 
-        // SharpGLTF chooses the container from the requested extension.
-        // Exceptions deliberately propagate to HeadlessGltfExportService.
-        modelRoot.Save(fullSystemPath);
+        var totalStopwatch = Stopwatch.StartNew();
+        var fullOutputPath = Path.GetFullPath(fullSystemPath);
+        var outputDirectory = Path.GetDirectoryName(fullOutputPath)
+            ?? Directory.GetCurrentDirectory();
+        Directory.CreateDirectory(outputDirectory);
 
-        if (string.Equals(Path.GetExtension(fullSystemPath), ".glb", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(Path.GetExtension(fullOutputPath), ".glb", StringComparison.OrdinalIgnoreCase))
         {
-            foreach (var texturePath in generatedTexturePaths
-                .Where(x => string.Equals(Path.GetExtension(x), ".png", StringComparison.OrdinalIgnoreCase))
-                .Distinct(StringComparer.OrdinalIgnoreCase))
+            var saveStopwatch = Stopwatch.StartNew();
+            modelRoot.Save(fullOutputPath);
+            saveStopwatch.Stop();
+            totalStopwatch.Stop();
+
+            Logger.Here().Information(
+                "GLTF save timing for {OutputName}: total={TotalMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, logicalImages={LogicalImages}",
+                Path.GetFileName(fullOutputPath),
+                totalStopwatch.Elapsed.TotalMilliseconds,
+                saveStopwatch.Elapsed.TotalMilliseconds,
+                GetFileSize(fullOutputPath),
+                modelRoot.LogicalImages.Count);
+            return;
+        }
+
+        var generatedTextures = generatedTexturePaths
+            .Where(x => string.Equals(Path.GetExtension(x), ".png", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var generatedTextureBytes = generatedTextures.Sum(GetFileSize);
+
+        TimedFileWriteStream? timedOutputStream = null;
+        var fallbackFileWriteMs = 0.0;
+        long fallbackBytesWritten = 0;
+
+        var context = WriteContext.Create(
+            (assetName, data) =>
             {
-                // Delete only paths explicitly returned by the texture
-                // handler. Auxiliary mask files are intentionally not
-                // returned and therefore remain discoverable by the host.
-                if (File.Exists(texturePath))
-                    File.Delete(texturePath);
+                var path = ResolveOutputPath(outputDirectory, assetName);
+                var stopwatch = Stopwatch.StartNew();
+                using var stream = File.Create(path);
+                stream.Write(data.Array!, data.Offset, data.Count);
+                stopwatch.Stop();
+
+                fallbackFileWriteMs += stopwatch.Elapsed.TotalMilliseconds;
+                fallbackBytesWritten += data.Count;
+            },
+            assetName =>
+            {
+                var stream = new TimedFileWriteStream(
+                    ResolveOutputPath(outputDirectory, assetName));
+                timedOutputStream = stream;
+                return stream;
+            });
+
+        var sharpGltfStopwatch = Stopwatch.StartNew();
+        modelRoot.SaveGLB(Path.GetFileName(fullOutputPath), context);
+        sharpGltfStopwatch.Stop();
+
+        var fileWriteMs = (timedOutputStream?.IoElapsedMilliseconds ?? 0)
+            + fallbackFileWriteMs;
+        var bytesWritten = (timedOutputStream?.BytesWritten ?? 0)
+            + fallbackBytesWritten;
+        var preprocessEmbedSerializeMs = Math.Max(
+            0,
+            sharpGltfStopwatch.Elapsed.TotalMilliseconds - fileWriteMs);
+
+        var cleanupStopwatch = Stopwatch.StartNew();
+        foreach (var texturePath in generatedTextures)
+        {
+            // Delete only paths explicitly returned by the texture
+            // handler. Auxiliary mask files are intentionally not
+            // returned and therefore remain discoverable by the host.
+            if (File.Exists(texturePath))
+                File.Delete(texturePath);
+        }
+        cleanupStopwatch.Stop();
+        totalStopwatch.Stop();
+
+        Logger.Here().Information(
+            "GLB save timing for {OutputName}: total={TotalMs:F1}ms, sharpGltf={SharpGltfMs:F1}ms, preprocessEmbedSerialize={PreprocessEmbedSerializeMs:F1}ms, fileWrite={FileWriteMs:F1}ms, cleanup={CleanupMs:F1}ms, outputBytes={OutputBytes}, streamedBytes={StreamedBytes}, logicalImages={LogicalImages}, generatedTextureBytes={GeneratedTextureBytes}, generatedTextureCount={GeneratedTextureCount}",
+            Path.GetFileName(fullOutputPath),
+            totalStopwatch.Elapsed.TotalMilliseconds,
+            sharpGltfStopwatch.Elapsed.TotalMilliseconds,
+            preprocessEmbedSerializeMs,
+            fileWriteMs,
+            cleanupStopwatch.Elapsed.TotalMilliseconds,
+            GetFileSize(fullOutputPath),
+            bytesWritten,
+            modelRoot.LogicalImages.Count,
+            generatedTextureBytes,
+            generatedTextures.Length);
+    }
+
+    private static string ResolveOutputPath(string outputDirectory, string rawUri)
+        => Path.Combine(outputDirectory, Uri.UnescapeDataString(rawUri));
+
+    private static long GetFileSize(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? new FileInfo(path).Length : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private sealed class TimedFileWriteStream : Stream
+    {
+        private readonly FileStream _stream;
+        private long _ioTicks;
+        private long _bytesWritten;
+        private bool _disposed;
+
+        public TimedFileWriteStream(string path)
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            var start = Stopwatch.GetTimestamp();
+            _stream = new FileStream(
+                path,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None);
+            _ioTicks += Stopwatch.GetTimestamp() - start;
+        }
+
+        public double IoElapsedMilliseconds
+            => _ioTicks * 1000.0 / Stopwatch.Frequency;
+
+        public long BytesWritten => _bytesWritten;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => _stream.CanSeek;
+        public override bool CanWrite => true;
+        public override long Length => _stream.Length;
+
+        public override long Position
+        {
+            get => _stream.Position;
+            set => _stream.Position = value;
+        }
+
+        public override void Flush()
+            => Measure(_stream.Flush);
+
+        public override int Read(byte[] buffer, int offset, int count)
+            => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin)
+            => _stream.Seek(offset, origin);
+
+        public override void SetLength(long value)
+            => _stream.SetLength(value);
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            Measure(() => _stream.Write(buffer, offset, count));
+            _bytesWritten += count;
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            var start = Stopwatch.GetTimestamp();
+            try
+            {
+                _stream.Write(buffer);
+            }
+            finally
+            {
+                _ioTicks += Stopwatch.GetTimestamp() - start;
+            }
+
+            _bytesWritten += buffer.Length;
+        }
+
+        public override void WriteByte(byte value)
+        {
+            Measure(() => _stream.WriteByte(value));
+            _bytesWritten++;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && !_disposed)
+            {
+                _disposed = true;
+                Measure(_stream.Dispose);
+            }
+
+            base.Dispose(disposing);
+        }
+
+        private void Measure(Action action)
+        {
+            var start = Stopwatch.GetTimestamp();
+            try
+            {
+                action();
+            }
+            finally
+            {
+                _ioTicks += Stopwatch.GetTimestamp() - start;
             }
         }
     }

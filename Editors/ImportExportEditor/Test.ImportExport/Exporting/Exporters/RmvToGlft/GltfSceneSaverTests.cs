@@ -36,6 +36,36 @@ public class GltfSceneSaverTests
     }
 
     [Test]
+    public void HeadlessSaverWritesReloadableGlbAndRemovesGeneratedTexture()
+    {
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-headless-glb-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+
+        var outputPath = Path.Combine(outputDirectory, "model.glb");
+        var texturePath = Path.Combine(outputDirectory, "body.png");
+        File.WriteAllBytes(texturePath, [1, 2, 3]);
+
+        try
+        {
+            var model = ModelRoot.CreateModel();
+            model.UseScene("default");
+            var saver = new HeadlessGltfSceneSaver();
+
+            saver.Save(model, outputPath, [texturePath]);
+
+            Assert.That(File.Exists(outputPath), Is.True);
+            ModelRoot.Validate(outputPath);
+            Assert.That(ModelRoot.Load(outputPath), Is.Not.Null);
+            Assert.That(File.Exists(texturePath), Is.False);
+        }
+        finally
+        {
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
+    [Test]
     public void RetainsGeneratedTexturePngForGltfOutput()
     {
         var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-gltf-{Guid.NewGuid():N}");
