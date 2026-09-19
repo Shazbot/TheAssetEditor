@@ -26,4 +26,17 @@ public sealed class HeadlessPackFileServiceTests
         Assert.That(winner!.DataSource.ReadData(), Is.EqualTo([2]));
         Assert.That(service.GetAllPackfileContainers(), Is.EqualTo([lowPriority, highPriority]));
     }
+
+    [Test]
+    public void ReverseLookup_UsesOwnerMetadata()
+    {
+        var container = PackFileContainer.CreateReadOnlyPackFile("test");
+        var file = PackFile.CreateFromBytes("foo.txt", [1, 2, 3]);
+        container.AddOrUpdateFile(@"folder\foo.txt", file);
+        var service = HeadlessPackFileServiceFactory.Create([container]);
+
+        Assert.That(service.GetFullPath(file), Is.EqualTo(@"folder\foo.txt"));
+        Assert.That(service.GetFullPath(file, container), Is.EqualTo(@"folder\foo.txt"));
+        Assert.That(service.GetPackFileContainer(file), Is.SameAs(container));
+    }
 }

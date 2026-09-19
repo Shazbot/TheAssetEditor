@@ -16,7 +16,6 @@ namespace Shared.Core.PackFiles
         private readonly IGlobalEventHub? _globalEventHub;
 
         private readonly PackFileRepository _repository = new();
-        private readonly HashSet<IPackFileContainerInternal> _loadedPackFileContainers = new(ReferenceEqualityComparer.Instance);
         private IPackFileContainerInternal? _packFileContainerSelectedForEdit;
 
         // We use this instead of the standard dialog helper, to avaid a circular dependency
@@ -43,7 +42,7 @@ namespace Shared.Core.PackFiles
         public IPackFileContainer? AddContainer(IPackFileContainer container, bool setToMainPackIfFirst = false)
         {
             var pf = CastContainer(container);
-            if (_loadedPackFileContainers.Contains(pf))
+            if (_repository.Packs.Any(x => ReferenceEquals(x, pf)))
             {
                 _logger.Here().Warning($"Rejected loading the same pack file container instance twice: '{DescribeContainer(pf)}'");
                 return null;
@@ -80,7 +79,6 @@ namespace Shared.Core.PackFiles
         {
             if (_repository.TryAdd(container) == false)
                 throw new InvalidOperationException($"Pack file '{DescribeContainer(container)}' is already loaded.");
-            _loadedPackFileContainers.Add(container);
             if (container is SystemFolderContainer systemFolderContainer)
             {
                 systemFolderContainer.FilesAddedExternally += OnSystemFolderContainerFilesAddedExternally;
@@ -184,8 +182,6 @@ namespace Shared.Core.PackFiles
             }
 
             _repository.Remove(container);
-            if (!_repository.Packs.Any(x => ReferenceEquals(x, container)))
-                _loadedPackFileContainers.Remove(container);
             if (_packFileContainerSelectedForEdit == container)
                 SetEditablePack(null);
 
@@ -311,12 +307,9 @@ namespace Shared.Core.PackFiles
 
         public IPackFileContainer? GetPackFileContainer(PackFile file)
         {
-            if (file.Container is IPackFileContainerInternal owner
-                && _loadedPackFileContainers.Contains(owner)
-                && !string.IsNullOrWhiteSpace(file.VirtualPath))
-            {
-                return owner;
-            }
+            var container = _repository.GetPackFileContainer(file);
+            if (container != null)
+                return container;
 
             _logger.Here().Warning($"Unknown packfile container for file '{file.Name}'");
             return null;
@@ -341,24 +334,8 @@ namespace Shared.Core.PackFiles
 
         public string GetFullPath(PackFile file, IPackFileContainer? container = null)
         {
-            if (container == null)
-            {
-                if (file.Container is IPackFileContainerInternal owner
-                    && _loadedPackFileContainers.Contains(owner)
-                    && !string.IsNullOrWhiteSpace(file.VirtualPath))
-                {
-                    return file.VirtualPath;
-                }
-            }
-            else
-            {
-                var concreteContainer = CastContainer(container);
-                if (ReferenceEquals(file.Container, concreteContainer)
-                    && !string.IsNullOrWhiteSpace(file.VirtualPath))
-                {
-                    return file.VirtualPath;
-                }
-            }
+            if (_repository.TryGetFullPath(file, container, out var path))
+                return path!;
 
             _logger.Here().Warning($"Unable to resolve full path for file '{file.Name}'");
             throw new Exception("Unknown path for " + file.Name);

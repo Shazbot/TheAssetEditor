@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Models.FileSources;
 using Shared.Core.PackFiles.Utility;
@@ -84,6 +85,8 @@ public sealed class VanillaPackFilesCacheReaderTests
             WriteCache(cachePath, packPath, index);
 
             var loaded = new HeadlessPackFileLoader(cachePath).LoadOrderedWithMetadata([packPath]);
+            var service = HeadlessPackFileServiceFactory.Create(loaded.Select(x => x.Container));
+            var rawFile = service.FindFile("folder\\raw.txt");
 
             Assert.That(loaded, Has.Count.EqualTo(1));
             Assert.That(loaded[0].IsVanillaPack, Is.True);
@@ -94,6 +97,11 @@ public sealed class VanillaPackFilesCacheReaderTests
             Assert.That(
                 loaded[0].Container.FindFile("folder\\compressed.txt")!.DataSource.ReadData(),
                 Is.EqualTo(rawFiles[1].Data));
+            Assert.That(rawFile, Is.Not.Null);
+            Assert.That(rawFile!.Container, Is.SameAs(loaded[0].Container));
+            Assert.That(rawFile.VirtualPath, Is.EqualTo("folder\\raw.txt"));
+            Assert.That(service.GetFullPath(rawFile), Is.EqualTo("folder\\raw.txt"));
+            Assert.That(service.GetPackFileContainer(rawFile), Is.SameAs(loaded[0].Container));
         }
         finally
         {
