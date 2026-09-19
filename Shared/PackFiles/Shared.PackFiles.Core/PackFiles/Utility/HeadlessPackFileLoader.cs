@@ -138,6 +138,7 @@ namespace Shared.Core.PackFiles.Utility
                     DiskParseMs: 0);
             }
 
+            var skippedWemCount = 0;
             var diskParseStopwatch = Stopwatch.StartNew();
             using var fileStream = File.OpenRead(fullPath);
             using var reader = new BinaryReader(fileStream, Encoding.ASCII);
@@ -146,10 +147,16 @@ namespace Shared.Core.PackFiles.Utility
                 fileStream.Length,
                 reader,
                 new CaPackDuplicateFileResolver(),
-                static path => !VanillaPackFilesCacheReader.ShouldIgnoreFile(path));
+                path =>
+                {
+                    if (!VanillaPackFilesCacheReader.ShouldIgnoreFile(path))
+                        return true;
+
+                    skippedWemCount++;
+                    return false;
+                });
             diskParseStopwatch.Stop();
 
-            var skippedWemCount = checked((int)container.Header.FileCount - container.GetFileCount());
             container.Header.FileCount = (uint)container.GetFileCount();
 
             container.IsCaPackFile = isCaPackFile;

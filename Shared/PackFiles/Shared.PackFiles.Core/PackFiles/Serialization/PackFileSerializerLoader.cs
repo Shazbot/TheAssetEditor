@@ -31,8 +31,15 @@ namespace Shared.Core.PackFiles.Serialization
             string packFileSystemPath,
             long packFileSize,
             BinaryReader reader,
+            IDuplicateFileResolver duplicatePackFileResolver)
+            => Load(packFileSystemPath, packFileSize, reader, duplicatePackFileResolver, includeFile: null);
+
+        public static PackFileContainer Load(
+            string packFileSystemPath,
+            long packFileSize,
+            BinaryReader reader,
             IDuplicateFileResolver duplicatePackFileResolver,
-            Func<string, bool>? includeFile = null)
+            Func<string, bool>? includeFile)
         {
             try
             {
