@@ -121,6 +121,40 @@ public class VariantMeshCompositionResolverTests
     }
 
     [Test]
+    public void ParsedDefinitionCacheCanBeClearedBetweenAssetSessions()
+    {
+        var root = PackFile.CreateFromASCII("root.variantmeshdefinition", """
+            <VARIANT_MESH>
+              <SLOT name="body">
+                <VARIANT_MESH model="body.rigid_model_v2" />
+              </SLOT>
+            </VARIANT_MESH>
+            """);
+        var body = PackFile.CreateFromASCII("body.rigid_model_v2", "body");
+        var packFileService = CreatePackFileService(root, body);
+        var modelResolver = new Mock<IModelAssetResolver>(MockBehavior.Strict);
+        modelResolver
+            .Setup(x => x.Resolve(body))
+            .Returns(CreatePlaceholderAsset(body));
+        var resolver = new VariantMeshCompositionResolver(
+            packFileService.Object,
+            modelResolver.Object,
+            cacheParsedDefinitions: true);
+
+        var first = resolver.Resolve(root);
+        Assert.That(first.HasRenderableContent, Is.True);
+        Assert.That(resolver.CachedDefinitionCount, Is.EqualTo(1));
+
+        root.DataSource = PackFile.CreateFromASCII("invalid.variantmeshdefinition", "not xml").DataSource;
+        var cached = resolver.Resolve(root);
+        Assert.That(cached.HasRenderableContent, Is.True, "The current asset session should reuse the parsed VMD.");
+
+        resolver.ClearParsedDefinitionCache();
+        var afterClear = resolver.Resolve(root);
+        Assert.That(afterClear.HasRenderableContent, Is.False, "Clearing the session cache must force the VMD to be parsed again.");
+    }
+
+    [Test]
     public void DetectsNestedCaseInsensitiveCycleWithDiagnostic()
     {
         var root = PackFile.CreateFromASCII("Models\\Root.variantmeshdefinition", """
