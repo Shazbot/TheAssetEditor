@@ -66,6 +66,26 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         private readonly IModelAssetResolver _modelAssetResolver;
         private readonly IVariantMeshCompositionResolver? _variantMeshResolver;
         private readonly IMissingSkeletonDecision _missingSkeletonDecision;
+        private readonly bool _cacheBuiltMeshes;
+        private readonly Dictionary<BuiltMeshCacheKey, IReadOnlyList<IMeshBuilder<MaterialBuilder>>> _builtMeshCache = new();
+
+        public int CachedBuiltMeshCount => _builtMeshCache.Count;
+        public long BuiltMeshCacheHits { get; private set; }
+        public long BuiltMeshCacheMisses { get; private set; }
+
+        public void ClearBuiltMeshCache()
+        {
+            _builtMeshCache.Clear();
+            BuiltMeshCacheHits = 0;
+            BuiltMeshCacheMisses = 0;
+        }
+
+        private sealed record BuiltMeshCacheKey(
+            string AssetPath,
+            string NamePrefix,
+            bool WillHaveSkeleton,
+            bool MirrorMesh,
+            string TextureSignature);
 
         // Keep the pre-composition constructor signature intact. The
         // composition resolver is an additive dependency for VMD exports.
@@ -99,7 +119,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             ISkeletonAnimationLookUpHelper skeletonLookUpHelper,
             IModelAssetResolver? modelAssetResolver,
             IVariantMeshCompositionResolver? variantMeshResolver,
-            IMissingSkeletonDecision? missingSkeletonDecision = null)
+            IMissingSkeletonDecision? missingSkeletonDecision = null,
+            bool cacheBuiltMeshes = false)
         {
             _gltfSaver = gltfSaver;
             _gltfMeshBuilder = gltfMeshBuilder;
@@ -112,6 +133,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             // Core is deliberately deterministic. Interactive callers must
             // supply their own decision adapter.
             _missingSkeletonDecision = missingSkeletonDecision ?? new HeadlessMissingSkeletonDecision();
+            _cacheBuiltMeshes = cacheBuiltMeshes;
         }
 
         public ExportSupportEnum CanExportFile(PackFile file)
@@ -398,12 +420,59 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             bool willHaveSkeleton)
         {
             var output = new List<ExportedMesh>();
-            var meshBuilders = _gltfMeshBuilder.Build(
-                modelPart.Asset,
-                textures,
-                settings,
-                willHaveSkeleton,
-                modelPart.NamePrefix == "model" ? null : modelPart.NamePrefix);
+            var effectiveNamePrefix = modelPart.NamePrefix == "model"
+                ? null
+                : modelPart.NamePrefix;
+            IReadOnlyList<IMeshBuilder<MaterialBuilder>> meshBuilders;
+
+            if (_cacheBuiltMeshes)
+            {
+                var assetPath = (modelPart.Asset.InputFile.VirtualPath ?? modelPart.Asset.InputFile.Name)
+                    .Replace('/', '\\')
+                    .Trim()
+                    .TrimStart('\\')
+                    .ToLowerInvariant();
+                var textureSignature = string.Join(
+                    "|",
+                    textures
+                        .OrderBy(texture => texture.MeshIndex)
+                        .ThenBy(texture => texture.GltfTextureType)
+                        .ThenBy(texture => Path.GetFileName(texture.SystemFilePath), StringComparer.OrdinalIgnoreCase)
+                        .Select(texture =>
+                            $"{texture.MeshIndex}:{texture.GltfTextureType}:{Path.GetFileName(texture.SystemFilePath)}:{texture.ImageData?.Length ?? 0}"));
+                var cacheKey = new BuiltMeshCacheKey(
+                    assetPath,
+                    effectiveNamePrefix ?? string.Empty,
+                    willHaveSkeleton,
+                    settings.MirrorMesh,
+                    textureSignature);
+
+                if (_builtMeshCache.TryGetValue(cacheKey, out var cachedMeshBuilders))
+                {
+                    BuiltMeshCacheHits++;
+                    meshBuilders = cachedMeshBuilders;
+                }
+                else
+                {
+                    BuiltMeshCacheMisses++;
+                    meshBuilders = _gltfMeshBuilder.Build(
+                        modelPart.Asset,
+                        textures,
+                        settings,
+                        willHaveSkeleton,
+                        effectiveNamePrefix).ToArray();
+                    _builtMeshCache[cacheKey] = meshBuilders;
+                }
+            }
+            else
+            {
+                meshBuilders = _gltfMeshBuilder.Build(
+                    modelPart.Asset,
+                    textures,
+                    settings,
+                    willHaveSkeleton,
+                    effectiveNamePrefix);
+            }
 
             for (var i = 0; i < meshBuilders.Count; i++)
             {
