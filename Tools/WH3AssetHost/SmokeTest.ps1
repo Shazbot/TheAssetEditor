@@ -15,8 +15,8 @@
 
 .EXAMPLE
     pwsh -File .\Tools\WH3AssetHost\SmokeTest.ps1 `
-        -HostPath K:\projects\whmm\tools\WH3AssetHost\WH3AssetHost.exe `
-        -GameDataPath 'K:\SteamLibrary\steamapps\common\Total War WARHAMMER III\data'
+        -HostPath C:\path\to\WH3AssetHost.exe `
+        -GameDataPath 'C:\path\to\Total War WARHAMMER III\data'
 #>
 
 [CmdletBinding()]
@@ -36,14 +36,14 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 if ([string]::IsNullOrWhiteSpace($HostPath)) {
-    $HostPath = Join-Path $repoRoot 'publish-trim-partial-final-safe\WH3AssetHost.exe'
+    $HostPath = Join-Path $repoRoot 'Tools\WH3AssetHost\bin\Release\net10.0-windows\win-x64\publish\WH3AssetHost.exe'
 }
 
 if ([string]::IsNullOrWhiteSpace($GameDataPath)) {
     if (-not [string]::IsNullOrWhiteSpace($env:WH3_GAME_DATA)) {
         $GameDataPath = $env:WH3_GAME_DATA
     } else {
-        $GameDataPath = 'K:\SteamLibrary\steamapps\common\Total War WARHAMMER III\data'
+        throw 'Game data path is required. Pass -GameDataPath or set WH3_GAME_DATA.'
     }
 }
 
