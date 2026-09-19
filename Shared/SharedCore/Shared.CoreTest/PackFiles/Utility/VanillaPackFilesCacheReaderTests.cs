@@ -23,7 +23,7 @@ public sealed class VanillaPackFilesCacheReaderTests
 
             var reader = new VanillaPackFilesCacheReader(cachePath);
 
-            Assert.That(reader.TryGet(new FileInfo(packPath)), Is.Null);
+            Assert.That(reader.TryBuildContainer(new FileInfo(packPath)), Is.Null);
         }
         finally
         {
@@ -58,7 +58,7 @@ public sealed class VanillaPackFilesCacheReaderTests
 
             var reader = new VanillaPackFilesCacheReader(cachePath);
 
-            Assert.That(reader.TryGet(new FileInfo(packPath)), Is.Null);
+            Assert.That(reader.TryBuildContainer(new FileInfo(packPath)), Is.Null);
         }
         finally
         {
@@ -110,6 +110,40 @@ public sealed class VanillaPackFilesCacheReaderTests
             Assert.That(rawFile.VirtualPath, Is.EqualTo("folder\\raw.txt"));
             Assert.That(service.GetFullPath(rawFile), Is.EqualTo("folder\\raw.txt"));
             Assert.That(service.GetPackFileContainer(rawFile), Is.SameAs(loaded[0].Container));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void CompactCache_AllWemPack_UsesFastPathWithoutMaterializingFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VanillaPackFilesCacheReaderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var packPath = Path.Combine(root, "audio.pack");
+        var cachePath = Path.Combine(root, "vanilla-pack-files-cache.bin");
+
+        try
+        {
+            var files = new[]
+            {
+                (Name: "audio\\a.wem", Data: Encoding.ASCII.GetBytes("first"), IsCompressed: false),
+                (Name: "audio\\b.wem", Data: Encoding.ASCII.GetBytes("second"), IsCompressed: false)
+            };
+            var index = BuildPack(packPath, files);
+            WriteCache(cachePath, packPath, index);
+
+            var reader = new VanillaPackFilesCacheReader(cachePath);
+            var built = reader.TryBuildContainer(new FileInfo(packPath));
+
+            Assert.That(built, Is.Not.Null);
+            Assert.That(built!.UsedAllWemFastPath, Is.True);
+            Assert.That(built.RetainedFileCount, Is.Zero);
+            Assert.That(built.SkippedWemCount, Is.EqualTo(2));
+            Assert.That(built.Container.GetFileCount(), Is.Zero);
         }
         finally
         {
@@ -198,7 +232,7 @@ public sealed class VanillaPackFilesCacheReaderTests
         using (var writer = new BinaryWriter(payload, Encoding.UTF8, leaveOpen: true))
         {
             writer.Write(Encoding.ASCII.GetBytes("WVFC"));
-            writer.Write(3u);
+            writer.Write(4u);
             writer.Write(1u);
 
             writer.Write((byte)1);
@@ -221,6 +255,7 @@ public sealed class VanillaPackFilesCacheReaderTests
 
             writer.Write(0u);
             writer.Write((uint)index.Files.Count);
+            writer.Write((uint)index.Files.Count(file => !file.Name.EndsWith(".wem", StringComparison.OrdinalIgnoreCase)));
             writer.Write((ulong)(index.Files.Count == 0 ? 0 : index.Files[0].StartPos));
 
             var previousName = string.Empty;

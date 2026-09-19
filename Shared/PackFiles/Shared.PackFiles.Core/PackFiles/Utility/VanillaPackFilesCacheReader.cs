@@ -2,6 +2,8 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Text;
 using Shared.Core.PackFiles.Models;
+using Shared.Core.PackFiles.Models.Containers;
+using Shared.Core.PackFiles.Models.FileSources;
 using Shared.Core.PackFiles.Serialization;
 using ZstdSharp;
 
@@ -9,7 +11,7 @@ namespace Shared.Core.PackFiles.Utility;
 
 internal sealed class VanillaPackFilesCacheReader
 {
-    private const uint CurrentVersion = 3;
+    private const uint CurrentVersion = 4;
     private const byte ExpandedEntryKind = 1;
     private const byte NamesOnlyEntryKind = 2;
     private const int MaxEntryCount = 100_000;
@@ -44,7 +46,7 @@ internal sealed class VanillaPackFilesCacheReader
 
     internal double LoadElapsedMilliseconds { get; }
 
-    public CachedPackIndex? TryGet(FileInfo packFile)
+    public CachedContainerBuild? TryBuildContainer(FileInfo packFile)
     {
         var metadataStopwatch = Stopwatch.StartNew();
         if (!_entries.TryGetValue(NormalizePath(packFile.FullName), out var entry)
@@ -53,18 +55,56 @@ internal sealed class VanillaPackFilesCacheReader
             || Math.Abs(entry.LastChangedLocal - GetNodeMtimeMilliseconds(packFile)) > TimestampToleranceMilliseconds
             || !IsVanillaHeader(entry.Header)
             || entry.Header.PackFileCount < 0
-            || entry.FileCount != entry.Header.PackFileCount)
+            || entry.FileCount != entry.Header.PackFileCount
+            || entry.NonWemFileCount < 0
+            || entry.NonWemFileCount > entry.FileCount
+            || entry.FirstStartPos < 0
+            || entry.FirstStartPos > packFile.Length)
         {
             return null;
         }
         metadataStopwatch.Stop();
 
+        var setupStopwatch = Stopwatch.StartNew();
+        var header = new PFHeader(
+            entry.Header.Version,
+            entry.Header.ByteMask,
+            entry.Header.ReferenceFileCount)
+        {
+            Buffer = entry.Header.Buffer,
+            FileCount = (uint)entry.NonWemFileCount,
+            DataStart = 0
+        };
+        header.DependantFiles.AddRange(entry.DependencyPacks);
+
+        var container = PackFileContainer.CreatePackFile(
+            Path.GetFileNameWithoutExtension(packFile.FullName),
+            packFile.FullName,
+            header);
+        container.OriginalLoadByteSize = packFile.Length;
+        container.EnsureFileCapacity(entry.NonWemFileCount);
+
+        var parent = new PackedFileSourceParent { FilePath = packFile.FullName };
+        setupStopwatch.Stop();
+
+        if (entry.NonWemFileCount == 0)
+        {
+            return new CachedContainerBuild(
+                container,
+                RetainedFileCount: 0,
+                SkippedWemCount: entry.FileCount,
+                metadataStopwatch.Elapsed.TotalMilliseconds,
+                DirectFileMaterializeMs: 0,
+                setupStopwatch.Elapsed.TotalMilliseconds,
+                UsedAllWemFastPath: entry.FileCount > 0);
+        }
+
         var fileMaterializeStopwatch = Stopwatch.StartNew();
         try
         {
             var reader = new CacheBinaryReader(_payload, entry.FilesOffset);
-            var packedFiles = new List<CachedPackedFile>(entry.FileCount);
             var skippedWemCount = 0;
+            var retainedFileCount = 0;
             var previousName = string.Empty;
             var startPos = entry.FirstStartPos;
 
@@ -90,28 +130,44 @@ internal sealed class VanillaPackFilesCacheReader
                 }
                 else
                 {
-                    packedFiles.Add(new CachedPackedFile(
-                        name,
-                        fileSize,
+                    if (retainedFileCount == 0)
+                        header.DataStart = startPos;
+
+                    var normalizedPath = name.ToLowerInvariant();
+                    var source = new PackedFileSource(
+                        parent,
                         startPos,
-                        compressed == 1));
+                        fileSize,
+                        header.HasEncryptedData,
+                        compressed == 1,
+                        CompressionFormat.None,
+                        0);
+                    container.AddOrUpdateFile(
+                        normalizedPath,
+                        new PackFile(GetFileName(normalizedPath), source));
+                    retainedFileCount++;
                 }
 
                 startPos = checked(startPos + fileSize);
                 previousName = name;
             }
 
-            if (reader.Position != entry.FilesEndOffset)
+            if (reader.Position != entry.FilesEndOffset
+                || retainedFileCount != entry.NonWemFileCount
+                || skippedWemCount != entry.FileCount - entry.NonWemFileCount)
+            {
                 return null;
+            }
 
             fileMaterializeStopwatch.Stop();
-            return new CachedPackIndex(
-                entry.Header,
-                packedFiles,
-                entry.DependencyPacks,
+            return new CachedContainerBuild(
+                container,
+                retainedFileCount,
                 skippedWemCount,
                 metadataStopwatch.Elapsed.TotalMilliseconds,
-                fileMaterializeStopwatch.Elapsed.TotalMilliseconds);
+                fileMaterializeStopwatch.Elapsed.TotalMilliseconds,
+                setupStopwatch.Elapsed.TotalMilliseconds,
+                UsedAllWemFastPath: false);
         }
         catch
         {
@@ -171,6 +227,7 @@ internal sealed class VanillaPackFilesCacheReader
                     }
 
                     var fileCount = CheckedCount(reader.ReadUInt32(), MaxTotalFileCount);
+                    var nonWemFileCount = CheckedCount(reader.ReadUInt32(), fileCount);
                     var firstStartPos = CheckedInt64(reader.ReadUInt64());
                     var filesOffset = reader.Position;
 
@@ -183,6 +240,7 @@ internal sealed class VanillaPackFilesCacheReader
                         header,
                         dependencyPacks,
                         fileCount,
+                        nonWemFileCount,
                         firstStartPos,
                         filesOffset,
                         recordEnd);
@@ -274,16 +332,23 @@ internal sealed class VanillaPackFilesCacheReader
     private static double GetNodeMtimeMilliseconds(FileInfo packFile)
         => (packFile.LastWriteTimeUtc - DateTime.UnixEpoch).TotalMilliseconds;
 
+    private static string GetFileName(string path)
+    {
+        var separator = path.LastIndexOfAny(['\\', '/']);
+        return separator < 0 ? path : path[(separator + 1)..];
+    }
+
     private static (byte[] Payload, Dictionary<string, CacheEntry> Entries) EmptyCache()
         => (Array.Empty<byte>(), new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase));
 
-    internal sealed record CachedPackIndex(
-        CachedPackFileHeader Header,
-        IReadOnlyList<CachedPackedFile> PackedFiles,
-        IReadOnlyList<string> DependencyPacks,
+    internal sealed record CachedContainerBuild(
+        PackFileContainer Container,
+        int RetainedFileCount,
         int SkippedWemCount,
         double MetadataValidationMs,
-        double FileMaterializeMs);
+        double DirectFileMaterializeMs,
+        double ContainerSetupMs,
+        bool UsedAllWemFastPath);
 
     internal sealed record CachedPackFileHeader(
         string Version,
@@ -293,18 +358,13 @@ internal sealed class VanillaPackFilesCacheReader
         int PackFileCount,
         byte[] Buffer);
 
-    internal sealed record CachedPackedFile(
-        string Name,
-        long FileSize,
-        long StartPos,
-        bool IsCompressed);
-
     private sealed record CacheEntry(
         long Size,
         double LastChangedLocal,
         CachedPackFileHeader Header,
         IReadOnlyList<string> DependencyPacks,
         int FileCount,
+        int NonWemFileCount,
         long FirstStartPos,
         int FilesOffset,
         int FilesEndOffset);
