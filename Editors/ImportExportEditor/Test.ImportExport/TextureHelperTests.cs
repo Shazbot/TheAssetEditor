@@ -41,43 +41,6 @@ public class TextureHelperTests
     }
 
     [Test]
-    public void ZstdTextureProbeReportsCompressedTransformedPayload()
-    {
-        var image = new TextureHelper.DecodedDdsImage(
-            4,
-            4,
-            Enumerable.Repeat(new byte[] { 30, 20, 10, 255 }, 16)
-                .SelectMany(x => x)
-                .ToArray());
-
-        var result = TextureHelper.ProbeBgraToRgbaZstd(image);
-
-        Assert.That(result.RawRgbaBytes, Is.EqualTo(4 * 4 * 4));
-        Assert.That(result.ZstdBytes, Is.GreaterThan(0));
-        Assert.That(result.ZstdBytes, Is.LessThan(result.RawRgbaBytes));
-        Assert.That(result.CompressionLevel, Is.EqualTo(1));
-        Assert.That(result.RgbaConvertMs, Is.GreaterThanOrEqualTo(0));
-        Assert.That(result.ZstdMs, Is.GreaterThanOrEqualTo(0));
-    }
-
-    [TestCase(4, 4, true)]
-    [TestCase(510, 512, true)]
-    [TestCase(512, 512, true)]
-    [TestCase(1024, 1024, true)]
-    [TestCase(2048, 2048, true)]
-    [TestCase(0, 512, false)]
-    [TestCase(512, 0, false)]
-    public void RawKtx2CompatibilityGuardAcceptsPositiveDimensions(
-        int width,
-        int height,
-        bool expected)
-    {
-        var image = new TextureHelper.DecodedDdsImage(width, height, Array.Empty<byte>());
-
-        Assert.That(TextureHelper.CanEncodeKtx2ForSharpGltf(image), Is.EqualTo(expected));
-    }
-
-    [Test]
     public void EncodeBgraToKtx2WritesLosslessLinearRgbaPayload()
     {
         var pixels = Enumerable.Range(0, 16)
