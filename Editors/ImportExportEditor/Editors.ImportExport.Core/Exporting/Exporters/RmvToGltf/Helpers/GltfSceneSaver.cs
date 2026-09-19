@@ -94,6 +94,23 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
                 return stream;
             });
 
+        // The headless preview scene is disposable after this save. Prepare it
+        // for GLB output in place so SharpGLTF does not defensively DeepClone()
+        // the entire model before embedding images/merging buffers. DeepClone()
+        // serializes the model to temporary glTF and deserializes it again, which
+        // is especially expensive for previews containing tens of MB of KTX2 data.
+        var inPlacePrepareStopwatch = Stopwatch.StartNew();
+        modelRoot.MergeImages();
+        modelRoot.MergeBuffers();
+        inPlacePrepareStopwatch.Stop();
+
+        // Images are already internal buffer views after MergeImages(). Keeping
+        // SatelliteFile here prevents WriteBinarySchema2 from requesting another
+        // image merge (and therefore another defensive clone). _WriteToSatellite
+        // detects the existing buffer views and leaves them embedded in the GLB;
+        // no image sidecar files are emitted.
+        context.ImageWriting = ResourceWriteMode.SatelliteFile;
+
         var sharpGltfStopwatch = Stopwatch.StartNew();
         modelRoot.SaveGLB(Path.GetFileName(fullOutputPath), context);
         sharpGltfStopwatch.Stop();
@@ -119,9 +136,10 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
         totalStopwatch.Stop();
 
         Logger.Here().Debug(
-            "GLB save timing for {OutputName}: total={TotalMs:F1}ms, sharpGltf={SharpGltfMs:F1}ms, preprocessEmbedSerialize={PreprocessEmbedSerializeMs:F1}ms, fileWrite={FileWriteMs:F1}ms, cleanup={CleanupMs:F1}ms, outputBytes={OutputBytes}, streamedBytes={StreamedBytes}, logicalImages={LogicalImages}, generatedTextureBytes={GeneratedTextureBytes}, generatedTextureCount={GeneratedTextureCount}",
+            "GLB save timing for {OutputName}: total={TotalMs:F1}ms, inPlacePrepare={InPlacePrepareMs:F1}ms, sharpGltf={SharpGltfMs:F1}ms, preprocessSerialize={PreprocessSerializeMs:F1}ms, fileWrite={FileWriteMs:F1}ms, cleanup={CleanupMs:F1}ms, outputBytes={OutputBytes}, streamedBytes={StreamedBytes}, logicalImages={LogicalImages}, generatedTextureBytes={GeneratedTextureBytes}, generatedTextureCount={GeneratedTextureCount}",
             Path.GetFileName(fullOutputPath),
             totalStopwatch.Elapsed.TotalMilliseconds,
+            inPlacePrepareStopwatch.Elapsed.TotalMilliseconds,
             sharpGltfStopwatch.Elapsed.TotalMilliseconds,
             preprocessEmbedSerializeMs,
             fileWriteMs,
