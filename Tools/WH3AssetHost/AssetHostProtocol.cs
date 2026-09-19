@@ -211,7 +211,13 @@ public sealed class AssetHostDispatcher : IDisposable
                     : string.Equals(command, "exportModel", StringComparison.Ordinal)
                         ? "ExportFailed"
                         : "RequestFailed";
-            response = AssetHostResponse.Fail(requestId, command, code, exception.Message, exception.ToString());
+            _logger.Error(
+                exception,
+                "Asset host request failed: requestId={RequestId}, command={Command}, code={Code}",
+                requestId,
+                command,
+                code);
+            response = AssetHostResponse.Fail(requestId, command, code, exception.Message);
         }
 
         stopwatch.Stop();
@@ -271,7 +277,7 @@ public sealed class AssetHostDispatcher : IDisposable
         previous?.Dispose();
         runtimeReplaceStopwatch.Stop();
 
-        _logger.Information(
+        _logger.Debug(
             "Asset host initialize phases: requestId={RequestId}, packs={PackCount}, runtimeCreate={RuntimeCreateMs}ms, runtimeReplace={RuntimeReplaceMs}ms, vanillaPackCache={HasVanillaPackCache}",
             requestId,
             packPaths.Count,
