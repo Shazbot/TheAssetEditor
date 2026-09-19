@@ -148,7 +148,7 @@ namespace GameWorld.Core.Services
             _initialIndexTask.GetAwaiter().GetResult();
             stopwatch.Stop();
 
-            _logger.Here().Information(
+            _logger.Here().Debug(
                 "Skeleton animation lookup waited {ElapsedMs}ms in {CallerName}",
                 stopwatch.ElapsedMilliseconds,
                 callerName);
@@ -198,7 +198,7 @@ namespace GameWorld.Core.Services
             phaseStopwatch.Stop();
             totalStopwatch.Stop();
 
-            _logger.Here().Information(
+            _logger.Here().Debug(
                 "Skeleton animation container indexed in {TotalMs}ms for [{ContainerName}]: discoverOrCache={DiscoverOrCacheMs}ms, merge={MergeMs}ms, animationRefs={AnimationCount}, skeletonFiles={SkeletonCount}",
                 totalStopwatch.ElapsedMilliseconds,
                 packFileContainer.Name,
@@ -287,7 +287,7 @@ namespace GameWorld.Core.Services
             var materializeMs = phaseStopwatch.ElapsedMilliseconds;
 
             stopwatch.Stop();
-            _logger.Here().Information(
+            _logger.Here().Debug(
                 "Skeleton animation container discovery completed in {ElapsedMs}ms for [{ContainerName}]: findAnimations={FindAnimationsMs}ms, categorize={CategorizeMs}ms, group={GroupMs}ms, diskReadParse={DiskReadParseMs}ms, memoryReadParse={MemoryReadParseMs}ms, materialize={MaterializeMs}ms, animationRefs={AnimationCount}, skeletonFiles={SkeletonCount}",
                 stopwatch.ElapsedMilliseconds,
                 packFileContainer.Name,
