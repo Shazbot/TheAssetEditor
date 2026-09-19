@@ -97,6 +97,13 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
             var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             totalStopwatch.Stop();
 
+            if (_textureEncodingProbe != null)
+            {
+                var srgb = IsLikelySrgbTexture(filePath, convertToBlenderFormat);
+                var losslessKtx2 = TextureHelper.EncodeBgraToKtx2(decoded, srgb);
+                _textureEncodingProbe.Probe(filePath, decoded, srgb, losslessKtx2);
+            }
+
             if (_enableKtx2Probe)
             {
                 var probe = TextureHelper.ProbeBgraToRgbaZstd(decoded);
@@ -244,6 +251,24 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
             else if (FileExtensionHelper.IsDdsFile(file.Name))
                 return ExportSupportEnum.Supported;
             return ExportSupportEnum.NotSupported;
+        }
+
+        private static bool IsLikelySrgbTexture(
+            string filePath,
+            bool convertToBlenderFormat)
+        {
+            if (convertToBlenderFormat)
+                return false;
+
+            var normalized = filePath.Replace('\\', '/').ToLowerInvariant();
+            return !normalized.Contains("normal")
+                && !normalized.Contains("material")
+                && !normalized.Contains("gloss")
+                && !normalized.Contains("roughness")
+                && !normalized.Contains("metallic")
+                && !normalized.Contains("occlusion")
+                && !normalized.Contains("_ao")
+                && !normalized.Contains("mask");
         }
 
         private static void ConvertToBlenderFormatInPlace(byte[] pixels)

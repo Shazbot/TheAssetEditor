@@ -108,6 +108,12 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             totalStopwatch.Stop();
 
+            if (_textureEncodingProbe != null)
+            {
+                var losslessKtx2 = TextureHelper.EncodeBgraToKtx2(decoded, srgb: false);
+                _textureEncodingProbe.Probe(filePath, decoded, srgb: false, losslessKtx2);
+            }
+
             if (_enableKtx2Probe)
             {
                 var probe = TextureHelper.ProbeBgraToRgbaZstd(decoded);

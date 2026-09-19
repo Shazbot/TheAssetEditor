@@ -1,15 +1,15 @@
 using System.Diagnostics;
 using MeshImportExport;
-using MonoGame.Tool;
+using System.Runtime.InteropServices;
 using Serilog;
 
 namespace WH3AssetHost;
 
 /// <summary>
-/// Temporary headless-only benchmark comparing the current lossless
-/// raw-RGBA+Zstd KTX2 path with Fast PNG and fast UASTC+Zstd KTX2.
-/// The actual exported texture remains the lossless KTX2 produced by
-/// TextureHelper; this probe only measures alternatives.
+/// Temporary headless-only benchmark comparing the known-good Fast PNG
+/// preview path with lossless raw-RGBA+Zstd KTX2 and fast UASTC+Zstd KTX2.
+/// PNG remains the actual exported texture; this probe only measures
+/// alternatives and never changes the GLB material input.
 /// </summary>
 internal sealed class UastcTextureBenchmarkProbe : ITextureEncodingProbe
 {
@@ -49,12 +49,18 @@ internal sealed class UastcTextureBenchmarkProbe : ITextureEncodingProbe
                 $"{(srgb ? string.Empty : "-linear ")}" +
                 $"-output_file {Quote(outputPath)}";
 
+            var basisuPath = ResolveBasisuExecutable();
+            if (basisuPath == null)
+                throw new FileNotFoundException(
+                    $"Unable to find basisu.exe under '{AppContext.BaseDirectory}'.");
+
             var basisuStopwatch = Stopwatch.StartNew();
-            var exitCode = Basisu.Run(
+            var exitCode = RunBasisu(
+                basisuPath,
                 args,
+                root,
                 out var stdOut,
-                out var stdErr,
-                workingDirectory: root);
+                out var stdErr);
             basisuStopwatch.Stop();
 
             if (exitCode != 0 || !File.Exists(outputPath))
@@ -121,6 +127,93 @@ internal sealed class UastcTextureBenchmarkProbe : ITextureEncodingProbe
                     root);
             }
         }
+    }
+
+    private static readonly Lazy<string?> BasisuExecutable = new(FindBasisuExecutable);
+    private static int _basisuPathLogged;
+
+    private static string? ResolveBasisuExecutable()
+    {
+        var path = BasisuExecutable.Value;
+        if (path != null && Interlocked.Exchange(ref _basisuPathLogged, 1) == 0)
+        {
+            Logger.Information(
+                "Using BasisU benchmark executable {BasisuPath}",
+                path);
+        }
+
+        return path;
+    }
+
+    private static string? FindBasisuExecutable()
+    {
+        var architecture = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.Arm64 or Architecture.Arm => "arm64",
+            _ => "x64"
+        };
+
+        var baseDirectory = AppContext.BaseDirectory;
+        var candidates = new[]
+        {
+            Path.Combine(baseDirectory, $"windows-{architecture}", "basisu.exe"),
+            Path.Combine(baseDirectory, "binaries", $"windows-{architecture}", "basisu.exe"),
+            Path.Combine(baseDirectory, "windows", "basisu.exe"),
+            Path.Combine(baseDirectory, "binaries", "windows", "basisu.exe")
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        try
+        {
+            return Directory
+                .EnumerateFiles(baseDirectory, "basisu.exe", SearchOption.AllDirectories)
+                .Where(path => path.Contains("windows", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(path => path.Contains($"windows-{architecture}", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .FirstOrDefault();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static int RunBasisu(
+        string executablePath,
+        string arguments,
+        string workingDirectory,
+        out string stdout,
+        out string stderr)
+    {
+        var processInfo = new ProcessStartInfo
+        {
+            FileName = executablePath,
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            ErrorDialog = false,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true
+        };
+
+        using var process = new Process { StartInfo = processInfo };
+        process.Start();
+        process.StandardInput.Close();
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+
+        stdout = stdoutTask.GetAwaiter().GetResult();
+        stderr = stderrTask.GetAwaiter().GetResult();
+        return process.ExitCode;
     }
 
     private static long WriteUncompressedBgraDds(
