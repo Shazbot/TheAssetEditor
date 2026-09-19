@@ -224,11 +224,11 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             foreach (var texture in texturesForModel)
             {
                 if (texture.ImageData is { Length: > 0 } imageData)
-                    material.WithChannelImage(texture.GlftTexureType, imageData);
+                    material.WithChannelImage(texture.GltfTextureType, imageData);
                 else
-                    material.WithChannelImage(texture.GlftTexureType, texture.SystemFilePath);
+                    material.WithChannelImage(texture.GltfTextureType, texture.SystemFilePath);
 
-                var channel = material.UseChannel(texture.GlftTexureType);
+                var channel = material.UseChannel(texture.GltfTextureType);
                 if (channel?.Texture?.PrimaryImage != null)
                 {
                     // Preserve the generated name even when the image is supplied
