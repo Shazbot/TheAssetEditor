@@ -120,7 +120,7 @@ namespace Shared.Core.PackFiles.Utility
                 skippedWemFiles,
                 allWemFastPathPacks);
 
-            Logger.Here().Information(
+            Logger.Here().Debug(
                 "Headless pack slowest loads: {SlowestPacks}",
                 string.Join(", ", slowestPacks
                     .OrderByDescending(x => x.TotalMs)
