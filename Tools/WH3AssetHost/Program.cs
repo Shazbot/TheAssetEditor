@@ -196,6 +196,10 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             .Where(x => x.IsVanillaPack)
             .Select(x => x.Container)
             .ToHashSet();
+        var metadataCacheableVanillaContainers = loadedPacks
+            .Where(x => x.UsedVanillaFilesCache)
+            .Select(x => x.Container)
+            .ToHashSet();
         var packFileService = HeadlessPackFileServiceFactory.Create(
             loadedPacks.Select(x => x.Container));
         phaseStopwatch.Stop();
@@ -226,7 +230,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
                 packFileService,
                 new GltfAnimationMetadataLookupCacheOptions(
                     GetAnimationMetadataCacheDirectory(),
-                    vanillaPackContainers)),
+                    metadataCacheableVanillaContainers)),
             skeletonLookup,
             modelResolver,
             compositionResolver,
@@ -241,10 +245,11 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         totalStopwatch.Stop();
 
         Log.ForContext<HeadlessExportRuntime>().Information(
-            "Asset host runtime initialized in {TotalMs}ms: {PackCount} packs ({VanillaPackCount} vanilla), packLoad={PackLoadMs}ms, packService={PackServiceMs}ms, exportPipeline={ExportPipelineMs}ms",
+            "Asset host runtime initialized in {TotalMs}ms: {PackCount} packs ({VanillaPackCount} vanilla, {MetadataCacheableVanillaPackCount} metadata-cacheable), packLoad={PackLoadMs}ms, packService={PackServiceMs}ms, exportPipeline={ExportPipelineMs}ms",
             totalStopwatch.ElapsedMilliseconds,
             loadedPacks.Count,
             vanillaPackContainers.Count,
+            metadataCacheableVanillaContainers.Count,
             packLoadMs,
             packServiceMs,
             exportPipelineMs);

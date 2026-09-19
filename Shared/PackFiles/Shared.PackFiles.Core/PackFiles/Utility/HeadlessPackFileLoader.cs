@@ -27,7 +27,8 @@ namespace Shared.Core.PackFiles.Utility
 
     public sealed record HeadlessPackFileLoadResult(
         IPackFileContainer Container,
-        bool IsVanillaPack);
+        bool IsVanillaPack,
+        bool UsedVanillaFilesCache = false);
 
     public sealed class HeadlessPackFileLoader : IHeadlessPackFileLoader
     {
@@ -161,7 +162,10 @@ namespace Shared.Core.PackFiles.Utility
 
                 return new PackLoadDetails(
                     fullPath,
-                    new HeadlessPackFileLoadResult(cachedBuild.Container, true),
+                    new HeadlessPackFileLoadResult(
+                        cachedBuild.Container,
+                        IsVanillaPack: true,
+                        UsedVanillaFilesCache: true),
                     UsedCache: true,
                     cachedBuild.RetainedFileCount,
                     cachedBuild.SkippedWemCount,
