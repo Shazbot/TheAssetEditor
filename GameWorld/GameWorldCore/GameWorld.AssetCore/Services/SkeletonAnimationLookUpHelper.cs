@@ -156,8 +156,13 @@ namespace GameWorld.Core.Services
 
         void LoadFromPackFileContainer(IPackFileContainer packFileContainer)
         {
+            var totalStopwatch = Stopwatch.StartNew();
+            var phaseStopwatch = Stopwatch.StartNew();
             var discovered = DiscoverFromPackFileContainer(packFileContainer);
+            phaseStopwatch.Stop();
+            var discoverOrCacheMs = phaseStopwatch.ElapsedMilliseconds;
 
+            phaseStopwatch.Restart();
             lock (_threadLock)
             {
                 if (_containerToAnimationPaths.ContainsKey(packFileContainer) == false)
@@ -190,6 +195,17 @@ namespace GameWorld.Core.Services
                     }
                 }
             }
+            phaseStopwatch.Stop();
+            totalStopwatch.Stop();
+
+            _logger.Here().Information(
+                "Skeleton animation container indexed in {TotalMs}ms for [{ContainerName}]: discoverOrCache={DiscoverOrCacheMs}ms, merge={MergeMs}ms, animationRefs={AnimationCount}, skeletonFiles={SkeletonCount}",
+                totalStopwatch.ElapsedMilliseconds,
+                packFileContainer.Name,
+                discoverOrCacheMs,
+                phaseStopwatch.ElapsedMilliseconds,
+                discovered.AnimationsBySkeletonName.Values.Sum(x => x.Count),
+                discovered.SkeletonFileNames.Count);
         }
 
         (List<string> SkeletonFileNames, Dictionary<string, List<AnimationReference>> AnimationsBySkeletonName) DiscoverFromPackFileContainer(IPackFileContainer packFileContainer)
@@ -199,12 +215,16 @@ namespace GameWorld.Core.Services
                 return cached.Value;
 
             var stopwatch = Stopwatch.StartNew();
+            var phaseStopwatch = Stopwatch.StartNew();
             var skeletonFileNameList = new ConcurrentBag<string>();
             var animationList = new ConcurrentDictionary<string, ConcurrentBag<AnimationReference>>(StringComparer.OrdinalIgnoreCase);
 
             var allAnimations = PackFileServiceUtility.FindAllWithExtentionIncludePaths(_packFiles, ".anim", packFileContainer);
+            phaseStopwatch.Stop();
+            var findAnimationsMs = phaseStopwatch.ElapsedMilliseconds;
 
             // Split animations in to two categories.
+            phaseStopwatch.Restart();
             // One for packfiles which are saved to disk, and one for in memory. 
             // Disk is the slow version, so we handle them specially 
             var allAnimsInSavedPackedFiles = new List<(string FullPath, PackedFileSource DataSource)>();
@@ -222,10 +242,17 @@ namespace GameWorld.Core.Services
             // This is done for performance reasons. Opening all the animations files from disk is very slow
             // creating stream which is reused goes a lot faster!
             // https://www.jacksondunstan.com/articles/3568
+            phaseStopwatch.Stop();
+            var categorizeMs = phaseStopwatch.ElapsedMilliseconds;
+
+            phaseStopwatch.Restart();
             var groupedAnims = allAnimsInSavedPackedFiles
                 .GroupBy(x => x.DataSource.Parent.FilePath)
                 .ToList();
+            phaseStopwatch.Stop();
+            var groupMs = phaseStopwatch.ElapsedMilliseconds;
 
+            phaseStopwatch.Restart();
             Parallel.ForEach(groupedAnims, group =>
             {
                 using var stream = new FileStream(group.Key, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -239,23 +266,37 @@ namespace GameWorld.Core.Services
                     FileDiscovered(bytes, packFileContainer, file.FullPath, skeletonFileNameList, animationList);
                 }
             });
+            phaseStopwatch.Stop();
+            var diskReadParseMs = phaseStopwatch.ElapsedMilliseconds;
 
             // Handle all in memory files 
+            phaseStopwatch.Restart();
             Parallel.ForEach(allAnimsOtherFiles, animation =>
             {
                 FileDiscovered(animation.DataSource.PeekData(100), packFileContainer, animation.FullPath, skeletonFileNameList, animationList);
             });
+            phaseStopwatch.Stop();
+            var memoryReadParseMs = phaseStopwatch.ElapsedMilliseconds;
 
+            phaseStopwatch.Restart();
             var resultAnimations = animationList.ToDictionary(
                 x => x.Key,
                 x => x.Value.ToList(),
                 StringComparer.OrdinalIgnoreCase);
+            phaseStopwatch.Stop();
+            var materializeMs = phaseStopwatch.ElapsedMilliseconds;
 
             stopwatch.Stop();
             _logger.Here().Information(
-                "Skeleton animation container discovery completed in {ElapsedMs}ms for [{ContainerName}] with {AnimationCount} animation refs and {SkeletonCount} skeleton files",
+                "Skeleton animation container discovery completed in {ElapsedMs}ms for [{ContainerName}]: findAnimations={FindAnimationsMs}ms, categorize={CategorizeMs}ms, group={GroupMs}ms, diskReadParse={DiskReadParseMs}ms, memoryReadParse={MemoryReadParseMs}ms, materialize={MaterializeMs}ms, animationRefs={AnimationCount}, skeletonFiles={SkeletonCount}",
                 stopwatch.ElapsedMilliseconds,
                 packFileContainer.Name,
+                findAnimationsMs,
+                categorizeMs,
+                groupMs,
+                diskReadParseMs,
+                memoryReadParseMs,
+                materializeMs,
                 resultAnimations.Values.Sum(x => x.Count),
                 skeletonFileNameList.Count);
 

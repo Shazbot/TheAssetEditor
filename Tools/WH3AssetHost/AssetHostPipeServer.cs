@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
+using Serilog;
 
 namespace WH3AssetHost;
 
@@ -13,10 +14,12 @@ public sealed class AssetHostPipeServer
 {
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
     private readonly IAssetHostRuntimeFactory _runtimeFactory;
+    private readonly ILogger _logger;
 
     public AssetHostPipeServer(IAssetHostRuntimeFactory runtimeFactory)
     {
         _runtimeFactory = runtimeFactory ?? throw new ArgumentNullException(nameof(runtimeFactory));
+        _logger = Log.ForContext<AssetHostPipeServer>();
     }
 
     public async Task RunAsync(
@@ -35,15 +38,25 @@ public sealed class AssetHostPipeServer
 
         try
         {
+            var pipeStartupStopwatch = Stopwatch.StartNew();
             using var pipe = new NamedPipeServerStream(
                 pipeName,
                 PipeDirection.InOut,
                 maxNumberOfServerInstances: 1,
                 transmissionMode: PipeTransmissionMode.Byte,
                 options: PipeOptions.Asynchronous);
+            pipeStartupStopwatch.Stop();
+            _logger.Information(
+                "Asset host pipe created in {PipeStartupMs}ms; waiting for client",
+                pipeStartupStopwatch.ElapsedMilliseconds);
             try
             {
+                var connectionWaitStopwatch = Stopwatch.StartNew();
                 await pipe.WaitForConnectionAsync(stop.Token);
+                connectionWaitStopwatch.Stop();
+                _logger.Information(
+                    "Asset host pipe client connected after {ConnectionWaitMs}ms",
+                    connectionWaitStopwatch.ElapsedMilliseconds);
                 using var dispatcher = new AssetHostDispatcher(
                     _runtimeFactory,
                     new HostMissingSkeletonDecision(pipe, stop.Token));
@@ -68,7 +81,7 @@ public sealed class AssetHostPipeServer
         }
     }
 
-    private static async Task ServeClientAsync(
+    private async Task ServeClientAsync(
         NamedPipeServerStream pipe,
         AssetHostDispatcher dispatcher,
         CancellationToken cancellationToken)
@@ -76,9 +89,11 @@ public sealed class AssetHostPipeServer
         while (!dispatcher.ShutdownRequested && !cancellationToken.IsCancellationRequested)
         {
             byte[]? payload;
+            var frameReadStopwatch = Stopwatch.StartNew();
             try
             {
                 payload = await NamedPipeFrameProtocol.ReadFrameAsync(pipe, cancellationToken);
+                frameReadStopwatch.Stop();
             }
             catch (AssetHostFrameException exception)
             {
@@ -116,6 +131,8 @@ public sealed class AssetHostPipeServer
             if (payload == null)
                 break;
 
+            var processingStopwatch = Stopwatch.StartNew();
+            var dispatchStopwatch = Stopwatch.StartNew();
             AssetHostResponse response;
             try
             {
@@ -133,10 +150,24 @@ public sealed class AssetHostPipeServer
                     "The request could not be processed.",
                     exception.Message);
             }
+            dispatchStopwatch.Stop();
 
+            var responseWriteStopwatch = Stopwatch.StartNew();
             try
             {
                 await NamedPipeFrameProtocol.WriteJsonFrameAsync(pipe, response, cancellationToken);
+                responseWriteStopwatch.Stop();
+                processingStopwatch.Stop();
+                _logger.Information(
+                    "Asset host pipe request served: requestId={RequestId}, command={Command}, success={Success}, requestBytes={RequestBytes}, frameRead={FrameReadMs}ms, dispatch={DispatchMs}ms, responseWrite={ResponseWriteMs}ms, processing={ProcessingMs}ms",
+                    response.RequestId,
+                    response.Command ?? "unknown",
+                    response.Success,
+                    payload.Length,
+                    frameReadStopwatch.ElapsedMilliseconds,
+                    dispatchStopwatch.ElapsedMilliseconds,
+                    responseWriteStopwatch.ElapsedMilliseconds,
+                    processingStopwatch.ElapsedMilliseconds);
             }
             catch (IOException)
             {

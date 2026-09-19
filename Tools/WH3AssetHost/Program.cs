@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Serilog;
 using Serilog.Events;
@@ -16,9 +17,14 @@ namespace WH3AssetHost;
 
 internal static class Program
 {
+    private static readonly Stopwatch ProcessLifetime = Stopwatch.StartNew();
+
     public static int Main(string[] args)
     {
         ConfigureFileLogging(args);
+        Log.Information(
+            "Asset host timing: logging initialized {ElapsedMs}ms after process entry",
+            ProcessLifetime.ElapsedMilliseconds);
 
         try
         {
@@ -167,16 +173,26 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         if (packPaths.Count == 0)
             throw new InvalidOperationException("At least one --pack path is required.");
 
+        var totalStopwatch = Stopwatch.StartNew();
+        var phaseStopwatch = Stopwatch.StartNew();
+
         var eventHub = new NoOpGlobalEventHub();
         var loader = new HeadlessPackFileLoader(vanillaPackFilesCachePath);
         var loadedPacks = loader.LoadOrderedWithMetadata(packPaths);
+        phaseStopwatch.Stop();
+        var packLoadMs = phaseStopwatch.ElapsedMilliseconds;
+
+        phaseStopwatch.Restart();
         var vanillaPackContainers = loadedPacks
             .Where(x => x.IsVanillaPack)
             .Select(x => x.Container)
             .ToHashSet();
         var packFileService = HeadlessPackFileServiceFactory.Create(
             loadedPacks.Select(x => x.Container));
+        phaseStopwatch.Stop();
+        var packServiceMs = phaseStopwatch.ElapsedMilliseconds;
 
+        phaseStopwatch.Restart();
         var modelResolver = new ModelAssetResolver(packFileService);
         var compositionResolver = new VariantMeshCompositionResolver(packFileService, modelResolver);
         var skeletonLookup = new SkeletonAnimationLookUpHelper(
@@ -202,12 +218,25 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             modelResolver,
             compositionResolver,
             missingSkeletonDecision ?? new HeadlessMissingSkeletonDecision());
-
-        return new HeadlessExportRuntime(
+        var runtime = new HeadlessExportRuntime(
             packFileService,
             skeletonLookup,
             new HeadlessGltfExportService(exporter),
             animationCatalogResolver);
+        phaseStopwatch.Stop();
+        var exportPipelineMs = phaseStopwatch.ElapsedMilliseconds;
+        totalStopwatch.Stop();
+
+        Log.ForContext<HeadlessExportRuntime>().Information(
+            "Asset host runtime initialized in {TotalMs}ms: {PackCount} packs ({VanillaPackCount} vanilla), packLoad={PackLoadMs}ms, packService={PackServiceMs}ms, exportPipeline={ExportPipelineMs}ms",
+            totalStopwatch.ElapsedMilliseconds,
+            loadedPacks.Count,
+            vanillaPackContainers.Count,
+            packLoadMs,
+            packServiceMs,
+            exportPipelineMs);
+
+        return runtime;
     }
 
     private static string GetAnimationIndexCacheDirectory()
@@ -221,9 +250,21 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 
     public AssetHostAnimationCatalog GetAnimationCatalog(string assetPath)
     {
+        var totalStopwatch = Stopwatch.StartNew();
+        var phaseStopwatch = Stopwatch.StartNew();
+
         var inputModel = PackFileService.FindFile(assetPath);
+        phaseStopwatch.Stop();
+        var assetLookupMs = phaseStopwatch.ElapsedMilliseconds;
         if (inputModel == null)
         {
+            totalStopwatch.Stop();
+            Log.ForContext<HeadlessExportRuntime>().Information(
+                "Asset host animation catalog completed in {TotalMs}ms for {AssetPath}: success=false, assetLookup={AssetLookupMs}ms",
+                totalStopwatch.ElapsedMilliseconds,
+                assetPath,
+                assetLookupMs);
+
             return new AssetHostAnimationCatalog(
                 false,
                 assetPath,
@@ -233,7 +274,12 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
                 [$"Asset '{assetPath}' was not found in the supplied packs."]);
         }
 
+        phaseStopwatch.Restart();
         var catalog = _animationCatalogResolver.Resolve(inputModel);
+        phaseStopwatch.Stop();
+        var resolveMs = phaseStopwatch.ElapsedMilliseconds;
+
+        phaseStopwatch.Restart();
         var animations = catalog.Animations
             .Select(animation => animation.AnimationFile)
             .Where(path => string.IsNullOrWhiteSpace(path) == false)
@@ -241,6 +287,19 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .Select(path => new AssetHostAnimationReference(path))
             .ToList();
+        phaseStopwatch.Stop();
+        var materializeMs = phaseStopwatch.ElapsedMilliseconds;
+        totalStopwatch.Stop();
+
+        Log.ForContext<HeadlessExportRuntime>().Information(
+            "Asset host animation catalog completed in {TotalMs}ms for {AssetPath}: success=true, assetLookup={AssetLookupMs}ms, resolve={ResolveMs}ms, materialize={MaterializeMs}ms, animations={AnimationCount}, diagnostics={DiagnosticCount}",
+            totalStopwatch.ElapsedMilliseconds,
+            assetPath,
+            assetLookupMs,
+            resolveMs,
+            materializeMs,
+            animations.Count,
+            catalog.Diagnostics.Count);
 
         return new AssetHostAnimationCatalog(
             true,
@@ -253,26 +312,48 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 
     public ExportResult ExportModel(AssetHostExportRequest request)
     {
+        var totalStopwatch = Stopwatch.StartNew();
+        var phaseStopwatch = Stopwatch.StartNew();
+
         var inputModel = PackFileService.FindFile(request.AssetPath);
+        phaseStopwatch.Stop();
+        var assetLookupMs = phaseStopwatch.ElapsedMilliseconds;
         if (inputModel == null)
         {
+            totalStopwatch.Stop();
+            Log.ForContext<HeadlessExportRuntime>().Information(
+                "Asset host export completed in {TotalMs}ms for {AssetPath}: success=false, assetLookup={AssetLookupMs}ms, reason=AssetNotFound",
+                totalStopwatch.ElapsedMilliseconds,
+                request.AssetPath,
+                assetLookupMs);
             return Failure(
                 "AssetNotFound",
                 $"Asset '{request.AssetPath}' was not found in the supplied packs.");
         }
 
+        phaseStopwatch.Restart();
         var animationFiles = new List<PackFile>();
         foreach (var animationPath in request.AnimationPaths)
         {
             var animation = PackFileService.FindFile(animationPath);
             if (animation == null)
             {
+                phaseStopwatch.Stop();
+                totalStopwatch.Stop();
+                Log.ForContext<HeadlessExportRuntime>().Information(
+                    "Asset host export completed in {TotalMs}ms for {AssetPath}: success=false, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, reason=AnimationNotFound",
+                    totalStopwatch.ElapsedMilliseconds,
+                    request.AssetPath,
+                    assetLookupMs,
+                    phaseStopwatch.ElapsedMilliseconds);
                 return Failure(
                     "AnimationNotFound",
                     $"Animation '{animationPath}' was not found in the supplied packs.");
             }
             animationFiles.Add(animation);
         }
+        phaseStopwatch.Stop();
+        var animationLookupMs = phaseStopwatch.ElapsedMilliseconds;
 
         var settings = new RmvToGltfExporterSettings(
             inputModel,
@@ -293,7 +374,27 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             // channels, so avoid converting and inverting them.
             ExportAuxiliaryMasks = false
         };
-        return ExportService.Export(settings);
+
+        phaseStopwatch.Restart();
+        var result = ExportService.Export(settings);
+        phaseStopwatch.Stop();
+        var exportMs = phaseStopwatch.ElapsedMilliseconds;
+        totalStopwatch.Stop();
+
+        Log.ForContext<HeadlessExportRuntime>().Information(
+            "Asset host export completed in {TotalMs}ms for {AssetPath}: success={Success}, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, gltfExport={ExportMs}ms, animations={AnimationCount}, variantSelections={VariantSelectionCount}, materials={ExportMaterials}, skeleton={IncludeSkeleton}",
+            totalStopwatch.ElapsedMilliseconds,
+            request.AssetPath,
+            result.Success,
+            assetLookupMs,
+            animationLookupMs,
+            exportMs,
+            animationFiles.Count,
+            request.VariantSelections?.Count ?? 0,
+            request.ExportMaterials,
+            request.IncludeSkeleton);
+
+        return result;
     }
 
     private static ExportResult Failure(string code, string message)

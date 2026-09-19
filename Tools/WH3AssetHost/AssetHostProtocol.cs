@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Reflection;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf;
+using Serilog;
 
 namespace WH3AssetHost;
 
@@ -126,6 +128,7 @@ public static class AssetHostProtocol
 public sealed class AssetHostDispatcher : IDisposable
 {
     private readonly IAssetHostRuntimeFactory _runtimeFactory;
+    private readonly ILogger _logger;
     private IAssetHostRuntime? _runtime;
     private string? _outputRoot;
     private readonly IMissingSkeletonDecision? _missingSkeletonDecision;
@@ -137,6 +140,7 @@ public sealed class AssetHostDispatcher : IDisposable
     {
         _runtimeFactory = runtimeFactory ?? throw new ArgumentNullException(nameof(runtimeFactory));
         _missingSkeletonDecision = missingSkeletonDecision;
+        _logger = Log.ForContext<AssetHostDispatcher>();
     }
 
     public bool ShutdownRequested => _shutdownRequested;
@@ -181,9 +185,11 @@ public sealed class AssetHostDispatcher : IDisposable
         if (string.IsNullOrWhiteSpace(command))
             return AssetHostResponse.Fail(requestId, null, "MissingCommand", "The command field is required.");
 
+        var stopwatch = Stopwatch.StartNew();
+        AssetHostResponse response;
         try
         {
-            return command switch
+            response = command switch
             {
                 "hello" => HandleHello(requestId),
                 "initialize" => HandleInitialize(request, requestId),
@@ -205,8 +211,17 @@ public sealed class AssetHostDispatcher : IDisposable
                     : string.Equals(command, "exportModel", StringComparison.Ordinal)
                         ? "ExportFailed"
                         : "RequestFailed";
-            return AssetHostResponse.Fail(requestId, command, code, exception.Message, exception.ToString());
+            response = AssetHostResponse.Fail(requestId, command, code, exception.Message, exception.ToString());
         }
+
+        stopwatch.Stop();
+        _logger.Information(
+            "Asset host request completed: requestId={RequestId}, command={Command}, success={Success}, elapsed={ElapsedMs}ms",
+            requestId,
+            command,
+            response.Success,
+            stopwatch.ElapsedMilliseconds);
+        return response;
     }
 
     private static AssetHostResponse HandleHello(string requestId)
@@ -245,11 +260,24 @@ public sealed class AssetHostDispatcher : IDisposable
 
         // Build first. If a pack is corrupt, the previous runtime remains
         // usable and is not disposed by a failed replacement.
+        var runtimeCreateStopwatch = Stopwatch.StartNew();
         var replacement = CreateRuntime(packPaths, outputRoot, vanillaPackFilesCachePath);
+        runtimeCreateStopwatch.Stop();
+
+        var runtimeReplaceStopwatch = Stopwatch.StartNew();
         var previous = _runtime;
         _runtime = replacement;
         _outputRoot = outputRoot;
         previous?.Dispose();
+        runtimeReplaceStopwatch.Stop();
+
+        _logger.Information(
+            "Asset host initialize phases: requestId={RequestId}, packs={PackCount}, runtimeCreate={RuntimeCreateMs}ms, runtimeReplace={RuntimeReplaceMs}ms, vanillaPackCache={HasVanillaPackCache}",
+            requestId,
+            packPaths.Count,
+            runtimeCreateStopwatch.ElapsedMilliseconds,
+            runtimeReplaceStopwatch.ElapsedMilliseconds,
+            string.IsNullOrWhiteSpace(vanillaPackFilesCachePath) == false);
 
         return AssetHostResponse.Ok(
             requestId,

@@ -1,4 +1,5 @@
-﻿using Editors.ImportExport.Common;
+﻿using System.Diagnostics;
+using Editors.ImportExport.Common;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers;
 using Editors.ImportExport.Misc;
 using GameWorld.Core.Services;
@@ -133,20 +134,23 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             if (IsVariantMeshDefinition(settings.InputModelFile))
                 return ExportVariantMesh(settings);
 
+            var totalStopwatch = Stopwatch.StartNew();
+            var phaseStopwatch = Stopwatch.StartNew();
+
             var resolvedAsset = _modelAssetResolver.Resolve(settings.InputModelFile);
+            phaseStopwatch.Stop();
+            var resolveMs = phaseStopwatch.ElapsedMilliseconds;
             foreach (var diagnostic in resolvedAsset.Diagnostics)
                 _logger.Here().Warning(diagnostic);
 
             var outputScene = ModelRoot.CreateModel();
             var modelPart = new ExportModelPart(resolvedAsset, string.Empty, "model", true, true);
-            // Keep the established direct RMV/WS behavior: those exports only
-            // request a skeleton when animation export is enabled. VMD
-            // composition intentionally decouples these choices below so slot
-            // attachments can still use a shared skeleton without clips.
             ProcessedGltfSkeleton? skeleton = null;
             global::Shared.GameFormats.Animation.AnimationFile? skeletonFile = null;
+            var skeletonMs = 0L;
             if (settings.IncludeSkeleton)
             {
+                phaseStopwatch.Restart();
                 skeleton = CreateSharedSkeleton(
                     [modelPart],
                     settings,
@@ -154,23 +158,64 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                     warnWhenMissing: true,
                     out skeletonFile,
                     out var exportCancelled);
-                // Preserve the direct exporter behavior: choosing No in the
-                // missing-skeleton warning aborts without saving an output.
+                phaseStopwatch.Stop();
+                skeletonMs = phaseStopwatch.ElapsedMilliseconds;
                 if (exportCancelled)
+                {
+                    totalStopwatch.Stop();
+                    _logger.Here().Information(
+                        "RMV/WS export timing for {AssetName}: status=cancelled, total={TotalMs}ms, resolve={ResolveMs}ms, skeleton={SkeletonMs}ms",
+                        settings.InputModelFile.Name,
+                        totalStopwatch.ElapsedMilliseconds,
+                        resolveMs,
+                        skeletonMs);
                     return ExportExecutionResult.Cancelled();
+                }
             }
-            if (skeleton != null && skeletonFile != null && settings.ExportAnimations)
-                _gltfAnimationBuilder.Build(skeletonFile, settings, skeleton, outputScene);
-            var textureSession = new GltfTextureExportSession(collisionSafe: false);
-            var textures = _gltfTextureHandler.HandleTextures(resolvedAsset, settings, textureSession);
-            var meshes = BuildMeshes(modelPart, textures, settings, skeleton != null);
 
+            var animationMs = 0L;
+            if (skeleton != null && skeletonFile != null && settings.ExportAnimations)
+            {
+                phaseStopwatch.Restart();
+                _gltfAnimationBuilder.Build(skeletonFile, settings, skeleton, outputScene);
+                phaseStopwatch.Stop();
+                animationMs = phaseStopwatch.ElapsedMilliseconds;
+            }
+
+            var textureSession = new GltfTextureExportSession(collisionSafe: false);
+            phaseStopwatch.Restart();
+            var textures = _gltfTextureHandler.HandleTextures(resolvedAsset, settings, textureSession);
+            phaseStopwatch.Stop();
+            var texturesMs = phaseStopwatch.ElapsedMilliseconds;
+
+            phaseStopwatch.Restart();
+            var meshes = BuildMeshes(modelPart, textures, settings, skeleton != null);
+            phaseStopwatch.Stop();
+            var meshesMs = phaseStopwatch.ElapsedMilliseconds;
+
+            phaseStopwatch.Restart();
             BuildGltfScene(
                 meshes,
                 skeleton,
                 settings,
                 outputScene,
                 textures.Select(x => x.SystemFilePath).ToArray());
+            phaseStopwatch.Stop();
+            var sceneAndSaveMs = phaseStopwatch.ElapsedMilliseconds;
+            totalStopwatch.Stop();
+
+            _logger.Here().Information(
+                "RMV/WS export timing for {AssetName}: status=completed, total={TotalMs}ms, resolve={ResolveMs}ms, skeleton={SkeletonMs}ms, animations={AnimationMs}ms, textures={TexturesMs}ms, meshes={MeshesMs}ms, sceneAndSave={SceneAndSaveMs}ms, meshCount={MeshCount}, textureCount={TextureCount}",
+                settings.InputModelFile.Name,
+                totalStopwatch.ElapsedMilliseconds,
+                resolveMs,
+                skeletonMs,
+                animationMs,
+                texturesMs,
+                meshesMs,
+                sceneAndSaveMs,
+                meshes.Count,
+                textures.Count);
 
             return ExportExecutionResult.Completed();
         }
@@ -180,9 +225,14 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             if (_variantMeshResolver == null)
                 throw new InvalidOperationException("VariantMeshDefinition export requires the variant mesh composition resolver.");
 
+            var totalStopwatch = Stopwatch.StartNew();
+            var phaseStopwatch = Stopwatch.StartNew();
+
             var composition = settings.VariantMeshSelections.Count > 0
                 ? _variantMeshResolver.Resolve(settings.InputModelFile, settings.VariantMeshSelections)
                 : _variantMeshResolver.Resolve(settings.InputModelFile);
+            phaseStopwatch.Stop();
+            var compositionMs = phaseStopwatch.ElapsedMilliseconds;
             foreach (var diagnostic in composition.Diagnostics)
                 _logger.Here().Warning(diagnostic);
 
@@ -194,15 +244,20 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 throw new InvalidOperationException($"Unable to resolve VariantMeshDefinition '{settings.InputModelFile.Name}'. {details}");
             }
 
+            phaseStopwatch.Restart();
             var modelParts = FlattenModelParts(composition.Root);
             if (modelParts.Count == 0)
                 throw new InvalidOperationException($"VariantMeshDefinition '{settings.InputModelFile.Name}' contains no renderable models.");
+            phaseStopwatch.Stop();
+            var flattenMs = phaseStopwatch.ElapsedMilliseconds;
 
             var outputScene = ModelRoot.CreateModel();
             ProcessedGltfSkeleton? skeleton = null;
             global::Shared.GameFormats.Animation.AnimationFile? skeletonFile = null;
+            var skeletonMs = 0L;
             if (settings.IncludeSkeleton)
             {
+                phaseStopwatch.Restart();
                 skeleton = CreateSharedSkeleton(
                     modelParts,
                     settings,
@@ -210,27 +265,67 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                     warnWhenMissing: false,
                     out skeletonFile,
                     out _);
+                phaseStopwatch.Stop();
+                skeletonMs = phaseStopwatch.ElapsedMilliseconds;
             }
+
+            phaseStopwatch.Restart();
             modelParts = ApplySharedSkeletonCompatibility(modelParts, skeleton);
+            phaseStopwatch.Stop();
+            var skeletonCompatibilityMs = phaseStopwatch.ElapsedMilliseconds;
+
             var textureSession = new GltfTextureExportSession(collisionSafe: true);
             var meshes = new List<ExportedMesh>();
             var generatedTexturePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var texturesMs = 0L;
+            var meshesMs = 0L;
 
             foreach (var modelPart in modelParts)
             {
+                phaseStopwatch.Restart();
                 var textures = _gltfTextureHandler.HandleTextures(modelPart.Asset, settings, textureSession);
+                phaseStopwatch.Stop();
+                texturesMs += phaseStopwatch.ElapsedMilliseconds;
                 generatedTexturePaths.UnionWith(textures.Select(x => x.SystemFilePath));
+
+                phaseStopwatch.Restart();
                 meshes.AddRange(BuildMeshes(modelPart, textures, settings, skeleton != null && modelPart.UseSharedSkeleton));
+                phaseStopwatch.Stop();
+                meshesMs += phaseStopwatch.ElapsedMilliseconds;
             }
 
-            // Skeleton creation and animation export are intentionally separate:
-            // attachments and skinning remain useful when animation export is
-            // disabled, while selected animations are still emitted exactly once.
+            var animationMs = 0L;
             if (skeleton != null && skeletonFile != null && settings.ExportAnimations)
+            {
+                phaseStopwatch.Restart();
                 _gltfAnimationBuilder.Build(skeletonFile, settings, skeleton, outputScene);
+                phaseStopwatch.Stop();
+                animationMs = phaseStopwatch.ElapsedMilliseconds;
+            }
 
             _logger.Here().Information($"VMD Export - Parts={modelParts.Count} MeshCount={meshes.Count} Skeleton={skeleton?.Data.Count}");
+
+            phaseStopwatch.Restart();
             BuildGltfScene(meshes, skeleton, settings, outputScene, generatedTexturePaths);
+            phaseStopwatch.Stop();
+            var sceneAndSaveMs = phaseStopwatch.ElapsedMilliseconds;
+            totalStopwatch.Stop();
+
+            _logger.Here().Information(
+                "VMD export timing for {AssetName}: total={TotalMs}ms, composition={CompositionMs}ms, flatten={FlattenMs}ms, skeleton={SkeletonMs}ms, skeletonCompatibility={SkeletonCompatibilityMs}ms, textures={TexturesMs}ms, meshes={MeshesMs}ms, animations={AnimationMs}ms, sceneAndSave={SceneAndSaveMs}ms, parts={PartCount}, meshCount={MeshCount}, textureCount={TextureCount}",
+                settings.InputModelFile.Name,
+                totalStopwatch.ElapsedMilliseconds,
+                compositionMs,
+                flattenMs,
+                skeletonMs,
+                skeletonCompatibilityMs,
+                texturesMs,
+                meshesMs,
+                animationMs,
+                sceneAndSaveMs,
+                modelParts.Count,
+                meshes.Count,
+                generatedTexturePaths.Count);
 
             return ExportExecutionResult.Completed();
         }
