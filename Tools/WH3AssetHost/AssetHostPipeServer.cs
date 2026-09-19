@@ -158,7 +158,7 @@ public sealed class AssetHostPipeServer
                 await NamedPipeFrameProtocol.WriteJsonFrameAsync(pipe, response, cancellationToken);
                 responseWriteStopwatch.Stop();
                 processingStopwatch.Stop();
-                _logger.Information(
+                _logger.Debug(
                     "Asset host pipe request served: requestId={RequestId}, command={Command}, success={Success}, requestBytes={RequestBytes}, frameRead={FrameReadMs}ms, dispatch={DispatchMs}ms, responseWrite={ResponseWriteMs}ms, processing={ProcessingMs}ms",
                     response.RequestId,
                     response.Command ?? "unknown",
