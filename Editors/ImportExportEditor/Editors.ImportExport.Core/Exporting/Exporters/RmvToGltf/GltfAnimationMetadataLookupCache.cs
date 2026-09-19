@@ -115,16 +115,17 @@ internal sealed class GltfAnimationMetadataLookupCache
         try
         {
             using var decompressor = new Decompressor();
-            var payload = decompressor.Unwrap(
-                cachedPack.CompressedPayload,
-                cachedPack.UncompressedLength).ToArray();
+            var payload = new byte[cachedPack.UncompressedLength];
+            var decompressedLength = decompressor.Unwrap(
+                cachedPack.CompressedPayload.AsSpan(0, cachedPack.CompressedLength),
+                payload);
             phaseStopwatch.Stop();
             var decompressMs = phaseStopwatch.Elapsed.TotalMilliseconds;
 
-            if (payload.Length != cachedPack.UncompressedLength)
+            if (decompressedLength != cachedPack.UncompressedLength)
             {
                 throw new InvalidDataException(
-                    $"Decompressed payload length {payload.Length} does not match expected {cachedPack.UncompressedLength}.");
+                    $"Decompressed payload length {decompressedLength} does not match expected {cachedPack.UncompressedLength}.");
             }
 
             phaseStopwatch.Restart();
@@ -150,7 +151,7 @@ internal sealed class GltfAnimationMetadataLookupCache
                 parsedIndex.FragmentCount,
                 parsedIndex.EntryCount,
                 parsedIndex.AnimationCount,
-                cachedPack.CompressedPayload.Length,
+                cachedPack.CompressedLength,
                 payload.Length);
 
             return parsedIndex;
@@ -184,7 +185,8 @@ internal sealed class GltfAnimationMetadataLookupCache
         var binaryBytes = payload.Length;
 
         using var compressor = new Compressor(1);
-        var compressedPayload = compressor.Wrap(payload).ToArray();
+        var compressedPayload = new byte[Compressor.GetCompressBound(payload.Length)];
+        var compressedLength = compressor.Wrap(payload, compressedPayload, 0);
         stopwatch.Stop();
 
         var cachedPack = new CachedPackEnvelope
@@ -193,7 +195,8 @@ internal sealed class GltfAnimationMetadataLookupCache
             Length = packStamp.Length,
             LastWriteTimeUtcTicks = packStamp.LastWriteTimeUtcTicks,
             UncompressedLength = binaryBytes,
-            CompressedPayload = compressedPayload
+            CompressedPayload = compressedPayload,
+            CompressedLength = compressedLength
         };
 
         lock (_sync)
@@ -208,7 +211,7 @@ internal sealed class GltfAnimationMetadataLookupCache
             stopwatch.Elapsed.TotalMilliseconds,
             fragments.Count,
             fragments.Sum(fragment => fragment.Entries.Count),
-            compressedPayload.Length,
+            compressedLength,
             binaryBytes);
     }
 
@@ -251,8 +254,8 @@ internal sealed class GltfAnimationMetadataLookupCache
                         writer.Write(pack.Length);
                         writer.Write(pack.LastWriteTimeUtcTicks);
                         writer.Write(pack.UncompressedLength);
-                        writer.Write(pack.CompressedPayload.Length);
-                        writer.Write(pack.CompressedPayload);
+                        writer.Write(pack.CompressedLength);
+                        writer.Write(pack.CompressedPayload, 0, pack.CompressedLength);
                     }
                 }
 
@@ -355,7 +358,8 @@ internal sealed class GltfAnimationMetadataLookupCache
                         Length = length,
                         LastWriteTimeUtcTicks = lastWriteTicks,
                         UncompressedLength = uncompressedLength,
-                        CompressedPayload = compressedPayload
+                        CompressedPayload = compressedPayload,
+                        CompressedLength = compressedLength
                     };
                 }
 
@@ -593,6 +597,7 @@ internal sealed class GltfAnimationMetadataLookupCache
         public long LastWriteTimeUtcTicks { get; set; }
         public int UncompressedLength { get; set; }
         public byte[] CompressedPayload { get; set; } = [];
+        public int CompressedLength { get; set; }
         public CachedPackIndex? ParsedIndex { get; set; }
     }
 
