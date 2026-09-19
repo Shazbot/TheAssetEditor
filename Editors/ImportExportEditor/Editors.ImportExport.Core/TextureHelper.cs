@@ -10,6 +10,9 @@ namespace MeshImportExport
 
     public class TextureHelper
     {
+        private const int PngBytesPerPixel = 4;
+        private static readonly uint[] Crc32Table = CreateCrc32Table();
+
         public readonly record struct DecodedDdsImage(int Width, int Height, byte[] BgraPixels);
 
         public static DecodedDdsImage DecodeDdsToBgra(byte[] ddsBytes)
@@ -47,42 +50,63 @@ namespace MeshImportExport
         public static byte[] EncodeBgraToPng(int width, int height, byte[] bgraPixels)
         {
             ArgumentNullException.ThrowIfNull(bgraPixels);
+            if (width <= 0)
+                throw new ArgumentOutOfRangeException(nameof(width), "PNG width must be positive.");
+            if (height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(height), "PNG height must be positive.");
 
-            var rowBytes = checked(width * 4);
+            var rowBytes = checked(width * PngBytesPerPixel);
             var expectedLength = checked(rowBytes * height);
-            if (width <= 0 || height <= 0)
-                throw new ArgumentOutOfRangeException(nameof(width), "PNG dimensions must be positive.");
             if (bgraPixels.Length < expectedLength)
                 throw new ArgumentException("The pixel buffer is smaller than the requested image.", nameof(bgraPixels));
 
             // GDI+ can premultiply and then unpremultiply semi-transparent
-            // pixels while saving PNGs.  That changes channel values by one or
-            // more (for example, 128 can become 127), which is not acceptable
-            // for packed game textures. Write an RGBA PNG directly so the
-            // decoded image contains exactly the source channel bytes.
+            // pixels while saving PNGs. That changes packed texture channel
+            // values, so write RGBA PNG bytes directly.
+            //
+            // PNG row filters substantially reduce the amount of data zlib has
+            // to encode. Choose the cheapest-looking filter independently for
+            // each row while keeping only reusable row-sized scratch buffers.
             var scanlines = new byte[checked((rowBytes + 1) * height)];
+            var currentRow = new byte[rowBytes];
+            var previousRow = new byte[rowBytes];
+            var bestFilteredRow = new byte[rowBytes];
+            var candidateFilteredRow = new byte[rowBytes];
+
             for (var row = 0; row < height; row++)
             {
-                var sourceRow = checked(row * rowBytes);
-                var destinationRow = checked(row * (rowBytes + 1));
-                // Filter type 0 (None).
-                scanlines[destinationRow] = 0;
+                FillRgbaRow(
+                    bgraPixels,
+                    checked(row * rowBytes),
+                    currentRow);
 
-                for (var column = 0; column < width; column++)
+                var bestFilter = (byte)0;
+                var bestScore = long.MaxValue;
+
+                for (byte filter = 0; filter <= 4; filter++)
                 {
-                    var sourceIndex = checked(sourceRow + column * 4);
-                    var destinationIndex = checked(destinationRow + 1 + column * 4);
+                    var score = FilterPngRow(
+                        filter,
+                        currentRow,
+                        previousRow,
+                        candidateFilteredRow);
 
-                    // PNG color type 6 is RGBA; the source buffer is BGRA.
-                    scanlines[destinationIndex] = bgraPixels[sourceIndex + 2];
-                    scanlines[destinationIndex + 1] = bgraPixels[sourceIndex + 1];
-                    scanlines[destinationIndex + 2] = bgraPixels[sourceIndex];
-                    scanlines[destinationIndex + 3] = bgraPixels[sourceIndex + 3];
+                    if (score >= bestScore)
+                        continue;
+
+                    bestScore = score;
+                    bestFilter = filter;
+                    (bestFilteredRow, candidateFilteredRow) = (candidateFilteredRow, bestFilteredRow);
                 }
+
+                var destinationRow = checked(row * (rowBytes + 1));
+                scanlines[destinationRow] = bestFilter;
+                bestFilteredRow.AsSpan().CopyTo(scanlines.AsSpan(destinationRow + 1, rowBytes));
+                (currentRow, previousRow) = (previousRow, currentRow);
             }
 
             using var compressed = new MemoryStream();
-            using (var zlib = new ZLibStream(compressed, CompressionLevel.Fastest, leaveOpen: true))
+            using (var zlib = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
                 zlib.Write(scanlines, 0, scanlines.Length);
 
             using var output = new MemoryStream();
@@ -103,6 +127,67 @@ namespace MeshImportExport
                 compressed.GetBuffer().AsSpan(0, checked((int)compressed.Length)));
             WritePngChunk(output, "IEND", ReadOnlySpan<byte>.Empty);
             return output.ToArray();
+        }
+
+        private static void FillRgbaRow(byte[] bgraPixels, int sourceOffset, Span<byte> rgbaRow)
+        {
+            for (var index = 0; index < rgbaRow.Length; index += PngBytesPerPixel)
+            {
+                rgbaRow[index] = bgraPixels[sourceOffset + index + 2];
+                rgbaRow[index + 1] = bgraPixels[sourceOffset + index + 1];
+                rgbaRow[index + 2] = bgraPixels[sourceOffset + index];
+                rgbaRow[index + 3] = bgraPixels[sourceOffset + index + 3];
+            }
+        }
+
+        private static long FilterPngRow(
+            byte filter,
+            ReadOnlySpan<byte> currentRow,
+            ReadOnlySpan<byte> previousRow,
+            Span<byte> filteredRow)
+        {
+            long score = 0;
+
+            for (var index = 0; index < currentRow.Length; index++)
+            {
+                var value = currentRow[index];
+                var left = index >= PngBytesPerPixel ? currentRow[index - PngBytesPerPixel] : 0;
+                var above = previousRow[index];
+                var upperLeft = index >= PngBytesPerPixel ? previousRow[index - PngBytesPerPixel] : 0;
+
+                var predictor = filter switch
+                {
+                    0 => 0,
+                    1 => left,
+                    2 => above,
+                    3 => (left + above) >> 1,
+                    4 => PaethPredictor(left, above, upperLeft),
+                    _ => throw new ArgumentOutOfRangeException(nameof(filter))
+                };
+
+                var filtered = unchecked((byte)(value - predictor));
+                filteredRow[index] = filtered;
+
+                // libpng-style heuristic: favor rows whose filtered bytes are
+                // closest to zero when interpreted as signed differences.
+                score += Math.Abs((int)(sbyte)filtered);
+            }
+
+            return score;
+        }
+
+        private static int PaethPredictor(int left, int above, int upperLeft)
+        {
+            var prediction = left + above - upperLeft;
+            var distanceLeft = Math.Abs(prediction - left);
+            var distanceAbove = Math.Abs(prediction - above);
+            var distanceUpperLeft = Math.Abs(prediction - upperLeft);
+
+            if (distanceLeft <= distanceAbove && distanceLeft <= distanceUpperLeft)
+                return left;
+            if (distanceAbove <= distanceUpperLeft)
+                return above;
+            return upperLeft;
         }
 
         private static void WritePngChunk(Stream output, string type, ReadOnlySpan<byte> data)
@@ -132,13 +217,23 @@ namespace MeshImportExport
         private static uint UpdateCrc32(uint crc, ReadOnlySpan<byte> data)
         {
             foreach (var value in data)
-            {
-                crc ^= value;
-                for (var bit = 0; bit < 8; bit++)
-                    crc = (crc >> 1) ^ (0xedb88320u & unchecked((uint)-(int)(crc & 1)));
-            }
+                crc = (crc >> 8) ^ Crc32Table[(int)((crc ^ value) & 0xff)];
 
             return crc;
+        }
+
+        private static uint[] CreateCrc32Table()
+        {
+            var table = new uint[256];
+            for (var value = 0; value < table.Length; value++)
+            {
+                var crc = (uint)value;
+                for (var bit = 0; bit < 8; bit++)
+                    crc = (crc >> 1) ^ (0xedb88320u & unchecked((uint)-(int)(crc & 1)));
+                table[value] = crc;
+            }
+
+            return table;
         }
 
         public static byte[] ConvertDdsToPng(byte[] ddsbyteSteam)
