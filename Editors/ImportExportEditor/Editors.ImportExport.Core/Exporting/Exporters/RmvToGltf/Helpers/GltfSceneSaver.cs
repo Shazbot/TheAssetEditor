@@ -65,7 +65,7 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
         }
 
         var generatedTextures = generatedTexturePaths
-            .Where(x => string.Equals(Path.GetExtension(x), ".png", StringComparison.OrdinalIgnoreCase))
+            .Where(IsGeneratedTexture)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var generatedTextureBytes = generatedTextures.Sum(GetFileSize);
@@ -131,6 +131,13 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
             modelRoot.LogicalImages.Count,
             generatedTextureBytes,
             generatedTextures.Length);
+    }
+
+    private static bool IsGeneratedTexture(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".ktx2", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ResolveOutputPath(string outputDirectory, string rawUri)
