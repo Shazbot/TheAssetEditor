@@ -9,25 +9,7 @@ using ZstdSharp;
 namespace MeshImportExport
 {
     public readonly record struct TexturePngExportResult(string Path, byte[] PngData);
-    public readonly record struct TextureZstdProbeResult(
-        int RawRgbaBytes,
-        int ZstdBytes,
-        double RgbaConvertMs,
-        double ZstdMs,
-        int CompressionLevel);
-
     public readonly record struct TextureImageExportResult(string Path, byte[] Data);
-
-    public interface ITextureEncodingProbe
-    {
-        void Probe(
-            string texturePath,
-            TextureHelper.DecodedDdsImage image,
-            bool srgb,
-            TextureKtx2EncodeResult losslessKtx2,
-            int pngBytes,
-            double pngEncodeMs);
-    }
 
     public readonly record struct TextureKtx2EncodeResult(
         byte[] Ktx2Data,
@@ -73,19 +55,6 @@ namespace MeshImportExport
 
         public static byte[] EncodeBgraToPng(DecodedDdsImage image)
             => EncodeBgraToPng(image.Width, image.Height, image.BgraPixels);
-
-        public static TextureZstdProbeResult ProbeBgraToRgbaZstd(
-            DecodedDdsImage image,
-            int compressionLevel = 1)
-        {
-            var payload = CompressBgraToRgbaZstd(image, compressionLevel);
-            return new TextureZstdProbeResult(
-                payload.RawRgbaBytes,
-                payload.CompressedLength,
-                payload.RgbaConvertMs,
-                payload.ZstdMs,
-                compressionLevel);
-        }
 
         /// <summary>
         /// Returns whether the transformed image can be encoded as the
