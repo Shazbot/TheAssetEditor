@@ -157,34 +157,6 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
                 channelConvertMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             }
 
-            if (!TextureHelper.CanEncodeKtx2ForSharpGltf(decoded))
-            {
-                phaseStopwatch.Restart();
-                var pngData = TextureHelper.EncodeBgraToPng(decoded);
-                phaseStopwatch.Stop();
-                var pngEncodeMs = phaseStopwatch.Elapsed.TotalMilliseconds;
-                var pngPath = Path.Combine(outDirectory, fileName + ".png");
-
-                phaseStopwatch.Restart();
-                _imageSaveHandler.Save(pngData, pngPath);
-                phaseStopwatch.Stop();
-                var pngSaveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
-                totalStopwatch.Stop();
-
-                Logger.Here().Debug(
-                    "KTX2 material texture fallback for {TexturePath}: reason=rawKtx2Compatibility, width={Width}, height={Height}, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, srgb={Srgb}, blender={ConvertToBlender}",
-                    filePath,
-                    decoded.Width,
-                    decoded.Height,
-                    pngEncodeMs,
-                    pngSaveMs,
-                    pngData.Length,
-                    srgb,
-                    convertToBlenderFormat);
-
-                return new TextureImageExportResult(pngPath, pngData);
-            }
-
             var encoded = TextureHelper.EncodeBgraToKtx2(decoded, srgb);
 
             phaseStopwatch.Restart();
