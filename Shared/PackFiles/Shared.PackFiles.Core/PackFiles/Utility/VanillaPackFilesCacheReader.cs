@@ -31,10 +31,15 @@ internal sealed class VanillaPackFilesCacheReader
         stopwatch.Stop();
         LoadElapsedMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
 
+        var compressedBytes = string.IsNullOrWhiteSpace(cachePath) || File.Exists(cachePath) == false
+            ? 0L
+            : new FileInfo(cachePath).Length;
         Logger.Here().Information(
-            "Vanilla pack files cache loaded in {ElapsedMs:F1}ms with {PackCount} pack entries",
+            "Vanilla pack files cache loaded in {ElapsedMs:F1}ms with {PackCount} pack entries, compressedBytes={CompressedBytes}, binaryBytes={BinaryBytes}",
             LoadElapsedMilliseconds,
-            _entries.Count);
+            _entries.Count,
+            compressedBytes,
+            _payload.LongLength);
     }
 
     internal double LoadElapsedMilliseconds { get; }
@@ -96,6 +101,9 @@ internal sealed class VanillaPackFilesCacheReader
                 previousName = name;
             }
 
+            if (reader.Position != entry.FilesEndOffset)
+                return null;
+
             fileMaterializeStopwatch.Stop();
             return new CachedPackIndex(
                 entry.Header,
@@ -135,11 +143,16 @@ internal sealed class VanillaPackFilesCacheReader
 
             var entryCount = CheckedCount(reader.ReadUInt32(), MaxEntryCount);
             var entries = new Dictionary<string, CacheEntry>(entryCount, StringComparer.OrdinalIgnoreCase);
-            var totalFileCount = 0;
 
             for (var entryIndex = 0; entryIndex < entryCount; entryIndex++)
             {
                 var kind = reader.ReadByte();
+                if (kind is not (ExpandedEntryKind or NamesOnlyEntryKind))
+                    throw new InvalidDataException("Unknown vanilla cache entry kind.");
+
+                var recordLength = CheckedCount(reader.ReadUInt32(), reader.Remaining);
+                var recordEnd = checked(reader.Position + recordLength);
+
                 var packPath = reader.ReadString();
                 var size = CheckedInt64(reader.ReadUInt64());
                 var lastChangedLocal = reader.ReadDouble();
@@ -158,13 +171,8 @@ internal sealed class VanillaPackFilesCacheReader
                     }
 
                     var fileCount = CheckedCount(reader.ReadUInt32(), MaxTotalFileCount);
-                    totalFileCount = checked(totalFileCount + fileCount);
-                    if (totalFileCount > MaxTotalFileCount)
-                        throw new InvalidDataException("Vanilla cache contains too many files.");
-
                     var firstStartPos = CheckedInt64(reader.ReadUInt64());
                     var filesOffset = reader.Position;
-                    SkipPackedFiles(reader, fileCount);
 
                     if (header.PackFileCount != fileCount)
                         throw new InvalidDataException("Pack file count does not match compact cache record.");
@@ -176,23 +184,11 @@ internal sealed class VanillaPackFilesCacheReader
                         dependencyPacks,
                         fileCount,
                         firstStartPos,
-                        filesOffset);
-                    continue;
+                        filesOffset,
+                        recordEnd);
                 }
 
-                if (kind != NamesOnlyEntryKind)
-                    throw new InvalidDataException("Unknown vanilla cache entry kind.");
-
-                var nameCount = CheckedCount(reader.ReadUInt32(), MaxTotalFileCount);
-                totalFileCount = checked(totalFileCount + nameCount);
-                if (totalFileCount > MaxTotalFileCount)
-                    throw new InvalidDataException("Vanilla cache contains too many files.");
-
-                for (var nameIndex = 0; nameIndex < nameCount; nameIndex++)
-                {
-                    _ = reader.ReadUInt32();
-                    reader.SkipString();
-                }
+                reader.SkipTo(recordEnd);
             }
 
             if (reader.Remaining != 0)
@@ -234,18 +230,6 @@ internal sealed class VanillaPackFilesCacheReader
             packFileIndexSize,
             packFileCount,
             headerBuffer);
-    }
-
-    private static void SkipPackedFiles(CacheBinaryReader reader, int fileCount)
-    {
-        for (var fileIndex = 0; fileIndex < fileCount; fileIndex++)
-        {
-            _ = reader.ReadUInt32(); // common UTF-16 prefix length; validated when materialized.
-            reader.SkipString();     // UTF-8 suffix.
-            _ = reader.ReadUInt32(); // stored file size.
-            if (reader.ReadByte() > 1)
-                throw new InvalidDataException("Invalid compression flag in vanilla cache.");
-        }
     }
 
     private static int CheckedCount(uint value, int maximum)
@@ -322,7 +306,8 @@ internal sealed class VanillaPackFilesCacheReader
         IReadOnlyList<string> DependencyPacks,
         int FileCount,
         long FirstStartPos,
-        int FilesOffset);
+        int FilesOffset,
+        int FilesEndOffset);
 
     private sealed class CacheBinaryReader
     {
@@ -407,6 +392,13 @@ internal sealed class VanillaPackFilesCacheReader
             var prefixLength = CheckedCount(ReadUInt32(), previous.Length);
             var suffix = ReadString();
             return string.Concat(previous.AsSpan(0, prefixLength), suffix.AsSpan());
+        }
+
+        public void SkipTo(int position)
+        {
+            if (position < _offset || position > _bytes.Length)
+                throw new InvalidDataException("Invalid compact cache record boundary.");
+            _offset = position;
         }
 
         private void Require(int length)

@@ -202,6 +202,10 @@ public sealed class VanillaPackFilesCacheReaderTests
             writer.Write(1u);
 
             writer.Write((byte)1);
+            var recordLengthOffset = payload.Position;
+            writer.Write(0u);
+            var recordStart = payload.Position;
+
             WriteString(writer, packPath);
             writer.Write((ulong)packInfo.Length);
             writer.Write((packInfo.LastWriteTimeUtc - DateTime.UnixEpoch).TotalMilliseconds);
@@ -229,6 +233,11 @@ public sealed class VanillaPackFilesCacheReaderTests
                 writer.Write((byte)(file.IsCompressed ? 1 : 0));
                 previousName = file.Name;
             }
+
+            var recordEnd = payload.Position;
+            payload.Position = recordLengthOffset;
+            writer.Write((uint)(recordEnd - recordStart));
+            payload.Position = recordEnd;
         }
 
         using var cacheStream = File.Create(cachePath);
