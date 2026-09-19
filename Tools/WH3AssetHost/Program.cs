@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Serilog;
+using Serilog.Events;
 using Editors.ImportExport;
 using Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng;
 using Editors.ImportExport.Exporting.Exporters.DdsToNormalPng;
@@ -16,11 +18,13 @@ internal static class Program
 {
     public static int Main(string[] args)
     {
-        if (args.Length > 0 && string.Equals(args[0], "serve", StringComparison.OrdinalIgnoreCase))
-            return RunServe(args);
+        ConfigureFileLogging(args);
 
         try
         {
+            if (args.Length > 0 && string.Equals(args[0], "serve", StringComparison.OrdinalIgnoreCase))
+                return RunServe(args);
+
             var request = CliRequest.Parse(args);
             if (request.Error != null)
                 return WriteFailure(2, "InvalidArguments", request.Error);
@@ -44,6 +48,48 @@ internal static class Program
         {
             Console.Error.WriteLine(exception.ToString());
             return WriteFailure(3, "InitializationFailed", exception.Message);
+        }
+        finally
+        {
+            Log.CloseAndFlush();
+        }
+    }
+
+    private static void ConfigureFileLogging(string[] args)
+    {
+        try
+        {
+            var localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var logRoot = string.IsNullOrWhiteSpace(localApplicationData)
+                ? Path.GetTempPath()
+                : localApplicationData;
+            var logDirectory = Path.Combine(logRoot, "WH3AssetHost", "Logs");
+            Directory.CreateDirectory(logDirectory);
+
+            var outputTemplate =
+                "[{Timestamp:HH:mm:ss} {Level}] [{ThreadId}] {SourceContext}::{MemberName} : {Message} {Exception}{NewLine}";
+
+            Log.Logger = new LoggerConfiguration()
+                .MinimumLevel.Debug()
+                .Enrich.FromLogContext()
+                .Enrich.WithThreadId()
+                .WriteTo.File(
+                    Path.Combine(logDirectory, "WH3AssetHost-.log"),
+                    restrictedToMinimumLevel: LogEventLevel.Information,
+                    outputTemplate: outputTemplate,
+                    rollingInterval: RollingInterval.Day,
+                    retainedFileCountLimit: 7,
+                    shared: true)
+                .CreateLogger();
+
+            Log.Information(
+                "WH3AssetHost starting in {Mode} mode. Log directory: {LogDirectory}",
+                args.Length > 0 ? args[0] : "unknown",
+                logDirectory);
+        }
+        catch
+        {
+            // Logging is diagnostic-only and must never prevent the host from starting.
         }
     }
 
