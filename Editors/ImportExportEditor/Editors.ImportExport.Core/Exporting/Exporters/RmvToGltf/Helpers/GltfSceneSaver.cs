@@ -66,9 +66,23 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
 
         var generatedTextures = generatedTexturePaths
             .Where(IsGeneratedTexture)
+            .Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        var generatedTextureSet = generatedTextures.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var generatedTextureBytes = generatedTextures.Sum(GetFileSize);
+        var externalizeGeneratedTextures =
+            generatedTextures.Length > 0
+            && modelRoot.LogicalImages.Count > 0
+            && modelRoot.LogicalImages.All(image =>
+            {
+                if (string.IsNullOrWhiteSpace(image.AlternateWriteFileName))
+                    return false;
+
+                var imagePath = Path.GetFullPath(
+                    ResolveOutputPath(outputDirectory, image.AlternateWriteFileName));
+                return generatedTextureSet.Contains(imagePath) && File.Exists(imagePath);
+            });
 
         TimedFileWriteStream? timedOutputStream = null;
         var fallbackFileWriteMs = 0.0;
@@ -94,22 +108,45 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
                 return stream;
             });
 
-        // The headless preview scene is disposable after this save. Prepare it
-        // for GLB output in place so SharpGLTF does not defensively DeepClone()
-        // the entire model before embedding images/merging buffers. DeepClone()
-        // serializes the model to temporary glTF and deserializes it again, which
-        // is especially expensive for previews containing tens of MB of KTX2 data.
+        // The headless preview scene is disposable after this save. Merge its
+        // geometry/animation buffers in place so SharpGLTF does not defensively
+        // DeepClone() the entire model before producing a GLB.
+        //
+        // When every logical image maps to a texture the exporter already wrote
+        // beside the preview, keep those images external. WHMM serves the whole
+        // registered preview directory, so GLTFLoader can fetch the KTX2 sidecars
+        // directly and we avoid copying ~tens of MB of texture data into every GLB.
+        //
+        // If an image cannot be proven to have a generated sidecar, preserve the
+        // previous self-contained behavior and embed all images in the GLB.
         var inPlacePrepareStopwatch = Stopwatch.StartNew();
-        modelRoot.MergeImages();
-        modelRoot.MergeBuffers();
+        if (externalizeGeneratedTextures)
+        {
+            modelRoot.MergeBuffers();
+        }
+        else
+        {
+            modelRoot.MergeImages();
+            modelRoot.MergeBuffers();
+        }
         inPlacePrepareStopwatch.Stop();
 
-        // Images are already internal buffer views after MergeImages(). Keeping
-        // SatelliteFile here prevents WriteBinarySchema2 from requesting another
-        // image merge (and therefore another defensive clone). _WriteToSatellite
-        // detects the existing buffer views and leaves them embedded in the GLB;
-        // no image sidecar files are emitted.
         context.ImageWriting = ResourceWriteMode.SatelliteFile;
+        if (externalizeGeneratedTextures)
+        {
+            context.ImageWriteCallback = (_, assetName, _) =>
+            {
+                var imagePath = Path.GetFullPath(
+                    ResolveOutputPath(outputDirectory, assetName));
+                if (!generatedTextureSet.Contains(imagePath) || !File.Exists(imagePath))
+                    throw new InvalidOperationException(
+                        $"Expected generated preview texture sidecar '{assetName}' was not available.");
+
+                // The texture exporter already wrote the exact KTX2/PNG bytes.
+                // Returning the URI without writing avoids duplicating that I/O.
+                return assetName;
+            };
+        }
 
         var sharpGltfStopwatch = Stopwatch.StartNew();
         modelRoot.SaveGLB(Path.GetFileName(fullOutputPath), context);
@@ -124,21 +161,25 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
             sharpGltfStopwatch.Elapsed.TotalMilliseconds - fileWriteMs);
 
         var cleanupStopwatch = Stopwatch.StartNew();
-        foreach (var texturePath in generatedTextures)
+        if (!externalizeGeneratedTextures)
         {
-            // Delete only paths explicitly returned by the texture
-            // handler. Auxiliary mask files are intentionally not
-            // returned and therefore remain discoverable by the host.
-            if (File.Exists(texturePath))
-                File.Delete(texturePath);
+            foreach (var texturePath in generatedTextures)
+            {
+                // Embedded GLBs no longer need the exact generated texture
+                // intermediates. External-texture previews retain them until
+                // WHMM releases and removes the entire preview directory.
+                if (File.Exists(texturePath))
+                    File.Delete(texturePath);
+            }
         }
         cleanupStopwatch.Stop();
         totalStopwatch.Stop();
 
         Logger.Here().Debug(
-            "GLB save timing for {OutputName}: total={TotalMs:F1}ms, inPlacePrepare={InPlacePrepareMs:F1}ms, sharpGltf={SharpGltfMs:F1}ms, preprocessSerialize={PreprocessSerializeMs:F1}ms, fileWrite={FileWriteMs:F1}ms, cleanup={CleanupMs:F1}ms, outputBytes={OutputBytes}, streamedBytes={StreamedBytes}, logicalImages={LogicalImages}, generatedTextureBytes={GeneratedTextureBytes}, generatedTextureCount={GeneratedTextureCount}",
+            "GLB save timing for {OutputName}: total={TotalMs:F1}ms, externalTextures={ExternalTextures}, inPlacePrepare={InPlacePrepareMs:F1}ms, sharpGltf={SharpGltfMs:F1}ms, preprocessSerialize={PreprocessSerializeMs:F1}ms, fileWrite={FileWriteMs:F1}ms, cleanup={CleanupMs:F1}ms, outputBytes={OutputBytes}, streamedBytes={StreamedBytes}, logicalImages={LogicalImages}, generatedTextureBytes={GeneratedTextureBytes}, generatedTextureCount={GeneratedTextureCount}",
             Path.GetFileName(fullOutputPath),
             totalStopwatch.Elapsed.TotalMilliseconds,
+            externalizeGeneratedTextures,
             inPlacePrepareStopwatch.Elapsed.TotalMilliseconds,
             sharpGltfStopwatch.Elapsed.TotalMilliseconds,
             preprocessEmbedSerializeMs,
