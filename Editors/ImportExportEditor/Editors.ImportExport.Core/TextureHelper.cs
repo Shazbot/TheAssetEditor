@@ -82,7 +82,7 @@ namespace MeshImportExport
             }
 
             using var compressed = new MemoryStream();
-            using (var zlib = new ZLibStream(compressed, CompressionLevel.Fastest, leaveOpen: true))
+            using (var zlib = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
                 zlib.Write(scanlines, 0, scanlines.Length);
 
             using var output = new MemoryStream();
