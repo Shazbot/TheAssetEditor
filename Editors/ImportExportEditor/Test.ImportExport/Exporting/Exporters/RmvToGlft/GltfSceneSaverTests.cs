@@ -144,6 +144,56 @@ public class GltfSceneSaverTests
     }
 
     [Test]
+    public void HeadlessSaverExternalizesUnmatchedLogicalImages()
+    {
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-headless-extra-sidecar-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+
+        var outputPath = Path.Combine(outputDirectory, "model.glb");
+        var generatedTexturePath = Path.Combine(outputDirectory, "body.png");
+        var extraTexturePath = Path.Combine(outputDirectory, "extra.png");
+        var pngBytes = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+        File.WriteAllBytes(generatedTexturePath, pngBytes);
+
+        try
+        {
+            var model = ModelRoot.CreateModel();
+            model.UseScene("default");
+
+            var generatedImage = model.CreateImage("body");
+            generatedImage.Content = new SharpGLTF.Memory.MemoryImage(pngBytes);
+            generatedImage.AlternateWriteFileName = "body.png";
+
+            var unmatchedImage = model.CreateImage("extra");
+            unmatchedImage.Content = new SharpGLTF.Memory.MemoryImage(pngBytes);
+            unmatchedImage.AlternateWriteFileName = "extra.png";
+
+            var saver = new HeadlessGltfSceneSaver();
+            saver.Save(model, outputPath, [generatedTexturePath]);
+
+            Assert.That(File.Exists(outputPath), Is.True);
+            Assert.That(File.ReadAllBytes(generatedTexturePath), Is.EqualTo(pngBytes));
+            Assert.That(File.Exists(extraTexturePath), Is.True);
+            Assert.That(File.ReadAllBytes(extraTexturePath), Is.EqualTo(pngBytes));
+
+            var glbText = System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(outputPath));
+            Assert.That(glbText, Does.Contain("body.png"));
+            Assert.That(glbText, Does.Contain("extra.png"));
+
+            ModelRoot.Validate(outputPath);
+            var reloaded = ModelRoot.Load(outputPath);
+            Assert.That(reloaded.LogicalImages, Has.Count.EqualTo(2));
+            Assert.That(reloaded.LogicalImages.All(image => image.Content.IsValid), Is.True);
+        }
+        finally
+        {
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
+    [Test]
     public void HeadlessSaverRemovesGeneratedKtx2Texture()
     {
         var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-headless-ktx2-{Guid.NewGuid():N}");
