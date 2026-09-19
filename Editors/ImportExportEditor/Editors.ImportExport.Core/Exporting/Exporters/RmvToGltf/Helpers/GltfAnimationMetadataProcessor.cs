@@ -5,7 +5,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers;
 
 internal static class GltfAnimationMetadataProcessor
 {
-    private static readonly ILogger Logger = Logging.Create<GltfAnimationMetadataProcessor>();
+    private static readonly ILogger Logger = Logging.CreateStatic(typeof(GltfAnimationMetadataProcessor));
 
     public static IReadOnlyList<AnimationClip.KeyFrame> Apply(
         AnimationClip source,
