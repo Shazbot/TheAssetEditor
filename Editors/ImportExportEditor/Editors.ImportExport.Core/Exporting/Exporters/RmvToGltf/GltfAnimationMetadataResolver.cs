@@ -44,6 +44,7 @@ internal sealed class GltfAnimationMetadataContextResolver
     private readonly GltfAnimationMetadataLookupCache? _cache;
     private readonly object _indexLock = new();
     private Dictionary<string, List<FragmentEntryContext>>? _contextsByAnimation;
+    private List<GltfAnimationMetadataLookupCache.CachedPackIndex>? _cachedPackIndexes;
 
     public GltfAnimationMetadataContextResolver(
         IHeadlessPackFileService packFileService,
@@ -59,7 +60,25 @@ internal sealed class GltfAnimationMetadataContextResolver
     {
         var animationPath = NormalizePath(_packFileService.GetFullPath(animationFile));
         var contexts = GetIndex();
-        if (!contexts.TryGetValue(animationPath, out var candidates))
+
+        var candidates = new List<FragmentEntryContext>();
+        foreach (var cachedPack in _cachedPackIndexes ?? [])
+        {
+            foreach (var cachedContext in cachedPack.GetContexts(animationPath))
+            {
+                candidates.Add(new FragmentEntryContext(
+                    cachedContext.FragmentPath,
+                    cachedContext.SkeletonName,
+                    cachedContext.MetaPath,
+                    cachedContext.PersistentMetaPath,
+                    cachedContext.SlotAnimations));
+            }
+        }
+
+        if (contexts.TryGetValue(animationPath, out var uncachedCandidates))
+            candidates.AddRange(uncachedCandidates);
+
+        if (candidates.Count == 0)
             return null;
 
         // SuperView only presents fragments matching the active skeleton, so do not
@@ -155,6 +174,7 @@ internal sealed class GltfAnimationMetadataContextResolver
             var cachedVanillaPackCount = 0;
             var parsedVanillaAnimPackCount = 0;
             var parsedUncachedAnimPackCount = 0;
+            var cachedPackIndexes = new List<GltfAnimationMetadataLookupCache.CachedPackIndex>();
 
             var animPacksByContainer = new Dictionary<IPackFileContainer, List<PackFile>>(
                 ReferenceEqualityComparer.Instance);
@@ -181,14 +201,12 @@ internal sealed class GltfAnimationMetadataContextResolver
             foreach (var pair in animPacksByContainer)
             {
                 var container = pair.Key;
-                var cachedFragments = _cache?.TryLoad(container);
-                if (cachedFragments != null)
+                var cachedIndex = _cache?.TryLoad(container);
+                if (cachedIndex != null)
                 {
-                    AddCachedFragments(
-                        cachedFragments,
-                        index,
-                        ref fragmentCount,
-                        ref entryCount);
+                    cachedPackIndexes.Add(cachedIndex);
+                    fragmentCount += cachedIndex.FragmentCount;
+                    entryCount += cachedIndex.EntryCount;
                     cachedVanillaPackCount++;
                     continue;
                 }
@@ -229,6 +247,12 @@ internal sealed class GltfAnimationMetadataContextResolver
 
             _cache?.Flush();
 
+            var uniqueAnimations = new HashSet<string>(
+                index.Keys,
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var cachedIndex in cachedPackIndexes)
+                uniqueAnimations.UnionWith(cachedIndex.AnimationPaths);
+
             stopwatch.Stop();
             Logger.Here().Information(
                 "GLTF animation metadata index built in {ElapsedMs:F1}ms: animPacks={AnimPackCount}, fragments={FragmentCount}, entries={EntryCount}, uniqueAnimations={AnimationCount}, cachedVanillaPacks={CachedVanillaPackCount}, parsedVanillaAnimPacks={ParsedVanillaAnimPackCount}, parsedUncachedAnimPacks={ParsedUncachedAnimPackCount}",
@@ -236,11 +260,12 @@ internal sealed class GltfAnimationMetadataContextResolver
                 animPacks.Count,
                 fragmentCount,
                 entryCount,
-                index.Count,
+                uniqueAnimations.Count,
                 cachedVanillaPackCount,
                 parsedVanillaAnimPackCount,
                 parsedUncachedAnimPackCount);
 
+            _cachedPackIndexes = cachedPackIndexes;
             _contextsByAnimation = index;
             return index;
         }
@@ -330,46 +355,6 @@ internal sealed class GltfAnimationMetadataContextResolver
         {
             Logger.Here().Warning(
                 $"Unable to index animation metadata from '{_packFileService.GetFullPath(animPack)}': {exception.Message}");
-        }
-    }
-
-    private static void AddCachedFragments(
-        IReadOnlyList<GltfAnimationMetadataLookupCache.CachedFragment> fragments,
-        Dictionary<string, List<FragmentEntryContext>> index,
-        ref int fragmentCount,
-        ref int entryCount)
-    {
-        foreach (var fragment in fragments)
-        {
-            fragmentCount++;
-
-            var slotAnimations = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var slot in fragment.SlotAnimations ?? [])
-            {
-                if (string.IsNullOrWhiteSpace(slot.SlotName)
-                    || string.IsNullOrWhiteSpace(slot.AnimationPath)
-                    || slotAnimations.ContainsKey(slot.SlotName))
-                    continue;
-
-                slotAnimations.Add(slot.SlotName, slot.AnimationPath);
-            }
-
-            foreach (var entry in fragment.Entries ?? [])
-            {
-                if (string.IsNullOrWhiteSpace(entry.AnimationPath))
-                    continue;
-
-                entryCount++;
-                AddContext(
-                    index,
-                    entry.AnimationPath,
-                    new FragmentEntryContext(
-                        fragment.FragmentPath,
-                        fragment.SkeletonName,
-                        entry.MetaPath,
-                        fragment.PersistentMetaPath,
-                        slotAnimations));
-            }
         }
     }
 
