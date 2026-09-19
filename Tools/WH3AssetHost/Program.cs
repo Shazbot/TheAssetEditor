@@ -22,7 +22,7 @@ internal static class Program
     public static int Main(string[] args)
     {
         ConfigureFileLogging(args);
-        Log.Information(
+        Log.Debug(
             "Asset host timing: logging initialized {ElapsedMs}ms after process entry",
             ProcessLifetime.ElapsedMilliseconds);
 
@@ -75,15 +75,24 @@ internal static class Program
             var outputTemplate =
                 "[{Timestamp:HH:mm:ss} {Level}] [{ThreadId}] {SourceContext}::{MemberName} : {Message} {Exception}{NewLine}";
 
+            var logLevel = string.Equals(
+                Environment.GetEnvironmentVariable("WH3ASSETHOST_LOG_LEVEL"),
+                "Debug",
+                StringComparison.OrdinalIgnoreCase)
+                ? LogEventLevel.Debug
+                : LogEventLevel.Information;
+
             Log.Logger = new LoggerConfiguration()
-                .MinimumLevel.Debug()
+                .MinimumLevel.Is(logLevel)
                 .Enrich.FromLogContext()
                 .Enrich.WithThreadId()
                 .WriteTo.File(
                     Path.Combine(logDirectory, "WH3AssetHost-.log"),
-                    restrictedToMinimumLevel: LogEventLevel.Information,
+                    restrictedToMinimumLevel: logLevel,
                     outputTemplate: outputTemplate,
                     rollingInterval: RollingInterval.Day,
+                    fileSizeLimitBytes: 10 * 1024 * 1024,
+                    rollOnFileSizeLimit: true,
                     retainedFileCountLimit: 7,
                     shared: true)
                 .CreateLogger();
