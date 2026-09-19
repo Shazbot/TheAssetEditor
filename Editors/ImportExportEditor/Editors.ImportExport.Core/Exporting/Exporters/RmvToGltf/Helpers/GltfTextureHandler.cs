@@ -66,12 +66,6 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             => HandleTextures(asset.Model, settings);
         public List<TextureResult> HandleTextures(ResolvedModelAsset asset, RmvToGltfExporterSettings settings, GltfTextureExportSession session)
             => HandleTextures(asset, settings);
-
-        public IReadOnlyList<List<TextureResult>> HandleTexturesBatch(
-            IReadOnlyList<ResolvedModelAsset> assets,
-            RmvToGltfExporterSettings settings,
-            GltfTextureExportSession session)
-            => assets.Select(asset => HandleTextures(asset, settings, session)).ToArray();
     }
 
     public class GltfTextureHandler : IGltfTextureHandler
@@ -135,38 +129,26 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             => HandleTextures(asset, settings, new GltfTextureExportSession(collisionSafe: false));
 
         public List<TextureResult> HandleTextures(ResolvedModelAsset asset, RmvToGltfExporterSettings settings, GltfTextureExportSession session)
-            => HandleTexturesBatch([asset], settings, session)[0];
-
-        public IReadOnlyList<List<TextureResult>> HandleTexturesBatch(
-            IReadOnlyList<ResolvedModelAsset> assets,
-            RmvToGltfExporterSettings settings,
-            GltfTextureExportSession session)
         {
-            var outputs = Enumerable.Range(0, assets.Count)
-                .Select(_ => new List<TextureResult>())
-                .ToArray();
+            var output = new List<TextureResult>();
 
-            if (!settings.ExportMaterials || assets.Count == 0)
-                return outputs;
+            if (!settings.ExportMaterials)
+                return output;
 
             var totalStopwatch = Stopwatch.StartNew();
             var timing = new TextureTimingAccumulator();
             var requests = new List<TextureWorkRequest>();
 
-            for (var assetIndex = 0; assetIndex < assets.Count; assetIndex++)
+            foreach (var part in asset.FirstLod)
             {
-                foreach (var part in assets[assetIndex].FirstLod)
+                foreach (var texture in part.Material.Textures)
                 {
-                    foreach (var texture in part.Material.Textures)
-                    {
-                        if (string.IsNullOrWhiteSpace(texture.Value))
-                            continue;
+                    if (string.IsNullOrWhiteSpace(texture.Value))
+                        continue;
 
-                        requests.Add(new TextureWorkRequest(
-                            assetIndex,
-                            part.PartIndex,
-                            new MaterialBuilderTextureInput(texture.Value, texture.Key)));
-                    }
+                    requests.Add(new TextureWorkRequest(
+                        part.PartIndex,
+                        new MaterialBuilderTextureInput(texture.Value, texture.Key)));
                 }
             }
 
@@ -179,7 +161,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 {
                     HandleTexture(
                         settings,
-                        outputs[request.AssetIndex],
+                        output,
                         session,
                         request.MeshIndex,
                         request.Texture,
@@ -203,8 +185,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                         // from the source basename. Different virtual paths can
                         // therefore target the same temporary filename. Keep
                         // those requests serial while allowing unrelated
-                        // textures from any VMD component to stay in the same
-                        // bounded worker pool.
+                        // textures to decode/transform/compress concurrently.
                         lock (session.GetOutputStemLock(request.Texture.Path))
                         {
                             HandleTexture(
@@ -216,34 +197,28 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                                 localTiming);
                         }
 
-                        results[requestIndex] = new TextureWorkResult(
-                            request.AssetIndex,
-                            localOutput,
-                            localTiming);
+                        results[requestIndex] = new TextureWorkResult(localOutput, localTiming);
                     });
 
                 // Merge in request order so material assignment and generated
-                // texture ordering remain deterministic within every asset.
+                // texture ordering remain deterministic across runs.
                 foreach (var result in results)
                 {
                     if (result == null)
                         continue;
 
-                    outputs[result.AssetIndex].AddRange(result.Output);
+                    output.AddRange(result.Output);
                     timing.Add(result.Timing);
                 }
             }
 
             totalStopwatch.Stop();
-            var assetName = assets.Count == 1
-                ? assets[0].InputFile.VirtualPath ?? assets[0].InputFile.Name
-                : $"VMD batch ({assets.Count} assets)";
             LogTextureSummary(
-                assetName,
+                asset.InputFile.VirtualPath ?? asset.InputFile.Name,
                 totalStopwatch.Elapsed.TotalMilliseconds,
-                outputs.Sum(x => x.Count),
+                output.Count,
                 timing);
-            return outputs;
+            return output;
         }
 
         private static void LogTextureSummary(
@@ -286,12 +261,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         }
 
         record MaterialBuilderTextureInput(string Path, TextureType Type);
-        private sealed record TextureWorkRequest(
-            int AssetIndex,
-            int MeshIndex,
-            MaterialBuilderTextureInput Texture);
+        private sealed record TextureWorkRequest(int MeshIndex, MaterialBuilderTextureInput Texture);
         private sealed record TextureWorkResult(
-            int AssetIndex,
             List<TextureResult> Output,
             TextureTimingAccumulator Timing);
 
