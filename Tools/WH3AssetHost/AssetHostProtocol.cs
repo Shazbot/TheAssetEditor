@@ -18,6 +18,20 @@ public sealed record AssetHostExportRequest(
 
 public sealed record AssetHostVariantMeshSelection(string SlotPath, int ChoiceIndex);
 
+public sealed record AssetHostBatchExportItem(
+    string OutputPath,
+    IReadOnlyList<AssetHostVariantMeshSelection> VariantSelections);
+
+public sealed record AssetHostBatchExportRequest(
+    string AssetPath,
+    IReadOnlyList<AssetHostBatchExportItem> Items,
+    IReadOnlyList<string> AnimationPaths,
+    bool ExportMaterials = true,
+    bool IncludeSkeleton = true,
+    bool MirrorMesh = true);
+
+public sealed record AssetHostBatchExportResult(IReadOnlyList<ExportResult> Exports);
+
 public sealed record AssetHostAnimationReference(string Path);
 
 public sealed record AssetHostAnimationCatalog(
@@ -51,6 +65,20 @@ public sealed record AssetHostMissingSkeletonDecisionRequest(
 public interface IAssetHostRuntime : IDisposable
 {
     ExportResult ExportModel(AssetHostExportRequest request);
+
+    AssetHostBatchExportResult ExportModels(AssetHostBatchExportRequest request)
+        => new(
+            request.Items
+                .Select(item => ExportModel(new AssetHostExportRequest(
+                    request.AssetPath,
+                    item.OutputPath,
+                    request.AnimationPaths,
+                    request.ExportMaterials,
+                    request.IncludeSkeleton,
+                    request.MirrorMesh,
+                    item.VariantSelections)))
+                .ToList());
+
     AssetHostAnimationCatalog GetAnimationCatalog(string assetPath);
 }
 
@@ -116,7 +144,7 @@ public static class AssetHostProtocol
         ?? "unknown";
 
     public static readonly IReadOnlyList<string> Capabilities =
-        ["hello", "initialize", "getAnimationCatalog", "exportModel", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
+        ["hello", "initialize", "getAnimationCatalog", "exportModel", "exportModelBatch", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
 }
 
 /// <summary>
@@ -195,6 +223,7 @@ public sealed class AssetHostDispatcher : IDisposable
                 "initialize" => HandleInitialize(request, requestId),
                 "getAnimationCatalog" => HandleGetAnimationCatalog(request, requestId),
                 "exportModel" => HandleExportModel(request, requestId),
+                "exportModelBatch" => HandleExportModelBatch(request, requestId),
                 "shutdown" => HandleShutdown(requestId),
                 _ => AssetHostResponse.Fail(requestId, command, "UnknownCommand", $"Unknown command '{command}'.")
             };
@@ -209,6 +238,7 @@ public sealed class AssetHostDispatcher : IDisposable
                 : string.Equals(command, "getAnimationCatalog", StringComparison.Ordinal)
                     ? "AnimationCatalogFailed"
                     : string.Equals(command, "exportModel", StringComparison.Ordinal)
+                        || string.Equals(command, "exportModelBatch", StringComparison.Ordinal)
                         ? "ExportFailed"
                         : "RequestFailed";
             _logger.Error(
@@ -414,6 +444,119 @@ public sealed class AssetHostDispatcher : IDisposable
             firstError?.Details,
             result);
     }
+
+    private AssetHostResponse HandleExportModelBatch(JsonElement request, string requestId)
+    {
+        if (_runtime == null || _outputRoot == null)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportModelBatch",
+                "NotInitialized",
+                "initialize must succeed before exportModelBatch.");
+        }
+
+        var assetPath = ReadString(request, "assetPath");
+        if (string.IsNullOrWhiteSpace(assetPath))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportModelBatch",
+                "MissingAssetPath",
+                "exportModelBatch requires assetPath.");
+        }
+
+        if (!request.TryGetProperty("items", out var itemsProperty)
+            || itemsProperty.ValueKind != JsonValueKind.Array)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportModelBatch",
+                "InvalidBatchItems",
+                "items must be a non-empty array of outputPath/variantSelections objects.");
+        }
+
+        var items = new List<AssetHostBatchExportItem>();
+        foreach (var item in itemsProperty.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                return AssetHostResponse.Fail(
+                    requestId,
+                    "exportModelBatch",
+                    "InvalidBatchItems",
+                    "Each batch item must be an object.");
+            }
+
+            var relativeOutputPath = ReadString(item, "outputPath");
+            if (!TryResolveOutputPath(_outputRoot, relativeOutputPath, out var outputPath, out var outputError))
+            {
+                return AssetHostResponse.Fail(
+                    requestId,
+                    "exportModelBatch",
+                    "InvalidOutputPath",
+                    outputError!);
+            }
+
+            if (!TryReadVariantMeshSelections(item, out var variantSelections, allowMissing: true))
+            {
+                return AssetHostResponse.Fail(
+                    requestId,
+                    "exportModelBatch",
+                    "InvalidVariantMeshSelections",
+                    "Each item's variantSelections must be an array of slotPath/choiceIndex objects.");
+            }
+
+            items.Add(new AssetHostBatchExportItem(outputPath, variantSelections));
+            if (items.Count > 100)
+            {
+                return AssetHostResponse.Fail(
+                    requestId,
+                    "exportModelBatch",
+                    "BatchTooLarge",
+                    "exportModelBatch supports at most 100 items.");
+            }
+        }
+
+        if (items.Count == 0)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportModelBatch",
+                "InvalidBatchItems",
+                "exportModelBatch requires at least one item.");
+        }
+
+        if (!TryReadStringArray(request, "animationPaths", out var animationPaths, allowMissing: true))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportModelBatch",
+                "InvalidAnimationPaths",
+                "animationPaths must be an array of virtual paths.");
+        }
+
+        if (!TryReadBoolean(request, true, out var exportMaterials, "exportMaterials", "materials")
+            || !TryReadBoolean(request, true, out var includeSkeleton, "includeSkeleton", "skeleton")
+            || !TryReadBoolean(request, true, out var mirrorMesh, "mirrorMesh", "mirror"))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportModelBatch",
+                "InvalidExportOptions",
+                "exportMaterials, includeSkeleton, and mirrorMesh must be boolean values.");
+        }
+
+        var result = _runtime.ExportModels(new AssetHostBatchExportRequest(
+            assetPath,
+            items,
+            animationPaths,
+            exportMaterials,
+            includeSkeleton,
+            mirrorMesh));
+        return AssetHostResponse.Ok(requestId, "exportModelBatch", result);
+    }
+
 
     private AssetHostResponse HandleShutdown(string requestId)
     {
