@@ -401,7 +401,7 @@ public class GltfTextureExportSessionTests
                 new GltfTextureExportSession(collisionSafe: false));
 
             Assert.That(textures, Has.Count.EqualTo(1));
-            Assert.That(textures[0].GlftTexureType, Is.EqualTo(KnownChannel.BaseColor));
+            Assert.That(textures[0].GltfTextureType, Is.EqualTo(KnownChannel.BaseColor));
             materialExporter.Verify(
                 x => x.ExportWithData(
                     It.Is<string>(path => path.EndsWith("body_mask.dds", StringComparison.OrdinalIgnoreCase)),
@@ -473,7 +473,7 @@ public class GltfTextureExportSessionTests
                 Times.Once);
 
             Assert.That(textures, Has.Count.EqualTo(1));
-            Assert.That(textures[0].GlftTexureType, Is.EqualTo(KnownChannel.BaseColor));
+            Assert.That(textures[0].GltfTextureType, Is.EqualTo(KnownChannel.BaseColor));
             Assert.That(textures[0].SystemFilePath, Is.EqualTo(baseColourPath));
 
             var meshBuilder = new GltfMeshBuilder()
