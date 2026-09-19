@@ -33,16 +33,25 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
     private readonly IPackedFileLookup _packFileLookup;
     private readonly IPackFileLocationLookup? _packFileLocationLookup;
     private readonly IModelAssetResolver _modelAssetResolver;
+    private readonly Dictionary<string, VariantMesh>? _parsedDefinitionCache;
 
     public VariantMeshCompositionResolver(
         IPackedFileLookup packFileLookup,
         IModelAssetResolver? modelAssetResolver = null,
-        IPackFileLocationLookup? packFileLocationLookup = null)
+        IPackFileLocationLookup? packFileLocationLookup = null,
+        bool cacheParsedDefinitions = false)
     {
         _packFileLookup = packFileLookup;
         _packFileLocationLookup = packFileLocationLookup ?? packFileLookup as IPackFileLocationLookup;
         _modelAssetResolver = modelAssetResolver ?? new ModelAssetResolver(packFileLookup, _packFileLocationLookup);
+        _parsedDefinitionCache = cacheParsedDefinitions
+            ? new Dictionary<string, VariantMesh>(StringComparer.OrdinalIgnoreCase)
+            : null;
     }
+
+    public int CachedDefinitionCount => _parsedDefinitionCache?.Count ?? 0;
+
+    public void ClearParsedDefinitionCache() => _parsedDefinitionCache?.Clear();
 
     public ResolvedVariantMeshComposition Resolve(PackFile inputFile)
     {
@@ -93,7 +102,7 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
             VariantMesh definition;
             try
             {
-                definition = VariantMeshDefinitionLoader.Load(file);
+                definition = LoadDefinition(file, definitionKey);
             }
             catch (Exception exception)
             {
@@ -350,6 +359,19 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
 
             node.Slots.Add(resolvedSlot);
         }
+    }
+
+    private VariantMesh LoadDefinition(PackFile file, string definitionKey)
+    {
+        if (_parsedDefinitionCache == null)
+            return VariantMeshDefinitionLoader.Load(file);
+
+        if (_parsedDefinitionCache.TryGetValue(definitionKey, out var cached))
+            return cached;
+
+        var definition = VariantMeshDefinitionLoader.Load(file);
+        _parsedDefinitionCache[definitionKey] = definition;
+        return definition;
     }
 
     private static bool IsStumpSlot(string? name)
