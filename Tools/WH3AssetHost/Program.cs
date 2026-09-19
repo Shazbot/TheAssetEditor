@@ -206,16 +206,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             compositionResolver,
             skeletonLookup);
         var imageSaveHandler = new SystemImageSaveHandler();
-        // Headless-only feasibility probe: compare the current Fast PNG with
-        // the proposed KTX2 raw-RGBA + Zstd payload before changing formats.
-        var materialExporter = new DdsToMaterialPngExporter(
-            packFileService,
-            imageSaveHandler,
-            enableKtx2Probe: true);
-        var normalExporter = new DdsToNormalPngExporter(
-            packFileService,
-            imageSaveHandler,
-            enableKtx2Probe: true);
+        var materialExporter = new DdsToMaterialPngExporter(packFileService, imageSaveHandler);
+        var normalExporter = new DdsToNormalPngExporter(packFileService, imageSaveHandler);
         var exporter = new RmvToGltfExporter(
             new HeadlessGltfSceneSaver(),
             new GltfMeshBuilder(),
@@ -380,7 +372,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             // The masks are auxiliary files and are not referenced by the
             // glTF scene. The mod-manager render only needs embedded material
             // channels, so avoid converting and inverting them.
-            ExportAuxiliaryMasks = false
+            ExportAuxiliaryMasks = false,
+            UseKtx2Textures = true
         };
 
         phaseStopwatch.Restart();

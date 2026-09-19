@@ -1,6 +1,8 @@
 using System.IO;
+using System.Buffers.Binary;
 using System.Text;
 using MeshImportExport;
+using ZstdSharp;
 
 namespace Test.ImportExport;
 
@@ -56,6 +58,58 @@ public class TextureHelperTests
         Assert.That(result.CompressionLevel, Is.EqualTo(1));
         Assert.That(result.RgbaConvertMs, Is.GreaterThanOrEqualTo(0));
         Assert.That(result.ZstdMs, Is.GreaterThanOrEqualTo(0));
+    }
+
+    [Test]
+    public void EncodeBgraToKtx2WritesLosslessLinearRgbaPayload()
+    {
+        var pixels = Enumerable.Range(0, 16)
+            .SelectMany(index => index % 2 == 0
+                ? new byte[] { 201, 34, 17, 77 }
+                : new byte[] { 30, 20, 10, 40 })
+            .ToArray();
+        var image = new TextureHelper.DecodedDdsImage(4, 4, pixels);
+
+        var result = TextureHelper.EncodeBgraToKtx2(image, srgb: false);
+        var data = result.Ktx2Data;
+
+        Assert.That(data.AsSpan(0, 12).ToArray(), Is.EqualTo(new byte[]
+        {
+            0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
+            0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A
+        }));
+        Assert.That(BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(12, 4)), Is.EqualTo(37u));
+        Assert.That(BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(44, 4)), Is.EqualTo(2u));
+
+        var dfdOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(48, 4)));
+        Assert.That(data[dfdOffset + 14], Is.EqualTo(1)); // linear transfer
+
+        var levelOffset = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(80, 8)));
+        var levelLength = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(88, 8)));
+        var rawLength = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(96, 8)));
+        Assert.That(rawLength, Is.EqualTo(4 * 4 * 4));
+
+        using var decompressor = new Decompressor();
+        var rgba = decompressor.Unwrap(data.AsSpan(levelOffset, levelLength)).ToArray();
+        Assert.That(rgba.Length, Is.EqualTo(4 * 4 * 4));
+        Assert.That(rgba.AsSpan(0, 8).ToArray(), Is.EqualTo(new byte[] { 17, 34, 201, 77, 10, 20, 30, 40 }));
+
+        var sharpGltfImage = new SharpGLTF.Memory.MemoryImage(data);
+        Assert.That(sharpGltfImage.IsKtx2, Is.True);
+        Assert.That(sharpGltfImage.IsValid, Is.True);
+    }
+
+    [Test]
+    public void EncodeBgraToKtx2WritesSrgbDescriptorWithLinearAlpha()
+    {
+        var image = new TextureHelper.DecodedDdsImage(1, 1, new byte[] { 3, 2, 1, 4 });
+
+        var data = TextureHelper.EncodeBgraToKtx2(image, srgb: true).Ktx2Data;
+        var dfdOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(48, 4)));
+
+        Assert.That(BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(12, 4)), Is.EqualTo(43u));
+        Assert.That(data[dfdOffset + 14], Is.EqualTo(2)); // sRGB transfer
+        Assert.That(data[dfdOffset + 79], Is.EqualTo(0x1f)); // alpha | LINEAR
     }
 
     private static byte[] CreateSolidRedDxt1Dds()

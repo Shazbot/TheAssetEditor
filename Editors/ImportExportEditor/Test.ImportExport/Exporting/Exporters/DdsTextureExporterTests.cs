@@ -1,4 +1,5 @@
 using System.IO;
+using System.Buffers.Binary;
 using System.Text;
 using Editors.ImportExport;
 using Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng;
@@ -7,6 +8,7 @@ using Moq;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Test.ImportExport;
+using ZstdSharp;
 
 namespace Test.ImportExport.Exporting.Exporters;
 
@@ -112,6 +114,36 @@ public sealed class DdsTextureExporterTests
         Assert.That(blenderPixel.A, Is.EqualTo(255));
     }
 
+    [Test]
+    public void NormalKtx2ExportUsesSameBlueNormalConversion()
+    {
+        var source = new Pixel(128, 128, 191, 191);
+        var rawPixel = ReadPixel(ExportNormal(source, convertToBlueNormalMap: false).PngData);
+        var expected = DecodePackedNormal(rawPixel);
+        var capture = ExportNormalKtx2(source, convertToBlueNormalMap: true);
+        var pixel = ReadKtx2Pixel(capture.PngData);
+
+        Assert.That(capture.Path, Does.EndWith("normal.ktx2"));
+        Assert.That(pixel.R, Is.EqualTo(expected.R));
+        Assert.That(pixel.G, Is.EqualTo(expected.G));
+        Assert.That(pixel.B, Is.EqualTo(expected.B));
+        Assert.That(pixel.A, Is.EqualTo(255));
+    }
+
+    [Test]
+    public void MaterialKtx2ExportPreservesBlenderChannelConversion()
+    {
+        var source = new Pixel(17, 34, 201, 77);
+        var capture = ExportMaterialKtx2(source, convertToBlenderFormat: true, srgb: false);
+        var pixel = ReadKtx2Pixel(capture.PngData);
+
+        Assert.That(capture.Path, Does.EndWith("material.ktx2"));
+        Assert.That(pixel.R, Is.EqualTo(source.B));
+        Assert.That(pixel.G, Is.EqualTo(source.G));
+        Assert.That(pixel.B, Is.EqualTo(source.R));
+        Assert.That(pixel.A, Is.EqualTo(255));
+    }
+
     private static CapturedImage ExportNormal(Pixel pixel, bool convertToBlueNormalMap)
     {
         const string sourcePath = "textures/normal.dds";
@@ -136,6 +168,30 @@ public sealed class DdsTextureExporterTests
         return capture;
     }
 
+    private static CapturedImage ExportNormalKtx2(Pixel pixel, bool convertToBlueNormalMap)
+    {
+        const string sourcePath = "textures/normal.dds";
+        var packFileService = CreatePackFileService(sourcePath, CreateA8R8G8B8Dds(pixel, 4, 4));
+        var capture = new CapturedImage();
+        var exporter = new DdsToNormalPngExporter(packFileService.Object, capture);
+
+        var outputPath = Path.Combine(Path.GetTempPath(), "asset-host-textures", "model.glb");
+        exporter.ExportKtx2WithData(sourcePath, outputPath, convertToBlueNormalMap);
+        return capture;
+    }
+
+    private static CapturedImage ExportMaterialKtx2(Pixel pixel, bool convertToBlenderFormat, bool srgb)
+    {
+        const string sourcePath = "textures/material.dds";
+        var packFileService = CreatePackFileService(sourcePath, CreateA8R8G8B8Dds(pixel, 4, 4));
+        var capture = new CapturedImage();
+        var exporter = new DdsToMaterialPngExporter(packFileService.Object, capture);
+
+        var outputPath = Path.Combine(Path.GetTempPath(), "asset-host-textures", "model.glb");
+        exporter.ExportKtx2WithData(sourcePath, outputPath, convertToBlenderFormat, srgb);
+        return capture;
+    }
+
     private static Mock<IPackFileService> CreatePackFileService(string path, byte[] dds)
     {
         var service = new Mock<IPackFileService>();
@@ -150,6 +206,20 @@ public sealed class DdsTextureExporterTests
         Assert.That(pngData, Is.Not.Null);
         Assert.That(pngData, Is.Not.Empty);
         return PngTestHelper.ReadFirstPixelRgba(pngData!);
+    }
+
+    private static ExactPngPixel ReadKtx2Pixel(byte[]? ktx2Data)
+    {
+        Assert.That(ktx2Data, Is.Not.Null);
+        Assert.That(ktx2Data, Is.Not.Empty);
+        var data = ktx2Data!;
+        var levelOffset = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(80, 8)));
+        var levelLength = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(88, 8)));
+
+        using var decompressor = new Decompressor();
+        var rgba = decompressor.Unwrap(data.AsSpan(levelOffset, levelLength));
+        Assert.That(rgba.Length, Is.GreaterThanOrEqualTo(4));
+        return new ExactPngPixel(rgba[0], rgba[1], rgba[2], rgba[3]);
     }
 
     private static ExactPngPixel DecodePackedNormal(ExactPngPixel packed)
@@ -172,7 +242,7 @@ public sealed class DdsTextureExporterTests
         return (byte)Math.Clamp((int)Math.Round(encoded, MidpointRounding.AwayFromZero), 0, 255);
     }
 
-    private static byte[] CreateA8R8G8B8Dds(Pixel pixel)
+    private static byte[] CreateA8R8G8B8Dds(Pixel pixel, int width = 1, int height = 1)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
@@ -180,9 +250,9 @@ public sealed class DdsTextureExporterTests
         writer.Write(Encoding.ASCII.GetBytes("DDS "));
         writer.Write(124); // DDS_HEADER.dwSize
         writer.Write(0x0000100f); // CAPS | HEIGHT | WIDTH | PIXELFORMAT | PITCH
-        writer.Write(1); // dwHeight
-        writer.Write(1); // dwWidth
-        writer.Write(4); // dwPitchOrLinearSize
+        writer.Write(height); // dwHeight
+        writer.Write(width); // dwWidth
+        writer.Write(width * 4); // dwPitchOrLinearSize
         writer.Write(0); // dwDepth
         writer.Write(0); // dwMipMapCount
 
@@ -205,10 +275,13 @@ public sealed class DdsTextureExporterTests
         writer.Write(0); // dwReserved2
 
         // A8R8G8B8 is stored little-endian as B, G, R, A.
-        writer.Write(pixel.B);
-        writer.Write(pixel.G);
-        writer.Write(pixel.R);
-        writer.Write(pixel.A);
+        for (var index = 0; index < width * height; index++)
+        {
+            writer.Write(pixel.B);
+            writer.Write(pixel.G);
+            writer.Write(pixel.R);
+            writer.Write(pixel.A);
+        }
         return stream.ToArray();
     }
 

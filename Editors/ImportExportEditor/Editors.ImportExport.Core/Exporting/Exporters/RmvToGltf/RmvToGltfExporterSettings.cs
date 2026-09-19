@@ -42,5 +42,12 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         /// export workflow historically preserves them for manual use.
         /// </summary>
         public bool ExportAuxiliaryMasks { get; init; } = true;
+
+        /// <summary>
+        /// Uses lossless raw-RGBA KTX2 textures with Zstd supercompression for
+        /// glTF material channels. Disabled by default so the normal AssetEditor
+        /// export workflow continues producing PNG files.
+        /// </summary>
+        public bool UseKtx2Textures { get; init; } = false;
     }
 }

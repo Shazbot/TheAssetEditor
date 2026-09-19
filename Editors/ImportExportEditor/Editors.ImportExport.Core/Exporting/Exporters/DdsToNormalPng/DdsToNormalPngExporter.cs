@@ -12,6 +12,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
     {
         public string Export(string filePath, string outputPath, bool convertToBlueNormalMap);
         public TexturePngExportResult ExportWithData(string filePath, string outputPath, bool convertToBlueNormalMap);
+        public TextureImageExportResult ExportKtx2WithData(string filePath, string outputPath, bool convertToBlueNormalMap);
         public ExportSupportEnum CanExportFile(PackFile file);
     }
 
@@ -135,6 +136,109 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                 convertToBlueNormalMap);
 
             return new TexturePngExportResult(outputFilePath, imgBytes);
+        }
+
+        public TextureImageExportResult ExportKtx2WithData(
+            string filePath,
+            string outputPath,
+            bool convertToBlueNormalMap)
+        {
+            var totalStopwatch = Stopwatch.StartNew();
+            var phaseStopwatch = Stopwatch.StartNew();
+
+            var packFile = _packFileLookup.FindFile(filePath);
+            phaseStopwatch.Stop();
+            var lookupMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            if (packFile == null)
+            {
+                totalStopwatch.Stop();
+                Logger.Here().Information(
+                    "KTX2 normal texture timing for {TexturePath}: status=missing, total={TotalMs:F1}ms, lookup={LookupMs:F1}ms",
+                    filePath,
+                    totalStopwatch.Elapsed.TotalMilliseconds,
+                    lookupMs);
+                return new TextureImageExportResult("", Array.Empty<byte>());
+            }
+
+            var fileName = Path.GetFileNameWithoutExtension(
+                filePath.Replace('\\', Path.DirectorySeparatorChar));
+            var outDirectory = Path.GetDirectoryName(outputPath) ?? string.Empty;
+            var suffix = convertToBlueNormalMap ? string.Empty : "_raw";
+            var outputFilePath = Path.Combine(outDirectory, fileName + suffix + ".ktx2");
+
+            phaseStopwatch.Restart();
+            var bytes = packFile.DataSource.ReadData();
+            phaseStopwatch.Stop();
+            var readMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            if (bytes == null || !bytes.Any())
+                throw new Exception($"Could not read file data. bytes.Count = {bytes?.Length}");
+
+            phaseStopwatch.Restart();
+            var decoded = TextureHelper.DecodeDdsToBgra(bytes);
+            phaseStopwatch.Stop();
+            var ddsDecodeMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+
+            var normalConvertMs = 0.0;
+            if (convertToBlueNormalMap)
+            {
+                phaseStopwatch.Restart();
+                ConvertPackedNormalToStandardInPlace(decoded.BgraPixels);
+                phaseStopwatch.Stop();
+                normalConvertMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            }
+
+            if (!TextureHelper.CanEncodeKtx2ForSharpGltf(decoded))
+            {
+                phaseStopwatch.Restart();
+                var pngData = TextureHelper.EncodeBgraToPng(decoded);
+                phaseStopwatch.Stop();
+                var pngEncodeMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+                var pngPath = Path.Combine(outDirectory, fileName + suffix + ".png");
+
+                phaseStopwatch.Restart();
+                _imageSaveHandler.Save(pngData, pngPath);
+                phaseStopwatch.Stop();
+                var pngSaveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+                totalStopwatch.Stop();
+
+                Logger.Here().Information(
+                    "KTX2 normal texture fallback for {TexturePath}: reason=dimensions, width={Width}, height={Height}, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
+                    filePath,
+                    decoded.Width,
+                    decoded.Height,
+                    pngEncodeMs,
+                    pngSaveMs,
+                    pngData.Length,
+                    convertToBlueNormalMap);
+
+                return new TextureImageExportResult(pngPath, pngData);
+            }
+
+            var encoded = TextureHelper.EncodeBgraToKtx2(decoded, srgb: false);
+
+            phaseStopwatch.Restart();
+            _imageSaveHandler.Save(encoded.Ktx2Data, outputFilePath);
+            phaseStopwatch.Stop();
+            var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            totalStopwatch.Stop();
+
+            Logger.Here().Information(
+                "KTX2 normal texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, normalConvert={NormalConvertMs:F1}ms, rgbaConvert={RgbaConvertMs:F1}ms, zstd={ZstdMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, zstdBytes={ZstdBytes}, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
+                filePath,
+                totalStopwatch.Elapsed.TotalMilliseconds,
+                lookupMs,
+                readMs,
+                ddsDecodeMs,
+                normalConvertMs,
+                encoded.RgbaConvertMs,
+                encoded.ZstdMs,
+                saveMs,
+                bytes.Length,
+                encoded.ZstdBytes,
+                encoded.Ktx2Data.Length,
+                convertToBlueNormalMap);
+
+            return new TextureImageExportResult(outputFilePath, encoded.Ktx2Data);
         }
 
         private static void ConvertPackedNormalToStandardInPlace(byte[] pixels)

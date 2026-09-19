@@ -187,20 +187,26 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             => Path.GetFileNameWithoutExtension(
                 sourcePath.Replace('\\', Path.DirectorySeparatorChar));
 
-        private static string GetMaterialTexturePath(string outputPath, string sourcePath)
+        private static string GetMaterialTexturePath(
+            string outputPath,
+            string sourcePath,
+            bool useKtx2 = false)
         {
             var outputDirectory = Path.GetDirectoryName(outputPath) ?? string.Empty;
-            return Path.Combine(outputDirectory, GetTextureStem(sourcePath) + ".png");
+            var extension = useKtx2 ? ".ktx2" : ".png";
+            return Path.Combine(outputDirectory, GetTextureStem(sourcePath) + extension);
         }
 
         private static string GetNormalTexturePath(
             string outputPath,
             string sourcePath,
-            bool convertToBlueNormalMap)
+            bool convertToBlueNormalMap,
+            bool useKtx2 = false)
         {
             var outputDirectory = Path.GetDirectoryName(outputPath) ?? string.Empty;
             var suffix = convertToBlueNormalMap ? string.Empty : "_raw";
-            return Path.Combine(outputDirectory, GetTextureStem(sourcePath) + suffix + ".png");
+            var extension = useKtx2 ? ".ktx2" : ".png";
+            return Path.Combine(outputDirectory, GetTextureStem(sourcePath) + suffix + extension);
         }
 
         private static string GetAuxiliaryMaskPath(string outputPath, string sourcePath)
@@ -218,7 +224,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             TextureTimingAccumulator timing)
         {
             var cacheLookupStopwatch = Stopwatch.StartNew();
-            var cacheHit = _convertedTextureCache.TryGet(cacheKey, out var cachedPng);
+            var cacheHit = _convertedTextureCache.TryGet(cacheKey, out var cachedPng, out _);
             cacheLookupStopwatch.Stop();
             timing.CacheLookupMs += cacheLookupStopwatch.Elapsed.TotalMilliseconds;
 
@@ -245,6 +251,48 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             var cacheStoreStopwatch = Stopwatch.StartNew();
             if (exported.PngData.Length > 0)
                 _convertedTextureCache.Store(cacheKey, exported.PngData);
+            cacheStoreStopwatch.Stop();
+            timing.CacheStoreMs += cacheStoreStopwatch.Elapsed.TotalMilliseconds;
+            return exported.Path;
+        }
+
+        private string ExportCachedImage(
+            string cacheKey,
+            string expectedOutputPath,
+            Func<MeshImportExport.TextureImageExportResult> exporter,
+            TextureTimingAccumulator timing)
+        {
+            var cacheLookupStopwatch = Stopwatch.StartNew();
+            var cacheHit = _convertedTextureCache.TryGet(cacheKey, out var cachedData, out var cachedExtension);
+            cacheLookupStopwatch.Stop();
+            timing.CacheLookupMs += cacheLookupStopwatch.Elapsed.TotalMilliseconds;
+
+            if (cacheHit)
+            {
+                timing.ConversionCacheHitCount++;
+                var cachedWriteStopwatch = Stopwatch.StartNew();
+                var cachedOutputPath = string.IsNullOrWhiteSpace(cachedExtension)
+                    ? expectedOutputPath
+                    : Path.ChangeExtension(expectedOutputPath, cachedExtension);
+                EnsureParentDirectory(cachedOutputPath);
+                File.WriteAllBytes(cachedOutputPath, cachedData);
+                cachedWriteStopwatch.Stop();
+                timing.CachedWriteMs += cachedWriteStopwatch.Elapsed.TotalMilliseconds;
+                return cachedOutputPath;
+            }
+
+            timing.ConversionCacheMissCount++;
+            var exporterStopwatch = Stopwatch.StartNew();
+            var exported = exporter();
+            exporterStopwatch.Stop();
+            timing.ExporterMs += exporterStopwatch.Elapsed.TotalMilliseconds;
+
+            ArgumentNullException.ThrowIfNull(exported.Data);
+            ArgumentNullException.ThrowIfNull(exported.Path);
+
+            var cacheStoreStopwatch = Stopwatch.StartNew();
+            if (exported.Data.Length > 0)
+                _convertedTextureCache.Store(cacheKey, exported.Data, Path.GetExtension(exported.Path));
             cacheStoreStopwatch.Stop();
             timing.CacheStoreMs += cacheStoreStopwatch.Elapsed.TotalMilliseconds;
             return exported.Path;
@@ -351,17 +399,35 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private void DoTextureConversionMaterialMap(RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
-            var cacheKey = CacheKey(text, "material", settings.ConvertMaterialTextureToBlender);
+            var cacheKey = CacheKey(text, "material", settings.ConvertMaterialTextureToBlender)
+                + (settings.UseKtx2Textures ? "|ktx2" : "|png");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
-                var exportedPath = ExportCachedTexture(
-                    cacheKey,
-                    GetMaterialTexturePath(settings.OutputPath, text.Path),
-                    () => _ddsToMaterialPngExporter.ExportWithData(
-                        text.Path,
-                        settings.OutputPath,
-                        settings.ConvertMaterialTextureToBlender),
-                    timing);
+                string exportedPath;
+                if (settings.UseKtx2Textures)
+                {
+                    exportedPath = ExportCachedImage(
+                        cacheKey,
+                        GetMaterialTexturePath(settings.OutputPath, text.Path, useKtx2: true),
+                        () => _ddsToMaterialPngExporter.ExportKtx2WithData(
+                            text.Path,
+                            settings.OutputPath,
+                            settings.ConvertMaterialTextureToBlender,
+                            srgb: false),
+                        timing);
+                }
+                else
+                {
+                    exportedPath = ExportCachedTexture(
+                        cacheKey,
+                        GetMaterialTexturePath(settings.OutputPath, text.Path),
+                        () => _ddsToMaterialPngExporter.ExportWithData(
+                            text.Path,
+                            settings.OutputPath,
+                            settings.ConvertMaterialTextureToBlender),
+                        timing);
+                }
+
                 var finalizeStopwatch = Stopwatch.StartNew();
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
                 finalizeStopwatch.Stop();
@@ -379,20 +445,40 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private void DoTextureDefault(KnownChannel textureType, RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
-            var cacheKey = CacheKey(text, "default");
+            var srgb = textureType is KnownChannel.BaseColor or KnownChannel.Emissive or KnownChannel.SpecularColor;
+            var cacheKey = CacheKey(text, "default")
+                + (settings.UseKtx2Textures ? $"|ktx2|srgb={srgb}" : "|png");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
-                var exportedPath = ExportCachedTexture(
-                    cacheKey,
-                    GetMaterialTexturePath(settings.OutputPath, text.Path),
-                    () => _ddsToMaterialPngExporter.ExportWithData(text.Path, settings.OutputPath, false),
-                    timing);
+                string exportedPath;
+                if (settings.UseKtx2Textures)
+                {
+                    exportedPath = ExportCachedImage(
+                        cacheKey,
+                        GetMaterialTexturePath(settings.OutputPath, text.Path, useKtx2: true),
+                        () => _ddsToMaterialPngExporter.ExportKtx2WithData(
+                            text.Path,
+                            settings.OutputPath,
+                            convertToBlenderFormat: false,
+                            srgb: srgb),
+                        timing);
+                }
+                else
+                {
+                    exportedPath = ExportCachedTexture(
+                        cacheKey,
+                        GetMaterialTexturePath(settings.OutputPath, text.Path),
+                        () => _ddsToMaterialPngExporter.ExportWithData(text.Path, settings.OutputPath, false),
+                        timing);
+                }
+
                 var finalizeStopwatch = Stopwatch.StartNew();
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
                 finalizeStopwatch.Stop();
                 timing.FinalizeMs += finalizeStopwatch.Elapsed.TotalMilliseconds;
 
-                // For 3D printing: Export alpha channel as a separate mask for base color/diffuse
+                // The editor-only displacement workflow still uses PNG helper
+                // outputs. Headless KTX2 previews never enable displacement.
                 if (settings.ExportDisplacementMaps && textureType == KnownChannel.BaseColor)
                 {
                     var postProcessStopwatch = Stopwatch.StartNew();
@@ -428,7 +514,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 string? exportedPath;
 
                 var cacheLookupStopwatch = Stopwatch.StartNew();
-                var cacheHit = _convertedTextureCache.TryGet(cacheKey, out var cachedPng);
+                var cacheHit = _convertedTextureCache.TryGet(cacheKey, out var cachedPng, out _);
                 cacheLookupStopwatch.Stop();
                 timing.CacheLookupMs += cacheLookupStopwatch.Elapsed.TotalMilliseconds;
 
@@ -521,7 +607,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private void DoTextureConversionNormalMap(RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
-            var cacheKey = CacheKey(text, "normal", settings.ConvertNormalTextureToBlue || settings.ExportDisplacementMaps);
+            var cacheKey = CacheKey(text, "normal", settings.ConvertNormalTextureToBlue || settings.ExportDisplacementMaps)
+                + (settings.UseKtx2Textures && !settings.ExportDisplacementMaps ? "|ktx2" : "|png");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
                 if (settings.ExportDisplacementMaps)
@@ -544,17 +631,37 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 }
                 else
                 {
-                    var exportedPath = ExportCachedTexture(
-                        cacheKey,
-                        GetNormalTexturePath(
-                            settings.OutputPath,
-                            text.Path,
-                            settings.ConvertNormalTextureToBlue),
-                        () => _ddsToNormalPngExporter.ExportWithData(
-                            text.Path,
-                            settings.OutputPath,
-                            settings.ConvertNormalTextureToBlue),
-                        timing);
+                    string exportedPath;
+                    if (settings.UseKtx2Textures)
+                    {
+                        exportedPath = ExportCachedImage(
+                            cacheKey,
+                            GetNormalTexturePath(
+                                settings.OutputPath,
+                                text.Path,
+                                settings.ConvertNormalTextureToBlue,
+                                useKtx2: true),
+                            () => _ddsToNormalPngExporter.ExportKtx2WithData(
+                                text.Path,
+                                settings.OutputPath,
+                                settings.ConvertNormalTextureToBlue),
+                            timing);
+                    }
+                    else
+                    {
+                        exportedPath = ExportCachedTexture(
+                            cacheKey,
+                            GetNormalTexturePath(
+                                settings.OutputPath,
+                                text.Path,
+                                settings.ConvertNormalTextureToBlue),
+                            () => _ddsToNormalPngExporter.ExportWithData(
+                                text.Path,
+                                settings.OutputPath,
+                                settings.ConvertNormalTextureToBlue),
+                            timing);
+                    }
+
                     var finalizeStopwatch = Stopwatch.StartNew();
                     session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
                     finalizeStopwatch.Stop();
@@ -1182,7 +1289,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         }
 
         /// <summary>
-        /// Caches converted PNG bytes for the lifetime of this texture handler.
+        /// Caches converted texture bytes for the lifetime of this texture handler.
         /// The headless host creates one handler per initialized pack set, so
         /// replacing the pack set naturally starts a fresh cache. The size cap
         /// prevents browsing many units from retaining unbounded image data.
@@ -1195,23 +1302,25 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             private long _totalBytes;
             private long _usageClock;
 
-            public bool TryGet(string key, out byte[] pngData)
+            public bool TryGet(string key, out byte[] data, out string extension)
             {
                 lock (_sync)
                 {
                     if (_entries.TryGetValue(key, out var entry))
                     {
                         _entries[key] = entry with { LastUsed = ++_usageClock };
-                        pngData = entry.Data;
+                        data = entry.Data;
+                        extension = entry.Extension;
                         return true;
                     }
                 }
 
-                pngData = Array.Empty<byte>();
+                data = Array.Empty<byte>();
+                extension = string.Empty;
                 return false;
             }
 
-            public void Store(string key, byte[] pngData)
+            public void Store(string key, byte[] pngData, string extension = ".png")
             {
                 if (pngData.Length == 0 || pngData.LongLength > MaximumBytes)
                     return;
@@ -1230,12 +1339,12 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                         _totalBytes -= oldest.Value.Data.LongLength;
                     }
 
-                    _entries[key] = new CacheEntry(pngData, ++_usageClock);
+                    _entries[key] = new CacheEntry(pngData, extension, ++_usageClock);
                     _totalBytes += pngData.LongLength;
                 }
             }
 
-            private sealed record CacheEntry(byte[] Data, long LastUsed);
+            private sealed record CacheEntry(byte[] Data, string Extension, long LastUsed);
         }
     }
 }

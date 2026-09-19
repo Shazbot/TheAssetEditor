@@ -12,6 +12,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
     {
         public string Export(string filePath, string outputPath, bool convertToBlenderFormat);
         public TexturePngExportResult ExportWithData(string filePath, string outputPath, bool convertToBlenderFormat);
+        public TextureImageExportResult ExportKtx2WithData(string filePath, string outputPath, bool convertToBlenderFormat, bool srgb);
         public ExportSupportEnum CanExportFile(PackFile file);
     }
 
@@ -124,6 +125,111 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
                 convertToBlenderFormat);
 
             return new TexturePngExportResult(outFilePath, imgBytes);
+        }
+
+        public TextureImageExportResult ExportKtx2WithData(
+            string filePath,
+            string outputPath,
+            bool convertToBlenderFormat,
+            bool srgb)
+        {
+            var totalStopwatch = Stopwatch.StartNew();
+            var phaseStopwatch = Stopwatch.StartNew();
+
+            var packFile = _packFileLookup.FindFile(filePath);
+            phaseStopwatch.Stop();
+            var lookupMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            if (packFile == null)
+            {
+                totalStopwatch.Stop();
+                Logger.Here().Information(
+                    "KTX2 material texture timing for {TexturePath}: status=missing, total={TotalMs:F1}ms, lookup={LookupMs:F1}ms",
+                    filePath,
+                    totalStopwatch.Elapsed.TotalMilliseconds,
+                    lookupMs);
+                return new TextureImageExportResult("", Array.Empty<byte>());
+            }
+
+            var fileName = Path.GetFileNameWithoutExtension(
+                filePath.Replace('\\', Path.DirectorySeparatorChar));
+            var outDirectory = Path.GetDirectoryName(outputPath) ?? string.Empty;
+            var outFilePath = Path.Combine(outDirectory, fileName + ".ktx2");
+
+            phaseStopwatch.Restart();
+            var bytes = packFile.DataSource.ReadData();
+            phaseStopwatch.Stop();
+            var readMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            if (bytes == null || !bytes.Any())
+                throw new Exception($"Could not read file data. bytes.Count = {bytes?.Length}");
+
+            phaseStopwatch.Restart();
+            var decoded = TextureHelper.DecodeDdsToBgra(bytes);
+            phaseStopwatch.Stop();
+            var ddsDecodeMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+
+            var channelConvertMs = 0.0;
+            if (convertToBlenderFormat)
+            {
+                phaseStopwatch.Restart();
+                ConvertToBlenderFormatInPlace(decoded.BgraPixels);
+                phaseStopwatch.Stop();
+                channelConvertMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            }
+
+            if (!TextureHelper.CanEncodeKtx2ForSharpGltf(decoded))
+            {
+                phaseStopwatch.Restart();
+                var pngData = TextureHelper.EncodeBgraToPng(decoded);
+                phaseStopwatch.Stop();
+                var pngEncodeMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+                var pngPath = Path.Combine(outDirectory, fileName + ".png");
+
+                phaseStopwatch.Restart();
+                _imageSaveHandler.Save(pngData, pngPath);
+                phaseStopwatch.Stop();
+                var pngSaveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+                totalStopwatch.Stop();
+
+                Logger.Here().Information(
+                    "KTX2 material texture fallback for {TexturePath}: reason=dimensions, width={Width}, height={Height}, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, srgb={Srgb}, blender={ConvertToBlender}",
+                    filePath,
+                    decoded.Width,
+                    decoded.Height,
+                    pngEncodeMs,
+                    pngSaveMs,
+                    pngData.Length,
+                    srgb,
+                    convertToBlenderFormat);
+
+                return new TextureImageExportResult(pngPath, pngData);
+            }
+
+            var encoded = TextureHelper.EncodeBgraToKtx2(decoded, srgb);
+
+            phaseStopwatch.Restart();
+            _imageSaveHandler.Save(encoded.Ktx2Data, outFilePath);
+            phaseStopwatch.Stop();
+            var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            totalStopwatch.Stop();
+
+            Logger.Here().Information(
+                "KTX2 material texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, channelConvert={ChannelConvertMs:F1}ms, rgbaConvert={RgbaConvertMs:F1}ms, zstd={ZstdMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, zstdBytes={ZstdBytes}, outputBytes={OutputBytes}, srgb={Srgb}, blender={ConvertToBlender}",
+                filePath,
+                totalStopwatch.Elapsed.TotalMilliseconds,
+                lookupMs,
+                readMs,
+                ddsDecodeMs,
+                channelConvertMs,
+                encoded.RgbaConvertMs,
+                encoded.ZstdMs,
+                saveMs,
+                bytes.Length,
+                encoded.ZstdBytes,
+                encoded.Ktx2Data.Length,
+                srgb,
+                convertToBlenderFormat);
+
+            return new TextureImageExportResult(outFilePath, encoded.Ktx2Data);
         }
 
         public ExportSupportEnum CanExportFile(PackFile file)

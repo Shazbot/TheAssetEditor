@@ -16,6 +16,17 @@ namespace MeshImportExport
         double ZstdMs,
         int CompressionLevel);
 
+    public readonly record struct TextureImageExportResult(string Path, byte[] Data);
+
+    public readonly record struct TextureKtx2EncodeResult(
+        byte[] Ktx2Data,
+        int RawRgbaBytes,
+        int ZstdBytes,
+        double RgbaConvertMs,
+        double ZstdMs,
+        int CompressionLevel,
+        bool Srgb);
+
     public class TextureHelper
     {
         public readonly record struct DecodedDdsImage(int Width, int Height, byte[] BgraPixels);
@@ -56,6 +67,90 @@ namespace MeshImportExport
             DecodedDdsImage image,
             int compressionLevel = 1)
         {
+            var payload = CompressBgraToRgbaZstd(image, compressionLevel);
+            return new TextureZstdProbeResult(
+                payload.RawRgbaBytes,
+                payload.CompressedLength,
+                payload.RgbaConvertMs,
+                payload.ZstdMs,
+                compressionLevel);
+        }
+
+        /// <summary>
+        /// Encodes the exact transformed BGRA pixels as a single-level KTX2
+        /// R8G8B8A8 texture with Zstd supercompression. This is intentionally
+        /// lossless: unlike Basis/UASTC there is no additional texture-quality
+        /// tradeoff, and Three.js can inflate the raw Vulkan-format payload.
+        /// </summary>
+        public static bool CanEncodeKtx2ForSharpGltf(DecodedDdsImage image)
+            => image.Width > 0
+                && image.Height > 0
+                && image.Width % 4 == 0
+                && image.Height % 4 == 0;
+
+        public static TextureKtx2EncodeResult EncodeBgraToKtx2(
+            DecodedDdsImage image,
+            bool srgb,
+            int compressionLevel = 1)
+        {
+            var payload = CompressBgraToRgbaZstd(image, compressionLevel);
+            var dfd = BuildRgba8Dfd(srgb);
+
+            const int identifierLength = 12;
+            const int headerLength = 68;
+            const int levelIndexLength = 24;
+            var dfdOffset = identifierLength + headerLength + levelIndexLength;
+            var kvdOffset = checked(dfdOffset + dfd.Length);
+            var levelOffset = kvdOffset;
+
+            using var output = new MemoryStream(
+                checked(levelOffset + payload.CompressedLength));
+            using var writer = new BinaryWriter(output, System.Text.Encoding.UTF8, leaveOpen: true);
+
+            writer.Write(new byte[]
+            {
+                0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
+                0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A
+            });
+
+            writer.Write(srgb ? 43u : 37u); // VK_FORMAT_R8G8B8A8_SRGB / UNORM
+            writer.Write(1u); // typeSize
+            writer.Write(checked((uint)image.Width));
+            writer.Write(checked((uint)image.Height));
+            writer.Write(0u); // pixelDepth
+            writer.Write(0u); // layerCount
+            writer.Write(1u); // faceCount
+            writer.Write(1u); // levelCount
+            writer.Write(2u); // KHR_SUPERCOMPRESSION_ZSTD
+            writer.Write(checked((uint)dfdOffset));
+            writer.Write(checked((uint)dfd.Length));
+            writer.Write(checked((uint)kvdOffset));
+            writer.Write(0u); // kvdByteLength
+            writer.Write(0UL); // sgdByteOffset
+            writer.Write(0UL); // sgdByteLength
+
+            writer.Write(checked((ulong)levelOffset));
+            writer.Write(checked((ulong)payload.CompressedLength));
+            writer.Write(checked((ulong)payload.RawRgbaBytes));
+
+            writer.Write(dfd);
+            writer.Write(payload.Compressed.AsSpan(0, payload.CompressedLength));
+            writer.Flush();
+
+            return new TextureKtx2EncodeResult(
+                output.ToArray(),
+                payload.RawRgbaBytes,
+                payload.CompressedLength,
+                payload.RgbaConvertMs,
+                payload.ZstdMs,
+                compressionLevel,
+                srgb);
+        }
+
+        private static ZstdRgbaPayload CompressBgraToRgbaZstd(
+            DecodedDdsImage image,
+            int compressionLevel)
+        {
             var expectedLength = checked(image.Width * image.Height * 4);
             if (image.Width <= 0 || image.Height <= 0)
                 throw new ArgumentOutOfRangeException(nameof(image), "Texture dimensions must be positive.");
@@ -80,13 +175,58 @@ namespace MeshImportExport
                 compressedLength = compressor.Wrap(rgba, destination.AsSpan());
             zstdStopwatch.Stop();
 
-            return new TextureZstdProbeResult(
-                rgba.Length,
+            return new ZstdRgbaPayload(
+                destination,
                 compressedLength,
+                rgba.Length,
                 convertStopwatch.Elapsed.TotalMilliseconds,
-                zstdStopwatch.Elapsed.TotalMilliseconds,
-                compressionLevel);
+                zstdStopwatch.Elapsed.TotalMilliseconds);
         }
+
+        private static byte[] BuildRgba8Dfd(bool srgb)
+        {
+            // Matches Khronos KTX-Software createDFDUnpacked(0, 4, 1, 0,
+            // s_SRGB/s_UNORM) for VK_FORMAT_R8G8B8A8_*.
+            const int sampleCount = 4;
+            const int descriptorBlockSize = 24 + sampleCount * 16;
+            var dfd = new byte[4 + descriptorBlockSize];
+
+            using var stream = new MemoryStream(dfd, writable: true);
+            using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+            writer.Write(checked((uint)dfd.Length));
+            writer.Write((ushort)0); // KHR_DF_VENDORID_KHRONOS
+            writer.Write((ushort)0); // KHR_DF_KHR_DESCRIPTORTYPE_BASICFORMAT
+            writer.Write((ushort)2); // KHR_DF_VERSIONNUMBER_LATEST
+            writer.Write((ushort)descriptorBlockSize);
+            writer.Write((byte)1); // KHR_DF_MODEL_RGBSDA
+            writer.Write((byte)1); // KHR_DF_PRIMARIES_BT709
+            writer.Write((byte)(srgb ? 2 : 1)); // KHR_DF_TRANSFER_SRGB / LINEAR
+            writer.Write((byte)0); // KHR_DF_FLAG_ALPHA_STRAIGHT
+            writer.Write(new byte[] { 0, 0, 0, 0 }); // 1x1x1x1 texel block
+            writer.Write(new byte[] { 4, 0, 0, 0, 0, 0, 0, 0 }); // bytesPlane
+
+            for (var channel = 0; channel < sampleCount; channel++)
+            {
+                writer.Write(checked((ushort)(channel * 8))); // bitOffset
+                writer.Write((byte)7); // bitLength stores bits - 1
+                var channelType = channel == 3 ? 15 : channel;
+                if (srgb && channel == 3)
+                    channelType |= 0x10; // alpha is linear in an sRGB texture
+                writer.Write(checked((byte)channelType));
+                writer.Write(new byte[] { 0, 0, 0, 0 }); // samplePosition
+                writer.Write(0u);
+                writer.Write(255u);
+            }
+
+            return dfd;
+        }
+
+        private readonly record struct ZstdRgbaPayload(
+            byte[] Compressed,
+            int CompressedLength,
+            int RawRgbaBytes,
+            double RgbaConvertMs,
+            double ZstdMs);
 
         public static byte[] EncodeBgraToPng(int width, int height, byte[] bgraPixels)
         {
