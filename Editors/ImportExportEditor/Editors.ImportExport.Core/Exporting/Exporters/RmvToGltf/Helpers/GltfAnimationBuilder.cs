@@ -14,9 +14,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 {
     public class GltfAnimationBuilder
     {
+        private static readonly ILogger Logger = Logging.Create<GltfAnimationBuilder>();
+        private readonly GltfAnimationMetadataContextResolver? _metadataResolver;
+
         public GltfAnimationBuilder(IPackedFileLookup? packFileLookup = null)
         {
-            _ = packFileLookup;
+            if (packFileLookup is IHeadlessPackFileService headlessPackFileService)
+                _metadataResolver = new GltfAnimationMetadataContextResolver(headlessPackFileService);
         }
 
         public virtual void Build(AnimationFile animSkeleton, RmvToGltfExporterSettings settings, ProcessedGltfSkeleton gltfSkeleton, ModelRoot outputScene)
@@ -24,35 +28,61 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             foreach (var animationPackFile in settings.InputAnimationFiles)
             {
                 var animationToExport = AnimationFile.Create(animationPackFile);                
-                CreateFromTWAnim(animationPackFile.Name, gltfSkeleton, animSkeleton, animationToExport, outputScene, settings);
+                CreateFromTWAnim(animationPackFile, gltfSkeleton, animSkeleton, animationToExport, outputScene, settings);
             }            
         }
 
-        private void CreateFromTWAnim(string animationName, ProcessedGltfSkeleton gltfSkeleton, AnimationFile skeletonAnimFile, AnimationFile animationToExport, ModelRoot modelRoot, RmvToGltfExporterSettings settings)
+        private void CreateFromTWAnim(PackFile animationPackFile, ProcessedGltfSkeleton gltfSkeleton, AnimationFile skeletonAnimFile, AnimationFile animationToExport, ModelRoot modelRoot, RmvToGltfExporterSettings settings)
         {
+            var animationName = animationPackFile.Name;
             var doMirror = settings.MirrorMesh;
             var gameSkeleton = new GameSkeleton(skeletonAnimFile, null!);
             var animationClip = new AnimationClip(animationToExport, gameSkeleton);
+            IReadOnlyList<AnimationClip.KeyFrame> frames = animationClip.DynamicFrames;
 
-            var secondsPerFrame = animationClip.PlayTimeInSec / animationClip.DynamicFrames.Count;            
+            if (_metadataResolver != null)
+            {
+                try
+                {
+                    var metadataContext = _metadataResolver.Resolve(animationPackFile, gameSkeleton);
+                    if (metadataContext?.HasRules == true)
+                    {
+                        frames = GltfAnimationMetadataProcessor.Apply(animationClip, gameSkeleton, metadataContext);
+                        Logger.Here().Information(
+                            "Applied SuperView animation metadata to {AnimationName}: fragment={FragmentPath}, transforms={TransformCount}, docks={DockCount}",
+                            animationName,
+                            metadataContext.FragmentPath,
+                            metadataContext.TransformRules.Count,
+                            metadataContext.DockRules.Count);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    Logger.Here().Warning(
+                        $"Unable to apply SuperView animation metadata to '{animationName}'; exporting the raw animation. {exception.Message}");
+                }
+            }
+
+            var secondsPerFrame = frames.Count == 0 ? 0 : animationClip.PlayTimeInSec / frames.Count;
 
             var gltfAnimation = modelRoot.CreateAnimation(animationName);
+            var boneCount = frames.Count == 0 ? 0 : Math.Min(frames[0].Position.Count, gltfSkeleton.Data.Count);
 
-            for (var boneIndex = 0; boneIndex < animationClip.AnimationBoneCount; boneIndex++)
+            for (var boneIndex = 0; boneIndex < boneCount; boneIndex++)
             {
                 var translationKeyFrames = new Dictionary<float, SysNum.Vector3>();
                 var rotationKeyFrames = new Dictionary<float, SysNum.Quaternion>();
                 var scaleKeyFrames = new Dictionary<float, SysNum.Vector3>();
 
-                // populate the bone track containers with the key frames from the .ANIM animation file
-                for (var frameIndex = 0; frameIndex < animationClip.DynamicFrames.Count; frameIndex++)
+                // Populate the bone tracks from the raw animation or from the
+                // SuperView-compatible metadata-adjusted pose sequence.
+                for (var frameIndex = 0; frameIndex < frames.Count; frameIndex++)
                 {
-                    translationKeyFrames.Add(secondsPerFrame * (float)frameIndex, GlobalSceneTransforms.FlipVector(animationClip.DynamicFrames[frameIndex].Position[boneIndex], doMirror));
-                    rotationKeyFrames.Add(secondsPerFrame * (float)frameIndex, GlobalSceneTransforms.FlipQuaternion(animationClip.DynamicFrames[frameIndex].Rotation[boneIndex], doMirror));
-                    scaleKeyFrames.Add(secondsPerFrame * (float)frameIndex, new SysNum.Vector3(1, 1, 1));
+                    translationKeyFrames.Add(secondsPerFrame * frameIndex, GlobalSceneTransforms.FlipVector(frames[frameIndex].Position[boneIndex], doMirror));
+                    rotationKeyFrames.Add(secondsPerFrame * frameIndex, GlobalSceneTransforms.FlipQuaternion(frames[frameIndex].Rotation[boneIndex], doMirror));
+                    scaleKeyFrames.Add(secondsPerFrame * frameIndex, frames[frameIndex].Scale[boneIndex]);
                 }
 
-                // add the transformations
                 var boneNode = gltfSkeleton.Data[boneIndex].Item1;
                 gltfAnimation.CreateRotationChannel(boneNode, rotationKeyFrames);
                 gltfAnimation.CreateTranslationChannel(boneNode, translationKeyFrames);

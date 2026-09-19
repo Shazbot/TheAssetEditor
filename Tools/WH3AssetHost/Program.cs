@@ -222,7 +222,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             new GltfMeshBuilder(),
             new GltfTextureHandler(normalExporter, materialExporter, packFileService),
             new GltfSkeletonBuilder(),
-            new GltfAnimationBuilder(),
+            new GltfAnimationBuilder(packFileService),
             skeletonLookup,
             modelResolver,
             compositionResolver,
