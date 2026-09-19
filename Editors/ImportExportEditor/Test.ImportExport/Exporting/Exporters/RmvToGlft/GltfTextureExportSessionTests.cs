@@ -96,7 +96,10 @@ public class GltfTextureExportSessionTests
                 false,
                 false,
                 false,
-                false);
+                false)
+            {
+                MaxTextureParallelism = 2
+            };
 
             var textures = handler.HandleTextures(asset, settings, new GltfTextureExportSession(collisionSafe: true));
 
@@ -107,6 +110,76 @@ public class GltfTextureExportSessionTests
         }
         finally
         {
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task ParallelTextureExportRunsIndependentBasenamesConcurrentlyAndPreservesOrder()
+    {
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-textures-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+        using var entered = new CountdownEvent(2);
+        using var release = new ManualResetEventSlim(false);
+
+        try
+        {
+            var materialExporter = new Mock<IDdsToMaterialPngExporter>();
+            materialExporter
+                .Setup(x => x.ExportKtx2WithData(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<bool>(),
+                    It.IsAny<bool>()))
+                .Returns((string source, string output, bool _, bool _) =>
+                {
+                    entered.Signal();
+                    if (!release.Wait(TimeSpan.FromSeconds(5)))
+                        throw new TimeoutException("Parallel texture conversion did not release in time.");
+
+                    var stem = Path.GetFileNameWithoutExtension(source);
+                    var path = Path.Combine(Path.GetDirectoryName(output)!, stem + ".ktx2");
+                    return new TextureImageExportResult(path, [1, 2, 3, 4]);
+                });
+
+            var handler = new GltfTextureHandler(
+                new Mock<IDdsToNormalPngExporter>().Object,
+                materialExporter.Object);
+            var asset = CreateAsset("textures/first.dds", "textures/second.dds");
+            var settings = new RmvToGltfExporterSettings(
+                asset.InputFile,
+                [],
+                Path.Combine(outputDirectory, "model.glb"),
+                true,
+                false,
+                false,
+                false,
+                false)
+            {
+                UseKtx2Textures = true,
+                ExportAuxiliaryMasks = false,
+                MaxTextureParallelism = 2
+            };
+
+            var exportTask = Task.Run(() =>
+                handler.HandleTextures(
+                    asset,
+                    settings,
+                    new GltfTextureExportSession(collisionSafe: true)));
+
+            var bothEntered = entered.Wait(TimeSpan.FromSeconds(5));
+            release.Set();
+            var textures = await exportTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.That(bothEntered, Is.True, "Both distinct texture conversions should enter before either is released.");
+            Assert.That(textures, Has.Count.EqualTo(2));
+            Assert.That(Path.GetFileName(textures[0].SystemFilePath), Does.StartWith("first_"));
+            Assert.That(Path.GetFileName(textures[1].SystemFilePath), Does.StartWith("second_"));
+        }
+        finally
+        {
+            release.Set();
             if (Directory.Exists(outputDirectory))
                 Directory.Delete(outputDirectory, recursive: true);
         }

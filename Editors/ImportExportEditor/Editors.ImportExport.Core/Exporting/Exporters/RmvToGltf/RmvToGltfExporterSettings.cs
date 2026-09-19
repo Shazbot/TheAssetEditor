@@ -49,5 +49,12 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         /// export workflow continues producing PNG files.
         /// </summary>
         public bool UseKtx2Textures { get; init; } = false;
+
+        /// <summary>
+        /// Maximum number of texture conversions allowed to run concurrently.
+        /// The normal AssetEditor workflow stays serial by default; headless
+        /// preview callers can opt into bounded CPU parallelism.
+        /// </summary>
+        public int MaxTextureParallelism { get; init; } = 1;
     }
 }

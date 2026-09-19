@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
@@ -28,13 +29,24 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
     /// </summary>
     public sealed class GltfTextureExportSession
     {
+        private readonly ConcurrentDictionary<string, object> _outputStemLocks =
+            new(StringComparer.OrdinalIgnoreCase);
+
         public GltfTextureExportSession(bool collisionSafe = true)
         {
             CollisionSafe = collisionSafe;
         }
 
-        internal Dictionary<string, string> ExportedTextures { get; } = new(StringComparer.OrdinalIgnoreCase);
+        internal ConcurrentDictionary<string, string> ExportedTextures { get; } =
+            new(StringComparer.OrdinalIgnoreCase);
         internal bool CollisionSafe { get; }
+
+        internal object GetOutputStemLock(string sourcePath)
+        {
+            var normalized = sourcePath.Replace('\\', '/');
+            var stem = Path.GetFileNameWithoutExtension(normalized);
+            return _outputStemLocks.GetOrAdd(stem, static _ => new object());
+        }
     }
 
     public interface IGltfTextureHandler
@@ -115,6 +127,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             var totalStopwatch = Stopwatch.StartNew();
             var timing = new TextureTimingAccumulator();
+            var requests = new List<TextureWorkRequest>();
 
             foreach (var part in asset.FirstLod)
             {
@@ -123,8 +136,69 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                     if (string.IsNullOrWhiteSpace(texture.Value))
                         continue;
 
-                    var input = new MaterialBuilderTextureInput(texture.Value, texture.Key);
-                    HandleTexture(settings, output, session, part.PartIndex, input, timing);
+                    requests.Add(new TextureWorkRequest(
+                        part.PartIndex,
+                        new MaterialBuilderTextureInput(texture.Value, texture.Key)));
+                }
+            }
+
+            var maxParallelism = Math.Clamp(settings.MaxTextureParallelism, 1, 32);
+            timing.MaxParallelism = Math.Min(maxParallelism, Math.Max(1, requests.Count));
+
+            if (timing.MaxParallelism <= 1 || requests.Count <= 1)
+            {
+                foreach (var request in requests)
+                {
+                    HandleTexture(
+                        settings,
+                        output,
+                        session,
+                        request.MeshIndex,
+                        request.Texture,
+                        timing);
+                }
+            }
+            else
+            {
+                var results = new TextureWorkResult?[requests.Count];
+                Parallel.For(
+                    0,
+                    requests.Count,
+                    new ParallelOptions { MaxDegreeOfParallelism = timing.MaxParallelism },
+                    requestIndex =>
+                    {
+                        var request = requests[requestIndex];
+                        var localOutput = new List<TextureResult>();
+                        var localTiming = new TextureTimingAccumulator { MaxParallelism = 1 };
+
+                        // DDS exporters derive their intermediate output name
+                        // from the source basename. Different virtual paths can
+                        // therefore target the same temporary filename. Keep
+                        // those requests serial while allowing unrelated
+                        // textures to decode/transform/compress concurrently.
+                        lock (session.GetOutputStemLock(request.Texture.Path))
+                        {
+                            HandleTexture(
+                                settings,
+                                localOutput,
+                                session,
+                                request.MeshIndex,
+                                request.Texture,
+                                localTiming);
+                        }
+
+                        results[requestIndex] = new TextureWorkResult(localOutput, localTiming);
+                    });
+
+                // Merge in request order so material assignment and generated
+                // texture ordering remain deterministic across runs.
+                foreach (var result in results)
+                {
+                    if (result == null)
+                        continue;
+
+                    output.AddRange(result.Output);
+                    timing.Add(result.Timing);
                 }
             }
 
@@ -144,9 +218,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             TextureTimingAccumulator timing)
         {
             Logger.Here().Information(
-                "GLTF texture handling timing for {AssetName}: total={TotalMs:F1}ms, requests={RequestCount}, outputs={OutputCount}, sessionHits={SessionHitCount}, conversionCacheHits={ConversionCacheHitCount}, conversionCacheMisses={ConversionCacheMissCount}, cacheLookup={CacheLookupMs:F1}ms, cachedWrite={CachedWriteMs:F1}ms, exporter={ExporterMs:F1}ms, postProcess={PostProcessMs:F1}ms, cacheStore={CacheStoreMs:F1}ms, finalize={FinalizeMs:F1}ms",
+                "GLTF texture handling timing for {AssetName}: total={TotalMs:F1}ms, parallelism={MaxParallelism}, requests={RequestCount}, outputs={OutputCount}, sessionHits={SessionHitCount}, conversionCacheHits={ConversionCacheHitCount}, conversionCacheMisses={ConversionCacheMissCount}, cacheLookup={CacheLookupMs:F1}ms, cachedWrite={CachedWriteMs:F1}ms, exporter={ExporterMs:F1}ms, postProcess={PostProcessMs:F1}ms, cacheStore={CacheStoreMs:F1}ms, finalize={FinalizeMs:F1}ms",
                 assetName,
                 totalMs,
+                timing.MaxParallelism,
                 timing.RequestCount,
                 outputCount,
                 timing.SessionHitCount,
@@ -176,6 +251,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         }
 
         record MaterialBuilderTextureInput(string Path, TextureType Type);
+        private sealed record TextureWorkRequest(int MeshIndex, MaterialBuilderTextureInput Texture);
+        private sealed record TextureWorkResult(
+            List<TextureResult> Output,
+            TextureTimingAccumulator Timing);
 
         private static string CacheKey(MaterialBuilderTextureInput texture, string conversion, bool option = false)
             => $"{NormalizeTexturePath(texture.Path)}|{conversion}|{option}";
@@ -1276,6 +1355,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private sealed class TextureTimingAccumulator
         {
+            public int MaxParallelism { get; set; } = 1;
             public int RequestCount { get; set; }
             public int SessionHitCount { get; set; }
             public int ConversionCacheHitCount { get; set; }
@@ -1286,6 +1366,20 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             public double PostProcessMs { get; set; }
             public double CacheStoreMs { get; set; }
             public double FinalizeMs { get; set; }
+
+            public void Add(TextureTimingAccumulator other)
+            {
+                RequestCount += other.RequestCount;
+                SessionHitCount += other.SessionHitCount;
+                ConversionCacheHitCount += other.ConversionCacheHitCount;
+                ConversionCacheMissCount += other.ConversionCacheMissCount;
+                CacheLookupMs += other.CacheLookupMs;
+                CachedWriteMs += other.CachedWriteMs;
+                ExporterMs += other.ExporterMs;
+                PostProcessMs += other.PostProcessMs;
+                CacheStoreMs += other.CacheStoreMs;
+                FinalizeMs += other.FinalizeMs;
+            }
         }
 
         /// <summary>

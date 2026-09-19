@@ -576,6 +576,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             str += $"\tConvertNormalTextureToBlue:{settings.ConvertNormalTextureToBlue}\n";
             str += $"\tExportAnimations:{settings.ExportAnimations}\n";
             str += $"\tMirrorMesh:{settings.MirrorMesh}\n";
+            str += $"\tMaxTextureParallelism:{settings.MaxTextureParallelism}\n";
 
             _logger.Here().Information(str);
         }

@@ -375,7 +375,11 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             ExportAuxiliaryMasks = false,
             // WHMM has a dedicated raw RGBA + Zstd KTX2 compatibility loader
             // for this low-latency headless preview format.
-            UseKtx2Textures = true
+            UseKtx2Textures = true,
+            // DDS decode, channel conversion and Zstd are independent per
+            // texture. Bound parallelism so previews use available CPU cores
+            // without letting a texture-heavy model monopolize the machine.
+            MaxTextureParallelism = Math.Min(4, Math.Max(1, Environment.ProcessorCount))
         };
 
         phaseStopwatch.Restart();
