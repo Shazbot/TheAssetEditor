@@ -54,7 +54,7 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
             saveStopwatch.Stop();
             totalStopwatch.Stop();
 
-            Logger.Here().Information(
+            Logger.Here().Debug(
                 "GLTF save timing for {OutputName}: total={TotalMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, logicalImages={LogicalImages}",
                 Path.GetFileName(fullOutputPath),
                 totalStopwatch.Elapsed.TotalMilliseconds,
@@ -118,7 +118,7 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
         cleanupStopwatch.Stop();
         totalStopwatch.Stop();
 
-        Logger.Here().Information(
+        Logger.Here().Debug(
             "GLB save timing for {OutputName}: total={TotalMs:F1}ms, sharpGltf={SharpGltfMs:F1}ms, preprocessEmbedSerialize={PreprocessEmbedSerializeMs:F1}ms, fileWrite={FileWriteMs:F1}ms, cleanup={CleanupMs:F1}ms, outputBytes={OutputBytes}, streamedBytes={StreamedBytes}, logicalImages={LogicalImages}, generatedTextureBytes={GeneratedTextureBytes}, generatedTextureCount={GeneratedTextureCount}",
             Path.GetFileName(fullOutputPath),
             totalStopwatch.Elapsed.TotalMilliseconds,
