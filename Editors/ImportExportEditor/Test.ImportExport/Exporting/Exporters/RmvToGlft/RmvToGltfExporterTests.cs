@@ -3,6 +3,7 @@ using Editors.ImportExport.Exporting.Exporters.DdsToNormalPng;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers;
 using GameWorld.Core.Services;
+using MeshImportExport;
 using Moq;
 using System.IO;
 using Shared.Core.Events;
@@ -115,7 +116,13 @@ namespace Test.ImportExport.Exporting.Exporters.RmvToGlft
             var pfs = PackFileSerivceTestHelper.Create(_inputPackFileKarl);
             var meshBuilder = new GltfMeshBuilder();
             var normalExporter = new Mock<IDdsToNormalPngExporter>();
+            normalExporter
+                .Setup(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns(new TexturePngExportResult(string.Empty, Array.Empty<byte>()));
             var materialExporter = new Mock<IDdsToMaterialPngExporter>();
+            materialExporter
+                .Setup(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns(new TexturePngExportResult(string.Empty, Array.Empty<byte>()));
             var eventHub = new Mock<IGlobalEventHub>();
             var skeletontonLookupHelper = new SkeletonAnimationLookUpHelper(pfs, eventHub.Object);            
             var skeletontonBuilder = new GltfSkeletonBuilder(pfs);
@@ -198,14 +205,14 @@ namespace Test.ImportExport.Exporting.Exporters.RmvToGlft
             var normalPaths = new List<string>();
             var normalExporter = new Mock<IDdsToNormalPngExporter>();
             normalExporter
-                .Setup(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Setup(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
                 .Callback<string, string, bool>((path, _, _) => normalPaths.Add(path))
-                .Returns((string)null!);
+                .Returns(new TexturePngExportResult(string.Empty, Array.Empty<byte>()));
             var materialExporter = new Mock<IDdsToMaterialPngExporter>();
             materialExporter
-                .Setup(x => x.Export(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
+                .Setup(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()))
                 .Callback<string, string, bool>((path, _, _) => materialPaths.Add(path))
-                .Returns((string)null!);
+                .Returns(new TexturePngExportResult(string.Empty, Array.Empty<byte>()));
 
             var handler = new GltfTextureHandler(normalExporter.Object, materialExporter.Object, pfs);
             var settings = new RmvToGltfExporterSettings(
