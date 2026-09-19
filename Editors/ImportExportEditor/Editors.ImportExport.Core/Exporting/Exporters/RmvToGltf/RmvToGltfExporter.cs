@@ -303,7 +303,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 animationMs = phaseStopwatch.ElapsedMilliseconds;
             }
 
-            _logger.Here().Information($"VMD Export - Parts={modelParts.Count} MeshCount={meshes.Count} Skeleton={skeleton?.Data.Count}");
+            _logger.Here().Debug($"VMD Export - Parts={modelParts.Count} MeshCount={meshes.Count} Skeleton={skeleton?.Data.Count}");
 
             var sceneTiming = BuildGltfScene(
                 meshes,
@@ -490,7 +490,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 
             sceneBuildStopwatch.Stop();
 
-            _logger.Here().Information(
+            _logger.Here().Debug(
                 "GLTF scene build timing for {OutputName}: total={TotalMs:F1}ms, createMeshes={CreateMeshesMs:F1}ms, attachNodes={AttachNodesMs:F1}ms, meshes={MeshCount}",
                 Path.GetFileName(settings.OutputPath),
                 sceneBuildStopwatch.Elapsed.TotalMilliseconds,
@@ -511,7 +511,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 sceneBuildStopwatch.ElapsedMilliseconds,
                 saveStopwatch.ElapsedMilliseconds);
 
-            _logger.Here().Information(
+            _logger.Here().Debug(
                 "GLTF scene/save timing for {OutputName}: total={TotalMs}ms, sceneBuild={SceneBuildMs}ms, save={SaveMs}ms, meshes={MeshCount}, generatedTextures={GeneratedTextureCount}",
                 Path.GetFileName(settings.OutputPath),
                 timing.TotalMs,
@@ -600,7 +600,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             str += $"\tMirrorMesh:{settings.MirrorMesh}\n";
             str += $"\tMaxTextureParallelism:{settings.MaxTextureParallelism}\n";
 
-            _logger.Here().Information(str);
+            _logger.Here().Debug(str);
         }
 
         private sealed record ExportModelPart(
