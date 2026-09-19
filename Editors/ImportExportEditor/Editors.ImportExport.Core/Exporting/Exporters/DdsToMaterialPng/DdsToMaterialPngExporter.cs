@@ -101,7 +101,13 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
             {
                 var srgb = IsLikelySrgbTexture(filePath, convertToBlenderFormat);
                 var losslessKtx2 = TextureHelper.EncodeBgraToKtx2(decoded, srgb);
-                _textureEncodingProbe.Probe(filePath, decoded, srgb, losslessKtx2);
+                _textureEncodingProbe.Probe(
+                    filePath,
+                    decoded,
+                    srgb,
+                    losslessKtx2,
+                    imgBytes.Length,
+                    pngEncodeMs);
             }
 
             if (_enableKtx2Probe)
@@ -221,8 +227,6 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
             phaseStopwatch.Stop();
             var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             totalStopwatch.Stop();
-
-            _textureEncodingProbe?.Probe(filePath, decoded, srgb, encoded);
 
             Logger.Here().Information(
                 "KTX2 material texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, channelConvert={ChannelConvertMs:F1}ms, rgbaConvert={RgbaConvertMs:F1}ms, zstd={ZstdMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, zstdBytes={ZstdBytes}, outputBytes={OutputBytes}, srgb={Srgb}, blender={ConvertToBlender}",

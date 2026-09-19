@@ -148,17 +148,20 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 {
     private readonly SkeletonAnimationLookUpHelper _skeletonLookup;
     private readonly IGltfAnimationCatalogResolver _animationCatalogResolver;
+    private readonly UastcTextureBenchmarkProbe _textureEncodingProbe;
 
     private HeadlessExportRuntime(
         IHeadlessPackFileService packFileService,
         SkeletonAnimationLookUpHelper skeletonLookup,
         HeadlessGltfExportService exportService,
-        IGltfAnimationCatalogResolver animationCatalogResolver)
+        IGltfAnimationCatalogResolver animationCatalogResolver,
+        UastcTextureBenchmarkProbe textureEncodingProbe)
     {
         PackFileService = packFileService;
         _skeletonLookup = skeletonLookup;
         ExportService = exportService;
         _animationCatalogResolver = animationCatalogResolver;
+        _textureEncodingProbe = textureEncodingProbe;
     }
 
     public IHeadlessPackFileService PackFileService { get; }
@@ -229,7 +232,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             packFileService,
             skeletonLookup,
             new HeadlessGltfExportService(exporter),
-            animationCatalogResolver);
+            animationCatalogResolver,
+            textureEncodingProbe);
         phaseStopwatch.Stop();
         var exportPipelineMs = phaseStopwatch.ElapsedMilliseconds;
         totalStopwatch.Stop();
@@ -386,20 +390,27 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             UseKtx2Textures = false
         };
 
+        _textureEncodingProbe.BeginExport(request.AssetPath);
+
         phaseStopwatch.Restart();
         var result = ExportService.Export(settings);
         phaseStopwatch.Stop();
         var exportMs = phaseStopwatch.ElapsedMilliseconds;
+
+        var benchmarkStopwatch = Stopwatch.StartNew();
+        _textureEncodingProbe.Flush(request.AssetPath);
+        benchmarkStopwatch.Stop();
         totalStopwatch.Stop();
 
         Log.ForContext<HeadlessExportRuntime>().Information(
-            "Asset host export completed in {TotalMs}ms for {AssetPath}: success={Success}, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, gltfExport={ExportMs}ms, animations={AnimationCount}, variantSelections={VariantSelectionCount}, materials={ExportMaterials}, skeleton={IncludeSkeleton}",
-            totalStopwatch.ElapsedMilliseconds,
+            "Asset host export completed in {TotalMs}ms for {AssetPath}: success={Success}, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, gltfExport={ExportMs}ms, uastcBenchmark={UastcBenchmarkMs:F1}ms, animations={AnimationCount}, variantSelections={VariantSelectionCount}, materials={ExportMaterials}, skeleton={IncludeSkeleton}",
+            totalStopwatch.Elapsed.TotalMilliseconds,
             request.AssetPath,
             result.Success,
             assetLookupMs,
             animationLookupMs,
             exportMs,
+            benchmarkStopwatch.Elapsed.TotalMilliseconds,
             animationFiles.Count,
             request.VariantSelections?.Count ?? 0,
             request.ExportMaterials,

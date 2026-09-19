@@ -24,7 +24,9 @@ namespace MeshImportExport
             string texturePath,
             TextureHelper.DecodedDdsImage image,
             bool srgb,
-            TextureKtx2EncodeResult losslessKtx2);
+            TextureKtx2EncodeResult losslessKtx2,
+            int pngBytes,
+            double pngEncodeMs);
     }
 
     public readonly record struct TextureKtx2EncodeResult(
