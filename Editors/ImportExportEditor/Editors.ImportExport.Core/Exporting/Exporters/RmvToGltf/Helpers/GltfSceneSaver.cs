@@ -71,22 +71,22 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
             .ToArray();
         var generatedTextureSet = generatedTextures.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var generatedTextureBytes = generatedTextures.Sum(GetFileSize);
-        var externalizeGeneratedTextures =
-            generatedTextures.Length > 0
-            && modelRoot.LogicalImages.Count > 0
-            && modelRoot.LogicalImages.All(image =>
-            {
-                if (string.IsNullOrWhiteSpace(image.AlternateWriteFileName))
-                    return false;
 
-                var imagePath = Path.GetFullPath(
-                    ResolveOutputPath(outputDirectory, image.AlternateWriteFileName));
-                return generatedTextureSet.Contains(imagePath) && File.Exists(imagePath);
-            });
+        // Supplying generated texture paths marks the headless preview workflow.
+        // Externalize every logical image in that workflow instead of requiring
+        // an all-or-nothing match between logical images and generated textures.
+        // Known generated files are reused; any additional logical image is
+        // written once by the image callback below.
+        var externalizePreviewImages =
+            generatedTextures.Length > 0
+            && modelRoot.LogicalImages.Count > 0;
 
         TimedFileWriteStream? timedOutputStream = null;
         var fallbackFileWriteMs = 0.0;
         long fallbackBytesWritten = 0;
+        var reusedExternalImageCount = 0;
+        var writtenExternalImageCount = 0;
+        long writtenExternalImageBytes = 0;
 
         var context = WriteContext.Create(
             (assetName, data) =>
@@ -120,7 +120,7 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
         // If an image cannot be proven to have a generated sidecar, preserve the
         // previous self-contained behavior and embed all images in the GLB.
         var inPlacePrepareStopwatch = Stopwatch.StartNew();
-        if (externalizeGeneratedTextures)
+        if (externalizePreviewImages)
         {
             modelRoot.MergeBuffers();
         }
@@ -132,18 +132,42 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
         inPlacePrepareStopwatch.Stop();
 
         context.ImageWriting = ResourceWriteMode.SatelliteFile;
-        if (externalizeGeneratedTextures)
+        if (externalizePreviewImages)
         {
-            context.ImageWriteCallback = (_, assetName, _) =>
+            context.ImageWriteCallback = (_, assetName, image) =>
             {
                 var imagePath = Path.GetFullPath(
                     ResolveOutputPath(outputDirectory, assetName));
-                if (!generatedTextureSet.Contains(imagePath) || !File.Exists(imagePath))
-                    throw new InvalidOperationException(
-                        $"Expected generated preview texture sidecar '{assetName}' was not available.");
 
-                // The texture exporter already wrote the exact KTX2/PNG bytes.
-                // Returning the URI without writing avoids duplicating that I/O.
+                if (generatedTextureSet.Contains(imagePath) && File.Exists(imagePath))
+                {
+                    // The texture exporter already wrote these bytes.
+                    reusedExternalImageCount++;
+                    return assetName;
+                }
+
+                // SharpGLTF can expose more logical images than the texture
+                // handler reports generated files. Keep those images external
+                // as well and write them once rather than forcing the entire
+                // model back to the embedded-image GLB path.
+                var directory = Path.GetDirectoryName(imagePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                var stopwatch = Stopwatch.StartNew();
+                using (var input = image.Open())
+                using (var output = File.Create(imagePath))
+                {
+                    input.CopyTo(output);
+                }
+                stopwatch.Stop();
+
+                var imageBytes = GetFileSize(imagePath);
+                fallbackFileWriteMs += stopwatch.Elapsed.TotalMilliseconds;
+                fallbackBytesWritten += imageBytes;
+                writtenExternalImageBytes += imageBytes;
+                writtenExternalImageCount++;
+
                 return assetName;
             };
         }
@@ -161,7 +185,7 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
             sharpGltfStopwatch.Elapsed.TotalMilliseconds - fileWriteMs);
 
         var cleanupStopwatch = Stopwatch.StartNew();
-        if (!externalizeGeneratedTextures)
+        if (!externalizePreviewImages)
         {
             foreach (var texturePath in generatedTextures)
             {
@@ -176,10 +200,10 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
         totalStopwatch.Stop();
 
         Logger.Here().Debug(
-            "GLB save timing for {OutputName}: total={TotalMs:F1}ms, externalTextures={ExternalTextures}, inPlacePrepare={InPlacePrepareMs:F1}ms, sharpGltf={SharpGltfMs:F1}ms, preprocessSerialize={PreprocessSerializeMs:F1}ms, fileWrite={FileWriteMs:F1}ms, cleanup={CleanupMs:F1}ms, outputBytes={OutputBytes}, streamedBytes={StreamedBytes}, logicalImages={LogicalImages}, generatedTextureBytes={GeneratedTextureBytes}, generatedTextureCount={GeneratedTextureCount}",
+            "GLB save timing for {OutputName}: total={TotalMs:F1}ms, externalTextures={ExternalTextures}, inPlacePrepare={InPlacePrepareMs:F1}ms, sharpGltf={SharpGltfMs:F1}ms, preprocessSerialize={PreprocessSerializeMs:F1}ms, fileWrite={FileWriteMs:F1}ms, cleanup={CleanupMs:F1}ms, outputBytes={OutputBytes}, streamedBytes={StreamedBytes}, logicalImages={LogicalImages}, generatedTextureBytes={GeneratedTextureBytes}, generatedTextureCount={GeneratedTextureCount}, reusedExternalImages={ReusedExternalImages}, writtenExternalImages={WrittenExternalImages}, writtenExternalImageBytes={WrittenExternalImageBytes}",
             Path.GetFileName(fullOutputPath),
             totalStopwatch.Elapsed.TotalMilliseconds,
-            externalizeGeneratedTextures,
+            externalizePreviewImages,
             inPlacePrepareStopwatch.Elapsed.TotalMilliseconds,
             sharpGltfStopwatch.Elapsed.TotalMilliseconds,
             preprocessEmbedSerializeMs,
@@ -189,7 +213,10 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
             bytesWritten,
             modelRoot.LogicalImages.Count,
             generatedTextureBytes,
-            generatedTextures.Length);
+            generatedTextures.Length,
+            reusedExternalImageCount,
+            writtenExternalImageCount,
+            writtenExternalImageBytes);
     }
 
     private static bool IsGeneratedTexture(string path)
