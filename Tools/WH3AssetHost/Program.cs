@@ -158,8 +158,8 @@ internal static class Program
 internal sealed class CurrentAssetModelResolverCache : IModelAssetResolver
 {
     private readonly IModelAssetResolver _inner;
-    private readonly Dictionary<PackFile, ResolvedModelAsset> _cache =
-        new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<string, ResolvedModelAsset> _cache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public CurrentAssetModelResolverCache(IModelAssetResolver inner)
     {
@@ -174,14 +174,15 @@ internal sealed class CurrentAssetModelResolverCache : IModelAssetResolver
     {
         ArgumentNullException.ThrowIfNull(inputFile);
 
-        if (_cache.TryGetValue(inputFile, out var cached))
+        var cacheKey = NormalizeCacheKey(inputFile);
+        if (_cache.TryGetValue(cacheKey, out var cached))
         {
             CacheHits++;
             return cached;
         }
 
         var resolved = _inner.Resolve(inputFile);
-        _cache[inputFile] = resolved;
+        _cache[cacheKey] = resolved;
         CacheMisses++;
         return resolved;
     }
@@ -198,6 +199,9 @@ internal sealed class CurrentAssetModelResolverCache : IModelAssetResolver
         CacheHits = 0;
         CacheMisses = 0;
     }
+
+    private static string NormalizeCacheKey(PackFile file)
+        => (file.VirtualPath ?? file.Name).Replace('/', '\\').Trim().TrimStart('\\');
 }
 
 internal sealed class HeadlessExportRuntime : IAssetHostRuntime
