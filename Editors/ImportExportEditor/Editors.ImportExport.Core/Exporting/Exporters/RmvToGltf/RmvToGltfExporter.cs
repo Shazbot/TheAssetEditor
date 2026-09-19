@@ -8,6 +8,7 @@ using Shared.GameFormats.RigidModel.MaterialHeaders;
 using SharpGLTF.Geometry;
 using SharpGLTF.Materials;
 using SharpGLTF.Schema2;
+using SharpGLTF.Scenes;
 
 namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 {
@@ -444,9 +445,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             var scene = outputScene.UseScene("default");
 
             var meshCreateStopwatch = Stopwatch.StartNew();
+            var deferBufferMergeToSaver = _gltfSaver is HeadlessGltfSceneSaver;
             var schemaMeshes = meshes.Count == 0
                 ? Array.Empty<Mesh>()
-                : outputScene.CreateMeshes(meshes.Select(x => x.MeshBuilder).ToArray()).ToArray();
+                : CreateSchemaMeshes(
+                    outputScene,
+                    meshes.Select(x => x.MeshBuilder).ToArray(),
+                    deferBufferMergeToSaver);
             meshCreateStopwatch.Stop();
 
             if (schemaMeshes.Length != meshes.Count)
@@ -491,12 +496,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             sceneBuildStopwatch.Stop();
 
             _logger.Here().Debug(
-                "GLTF scene build timing for {OutputName}: total={TotalMs:F1}ms, createMeshes={CreateMeshesMs:F1}ms, attachNodes={AttachNodesMs:F1}ms, meshes={MeshCount}",
+                "GLTF scene build timing for {OutputName}: total={TotalMs:F1}ms, createMeshes={CreateMeshesMs:F1}ms, attachNodes={AttachNodesMs:F1}ms, meshes={MeshCount}, deferredBufferMerge={DeferredBufferMerge}",
                 Path.GetFileName(settings.OutputPath),
                 sceneBuildStopwatch.Elapsed.TotalMilliseconds,
                 meshCreateStopwatch.Elapsed.TotalMilliseconds,
                 nodeAttachStopwatch.Elapsed.TotalMilliseconds,
-                meshes.Count);
+                meshes.Count,
+                deferBufferMergeToSaver);
 
             var saveStopwatch = Stopwatch.StartNew();
             _gltfSaver.Save(
@@ -521,6 +527,44 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 generatedTexturePaths?.Count ?? 0);
 
             return timing;
+        }
+
+        private static Mesh[] CreateSchemaMeshes(
+            ModelRoot outputScene,
+            IMeshBuilder<MaterialBuilder>[] meshBuilders,
+            bool deferBufferMergeToSaver)
+        {
+            if (!deferBufferMergeToSaver)
+                return outputScene.CreateMeshes(meshBuilders).ToArray();
+
+            // SharpGLTF's default CreateMeshes() packs and merges all geometry
+            // buffers immediately. Headless GLB saving already performs one
+            // final ModelRoot.MergeBuffers() pass, so doing both copies the same
+            // vertex/index data twice on every preview export.
+            //
+            // Keep every other default mesh-packing option unchanged and only
+            // defer the merge until the disposable ModelRoot is ready to save.
+            var schemaSettings = SceneBuilderSchema2Settings.Default;
+            schemaSettings.MergeBuffers = false;
+
+            // Mirror SharpGLTF's normal material coalescing behavior so this
+            // overload is output-equivalent apart from when buffers are merged.
+            var materials = new Dictionary<MaterialBuilder, Material>(
+                MaterialBuilder.ContentComparer);
+
+            Material ConvertMaterial(MaterialBuilder sourceMaterial)
+            {
+                if (materials.TryGetValue(sourceMaterial, out var material))
+                    return material;
+
+                material = outputScene.CreateMaterial(sourceMaterial);
+                materials[sourceMaterial] = material;
+                return material;
+            }
+
+            return outputScene
+                .CreateMeshes(ConvertMaterial, schemaSettings, meshBuilders)
+                .ToArray();
         }
 
         internal static Node? FindAttachmentBone(
