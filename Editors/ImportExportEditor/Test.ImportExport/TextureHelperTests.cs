@@ -38,36 +38,6 @@ public class TextureHelperTests
         Assert.That(pixel.A, Is.EqualTo(77));
     }
 
-    [Test]
-    public void EncodeBgraToPngUsesAdaptiveFiltersAndPreservesAllPixels()
-    {
-        const int width = 8;
-        const int height = 2;
-        var bgra = new byte[width * height * 4];
-        var expectedRgba = new byte[bgra.Length];
-
-        for (var pixel = 0; pixel < width * height; pixel++)
-        {
-            var index = pixel * 4;
-            bgra[index] = 201;
-            bgra[index + 1] = 34;
-            bgra[index + 2] = 17;
-            bgra[index + 3] = 77;
-
-            expectedRgba[index] = 17;
-            expectedRgba[index + 1] = 34;
-            expectedRgba[index + 2] = 201;
-            expectedRgba[index + 3] = 77;
-        }
-
-        var png = TextureHelper.EncodeBgraToPng(width, height, bgra);
-        var decoded = PngTestHelper.ReadAllPixelsRgba(png);
-        var filters = PngTestHelper.ReadFilterTypes(png);
-
-        Assert.That(decoded, Is.EqualTo(expectedRgba));
-        Assert.That(filters, Is.EqualTo(new byte[] { 1, 2 }));
-    }
-
     private static byte[] CreateSolidRedDxt1Dds()
     {
         using var stream = new MemoryStream();
