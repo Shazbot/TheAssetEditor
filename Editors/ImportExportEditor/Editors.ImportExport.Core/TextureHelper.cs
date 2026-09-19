@@ -1,4 +1,5 @@
 using System.Drawing.Imaging;
+using System.IO.Compression;
 using System.IO;
 using Editors.ImportExport.Misc;
 using Pfim;
@@ -47,10 +48,125 @@ namespace MeshImportExport
         {
             ArgumentNullException.ThrowIfNull(bgraPixels);
 
-            using var bitmap = BitmapPixelBuffer.CreateBitmap(width, height, bgraPixels);
+            var rowBytes = checked(width * 4);
+            var expectedLength = checked(rowBytes * height);
+            if (width <= 0 || height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(width), "PNG dimensions must be positive.");
+            if (bgraPixels.Length < expectedLength)
+                throw new ArgumentException("The pixel buffer is smaller than the requested image.", nameof(bgraPixels));
+
+            // GDI+ can premultiply and then unpremultiply semi-transparent
+            // pixels while saving PNGs.  That changes channel values by one or
+            // more (for example, 128 can become 127), which is not acceptable
+            // for packed game textures. Write an RGBA PNG directly so the
+            // decoded image contains exactly the source channel bytes.
+            var scanlines = new byte[checked((rowBytes + 1) * height)];
+            for (var row = 0; row < height; row++)
+            {
+                var sourceRow = checked(row * rowBytes);
+                var destinationRow = checked(row * (rowBytes + 1));
+                // Filter type 0 (None).
+                scanlines[destinationRow] = 0;
+
+                for (var column = 0; column < width; column++)
+                {
+                    var sourceIndex = checked(sourceRow + column * 4);
+                    var destinationIndex = checked(destinationRow + 1 + column * 4);
+
+                    // PNG color type 6 is RGBA; the source buffer is BGRA.
+                    scanlines[destinationIndex] = bgraPixels[sourceIndex + 2];
+                    scanlines[destinationIndex + 1] = bgraPixels[sourceIndex + 1];
+                    scanlines[destinationIndex + 2] = bgraPixels[sourceIndex];
+                    scanlines[destinationIndex + 3] = bgraPixels[sourceIndex + 3];
+                }
+            }
+
+            using var compressed = new MemoryStream();
+            using (var zlib = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
+                zlib.Write(scanlines, 0, scanlines.Length);
+
             using var output = new MemoryStream();
-            bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+            output.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+
+            Span<byte> header = stackalloc byte[13];
+            WriteBigEndian(header[0..4], (uint)width);
+            WriteBigEndian(header[4..8], (uint)height);
+            header[8] = 8; // bit depth
+            header[9] = 6; // RGBA
+            header[10] = 0; // compression method
+            header[11] = 0; // filter method
+            header[12] = 0; // no interlace
+            WritePngChunk(output, "IHDR", header);
+            WritePngChunk(output, "IDAT", compressed.ToArray());
+            WritePngChunk(output, "IEND", ReadOnlySpan<byte>.Empty);
             return output.ToArray();
+        }
+
+        /// <summary>
+        /// Returns the BGRA values that a PNG consumer using GDI+ will read
+        /// from the encoded image. GDI+ applies its alpha representation while
+        /// loading semi-transparent PNGs, so conversions that operate before
+        /// PNG encoding must use the same values as the exported raw texture.
+        /// </summary>
+        public static DecodedDdsImage NormalizeBgraForPng(DecodedDdsImage image)
+        {
+            var png = EncodeBgraToPng(image);
+            using var stream = new MemoryStream(png, writable: false);
+            using var decodedImage = System.Drawing.Image.FromStream(stream);
+            using var bitmap = new System.Drawing.Bitmap(decodedImage);
+            var pixels = new byte[checked(image.Width * image.Height * 4)];
+            for (var y = 0; y < image.Height; y++)
+            {
+                for (var x = 0; x < image.Width; x++)
+                {
+                    var color = bitmap.GetPixel(x, y);
+                    var index = checked((y * image.Width + x) * 4);
+                    pixels[index] = color.B;
+                    pixels[index + 1] = color.G;
+                    pixels[index + 2] = color.R;
+                    pixels[index + 3] = color.A;
+                }
+            }
+
+            return image with { BgraPixels = pixels };
+        }
+
+        private static void WritePngChunk(Stream output, string type, ReadOnlySpan<byte> data)
+        {
+            var typeBytes = System.Text.Encoding.ASCII.GetBytes(type);
+            Span<byte> length = stackalloc byte[4];
+            WriteBigEndian(length, checked((uint)data.Length));
+            output.Write(length);
+            output.Write(typeBytes);
+            output.Write(data);
+
+            var crcInput = new byte[checked(typeBytes.Length + data.Length)];
+            typeBytes.CopyTo(crcInput, 0);
+            data.CopyTo(crcInput.AsSpan(typeBytes.Length));
+            Span<byte> crc = stackalloc byte[4];
+            WriteBigEndian(crc, ComputeCrc32(crcInput));
+            output.Write(crc);
+        }
+
+        private static void WriteBigEndian(Span<byte> destination, uint value)
+        {
+            destination[0] = (byte)(value >> 24);
+            destination[1] = (byte)(value >> 16);
+            destination[2] = (byte)(value >> 8);
+            destination[3] = (byte)value;
+        }
+
+        private static uint ComputeCrc32(ReadOnlySpan<byte> data)
+        {
+            var crc = 0xffffffffu;
+            foreach (var value in data)
+            {
+                crc ^= value;
+                for (var bit = 0; bit < 8; bit++)
+                    crc = (crc >> 1) ^ (0xedb88320u & unchecked((uint)-(int)(crc & 1)));
+            }
+
+            return ~crc;
         }
 
         public static byte[] ConvertDdsToPng(byte[] ddsbyteSteam)

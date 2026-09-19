@@ -81,6 +81,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             if (convertToBlueNormalMap)
             {
                 phaseStopwatch.Restart();
+                decoded = TextureHelper.NormalizeBgraForPng(decoded);
                 ConvertPackedNormalToStandardInPlace(decoded.BgraPixels);
                 phaseStopwatch.Stop();
                 normalConvertMs = phaseStopwatch.Elapsed.TotalMilliseconds;

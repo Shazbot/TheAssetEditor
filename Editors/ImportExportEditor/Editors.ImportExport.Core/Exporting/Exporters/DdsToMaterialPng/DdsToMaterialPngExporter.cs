@@ -69,6 +69,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
             if (convertToBlenderFormat)
             {
                 phaseStopwatch.Restart();
+                decoded = TextureHelper.NormalizeBgraForPng(decoded);
                 ConvertToBlenderFormatInPlace(decoded.BgraPixels);
                 phaseStopwatch.Stop();
                 channelConvertMs = phaseStopwatch.Elapsed.TotalMilliseconds;
