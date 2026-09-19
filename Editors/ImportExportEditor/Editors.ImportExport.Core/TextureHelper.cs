@@ -56,14 +56,6 @@ namespace MeshImportExport
         public static byte[] EncodeBgraToPng(DecodedDdsImage image)
             => EncodeBgraToPng(image.Width, image.Height, image.BgraPixels);
 
-        /// <summary>
-        /// Returns whether the transformed image can be encoded as the
-        /// headless preview's single-level raw RGBA + Zstd KTX2 payload.
-        /// Raw R8G8B8A8 KTX2 has no block-size restriction.
-        /// </summary>
-        public static bool CanEncodeKtx2ForSharpGltf(DecodedDdsImage image)
-            => image.Width > 0 && image.Height > 0;
-
         public static TextureKtx2EncodeResult EncodeBgraToKtx2(
             DecodedDdsImage image,
             bool srgb,
