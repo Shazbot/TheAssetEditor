@@ -210,6 +210,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
     private readonly IGltfAnimationCatalogResolver _animationCatalogResolver;
     private readonly CurrentAssetModelResolverCache _modelResolverCache;
     private readonly VariantMeshCompositionResolver _compositionResolver;
+    private readonly GltfTextureHandler _textureHandler;
     private string? _currentAssetSessionKey;
 
     private HeadlessExportRuntime(
@@ -218,7 +219,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         HeadlessGltfExportService exportService,
         IGltfAnimationCatalogResolver animationCatalogResolver,
         CurrentAssetModelResolverCache modelResolverCache,
-        VariantMeshCompositionResolver compositionResolver)
+        VariantMeshCompositionResolver compositionResolver,
+        GltfTextureHandler textureHandler)
     {
         PackFileService = packFileService;
         _skeletonLookup = skeletonLookup;
@@ -226,6 +228,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         _animationCatalogResolver = animationCatalogResolver;
         _modelResolverCache = modelResolverCache;
         _compositionResolver = compositionResolver;
+        _textureHandler = textureHandler;
     }
 
     public IHeadlessPackFileService PackFileService { get; }
@@ -282,10 +285,11 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         var imageSaveHandler = new SystemImageSaveHandler();
         var materialExporter = new DdsToMaterialPngExporter(packFileService, imageSaveHandler);
         var normalExporter = new DdsToNormalPngExporter(packFileService, imageSaveHandler);
+        var textureHandler = new GltfTextureHandler(normalExporter, materialExporter, packFileService);
         var exporter = new RmvToGltfExporter(
             new HeadlessGltfSceneSaver(),
             new GltfMeshBuilder(),
-            new GltfTextureHandler(normalExporter, materialExporter, packFileService),
+            textureHandler,
             new GltfSkeletonBuilder(),
             new GltfAnimationBuilder(
                 packFileService,
@@ -302,7 +306,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             new HeadlessGltfExportService(exporter),
             animationCatalogResolver,
             modelResolver,
-            compositionResolver);
+            compositionResolver,
+            textureHandler);
         phaseStopwatch.Stop();
         var exportPipelineMs = phaseStopwatch.ElapsedMilliseconds;
         totalStopwatch.Stop();
@@ -358,6 +363,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 
         _modelResolverCache.Clear();
         _compositionResolver.ClearParsedDefinitionCache();
+        _textureHandler.ClearConvertedTextureCache();
         _currentAssetSessionKey = sessionKey;
     }
 
