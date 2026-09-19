@@ -218,9 +218,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             foreach (var texture in texturesForModel)
             {
-                material.WithChannelImage(texture.GlftTexureType, texture.SystemFilePath);
+                material.WithChannelImage(texture.GltfTextureType, texture.SystemFilePath);
 
-                var channel = material.UseChannel(texture.GlftTexureType);
+                var channel = material.UseChannel(texture.GltfTextureType);
                 if (channel?.Texture?.PrimaryImage != null)
                 {
                     // Set SharpGLTF to re-resave textures with specified paths

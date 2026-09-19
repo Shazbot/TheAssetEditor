@@ -1,11 +1,13 @@
 ﻿using System.Collections.ObjectModel;
 using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
-using Microsoft.Xna.Framework;
 using Shared.ByteParsing;
 using Shared.ByteParsing.Parsers;
 using Shared.Core.Events;
 using Shared.GameFormats.AnimationMeta.Parsing;
+
+using NumericsVector3 = System.Numerics.Vector3;
+using NumericsVector4 = System.Numerics.Vector4;
 
 namespace Editors.AnimationMeta.Presentation
 {
@@ -47,11 +49,11 @@ namespace Editors.AnimationMeta.Presentation
 
                 AttributeViewModel? editableItem = null;
                 var fieldName = FormatFieldName(prop.Name);
-                if (attributeInfo.DisplayOverride == MetaDataTagAttribute.DisplayType.EulerVector || value is Vector3)
+                if (attributeInfo.DisplayOverride == MetaDataTagAttribute.DisplayType.EulerVector || value is NumericsVector3)
                 {
-                    if (value is Vector3 vector3)
+                    if (value is NumericsVector3 vector3)
                         editableItem = new VectorAttributeViewModel(fieldName, itemDiscription, parser as Vector3Parser, vector3, typedMetaItem, prop, eventHub);
-                    else if (value is Vector4 quaternion)
+                    else if (value is NumericsVector4 quaternion)
                         editableItem = new OrientationAttributeViewModel(fieldName, itemDiscription, parser as Vector4Parser, quaternion, typedMetaItem, prop, eventHub);
                     else
                         throw new Exception("Unknown item");

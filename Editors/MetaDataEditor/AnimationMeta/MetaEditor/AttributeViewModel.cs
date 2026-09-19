@@ -1,11 +1,15 @@
 ﻿using System.Reflection;
 using CommunityToolkit.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
-using Microsoft.Xna.Framework;
 using Shared.ByteParsing.Parsers;
 using Shared.Core.Events;
 using Shared.Core.Misc;
 using Shared.Ui.BaseDialogs.MathViews;
+
+using NumericsVector3 = System.Numerics.Vector3;
+using NumericsVector4 = System.Numerics.Vector4;
+using XnaQuaternion = Microsoft.Xna.Framework.Quaternion;
+using XnaVector3 = Microsoft.Xna.Framework.Vector3;
 
 namespace Editors.AnimationMeta.Presentation
 {
@@ -107,13 +111,13 @@ namespace Editors.AnimationMeta.Presentation
     {
         [ObservableProperty] Vector3ViewModel _value = new(0, 0, 0);
 
-        public OrientationAttributeViewModel(string fieldName, string description, Vector4Parser parser, Vector4 value, object target, PropertyInfo property, IEventHub eventHub) 
+        public OrientationAttributeViewModel(string fieldName, string description, Vector4Parser parser, NumericsVector4 value, object target, PropertyInfo property, IEventHub eventHub) 
             : base(fieldName, description, parser, value, target, property, eventHub)
         {
 
             _value = new(0, 0, 0, OnValueChangedCallback);
 
-            var q = new Quaternion(value);
+            var q = new XnaQuaternion(value.X, value.Y, value.Z, value.W);
             var eulerRotation = MathUtil.QuaternionToEulerDegree(q);
 
             Value.DisableCallbacks = true;
@@ -123,13 +127,13 @@ namespace Editors.AnimationMeta.Presentation
             IsValid = true;
         }
 
-        private void OnValueChangedCallback(Vector3 vector)
+        private void OnValueChangedCallback(XnaVector3 vector)
         {
             var vector3 = Value.GetAsVector3();
             var value = MathUtil.EulerDegreesToQuaternion(vector3);
             value.Normalize();
 
-            _property.SetValue(_target, value.ToVector4());
+            _property.SetValue(_target, new NumericsVector4(value.X, value.Y, value.Z, value.W));
             _eventHub.Publish(new MetaDataAttributeChangedEvent());
             IsModified = true;
         }
@@ -140,21 +144,21 @@ namespace Editors.AnimationMeta.Presentation
     {
         [ObservableProperty] Vector3ViewModel _value;
 
-        public VectorAttributeViewModel(string fieldName, string description, Vector3Parser parser, Vector3 value, object target, PropertyInfo property, IEventHub eventHub) 
+        public VectorAttributeViewModel(string fieldName, string description, Vector3Parser parser, NumericsVector3 value, object target, PropertyInfo property, IEventHub eventHub) 
             : base(fieldName, description, parser, value, target, property, eventHub)
         {
             _value = new(0, 0, 0, OnValueChangedCallback);
             Value.DisableCallbacks = true;
-            Value.Set(value);
+            Value.Set(new XnaVector3(value.X, value.Y, value.Z));
             Value.DisableCallbacks = false;
             IsValid = true;
         }
 
 
-        private void OnValueChangedCallback(Vector3 vector)
+        private void OnValueChangedCallback(XnaVector3 vector)
         {
             var vector3 = Value.GetAsVector3();
-            _property.SetValue(_target, vector3);
+            _property.SetValue(_target, new NumericsVector3(vector3.X, vector3.Y, vector3.Z));
             _eventHub.Publish(new MetaDataAttributeChangedEvent());
             IsModified = true;
         }
