@@ -92,6 +92,12 @@ public sealed class VanillaPackFilesCacheReaderTests
             WriteCache(cachePath, packPath, index);
 
             var loaded = new HeadlessPackFileLoader(cachePath).LoadOrderedWithMetadata([packPath]);
+            var lazyContainer = loaded[0].Container as VanillaPackFilesCacheReader.LazyVanillaPackFileContainer;
+
+            Assert.That(lazyContainer, Is.Not.Null);
+            Assert.That(lazyContainer!.IndexedFileCount, Is.EqualTo(2));
+            Assert.That(lazyContainer.MaterializedFileCount, Is.Zero);
+
             var service = HeadlessPackFileServiceFactory.Create(loaded.Select(x => x.Container));
             var rawFile = service.FindFile("folder\\raw.txt");
 
@@ -99,8 +105,10 @@ public sealed class VanillaPackFilesCacheReaderTests
             Assert.That(loaded[0].IsVanillaPack, Is.True);
             Assert.That(loaded[0].Container.GetFileCount(), Is.EqualTo(2));
             Assert.That(loaded[0].Container.FindFile("audio\\voice.wem"), Is.Null);
+            var repeatedRawFile = loaded[0].Container.FindFile("folder\\raw.txt");
+            Assert.That(repeatedRawFile, Is.SameAs(rawFile));
             Assert.That(
-                loaded[0].Container.FindFile("folder\\raw.txt")!.DataSource.ReadData(),
+                repeatedRawFile!.DataSource.ReadData(),
                 Is.EqualTo(rawFiles[0].Data));
             Assert.That(
                 loaded[0].Container.FindFile("folder\\compressed.txt")!.DataSource.ReadData(),
@@ -110,6 +118,54 @@ public sealed class VanillaPackFilesCacheReaderTests
             Assert.That(rawFile.VirtualPath, Is.EqualTo("folder\\raw.txt"));
             Assert.That(service.GetFullPath(rawFile), Is.EqualTo("folder\\raw.txt"));
             Assert.That(service.GetPackFileContainer(rawFile), Is.SameAs(loaded[0].Container));
+            Assert.That(lazyContainer.MaterializedFileCount, Is.EqualTo(2));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void LazyContainer_ExtensionSearchMaterializesOnlyMatchingFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VanillaPackFilesCacheReaderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var packPath = Path.Combine(root, "release.pack");
+        var cachePath = Path.Combine(root, "vanilla-pack-files-cache.bin");
+
+        try
+        {
+            var files = new[]
+            {
+                (Name: "animations\\idle.anim", Data: Encoding.ASCII.GetBytes("anim"), IsCompressed: false),
+                (Name: "folder\\keep.txt", Data: Encoding.ASCII.GetBytes("text"), IsCompressed: false),
+                (Name: "audio\\skip.wem", Data: Encoding.ASCII.GetBytes("audio"), IsCompressed: false)
+            };
+            var index = BuildPack(packPath, files);
+            WriteCache(cachePath, packPath, index);
+
+            var loaded = new HeadlessPackFileLoader(cachePath).LoadOrderedWithMetadata([packPath]);
+            var container = loaded[0].Container;
+            var lazyContainer = container as VanillaPackFilesCacheReader.LazyVanillaPackFileContainer;
+            var service = HeadlessPackFileServiceFactory.Create([container]);
+
+            Assert.That(lazyContainer, Is.Not.Null);
+            Assert.That(lazyContainer!.IndexedFileCount, Is.EqualTo(2));
+            Assert.That(lazyContainer.MaterializedFileCount, Is.Zero);
+
+            var animations = PackFileServiceUtility.FindAllWithExtentionIncludePaths(
+                service,
+                ".anim",
+                container);
+
+            Assert.That(animations, Has.Count.EqualTo(1));
+            Assert.That(animations[0].FileName, Is.EqualTo("animations\\idle.anim"));
+            Assert.That(animations[0].Pack.DataSource.ReadData(), Is.EqualTo(files[0].Data));
+            Assert.That(lazyContainer.MaterializedFileCount, Is.EqualTo(1));
+            Assert.That(container.ContainsFile("folder\\keep.txt"), Is.True);
+            Assert.That(lazyContainer.MaterializedFileCount, Is.EqualTo(1));
         }
         finally
         {
@@ -144,6 +200,10 @@ public sealed class VanillaPackFilesCacheReaderTests
             Assert.That(built.RetainedFileCount, Is.Zero);
             Assert.That(built.SkippedWemCount, Is.EqualTo(2));
             Assert.That(built.Container.GetFileCount(), Is.Zero);
+            var lazyContainer = built.Container as VanillaPackFilesCacheReader.LazyVanillaPackFileContainer;
+            Assert.That(lazyContainer, Is.Not.Null);
+            Assert.That(lazyContainer!.IndexedFileCount, Is.Zero);
+            Assert.That(lazyContainer.MaterializedFileCount, Is.Zero);
         }
         finally
         {

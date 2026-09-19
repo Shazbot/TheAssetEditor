@@ -63,7 +63,7 @@ namespace Shared.Core.PackFiles.Utility
             var pathSetupMs = 0.0;
             var cacheLookupMs = 0.0;
             var cacheMetadataValidationMs = 0.0;
-            var cacheDirectFileMaterializeMs = 0.0;
+            var cacheFileIndexBuildMs = 0.0;
             var cachedContainerSetupMs = 0.0;
             var allWemFastPathPacks = 0;
             var diskParseMs = 0.0;
@@ -80,7 +80,7 @@ namespace Shared.Core.PackFiles.Utility
                 pathSetupMs += details.PathSetupMs;
                 cacheLookupMs += details.CacheLookupMs;
                 cacheMetadataValidationMs += details.CacheMetadataValidationMs;
-                cacheDirectFileMaterializeMs += details.CacheDirectFileMaterializeMs;
+                cacheFileIndexBuildMs += details.CacheFileIndexBuildMs;
                 cachedContainerSetupMs += details.CachedContainerSetupMs;
                 if (details.UsedAllWemFastPath)
                     allWemFastPathPacks++;
@@ -103,7 +103,7 @@ namespace Shared.Core.PackFiles.Utility
             var orderedLoadMs = totalStopwatch.Elapsed.TotalMilliseconds;
             var totalIncludingCacheFileMs = orderedLoadMs + _vanillaCacheFileLoadMs;
             Logger.Here().Information(
-                "Headless pack cold-start breakdown: totalIncludingCacheFile={TotalIncludingCacheFileMs:F1}ms, cacheFileLoad={CacheFileLoadMs:F1}ms, orderedLoad={OrderedLoadMs:F1}ms, pathSetup={PathSetupMs:F1}ms, cacheReadBuild={CacheLookupMs:F1}ms (metadataValidation={CacheMetadataValidationMs:F1}ms, containerSetup={CachedContainerSetupMs:F1}ms, directFileMaterialize={CacheDirectFileMaterializeMs:F1}ms), diskParse={DiskParseMs:F1}ms, packs={PackCount}, cacheHits={CacheHits}, diskLoads={DiskLoads}, retainedCachedFiles={RetainedCachedFiles}, skippedWemFiles={SkippedWemFiles}, allWemFastPathPacks={AllWemFastPathPacks}",
+                "Headless pack cold-start breakdown: totalIncludingCacheFile={TotalIncludingCacheFileMs:F1}ms, cacheFileLoad={CacheFileLoadMs:F1}ms, orderedLoad={OrderedLoadMs:F1}ms, pathSetup={PathSetupMs:F1}ms, cacheReadBuild={CacheLookupMs:F1}ms (metadataValidation={CacheMetadataValidationMs:F1}ms, containerSetup={CachedContainerSetupMs:F1}ms, lazyFileIndexBuild={CacheFileIndexBuildMs:F1}ms), diskParse={DiskParseMs:F1}ms, packs={PackCount}, cacheHits={CacheHits}, diskLoads={DiskLoads}, retainedCachedFiles={RetainedCachedFiles}, materializedCachedFilesAtStartup=0, skippedWemFiles={SkippedWemFiles}, allWemFastPathPacks={AllWemFastPathPacks}",
                 totalIncludingCacheFileMs,
                 _vanillaCacheFileLoadMs,
                 orderedLoadMs,
@@ -111,7 +111,7 @@ namespace Shared.Core.PackFiles.Utility
                 cacheLookupMs,
                 cacheMetadataValidationMs,
                 cachedContainerSetupMs,
-                cacheDirectFileMaterializeMs,
+                cacheFileIndexBuildMs,
                 diskParseMs,
                 packFilePaths.Count,
                 cacheHits,
@@ -168,7 +168,7 @@ namespace Shared.Core.PackFiles.Utility
                     pathSetupStopwatch.Elapsed.TotalMilliseconds,
                     cacheLookupStopwatch.Elapsed.TotalMilliseconds,
                     cachedBuild.MetadataValidationMs,
-                    cachedBuild.DirectFileMaterializeMs,
+                    cachedBuild.FileIndexBuildMs,
                     cachedBuild.ContainerSetupMs,
                     DiskParseMs: 0,
                     cachedBuild.UsedAllWemFastPath,
@@ -214,7 +214,7 @@ namespace Shared.Core.PackFiles.Utility
                 pathSetupStopwatch.Elapsed.TotalMilliseconds,
                 cacheLookupStopwatch.Elapsed.TotalMilliseconds,
                 CacheMetadataValidationMs: 0,
-                CacheDirectFileMaterializeMs: 0,
+                CacheFileIndexBuildMs: 0,
                 CachedContainerSetupMs: 0,
                 diskParseStopwatch.Elapsed.TotalMilliseconds,
                 UsedAllWemFastPath: false,
@@ -230,7 +230,7 @@ namespace Shared.Core.PackFiles.Utility
             double PathSetupMs,
             double CacheLookupMs,
             double CacheMetadataValidationMs,
-            double CacheDirectFileMaterializeMs,
+            double CacheFileIndexBuildMs,
             double CachedContainerSetupMs,
             double DiskParseMs,
             bool UsedAllWemFastPath,

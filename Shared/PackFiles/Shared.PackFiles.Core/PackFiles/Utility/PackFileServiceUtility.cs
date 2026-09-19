@@ -23,6 +23,9 @@ namespace Shared.Core.PackFiles.Utility
         {
             if (packFileContainer != null)
             {
+                if (packFileContainer is IPackFileContainerInternal internalContainer)
+                    return internalContainer.FindAllWithExtention(extention);
+
                 var normalizedExtension = extention.ToLower();
                 return packFileContainer.GetAllFiles()
                     .Where(x => Path.GetExtension(x.Key) == normalizedExtension)
