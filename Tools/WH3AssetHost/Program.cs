@@ -211,6 +211,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
     private readonly CurrentAssetModelResolverCache _modelResolverCache;
     private readonly VariantMeshCompositionResolver _compositionResolver;
     private readonly GltfTextureHandler _textureHandler;
+    private readonly RmvToGltfExporter _exporter;
     private string? _currentAssetSessionKey;
 
     private HeadlessExportRuntime(
@@ -220,7 +221,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         IGltfAnimationCatalogResolver animationCatalogResolver,
         CurrentAssetModelResolverCache modelResolverCache,
         VariantMeshCompositionResolver compositionResolver,
-        GltfTextureHandler textureHandler)
+        GltfTextureHandler textureHandler,
+        RmvToGltfExporter exporter)
     {
         PackFileService = packFileService;
         _skeletonLookup = skeletonLookup;
@@ -229,6 +231,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         _modelResolverCache = modelResolverCache;
         _compositionResolver = compositionResolver;
         _textureHandler = textureHandler;
+        _exporter = exporter;
     }
 
     public IHeadlessPackFileService PackFileService { get; }
@@ -299,7 +302,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             skeletonLookup,
             modelResolver,
             compositionResolver,
-            missingSkeletonDecision ?? new HeadlessMissingSkeletonDecision());
+            missingSkeletonDecision ?? new HeadlessMissingSkeletonDecision(),
+            cacheBuiltMeshes: true);
         var runtime = new HeadlessExportRuntime(
             packFileService,
             skeletonLookup,
@@ -307,7 +311,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             animationCatalogResolver,
             modelResolver,
             compositionResolver,
-            textureHandler);
+            textureHandler,
+            exporter);
         phaseStopwatch.Stop();
         var exportPipelineMs = phaseStopwatch.ElapsedMilliseconds;
         totalStopwatch.Stop();
@@ -352,18 +357,22 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         if (_currentAssetSessionKey != null)
         {
             Log.ForContext<HeadlessExportRuntime>().Debug(
-                "Clearing current-asset caches while switching from {PreviousAsset} to {AssetPath}: parsedModels={ParsedModelCount}, parsedVmdDefinitions={ParsedVmdDefinitionCount}, modelCacheHits={ModelCacheHits}, modelCacheMisses={ModelCacheMisses}",
+                "Clearing current-asset caches while switching from {PreviousAsset} to {AssetPath}: parsedModels={ParsedModelCount}, parsedVmdDefinitions={ParsedVmdDefinitionCount}, cachedBuiltMeshes={CachedBuiltMeshCount}, modelCacheHits={ModelCacheHits}, modelCacheMisses={ModelCacheMisses}, builtMeshCacheHits={BuiltMeshCacheHits}, builtMeshCacheMisses={BuiltMeshCacheMisses}",
                 _currentAssetSessionKey,
                 sessionKey,
                 _modelResolverCache.CachedAssetCount,
                 _compositionResolver.CachedDefinitionCount,
+                _exporter.CachedBuiltMeshCount,
                 _modelResolverCache.CacheHits,
-                _modelResolverCache.CacheMisses);
+                _modelResolverCache.CacheMisses,
+                _exporter.BuiltMeshCacheHits,
+                _exporter.BuiltMeshCacheMisses);
         }
 
         _modelResolverCache.Clear();
         _compositionResolver.ClearParsedDefinitionCache();
         _textureHandler.ClearConvertedTextureCache();
+        _exporter.ClearBuiltMeshCache();
         _currentAssetSessionKey = sessionKey;
     }
 
@@ -435,6 +444,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         EnsureAssetSession(request.AssetPath);
         var modelCacheHitsBefore = _modelResolverCache.CacheHits;
         var modelCacheMissesBefore = _modelResolverCache.CacheMisses;
+        var builtMeshCacheHitsBefore = _exporter.BuiltMeshCacheHits;
+        var builtMeshCacheMissesBefore = _exporter.BuiltMeshCacheMisses;
         var totalStopwatch = Stopwatch.StartNew();
         var phaseStopwatch = Stopwatch.StartNew();
 
@@ -512,7 +523,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         totalStopwatch.Stop();
 
         Log.ForContext<HeadlessExportRuntime>().Information(
-            "Asset host export completed in {TotalMs}ms for {AssetPath}: success={Success}, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, gltfExport={ExportMs}ms, animations={AnimationCount}, variantSelections={VariantSelectionCount}, materials={ExportMaterials}, skeleton={IncludeSkeleton}, modelCacheHits={ModelCacheHits}, modelCacheMisses={ModelCacheMisses}, cachedModels={CachedModelCount}, cachedVmdDefinitions={CachedVmdDefinitionCount}",
+            "Asset host export completed in {TotalMs}ms for {AssetPath}: success={Success}, assetLookup={AssetLookupMs}ms, animationLookup={AnimationLookupMs}ms, gltfExport={ExportMs}ms, animations={AnimationCount}, variantSelections={VariantSelectionCount}, materials={ExportMaterials}, skeleton={IncludeSkeleton}, modelCacheHits={ModelCacheHits}, modelCacheMisses={ModelCacheMisses}, builtMeshCacheHits={BuiltMeshCacheHits}, builtMeshCacheMisses={BuiltMeshCacheMisses}, cachedModels={CachedModelCount}, cachedVmdDefinitions={CachedVmdDefinitionCount}, cachedBuiltMeshes={CachedBuiltMeshCount}",
             totalStopwatch.ElapsedMilliseconds,
             request.AssetPath,
             result.Success,
@@ -525,8 +536,11 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             request.IncludeSkeleton,
             _modelResolverCache.CacheHits - modelCacheHitsBefore,
             _modelResolverCache.CacheMisses - modelCacheMissesBefore,
+            _exporter.BuiltMeshCacheHits - builtMeshCacheHitsBefore,
+            _exporter.BuiltMeshCacheMisses - builtMeshCacheMissesBefore,
             _modelResolverCache.CachedAssetCount,
-            _compositionResolver.CachedDefinitionCount);
+            _compositionResolver.CachedDefinitionCount,
+            _exporter.CachedBuiltMeshCount);
 
         return result;
     }
