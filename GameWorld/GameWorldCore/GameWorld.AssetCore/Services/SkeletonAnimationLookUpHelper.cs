@@ -86,6 +86,7 @@ namespace GameWorld.Core.Services
             {
                 UnloadAnimationFromContainer(packFileContainer);
                 LoadFromPackFileContainer(packFileContainer);
+                _animationIndexCache?.Flush();
             });
         }
 
@@ -98,11 +99,19 @@ namespace GameWorld.Core.Services
         {
             var stopwatch = Stopwatch.StartNew();
             var containers = _packFiles.GetAllPackfileContainers();
-            foreach (var container in containers)
+
+            try
             {
-                if (_isDisposed)
-                    return;
-                LoadFromPackFileContainer(container);
+                foreach (var container in containers)
+                {
+                    if (_isDisposed)
+                        return;
+                    LoadFromPackFileContainer(container);
+                }
+            }
+            finally
+            {
+                _animationIndexCache?.Flush();
             }
 
             stopwatch.Stop();

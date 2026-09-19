@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.IO;
-using System.Security.Cryptography;
-using System.Text;
+using System.IO.Compression;
 using System.Text.Json;
 using Serilog;
 using Shared.Core.PackFiles.Models;
@@ -11,9 +10,8 @@ namespace GameWorld.Core.Services;
 
 /// <summary>
 /// Enables the headless host to persist animation-header results for a known
-/// set of vanilla pack containers. Mod containers are intentionally supplied
-/// by the host only as a lookup set, so they can never be written to this
-/// cache accidentally.
+/// set of vanilla pack containers. The on-disk cache is one Brotli-compressed
+/// document, while validation and invalidation remain per pack.
 /// </summary>
 public sealed class SkeletonAnimationLookupCacheOptions
 {
@@ -34,10 +32,16 @@ public sealed class SkeletonAnimationLookupCacheOptions
 
 internal sealed class SkeletonAnimationLookupCache
 {
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 2;
+    private const string CacheFileName = "animation-index.br";
 
     private readonly ILogger _logger = Logging.Create<SkeletonAnimationLookupCache>();
     private readonly SkeletonAnimationLookupCacheOptions _options;
+    private readonly object _sync = new();
+    private readonly Dictionary<string, CachedPack> _packsByPath = new(StringComparer.OrdinalIgnoreCase);
+
+    private bool _isLoaded;
+    private bool _isDirty;
 
     public SkeletonAnimationLookupCache(SkeletonAnimationLookupCacheOptions options)
     {
@@ -65,92 +69,68 @@ internal sealed class SkeletonAnimationLookupCache
             return null;
         }
 
-        var cachePath = GetCacheFilePath(packStamp.PackPath);
-        if (!File.Exists(cachePath))
-        {
-            LogMiss(container, "cache file not found");
-            return null;
-        }
+        EnsureLoaded();
 
         var stopwatch = Stopwatch.StartNew();
-        try
+        CachedPack cachedPack;
+        lock (_sync)
         {
-            var document = JsonSerializer.Deserialize<CacheDocument>(
-                File.ReadAllText(cachePath, Encoding.UTF8),
-                SkeletonAnimationLookupCacheJsonContext.Default.CacheDocument);
-            if (document == null)
+            if (!_packsByPath.TryGetValue(packStamp.PackPath, out var foundPack))
             {
-                LogMiss(container, "cache document was empty");
+                LogMiss(container, "pack entry not found");
                 return null;
             }
 
-            if (document.SchemaVersion != CurrentSchemaVersion)
+            cachedPack = foundPack;
+
+            if (cachedPack.Length != packStamp.Length)
             {
-                LogMiss(
-                    container,
-                    $"schema version {document.SchemaVersion} does not match {CurrentSchemaVersion}");
+                _packsByPath.Remove(packStamp.PackPath);
+                _isDirty = true;
+                LogMiss(container, $"pack size changed ({cachedPack.Length} -> {packStamp.Length})");
                 return null;
             }
 
-            if (!string.Equals(document.PackPath, packStamp.PackPath, StringComparison.OrdinalIgnoreCase))
+            if (cachedPack.LastWriteTimeUtcTicks != packStamp.LastWriteTimeUtcTicks)
             {
-                LogMiss(container, "pack path changed");
-                return null;
-            }
-
-            if (document.Length != packStamp.Length)
-            {
-                LogMiss(container, $"pack size changed ({document.Length} -> {packStamp.Length})");
-                return null;
-            }
-
-            if (document.LastWriteTimeUtcTicks != packStamp.LastWriteTimeUtcTicks)
-            {
+                _packsByPath.Remove(packStamp.PackPath);
+                _isDirty = true;
                 LogMiss(container, "pack last-write time changed");
                 return null;
             }
+        }
 
-            var animationsBySkeletonName = new Dictionary<string, List<AnimationReference>>(
-                StringComparer.OrdinalIgnoreCase);
-            foreach (var animation in document.Animations ?? [])
+        var animationsBySkeletonName = new Dictionary<string, List<AnimationReference>>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var animation in cachedPack.Animations ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(animation.SkeletonName)
+                || string.IsNullOrWhiteSpace(animation.AnimationPath))
+                continue;
+
+            if (!animationsBySkeletonName.TryGetValue(animation.SkeletonName, out var animations))
             {
-                if (string.IsNullOrWhiteSpace(animation.SkeletonName)
-                    || string.IsNullOrWhiteSpace(animation.AnimationPath))
-                    continue;
-
-                if (!animationsBySkeletonName.TryGetValue(animation.SkeletonName, out var animations))
-                {
-                    animations = [];
-                    animationsBySkeletonName[animation.SkeletonName] = animations;
-                }
-
-                animations.Add(new AnimationReference(animation.AnimationPath, container));
+                animations = [];
+                animationsBySkeletonName[animation.SkeletonName] = animations;
             }
 
-            var skeletonFileNames = (document.SkeletonFileNames ?? [])
-                .Where(path => string.IsNullOrWhiteSpace(path) == false)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            stopwatch.Stop();
-            _logger.Here().Information(
-                "Skeleton animation cache HIT for [{ContainerName}] in {ElapsedMs}ms with {AnimationCount} animation refs and {SkeletonCount} skeleton files",
-                container.Name,
-                stopwatch.ElapsedMilliseconds,
-                animationsBySkeletonName.Values.Sum(x => x.Count),
-                skeletonFileNames.Count);
-
-            return (skeletonFileNames, animationsBySkeletonName);
+            animations.Add(new AnimationReference(animation.AnimationPath, container));
         }
-        catch (Exception exception)
-        {
-            _logger.Here().Warning(
-                "Skeleton animation cache MISS for [{ContainerName}] from '{CachePath}': invalid cache: {Message}",
-                container.Name,
-                cachePath,
-                exception.Message);
-            return null;
-        }
+
+        var skeletonFileNames = (cachedPack.SkeletonFileNames ?? [])
+            .Where(path => string.IsNullOrWhiteSpace(path) == false)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        stopwatch.Stop();
+        _logger.Here().Information(
+            "Skeleton animation cache HIT for [{ContainerName}] in {ElapsedMs}ms with {AnimationCount} animation refs and {SkeletonCount} skeleton files",
+            container.Name,
+            stopwatch.ElapsedMilliseconds,
+            animationsBySkeletonName.Values.Sum(x => x.Count),
+            skeletonFileNames.Count);
+
+        return (skeletonFileNames, animationsBySkeletonName);
     }
 
     public void Save(
@@ -162,10 +142,10 @@ internal sealed class SkeletonAnimationLookupCache
             || !TryGetPackStamp(container, out var packStamp))
             return;
 
-        var cachePath = GetCacheFilePath(packStamp.PackPath);
-        var document = new CacheDocument
+        EnsureLoaded();
+
+        var cachedPack = new CachedPack
         {
-            SchemaVersion = CurrentSchemaVersion,
             PackPath = packStamp.PackPath,
             Length = packStamp.Length,
             LastWriteTimeUtcTicks = packStamp.LastWriteTimeUtcTicks,
@@ -187,48 +167,172 @@ internal sealed class SkeletonAnimationLookupCache
                 .ToList()
         };
 
-        string? temporaryPath = null;
-        var stopwatch = Stopwatch.StartNew();
-        try
+        lock (_sync)
         {
-            Directory.CreateDirectory(_options.CacheDirectory);
-            temporaryPath = string.Concat(cachePath, ".", Guid.NewGuid().ToString("N"), ".tmp");
-            File.WriteAllText(
-                temporaryPath,
-                JsonSerializer.Serialize(
-                    document,
-                    SkeletonAnimationLookupCacheJsonContext.Default.CacheDocument),
-                Encoding.UTF8);
-            File.Move(temporaryPath, cachePath, overwrite: true);
-            temporaryPath = null;
+            _packsByPath[packStamp.PackPath] = cachedPack;
+            _isDirty = true;
+        }
+    }
 
-            stopwatch.Stop();
-            _logger.Here().Information(
-                "Skeleton animation cache SAVED for [{ContainerName}] in {ElapsedMs}ms with {AnimationCount} animation refs and {SkeletonCount} skeleton files",
-                container.Name,
-                stopwatch.ElapsedMilliseconds,
-                document.Animations.Count,
-                document.SkeletonFileNames.Count);
-        }
-        catch (Exception exception)
+    public void Flush()
+    {
+        EnsureLoaded();
+
+        lock (_sync)
         {
-            _logger.Here().Warning(
-                "Unable to save skeleton animation lookup cache '{CachePath}': {Message}",
-                cachePath,
-                exception.Message);
-        }
-        finally
-        {
-            if (temporaryPath != null)
+            if (!_isDirty)
+                return;
+
+            var document = new CacheDocument
             {
-                try
+                SchemaVersion = CurrentSchemaVersion,
+                Packs = _packsByPath.Values
+                    .OrderBy(pack => pack.PackPath, StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            };
+
+            var cachePath = GetCacheFilePath();
+            string? temporaryPath = null;
+            var stopwatch = Stopwatch.StartNew();
+
+            try
+            {
+                Directory.CreateDirectory(_options.CacheDirectory);
+                temporaryPath = string.Concat(cachePath, ".", Guid.NewGuid().ToString("N"), ".tmp");
+
+                using (var fileStream = new FileStream(
+                    temporaryPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None))
+                using (var brotliStream = new BrotliStream(
+                    fileStream,
+                    CompressionLevel.Optimal,
+                    leaveOpen: false))
                 {
-                    File.Delete(temporaryPath);
+                    JsonSerializer.Serialize(
+                        brotliStream,
+                        document,
+                        SkeletonAnimationLookupCacheJsonContext.Default.CacheDocument);
                 }
-                catch
+
+                File.Move(temporaryPath, cachePath, overwrite: true);
+                temporaryPath = null;
+                _isDirty = false;
+
+                stopwatch.Stop();
+                var compressedBytes = new FileInfo(cachePath).Length;
+                _logger.Here().Information(
+                    "Skeleton animation cache SAVED combined index in {ElapsedMs}ms: {PackCount} packs, {AnimationCount} animation refs, {SkeletonCount} skeleton files, {CompressedBytes} bytes compressed",
+                    stopwatch.ElapsedMilliseconds,
+                    document.Packs.Count,
+                    document.Packs.Sum(pack => pack.Animations?.Count ?? 0),
+                    document.Packs.Sum(pack => pack.SkeletonFileNames?.Count ?? 0),
+                    compressedBytes);
+            }
+            catch (Exception exception)
+            {
+                _logger.Here().Warning(
+                    "Unable to save skeleton animation lookup cache '{CachePath}': {Message}",
+                    cachePath,
+                    exception.Message);
+            }
+            finally
+            {
+                if (temporaryPath != null)
                 {
-                    // Cache writes are best effort; leave the lookup usable.
+                    try
+                    {
+                        File.Delete(temporaryPath);
+                    }
+                    catch
+                    {
+                        // Cache writes are best effort; leave the lookup usable.
+                    }
                 }
+            }
+        }
+    }
+
+    private void EnsureLoaded()
+    {
+        lock (_sync)
+        {
+            if (_isLoaded)
+                return;
+
+            _isLoaded = true;
+            var cachePath = GetCacheFilePath();
+            if (!File.Exists(cachePath))
+            {
+                _logger.Here().Information(
+                    "Skeleton animation combined cache not found at '{CachePath}'",
+                    cachePath);
+                return;
+            }
+
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                CacheDocument? document;
+                using (var fileStream = new FileStream(
+                    cachePath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read))
+                using (var brotliStream = new BrotliStream(
+                    fileStream,
+                    CompressionMode.Decompress,
+                    leaveOpen: false))
+                {
+                    document = JsonSerializer.Deserialize(
+                        brotliStream,
+                        SkeletonAnimationLookupCacheJsonContext.Default.CacheDocument);
+                }
+
+                if (document == null)
+                    throw new InvalidDataException("Cache document was empty.");
+                if (document.SchemaVersion != CurrentSchemaVersion)
+                    throw new InvalidDataException(
+                        $"Schema version {document.SchemaVersion} does not match {CurrentSchemaVersion}.");
+
+                foreach (var pack in document.Packs ?? [])
+                {
+                    if (string.IsNullOrWhiteSpace(pack.PackPath))
+                        continue;
+                    _packsByPath[Path.GetFullPath(pack.PackPath)] = pack;
+                }
+
+                var currentPackPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var container in _options.CacheableContainers)
+                {
+                    if (TryGetPackStamp(container, out var currentStamp))
+                        currentPackPaths.Add(currentStamp.PackPath);
+                }
+
+                var stalePaths = _packsByPath.Keys
+                    .Where(path => !currentPackPaths.Contains(path))
+                    .ToList();
+                foreach (var stalePath in stalePaths)
+                    _packsByPath.Remove(stalePath);
+
+                if (stalePaths.Count > 0)
+                    _isDirty = true;
+
+                stopwatch.Stop();
+                _logger.Here().Information(
+                    "Skeleton animation combined cache LOADED in {ElapsedMs}ms with {PackCount} pack entries ({RemovedPackCount} stale entries removed)",
+                    stopwatch.ElapsedMilliseconds,
+                    _packsByPath.Count,
+                    stalePaths.Count);
+            }
+            catch (Exception exception)
+            {
+                _packsByPath.Clear();
+                _logger.Here().Warning(
+                    "Ignoring invalid skeleton animation combined cache '{CachePath}': {Message}",
+                    cachePath,
+                    exception.Message);
             }
         }
     }
@@ -241,11 +345,8 @@ internal sealed class SkeletonAnimationLookupCache
             reason);
     }
 
-    private string GetCacheFilePath(string packPath)
-    {
-        var pathHash = SHA256.HashData(Encoding.UTF8.GetBytes(packPath.ToUpperInvariant()));
-        return Path.Combine(_options.CacheDirectory, $"{Convert.ToHexString(pathHash)}.json");
-    }
+    private string GetCacheFilePath()
+        => Path.Combine(_options.CacheDirectory, CacheFileName);
 
     private static bool TryGetPackStamp(IPackFileContainer container, out PackStamp stamp)
     {
@@ -279,6 +380,11 @@ internal sealed class SkeletonAnimationLookupCache
     internal sealed class CacheDocument
     {
         public int SchemaVersion { get; set; }
+        public List<CachedPack> Packs { get; set; } = [];
+    }
+
+    internal sealed class CachedPack
+    {
         public string PackPath { get; set; } = string.Empty;
         public long Length { get; set; }
         public long LastWriteTimeUtcTicks { get; set; }
