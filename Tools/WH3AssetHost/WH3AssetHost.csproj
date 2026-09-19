@@ -6,7 +6,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <LangVersion>preview</LangVersion>
   </PropertyGroup>
 
   <!-- Release builds are distributed with the mod manager as one self-contained file. -->
