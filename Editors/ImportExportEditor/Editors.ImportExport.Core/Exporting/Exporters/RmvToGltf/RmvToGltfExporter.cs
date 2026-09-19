@@ -442,9 +442,22 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             var sceneBuildStopwatch = Stopwatch.StartNew();
 
             var scene = outputScene.UseScene("default");
-            foreach (var exportedMesh in meshes)
+
+            var meshCreateStopwatch = Stopwatch.StartNew();
+            var schemaMeshes = meshes.Count == 0
+                ? Array.Empty<Mesh>()
+                : outputScene.CreateMeshes(meshes.Select(x => x.MeshBuilder).ToArray()).ToArray();
+            meshCreateStopwatch.Stop();
+
+            if (schemaMeshes.Length != meshes.Count)
+                throw new InvalidOperationException(
+                    $"SharpGLTF created {schemaMeshes.Length} meshes for {meshes.Count} mesh builders.");
+
+            var nodeAttachStopwatch = Stopwatch.StartNew();
+            for (var meshIndex = 0; meshIndex < meshes.Count; meshIndex++)
             {
-                var mesh = outputScene.CreateMesh(exportedMesh.MeshBuilder);
+                var exportedMesh = meshes[meshIndex];
+                var mesh = schemaMeshes[meshIndex];
                 Node? parent = null;
 
                 if (gltfSkeleton != null)
@@ -473,8 +486,17 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 else
                     node.WithMesh(mesh);
             }
+            nodeAttachStopwatch.Stop();
 
             sceneBuildStopwatch.Stop();
+
+            _logger.Here().Information(
+                "GLTF scene build timing for {OutputName}: total={TotalMs:F1}ms, createMeshes={CreateMeshesMs:F1}ms, attachNodes={AttachNodesMs:F1}ms, meshes={MeshCount}",
+                Path.GetFileName(settings.OutputPath),
+                sceneBuildStopwatch.Elapsed.TotalMilliseconds,
+                meshCreateStopwatch.Elapsed.TotalMilliseconds,
+                nodeAttachStopwatch.Elapsed.TotalMilliseconds,
+                meshes.Count);
 
             var saveStopwatch = Stopwatch.StartNew();
             _gltfSaver.Save(

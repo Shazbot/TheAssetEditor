@@ -223,14 +223,18 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             foreach (var texture in texturesForModel)
             {
-                material.WithChannelImage(texture.GlftTexureType, texture.SystemFilePath);
+                if (texture.ImageData is { Length: > 0 } imageData)
+                    material.WithChannelImage(texture.GlftTexureType, imageData);
+                else
+                    material.WithChannelImage(texture.GlftTexureType, texture.SystemFilePath);
 
                 var channel = material.UseChannel(texture.GlftTexureType);
-                if (channel?.Texture?.PrimaryImage != null) 
+                if (channel?.Texture?.PrimaryImage != null)
                 {
-                    // Set SharpGLTF to re-resave textures with specified paths, default behavior is texturePath = "{folder}\meshName{counter}.png"
+                    // Preserve the generated name even when the image is supplied
+                    // from memory so text glTF exports retain their existing paths.
                     channel.Texture.PrimaryImage.AlternateWriteFileName = Path.GetFileName(texture.SystemFilePath);
-                }                               
+                }
             }
 
             return material;

@@ -74,6 +74,51 @@ public class GltfSceneAttachmentTests
     }
 
     [Test]
+    public void BuildsMultipleMeshesInInputOrder()
+    {
+        var saver = new TestGltfSceneSaver();
+        var exporter = CreateExporter(saver);
+        var model = ModelRoot.CreateModel();
+        var inputFile = PackFile.CreateFromASCII("test.rigid_model_v2", "test");
+        var settings = new RmvToGltfExporterSettings(
+            inputFile,
+            [],
+            Path.Combine(Path.GetTempPath(), "scene-batch-test.gltf"),
+            false,
+            false,
+            false,
+            false,
+            false);
+
+        exporter.BuildGltfScene(
+            [
+                new RmvToGltfExporter.ExportedMesh(
+                    CreateStaticMesh("first_mesh"),
+                    string.Empty,
+                    -1,
+                    false,
+                    false,
+                    true,
+                    Vector3.Zero),
+                new RmvToGltfExporter.ExportedMesh(
+                    CreateStaticMesh("second_mesh"),
+                    string.Empty,
+                    -1,
+                    false,
+                    false,
+                    true,
+                    Vector3.Zero)
+            ],
+            null,
+            settings,
+            model);
+
+        Assert.That(model.LogicalMeshes.Select(x => x.Name), Is.EqualTo(new[] { "first_mesh", "second_mesh" }));
+        Assert.That(model.LogicalNodes.Where(x => x.Mesh != null).Select(x => x.Name),
+            Is.EqualTo(new[] { "first_mesh", "second_mesh" }));
+    }
+
+    [Test]
     public void PivotIsStoredAsMeshNodeLocalTranslation()
     {
         var result = BuildScene(

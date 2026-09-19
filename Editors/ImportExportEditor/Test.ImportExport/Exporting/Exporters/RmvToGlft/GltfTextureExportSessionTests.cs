@@ -176,12 +176,126 @@ public class GltfTextureExportSessionTests
             Assert.That(textures, Has.Count.EqualTo(2));
             Assert.That(Path.GetFileName(textures[0].SystemFilePath), Does.StartWith("first_"));
             Assert.That(Path.GetFileName(textures[1].SystemFilePath), Does.StartWith("second_"));
+            Assert.That(textures.All(x => x.ImageData != null && x.ImageData.SequenceEqual(new byte[] { 1, 2, 3, 4 })), Is.True);
         }
         finally
         {
             release.Set();
             if (Directory.Exists(outputDirectory))
                 Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void MeshBuilderUsesInMemoryTextureDataWhenGeneratedFileIsMissing()
+    {
+        var asset = CreateTexturedAsset(
+            "textures/body_base_colour.dds",
+            "textures/body_mask.dds");
+        var missingPath = Path.Combine(
+            Path.GetTempPath(),
+            $"missing-texture-{Guid.NewGuid():N}.png");
+        var settings = new RmvToGltfExporterSettings(
+            asset.InputFile,
+            [],
+            Path.Combine(Path.GetTempPath(), $"model-{Guid.NewGuid():N}.glb"),
+            true,
+            false,
+            false,
+            false,
+            false);
+        var textures = new List<TextureResult>
+        {
+            new(0, missingPath, KnownChannel.BaseColor)
+            {
+                ImageData = OnePixelPng
+            }
+        };
+
+        var meshBuilder = new GltfMeshBuilder()
+            .Build(asset, textures, settings, willHaveSkeleton: false)
+            .Single();
+        var model = ModelRoot.CreateModel();
+
+        Assert.That(File.Exists(missingPath), Is.False);
+        model.CreateMesh(meshBuilder);
+
+        var image = model.LogicalImages.Single();
+        Assert.That(image.Content.SourcePath, Is.Null);
+        Assert.That(image.Content.Content.ToArray(), Is.EqualTo(OnePixelPng));
+    }
+
+    [Test]
+    public void HandlerKeepsCachedKtx2BytesAcrossExportSessions()
+    {
+        var rootDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-textures-{Guid.NewGuid():N}");
+        var firstDirectory = Path.Combine(rootDirectory, "first");
+        var secondDirectory = Path.Combine(rootDirectory, "second");
+        Directory.CreateDirectory(firstDirectory);
+        Directory.CreateDirectory(secondDirectory);
+        var encoded = new byte[] { 10, 20, 30, 40 };
+
+        try
+        {
+            var materialExporter = new Mock<IDdsToMaterialPngExporter>();
+            materialExporter
+                .Setup(x => x.ExportKtx2WithData(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<bool>(),
+                    It.IsAny<bool>()))
+                .Returns((string source, string output, bool convertToBlender, bool srgb) =>
+                {
+                    var path = Path.Combine(Path.GetDirectoryName(output)!, "cache.ktx2");
+                    return new TextureImageExportResult(path, encoded);
+                });
+
+            var handler = new GltfTextureHandler(
+                new Mock<IDdsToNormalPngExporter>().Object,
+                materialExporter.Object);
+            var asset = CreateAsset("textures/cache.dds", "textures/cache.dds");
+            var firstSettings = new RmvToGltfExporterSettings(
+                asset.InputFile,
+                [],
+                Path.Combine(firstDirectory, "model.glb"),
+                true,
+                false,
+                false,
+                false,
+                false)
+            {
+                UseKtx2Textures = true,
+                ExportAuxiliaryMasks = false
+            };
+            var secondSettings = firstSettings with
+            {
+                OutputPath = Path.Combine(secondDirectory, "model.glb")
+            };
+
+            var firstTextures = handler.HandleTextures(
+                asset,
+                firstSettings,
+                new GltfTextureExportSession(collisionSafe: false));
+            var secondTextures = handler.HandleTextures(
+                asset,
+                secondSettings,
+                new GltfTextureExportSession(collisionSafe: false));
+
+            materialExporter.Verify(
+                x => x.ExportKtx2WithData(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<bool>(),
+                    It.IsAny<bool>()),
+                Times.Once);
+            Assert.That(firstTextures.All(x => x.ImageData != null && x.ImageData.SequenceEqual(encoded)), Is.True);
+            Assert.That(secondTextures.All(x => x.ImageData != null && x.ImageData.SequenceEqual(encoded)), Is.True);
+            Assert.That(File.Exists(Path.Combine(secondDirectory, "cache.ktx2")), Is.True);
+        }
+        finally
+        {
+            if (Directory.Exists(rootDirectory))
+                Directory.Delete(rootDirectory, recursive: true);
         }
     }
 
