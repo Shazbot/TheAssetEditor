@@ -53,7 +53,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             if (packFile == null)
             {
                 totalStopwatch.Stop();
-                Logger.Here().Information(
+                Logger.Here().Debug(
                     "DDS normal texture timing for {TexturePath}: status=missing, total={TotalMs:F1}ms, lookup={LookupMs:F1}ms",
                     filePath,
                     totalStopwatch.Elapsed.TotalMilliseconds,
@@ -102,7 +102,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             totalStopwatch.Stop();
 
-            Logger.Here().Information(
+            Logger.Here().Debug(
                 "DDS normal texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, normalConvert={NormalConvertMs:F1}ms, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
                 filePath,
                 totalStopwatch.Elapsed.TotalMilliseconds,
@@ -133,7 +133,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             if (packFile == null)
             {
                 totalStopwatch.Stop();
-                Logger.Here().Information(
+                Logger.Here().Debug(
                     "KTX2 normal texture timing for {TexturePath}: status=missing, total={TotalMs:F1}ms, lookup={LookupMs:F1}ms",
                     filePath,
                     totalStopwatch.Elapsed.TotalMilliseconds,
@@ -182,7 +182,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                 var pngSaveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
                 totalStopwatch.Stop();
 
-                Logger.Here().Information(
+                Logger.Here().Debug(
                     "KTX2 normal texture fallback for {TexturePath}: reason=rawKtx2Compatibility, width={Width}, height={Height}, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
                     filePath,
                     decoded.Width,
@@ -203,7 +203,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             totalStopwatch.Stop();
 
-            Logger.Here().Information(
+            Logger.Here().Debug(
                 "KTX2 normal texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, normalConvert={NormalConvertMs:F1}ms, rgbaConvert={RgbaConvertMs:F1}ms, zstd={ZstdMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, zstdBytes={ZstdBytes}, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
                 filePath,
                 totalStopwatch.Elapsed.TotalMilliseconds,
