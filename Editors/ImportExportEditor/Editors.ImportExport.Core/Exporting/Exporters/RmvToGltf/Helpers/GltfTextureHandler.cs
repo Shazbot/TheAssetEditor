@@ -84,6 +84,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             _packFileLookup = packFileLookup;
         }
 
+        public void ClearConvertedTextureCache() => _convertedTextureCache.Clear();
+
         public List<TextureResult> HandleTextures(RmvFile rmvFile, RmvToGltfExporterSettings settings)
         {
             var output = new List<TextureResult>();
@@ -1454,6 +1456,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
                     _entries[key] = new CacheEntry(pngData, extension, ++_usageClock);
                     _totalBytes += pngData.LongLength;
+                }
+            }
+
+            public void Clear()
+            {
+                lock (_sync)
+                {
+                    _entries.Clear();
+                    _totalBytes = 0;
+                    _usageClock = 0;
                 }
             }
 
