@@ -82,6 +82,7 @@ internal sealed class VanillaPackFilesCacheReader
 
         if (entry.NonWemFileCount == 0)
         {
+            var containerSetupStopwatch = Stopwatch.StartNew();
             var emptyContainer = new LazyVanillaPackFileContainer(
                 Path.GetFileNameWithoutExtension(packFile.FullName),
                 packFile.FullName,
@@ -92,6 +93,7 @@ internal sealed class VanillaPackFilesCacheReader
                 new Dictionary<ulong, LazyFileRecord>(),
                 null,
                 uniqueFileCount: 0);
+            containerSetupStopwatch.Stop();
 
             return new CachedContainerBuild(
                 emptyContainer,
@@ -99,7 +101,7 @@ internal sealed class VanillaPackFilesCacheReader
                 SkippedWemCount: entry.FileCount,
                 metadataStopwatch.Elapsed.TotalMilliseconds,
                 FileIndexBuildMs: 0,
-                setupStopwatch.Elapsed.TotalMilliseconds,
+                setupStopwatch.Elapsed.TotalMilliseconds + containerSetupStopwatch.Elapsed.TotalMilliseconds,
                 UsedAllWemFastPath: entry.FileCount > 0);
         }
 
@@ -477,7 +479,7 @@ internal sealed class VanillaPackFilesCacheReader
         int PackFileCount,
         byte[] Buffer);
 
-    private sealed record CacheEntry(
+    internal sealed record CacheEntry(
         long Size,
         double LastChangedLocal,
         CachedPackFileHeader Header,
@@ -494,7 +496,7 @@ internal sealed class VanillaPackFilesCacheReader
         long Size,
         bool IsCompressed);
 
-    private sealed record CollisionEntry(
+    internal sealed record CollisionEntry(
         string Path,
         LazyFileRecord Record);
 
@@ -509,7 +511,7 @@ internal sealed class VanillaPackFilesCacheReader
         private readonly Dictionary<string, PackFile> _materializedFiles = new(StringComparer.Ordinal);
         private readonly object _materializedLock = new();
 
-        private LazyVanillaPackFileContainer(
+        internal LazyVanillaPackFileContainer(
             string name,
             string systemFilePath,
             long originalLoadByteSize,
