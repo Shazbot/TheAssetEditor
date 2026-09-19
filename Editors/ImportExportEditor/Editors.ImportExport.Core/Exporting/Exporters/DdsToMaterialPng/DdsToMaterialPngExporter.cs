@@ -1,4 +1,5 @@
-﻿using System.Drawing;
+﻿using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using Editors.ImportExport.Misc;
 using MeshImportExport;
@@ -16,6 +17,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
 
     public class DdsToMaterialPngExporter : IDdsToMaterialPngExporter
     {
+        private static readonly ILogger Logger = Logging.Create<DdsToMaterialPngExporter>();
         private readonly IPackedFileLookup _packFileLookup;
         private readonly IImageSaveHandler _imageSaveHandler;
         public DdsToMaterialPngExporter(IPackedFileLookup packFileLookup, IImageSaveHandler imageSaveHandler)
@@ -26,29 +28,69 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
 
         public string Export(string filePath, string outputPath, bool convertToBlenderFormat)
         {
+            var totalStopwatch = Stopwatch.StartNew();
+            var phaseStopwatch = Stopwatch.StartNew();
+
             var packFile = _packFileLookup.FindFile(filePath);
-            if (packFile == null)            
+            phaseStopwatch.Stop();
+            var lookupMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            if (packFile == null)
+            {
+                totalStopwatch.Stop();
+                Logger.Here().Information(
+                    "DDS material texture timing for {TexturePath}: status=missing, total={TotalMs:F1}ms, lookup={LookupMs:F1}ms",
+                    filePath,
+                    totalStopwatch.Elapsed.TotalMilliseconds,
+                    lookupMs);
                 return "";
+            }
 
             var fileName = Path.GetFileNameWithoutExtension(
                 filePath.Replace('\\', Path.DirectorySeparatorChar));
             var outDirectory = Path.GetDirectoryName(outputPath) ?? string.Empty;
             var outFilePath = Path.Combine(outDirectory, fileName + ".png");
 
+            phaseStopwatch.Restart();
             var bytes = packFile.DataSource.ReadData();
+            phaseStopwatch.Stop();
+            var readMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             if (bytes == null || !bytes.Any())
                 throw new Exception($"Could not read file data. bytes.Count = {bytes?.Length}");
 
+            phaseStopwatch.Restart();
             var imgBytes = TextureHelper.ConvertDdsToPng(bytes);
+            phaseStopwatch.Stop();
+            var ddsToPngMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             if (imgBytes == null || !imgBytes.Any())
                 throw new Exception($"image data invalid/empty. imgBytes.Count = {imgBytes?.Length}");
 
+            var channelConvertMs = 0.0;
             if (convertToBlenderFormat)
             {
+                phaseStopwatch.Restart();
                 imgBytes = ConvertToBlenderFormat(imgBytes);
+                phaseStopwatch.Stop();
+                channelConvertMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             }
 
+            phaseStopwatch.Restart();
             _imageSaveHandler.Save(imgBytes, outFilePath);
+            phaseStopwatch.Stop();
+            var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            totalStopwatch.Stop();
+
+            Logger.Here().Information(
+                "DDS material texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsToPng={DdsToPngMs:F1}ms, channelConvert={ChannelConvertMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, outputBytes={OutputBytes}, blender={ConvertToBlender}",
+                filePath,
+                totalStopwatch.Elapsed.TotalMilliseconds,
+                lookupMs,
+                readMs,
+                ddsToPngMs,
+                channelConvertMs,
+                saveMs,
+                bytes.Length,
+                imgBytes.Length,
+                convertToBlenderFormat);
 
             return outFilePath;
         }

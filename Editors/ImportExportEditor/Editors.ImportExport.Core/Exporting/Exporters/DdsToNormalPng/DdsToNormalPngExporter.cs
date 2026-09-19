@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using Editors.ImportExport.Misc;
@@ -16,6 +17,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
 
     public class DdsToNormalPngExporter : IDdsToNormalPngExporter
     {
+        private static readonly ILogger Logger = Logging.Create<DdsToNormalPngExporter>();
         private readonly IPackedFileLookup _packFileLookup;
         private readonly IImageSaveHandler _imageSaveHandler;
 
@@ -36,9 +38,22 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
 
         public string Export(string filePath, string outputPath, bool convertToBlueNormalMap)
         {
+            var totalStopwatch = Stopwatch.StartNew();
+            var phaseStopwatch = Stopwatch.StartNew();
+
             var packFile = _packFileLookup.FindFile(filePath);
+            phaseStopwatch.Stop();
+            var lookupMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             if (packFile == null)
+            {
+                totalStopwatch.Stop();
+                Logger.Here().Information(
+                    "DDS normal texture timing for {TexturePath}: status=missing, total={TotalMs:F1}ms, lookup={LookupMs:F1}ms",
+                    filePath,
+                    totalStopwatch.Elapsed.TotalMilliseconds,
+                    lookupMs);
                 return "";
+            }
 
             var fileName = Path.GetFileNameWithoutExtension(
                 filePath.Replace('\\', Path.DirectorySeparatorChar));
@@ -47,18 +62,47 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                 outDirectory,
                 convertToBlueNormalMap ? fileName + ".png" : fileName + "_raw.png");
 
+            phaseStopwatch.Restart();
             var bytes = packFile.DataSource.ReadData();
+            phaseStopwatch.Stop();
+            var readMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             if (bytes == null || !bytes.Any())
                 throw new Exception($"Could not read file data. bytes.Count = {bytes?.Length}");
 
+            phaseStopwatch.Restart();
             var imgBytes = TextureHelper.ConvertDdsToPng(bytes);
+            phaseStopwatch.Stop();
+            var ddsToPngMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             if (imgBytes == null || !imgBytes.Any())
                 throw new Exception($"image data invalid/empty. imgBytes.Count = {imgBytes?.Length}");
 
+            var normalConvertMs = 0.0;
             if (convertToBlueNormalMap)
+            {
+                phaseStopwatch.Restart();
                 imgBytes = ConvertPackedNormalToStandard(imgBytes);
+                phaseStopwatch.Stop();
+                normalConvertMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            }
 
+            phaseStopwatch.Restart();
             _imageSaveHandler.Save(imgBytes, outputFilePath);
+            phaseStopwatch.Stop();
+            var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
+            totalStopwatch.Stop();
+
+            Logger.Here().Information(
+                "DDS normal texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsToPng={DdsToPngMs:F1}ms, normalConvert={NormalConvertMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
+                filePath,
+                totalStopwatch.Elapsed.TotalMilliseconds,
+                lookupMs,
+                readMs,
+                ddsToPngMs,
+                normalConvertMs,
+                saveMs,
+                bytes.Length,
+                imgBytes.Length,
+                convertToBlueNormalMap);
 
             return outputFilePath;
         }

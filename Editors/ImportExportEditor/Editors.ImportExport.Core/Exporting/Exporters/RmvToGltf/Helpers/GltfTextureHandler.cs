@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -47,6 +48,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
     public class GltfTextureHandler : IGltfTextureHandler
     {
+        private static readonly ILogger Logger = Logging.Create<GltfTextureHandler>();
         private readonly IDdsToNormalPngExporter _ddsToNormalPngExporter;
         private readonly IDdsToMaterialPngExporter _ddsToMaterialPngExporter;
         private readonly IPackedFileLookup? _packFileLookup;
@@ -67,6 +69,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             if (!settings.ExportMaterials)
                 return output;
 
+            var totalStopwatch = Stopwatch.StartNew();
+            var timing = new TextureTimingAccumulator();
             var session = new GltfTextureExportSession(collisionSafe: false);
 
             int lodICounnt = 1;
@@ -79,13 +83,17 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
                     foreach (var tex in textures)
                     {
-                        HandleTexture(settings, output, session, meshIndex, tex);
+                        HandleTexture(settings, output, session, meshIndex, tex, timing);
                     }
                 }
-
-
             }
 
+            totalStopwatch.Stop();
+            LogTextureSummary(
+                rmvFile.Header.SkeletonName,
+                totalStopwatch.Elapsed.TotalMilliseconds,
+                output.Count,
+                timing);
             return output;
         }
 
@@ -105,6 +113,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             if (!settings.ExportMaterials)
                 return output;
 
+            var totalStopwatch = Stopwatch.StartNew();
+            var timing = new TextureTimingAccumulator();
+
             foreach (var part in asset.FirstLod)
             {
                 foreach (var texture in part.Material.Textures)
@@ -113,11 +124,40 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                         continue;
 
                     var input = new MaterialBuilderTextureInput(texture.Value, texture.Key);
-                    HandleTexture(settings, output, session, part.PartIndex, input);
+                    HandleTexture(settings, output, session, part.PartIndex, input, timing);
                 }
             }
 
+            totalStopwatch.Stop();
+            LogTextureSummary(
+                asset.InputFile.VirtualPath ?? asset.InputFile.Name,
+                totalStopwatch.Elapsed.TotalMilliseconds,
+                output.Count,
+                timing);
             return output;
+        }
+
+        private static void LogTextureSummary(
+            string assetName,
+            double totalMs,
+            int outputCount,
+            TextureTimingAccumulator timing)
+        {
+            Logger.Here().Information(
+                "GLTF texture handling timing for {AssetName}: total={TotalMs:F1}ms, requests={RequestCount}, outputs={OutputCount}, sessionHits={SessionHitCount}, conversionCacheHits={ConversionCacheHitCount}, conversionCacheMisses={ConversionCacheMissCount}, cacheLookup={CacheLookupMs:F1}ms, cachedWrite={CachedWriteMs:F1}ms, exporter={ExporterMs:F1}ms, postProcess={PostProcessMs:F1}ms, cacheStore={CacheStoreMs:F1}ms, finalize={FinalizeMs:F1}ms",
+                assetName,
+                totalMs,
+                timing.RequestCount,
+                outputCount,
+                timing.SessionHitCount,
+                timing.ConversionCacheHitCount,
+                timing.ConversionCacheMissCount,
+                timing.CacheLookupMs,
+                timing.CachedWriteMs,
+                timing.ExporterMs,
+                timing.PostProcessMs,
+                timing.CacheStoreMs,
+                timing.FinalizeMs);
         }
         interface IDDsToPngExporter
         {
@@ -174,17 +214,35 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         private string ExportCachedTexture(
             string cacheKey,
             string expectedOutputPath,
-            Func<string> exporter)
+            Func<string> exporter,
+            TextureTimingAccumulator timing)
         {
-            if (_convertedTextureCache.TryGet(cacheKey, out var cachedPng))
+            var cacheLookupStopwatch = Stopwatch.StartNew();
+            var cacheHit = _convertedTextureCache.TryGet(cacheKey, out var cachedPng);
+            cacheLookupStopwatch.Stop();
+            timing.CacheLookupMs += cacheLookupStopwatch.Elapsed.TotalMilliseconds;
+
+            if (cacheHit)
             {
+                timing.ConversionCacheHitCount++;
+                var cachedWriteStopwatch = Stopwatch.StartNew();
                 EnsureParentDirectory(expectedOutputPath);
                 File.WriteAllBytes(expectedOutputPath, cachedPng);
+                cachedWriteStopwatch.Stop();
+                timing.CachedWriteMs += cachedWriteStopwatch.Elapsed.TotalMilliseconds;
                 return expectedOutputPath;
             }
 
+            timing.ConversionCacheMissCount++;
+            var exporterStopwatch = Stopwatch.StartNew();
             var exportedPath = exporter();
+            exporterStopwatch.Stop();
+            timing.ExporterMs += exporterStopwatch.Elapsed.TotalMilliseconds;
+
+            var cacheStoreStopwatch = Stopwatch.StartNew();
             CacheExportedTexture(cacheKey, exportedPath);
+            cacheStoreStopwatch.Stop();
+            timing.CacheStoreMs += cacheStoreStopwatch.Elapsed.TotalMilliseconds;
             return exportedPath;
         }
 
@@ -272,40 +330,42 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             List<TextureResult> output,
             GltfTextureExportSession session,
             int meshIndex,
-            MaterialBuilderTextureInput texture)
+            MaterialBuilderTextureInput texture,
+            TextureTimingAccumulator timing)
         {
+            timing.RequestCount++;
             switch (texture.Type)
             {
                 case TextureType.Normal:
-                    DoTextureConversionNormalMap(settings, output, session, meshIndex, texture);
+                    DoTextureConversionNormalMap(settings, output, session, meshIndex, texture, timing);
                     break;
                 case TextureType.MaterialMap:
-                    DoTextureConversionMaterialMap(settings, output, session, meshIndex, texture);
+                    DoTextureConversionMaterialMap(settings, output, session, meshIndex, texture, timing);
                     break;
                 case TextureType.BaseColour:
                 case TextureType.Diffuse:
-                    DoTextureDefault(KnownChannel.BaseColor, settings, output, session, meshIndex, texture);
+                    DoTextureDefault(KnownChannel.BaseColor, settings, output, session, meshIndex, texture, timing);
                     break;
                 case TextureType.Mask:
-                    DoTextureMask(settings, session, texture);
+                    DoTextureMask(settings, session, texture, timing);
                     break;
                 case TextureType.Specular:
-                    DoTextureDefault(KnownChannel.SpecularColor, settings, output, session, meshIndex, texture);
+                    DoTextureDefault(KnownChannel.SpecularColor, settings, output, session, meshIndex, texture, timing);
                     break;
                 case TextureType.Gloss:
-                    DoTextureDefault(KnownChannel.MetallicRoughness, settings, output, session, meshIndex, texture);
+                    DoTextureDefault(KnownChannel.MetallicRoughness, settings, output, session, meshIndex, texture, timing);
                     break;
                 case TextureType.Ambient_occlusion:
-                    DoTextureDefault(KnownChannel.Occlusion, settings, output, session, meshIndex, texture);
+                    DoTextureDefault(KnownChannel.Occlusion, settings, output, session, meshIndex, texture, timing);
                     break;
                 case TextureType.Emissive:
                 case TextureType.EmissiveDistortion:
-                    DoTextureDefault(KnownChannel.Emissive, settings, output, session, meshIndex, texture);
+                    DoTextureDefault(KnownChannel.Emissive, settings, output, session, meshIndex, texture, timing);
                     break;
             }
         }
 
-        private void DoTextureConversionMaterialMap(RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text)
+        private void DoTextureConversionMaterialMap(RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
             var cacheKey = CacheKey(text, "material", settings.ConvertMaterialTextureToBlender);
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
@@ -316,8 +376,16 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                     () => _ddsToMaterialPngExporter.Export(
                         text.Path,
                         settings.OutputPath,
-                        settings.ConvertMaterialTextureToBlender));
+                        settings.ConvertMaterialTextureToBlender),
+                    timing);
+                var finalizeStopwatch = Stopwatch.StartNew();
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
+                finalizeStopwatch.Stop();
+                timing.FinalizeMs += finalizeStopwatch.Elapsed.TotalMilliseconds;
+            }
+            else
+            {
+                timing.SessionHitCount++;
             }
 
             var systemPath = session.ExportedTextures[cacheKey];
@@ -325,7 +393,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 output.Add(new TextureResult(meshIndex, systemPath, KnownChannel.MetallicRoughness));
         }
 
-        private void DoTextureDefault(KnownChannel textureType, RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text)
+        private void DoTextureDefault(KnownChannel textureType, RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
             var cacheKey = CacheKey(text, "default");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
@@ -333,19 +401,30 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 var exportedPath = ExportCachedTexture(
                     cacheKey,
                     GetMaterialTexturePath(settings.OutputPath, text.Path),
-                    () => _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false));
+                    () => _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false),
+                    timing);
+                var finalizeStopwatch = Stopwatch.StartNew();
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
+                finalizeStopwatch.Stop();
+                timing.FinalizeMs += finalizeStopwatch.Elapsed.TotalMilliseconds;
 
                 // For 3D printing: Export alpha channel as a separate mask for base color/diffuse
                 if (settings.ExportDisplacementMaps && textureType == KnownChannel.BaseColor)
                 {
+                    var postProcessStopwatch = Stopwatch.StartNew();
                     ExportAlphaMask(
                         text.Path,
                         settings.OutputPath,
                         session.CollisionSafe
                             ? GetCollisionSafeStem(session, cacheKey, text.Path, Path.GetFileNameWithoutExtension(text.Path))
                             : null);
+                    postProcessStopwatch.Stop();
+                    timing.PostProcessMs += postProcessStopwatch.Elapsed.TotalMilliseconds;
                 }
+            }
+            else
+            {
+                timing.SessionHitCount++;
             }
 
             var systemPath = session.ExportedTextures[cacheKey];
@@ -353,7 +432,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 output.Add(new TextureResult(meshIndex, systemPath, textureType));
         }
 
-        private void DoTextureMask(RmvToGltfExporterSettings settings, GltfTextureExportSession session, MaterialBuilderTextureInput text)
+        private void DoTextureMask(RmvToGltfExporterSettings settings, GltfTextureExportSession session, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
             if (!settings.ExportAuxiliaryMasks)
                 return;
@@ -361,30 +440,37 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             var cacheKey = CacheKey(text, "mask");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
-                // Export mask as separate PNG - name it with _mask suffix for clarity.
-                // Unlike the regular material conversions, cache the final
-                // inverted mask so a later export does not repeat either DDS
-                // decoding or the pixel transform.
                 var maskPath = GetAuxiliaryMaskPath(settings.OutputPath, text.Path);
                 string? exportedPath;
-                if (_convertedTextureCache.TryGet(cacheKey, out var cachedPng))
+
+                var cacheLookupStopwatch = Stopwatch.StartNew();
+                var cacheHit = _convertedTextureCache.TryGet(cacheKey, out var cachedPng);
+                cacheLookupStopwatch.Stop();
+                timing.CacheLookupMs += cacheLookupStopwatch.Elapsed.TotalMilliseconds;
+
+                if (cacheHit)
                 {
+                    timing.ConversionCacheHitCount++;
+                    var cachedWriteStopwatch = Stopwatch.StartNew();
                     WriteCachedTexture(maskPath, cachedPng);
+                    cachedWriteStopwatch.Stop();
+                    timing.CachedWriteMs += cachedWriteStopwatch.Elapsed.TotalMilliseconds;
                     exportedPath = maskPath;
                 }
                 else
                 {
+                    timing.ConversionCacheMissCount++;
+                    var exporterStopwatch = Stopwatch.StartNew();
                     exportedPath = _ddsToMaterialPngExporter.Export(text.Path, settings.OutputPath, false);
+                    exporterStopwatch.Stop();
+                    timing.ExporterMs += exporterStopwatch.Elapsed.TotalMilliseconds;
 
+                    var postProcessStopwatch = Stopwatch.StartNew();
                     if (!string.IsNullOrWhiteSpace(exportedPath))
                     {
-                        // Invert the mask values for proper alpha channel usage
-                        // Game masks are often inverted (black=show, white=hide)
-                        // Alpha channels need (black=transparent, white=opaque)
                         if (File.Exists(exportedPath))
                             InvertMaskImage(exportedPath);
 
-                        // Rename to have _mask suffix
                         var directory = Path.GetDirectoryName(exportedPath) ?? string.Empty;
                         var fileNameWithoutExt = Path.GetFileNameWithoutExtension(exportedPath);
                         var newFileName = fileNameWithoutExt + "_mask.png";
@@ -398,11 +484,23 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                             exportedPath = newPath;
                         }
                     }
+                    postProcessStopwatch.Stop();
+                    timing.PostProcessMs += postProcessStopwatch.Elapsed.TotalMilliseconds;
 
+                    var cacheStoreStopwatch = Stopwatch.StartNew();
                     CacheExportedTexture(cacheKey, exportedPath);
+                    cacheStoreStopwatch.Stop();
+                    timing.CacheStoreMs += cacheStoreStopwatch.Elapsed.TotalMilliseconds;
                 }
 
+                var finalizeStopwatch = Stopwatch.StartNew();
                 session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
+                finalizeStopwatch.Stop();
+                timing.FinalizeMs += finalizeStopwatch.Elapsed.TotalMilliseconds;
+            }
+            else
+            {
+                timing.SessionHitCount++;
             }
 
             // The mask is an auxiliary/manual export. There is no standard
@@ -443,31 +541,31 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             bitmap.Save(imagePath, System.Drawing.Imaging.ImageFormat.Png);
         }
 
-        private void DoTextureConversionNormalMap(RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text)
+        private void DoTextureConversionNormalMap(RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
             var cacheKey = CacheKey(text, "normal", settings.ConvertNormalTextureToBlue || settings.ExportDisplacementMaps);
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
-                // Only export displacement maps for 3D printing workflow
                 if (settings.ExportDisplacementMaps)
                 {
-                    // Export normal map variants with proper YCoCg decoding
+                    timing.ConversionCacheMissCount++;
+                    var exporterStopwatch = Stopwatch.StartNew();
                     var outputStem = session.CollisionSafe
                         ? GetCollisionSafeStem(session, cacheKey, text.Path, Path.GetFileNameWithoutExtension(text.Path))
                         : Path.GetFileNameWithoutExtension(text.Path);
                     ExportNormalMapVariants(text.Path, settings.OutputPath, outputStem);
                     ExportDisplacementFromNormalMap(text.Path, settings.OutputPath, settings, outputStem);
 
-                    // Set the path to the raw normal map
                     var outDirectory = Path.GetDirectoryName(settings.OutputPath) ?? string.Empty;
                     var rawNormalPath = Path.Combine(outDirectory, outputStem + "_raw.png");
                     session.ExportedTextures[cacheKey] = session.CollisionSafe
                         ? rawNormalPath
                         : FinalizeTexturePath(session, cacheKey, text.Path, rawNormalPath);
+                    exporterStopwatch.Stop();
+                    timing.ExporterMs += exporterStopwatch.Elapsed.TotalMilliseconds;
                 }
                 else
                 {
-                    // Regular export: use the standard DDS to PNG exporter
                     var exportedPath = ExportCachedTexture(
                         cacheKey,
                         GetNormalTexturePath(
@@ -477,9 +575,17 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                         () => _ddsToNormalPngExporter.Export(
                             text.Path,
                             settings.OutputPath,
-                            settings.ConvertNormalTextureToBlue));
+                            settings.ConvertNormalTextureToBlue),
+                        timing);
+                    var finalizeStopwatch = Stopwatch.StartNew();
                     session.ExportedTextures[cacheKey] = FinalizeTexturePath(session, cacheKey, text.Path, exportedPath);
+                    finalizeStopwatch.Stop();
+                    timing.FinalizeMs += finalizeStopwatch.Elapsed.TotalMilliseconds;
                 }
+            }
+            else
+            {
+                timing.SessionHitCount++;
             }
 
             var systemPath = session.ExportedTextures[cacheKey];
@@ -1081,6 +1187,20 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             var displacementPngPath = Path.Combine(outDirectory, fileName + ".png");
             displacementBitmap.Save(displacementPngPath, System.Drawing.Imaging.ImageFormat.Png);
+        }
+
+        private sealed class TextureTimingAccumulator
+        {
+            public int RequestCount { get; set; }
+            public int SessionHitCount { get; set; }
+            public int ConversionCacheHitCount { get; set; }
+            public int ConversionCacheMissCount { get; set; }
+            public double CacheLookupMs { get; set; }
+            public double CachedWriteMs { get; set; }
+            public double ExporterMs { get; set; }
+            public double PostProcessMs { get; set; }
+            public double CacheStoreMs { get; set; }
+            public double FinalizeMs { get; set; }
         }
 
         /// <summary>

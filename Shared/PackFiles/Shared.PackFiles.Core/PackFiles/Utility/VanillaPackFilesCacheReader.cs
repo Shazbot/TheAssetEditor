@@ -21,15 +21,19 @@ internal sealed class VanillaPackFilesCacheReader
         var stopwatch = Stopwatch.StartNew();
         _entries = LoadEntries(cachePath);
         stopwatch.Stop();
+        LoadElapsedMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
 
         Logger.Here().Information(
             "Vanilla pack files cache loaded in {ElapsedMs:F1}ms with {PackCount} pack entries",
-            stopwatch.Elapsed.TotalMilliseconds,
+            LoadElapsedMilliseconds,
             _entries.Count);
     }
 
+    internal double LoadElapsedMilliseconds { get; }
+
     public CachedPackIndex? TryGet(FileInfo packFile)
     {
+        var metadataStopwatch = Stopwatch.StartNew();
         if (!_entries.TryGetValue(NormalizePath(packFile.FullName), out var entry)
             || entry.PackedFiles == null
             || entry.PackHeader == null
@@ -48,7 +52,9 @@ internal sealed class VanillaPackFilesCacheReader
         {
             return null;
         }
+        metadataStopwatch.Stop();
 
+        var fileMaterializeStopwatch = Stopwatch.StartNew();
         var packedFiles = new List<CachedPackedFile>(entry.PackedFiles.Count);
         var skippedWemCount = 0;
         var previousEnd = -1L;
@@ -82,7 +88,14 @@ internal sealed class VanillaPackFilesCacheReader
         if (entry.DependencyPacks.Any(string.IsNullOrWhiteSpace))
             return null;
 
-        return new CachedPackIndex(header, packedFiles, entry.DependencyPacks, skippedWemCount);
+        fileMaterializeStopwatch.Stop();
+        return new CachedPackIndex(
+            header,
+            packedFiles,
+            entry.DependencyPacks,
+            skippedWemCount,
+            metadataStopwatch.Elapsed.TotalMilliseconds,
+            fileMaterializeStopwatch.Elapsed.TotalMilliseconds);
     }
 
     private static Dictionary<string, CacheEntry> LoadEntries(string cachePath)
@@ -188,7 +201,9 @@ internal sealed class VanillaPackFilesCacheReader
         CachedPackFileHeader Header,
         IReadOnlyList<CachedPackedFile> PackedFiles,
         IReadOnlyList<string> DependencyPacks,
-        int SkippedWemCount);
+        int SkippedWemCount,
+        double MetadataValidationMs,
+        double FileMaterializeMs);
 
     internal sealed record CachedPackFileHeader(
         string Version,

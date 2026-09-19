@@ -33,11 +33,15 @@ namespace Shared.Core.PackFiles.Utility
     {
         private static readonly ILogger Logger = Logging.Create<HeadlessPackFileLoader>();
         private readonly VanillaPackFilesCacheReader? _vanillaPackFilesCache;
+        private readonly double _vanillaCacheFileLoadMs;
 
         public HeadlessPackFileLoader(string? vanillaPackFilesCachePath = null)
         {
             if (string.IsNullOrWhiteSpace(vanillaPackFilesCachePath) == false)
+            {
                 _vanillaPackFilesCache = new VanillaPackFilesCacheReader(vanillaPackFilesCachePath);
+                _vanillaCacheFileLoadMs = _vanillaPackFilesCache.LoadElapsedMilliseconds;
+            }
         }
 
         public IPackFileContainer LoadPack(string packFilePath, bool isCaPackFile = false)
@@ -56,9 +60,14 @@ namespace Shared.Core.PackFiles.Utility
             var diskLoads = 0;
             var retainedCachedFiles = 0;
             var skippedWemFiles = 0;
+            var pathSetupMs = 0.0;
             var cacheLookupMs = 0.0;
-            var cachedContainerBuildMs = 0.0;
+            var cacheMetadataValidationMs = 0.0;
+            var cacheFileMaterializeMs = 0.0;
+            var cachedContainerSetupMs = 0.0;
+            var cachedFileObjectBuildMs = 0.0;
             var diskParseMs = 0.0;
+            var slowestPacks = new List<PackLoadDetails>();
 
             for (var index = 0; index < packFilePaths.Count; index++)
             {
@@ -68,10 +77,15 @@ namespace Shared.Core.PackFiles.Utility
 
                 var details = LoadPackWithDetails(fullPath, firstPackIsCaPack && index == 0);
                 containers.Add(details.Result);
+                pathSetupMs += details.PathSetupMs;
                 cacheLookupMs += details.CacheLookupMs;
-                cachedContainerBuildMs += details.CachedContainerBuildMs;
+                cacheMetadataValidationMs += details.CacheMetadataValidationMs;
+                cacheFileMaterializeMs += details.CacheFileMaterializeMs;
+                cachedContainerSetupMs += details.CachedContainerSetupMs;
+                cachedFileObjectBuildMs += details.CachedFileObjectBuildMs;
                 diskParseMs += details.DiskParseMs;
                 skippedWemFiles += details.SkippedWemCount;
+                slowestPacks.Add(details);
 
                 if (details.UsedCache)
                 {
@@ -85,17 +99,32 @@ namespace Shared.Core.PackFiles.Utility
             }
 
             totalStopwatch.Stop();
+            var orderedLoadMs = totalStopwatch.Elapsed.TotalMilliseconds;
+            var totalIncludingCacheFileMs = orderedLoadMs + _vanillaCacheFileLoadMs;
             Logger.Here().Information(
-                "Headless pack load completed in {TotalMs:F1}ms for {PackCount} packs: cacheHits={CacheHits}, diskLoads={DiskLoads}, cacheLookup={CacheLookupMs:F1}ms, cachedContainerBuild={CachedContainerBuildMs:F1}ms, diskParse={DiskParseMs:F1}ms, retainedCachedFiles={RetainedCachedFiles}, skippedWemFiles={SkippedWemFiles}",
-                totalStopwatch.Elapsed.TotalMilliseconds,
+                "Headless pack cold-start breakdown: totalIncludingCacheFile={TotalIncludingCacheFileMs:F1}ms, cacheFileLoad={CacheFileLoadMs:F1}ms, orderedLoad={OrderedLoadMs:F1}ms, pathSetup={PathSetupMs:F1}ms, cacheLookup={CacheLookupMs:F1}ms (metadataValidation={CacheMetadataValidationMs:F1}ms, fileFilterMaterialize={CacheFileMaterializeMs:F1}ms), cachedContainerSetup={CachedContainerSetupMs:F1}ms, cachedFileObjectBuild={CachedFileObjectBuildMs:F1}ms, diskParse={DiskParseMs:F1}ms, packs={PackCount}, cacheHits={CacheHits}, diskLoads={DiskLoads}, retainedCachedFiles={RetainedCachedFiles}, skippedWemFiles={SkippedWemFiles}",
+                totalIncludingCacheFileMs,
+                _vanillaCacheFileLoadMs,
+                orderedLoadMs,
+                pathSetupMs,
+                cacheLookupMs,
+                cacheMetadataValidationMs,
+                cacheFileMaterializeMs,
+                cachedContainerSetupMs,
+                cachedFileObjectBuildMs,
+                diskParseMs,
                 packFilePaths.Count,
                 cacheHits,
                 diskLoads,
-                cacheLookupMs,
-                cachedContainerBuildMs,
-                diskParseMs,
                 retainedCachedFiles,
                 skippedWemFiles);
+
+            Logger.Here().Information(
+                "Headless pack slowest loads: {SlowestPacks}",
+                string.Join(", ", slowestPacks
+                    .OrderByDescending(x => x.TotalMs)
+                    .Take(5)
+                    .Select(x => $"{Path.GetFileName(x.PackPath)}={x.TotalMs:F1}ms(files={x.RetainedFileCount},wem={x.SkippedWemCount},cache={x.UsedCache})")));
 
             return containers;
         }
@@ -109,6 +138,8 @@ namespace Shared.Core.PackFiles.Utility
 
         private PackLoadDetails LoadPackWithDetails(string packFilePath, bool isCaPackFile)
         {
+            var totalStopwatch = Stopwatch.StartNew();
+            var pathSetupStopwatch = Stopwatch.StartNew();
             if (string.IsNullOrWhiteSpace(packFilePath))
                 throw new ArgumentException("A pack file path is required.", nameof(packFilePath));
             if (File.Exists(packFilePath) == false)
@@ -116,26 +147,32 @@ namespace Shared.Core.PackFiles.Utility
 
             var fullPath = Path.GetFullPath(packFilePath);
             var fileInfo = new FileInfo(fullPath);
+            pathSetupStopwatch.Stop();
 
             var cacheLookupStopwatch = Stopwatch.StartNew();
             var cachedIndex = _vanillaPackFilesCache?.TryGet(fileInfo);
             cacheLookupStopwatch.Stop();
             if (cachedIndex != null)
             {
-                var containerBuildStopwatch = Stopwatch.StartNew();
-                var cachedContainer = CreateContainerFromCachedIndex(fullPath, fileInfo.Length, cachedIndex);
-                containerBuildStopwatch.Stop();
+                var cachedBuild = CreateContainerFromCachedIndex(fullPath, fileInfo.Length, cachedIndex);
+                cachedBuild.Container.IsCaPackFile = isCaPackFile;
+                cachedBuild.Container.IsReadOnly = true;
+                totalStopwatch.Stop();
 
-                cachedContainer.IsCaPackFile = isCaPackFile;
-                cachedContainer.IsReadOnly = true;
                 return new PackLoadDetails(
-                    new HeadlessPackFileLoadResult(cachedContainer, true),
+                    fullPath,
+                    new HeadlessPackFileLoadResult(cachedBuild.Container, true),
                     UsedCache: true,
                     cachedIndex.PackedFiles.Count,
                     cachedIndex.SkippedWemCount,
+                    pathSetupStopwatch.Elapsed.TotalMilliseconds,
                     cacheLookupStopwatch.Elapsed.TotalMilliseconds,
-                    containerBuildStopwatch.Elapsed.TotalMilliseconds,
-                    DiskParseMs: 0);
+                    cachedIndex.MetadataValidationMs,
+                    cachedIndex.FileMaterializeMs,
+                    cachedBuild.SetupMs,
+                    cachedBuild.FileObjectBuildMs,
+                    DiskParseMs: 0,
+                    totalStopwatch.Elapsed.TotalMilliseconds);
             }
 
             var skippedWemCount = 0;
@@ -167,21 +204,29 @@ namespace Shared.Core.PackFiles.Utility
                 PackFileCAType.RELEASE or
                 PackFileCAType.PATCH or
                 PackFileCAType.MOVIE;
+            totalStopwatch.Stop();
             return new PackLoadDetails(
+                fullPath,
                 new HeadlessPackFileLoadResult(container, isVanillaPack),
                 UsedCache: false,
                 container.GetFileCount(),
                 skippedWemCount,
+                pathSetupStopwatch.Elapsed.TotalMilliseconds,
                 cacheLookupStopwatch.Elapsed.TotalMilliseconds,
-                CachedContainerBuildMs: 0,
-                diskParseStopwatch.Elapsed.TotalMilliseconds);
+                CacheMetadataValidationMs: 0,
+                CacheFileMaterializeMs: 0,
+                CachedContainerSetupMs: 0,
+                CachedFileObjectBuildMs: 0,
+                diskParseStopwatch.Elapsed.TotalMilliseconds,
+                totalStopwatch.Elapsed.TotalMilliseconds);
         }
 
-        private static PackFileContainer CreateContainerFromCachedIndex(
+        private static CachedContainerBuildDetails CreateContainerFromCachedIndex(
             string fullPath,
             long fileSize,
             VanillaPackFilesCacheReader.CachedPackIndex cachedIndex)
         {
+            var setupStopwatch = Stopwatch.StartNew();
             var header = new PFHeader(
                 cachedIndex.Header.Version,
                 cachedIndex.Header.ByteMask,
@@ -203,6 +248,9 @@ namespace Shared.Core.PackFiles.Utility
             container.EnsureFileCapacity(cachedIndex.PackedFiles.Count);
 
             var parent = new PackedFileSourceParent { FilePath = fullPath };
+            setupStopwatch.Stop();
+
+            var fileObjectStopwatch = Stopwatch.StartNew();
             foreach (var cachedFile in cachedIndex.PackedFiles)
             {
                 var normalizedPath = cachedFile.Name.ToLowerInvariant();
@@ -218,8 +266,12 @@ namespace Shared.Core.PackFiles.Utility
                     normalizedPath,
                     new PackFile(GetFileName(normalizedPath), source));
             }
+            fileObjectStopwatch.Stop();
 
-            return container;
+            return new CachedContainerBuildDetails(
+                container,
+                setupStopwatch.Elapsed.TotalMilliseconds,
+                fileObjectStopwatch.Elapsed.TotalMilliseconds);
         }
 
         private static string GetFileName(string path)
@@ -228,14 +280,25 @@ namespace Shared.Core.PackFiles.Utility
             return separator < 0 ? path : path[(separator + 1)..];
         }
 
+        private sealed record CachedContainerBuildDetails(
+            PackFileContainer Container,
+            double SetupMs,
+            double FileObjectBuildMs);
+
         private sealed record PackLoadDetails(
+            string PackPath,
             HeadlessPackFileLoadResult Result,
             bool UsedCache,
             int RetainedFileCount,
             int SkippedWemCount,
+            double PathSetupMs,
             double CacheLookupMs,
-            double CachedContainerBuildMs,
-            double DiskParseMs);
+            double CacheMetadataValidationMs,
+            double CacheFileMaterializeMs,
+            double CachedContainerSetupMs,
+            double CachedFileObjectBuildMs,
+            double DiskParseMs,
+            double TotalMs);
     }
 
 }
