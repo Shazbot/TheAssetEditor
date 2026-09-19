@@ -166,6 +166,46 @@ public sealed class AssetHostDispatcherTests
     }
 
     [Test]
+    public void ExportBatch_PassesAllVariantSelectionsToOneRuntime()
+    {
+        var factory = new FakeRuntimeFactory();
+        using var dispatcher = new AssetHostDispatcher(factory);
+        var root = Path.Combine(Path.GetTempPath(), "asset-host-root", Guid.NewGuid().ToString("N"));
+        dispatcher.Dispatch(Initialize(root, "base.pack"));
+
+        var response = dispatcher.Dispatch(Request(
+            "exportModelBatch",
+            "variant-batch",
+            "assetPath", "unit.variantmeshdefinition",
+            "animationPaths", Array.Empty<string>(),
+            "items", new object[]
+            {
+                new
+                {
+                    outputPath = "batch/one.glb",
+                    variantSelections = new[] { new { slotPath = "root/slot[0]", choiceIndex = 0 } }
+                },
+                new
+                {
+                    outputPath = "batch/two.glb",
+                    variantSelections = new[] { new { slotPath = "root/slot[0]", choiceIndex = 1 } }
+                }
+            }));
+
+        Assert.That(response.Success, Is.True);
+        Assert.That(response.Command, Is.EqualTo("exportModelBatch"));
+        Assert.That(factory.Created.Single().Exports, Has.Count.EqualTo(2));
+        Assert.That(factory.Created.Single().Exports[0].VariantSelections, Is.EqualTo(new[]
+        {
+            new AssetHostVariantMeshSelection("root/slot[0]", 0)
+        }));
+        Assert.That(factory.Created.Single().Exports[1].VariantSelections, Is.EqualTo(new[]
+        {
+            new AssetHostVariantMeshSelection("root/slot[0]", 1)
+        }));
+    }
+
+    [Test]
     public void Export_PropagatesStableMissingAssetAndAnimationCodes()
     {
         var factory = new FakeRuntimeFactory
