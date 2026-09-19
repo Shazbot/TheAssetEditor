@@ -27,7 +27,12 @@ namespace Shared.Core.PackFiles.Serialization
     {
         static readonly ILogger s_logger = Logging.CreateStatic(typeof(PackFileSerializerLoader));
 
-        public static PackFileContainer Load(string packFileSystemPath, long packFileSize, BinaryReader reader, IDuplicateFileResolver duplicatePackFileResolver)
+        public static PackFileContainer Load(
+            string packFileSystemPath,
+            long packFileSize,
+            BinaryReader reader,
+            IDuplicateFileResolver duplicatePackFileResolver,
+            Func<string, bool>? includeFile = null)
         {
             try
             {
@@ -41,7 +46,8 @@ namespace Shared.Core.PackFiles.Serialization
                 if (output.Header.FileCount > int.MaxValue)
                     throw new Exception("Too many files in packfile!");
 
-                output.EnsureFileCapacity((int)output.Header.FileCount);
+                if (includeFile == null)
+                    output.EnsureFileCapacity((int)output.Header.FileCount);
 
                 var packedFileSourceParent = new PackedFileSourceParent()
                 {
@@ -66,6 +72,12 @@ namespace Shared.Core.PackFiles.Serialization
                         isCompressed = reader.ReadBoolean();
 
                     var fullPackedFileName = IOFunctions.ReadZeroTerminatedAscii(reader, fileNameBuffer).ToLower();
+                    if (includeFile != null && !includeFile(fullPackedFileName))
+                    {
+                        offset += size;
+                        continue;
+                    }
+
                     var packFileName = Path.GetFileName(fullPackedFileName);
                     var isEncrypted = output.Header.HasEncryptedData;
 

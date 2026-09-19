@@ -74,6 +74,7 @@ public sealed class VanillaPackFilesCacheReaderTests
             var rawFiles = new[]
             {
                 (Name: "folder\\raw.txt", Data: Encoding.ASCII.GetBytes("raw payload"), IsCompressed: false),
+                (Name: "audio\\voice.wem", Data: Encoding.ASCII.GetBytes("unused audio"), IsCompressed: false),
                 (Name: "folder\\compressed.txt", Data: Encoding.ASCII.GetBytes(new string('C', 256)), IsCompressed: true)
             };
             var storedFiles = rawFiles
@@ -91,17 +92,48 @@ public sealed class VanillaPackFilesCacheReaderTests
             Assert.That(loaded, Has.Count.EqualTo(1));
             Assert.That(loaded[0].IsVanillaPack, Is.True);
             Assert.That(loaded[0].Container.GetFileCount(), Is.EqualTo(2));
+            Assert.That(loaded[0].Container.FindFile("audio\\voice.wem"), Is.Null);
             Assert.That(
                 loaded[0].Container.FindFile("folder\\raw.txt")!.DataSource.ReadData(),
                 Is.EqualTo(rawFiles[0].Data));
             Assert.That(
                 loaded[0].Container.FindFile("folder\\compressed.txt")!.DataSource.ReadData(),
-                Is.EqualTo(rawFiles[1].Data));
+                Is.EqualTo(rawFiles[2].Data));
             Assert.That(rawFile, Is.Not.Null);
             Assert.That(rawFile!.Container, Is.SameAs(loaded[0].Container));
             Assert.That(rawFile.VirtualPath, Is.EqualTo("folder\\raw.txt"));
             Assert.That(service.GetFullPath(rawFile), Is.EqualTo("folder\\raw.txt"));
             Assert.That(service.GetPackFileContainer(rawFile), Is.SameAs(loaded[0].Container));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void HeadlessLoader_WithoutCache_SkipsWemBeforeCreatingPackFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "VanillaPackFilesCacheReaderTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var packPath = Path.Combine(root, "release.pack");
+
+        try
+        {
+            var files = new[]
+            {
+                (Name: "folder\\keep.txt", Data: Encoding.ASCII.GetBytes("keep"), IsCompressed: false),
+                (Name: "audio\\skip.wem", Data: Encoding.ASCII.GetBytes("skip"), IsCompressed: false)
+            };
+            BuildPack(packPath, files);
+
+            var loaded = new HeadlessPackFileLoader().LoadOrderedWithMetadata([packPath]);
+
+            Assert.That(loaded, Has.Count.EqualTo(1));
+            Assert.That(loaded[0].Container.GetFileCount(), Is.EqualTo(1));
+            Assert.That(loaded[0].Container.FindFile("folder\\keep.txt"), Is.Not.Null);
+            Assert.That(loaded[0].Container.FindFile("audio\\skip.wem"), Is.Null);
         }
         finally
         {

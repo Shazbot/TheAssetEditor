@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -11,12 +12,20 @@ internal sealed class VanillaPackFilesCacheReader
 {
     private const int CurrentVersion = 2;
     private const double TimestampToleranceMilliseconds = 1.0;
+    private static readonly ILogger Logger = Logging.Create<VanillaPackFilesCacheReader>();
 
     private readonly Dictionary<string, CacheEntry> _entries;
 
     public VanillaPackFilesCacheReader(string cachePath)
     {
+        var stopwatch = Stopwatch.StartNew();
         _entries = LoadEntries(cachePath);
+        stopwatch.Stop();
+
+        Logger.Here().Information(
+            "Vanilla pack files cache loaded in {ElapsedMs:F1}ms with {PackCount} pack entries",
+            stopwatch.Elapsed.TotalMilliseconds,
+            _entries.Count);
     }
 
     public CachedPackIndex? TryGet(FileInfo packFile)
@@ -41,6 +50,7 @@ internal sealed class VanillaPackFilesCacheReader
         }
 
         var packedFiles = new List<CachedPackedFile>(entry.PackedFiles.Count);
+        var skippedWemCount = 0;
         var previousEnd = -1L;
         foreach (var packedFile in entry.PackedFiles)
         {
@@ -55,18 +65,24 @@ internal sealed class VanillaPackFilesCacheReader
                 return null;
             }
 
+            previousEnd = packedFile.StartPos + packedFile.FileSize;
+            if (ShouldIgnoreFile(packedFile.Name))
+            {
+                skippedWemCount++;
+                continue;
+            }
+
             packedFiles.Add(new CachedPackedFile(
                 packedFile.Name,
                 packedFile.FileSize,
                 packedFile.StartPos,
                 packedFile.IsCompressed));
-            previousEnd = packedFile.StartPos + packedFile.FileSize;
         }
 
         if (entry.DependencyPacks.Any(string.IsNullOrWhiteSpace))
             return null;
 
-        return new CachedPackIndex(header, packedFiles, entry.DependencyPacks);
+        return new CachedPackIndex(header, packedFiles, entry.DependencyPacks, skippedWemCount);
     }
 
     private static Dictionary<string, CacheEntry> LoadEntries(string cachePath)
@@ -147,6 +163,9 @@ internal sealed class VanillaPackFilesCacheReader
             PackFileCAType.PATCH or
             PackFileCAType.MOVIE;
 
+    internal static bool ShouldIgnoreFile(string path)
+        => path.EndsWith(".wem", StringComparison.OrdinalIgnoreCase);
+
     private static string NormalizePath(string path)
     {
         try
@@ -168,7 +187,8 @@ internal sealed class VanillaPackFilesCacheReader
     internal sealed record CachedPackIndex(
         CachedPackFileHeader Header,
         IReadOnlyList<CachedPackedFile> PackedFiles,
-        IReadOnlyList<string> DependencyPacks);
+        IReadOnlyList<string> DependencyPacks,
+        int SkippedWemCount);
 
     internal sealed record CachedPackFileHeader(
         string Version,

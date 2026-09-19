@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Models.Containers;
@@ -30,6 +31,7 @@ namespace Shared.Core.PackFiles.Utility
 
     public sealed class HeadlessPackFileLoader : IHeadlessPackFileLoader
     {
+        private static readonly ILogger Logger = Logging.Create<HeadlessPackFileLoader>();
         private readonly VanillaPackFilesCacheReader? _vanillaPackFilesCache;
 
         public HeadlessPackFileLoader(string? vanillaPackFilesCachePath = null)
@@ -39,7 +41,7 @@ namespace Shared.Core.PackFiles.Utility
         }
 
         public IPackFileContainer LoadPack(string packFilePath, bool isCaPackFile = false)
-            => LoadPackWithMetadata(packFilePath, isCaPackFile).Container;
+            => LoadPackWithDetails(packFilePath, isCaPackFile).Result.Container;
 
         public IReadOnlyList<HeadlessPackFileLoadResult> LoadOrderedWithMetadata(
             IReadOnlyList<string> packFilePaths,
@@ -47,16 +49,53 @@ namespace Shared.Core.PackFiles.Utility
         {
             ArgumentNullException.ThrowIfNull(packFilePaths);
 
+            var totalStopwatch = Stopwatch.StartNew();
             var normalizedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var containers = new List<HeadlessPackFileLoadResult>(packFilePaths.Count);
+            var cacheHits = 0;
+            var diskLoads = 0;
+            var retainedCachedFiles = 0;
+            var skippedWemFiles = 0;
+            var cacheLookupMs = 0.0;
+            var cachedContainerBuildMs = 0.0;
+            var diskParseMs = 0.0;
+
             for (var index = 0; index < packFilePaths.Count; index++)
             {
                 var fullPath = Path.GetFullPath(packFilePaths[index]);
                 if (normalizedPaths.Add(fullPath) == false)
                     throw new InvalidOperationException($"Pack file '{fullPath}' was supplied more than once.");
 
-                containers.Add(LoadPackWithMetadata(fullPath, firstPackIsCaPack && index == 0));
+                var details = LoadPackWithDetails(fullPath, firstPackIsCaPack && index == 0);
+                containers.Add(details.Result);
+                cacheLookupMs += details.CacheLookupMs;
+                cachedContainerBuildMs += details.CachedContainerBuildMs;
+                diskParseMs += details.DiskParseMs;
+                skippedWemFiles += details.SkippedWemCount;
+
+                if (details.UsedCache)
+                {
+                    cacheHits++;
+                    retainedCachedFiles += details.RetainedFileCount;
+                }
+                else
+                {
+                    diskLoads++;
+                }
             }
+
+            totalStopwatch.Stop();
+            Logger.Here().Information(
+                "Headless pack load completed in {TotalMs:F1}ms for {PackCount} packs: cacheHits={CacheHits}, diskLoads={DiskLoads}, cacheLookup={CacheLookupMs:F1}ms, cachedContainerBuild={CachedContainerBuildMs:F1}ms, diskParse={DiskParseMs:F1}ms, retainedCachedFiles={RetainedCachedFiles}, skippedWemFiles={SkippedWemFiles}",
+                totalStopwatch.Elapsed.TotalMilliseconds,
+                packFilePaths.Count,
+                cacheHits,
+                diskLoads,
+                cacheLookupMs,
+                cachedContainerBuildMs,
+                diskParseMs,
+                retainedCachedFiles,
+                skippedWemFiles);
 
             return containers;
         }
@@ -68,7 +107,7 @@ namespace Shared.Core.PackFiles.Utility
                 .Select(x => x.Container)
                 .ToList();
 
-        private HeadlessPackFileLoadResult LoadPackWithMetadata(string packFilePath, bool isCaPackFile)
+        private PackLoadDetails LoadPackWithDetails(string packFilePath, bool isCaPackFile)
         {
             if (string.IsNullOrWhiteSpace(packFilePath))
                 throw new ArgumentException("A pack file path is required.", nameof(packFilePath));
@@ -77,38 +116,58 @@ namespace Shared.Core.PackFiles.Utility
 
             var fullPath = Path.GetFullPath(packFilePath);
             var fileInfo = new FileInfo(fullPath);
+
+            var cacheLookupStopwatch = Stopwatch.StartNew();
             var cachedIndex = _vanillaPackFilesCache?.TryGet(fileInfo);
+            cacheLookupStopwatch.Stop();
             if (cachedIndex != null)
             {
+                var containerBuildStopwatch = Stopwatch.StartNew();
                 var cachedContainer = CreateContainerFromCachedIndex(fullPath, fileInfo.Length, cachedIndex);
+                containerBuildStopwatch.Stop();
+
                 cachedContainer.IsCaPackFile = isCaPackFile;
                 cachedContainer.IsReadOnly = true;
-                return new HeadlessPackFileLoadResult(cachedContainer, true);
+                return new PackLoadDetails(
+                    new HeadlessPackFileLoadResult(cachedContainer, true),
+                    UsedCache: true,
+                    cachedIndex.PackedFiles.Count,
+                    cachedIndex.SkippedWemCount,
+                    cacheLookupStopwatch.Elapsed.TotalMilliseconds,
+                    containerBuildStopwatch.Elapsed.TotalMilliseconds,
+                    DiskParseMs: 0);
             }
 
+            var diskParseStopwatch = Stopwatch.StartNew();
             using var fileStream = File.OpenRead(fullPath);
             using var reader = new BinaryReader(fileStream, Encoding.ASCII);
             var container = PackFileSerializerLoader.Load(
                 fullPath,
                 fileStream.Length,
                 reader,
-                new CaPackDuplicateFileResolver());
+                new CaPackDuplicateFileResolver(),
+                static path => !VanillaPackFilesCacheReader.ShouldIgnoreFile(path));
+            diskParseStopwatch.Stop();
 
-            // Set these flags before returning. Do not call SaveSettings: a
-            // read-only host load must not write editor metadata beside packs.
+            var skippedWemCount = checked((int)container.Header.FileCount - container.GetFileCount());
+            container.Header.FileCount = (uint)container.GetFileCount();
+
             container.IsCaPackFile = isCaPackFile;
             container.IsReadOnly = true;
 
-            // CA's pack header identifies user-created packs as MOD. The
-            // remaining known CA header types are the game's own packs. Keep
-            // this classification here, next to header parsing, so callers do
-            // not have to guess from paths or filenames.
             var isVanillaPack = container.Header.PackFileType is
                 PackFileCAType.BOOT or
                 PackFileCAType.RELEASE or
                 PackFileCAType.PATCH or
                 PackFileCAType.MOVIE;
-            return new HeadlessPackFileLoadResult(container, isVanillaPack);
+            return new PackLoadDetails(
+                new HeadlessPackFileLoadResult(container, isVanillaPack),
+                UsedCache: false,
+                container.GetFileCount(),
+                skippedWemCount,
+                cacheLookupStopwatch.Elapsed.TotalMilliseconds,
+                CachedContainerBuildMs: 0,
+                diskParseStopwatch.Elapsed.TotalMilliseconds);
         }
 
         private static PackFileContainer CreateContainerFromCachedIndex(
@@ -161,6 +220,15 @@ namespace Shared.Core.PackFiles.Utility
             var separator = path.LastIndexOfAny(['\\', '/']);
             return separator < 0 ? path : path[(separator + 1)..];
         }
+
+        private sealed record PackLoadDetails(
+            HeadlessPackFileLoadResult Result,
+            bool UsedCache,
+            int RetainedFileCount,
+            int SkippedWemCount,
+            double CacheLookupMs,
+            double CachedContainerBuildMs,
+            double DiskParseMs);
     }
 
 }
