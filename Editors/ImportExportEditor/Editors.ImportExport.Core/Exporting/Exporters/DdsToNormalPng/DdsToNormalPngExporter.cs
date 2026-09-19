@@ -22,15 +22,18 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
         private readonly IPackedFileLookup _packFileLookup;
         private readonly IImageSaveHandler _imageSaveHandler;
         private readonly bool _enableKtx2Probe;
+        private readonly ITextureEncodingProbe? _textureEncodingProbe;
 
         public DdsToNormalPngExporter(
             IPackedFileLookup packFileLookup,
             IImageSaveHandler imageSaveHandler,
-            bool enableKtx2Probe = false)
+            bool enableKtx2Probe = false,
+            ITextureEncodingProbe? textureEncodingProbe = null)
         {
             _packFileLookup = packFileLookup;
             _imageSaveHandler = imageSaveHandler;
             _enableKtx2Probe = enableKtx2Probe;
+            _textureEncodingProbe = textureEncodingProbe;
         }
 
         public ExportSupportEnum CanExportFile(PackFile file)
@@ -221,6 +224,8 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             phaseStopwatch.Stop();
             var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             totalStopwatch.Stop();
+
+            _textureEncodingProbe?.Probe(filePath, decoded, srgb: false, encoded);
 
             Logger.Here().Information(
                 "KTX2 normal texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, normalConvert={NormalConvertMs:F1}ms, rgbaConvert={RgbaConvertMs:F1}ms, zstd={ZstdMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, zstdBytes={ZstdBytes}, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",

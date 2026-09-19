@@ -206,8 +206,15 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             compositionResolver,
             skeletonLookup);
         var imageSaveHandler = new SystemImageSaveHandler();
-        var materialExporter = new DdsToMaterialPngExporter(packFileService, imageSaveHandler);
-        var normalExporter = new DdsToNormalPngExporter(packFileService, imageSaveHandler);
+        var textureEncodingProbe = new UastcTextureBenchmarkProbe();
+        var materialExporter = new DdsToMaterialPngExporter(
+            packFileService,
+            imageSaveHandler,
+            textureEncodingProbe: textureEncodingProbe);
+        var normalExporter = new DdsToNormalPngExporter(
+            packFileService,
+            imageSaveHandler,
+            textureEncodingProbe: textureEncodingProbe);
         var exporter = new RmvToGltfExporter(
             new HeadlessGltfSceneSaver(),
             new GltfMeshBuilder(),

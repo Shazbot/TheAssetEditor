@@ -18,6 +18,15 @@ namespace MeshImportExport
 
     public readonly record struct TextureImageExportResult(string Path, byte[] Data);
 
+    public interface ITextureEncodingProbe
+    {
+        void Probe(
+            string texturePath,
+            TextureHelper.DecodedDdsImage image,
+            bool srgb,
+            TextureKtx2EncodeResult losslessKtx2);
+    }
+
     public readonly record struct TextureKtx2EncodeResult(
         byte[] Ktx2Data,
         int RawRgbaBytes,
