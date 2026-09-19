@@ -380,7 +380,10 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             // glTF scene. The mod-manager render only needs embedded material
             // channels, so avoid converting and inverting them.
             ExportAuxiliaryMasks = false,
-            UseKtx2Textures = true
+            // Raw RGBA KTX2 is not valid KHR_texture_basisu content. Keep the
+            // production preview on the known-good PNG path until the host
+            // emits standards-compliant Basis/UASTC KTX2 textures.
+            UseKtx2Textures = false
         };
 
         phaseStopwatch.Restart();
