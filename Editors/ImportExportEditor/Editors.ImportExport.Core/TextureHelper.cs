@@ -1,12 +1,20 @@
 using System.Drawing.Imaging;
 using System.IO.Compression;
 using System.IO;
+using System.Diagnostics;
 using Editors.ImportExport.Misc;
 using Pfim;
+using ZstdSharp;
 
 namespace MeshImportExport
 {
     public readonly record struct TexturePngExportResult(string Path, byte[] PngData);
+    public readonly record struct TextureZstdProbeResult(
+        int RawRgbaBytes,
+        int ZstdBytes,
+        double RgbaConvertMs,
+        double ZstdMs,
+        int CompressionLevel);
 
     public class TextureHelper
     {
@@ -43,6 +51,42 @@ namespace MeshImportExport
 
         public static byte[] EncodeBgraToPng(DecodedDdsImage image)
             => EncodeBgraToPng(image.Width, image.Height, image.BgraPixels);
+
+        public static TextureZstdProbeResult ProbeBgraToRgbaZstd(
+            DecodedDdsImage image,
+            int compressionLevel = 1)
+        {
+            var expectedLength = checked(image.Width * image.Height * 4);
+            if (image.Width <= 0 || image.Height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(image), "Texture dimensions must be positive.");
+            if (image.BgraPixels == null || image.BgraPixels.Length < expectedLength)
+                throw new ArgumentException("The pixel buffer is smaller than the requested image.", nameof(image));
+
+            var convertStopwatch = Stopwatch.StartNew();
+            var rgba = new byte[expectedLength];
+            for (var index = 0; index < expectedLength; index += 4)
+            {
+                rgba[index] = image.BgraPixels[index + 2];
+                rgba[index + 1] = image.BgraPixels[index + 1];
+                rgba[index + 2] = image.BgraPixels[index];
+                rgba[index + 3] = image.BgraPixels[index + 3];
+            }
+            convertStopwatch.Stop();
+
+            var zstdStopwatch = Stopwatch.StartNew();
+            var destination = new byte[Compressor.GetCompressBound(rgba.Length)];
+            int compressedLength;
+            using (var compressor = new Compressor(compressionLevel))
+                compressedLength = compressor.Wrap(rgba, destination.AsSpan());
+            zstdStopwatch.Stop();
+
+            return new TextureZstdProbeResult(
+                rgba.Length,
+                compressedLength,
+                convertStopwatch.Elapsed.TotalMilliseconds,
+                zstdStopwatch.Elapsed.TotalMilliseconds,
+                compressionLevel);
+        }
 
         public static byte[] EncodeBgraToPng(int width, int height, byte[] bgraPixels)
         {

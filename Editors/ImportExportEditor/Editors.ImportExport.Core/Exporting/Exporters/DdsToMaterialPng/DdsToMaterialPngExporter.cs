@@ -20,10 +20,16 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
         private static readonly ILogger Logger = Logging.Create<DdsToMaterialPngExporter>();
         private readonly IPackedFileLookup _packFileLookup;
         private readonly IImageSaveHandler _imageSaveHandler;
-        public DdsToMaterialPngExporter(IPackedFileLookup packFileLookup, IImageSaveHandler imageSaveHandler)
+        private readonly bool _enableKtx2Probe;
+
+        public DdsToMaterialPngExporter(
+            IPackedFileLookup packFileLookup,
+            IImageSaveHandler imageSaveHandler,
+            bool enableKtx2Probe = false)
         {
             _packFileLookup = packFileLookup;
             _imageSaveHandler = imageSaveHandler;
+            _enableKtx2Probe = enableKtx2Probe;
         }
 
         public string Export(string filePath, string outputPath, bool convertToBlenderFormat)
@@ -86,6 +92,22 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng
             phaseStopwatch.Stop();
             var saveMs = phaseStopwatch.Elapsed.TotalMilliseconds;
             totalStopwatch.Stop();
+
+            if (_enableKtx2Probe)
+            {
+                var probe = TextureHelper.ProbeBgraToRgbaZstd(decoded);
+                Logger.Here().Information(
+                    "KTX2 Zstd feasibility for {TexturePath}: rawRgbaBytes={RawRgbaBytes}, zstdBytes={ZstdBytes}, rgbaConvert={RgbaConvertMs:F1}ms, zstd={ZstdMs:F1}ms, level={ZstdLevel}, pngBytes={PngBytes}, pngEncode={PngEncodeMs:F1}ms, zstdVsPng={ZstdVsPng:P1}",
+                    filePath,
+                    probe.RawRgbaBytes,
+                    probe.ZstdBytes,
+                    probe.RgbaConvertMs,
+                    probe.ZstdMs,
+                    probe.CompressionLevel,
+                    imgBytes.Length,
+                    pngEncodeMs,
+                    imgBytes.Length == 0 ? 0d : (double)probe.ZstdBytes / imgBytes.Length);
+            }
 
             Logger.Here().Information(
                 "DDS material texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, channelConvert={ChannelConvertMs:F1}ms, pngEncode={PngEncodeMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, outputBytes={OutputBytes}, blender={ConvertToBlender}",

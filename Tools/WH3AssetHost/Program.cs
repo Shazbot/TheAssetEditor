@@ -206,8 +206,16 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             compositionResolver,
             skeletonLookup);
         var imageSaveHandler = new SystemImageSaveHandler();
-        var materialExporter = new DdsToMaterialPngExporter(packFileService, imageSaveHandler);
-        var normalExporter = new DdsToNormalPngExporter(packFileService, imageSaveHandler);
+        // Headless-only feasibility probe: compare the current Fast PNG with
+        // the proposed KTX2 raw-RGBA + Zstd payload before changing formats.
+        var materialExporter = new DdsToMaterialPngExporter(
+            packFileService,
+            imageSaveHandler,
+            enableKtx2Probe: true);
+        var normalExporter = new DdsToNormalPngExporter(
+            packFileService,
+            imageSaveHandler,
+            enableKtx2Probe: true);
         var exporter = new RmvToGltfExporter(
             new HeadlessGltfSceneSaver(),
             new GltfMeshBuilder(),
