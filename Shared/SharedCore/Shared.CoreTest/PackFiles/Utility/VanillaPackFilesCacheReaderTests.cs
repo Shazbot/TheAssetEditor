@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Models.FileSources;
@@ -43,11 +42,18 @@ public sealed class VanillaPackFilesCacheReaderTests
 
         try
         {
-            using (var cacheStream = File.Create(cachePath))
-            using (var compressor = new CompressionStream(cacheStream, 1))
+            using (var payload = new MemoryStream())
             {
-                var json = Encoding.UTF8.GetBytes("{\"version\":1,\"entries\":{}}");
-                compressor.Write(json);
+                using (var writer = new BinaryWriter(payload, Encoding.UTF8, leaveOpen: true))
+                {
+                    writer.Write(Encoding.ASCII.GetBytes("WVFC"));
+                    writer.Write(2u);
+                    writer.Write(0u);
+                }
+
+                using var cacheStream = File.Create(cachePath);
+                using var compressor = new CompressionStream(cacheStream, 1);
+                compressor.Write(payload.ToArray());
             }
 
             var reader = new VanillaPackFilesCacheReader(cachePath);
@@ -188,40 +194,66 @@ public sealed class VanillaPackFilesCacheReaderTests
     private static void WriteCache(string cachePath, string packPath, PackIndex index)
     {
         var packInfo = new FileInfo(packPath);
-        var document = new
+        using var payload = new MemoryStream();
+        using (var writer = new BinaryWriter(payload, Encoding.UTF8, leaveOpen: true))
         {
-            version = 2,
-            entries = new Dictionary<string, object>
-            {
-                [packPath] = new
-                {
-                    size = packInfo.Length,
-                    lastChangedLocal = (packInfo.LastWriteTimeUtc - DateTime.UnixEpoch).TotalMilliseconds,
-                    packedFiles = index.Files.Select(file => new
-                    {
-                        name = file.Name,
-                        file_size = file.Size,
-                        start_pos = file.StartPos,
-                        is_compressed = file.IsCompressed
-                    }),
-                    packHeader = new
-                    {
-                        header = Convert.ToBase64String(Encoding.ASCII.GetBytes("PFH5")),
-                        byteMask = (int)PackFileCAType.RELEASE,
-                        refFileCount = 0,
-                        pack_file_index_size = 0,
-                        pack_file_count = index.Files.Count,
-                        header_buffer = Convert.ToBase64String(new byte[] { 1, 2, 3, 4 })
-                    },
-                    dependencyPacks = Array.Empty<string>()
-                }
-            }
-        };
+            writer.Write(Encoding.ASCII.GetBytes("WVFC"));
+            writer.Write(3u);
+            writer.Write(1u);
 
-        var json = JsonSerializer.SerializeToUtf8Bytes(document);
+            writer.Write((byte)1);
+            WriteString(writer, packPath);
+            writer.Write((ulong)packInfo.Length);
+            writer.Write((packInfo.LastWriteTimeUtc - DateTime.UnixEpoch).TotalMilliseconds);
+
+            writer.Write(4u);
+            writer.Write(Encoding.ASCII.GetBytes("PFH5"));
+            writer.Write((int)PackFileCAType.RELEASE);
+            writer.Write(0u);
+            writer.Write(0u);
+            writer.Write((uint)index.Files.Count);
+            writer.Write(4u);
+            writer.Write(new byte[] { 1, 2, 3, 4 });
+
+            writer.Write(0u);
+            writer.Write((uint)index.Files.Count);
+            writer.Write((ulong)(index.Files.Count == 0 ? 0 : index.Files[0].StartPos));
+
+            var previousName = string.Empty;
+            foreach (var file in index.Files)
+            {
+                var prefixLength = CommonPrefixLength(previousName, file.Name);
+                writer.Write((uint)prefixLength);
+                WriteString(writer, file.Name[prefixLength..]);
+                writer.Write((uint)file.Size);
+                writer.Write((byte)(file.IsCompressed ? 1 : 0));
+                previousName = file.Name;
+            }
+        }
+
         using var cacheStream = File.Create(cachePath);
         using var compressor = new CompressionStream(cacheStream, 1);
-        compressor.Write(json);
+        compressor.Write(payload.ToArray());
+    }
+
+    private static void WriteString(BinaryWriter writer, string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        writer.Write((uint)bytes.Length);
+        writer.Write(bytes);
+    }
+
+    private static int CommonPrefixLength(string previous, string current)
+    {
+        var limit = Math.Min(previous.Length, current.Length);
+        var prefix = 0;
+        while (prefix < limit && previous[prefix] == current[prefix])
+            prefix++;
+
+        if (prefix > 0 && char.IsHighSurrogate(previous[prefix - 1]))
+            prefix--;
+
+        return prefix;
     }
 
     private sealed record PackIndex(IReadOnlyList<CachedFile> Files, int IndexSize);

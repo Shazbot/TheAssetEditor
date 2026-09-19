@@ -1,7 +1,6 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Serialization;
 using ZstdSharp;
@@ -10,16 +9,25 @@ namespace Shared.Core.PackFiles.Utility;
 
 internal sealed class VanillaPackFilesCacheReader
 {
-    private const int CurrentVersion = 2;
+    private const uint CurrentVersion = 3;
+    private const byte ExpandedEntryKind = 1;
+    private const byte NamesOnlyEntryKind = 2;
+    private const int MaxEntryCount = 100_000;
+    private const int MaxTotalFileCount = 5_000_000;
+    private const int MaxStringBytes = 16 * 1024 * 1024;
     private const double TimestampToleranceMilliseconds = 1.0;
+
+    private static readonly byte[] Magic = Encoding.ASCII.GetBytes("WVFC");
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private static readonly ILogger Logger = Logging.Create<VanillaPackFilesCacheReader>();
 
+    private readonly byte[] _payload;
     private readonly Dictionary<string, CacheEntry> _entries;
 
     public VanillaPackFilesCacheReader(string cachePath)
     {
         var stopwatch = Stopwatch.StartNew();
-        _entries = LoadEntries(cachePath);
+        (_payload, _entries) = LoadEntries(cachePath);
         stopwatch.Stop();
         LoadElapsedMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
 
@@ -35,138 +43,223 @@ internal sealed class VanillaPackFilesCacheReader
     {
         var metadataStopwatch = Stopwatch.StartNew();
         if (!_entries.TryGetValue(NormalizePath(packFile.FullName), out var entry)
-            || entry.PackedFiles == null
-            || entry.PackHeader == null
-            || entry.DependencyPacks == null
             || entry.Size != packFile.Length
             || !double.IsFinite(entry.LastChangedLocal)
-            || Math.Abs(entry.LastChangedLocal - GetNodeMtimeMilliseconds(packFile)) > TimestampToleranceMilliseconds)
-        {
-            return null;
-        }
-
-        if (!TryReadHeader(entry.PackHeader, out var header)
-            || !IsVanillaHeader(header)
-            || header.PackFileCount < 0
-            || entry.PackedFiles.Count != header.PackFileCount)
+            || Math.Abs(entry.LastChangedLocal - GetNodeMtimeMilliseconds(packFile)) > TimestampToleranceMilliseconds
+            || !IsVanillaHeader(entry.Header)
+            || entry.Header.PackFileCount < 0
+            || entry.FileCount != entry.Header.PackFileCount)
         {
             return null;
         }
         metadataStopwatch.Stop();
 
         var fileMaterializeStopwatch = Stopwatch.StartNew();
-        var packedFiles = new List<CachedPackedFile>(entry.PackedFiles.Count);
-        var skippedWemCount = 0;
-        var previousEnd = -1L;
-        foreach (var packedFile in entry.PackedFiles)
+        try
         {
-            if (string.IsNullOrWhiteSpace(packedFile.Name)
-                || packedFile.FileSize < 0
-                || packedFile.FileSize > int.MaxValue
-                || packedFile.StartPos < 0
-                || packedFile.StartPos > packFile.Length
-                || packedFile.FileSize > packFile.Length - packedFile.StartPos
-                || packedFile.StartPos < previousEnd)
+            var reader = new CacheBinaryReader(_payload, entry.FilesOffset);
+            var packedFiles = new List<CachedPackedFile>(entry.FileCount);
+            var skippedWemCount = 0;
+            var previousName = string.Empty;
+            var startPos = entry.FirstStartPos;
+
+            for (var index = 0; index < entry.FileCount; index++)
             {
-                return null;
+                var name = reader.ReadFrontCodedString(previousName);
+                var fileSize = (long)reader.ReadUInt32();
+                var compressed = reader.ReadByte();
+                if (compressed > 1)
+                    return null;
+
+                if (string.IsNullOrWhiteSpace(name)
+                    || startPos < 0
+                    || startPos > packFile.Length
+                    || fileSize > packFile.Length - startPos)
+                {
+                    return null;
+                }
+
+                if (ShouldIgnoreFile(name))
+                {
+                    skippedWemCount++;
+                }
+                else
+                {
+                    packedFiles.Add(new CachedPackedFile(
+                        name,
+                        fileSize,
+                        startPos,
+                        compressed == 1));
+                }
+
+                startPos = checked(startPos + fileSize);
+                previousName = name;
             }
 
-            previousEnd = packedFile.StartPos + packedFile.FileSize;
-            if (ShouldIgnoreFile(packedFile.Name))
-            {
-                skippedWemCount++;
-                continue;
-            }
-
-            packedFiles.Add(new CachedPackedFile(
-                packedFile.Name,
-                packedFile.FileSize,
-                packedFile.StartPos,
-                packedFile.IsCompressed));
+            fileMaterializeStopwatch.Stop();
+            return new CachedPackIndex(
+                entry.Header,
+                packedFiles,
+                entry.DependencyPacks,
+                skippedWemCount,
+                metadataStopwatch.Elapsed.TotalMilliseconds,
+                fileMaterializeStopwatch.Elapsed.TotalMilliseconds);
         }
-
-        if (entry.DependencyPacks.Any(string.IsNullOrWhiteSpace))
+        catch
+        {
             return null;
-
-        fileMaterializeStopwatch.Stop();
-        return new CachedPackIndex(
-            header,
-            packedFiles,
-            entry.DependencyPacks,
-            skippedWemCount,
-            metadataStopwatch.Elapsed.TotalMilliseconds,
-            fileMaterializeStopwatch.Elapsed.TotalMilliseconds);
+        }
     }
 
-    private static Dictionary<string, CacheEntry> LoadEntries(string cachePath)
+    private static (byte[] Payload, Dictionary<string, CacheEntry> Entries) LoadEntries(string cachePath)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(cachePath) || File.Exists(cachePath) == false)
-                return new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
+                return EmptyCache();
 
-            using var compressedStream = File.OpenRead(cachePath);
-            using var decompressionStream = new DecompressionStream(compressedStream);
-            var document = JsonSerializer.Deserialize(
-                decompressionStream,
-                VanillaPackFilesCacheJsonContext.Default.CacheDocument);
-            if (document?.Version != CurrentVersion || document.Entries == null)
-                return new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
+            byte[] payload;
+            using (var compressedStream = File.OpenRead(cachePath))
+            using (var decompressionStream = new DecompressionStream(compressedStream))
+            using (var memory = new MemoryStream())
+            {
+                decompressionStream.CopyTo(memory);
+                payload = memory.ToArray();
+            }
 
-            return document.Entries
-                .Where(pair => string.IsNullOrWhiteSpace(pair.Key) == false && pair.Value != null)
-                .ToDictionary(pair => NormalizePath(pair.Key), pair => pair.Value!, StringComparer.OrdinalIgnoreCase);
+            var reader = new CacheBinaryReader(payload);
+            if (!reader.ReadBytes(Magic.Length).SequenceEqual(Magic))
+                return EmptyCache();
+            if (reader.ReadUInt32() != CurrentVersion)
+                return EmptyCache();
+
+            var entryCount = CheckedCount(reader.ReadUInt32(), MaxEntryCount);
+            var entries = new Dictionary<string, CacheEntry>(entryCount, StringComparer.OrdinalIgnoreCase);
+            var totalFileCount = 0;
+
+            for (var entryIndex = 0; entryIndex < entryCount; entryIndex++)
+            {
+                var kind = reader.ReadByte();
+                var packPath = reader.ReadString();
+                var size = CheckedInt64(reader.ReadUInt64());
+                var lastChangedLocal = reader.ReadDouble();
+
+                if (kind == ExpandedEntryKind)
+                {
+                    var header = ReadHeader(reader);
+
+                    var dependencyCount = CheckedCount(reader.ReadUInt32(), 100_000);
+                    var dependencyPacks = new string[dependencyCount];
+                    for (var dependencyIndex = 0; dependencyIndex < dependencyCount; dependencyIndex++)
+                    {
+                        dependencyPacks[dependencyIndex] = reader.ReadString();
+                        if (string.IsNullOrWhiteSpace(dependencyPacks[dependencyIndex]))
+                            throw new InvalidDataException("Empty dependency path in vanilla cache.");
+                    }
+
+                    var fileCount = CheckedCount(reader.ReadUInt32(), MaxTotalFileCount);
+                    totalFileCount = checked(totalFileCount + fileCount);
+                    if (totalFileCount > MaxTotalFileCount)
+                        throw new InvalidDataException("Vanilla cache contains too many files.");
+
+                    var firstStartPos = CheckedInt64(reader.ReadUInt64());
+                    var filesOffset = reader.Position;
+                    SkipPackedFiles(reader, fileCount);
+
+                    if (header.PackFileCount != fileCount)
+                        throw new InvalidDataException("Pack file count does not match compact cache record.");
+
+                    entries[NormalizePath(packPath)] = new CacheEntry(
+                        size,
+                        lastChangedLocal,
+                        header,
+                        dependencyPacks,
+                        fileCount,
+                        firstStartPos,
+                        filesOffset);
+                    continue;
+                }
+
+                if (kind != NamesOnlyEntryKind)
+                    throw new InvalidDataException("Unknown vanilla cache entry kind.");
+
+                var nameCount = CheckedCount(reader.ReadUInt32(), MaxTotalFileCount);
+                totalFileCount = checked(totalFileCount + nameCount);
+                if (totalFileCount > MaxTotalFileCount)
+                    throw new InvalidDataException("Vanilla cache contains too many files.");
+
+                for (var nameIndex = 0; nameIndex < nameCount; nameIndex++)
+                {
+                    _ = reader.ReadUInt32();
+                    reader.SkipString();
+                }
+            }
+
+            if (reader.Remaining != 0)
+                throw new InvalidDataException("Trailing data in vanilla cache.");
+
+            return (payload, entries);
         }
         catch
         {
-            // This cache is disposable. A corrupt, incomplete, or older cache
-            // must never prevent the host from loading packs normally.
-            return new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase);
+            // The cache is disposable. Corrupt, incomplete, or older cache data
+            // must never prevent the host from parsing packs normally.
+            return EmptyCache();
         }
     }
 
-    private static bool TryReadHeader(CachePackHeader source, out CachedPackFileHeader header)
+    private static CachedPackFileHeader ReadHeader(CacheBinaryReader reader)
     {
-        header = null!;
-        if (source.ByteMask < int.MinValue
-            || source.ByteMask > int.MaxValue
-            || source.RefFileCount < 0
-            || source.RefFileCount > uint.MaxValue
-            || source.PackFileIndexSize < 0
-            || source.PackFileIndexSize > uint.MaxValue
-            || source.PackFileCount < 0
-            || source.PackFileCount > int.MaxValue
-            || string.IsNullOrWhiteSpace(source.Header)
-            || string.IsNullOrWhiteSpace(source.HeaderBuffer))
+        var headerLength = CheckedCount(reader.ReadUInt32(), 1024);
+        var headerBytes = reader.ReadBytes(headerLength).ToArray();
+        var byteMask = reader.ReadInt32();
+        var referenceFileCount = reader.ReadUInt32();
+        var packFileIndexSize = reader.ReadUInt32();
+        var packFileCount = CheckedCount(reader.ReadUInt32(), int.MaxValue);
+        var headerBufferLength = CheckedCount(reader.ReadUInt32(), 1024 * 1024);
+        var headerBuffer = reader.ReadBytes(headerBufferLength).ToArray();
+
+        var version = Encoding.ASCII.GetString(headerBytes);
+        if (headerBytes.Length != 4
+            || headerBuffer.Length == 0
+            || version is not ("PFH0" or "PFH2" or "PFH3" or "PFH4" or "PFH5" or "PFH6"))
         {
-            return false;
+            throw new InvalidDataException("Invalid pack header in vanilla cache.");
         }
 
-        try
-        {
-            var headerBytes = Convert.FromBase64String(source.Header);
-            var headerBuffer = Convert.FromBase64String(source.HeaderBuffer);
-            var version = Encoding.ASCII.GetString(headerBytes);
-            if (headerBytes.Length != 4
-                || headerBuffer.Length == 0
-                || version is not ("PFH0" or "PFH2" or "PFH3" or "PFH4" or "PFH5" or "PFH6"))
-            {
-                return false;
-            }
+        return new CachedPackFileHeader(
+            version,
+            byteMask,
+            referenceFileCount,
+            packFileIndexSize,
+            packFileCount,
+            headerBuffer);
+    }
 
-            header = new CachedPackFileHeader(
-                version,
-                (int)source.ByteMask,
-                (uint)source.RefFileCount,
-                (uint)source.PackFileIndexSize,
-                (int)source.PackFileCount,
-                headerBuffer);
-            return true;
-        }
-        catch (FormatException)
+    private static void SkipPackedFiles(CacheBinaryReader reader, int fileCount)
+    {
+        for (var fileIndex = 0; fileIndex < fileCount; fileIndex++)
         {
-            return false;
+            _ = reader.ReadUInt32(); // common UTF-16 prefix length; validated when materialized.
+            reader.SkipString();     // UTF-8 suffix.
+            _ = reader.ReadUInt32(); // stored file size.
+            if (reader.ReadByte() > 1)
+                throw new InvalidDataException("Invalid compression flag in vanilla cache.");
         }
+    }
+
+    private static int CheckedCount(uint value, int maximum)
+    {
+        if (value > (uint)maximum)
+            throw new InvalidDataException("Count exceeds compact cache limit.");
+        return (int)value;
+    }
+
+    private static long CheckedInt64(ulong value)
+    {
+        if (value > long.MaxValue)
+            throw new InvalidDataException("Unsigned cache value exceeds Int64.");
+        return (long)value;
     }
 
     private static bool IsVanillaHeader(CachedPackFileHeader header)
@@ -197,6 +290,9 @@ internal sealed class VanillaPackFilesCacheReader
     private static double GetNodeMtimeMilliseconds(FileInfo packFile)
         => (packFile.LastWriteTimeUtc - DateTime.UnixEpoch).TotalMilliseconds;
 
+    private static (byte[] Payload, Dictionary<string, CacheEntry> Entries) EmptyCache()
+        => (Array.Empty<byte>(), new Dictionary<string, CacheEntry>(StringComparer.OrdinalIgnoreCase));
+
     internal sealed record CachedPackIndex(
         CachedPackFileHeader Header,
         IReadOnlyList<CachedPackedFile> PackedFiles,
@@ -219,66 +315,104 @@ internal sealed class VanillaPackFilesCacheReader
         long StartPos,
         bool IsCompressed);
 
-    internal sealed class CacheDocument
+    private sealed record CacheEntry(
+        long Size,
+        double LastChangedLocal,
+        CachedPackFileHeader Header,
+        IReadOnlyList<string> DependencyPacks,
+        int FileCount,
+        long FirstStartPos,
+        int FilesOffset);
+
+    private sealed class CacheBinaryReader
     {
-        [JsonPropertyName("version")]
-        public int Version { get; set; }
+        private readonly byte[] _bytes;
+        private int _offset;
 
-        [JsonPropertyName("entries")]
-        public Dictionary<string, CacheEntry>? Entries { get; set; }
-    }
+        public CacheBinaryReader(byte[] bytes, int offset = 0)
+        {
+            _bytes = bytes;
+            if (offset < 0 || offset > bytes.Length)
+                throw new InvalidDataException("Invalid compact cache offset.");
+            _offset = offset;
+        }
 
-    internal sealed class CacheEntry
-    {
-        [JsonPropertyName("size")]
-        public long Size { get; set; }
+        public int Position => _offset;
+        public int Remaining => _bytes.Length - _offset;
 
-        [JsonPropertyName("lastChangedLocal")]
-        public double LastChangedLocal { get; set; }
+        public byte ReadByte()
+        {
+            Require(1);
+            return _bytes[_offset++];
+        }
 
-        [JsonPropertyName("packedFiles")]
-        public List<CachedPackedFileDto>? PackedFiles { get; set; }
+        public uint ReadUInt32()
+        {
+            Require(4);
+            var value = BinaryPrimitives.ReadUInt32LittleEndian(_bytes.AsSpan(_offset, 4));
+            _offset += 4;
+            return value;
+        }
 
-        [JsonPropertyName("packHeader")]
-        public CachePackHeader? PackHeader { get; set; }
+        public int ReadInt32()
+        {
+            Require(4);
+            var value = BinaryPrimitives.ReadInt32LittleEndian(_bytes.AsSpan(_offset, 4));
+            _offset += 4;
+            return value;
+        }
 
-        [JsonPropertyName("dependencyPacks")]
-        public List<string>? DependencyPacks { get; set; }
-    }
+        public ulong ReadUInt64()
+        {
+            Require(8);
+            var value = BinaryPrimitives.ReadUInt64LittleEndian(_bytes.AsSpan(_offset, 8));
+            _offset += 8;
+            return value;
+        }
 
-    internal sealed class CachedPackedFileDto
-    {
-        [JsonPropertyName("name")]
-        public string? Name { get; set; }
+        public double ReadDouble()
+        {
+            Require(8);
+            var bits = BinaryPrimitives.ReadInt64LittleEndian(_bytes.AsSpan(_offset, 8));
+            _offset += 8;
+            var value = BitConverter.Int64BitsToDouble(bits);
+            if (!double.IsFinite(value))
+                throw new InvalidDataException("Non-finite double in vanilla cache.");
+            return value;
+        }
 
-        [JsonPropertyName("file_size")]
-        public long FileSize { get; set; }
+        public ReadOnlySpan<byte> ReadBytes(int length)
+        {
+            Require(length);
+            var value = _bytes.AsSpan(_offset, length);
+            _offset += length;
+            return value;
+        }
 
-        [JsonPropertyName("start_pos")]
-        public long StartPos { get; set; }
+        public string ReadString()
+        {
+            var length = CheckedCount(ReadUInt32(), MaxStringBytes);
+            return StrictUtf8.GetString(ReadBytes(length));
+        }
 
-        [JsonPropertyName("is_compressed")]
-        public bool IsCompressed { get; set; }
-    }
+        public void SkipString()
+        {
+            var length = CheckedCount(ReadUInt32(), MaxStringBytes);
+            Require(length);
+            _offset += length;
+        }
 
-    internal sealed class CachePackHeader
-    {
-        [JsonPropertyName("header")]
-        public string? Header { get; set; }
+        public string ReadFrontCodedString(string previous)
+        {
+            var prefixLength = CheckedCount(ReadUInt32(), previous.Length);
+            var suffix = ReadString();
+            return string.Concat(previous.AsSpan(0, prefixLength), suffix.AsSpan());
+        }
 
-        [JsonPropertyName("byteMask")]
-        public long ByteMask { get; set; }
-
-        [JsonPropertyName("refFileCount")]
-        public long RefFileCount { get; set; }
-
-        [JsonPropertyName("pack_file_index_size")]
-        public long PackFileIndexSize { get; set; }
-
-        [JsonPropertyName("pack_file_count")]
-        public long PackFileCount { get; set; }
-
-        [JsonPropertyName("header_buffer")]
-        public string? HeaderBuffer { get; set; }
+        private void Require(int length)
+        {
+            if (length < 0 || length > Remaining)
+                throw new InvalidDataException("Truncated compact vanilla cache.");
+        }
     }
 }
