@@ -86,6 +86,86 @@ public sealed class AssetHostPipeServerTests
     }
 
     [Test]
+    public async Task PipeServer_SerializesBatchExportResults()
+    {
+        var factory = new FakeRuntimeFactory();
+        var pipeName = "wh3-asset-host-batch-" + Guid.NewGuid().ToString("N");
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var server = new AssetHostPipeServer(factory);
+        var serverTask = server.RunAsync(pipeName, cancellationToken: cancellation.Token);
+
+        try
+        {
+            await using var client = new NamedPipeClientStream(
+                ".",
+                pipeName,
+                PipeDirection.InOut,
+                PipeOptions.Asynchronous);
+            await client.ConnectAsync(cancellation.Token);
+
+            var outputRoot = Path.Combine(Path.GetTempPath(), "asset-host-pipe", Guid.NewGuid().ToString("N"));
+            await SendAsync(client, new
+            {
+                protocolVersion = AssetHostProtocol.ProtocolVersion,
+                requestId = "init-batch",
+                command = "initialize",
+                packPaths = new[] { "base.pack" },
+                outputRoot
+            });
+            using var initialize = await ReadJsonAsync(client);
+            Assert.That(initialize.RootElement.GetProperty("success").GetBoolean(), Is.True);
+
+            await SendAsync(client, new
+            {
+                protocolVersion = AssetHostProtocol.ProtocolVersion,
+                requestId = "export-batch",
+                command = "exportModelBatch",
+                assetPath = "unit.variantmeshdefinition",
+                items = new object[]
+                {
+                    new
+                    {
+                        outputPath = "batch/one.glb",
+                        variantSelections = new[] { new { slotPath = "root/slot[0]", choiceIndex = 0 } }
+                    },
+                    new
+                    {
+                        outputPath = "batch/two.glb",
+                        variantSelections = new[] { new { slotPath = "root/slot[0]", choiceIndex = 1 } }
+                    }
+                }
+            });
+            using var export = await ReadJsonAsync(client);
+            Assert.That(export.RootElement.GetProperty("success").GetBoolean(), Is.True);
+            var exports = export.RootElement.GetProperty("result").GetProperty("exports");
+            Assert.That(exports.GetArrayLength(), Is.EqualTo(2));
+            Assert.That(exports[0].GetProperty("success").GetBoolean(), Is.True);
+            Assert.That(exports[1].GetProperty("success").GetBoolean(), Is.True);
+
+            await SendAsync(client, new
+            {
+                protocolVersion = AssetHostProtocol.ProtocolVersion,
+                requestId = "shutdown-batch",
+                command = "shutdown"
+            });
+            using var shutdown = await ReadJsonAsync(client);
+            Assert.That(shutdown.RootElement.GetProperty("success").GetBoolean(), Is.True);
+            await serverTask;
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try
+            {
+                await serverTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+    }
+
+    [Test]
     public async Task PipeServer_DisposesRuntimeWhenClientDisconnects()
     {
         var factory = new FakeRuntimeFactory();
