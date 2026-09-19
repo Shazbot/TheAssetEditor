@@ -277,15 +277,24 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             var textureSession = new GltfTextureExportSession(collisionSafe: true);
             var meshes = new List<ExportedMesh>();
             var generatedTexturePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var texturesMs = 0L;
-            var meshesMs = 0L;
 
-            foreach (var modelPart in modelParts)
+            phaseStopwatch.Restart();
+            var texturesByModelPart = _gltfTextureHandler.HandleTexturesBatch(
+                modelParts.Select(x => x.Asset).ToArray(),
+                settings,
+                textureSession);
+            phaseStopwatch.Stop();
+            var texturesMs = phaseStopwatch.ElapsedMilliseconds;
+
+            if (texturesByModelPart.Count != modelParts.Count)
+                throw new InvalidOperationException(
+                    $"Texture handler returned {texturesByModelPart.Count} result sets for {modelParts.Count} VMD parts.");
+
+            var meshesMs = 0L;
+            for (var modelPartIndex = 0; modelPartIndex < modelParts.Count; modelPartIndex++)
             {
-                phaseStopwatch.Restart();
-                var textures = _gltfTextureHandler.HandleTextures(modelPart.Asset, settings, textureSession);
-                phaseStopwatch.Stop();
-                texturesMs += phaseStopwatch.ElapsedMilliseconds;
+                var modelPart = modelParts[modelPartIndex];
+                var textures = texturesByModelPart[modelPartIndex];
                 generatedTexturePaths.UnionWith(textures.Select(x => x.SystemFilePath));
 
                 phaseStopwatch.Restart();

@@ -187,6 +187,84 @@ public class GltfTextureExportSessionTests
     }
 
     [Test]
+    public async Task BatchTextureExportRunsAcrossAssetsConcurrentlyAndPreservesPerAssetResults()
+    {
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-textures-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+        using var entered = new CountdownEvent(2);
+        using var release = new ManualResetEventSlim(false);
+
+        try
+        {
+            var materialExporter = new Mock<IDdsToMaterialPngExporter>();
+            materialExporter
+                .Setup(x => x.ExportKtx2WithData(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<bool>(),
+                    It.IsAny<bool>()))
+                .Returns((string source, string output, bool _, bool _) =>
+                {
+                    entered.Signal();
+                    if (!release.Wait(TimeSpan.FromSeconds(5)))
+                        throw new TimeoutException("VMD-wide texture conversion did not release in time.");
+
+                    var stem = Path.GetFileNameWithoutExtension(source);
+                    var path = Path.Combine(Path.GetDirectoryName(output)!, stem + ".ktx2");
+                    return new TextureImageExportResult(path, [1, 2, 3, 4]);
+                });
+
+            var handler = new GltfTextureHandler(
+                new Mock<IDdsToNormalPngExporter>().Object,
+                materialExporter.Object);
+            var firstAsset = CreateSingleTextureAsset("first", "textures/first.dds");
+            var secondAsset = CreateSingleTextureAsset("second", "textures/second.dds");
+            var settings = new RmvToGltfExporterSettings(
+                firstAsset.InputFile,
+                [],
+                Path.Combine(outputDirectory, "model.glb"),
+                true,
+                false,
+                false,
+                false,
+                false)
+            {
+                UseKtx2Textures = true,
+                ExportAuxiliaryMasks = false,
+                MaxTextureParallelism = 2
+            };
+
+            var exportTask = Task.Run(() =>
+                handler.HandleTexturesBatch(
+                    [firstAsset, secondAsset],
+                    settings,
+                    new GltfTextureExportSession(collisionSafe: true)));
+
+            var bothEntered = entered.Wait(TimeSpan.FromSeconds(5));
+            release.Set();
+            var texturesByAsset = await exportTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.That(bothEntered, Is.True,
+                "Texture work from separate VMD assets should share the same worker pool.");
+            Assert.That(texturesByAsset, Has.Count.EqualTo(2));
+            Assert.That(texturesByAsset[0], Has.Count.EqualTo(1));
+            Assert.That(texturesByAsset[1], Has.Count.EqualTo(1));
+            Assert.That(Path.GetFileName(texturesByAsset[0][0].SystemFilePath), Does.StartWith("first_"));
+            Assert.That(Path.GetFileName(texturesByAsset[1][0].SystemFilePath), Does.StartWith("second_"));
+            Assert.That(
+                texturesByAsset.SelectMany(x => x)
+                    .All(x => x.ImageData != null && x.ImageData.SequenceEqual(new byte[] { 1, 2, 3, 4 })),
+                Is.True);
+        }
+        finally
+        {
+            release.Set();
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
+    [Test]
     public void MeshBuilderUsesInMemoryTextureDataWhenGeneratedFileIsMissing()
     {
         var asset = CreateTexturedAsset(
@@ -507,6 +585,30 @@ public class GltfTextureExportSessionTests
             if (Directory.Exists(outputDirectory))
                 Directory.Delete(outputDirectory, recursive: true);
         }
+    }
+
+    private static ResolvedModelAsset CreateSingleTextureAsset(string name, string texture)
+    {
+        var model = CreateModel(name, texture);
+        var header = new RmvFileHeader
+        {
+            Version = RmvVersionEnum.RMV2_V6,
+            LodCount = 1,
+            SkeletonName = string.Empty
+        };
+        var rmv = new RmvFile
+        {
+            Header = header,
+            ModelList = [new[] { model }],
+            LodHeaders = [LodHeaderFactory.Create().CreateEmpty(RmvVersionEnum.RMV2_V6, 0, 0, 0)]
+        };
+        var part = new ResolvedModelPart(
+            0,
+            0,
+            model,
+            ResolvedModelMaterial.Create(model.Material));
+        var input = PackFile.CreateFromASCII($"{name}.rigid_model_v2", name);
+        return new ResolvedModelAsset(input, input, null, null, rmv, [new[] { part }], []);
     }
 
     private static ResolvedModelAsset CreateAsset(string firstTexture, string secondTexture)
