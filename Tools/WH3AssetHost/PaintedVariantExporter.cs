@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -8,7 +7,6 @@ using System.Xml;
 using GameWorld.Core.Services;
 using Shared.Core.PackFiles;
 using Shared.GameFormats.RigidModel;
-using Shared.GameFormats.RigidModel.Types;
 
 namespace WH3AssetHost;
 
@@ -156,7 +154,7 @@ internal sealed class PaintedVariantExporter
             WriteVirtualFile(request.OutputDirectory, vmdVirtualPath, vmdBytes);
             writtenVirtualFiles.Add(vmdVirtualPath);
 
-            var manifestVirtualPath = "whmm_unit_painter_manifest.json";
+            var manifestVirtualPath = $"whmm_unit_painter_manifest_{variantName}.json";
             WriteManifest(
                 request.OutputDirectory,
                 manifestVirtualPath,
@@ -212,9 +210,24 @@ internal sealed class PaintedVariantExporter
             if (wsModelPath != null)
                 return wsModelPath;
 
-            warnings.Add(
-                $"WSModel '{GetVirtualPath(asset.WsModelFile)}' did not expose the painted texture path; "
-                + "falling back to a cloned RMV2 material.");
+            // A WSModel can inherit a slot from the RMV2 material when its XML
+            // does not override that texture. Clone the geometry in that case,
+            // then keep every original WS material mapping while pointing the
+            // cloned WSModel at the painted RMV2.
+            var clonedGeometryPath = CloneRmvModel(
+                asset,
+                componentIndex,
+                assetRoot,
+                outputDirectory,
+                replacements,
+                writtenVirtualFiles);
+            return CloneWsModelWithGeometry(
+                asset.WsModelFile,
+                componentIndex,
+                assetRoot,
+                outputDirectory,
+                clonedGeometryPath,
+                writtenVirtualFiles);
         }
 
         return CloneRmvModel(
@@ -274,6 +287,29 @@ internal sealed class PaintedVariantExporter
 
         var sourcePath = GetVirtualPath(wsModelFile);
         var fileName = $"{componentIndex:D3}_{SafeStem(Path.GetFileNameWithoutExtension(sourcePath))}_{ShortHash(sourcePath)}.wsmodel";
+        var targetVirtualPath = $"{assetRoot}\\models\\{fileName}";
+        WriteVirtualFile(outputDirectory, targetVirtualPath, SaveXml(document));
+        writtenVirtualFiles.Add(targetVirtualPath);
+        return targetVirtualPath;
+    }
+
+    private static string CloneWsModelWithGeometry(
+        Shared.Core.PackFiles.Models.PackFile wsModelFile,
+        int componentIndex,
+        string assetRoot,
+        string outputDirectory,
+        string geometryVirtualPath,
+        List<string> writtenVirtualFiles)
+    {
+        var document = LoadXml(wsModelFile.DataSource.ReadData());
+        var geometryNode = document.SelectSingleNode("/model/geometry")
+            ?? throw new InvalidOperationException(
+                $"WSModel '{GetVirtualPath(wsModelFile)}' does not contain a geometry node.");
+        geometryNode.InnerText = geometryVirtualPath;
+
+        var sourcePath = GetVirtualPath(wsModelFile);
+        var fileName =
+            $"{componentIndex:D3}_{SafeStem(Path.GetFileNameWithoutExtension(sourcePath))}_{ShortHash(sourcePath)}.wsmodel";
         var targetVirtualPath = $"{assetRoot}\\models\\{fileName}";
         WriteVirtualFile(outputDirectory, targetVirtualPath, SaveXml(document));
         writtenVirtualFiles.Add(targetVirtualPath);
@@ -682,7 +718,10 @@ internal static class Dxt5DdsEncoder
                      | (mipCount > 1 ? DdsdMipMapCount : 0u));
         writer.Write((uint)height);
         writer.Write((uint)width);
-        writer.Write((uint)(Math.Max(1, (width + 3) / 4) * 16));
+        writer.Write((uint)(
+            Math.Max(1, (width + 3) / 4)
+            * Math.Max(1, (height + 3) / 4)
+            * 16));
         writer.Write(0u);
         writer.Write((uint)mipCount);
         for (var index = 0; index < 11; index++)
