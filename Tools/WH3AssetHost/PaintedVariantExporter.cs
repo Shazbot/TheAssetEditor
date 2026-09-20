@@ -93,6 +93,7 @@ internal sealed class PaintedVariantExporter
 
             var texconv = new TexconvDdsEncoder();
             var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var exportedTextureFormats = new Dictionary<string, DdsSourceFormat>(StringComparer.OrdinalIgnoreCase);
             foreach (var painted in paintedSources)
             {
                 if (!usedSourceTextures.Contains(painted.Source))
@@ -113,6 +114,7 @@ internal sealed class PaintedVariantExporter
                 WriteVirtualFile(request.OutputDirectory, ddsVirtualPath, ddsBytes);
                 writtenVirtualFiles.Add(ddsVirtualPath);
                 replacements[painted.Source] = ddsVirtualPath;
+                exportedTextureFormats[painted.Source] = sourceFormat;
             }
 
             if (replacements.Count == 0)
@@ -173,6 +175,7 @@ internal sealed class PaintedVariantExporter
                 request.AssetPath,
                 vmdVirtualPath,
                 replacements,
+                exportedTextureFormats,
                 writtenVirtualFiles,
                 warnings);
             writtenVirtualFiles.Add(manifestVirtualPath);
@@ -566,6 +569,7 @@ internal sealed class PaintedVariantExporter
         string sourceAssetPath,
         string variantMeshPath,
         IReadOnlyDictionary<string, string> replacements,
+        IReadOnlyDictionary<string, DdsSourceFormat> formats,
         IReadOnlyList<string> files,
         IReadOnlyList<string> warnings)
     {
@@ -585,6 +589,12 @@ internal sealed class PaintedVariantExporter
             writer.WriteStartObject();
             writer.WriteString("source", pair.Key);
             writer.WriteString("painted", pair.Value);
+            if (formats.TryGetValue(pair.Key, out var format))
+            {
+                writer.WriteString("format", format.TexconvFormat);
+                writer.WriteNumber("mipCount", format.MipCount);
+                writer.WriteString("header", format.ForceDx10Header ? "DX10" : "legacy");
+            }
             writer.WriteEndObject();
         }
         writer.WriteEndArray();
