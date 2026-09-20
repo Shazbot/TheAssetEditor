@@ -125,6 +125,17 @@ public sealed class PaintedVariantTextureEncoderTests
     }
 
     [Test]
+    public void BcnEncoder_RejectsLegacyFloatBaseColourInsteadOfQuantizing()
+    {
+        var source = Inspect(CreateLegacyNumericFourCcDds(116, 4, 4, 1));
+
+        var exception = Assert.Throws<TargetInvocationException>(() => Encode(source));
+        Assert.That(exception!.InnerException, Is.TypeOf<NotSupportedException>());
+        Assert.That(exception.InnerException!.Message, Does.Contain("floating-point"));
+        Assert.That(exception.InnerException.Message, Does.Contain("8-bit RGBA"));
+    }
+
+    [Test]
     public void BcnEncoder_RejectsBc6hInsteadOfQuantizingHdr()
     {
         var source = Inspect(CreateDx10Dds(95, 4, 4, 3));
@@ -196,6 +207,18 @@ public sealed class PaintedVariantTextureEncoderTests
         var dds = CreateHeader(width, height, mipCount, 128);
         WriteUInt32(dds, 80, pixelFormatFlags);
         WriteUInt32(dds, 84, FourCc(fourCc));
+        return dds;
+    }
+
+    private static byte[] CreateLegacyNumericFourCcDds(
+        uint fourCc,
+        int width,
+        int height,
+        int mipCount)
+    {
+        var dds = CreateHeader(width, height, mipCount, 128);
+        WriteUInt32(dds, 80, 0x00000004);
+        WriteUInt32(dds, 84, fourCc);
         return dds;
     }
 
