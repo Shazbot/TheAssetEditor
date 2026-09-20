@@ -32,10 +32,14 @@ internal sealed class BcnDdsEncoder
                 + $"{sourceFormat.Width}x{sourceFormat.Height}.");
         }
 
-        var compressionFormat =
-            baseCompressionFormat == CompressionFormat.Bc1 && image.HasTransparency
-                ? CompressionFormat.Bc1WithAlpha
-                : baseCompressionFormat;
+        var sourceDeclaresOpaqueAlpha = sourceFormat.UsesDx10Header && sourceFormat.Dx10AlphaMode == 3;
+        var useBc1Alpha =
+            baseCompressionFormat == CompressionFormat.Bc1
+            && image.HasTransparency
+            && !sourceDeclaresOpaqueAlpha;
+        var compressionFormat = useBc1Alpha
+            ? CompressionFormat.Bc1WithAlpha
+            : baseCompressionFormat;
 
         var encoder = new BcEncoder();
         encoder.OutputOptions.GenerateMipMaps = sourceFormat.MipCount > 1;
