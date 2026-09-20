@@ -66,6 +66,10 @@ public sealed class PaintedVariantTextureEncoderTests
         Assert.That(Get<int>(result, "MipCount"), Is.EqualTo(3));
         Assert.That(Get<bool>(result, "UsesDx10Header"), Is.False);
         Assert.That(Get<uint?>(result, "LegacyFourCc"), Is.EqualTo(FourCc("DXT5")));
+        Assert.That(ReadUInt32(encoded, 8) & 0x00020000u, Is.Not.Zero, "DDSD_MIPMAPCOUNT");
+        Assert.That(ReadUInt32(encoded, 8) & 0x00080000u, Is.Not.Zero, "DDSD_LINEARSIZE");
+        Assert.That(ReadUInt32(encoded, 20), Is.EqualTo(16u), "4x4 BC3 top mip linear size");
+        Assert.That(ReadUInt32(encoded, 108) & 0x00400008u, Is.EqualTo(0x00400008u), "mip/complex caps");
     }
 
     [TestCase(71u, "BC1_UNORM")]
@@ -262,6 +266,9 @@ public sealed class PaintedVariantTextureEncoderTests
             | ((uint)value[1] << 8)
             | ((uint)value[2] << 16)
             | ((uint)value[3] << 24);
+
+    private static uint ReadUInt32(byte[] source, int offset)
+        => BinaryPrimitives.ReadUInt32LittleEndian(source.AsSpan(offset, sizeof(uint)));
 
     private static void WriteUInt32(byte[] target, int offset, uint value)
         => BinaryPrimitives.WriteUInt32LittleEndian(target.AsSpan(offset, sizeof(uint)), value);
