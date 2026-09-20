@@ -274,7 +274,10 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         {
             var resolvedSlot = new ResolvedVariantMeshSlot(
                 slot.Name ?? string.Empty,
-                slot.AttachmentPoint ?? string.Empty);
+                slot.AttachmentPoint ?? string.Empty,
+                slot.AttachmentPoint,
+                slot.Probability,
+                slot.use_different_attach_point_parts);
             var slotPath = $"{nodePath}/slot[{slotIndex}]";
             var candidates = new List<(int Index, Func<ResolvedVariantMeshNode?> Resolve)>();
             var candidateIndex = 0;
@@ -462,13 +465,28 @@ public sealed class ResolvedVariantMeshNode
 
 public sealed class ResolvedVariantMeshSlot
 {
-    public ResolvedVariantMeshSlot(string name, string attachmentPoint)
+    public ResolvedVariantMeshSlot(
+        string name,
+        string attachmentPoint,
+        string? sourceAttachmentPoint = null,
+        string? probability = null,
+        string? useDifferentAttachPointParts = null)
     {
         Name = name;
         AttachmentPoint = attachmentPoint;
+        SourceAttachmentPoint = sourceAttachmentPoint;
+        Probability = probability;
+        UseDifferentAttachPointParts = useDifferentAttachPointParts;
     }
 
     public string Name { get; }
     public string AttachmentPoint { get; }
+
+    // Preserve source VMD slot attributes for consumers that need to emit a
+    // selected/flattened definition without inventing replacement metadata.
+    public string? SourceAttachmentPoint { get; }
+    public string? Probability { get; }
+    public string? UseDifferentAttachPointParts { get; }
+
     public ResolvedVariantMeshNode? SelectedChild { get; set; }
 }
