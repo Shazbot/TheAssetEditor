@@ -372,7 +372,7 @@ internal sealed class PaintedVariantExporter
         return targetVirtualPath;
     }
 
-    private static string CloneRmvModel(
+    private string CloneRmvModel(
         ResolvedModelAsset asset,
         int componentIndex,
         string assetRoot,

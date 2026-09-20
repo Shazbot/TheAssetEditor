@@ -19,7 +19,7 @@ public sealed class PaintedVariantExporterTests
             BindingFlags.NonPublic)
             ?? throw new AssertionException("PaintedVariantExporter.ExportedComponent was not found.");
         var constructor = componentType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            .Single();
+            .Single(candidate => candidate.GetParameters().Length == 6);
 
         object CreateComponent(
             string modelPath,
