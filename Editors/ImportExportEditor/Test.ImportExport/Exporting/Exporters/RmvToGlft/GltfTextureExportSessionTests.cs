@@ -217,7 +217,8 @@ public class GltfTextureExportSessionTests
         {
             new(0, missingPath, KnownChannel.BaseColor)
             {
-                ImageData = OnePixelPng
+                ImageData = OnePixelPng,
+                SourceVirtualPath = "textures\\body_base_colour.dds"
             }
         };
 
@@ -232,6 +233,13 @@ public class GltfTextureExportSessionTests
         var image = model.LogicalImages.Single();
         Assert.That(image.Content.SourcePath, Is.Null);
         Assert.That(image.Content.Content.ToArray(), Is.EqualTo(OnePixelPng));
+        Assert.That(image.Name, Is.EqualTo(Path.GetFileName(missingPath)));
+        Assert.That(
+            image.Extras?["wh3SourceVirtualPath"]?.GetValue<string>(),
+            Is.EqualTo("textures\\body_base_colour.dds"));
+        Assert.That(
+            image.Extras?["wh3Channel"]?.GetValue<string>(),
+            Is.EqualTo(KnownChannel.BaseColor.ToString()));
     }
 
     [Test]
