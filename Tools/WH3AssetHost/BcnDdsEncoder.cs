@@ -68,6 +68,15 @@ internal sealed class BcnDdsEncoder
 
     private static CompressionFormat GetSupportedCompressionFormat(DdsSourceFormat sourceFormat)
     {
+        if (sourceFormat.FormatName.StartsWith("BC6H", StringComparison.Ordinal)
+            || sourceFormat.FormatName.Contains("FLOAT", StringComparison.Ordinal))
+        {
+            throw new NotSupportedException(
+                $"BaseColour DDS format '{sourceFormat.FormatName}' contains HDR/floating-point data. "
+                + "The current unit painter works in 8-bit RGBA, so exporting it would lose source values. "
+                + "This texture is intentionally left unsupported until the painter has a float/HDR path.");
+        }
+
         if (!sourceFormat.UsesDx10Header)
         {
             var fourCc = sourceFormat.LegacyFourCc;
@@ -87,10 +96,6 @@ internal sealed class BcnDdsEncoder
             74 or 75 => CompressionFormat.Bc2,
             77 or 78 => CompressionFormat.Bc3,
             98 or 99 => CompressionFormat.Bc7,
-            95 or 96 => throw new NotSupportedException(
-                $"BaseColour DDS format '{sourceFormat.FormatName}' contains HDR floating-point data. "
-                + "The current unit painter works in 8-bit RGBA, so exporting it would lose HDR values. "
-                + "This texture is intentionally left unsupported until the painter has a float/HDR path."),
             _ => throw Unsupported(sourceFormat)
         };
     }
