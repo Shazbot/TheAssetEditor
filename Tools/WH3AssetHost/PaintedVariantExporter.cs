@@ -671,7 +671,7 @@ internal static class Bc7DdsEncoder
         var image = ReadPng(pngPath);
         var encoder = new BcEncoder();
         encoder.OutputOptions.GenerateMipMaps = true;
-        encoder.OutputOptions.Quality = CompressionQuality.Balanced;
+        encoder.OutputOptions.Quality = CompressionQuality.Fast;
         encoder.OutputOptions.Format = CompressionFormat.Bc7;
         encoder.OutputOptions.FileFormat = OutputFileFormat.Dds;
         encoder.Options.IsParallel = true;
