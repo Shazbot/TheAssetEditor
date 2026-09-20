@@ -659,10 +659,9 @@ internal sealed class PaintedVariantExporter
 }
 
 /// <summary>
-/// Small dependency-free BC3/DXT5 encoder used for painted BaseColor output.
-/// It intentionally favors deterministic, fast export over offline compressor
-/// quality; the generated DDS contains a complete mip chain and is accepted by
-/// the same DirectX texture path used by WH3.
+/// Encodes painted BaseColor output as BC7 DDS with a full mip chain.
+/// Fast-quality parallel compression keeps export responsive while retaining
+/// substantially more color detail than the earlier BC3 proof of concept.
 /// </summary>
 internal static class Bc7DdsEncoder
 {
