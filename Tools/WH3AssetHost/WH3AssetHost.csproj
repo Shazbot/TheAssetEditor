@@ -14,7 +14,8 @@
     <TexconvSha512>AEAF50E4E531182FF44C3879FA68B6FBF43EDA69A9C3E632E9A6D5AE74A8239301C406391AC0A9D4B9A1579F8A0571360AC1E20F01559997F644E19FD33AC4D9</TexconvSha512>
   </PropertyGroup>
 
-  <!-- Release builds are distributed with the mod manager as one self-contained file. -->
+  <!-- The managed host is a single self-contained executable; texconv and its MIT license
+       are shipped beside it as explicit third-party runtime files. -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
