@@ -18,6 +18,7 @@ public sealed class AssetHostDispatcherTests
         var resultJson = System.Text.Json.JsonSerializer.Serialize(response.Result);
         Assert.That(resultJson, Does.Contain("exportModel"));
         Assert.That(resultJson, Does.Contain("exportPaintedVariant"));
+        Assert.That(resultJson, Does.Contain("paintedVariantRgba"));
     }
 
     [Test]
