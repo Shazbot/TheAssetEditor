@@ -40,7 +40,7 @@ public class GltfTextureExportSessionTests
                 });
 
             var handler = new GltfTextureHandler(new Mock<IDdsToNormalPngExporter>().Object, materialExporter.Object);
-            var asset = CreateAsset("textures/same/shared.dds", "textures/same/shared.dds");
+            var asset = CreateAsset("textures\\same\\shared.dds", "textures/same/shared.dds");
             var settings = new RmvToGltfExporterSettings(
                 asset.InputFile,
                 [],
@@ -90,8 +90,8 @@ public class GltfTextureExportSessionTests
             var normalExporter = new Mock<IDdsToNormalPngExporter>();
             var handler = new GltfTextureHandler(normalExporter.Object, materialExporter.Object);
             var asset = CreateAsset(
-                "textures/first/shared.dds",
-                "textures/second/shared.dds");
+                "textures\\first\\shared.dds",
+                "textures\\second\\shared.dds");
             var settings = new RmvToGltfExporterSettings(
                 asset.InputFile,
                 [],
