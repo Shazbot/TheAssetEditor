@@ -71,6 +71,28 @@ public sealed class PaintedVariantTextureEncoderTests
         Assert.That(Get<uint?>(result, "LegacyFourCc"), Is.EqualTo(FourCc("DXT5")));
     }
 
+    [TestCase(71u, "BC1_UNORM")]
+    [TestCase(72u, "BC1_UNORM_SRGB")]
+    [TestCase(74u, "BC2_UNORM")]
+    [TestCase(75u, "BC2_UNORM_SRGB")]
+    [TestCase(77u, "BC3_UNORM")]
+    [TestCase(78u, "BC3_UNORM_SRGB")]
+    [TestCase(98u, "BC7_UNORM")]
+    [TestCase(99u, "BC7_UNORM_SRGB")]
+    public void BcnEncoder_PreservesSupportedDx10BaseColourFormats(
+        uint dxgiFormat,
+        string expectedFormat)
+    {
+        var source = Inspect(CreateDx10Dds(dxgiFormat, 4, 4, 3));
+        var encoded = Encode(source);
+
+        var result = Inspect(encoded);
+        Assert.That(Get<string>(result, "FormatName"), Is.EqualTo(expectedFormat));
+        Assert.That(Get<uint?>(result, "DxgiFormat"), Is.EqualTo(dxgiFormat));
+        Assert.That(Get<int>(result, "MipCount"), Is.EqualTo(3));
+        Assert.That(Get<bool>(result, "UsesDx10Header"), Is.True);
+    }
+
     [Test]
     public void BcnEncoder_PreservesDx10Bc7SrgbAndAlphaMode()
     {
