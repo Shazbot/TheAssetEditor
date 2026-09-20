@@ -128,7 +128,10 @@ internal sealed class TexconvDdsEncoder
             if (!string.Equals(actual.TexconvFormat, sourceFormat.TexconvFormat, StringComparison.OrdinalIgnoreCase)
                 || actual.Width != sourceFormat.Width
                 || actual.Height != sourceFormat.Height
-                || actual.MipCount != sourceFormat.MipCount)
+                || actual.MipCount != sourceFormat.MipCount
+                || actual.ForceDx10Header != sourceFormat.ForceDx10Header
+                || actual.PreferLegacyHeader != sourceFormat.PreferLegacyHeader
+                || actual.Dx10AlphaMode != sourceFormat.Dx10AlphaMode)
             {
                 throw new InvalidDataException(
                     "texconv output did not preserve the requested DDS layout: "
