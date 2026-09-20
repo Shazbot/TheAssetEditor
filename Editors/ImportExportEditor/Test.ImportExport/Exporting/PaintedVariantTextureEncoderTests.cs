@@ -6,6 +6,9 @@ namespace Test.ImportExport.Exporting;
 
 public sealed class PaintedVariantTextureEncoderTests
 {
+    private const string FourByFourPngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAK0lEQVR4nG3KsQkAIBAEwREs63p7v3INDEyMloEdrB06VOgpGsXtlAe/4wCGqwp277/E1QAAAABJRU5ErkJggg==";
+
     [Test]
     public void DdsInspector_ReadsLegacyDxt5AndMipCount()
     {
@@ -13,37 +16,101 @@ public sealed class PaintedVariantTextureEncoderTests
 
         var result = Inspect(dds);
 
-        Assert.That(Get<string>(result, "TexconvFormat"), Is.EqualTo("BC3_UNORM"));
+        Assert.That(Get<string>(result, "FormatName"), Is.EqualTo("BC3_UNORM"));
         Assert.That(Get<int>(result, "Width"), Is.EqualTo(1024));
         Assert.That(Get<int>(result, "Height"), Is.EqualTo(512));
         Assert.That(Get<int>(result, "MipCount"), Is.EqualTo(10));
         Assert.That(Get<bool>(result, "IsSrgb"), Is.False);
-        Assert.That(Get<bool>(result, "PreferLegacyHeader"), Is.True);
+        Assert.That(Get<bool>(result, "UsesDx10Header"), Is.False);
+        Assert.That(Get<uint?>(result, "LegacyFourCc"), Is.EqualTo(FourCc("DXT5")));
     }
 
     [Test]
     public void DdsInspector_ReadsDx10Bc7Srgb()
     {
-        var dds = CreateDx10Dds(dxgiFormat: 99, width: 2048, height: 2048, mipCount: 12);
+        var dds = CreateDx10Dds(
+            dxgiFormat: 99,
+            width: 2048,
+            height: 2048,
+            mipCount: 12,
+            alphaMode: 3);
 
         var result = Inspect(dds);
 
-        Assert.That(Get<string>(result, "TexconvFormat"), Is.EqualTo("BC7_UNORM_SRGB"));
+        Assert.That(Get<string>(result, "FormatName"), Is.EqualTo("BC7_UNORM_SRGB"));
         Assert.That(Get<int>(result, "MipCount"), Is.EqualTo(12));
         Assert.That(Get<bool>(result, "IsSrgb"), Is.True);
-        Assert.That(Get<bool>(result, "PreferLegacyHeader"), Is.False);
+        Assert.That(Get<bool>(result, "UsesDx10Header"), Is.True);
+        Assert.That(Get<uint?>(result, "DxgiFormat"), Is.EqualTo(99));
+        Assert.That(Get<uint?>(result, "Dx10AlphaMode"), Is.EqualTo(3));
     }
 
     [TestCase("DXT1", "BC1_UNORM")]
     [TestCase("DXT3", "BC2_UNORM")]
+    [TestCase("DXT5", "BC3_UNORM")]
     [TestCase("ATI1", "BC4_UNORM")]
     [TestCase("ATI2", "BC5_UNORM")]
     public void DdsInspector_MapsCommonLegacyBlockFormats(string fourCc, string expectedFormat)
     {
         var result = Inspect(CreateLegacyFourCcDds(fourCc, 256, 256, 1));
 
-        Assert.That(Get<string>(result, "TexconvFormat"), Is.EqualTo(expectedFormat));
-        Assert.That(Get<bool>(result, "PreferLegacyHeader"), Is.True);
+        Assert.That(Get<string>(result, "FormatName"), Is.EqualTo(expectedFormat));
+        Assert.That(Get<bool>(result, "UsesDx10Header"), Is.False);
+    }
+
+    [Test]
+    public void BcnEncoder_PreservesLegacyDxt5AndMipCount()
+    {
+        var source = Inspect(CreateLegacyFourCcDds("DXT5", 4, 4, 3));
+        var encoded = Encode(source);
+
+        var result = Inspect(encoded);
+        Assert.That(Get<string>(result, "FormatName"), Is.EqualTo("BC3_UNORM"));
+        Assert.That(Get<int>(result, "MipCount"), Is.EqualTo(3));
+        Assert.That(Get<bool>(result, "UsesDx10Header"), Is.False);
+        Assert.That(Get<uint?>(result, "LegacyFourCc"), Is.EqualTo(FourCc("DXT5")));
+    }
+
+    [Test]
+    public void BcnEncoder_PreservesDx10Bc7SrgbAndAlphaMode()
+    {
+        var source = Inspect(CreateDx10Dds(99, 4, 4, 3, alphaMode: 3));
+        var encoded = Encode(source);
+
+        var result = Inspect(encoded);
+        Assert.That(Get<string>(result, "FormatName"), Is.EqualTo("BC7_UNORM_SRGB"));
+        Assert.That(Get<int>(result, "MipCount"), Is.EqualTo(3));
+        Assert.That(Get<bool>(result, "UsesDx10Header"), Is.True);
+        Assert.That(Get<uint?>(result, "DxgiFormat"), Is.EqualTo(99));
+        Assert.That(Get<uint?>(result, "Dx10AlphaMode"), Is.EqualTo(3));
+    }
+
+    [Test]
+    public void BcnEncoder_PreservesLegacyDxt1AlphaFlag()
+    {
+        var source = Inspect(
+            CreateLegacyFourCcDds(
+                "DXT1",
+                4,
+                4,
+                3,
+                pixelFormatFlags: 0x00000004 | 0x00000001));
+        var encoded = Encode(source);
+
+        var result = Inspect(encoded);
+        Assert.That(Get<uint>(result, "LegacyPixelFormatFlags") & 0x1u, Is.EqualTo(0x1u));
+        Assert.That(Get<uint?>(result, "LegacyFourCc"), Is.EqualTo(FourCc("DXT1")));
+    }
+
+    [Test]
+    public void BcnEncoder_RejectsBc6hInsteadOfQuantizingHdr()
+    {
+        var source = Inspect(CreateDx10Dds(95, 4, 4, 3));
+
+        var exception = Assert.Throws<TargetInvocationException>(() => Encode(source));
+        Assert.That(exception!.InnerException, Is.TypeOf<NotSupportedException>());
+        Assert.That(exception.InnerException!.Message, Does.Contain("HDR"));
+        Assert.That(exception.InnerException.Message, Does.Contain("8-bit RGBA"));
     }
 
     private static object Inspect(byte[] dds)
@@ -62,6 +129,37 @@ public sealed class PaintedVariantTextureEncoderTests
             ?? throw new AssertionException("DdsFormatInspector returned null.");
     }
 
+    private static byte[] Encode(object sourceFormat)
+    {
+        var tempDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "wh3-painted-dds-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        var pngPath = Path.Combine(tempDirectory, "painted.png");
+
+        try
+        {
+            File.WriteAllBytes(pngPath, Convert.FromBase64String(FourByFourPngBase64));
+
+            var encoderType = typeof(AssetHostProtocol).Assembly.GetType(
+                "WH3AssetHost.BcnDdsEncoder",
+                throwOnError: true)!;
+            var encoder = Activator.CreateInstance(encoderType)
+                ?? throw new AssertionException("BcnDdsEncoder could not be created.");
+            var method = encoderType.GetMethod(
+                "EncodePngFile",
+                BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new AssertionException("BcnDdsEncoder.EncodePngFile was not found.");
+
+            return (byte[])(method.Invoke(encoder, [pngPath, sourceFormat])
+                ?? throw new AssertionException("BcnDdsEncoder returned null."));
+        }
+        finally
+        {
+            Directory.Delete(tempDirectory, recursive: true);
+        }
+    }
+
     private static T Get<T>(object instance, string propertyName)
         => (T)(instance.GetType().GetProperty(propertyName)?.GetValue(instance)
             ?? throw new AssertionException($"Property '{propertyName}' was not found."));
@@ -70,10 +168,11 @@ public sealed class PaintedVariantTextureEncoderTests
         string fourCc,
         int width,
         int height,
-        int mipCount)
+        int mipCount,
+        uint pixelFormatFlags = 0x00000004)
     {
         var dds = CreateHeader(width, height, mipCount, 128);
-        WriteUInt32(dds, 80, 0x00000004);
+        WriteUInt32(dds, 80, pixelFormatFlags);
         WriteUInt32(dds, 84, FourCc(fourCc));
         return dds;
     }
@@ -82,7 +181,8 @@ public sealed class PaintedVariantTextureEncoderTests
         uint dxgiFormat,
         int width,
         int height,
-        int mipCount)
+        int mipCount,
+        uint alphaMode = 0)
     {
         var dds = CreateHeader(width, height, mipCount, 148);
         WriteUInt32(dds, 80, 0x00000004);
@@ -90,6 +190,7 @@ public sealed class PaintedVariantTextureEncoderTests
         WriteUInt32(dds, 128, dxgiFormat);
         WriteUInt32(dds, 132, 3); // D3D10_RESOURCE_DIMENSION_TEXTURE2D
         WriteUInt32(dds, 140, 1); // array size
+        WriteUInt32(dds, 144, alphaMode);
         return dds;
     }
 
