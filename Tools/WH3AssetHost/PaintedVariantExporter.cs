@@ -147,13 +147,16 @@ internal sealed class PaintedVariantExporter
             for (var index = 0; index < components.Length; index++)
             {
                 var component = components[index];
-                var originalPath = GetEffectiveModelPath(component.Asset);
+                var sourceModelPath = !string.IsNullOrWhiteSpace(component.SourceModelPath)
+                    ? NormalizeVirtualPath(component.SourceModelPath)
+                    : GetEffectiveModelPath(component.Asset);
                 var affected = ComponentUsesPaintedTexture(component.Asset, replacements);
-                var exportedPath = originalPath;
+                var exportedPath = sourceModelPath;
 
                 if (affected)
                 {
-                    if (!assetCloneCache.TryGetValue(originalPath, out exportedPath!))
+                    var cloneCacheKey = GetEffectiveModelPath(component.Asset);
+                    if (!assetCloneCache.TryGetValue(cloneCacheKey, out exportedPath!))
                     {
                         exportedPath = CloneAffectedAsset(
                             component.Asset,
@@ -162,13 +165,19 @@ internal sealed class PaintedVariantExporter
                             request.OutputDirectory,
                             replacements,
                             materialCloneCache,
-                            writtenVirtualFiles,
-                            warnings);
-                        assetCloneCache[originalPath] = exportedPath;
+                            writtenVirtualFiles);
+                        assetCloneCache[cloneCacheKey] = exportedPath;
                     }
                 }
 
-                exportedComponents.Add(new ExportedComponent(exportedPath, component.AttachmentPoint));
+                exportedComponents.Add(
+                    new ExportedComponent(
+                        exportedPath,
+                        component.SlotName,
+                        component.AttachmentPoint,
+                        component.SourceAttachmentPoint,
+                        component.Probability,
+                        component.UseDifferentAttachPointParts));
             }
 
             var sourceDefinition = VariantMeshDefinitionLoader.Load(inputFile);
@@ -229,28 +238,14 @@ internal sealed class PaintedVariantExporter
         string outputDirectory,
         IReadOnlyDictionary<string, string> replacements,
         Dictionary<string, string> materialCloneCache,
-        List<string> writtenVirtualFiles,
-        List<string> warnings)
+        List<string> writtenVirtualFiles)
     {
-        var hasEffectiveWsMaterials = asset.PartsByLod
-            .SelectMany(parts => parts)
-            .Any(part => part.Material.UsesWsModelMaterial);
-
-        if (hasEffectiveWsMaterials && asset.WsModelFile != null)
+        if (asset.UsesWsModel && asset.WsModelFile != null)
         {
-            // An effective WSModel material may override only some slots. The same
-            // painted source can therefore be explicit in one XML material and
-            // inherited from RMV2 in another part. Clone both layers when needed.
-            var clonedGeometryPath = RawRmvUsesPaintedTexture(asset, replacements)
-                ? CloneRmvModel(
-                    asset,
-                    componentIndex,
-                    assetRoot,
-                    outputDirectory,
-                    replacements,
-                    writtenVirtualFiles)
-                : null;
-
+            // WH3 resolves the effective textures through the WSModel material
+            // bindings. Rewriting the RMV2 material table is redundant when a
+            // WSModel is present, so keep the original geometry reference and
+            // clone only the WSModel/material layer that actually overrides it.
             var wsModelPath = CloneWsModel(
                 asset,
                 componentIndex,
@@ -258,14 +253,13 @@ internal sealed class PaintedVariantExporter
                 outputDirectory,
                 replacements,
                 materialCloneCache,
-                writtenVirtualFiles,
-                clonedGeometryPath);
+                writtenVirtualFiles);
             if (wsModelPath != null)
                 return wsModelPath;
 
             throw new InvalidOperationException(
-                $"Model '{GetVirtualPath(asset.InputFile)}' uses a painted effective texture, "
-                + "but neither its RMV2 material nor its WSModel material exposed a replaceable source path.");
+                $"WSModel '{GetVirtualPath(asset.WsModelFile)}' uses a painted effective texture, "
+                + "but none of its material files exposed the source texture path.");
         }
 
         return CloneRmvModel(
@@ -284,8 +278,7 @@ internal sealed class PaintedVariantExporter
         string outputDirectory,
         IReadOnlyDictionary<string, string> replacements,
         Dictionary<string, string> materialCloneCache,
-        List<string> writtenVirtualFiles,
-        string? geometryOverride)
+        List<string> writtenVirtualFiles)
     {
         var wsModelFile = asset.WsModelFile;
         if (wsModelFile == null)
@@ -294,18 +287,9 @@ internal sealed class PaintedVariantExporter
         var document = LoadXml(wsModelFile.DataSource.ReadData());
         var changed = false;
 
-        if (!string.IsNullOrWhiteSpace(geometryOverride))
-        {
-            var geometryNode = document.SelectSingleNode("/model/geometry")
-                ?? throw new InvalidOperationException(
-                    $"WSModel '{GetVirtualPath(wsModelFile)}' does not contain a geometry node.");
-            geometryNode.InnerText = geometryOverride;
-            changed = true;
-        }
-
         var materialNodes = document.SelectNodes("/model/materials/material");
         if (materialNodes == null)
-            return changed ? SaveClonedWsModel() : null;
+            return null;
         foreach (XmlNode materialNode in materialNodes)
         {
             var sourceMaterialPath = NormalizeVirtualPath(materialNode.InnerText);
@@ -333,18 +317,13 @@ internal sealed class PaintedVariantExporter
         if (!changed)
             return null;
 
-        return SaveClonedWsModel();
-
-        string SaveClonedWsModel()
-        {
-            var sourcePath = GetVirtualPath(wsModelFile);
-            var fileName =
-                $"{componentIndex:D3}_{SafeStem(Path.GetFileNameWithoutExtension(sourcePath))}_{ShortHash(sourcePath)}.wsmodel";
-            var targetVirtualPath = $"{assetRoot}\\models\\{fileName}";
-            WriteVirtualFile(outputDirectory, targetVirtualPath, SaveXml(document));
-            writtenVirtualFiles.Add(targetVirtualPath);
-            return targetVirtualPath;
-        }
+        var sourcePath = GetVirtualPath(wsModelFile);
+        var fileName =
+            $"{componentIndex:D3}_{SafeStem(Path.GetFileNameWithoutExtension(sourcePath))}_{ShortHash(sourcePath)}.wsmodel";
+        var targetVirtualPath = $"{assetRoot}\\models\\{fileName}";
+        WriteVirtualFile(outputDirectory, targetVirtualPath, SaveXml(document));
+        writtenVirtualFiles.Add(targetVirtualPath);
+        return targetVirtualPath;
     }
 
     private string? CloneMaterialIfAffected(
@@ -434,16 +413,6 @@ internal sealed class PaintedVariantExporter
         return targetVirtualPath;
     }
 
-    private static bool RawRmvUsesPaintedTexture(
-        ResolvedModelAsset asset,
-        IReadOnlyDictionary<string, string> replacements)
-        => asset.PartsByLod
-            .SelectMany(parts => parts)
-            .SelectMany(part => part.Material.SourceMaterial.GetAllTextures())
-            .Where(texture => !string.IsNullOrWhiteSpace(texture.Path))
-            .Select(texture => NormalizeVirtualPath(texture.Path))
-            .Any(replacements.ContainsKey);
-
     private static bool ComponentUsesPaintedTexture(
         ResolvedModelAsset asset,
         IReadOnlyDictionary<string, string> replacements)
@@ -483,12 +452,12 @@ internal sealed class PaintedVariantExporter
         var rootIndex = -1;
         for (var index = 0; index < components.Count; index++)
         {
-            if (string.IsNullOrWhiteSpace(components[index].AttachmentPoint))
-            {
-                rootIndex = index;
-                writer.WriteAttributeString("model", components[index].ModelPath);
-                break;
-            }
+            if (components[index].SlotName != null)
+                continue;
+
+            rootIndex = index;
+            writer.WriteAttributeString("model", components[index].ModelPath);
+            break;
         }
 
         for (var index = 0; index < components.Count; index++)
@@ -498,9 +467,22 @@ internal sealed class PaintedVariantExporter
 
             var component = components[index];
             writer.WriteStartElement("SLOT");
-            writer.WriteAttributeString("name", $"whmm_painted_{index:D3}");
-            writer.WriteAttributeString("attach_point", component.AttachmentPoint ?? string.Empty);
-            writer.WriteAttributeString("probability", "1");
+            writer.WriteAttributeString(
+                "name",
+                string.IsNullOrWhiteSpace(component.SlotName)
+                    ? $"whmm_selected_{index:D3}"
+                    : component.SlotName);
+
+            if (component.SourceAttachmentPoint != null)
+                writer.WriteAttributeString("attach_point", component.SourceAttachmentPoint);
+            if (component.Probability != null)
+                writer.WriteAttributeString("probability", component.Probability);
+            if (component.UseDifferentAttachPointParts != null)
+            {
+                writer.WriteAttributeString(
+                    "use_different_attach_point_parts",
+                    component.UseDifferentAttachPointParts);
+            }
 
             writer.WriteStartElement("VARIANT_MESH");
             writer.WriteAttributeString("model", component.ModelPath);
@@ -522,15 +504,42 @@ internal sealed class PaintedVariantExporter
 
     private static IEnumerable<ResolvedComponent> EnumerateComponents(
         ResolvedVariantMeshNode node,
-        string attachmentPoint = "")
+        string? slotName = null,
+        string attachmentPoint = "",
+        string? sourceAttachmentPoint = null,
+        string? probability = null,
+        string? useDifferentAttachPointParts = null,
+        string? sourceModelPath = null)
     {
+        var effectiveSourceModelPath = !string.IsNullOrWhiteSpace(node.ModelReference)
+            ? node.ModelReference
+            : sourceModelPath;
+
         if (node.ModelAsset != null)
-            yield return new ResolvedComponent(node.ModelAsset, attachmentPoint);
+        {
+            yield return new ResolvedComponent(
+                node.ModelAsset,
+                effectiveSourceModelPath,
+                slotName,
+                attachmentPoint,
+                sourceAttachmentPoint,
+                probability,
+                useDifferentAttachPointParts);
+        }
 
         if (node.ResolvedModelReference != null)
         {
-            foreach (var component in EnumerateComponents(node.ResolvedModelReference, attachmentPoint))
+            foreach (var component in EnumerateComponents(
+                         node.ResolvedModelReference,
+                         slotName,
+                         attachmentPoint,
+                         sourceAttachmentPoint,
+                         probability,
+                         useDifferentAttachPointParts,
+                         effectiveSourceModelPath))
+            {
                 yield return component;
+            }
         }
 
         foreach (var slot in node.Slots)
@@ -538,8 +547,16 @@ internal sealed class PaintedVariantExporter
             if (slot.SelectedChild == null)
                 continue;
 
-            foreach (var component in EnumerateComponents(slot.SelectedChild, slot.AttachmentPoint))
+            foreach (var component in EnumerateComponents(
+                         slot.SelectedChild,
+                         slot.Name,
+                         slot.AttachmentPoint,
+                         slot.SourceAttachmentPoint,
+                         slot.Probability,
+                         slot.UseDifferentAttachPointParts))
+            {
                 yield return component;
+            }
         }
     }
 
@@ -637,13 +654,22 @@ internal sealed class PaintedVariantExporter
         writer.Flush();
     }
 
-    private static string GetEffectiveModelPath(ResolvedModelAsset asset)
+    private string GetEffectiveModelPath(ResolvedModelAsset asset)
         => asset.UsesWsModel && asset.WsModelFile != null
             ? GetVirtualPath(asset.WsModelFile)
             : GetVirtualPath(asset.InputFile);
 
-    private static string GetVirtualPath(Shared.Core.PackFiles.Models.PackFile file)
-        => NormalizeVirtualPath(file.Name);
+    private string GetVirtualPath(Shared.Core.PackFiles.Models.PackFile file)
+    {
+        try
+        {
+            return NormalizeVirtualPath(_packFileService.GetFullPath(file));
+        }
+        catch
+        {
+            return NormalizeVirtualPath(file.Name);
+        }
+    }
 
     private static string NormalizeVirtualPath(string path)
         => path.Replace('/', '\\').Trim().TrimStart('\\');
@@ -696,6 +722,20 @@ internal sealed class PaintedVariantExporter
             warnings ?? Array.Empty<string>(),
             [new AssetHostError(code, message)]);
 
-    private sealed record ResolvedComponent(ResolvedModelAsset Asset, string AttachmentPoint);
-    private sealed record ExportedComponent(string ModelPath, string AttachmentPoint);
+    private sealed record ResolvedComponent(
+        ResolvedModelAsset Asset,
+        string? SourceModelPath,
+        string? SlotName,
+        string AttachmentPoint,
+        string? SourceAttachmentPoint,
+        string? Probability,
+        string? UseDifferentAttachPointParts);
+
+    private sealed record ExportedComponent(
+        string ModelPath,
+        string? SlotName,
+        string AttachmentPoint,
+        string? SourceAttachmentPoint,
+        string? Probability,
+        string? UseDifferentAttachPointParts);
 }
