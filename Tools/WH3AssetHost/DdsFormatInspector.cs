@@ -4,14 +4,16 @@ using System.Text;
 namespace WH3AssetHost;
 
 internal sealed record DdsSourceFormat(
-    string TexconvFormat,
+    string FormatName,
     int Width,
     int Height,
     int MipCount,
     bool IsSrgb,
-    bool PreferLegacyHeader,
-    bool ForceDx10Header,
-    uint? Dx10AlphaMode);
+    bool UsesDx10Header,
+    uint? DxgiFormat,
+    uint? Dx10AlphaMode,
+    uint? LegacyFourCc,
+    uint LegacyPixelFormatFlags);
 
 internal static class DdsFormatInspector
 {
@@ -113,10 +115,10 @@ internal static class DdsFormatInspector
         if (mipCount <= 0)
             mipCount = 1;
 
-        var flags = ReadUInt32(data, 80);
+        var pixelFormatFlags = ReadUInt32(data, 80);
         var fourCc = ReadUInt32(data, 84);
 
-        if ((flags & DdpfFourCc) != 0)
+        if ((pixelFormatFlags & DdpfFourCc) != 0)
         {
             if (fourCc == FourCc("DX10"))
             {
@@ -145,9 +147,11 @@ internal static class DdsFormatInspector
                     height,
                     mipCount,
                     format.EndsWith("_SRGB", StringComparison.Ordinal),
-                    PreferLegacyHeader: false,
-                    ForceDx10Header: true,
-                    Dx10AlphaMode: ReadUInt32(data, 144) & 0x7);
+                    UsesDx10Header: true,
+                    DxgiFormat: dxgi,
+                    Dx10AlphaMode: ReadUInt32(data, 144) & 0x7,
+                    LegacyFourCc: null,
+                    LegacyPixelFormatFlags: 0);
             }
 
             ValidateLegacyTextureShape(data);
@@ -155,7 +159,9 @@ internal static class DdsFormatInspector
             var legacyFormat = fourCc switch
             {
                 var value when value == FourCc("DXT1") => "BC1_UNORM",
+                var value when value is var _ && value == FourCc("DXT2") => "BC2_UNORM",
                 var value when value == FourCc("DXT3") => "BC2_UNORM",
+                var value when value is var _ && value == FourCc("DXT4") => "BC3_UNORM",
                 var value when value == FourCc("DXT5") => "BC3_UNORM",
                 var value when value == FourCc("ATI1") || value == FourCc("BC4U") => "BC4_UNORM",
                 var value when value == FourCc("BC4S") => "BC4_SNORM",
@@ -163,6 +169,7 @@ internal static class DdsFormatInspector
                 var value when value == FourCc("BC5S") => "BC5_SNORM",
                 // A few legacy DDS writers store D3DFORMAT numeric constants in dwFourCC.
                 36u => "R16G16B16A16_UNORM",
+                110u => "R16G16B16A16_SNORM",
                 111u => "R16_FLOAT",
                 112u => "R16G16_FLOAT",
                 113u => "R16G16B16A16_FLOAT",
@@ -185,9 +192,11 @@ internal static class DdsFormatInspector
                 height,
                 mipCount,
                 IsSrgb: false,
-                PreferLegacyHeader: CanUseLegacyHeader(legacyFormat),
-                ForceDx10Header: false,
-                Dx10AlphaMode: null);
+                UsesDx10Header: false,
+                DxgiFormat: null,
+                Dx10AlphaMode: null,
+                LegacyFourCc: fourCc,
+                LegacyPixelFormatFlags: pixelFormatFlags);
         }
 
         var rgbBitCount = ReadUInt32(data, 88);
@@ -197,7 +206,7 @@ internal static class DdsFormatInspector
         var aMask = ReadUInt32(data, 104);
 
         string? uncompressed = null;
-        if ((flags & DdpfRgb) != 0)
+        if ((pixelFormatFlags & DdpfRgb) != 0)
         {
             uncompressed = (rgbBitCount, rMask, gMask, bMask, aMask) switch
             {
@@ -210,7 +219,7 @@ internal static class DdsFormatInspector
                 _ => null
             };
         }
-        else if ((flags & DdpfLuminance) != 0)
+        else if ((pixelFormatFlags & DdpfLuminance) != 0)
         {
             uncompressed = (rgbBitCount, rMask, gMask, aMask) switch
             {
@@ -220,7 +229,7 @@ internal static class DdsFormatInspector
                 _ => null
             };
         }
-        else if ((flags & DdpfAlpha) != 0 && rgbBitCount == 8 && aMask == 0x000000ff)
+        else if ((pixelFormatFlags & DdpfAlpha) != 0 && rgbBitCount == 8 && aMask == 0x000000ff)
         {
             uncompressed = "A8_UNORM";
         }
@@ -228,7 +237,7 @@ internal static class DdsFormatInspector
         if (uncompressed == null)
         {
             throw new InvalidDataException(
-                $"DDS uses an unsupported legacy uncompressed layout: flags=0x{flags:X8}, "
+                $"DDS uses an unsupported legacy uncompressed layout: flags=0x{pixelFormatFlags:X8}, "
                 + $"bits={rgbBitCount}, masks=0x{rMask:X8}/0x{gMask:X8}/0x{bMask:X8}/0x{aMask:X8}.");
         }
 
@@ -240,9 +249,11 @@ internal static class DdsFormatInspector
             height,
             mipCount,
             IsSrgb: false,
-            PreferLegacyHeader: CanUseLegacyHeader(uncompressed),
-            ForceDx10Header: false,
-            Dx10AlphaMode: null);
+            UsesDx10Header: false,
+            DxgiFormat: null,
+            Dx10AlphaMode: null,
+            LegacyFourCc: null,
+            LegacyPixelFormatFlags: pixelFormatFlags);
     }
 
     private static void ValidateLegacyTextureShape(ReadOnlySpan<byte> data)
@@ -255,29 +266,10 @@ internal static class DdsFormatInspector
         }
     }
 
-    private static bool CanUseLegacyHeader(string format)
-        => format is "BC1_UNORM"
-            or "BC2_UNORM"
-            or "BC3_UNORM"
-            or "BC4_UNORM"
-            or "BC4_SNORM"
-            or "BC5_UNORM"
-            or "BC5_SNORM"
-            or "R8G8B8A8_UNORM"
-            or "B8G8R8A8_UNORM"
-            or "B8G8R8X8_UNORM"
-            or "B5G6R5_UNORM"
-            or "B5G5R5A1_UNORM"
-            or "B4G4R4A4_UNORM"
-            or "R8_UNORM"
-            or "R16_UNORM"
-            or "R8G8_UNORM"
-            or "A8_UNORM";
-
     private static uint ReadUInt32(ReadOnlySpan<byte> data, int offset)
         => BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, sizeof(uint)));
 
-    private static uint FourCc(string value)
+    internal static uint FourCc(string value)
     {
         if (value.Length != 4)
             throw new ArgumentException("FourCC values must contain exactly four characters.", nameof(value));
