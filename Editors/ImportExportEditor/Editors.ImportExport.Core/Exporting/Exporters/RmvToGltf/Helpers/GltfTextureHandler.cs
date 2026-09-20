@@ -21,6 +21,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         bool HasAlphaChannel = false)
     {
         /// <summary>
+        /// Original pack-relative texture path used to build this preview image.
+        /// Kept alongside the generated KTX2/PNG name so downstream editors can
+        /// map a painted glTF texture back to the WH3 source asset.
+        /// </summary>
+        public string SourceVirtualPath { get; init; } = string.Empty;
+
+        /// <summary>
         /// Encoded image bytes already produced by the texture exporter.
         /// Headless KTX2 exports keep these bytes so SharpGLTF can consume
         /// them directly instead of reopening the generated file from disk.
@@ -439,12 +446,14 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             string cacheKey,
             int meshIndex,
             string systemPath,
-            KnownChannel channel)
+            KnownChannel channel,
+            string sourceVirtualPath)
         {
             session.ExportedTextureData.TryGetValue(cacheKey, out var imageData);
             return new TextureResult(meshIndex, systemPath, channel)
             {
-                ImageData = imageData
+                ImageData = imageData,
+                SourceVirtualPath = sourceVirtualPath.Replace('/', '\\').Trim().TrimStart('\\')
             };
         }
 
@@ -534,7 +543,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             var systemPath = session.ExportedTextures[cacheKey];
             if (string.IsNullOrWhiteSpace(systemPath) == false)
-                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, KnownChannel.MetallicRoughness));
+                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, KnownChannel.MetallicRoughness, text.Path));
         }
 
         private void DoTextureDefault(KnownChannel textureType, RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
@@ -596,7 +605,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             var systemPath = session.ExportedTextures[cacheKey];
             if (string.IsNullOrWhiteSpace(systemPath) == false)
-                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, textureType));
+                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, textureType, text.Path));
         }
 
         private void DoTextureMask(RmvToGltfExporterSettings settings, GltfTextureExportSession session, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
@@ -775,7 +784,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             var systemPath = session.ExportedTextures[cacheKey];
             if (string.IsNullOrWhiteSpace(systemPath) == false)
-                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, KnownChannel.Normal));
+                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, KnownChannel.Normal, text.Path));
         }
 
         private void ExportNormalMapVariants(string packFilePath, string outputPath, string? outputStem = null)
