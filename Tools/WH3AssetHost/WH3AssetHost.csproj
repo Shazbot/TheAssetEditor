@@ -69,9 +69,9 @@
                   SkipUnchangedFiles="true"
                   Retries="2" />
     <GetFileHash Files="$(TexconvPath)" Algorithm="SHA512">
-      <Output TaskParameter="Items" ItemName="_TexconvHashItem" />
+      <Output TaskParameter="Hash" PropertyName="_TexconvActualSha512" />
     </GetFileHash>
-    <Error Condition="'%(_TexconvHashItem.FileHash)' != '$(TexconvSha512)'"
+    <Error Condition="'$(_TexconvActualSha512)' != '$(TexconvSha512)'"
            Text="texconv.exe SHA-512 verification failed. Delete '$(TexconvPath)' and rebuild to download the pinned DirectXTex $(DirectXTexRelease) binary." />
   </Target>
 
