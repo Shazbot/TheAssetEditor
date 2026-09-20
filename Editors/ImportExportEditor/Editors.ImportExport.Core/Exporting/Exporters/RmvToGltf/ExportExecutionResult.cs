@@ -6,20 +6,11 @@ public enum ExportExecutionStatus
     Cancelled
 }
 
-public sealed record ExportTextureSource(
-    string SourceVirtualPath,
-    string GeneratedFileName,
-    string Channel);
-
-public readonly record struct ExportExecutionResult(
-    ExportExecutionStatus Status,
-    IReadOnlyList<ExportTextureSource> TextureSources)
+public readonly record struct ExportExecutionResult(ExportExecutionStatus Status)
 {
-    public static ExportExecutionResult Completed(IEnumerable<ExportTextureSource>? textureSources = null)
-        => new(
-            ExportExecutionStatus.Completed,
-            textureSources?.Distinct().ToArray() ?? Array.Empty<ExportTextureSource>());
+    public static ExportExecutionResult Completed()
+        => new(ExportExecutionStatus.Completed);
 
     public static ExportExecutionResult Cancelled()
-        => new(ExportExecutionStatus.Cancelled, Array.Empty<ExportTextureSource>());
+        => new(ExportExecutionStatus.Cancelled);
 }
