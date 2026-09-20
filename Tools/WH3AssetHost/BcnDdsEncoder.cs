@@ -41,10 +41,9 @@ internal sealed class BcnDdsEncoder
         encoder.OutputOptions.MaxMipMapLevel = sourceFormat.MipCount;
         encoder.OutputOptions.Format = compressionFormat;
         encoder.OutputOptions.FileFormat = OutputFileFormat.Dds;
-        encoder.OutputOptions.Quality =
-            compressionFormat is CompressionFormat.Bc7
-                ? CompressionQuality.Fast
-                : CompressionQuality.Balanced;
+        // Export is an offline operation, so prefer the library's balanced
+        // compressor over its visibly lower-quality fast BC7 path.
+        encoder.OutputOptions.Quality = CompressionQuality.Balanced;
         encoder.OutputOptions.DdsPreferDxt10Header = sourceFormat.UsesDx10Header;
         encoder.OutputOptions.DdsBc1WriteAlphaFlag =
             (sourceFormat.LegacyPixelFormatFlags & DdpfAlphaPixels) != 0;
