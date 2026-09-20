@@ -129,7 +129,7 @@ internal sealed class PaintedVariantExporter
             for (var index = 0; index < components.Length; index++)
             {
                 var component = components[index];
-                var originalPath = GetVirtualPath(component.Asset.InputFile);
+                var originalPath = GetEffectiveModelPath(component.Asset);
                 var affected = ComponentUsesPaintedTexture(component.Asset, replacements);
                 var exportedPath = originalPath;
 
@@ -601,6 +601,11 @@ internal sealed class PaintedVariantExporter
         writer.WriteEndObject();
         writer.Flush();
     }
+
+    private static string GetEffectiveModelPath(ResolvedModelAsset asset)
+        => asset.UsesWsModel && asset.WsModelFile != null
+            ? GetVirtualPath(asset.WsModelFile)
+            : GetVirtualPath(asset.InputFile);
 
     private static string GetVirtualPath(Shared.Core.PackFiles.Models.PackFile file)
         => NormalizeVirtualPath(file.Name);
