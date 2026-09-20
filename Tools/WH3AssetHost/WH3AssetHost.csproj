@@ -44,7 +44,6 @@
 
   <ItemGroup>
     <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
-    <PackageReference Include="System.Drawing.Common" Version="10.0.1" />
   </ItemGroup>
 
   <ItemGroup>
