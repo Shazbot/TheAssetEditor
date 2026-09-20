@@ -345,3 +345,5 @@ healthchecksdb
 
 # A folder for research stuff
 /Research
+# Downloaded pinned DirectXTex tool for WH3AssetHost
+/Tools/WH3AssetHost/ThirdParty/DirectXTex/texconv.exe
