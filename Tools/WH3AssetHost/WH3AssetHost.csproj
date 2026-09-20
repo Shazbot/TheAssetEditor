@@ -43,6 +43,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="10.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <TrimmerRootDescriptor Include="Trim/WH3AssetHost.Linker.xml" />
   </ItemGroup>
 
