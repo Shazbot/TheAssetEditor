@@ -68,6 +68,11 @@ internal sealed class TexconvDdsEncoder
             startInfo.ArgumentList.Add("-y");
             startInfo.ArgumentList.Add("-ft");
             startInfo.ArgumentList.Add("DDS");
+            // Canvas-produced PNGs may carry sRGB metadata regardless of the original
+            // WH3 DDS format. Ignore that container metadata and explicitly apply the
+            // source DDS colorspace below so texconv does not silently reinterpret
+            // linear UNORM textures as sRGB.
+            startInfo.ArgumentList.Add("--ignore-srgb");
             startInfo.ArgumentList.Add("-f");
             startInfo.ArgumentList.Add(sourceFormat.TexconvFormat);
             startInfo.ArgumentList.Add("-m");
