@@ -281,10 +281,17 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             new SkeletonAnimationLookupCacheOptions(
                 GetAnimationIndexCacheDirectory(),
                 vanillaPackContainers));
+        var animationMetadataCacheOptions = new GltfAnimationMetadataLookupCacheOptions(
+            GetAnimationMetadataCacheDirectory(),
+            metadataCacheableVanillaContainers);
+        var animationMetadataResolver = new GltfAnimationMetadataContextResolver(
+            packFileService,
+            animationMetadataCacheOptions);
         var animationCatalogResolver = new GltfAnimationCatalogResolver(
             modelResolver,
             compositionResolver,
-            skeletonLookup);
+            skeletonLookup,
+            animationMetadataResolver);
         var imageSaveHandler = new SystemImageSaveHandler();
         var materialExporter = new DdsToMaterialPngExporter(packFileService, imageSaveHandler);
         var normalExporter = new DdsToNormalPngExporter(packFileService, imageSaveHandler);
@@ -296,9 +303,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             new GltfSkeletonBuilder(),
             new GltfAnimationBuilder(
                 packFileService,
-                new GltfAnimationMetadataLookupCacheOptions(
-                    GetAnimationMetadataCacheDirectory(),
-                    metadataCacheableVanillaContainers)),
+                animationMetadataCacheOptions,
+                animationMetadataResolver),
             skeletonLookup,
             modelResolver,
             compositionResolver,
@@ -409,12 +415,18 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         var resolveMs = phaseStopwatch.ElapsedMilliseconds;
 
         phaseStopwatch.Restart();
-        var animations = catalog.Animations
-            .Select(animation => animation.AnimationFile)
-            .Where(path => string.IsNullOrWhiteSpace(path) == false)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Select(path => new AssetHostAnimationReference(path))
+        var loadedContainers = PackFileService.GetAllPackfileContainers();
+        var animations = catalog.Selections
+            .Where(selection => string.IsNullOrWhiteSpace(selection.AnimationFile) == false)
+            .Select(selection => new AssetHostAnimationReference(
+                selection.AnimationFile,
+                GetPackIndex(loadedContainers, selection.Container),
+                selection.FragmentPath,
+                selection.MetadataPath))
+            .OrderBy(animation => animation.Path, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(animation => animation.PackIndex)
+            .ThenBy(animation => animation.FragmentPath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(animation => animation.MetadataPath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToList();
         phaseStopwatch.Stop();
         var materializeMs = phaseStopwatch.ElapsedMilliseconds;
@@ -467,9 +479,26 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 
         phaseStopwatch.Restart();
         var animationFiles = new List<PackFile>();
-        foreach (var animationPath in request.AnimationPaths)
+        var metadataSelections = new List<GltfAnimationMetadataSelection?>();
+        for (var animationIndex = 0; animationIndex < request.AnimationPaths.Count; animationIndex++)
         {
-            var animation = PackFileService.FindFile(animationPath);
+            var animationPath = request.AnimationPaths[animationIndex];
+            var requestedSelection = request.AnimationSelections != null
+                && request.AnimationSelections.Count > animationIndex
+                ? request.AnimationSelections[animationIndex]
+                : null;
+            IPackFileContainer? selectedContainer = null;
+            if (requestedSelection?.PackIndex is int packIndex)
+            {
+                var containers = PackFileService.GetAllPackfileContainers();
+                if ((uint)packIndex >= (uint)containers.Count)
+                    return Failure(
+                        "AnimationPackNotFound",
+                        $"Animation pack index {packIndex} for '{animationPath}' is no longer available.");
+                selectedContainer = containers[packIndex];
+            }
+
+            var animation = PackFileService.FindFile(animationPath, selectedContainer);
             if (animation == null)
             {
                 phaseStopwatch.Stop();
@@ -485,6 +514,11 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
                     $"Animation '{animationPath}' was not found in the supplied packs.");
             }
             animationFiles.Add(animation);
+            metadataSelections.Add(requestedSelection?.FragmentPath == null
+                ? null
+                : new GltfAnimationMetadataSelection(
+                    requestedSelection.FragmentPath,
+                    requestedSelection.MetadataPath));
         }
         phaseStopwatch.Stop();
         var animationLookupMs = phaseStopwatch.ElapsedMilliseconds;
@@ -500,6 +534,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             MirrorMesh: request.MirrorMesh)
         {
             IncludeSkeleton = request.IncludeSkeleton,
+            AnimationMetadataSelections = metadataSelections,
             VariantMeshSelections = request.VariantSelections?
                 .Select(selection => new VariantMeshSelection(selection.SlotPath, selection.ChoiceIndex))
                 .ToList() ?? [],
@@ -570,6 +605,19 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             Array.Empty<string>(),
             Array.Empty<ExportWarning>(),
             [new ExportError(code, message)]);
+
+    private static int? GetPackIndex(
+        IReadOnlyList<IPackFileContainer> containers,
+        IPackFileContainer selected)
+    {
+        for (var index = 0; index < containers.Count; index++)
+        {
+            if (ReferenceEquals(containers[index], selected))
+                return index;
+        }
+
+        return null;
+    }
 
     public void Dispose() => _skeletonLookup.Dispose();
 }

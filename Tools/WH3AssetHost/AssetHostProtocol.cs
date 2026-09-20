@@ -14,7 +14,8 @@ public sealed record AssetHostExportRequest(
     bool ExportMaterials = true,
     bool IncludeSkeleton = true,
     bool MirrorMesh = true,
-    IReadOnlyList<AssetHostVariantMeshSelection>? VariantSelections = null);
+    IReadOnlyList<AssetHostVariantMeshSelection>? VariantSelections = null,
+    IReadOnlyList<AssetHostAnimationSelection>? AnimationSelections = null);
 
 public sealed record AssetHostVariantMeshSelection(string SlotPath, int ChoiceIndex);
 
@@ -28,7 +29,8 @@ public sealed record AssetHostBatchExportRequest(
     IReadOnlyList<string> AnimationPaths,
     bool ExportMaterials = true,
     bool IncludeSkeleton = true,
-    bool MirrorMesh = true);
+    bool MirrorMesh = true,
+    IReadOnlyList<AssetHostAnimationSelection>? AnimationSelections = null);
 
 public sealed record AssetHostBatchExportResult(IReadOnlyList<ExportResult> Exports);
 
@@ -52,7 +54,17 @@ public sealed record AssetHostPaintedVariantResult(
     IReadOnlyList<string> Warnings,
     IReadOnlyList<AssetHostError> Errors);
 
-public sealed record AssetHostAnimationReference(string Path);
+public sealed record AssetHostAnimationSelection(
+    string Path,
+    int? PackIndex = null,
+    string? FragmentPath = null,
+    string? MetadataPath = null);
+
+public sealed record AssetHostAnimationReference(
+    string Path,
+    int? PackIndex = null,
+    string? FragmentPath = null,
+    string? MetadataPath = null);
 
 public sealed record AssetHostAnimationCatalog(
     bool Success,
@@ -96,7 +108,8 @@ public interface IAssetHostRuntime : IDisposable
                     request.ExportMaterials,
                     request.IncludeSkeleton,
                     request.MirrorMesh,
-                    item.VariantSelections)))
+                    item.VariantSelections,
+                    request.AnimationSelections)))
                 .ToList());
 
     AssetHostAnimationCatalog GetAnimationCatalog(string assetPath);
@@ -433,6 +446,18 @@ public sealed class AssetHostDispatcher : IDisposable
                 "animationPaths must be an array of virtual paths.");
         }
 
+        if (!TryReadAnimationSelections(request, out var animationSelections, allowMissing: true))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportModel",
+                "InvalidAnimationSelections",
+                "animationSelections must be an array of path/fragment context objects.");
+        }
+
+        if (animationSelections.Count != 0)
+            animationPaths = animationSelections.Select(selection => selection.Path).ToList();
+
         if (!TryReadVariantMeshSelections(request, out var variantSelections, allowMissing: true))
         {
             return AssetHostResponse.Fail(
@@ -460,7 +485,8 @@ public sealed class AssetHostDispatcher : IDisposable
             exportMaterials,
             includeSkeleton,
             mirrorMesh,
-            variantSelections);
+            variantSelections,
+            animationSelections.Count == 0 ? null : animationSelections);
         var result = _runtime.ExportModel(exportRequest);
         if (result.Success)
             return AssetHostResponse.Ok(requestId, "exportModel", result);
@@ -566,6 +592,18 @@ public sealed class AssetHostDispatcher : IDisposable
                 "animationPaths must be an array of virtual paths.");
         }
 
+        if (!TryReadAnimationSelections(request, out var animationSelections, allowMissing: true))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportModelBatch",
+                "InvalidAnimationSelections",
+                "animationSelections must be an array of path/fragment context objects.");
+        }
+
+        if (animationSelections.Count != 0)
+            animationPaths = animationSelections.Select(selection => selection.Path).ToList();
+
         if (!TryReadBoolean(request, true, out var exportMaterials, "exportMaterials", "materials")
             || !TryReadBoolean(request, true, out var includeSkeleton, "includeSkeleton", "skeleton")
             || !TryReadBoolean(request, true, out var mirrorMesh, "mirrorMesh", "mirror"))
@@ -583,7 +621,8 @@ public sealed class AssetHostDispatcher : IDisposable
             animationPaths,
             exportMaterials,
             includeSkeleton,
-            mirrorMesh));
+            mirrorMesh,
+            animationSelections.Count == 0 ? null : animationSelections));
         return AssetHostResponse.Ok(requestId, "exportModelBatch", result);
     }
 
@@ -948,6 +987,48 @@ public sealed class AssetHostDispatcher : IDisposable
                 return false;
             values.Add(item.GetString()!);
         }
+        return true;
+    }
+
+    private static bool TryReadAnimationSelections(
+        JsonElement request,
+        out List<AssetHostAnimationSelection> values,
+        bool allowMissing = false)
+    {
+        values = [];
+        if (!request.TryGetProperty("animationSelections", out var property))
+            return allowMissing;
+        if (property.ValueKind != JsonValueKind.Array)
+            return false;
+
+        foreach (var item in property.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+                return false;
+
+            var path = ReadString(item, "path")?.Trim();
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            int? packIndex = null;
+            if (item.TryGetProperty("packIndex", out var packIndexProperty))
+            {
+                if (packIndexProperty.ValueKind != JsonValueKind.Number
+                    || !packIndexProperty.TryGetInt32(out var parsedPackIndex)
+                    || parsedPackIndex < 0)
+                    return false;
+                packIndex = parsedPackIndex;
+            }
+
+            var fragmentPath = ReadString(item, "fragmentPath")?.Trim();
+            var metadataPath = ReadString(item, "metadataPath")?.Trim();
+            values.Add(new AssetHostAnimationSelection(
+                path,
+                packIndex,
+                string.IsNullOrWhiteSpace(fragmentPath) ? null : fragmentPath,
+                string.IsNullOrWhiteSpace(metadataPath) ? null : metadataPath));
+        }
+
         return true;
     }
 

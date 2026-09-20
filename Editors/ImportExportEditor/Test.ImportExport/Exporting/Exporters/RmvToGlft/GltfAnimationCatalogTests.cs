@@ -41,6 +41,37 @@ public class GltfAnimationCatalogTests
     }
 
     [Test]
+    public void CatalogCarriesFragmentEntryContextForTheSelectedAnimationReference()
+    {
+        var input = PackFile.CreateFromASCII("model.rigid_model_v2", "model");
+        var asset = CreateAsset(input, "direct_skeleton");
+        var modelResolver = new Mock<IModelAssetResolver>();
+        modelResolver.Setup(x => x.Resolve(input)).Returns(asset);
+        var lookup = CreateLookup("direct_skeleton", out var animationReference);
+        var contextProvider = new Mock<IGltfAnimationContextReferenceProvider>();
+        contextProvider
+            .Setup(x => x.GetSelectionsForAnimation(
+                animationReference.AnimationFile,
+                "direct_skeleton",
+                animationReference.Container))
+            .Returns([new GltfAnimationMetadataSelection("unit.fragment", "stand_idle.meta")]);
+
+        var resolver = new GltfAnimationCatalogResolver(
+            modelResolver.Object,
+            new Mock<IVariantMeshCompositionResolver>().Object,
+            lookup.Object,
+            contextProvider.Object);
+
+        var catalog = resolver.Resolve(input);
+
+        Assert.That(catalog.Selections, Has.Count.EqualTo(1));
+        Assert.That(catalog.Selections[0].AnimationFile, Is.EqualTo(animationReference.AnimationFile));
+        Assert.That(catalog.Selections[0].Container, Is.SameAs(animationReference.Container));
+        Assert.That(catalog.Selections[0].FragmentPath, Is.EqualTo("unit.fragment"));
+        Assert.That(catalog.Selections[0].MetadataPath, Is.EqualTo("stand_idle.meta"));
+    }
+
+    [Test]
     public void VmdCatalogUsesExporterOrderAndReportsDifferentComponentSkeletons()
     {
         var input = PackFile.CreateFromASCII("root.variantmeshdefinition", "root");

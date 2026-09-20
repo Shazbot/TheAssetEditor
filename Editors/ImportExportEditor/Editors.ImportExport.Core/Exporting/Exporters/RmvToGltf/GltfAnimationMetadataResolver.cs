@@ -36,7 +36,24 @@ internal sealed record GltfAnimationMetadataContext(
     public bool HasRules => TransformRules.Count != 0 || DockRules.Count != 0;
 }
 
-internal sealed class GltfAnimationMetadataContextResolver
+/// <summary>
+/// Identifies the fragment entry whose metadata should be used for an animation.
+/// The animation path alone is not unique because one clip may be referenced by
+/// several fragment entries.
+/// </summary>
+public sealed record GltfAnimationMetadataSelection(
+    string? FragmentPath,
+    string? MetadataPath);
+
+public interface IGltfAnimationContextReferenceProvider
+{
+    IReadOnlyList<GltfAnimationMetadataSelection> GetSelectionsForAnimation(
+        string animationPath,
+        string skeletonName,
+        IPackFileContainer container);
+}
+
+public sealed class GltfAnimationMetadataContextResolver : IGltfAnimationContextReferenceProvider
 {
     private static readonly ILogger Logger = Logging.Create<GltfAnimationMetadataContextResolver>();
 
@@ -57,29 +74,14 @@ internal sealed class GltfAnimationMetadataContextResolver
             : new GltfAnimationMetadataLookupCache(cacheOptions);
     }
 
-    public GltfAnimationMetadataContext? Resolve(PackFile animationFile, GameSkeleton skeleton)
+    internal GltfAnimationMetadataContext? Resolve(
+        PackFile animationFile,
+        GameSkeleton skeleton,
+        GltfAnimationMetadataSelection? requestedSelection = null)
     {
         var animationPath = NormalizePath(_packFileService.GetFullPath(animationFile));
-        var contexts = GetIndex();
         var activeContainer = _packFileService.GetPackFileContainer(animationFile);
-
-        var candidates = new List<FragmentEntryContext>();
-        foreach (var cachedPack in _cachedPackIndexes ?? [])
-        {
-            foreach (var cachedContext in cachedPack.Index.GetContexts(animationPath))
-            {
-                candidates.Add(new FragmentEntryContext(
-                    cachedContext.FragmentPath,
-                    cachedContext.SkeletonName,
-                    cachedContext.MetaPath,
-                    cachedContext.PersistentMetaPath,
-                    cachedContext.SlotAnimations,
-                    cachedPack.Container));
-            }
-        }
-
-        if (contexts.TryGetValue(animationPath, out var uncachedCandidates))
-            candidates.AddRange(uncachedCandidates);
+        var candidates = GetCandidateContexts(animationPath);
 
         if (candidates.Count == 0)
             return null;
@@ -96,8 +98,13 @@ internal sealed class GltfAnimationMetadataContextResolver
         var selection = SelectBestContext(
             matching,
             activeContainer,
-            _packPrecedenceByContainer ?? new Dictionary<IPackFileContainer, int>(ReferenceEqualityComparer.Instance));
-        var context = selection.Context;
+            _packPrecedenceByContainer ?? new Dictionary<IPackFileContainer, int>(ReferenceEqualityComparer.Instance),
+            requestedSelection);
+
+        if (requestedSelection != null && selection.Context == null)
+            return null;
+
+        var context = selection.Context!;
         if (selection.IsAmbiguous)
         {
             diagnostics.Add(
@@ -164,6 +171,46 @@ internal sealed class GltfAnimationMetadataContextResolver
             transformRules,
             dockRules,
             diagnostics);
+    }
+
+    public IReadOnlyList<GltfAnimationMetadataSelection> GetSelectionsForAnimation(
+        string animationPath,
+        string skeletonName,
+        IPackFileContainer container)
+    {
+        var normalizedPath = NormalizePath(animationPath);
+        return GetCandidateContexts(normalizedPath)
+            .Where(x => string.Equals(x.SkeletonName, skeletonName, StringComparison.OrdinalIgnoreCase))
+            .Where(x => x.SourceContainer != null && ReferenceEquals(x.SourceContainer, container))
+            .Select(x => new GltfAnimationMetadataSelection(x.FragmentPath, x.MetaPath))
+            .Distinct()
+            .OrderBy(x => x.FragmentPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.MetadataPath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private List<FragmentEntryContext> GetCandidateContexts(string animationPath)
+    {
+        var contexts = GetIndex();
+        var candidates = new List<FragmentEntryContext>();
+        foreach (var cachedPack in _cachedPackIndexes ?? [])
+        {
+            foreach (var cachedContext in cachedPack.Index.GetContexts(animationPath))
+            {
+                candidates.Add(new FragmentEntryContext(
+                    cachedContext.FragmentPath,
+                    cachedContext.SkeletonName,
+                    cachedContext.MetaPath,
+                    cachedContext.PersistentMetaPath,
+                    cachedContext.SlotAnimations,
+                    cachedPack.Container));
+            }
+        }
+
+        if (contexts.TryGetValue(animationPath, out var uncachedCandidates))
+            candidates.AddRange(uncachedCandidates);
+
+        return candidates;
     }
 
     private Dictionary<string, List<FragmentEntryContext>> GetIndex()
@@ -392,10 +439,30 @@ internal sealed class GltfAnimationMetadataContextResolver
     internal static GltfAnimationMetadataContextSelection SelectBestContext(
         IReadOnlyList<FragmentEntryContext> candidates,
         IPackFileContainer? activeContainer,
-        IReadOnlyDictionary<IPackFileContainer, int> packPrecedenceByContainer)
+        IReadOnlyDictionary<IPackFileContainer, int> packPrecedenceByContainer,
+        GltfAnimationMetadataSelection? requestedSelection = null)
     {
         if (candidates.Count == 0)
             throw new ArgumentException("At least one metadata context is required.", nameof(candidates));
+
+        if (requestedSelection != null)
+        {
+            var explicitlySelected = candidates
+                .Where(x => string.Equals(x.FragmentPath, requestedSelection.FragmentPath, StringComparison.OrdinalIgnoreCase))
+                .Where(x => string.Equals(x.MetaPath ?? string.Empty, requestedSelection.MetadataPath ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (explicitlySelected.Count == 0)
+            {
+                Logger.Here().Warning(
+                    "Requested animation metadata context was not found: fragment={FragmentPath}, metadata={MetadataPath}",
+                    requestedSelection.FragmentPath,
+                    requestedSelection.MetadataPath);
+                return new GltfAnimationMetadataContextSelection(null, false);
+            }
+
+            candidates = explicitlySelected;
+        }
 
         var ordered = candidates
             .OrderByDescending(x => activeContainer != null
@@ -479,7 +546,7 @@ internal sealed class GltfAnimationMetadataContextResolver
         IPackFileContainer? SourceContainer);
 
     internal sealed record GltfAnimationMetadataContextSelection(
-        FragmentEntryContext Context,
+        FragmentEntryContext? Context,
         bool IsAmbiguous);
 
     private sealed record CachedPackMetadataIndex(

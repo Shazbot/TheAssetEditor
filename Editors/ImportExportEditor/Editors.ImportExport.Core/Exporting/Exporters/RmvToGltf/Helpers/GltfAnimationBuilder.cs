@@ -19,9 +19,14 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         public GltfAnimationBuilder(
             IPackedFileLookup? packFileLookup = null,
-            GltfAnimationMetadataLookupCacheOptions? metadataCacheOptions = null)
+            GltfAnimationMetadataLookupCacheOptions? metadataCacheOptions = null,
+            GltfAnimationMetadataContextResolver? metadataResolver = null)
         {
-            if (packFileLookup is IHeadlessPackFileService headlessPackFileService)
+            if (metadataResolver != null)
+            {
+                _metadataResolver = metadataResolver;
+            }
+            else if (packFileLookup is IHeadlessPackFileService headlessPackFileService)
             {
                 _metadataResolver = new GltfAnimationMetadataContextResolver(
                     headlessPackFileService,
@@ -31,14 +36,32 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         public virtual void Build(AnimationFile animSkeleton, RmvToGltfExporterSettings settings, ProcessedGltfSkeleton gltfSkeleton, ModelRoot outputScene)
         {                     
-            foreach (var animationPackFile in settings.InputAnimationFiles)
+            for (var animationIndex = 0; animationIndex < settings.InputAnimationFiles.Count; animationIndex++)
             {
+                var animationPackFile = settings.InputAnimationFiles[animationIndex];
                 var animationToExport = AnimationFile.Create(animationPackFile);                
-                CreateFromTWAnim(animationPackFile, gltfSkeleton, animSkeleton, animationToExport, outputScene, settings);
+                var metadataSelection = settings.AnimationMetadataSelections.Count > animationIndex
+                    ? settings.AnimationMetadataSelections[animationIndex]
+                    : null;
+                CreateFromTWAnim(
+                    animationPackFile,
+                    gltfSkeleton,
+                    animSkeleton,
+                    animationToExport,
+                    outputScene,
+                    settings,
+                    metadataSelection);
             }            
         }
 
-        private void CreateFromTWAnim(PackFile animationPackFile, ProcessedGltfSkeleton gltfSkeleton, AnimationFile skeletonAnimFile, AnimationFile animationToExport, ModelRoot modelRoot, RmvToGltfExporterSettings settings)
+        private void CreateFromTWAnim(
+            PackFile animationPackFile,
+            ProcessedGltfSkeleton gltfSkeleton,
+            AnimationFile skeletonAnimFile,
+            AnimationFile animationToExport,
+            ModelRoot modelRoot,
+            RmvToGltfExporterSettings settings,
+            GltfAnimationMetadataSelection? metadataSelection)
         {
             var animationName = animationPackFile.Name;
             var doMirror = settings.MirrorMesh;
@@ -50,7 +73,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             {
                 try
                 {
-                    var metadataContext = _metadataResolver.Resolve(animationPackFile, gameSkeleton);
+                    var metadataContext = _metadataResolver.Resolve(animationPackFile, gameSkeleton, metadataSelection);
                     if (metadataContext?.HasRules == true)
                     {
                         frames = GltfAnimationMetadataProcessor.Apply(animationClip, gameSkeleton, metadataContext);

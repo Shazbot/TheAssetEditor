@@ -37,6 +37,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         public bool IncludeSkeleton { get; init; } = true;
 
         /// <summary>
+        /// Optional fragment-entry identities aligned with InputAnimationFiles.
+        /// Supplying these prevents metadata resolution from falling back to a
+        /// different fragment when the same animation path is reused.
+        /// </summary>
+        public IReadOnlyList<GltfAnimationMetadataSelection?> AnimationMetadataSelections { get; init; } = [];
+
+        /// <summary>
         /// Controls whether RMV mask textures are emitted as auxiliary PNGs.
         /// They are not part of the glTF material channels, but the editor's
         /// export workflow historically preserves them for manual use.

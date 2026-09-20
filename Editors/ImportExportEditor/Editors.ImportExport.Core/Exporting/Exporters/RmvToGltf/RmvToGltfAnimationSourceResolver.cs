@@ -15,19 +15,32 @@ public sealed class GltfAnimationCatalog
         string? skeletonName,
         bool hasSkeletonFile,
         IReadOnlyList<AnimationReference> animations,
-        IReadOnlyList<string> diagnostics)
+        IReadOnlyList<string> diagnostics,
+        IReadOnlyList<GltfAnimationCatalogSelection>? selections = null)
     {
         SkeletonName = skeletonName;
         HasSkeletonFile = hasSkeletonFile;
         Animations = new ReadOnlyCollection<AnimationReference>(animations.ToList());
         Diagnostics = new ReadOnlyCollection<string>(diagnostics.ToList());
+        Selections = new ReadOnlyCollection<GltfAnimationCatalogSelection>((selections ?? []).ToList());
     }
 
     public string? SkeletonName { get; }
     public bool HasSkeletonFile { get; }
     public IReadOnlyList<AnimationReference> Animations { get; }
     public IReadOnlyList<string> Diagnostics { get; }
+    public IReadOnlyList<GltfAnimationCatalogSelection> Selections { get; }
 }
+
+/// <summary>
+/// A catalog item retains the pack and fragment-entry identity behind the
+/// displayed animation path. The UI may still display only AnimationFile.
+/// </summary>
+public sealed record GltfAnimationCatalogSelection(
+    string AnimationFile,
+    IPackFileContainer Container,
+    string? FragmentPath,
+    string? MetadataPath);
 
 public interface IGltfAnimationCatalogResolver
 {
@@ -45,15 +58,18 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
     private readonly IModelAssetResolver _modelAssetResolver;
     private readonly IVariantMeshCompositionResolver _variantMeshResolver;
     private readonly ISkeletonAnimationLookUpHelper _skeletonAnimationLookUpHelper;
+    private readonly IGltfAnimationContextReferenceProvider? _metadataResolver;
 
     public GltfAnimationCatalogResolver(
         IModelAssetResolver modelAssetResolver,
         IVariantMeshCompositionResolver variantMeshResolver,
-        ISkeletonAnimationLookUpHelper skeletonAnimationLookUpHelper)
+        ISkeletonAnimationLookUpHelper skeletonAnimationLookUpHelper,
+        IGltfAnimationContextReferenceProvider? metadataResolver = null)
     {
         _modelAssetResolver = modelAssetResolver;
         _variantMeshResolver = variantMeshResolver;
         _skeletonAnimationLookUpHelper = skeletonAnimationLookUpHelper;
+        _metadataResolver = metadataResolver;
     }
 
     public GltfAnimationCatalog Resolve(PackFile inputFile)
@@ -79,13 +95,46 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
             }
 
             var animations = _skeletonAnimationLookUpHelper.GetAnimationsForSkeleton(skeletonName);
-            return new GltfAnimationCatalog(skeletonName, true, animations, diagnostics);
+            var selections = BuildSelections(animations, skeletonName);
+            return new GltfAnimationCatalog(skeletonName, true, animations, diagnostics, selections);
         }
         catch (Exception exception)
         {
             diagnostics.Add($"Unable to load animation catalog for skeleton '{skeletonName}': {exception.Message}");
             return new GltfAnimationCatalog(skeletonName, false, [], diagnostics);
         }
+    }
+
+    private IReadOnlyList<GltfAnimationCatalogSelection> BuildSelections(
+        IEnumerable<AnimationReference> animations,
+        string skeletonName)
+    {
+        var output = new List<GltfAnimationCatalogSelection>();
+        foreach (var animation in animations)
+        {
+            var contexts = _metadataResolver?.GetSelectionsForAnimation(
+                animation.AnimationFile,
+                skeletonName,
+                animation.Container) ?? [];
+
+            if (contexts.Count == 0)
+            {
+                output.Add(new GltfAnimationCatalogSelection(
+                    animation.AnimationFile,
+                    animation.Container,
+                    null,
+                    null));
+                continue;
+            }
+
+            output.AddRange(contexts.Select(context => new GltfAnimationCatalogSelection(
+                animation.AnimationFile,
+                animation.Container,
+                context.FragmentPath,
+                context.MetadataPath)));
+        }
+
+        return output;
     }
 
     private RmvToGltfAnimationSource ResolveModelSource(PackFile inputFile)

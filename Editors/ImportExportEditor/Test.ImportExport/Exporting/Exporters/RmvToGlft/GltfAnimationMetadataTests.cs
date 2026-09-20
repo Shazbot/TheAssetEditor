@@ -211,6 +211,41 @@ public class GltfAnimationMetadataTests
         Assert.That(selected.IsAmbiguous, Is.True);
     }
 
+    [Test]
+    public void SelectBestContextHonorsExplicitFragmentEntrySelection()
+    {
+        var container = new Mock<IPackFileContainer>().Object;
+        var candidates = new[]
+        {
+            new GltfAnimationMetadataContextResolver.FragmentEntryContext(
+                "a.fragment",
+                "test_skeleton",
+                "a.meta",
+                null,
+                new Dictionary<string, string>(),
+                container),
+            new GltfAnimationMetadataContextResolver.FragmentEntryContext(
+                "b.fragment",
+                "test_skeleton",
+                "b.meta",
+                null,
+                new Dictionary<string, string>(),
+                container)
+        };
+
+        var selected = GltfAnimationMetadataContextResolver.SelectBestContext(
+            candidates,
+            container,
+            new Dictionary<IPackFileContainer, int>(ReferenceEqualityComparer.Instance)
+            {
+                [container] = 0
+            },
+            new GltfAnimationMetadataSelection("b.fragment", "b.meta"));
+
+        Assert.That(selected.Context!.FragmentPath, Is.EqualTo("b.fragment"));
+        Assert.That(selected.IsAmbiguous, Is.False);
+    }
+
     private static GameSkeleton CreateSkeleton(params (string Name, int ParentId, Vector3 Translation)[] bones)
     {
         var file = new AnimationFile
