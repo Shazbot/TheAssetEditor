@@ -69,9 +69,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             Directory.CreateDirectory(outputDirectory);
             var before = CaptureFiles(outputDirectory);
 
+            ExportExecutionResult execution;
             try
             {
-                var execution = _exporter.Export(settings with { OutputPath = outputPath });
+                execution = _exporter.Export(settings with { OutputPath = outputPath });
                 if (execution.Status == ExportExecutionStatus.Cancelled)
                 {
                     return new ExportResult(
