@@ -235,17 +235,20 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                     var image = channel.Texture.PrimaryImage;
                     var generatedFileName = Path.GetFileName(texture.SystemFilePath);
 
-                    // Preserve a stable source identity inside the GLB itself. THREE.GLTFLoader
-                    // copies image extras onto Texture.userData, so WHMM can paint an embedded
-                    // image and still map it back to the original pack-relative DDS path without
-                    // depending on blob URLs or texture ordering.
-                    image.Name = generatedFileName;
-                    image.Extras = new JsonObject
+                    // WH3AssetHost uses the raw-KTX2 preview path. Preserve a stable source
+                    // identity inside those GLBs without changing normal editor glTF exports.
+                    // THREE.GLTFLoader copies image extras onto Texture.userData, so WHMM can
+                    // map an edited image back to its original pack-relative DDS path.
+                    if (settings.UseKtx2Textures && !string.IsNullOrWhiteSpace(texture.SourceVirtualPath))
                     {
-                        ["wh3SourceVirtualPath"] = texture.SourceVirtualPath,
-                        ["wh3GeneratedFileName"] = generatedFileName,
-                        ["wh3Channel"] = texture.GltfTextureType.ToString()
-                    };
+                        image.Name = generatedFileName;
+                        image.Extras = new JsonObject
+                        {
+                            ["wh3SourceVirtualPath"] = texture.SourceVirtualPath,
+                            ["wh3GeneratedFileName"] = generatedFileName,
+                            ["wh3Channel"] = texture.GltfTextureType.ToString()
+                        };
+                    }
 
                     // Preserve the generated name even when the image is supplied
                     // from memory so text glTF exports retain their existing paths.
