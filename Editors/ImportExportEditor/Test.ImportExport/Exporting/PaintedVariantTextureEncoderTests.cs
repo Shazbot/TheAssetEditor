@@ -6,9 +6,6 @@ namespace Test.ImportExport.Exporting;
 
 public sealed class PaintedVariantTextureEncoderTests
 {
-    private const string FourByFourPngBase64 =
-        "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAK0lEQVR4nG3KsQkAIBAEwREs63p7v3INDEyMloEdrB06VOgpGsXtlAe/4wCGqwp277/E1QAAAABJRU5ErkJggg==";
-
     [Test]
     public void DdsInspector_ReadsLegacyDxt5AndMipCount()
     {
@@ -168,11 +165,19 @@ public sealed class PaintedVariantTextureEncoderTests
             Path.GetTempPath(),
             "wh3-painted-dds-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDirectory);
-        var pngPath = Path.Combine(tempDirectory, "painted.png");
+        var rgbaPath = Path.Combine(tempDirectory, "painted.rgba");
 
         try
         {
-            File.WriteAllBytes(pngPath, Convert.FromBase64String(FourByFourPngBase64));
+            var rgba = new byte[4 * 4 * 4];
+            for (var index = 0; index < rgba.Length; index += 4)
+            {
+                rgba[index] = 200;
+                rgba[index + 1] = 100;
+                rgba[index + 2] = 50;
+                rgba[index + 3] = 255;
+            }
+            File.WriteAllBytes(rgbaPath, rgba);
 
             var encoderType = typeof(AssetHostProtocol).Assembly.GetType(
                 "WH3AssetHost.BcnDdsEncoder",
@@ -180,11 +185,11 @@ public sealed class PaintedVariantTextureEncoderTests
             var encoder = Activator.CreateInstance(encoderType, nonPublic: true)
                 ?? throw new AssertionException("BcnDdsEncoder could not be created.");
             var method = encoderType.GetMethod(
-                "EncodePngFile",
+                "EncodeRgbaFile",
                 BindingFlags.Public | BindingFlags.Instance)
-                ?? throw new AssertionException("BcnDdsEncoder.EncodePngFile was not found.");
+                ?? throw new AssertionException("BcnDdsEncoder.EncodeRgbaFile was not found.");
 
-            return (byte[])(method.Invoke(encoder, [pngPath, sourceFormat])
+            return (byte[])(method.Invoke(encoder, [rgbaPath, 4, 4, sourceFormat])
                 ?? throw new AssertionException("BcnDdsEncoder returned null."));
         }
         finally
