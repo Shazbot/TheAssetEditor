@@ -50,11 +50,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Remove default None items first so repeat builds do not trip SDK duplicate-item checks
+         after texconv.exe has been downloaded into the project tree. -->
+    <None Remove="$(TexconvPath)" />
     <None Include="$(TexconvPath)"
           Link="texconv.exe"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest"
           Visible="false" />
+    <None Remove="ThirdParty\DirectXTex\LICENSE.txt" />
     <None Include="ThirdParty\DirectXTex\LICENSE.txt"
           Link="DirectXTex-LICENSE.txt"
           CopyToOutputDirectory="PreserveNewest"
