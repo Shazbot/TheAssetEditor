@@ -34,7 +34,9 @@ public sealed record AssetHostBatchExportResult(IReadOnlyList<ExportResult> Expo
 
 public sealed record AssetHostPaintedTextureInput(
     string SourceVirtualPath,
-    string PngPath);
+    string RgbaPath,
+    int Width,
+    int Height);
 
 public sealed record AssetHostPaintedVariantRequest(
     string AssetPath,
@@ -652,26 +654,31 @@ public sealed class AssetHostDispatcher : IDisposable
             }
 
             var sourceVirtualPath = ReadString(texture, "sourceVirtualPath")?.Trim();
-            var relativePngPath = ReadString(texture, "pngPath")?.Trim();
-            if (string.IsNullOrWhiteSpace(sourceVirtualPath) || string.IsNullOrWhiteSpace(relativePngPath))
+            var relativeRgbaPath = ReadString(texture, "rgbaPath")?.Trim();
+            if (string.IsNullOrWhiteSpace(sourceVirtualPath)
+                || string.IsNullOrWhiteSpace(relativeRgbaPath)
+                || !TryReadInt32(texture, "width", out var width)
+                || !TryReadInt32(texture, "height", out var height)
+                || width is <= 0 or > 16384
+                || height is <= 0 or > 16384)
             {
                 return AssetHostResponse.Fail(
                     requestId,
                     "exportPaintedVariant",
                     "InvalidPaintedTexture",
-                    "Each painted texture requires sourceVirtualPath and pngPath.");
+                    "Each painted texture requires sourceVirtualPath, rgbaPath, and dimensions from 1 to 16384.");
             }
 
-            if (!TryResolveInputPngPath(_outputRoot, relativePngPath, out var pngPath, out var pngError))
+            if (!TryResolveInputRgbaPath(_outputRoot, relativeRgbaPath, width, height, out var rgbaPath, out var rgbaError))
             {
                 return AssetHostResponse.Fail(
                     requestId,
                     "exportPaintedVariant",
                     "InvalidPaintedTexture",
-                    pngError ?? "The painted texture PNG path is invalid.");
+                    rgbaError ?? "The painted texture RGBA path is invalid.");
             }
 
-            textures.Add(new AssetHostPaintedTextureInput(sourceVirtualPath, pngPath));
+            textures.Add(new AssetHostPaintedTextureInput(sourceVirtualPath, rgbaPath, width, height));
             if (textures.Count > 64)
             {
                 return AssetHostResponse.Fail(
@@ -839,27 +846,48 @@ public sealed class AssetHostDispatcher : IDisposable
         }
     }
 
-    private static bool TryResolveInputPngPath(
+    private static bool TryResolveInputRgbaPath(
         string outputRoot,
         string relativePath,
-        out string pngPath,
+        int width,
+        int height,
+        out string rgbaPath,
         out string? error)
     {
-        if (!TryResolveDirectoryPath(outputRoot, relativePath, out pngPath, out error))
+        if (!TryResolveDirectoryPath(outputRoot, relativePath, out rgbaPath, out error))
             return false;
 
-        if (!Path.GetExtension(pngPath).Equals(".png", StringComparison.OrdinalIgnoreCase))
+        if (!Path.GetExtension(rgbaPath).Equals(".rgba", StringComparison.OrdinalIgnoreCase))
         {
-            pngPath = string.Empty;
-            error = "Painted texture input must be a .png file.";
+            rgbaPath = string.Empty;
+            error = "Painted texture input must be a .rgba file.";
             return false;
         }
-        if (!File.Exists(pngPath))
+        if (!File.Exists(rgbaPath))
         {
-            pngPath = string.Empty;
+            rgbaPath = string.Empty;
             error = "Painted texture input does not exist.";
             return false;
         }
+
+        try
+        {
+            var expectedBytes = checked((long)width * height * 4);
+            var actualBytes = new FileInfo(rgbaPath).Length;
+            if (actualBytes != expectedBytes)
+            {
+                rgbaPath = string.Empty;
+                error = $"Painted texture RGBA data has {actualBytes} bytes; expected {expectedBytes} for {width}x{height}.";
+                return false;
+            }
+        }
+        catch (OverflowException)
+        {
+            rgbaPath = string.Empty;
+            error = "Painted texture dimensions are too large.";
+            return false;
+        }
+
         return true;
     }
 
