@@ -240,7 +240,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 meshes.Count,
                 textures.Count);
 
-            return ExportExecutionResult.Completed(GetTextureSources(textures));
+            return ExportExecutionResult.Completed();
         }
 
         private ExportExecutionResult ExportVariantMesh(RmvToGltfExporterSettings settings)
@@ -299,7 +299,6 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
 
             var textureSession = new GltfTextureExportSession(collisionSafe: true);
             var meshes = new List<ExportedMesh>();
-            var exportedTextures = new List<TextureResult>();
             var generatedTexturePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var texturesMs = 0L;
             var meshesMs = 0L;
@@ -310,7 +309,6 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 var textures = _gltfTextureHandler.HandleTextures(modelPart.Asset, settings, textureSession);
                 phaseStopwatch.Stop();
                 texturesMs += phaseStopwatch.ElapsedMilliseconds;
-                exportedTextures.AddRange(textures);
                 generatedTexturePaths.UnionWith(textures.Select(x => x.SystemFilePath));
 
                 phaseStopwatch.Restart();
@@ -357,18 +355,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 meshes.Count,
                 generatedTexturePaths.Count);
 
-            return ExportExecutionResult.Completed(GetTextureSources(exportedTextures));
+            return ExportExecutionResult.Completed();
         }
-
-        private static IReadOnlyList<ExportTextureSource> GetTextureSources(IEnumerable<TextureResult> textures)
-            => textures
-                .Where(texture => string.IsNullOrWhiteSpace(texture.SourceVirtualPath) == false)
-                .Select(texture => new ExportTextureSource(
-                    texture.SourceVirtualPath,
-                    Path.GetFileName(texture.SystemFilePath),
-                    texture.GltfTextureType.ToString()))
-                .Distinct()
-                .ToArray();
 
         private ProcessedGltfSkeleton? CreateSharedSkeleton(
             IReadOnlyList<ExportModelPart> modelParts,
