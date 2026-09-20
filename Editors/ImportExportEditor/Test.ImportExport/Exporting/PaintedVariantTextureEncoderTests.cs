@@ -177,7 +177,7 @@ public sealed class PaintedVariantTextureEncoderTests
             var encoderType = typeof(AssetHostProtocol).Assembly.GetType(
                 "WH3AssetHost.BcnDdsEncoder",
                 throwOnError: true)!;
-            var encoder = Activator.CreateInstance(encoderType)
+            var encoder = Activator.CreateInstance(encoderType, nonPublic: true)
                 ?? throw new AssertionException("BcnDdsEncoder could not be created.");
             var method = encoderType.GetMethod(
                 "EncodePngFile",
