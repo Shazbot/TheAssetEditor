@@ -121,6 +121,46 @@ public class VariantMeshCompositionResolverTests
     }
 
     [Test]
+    public void PreservesSelectedSlotMetadataAndSourceModelReference()
+    {
+        var root = PackFile.CreateFromASCII("root.variantmeshdefinition", """
+            <VARIANT_MESH model="variantmeshes\\root.wsmodel">
+              <SLOT name="legs">
+                <VARIANT_MESH model="variantmeshes\\unit\\legs_01.wsmodel" />
+              </SLOT>
+              <SLOT name="weapon" attach_point="" probability="0.75" use_different_attach_point_parts="true">
+                <VARIANT_MESH_REFERENCE definition="variantmeshes\\unit\\weapon_01.wsmodel" />
+              </SLOT>
+            </VARIANT_MESH>
+            """);
+        var rootModel = PackFile.CreateFromASCII("root.wsmodel", "root");
+        var legs = PackFile.CreateFromASCII("legs_01.wsmodel", "legs");
+        var weapon = PackFile.CreateFromASCII("weapon_01.wsmodel", "weapon");
+        var packFileService = CreatePackFileService(root, rootModel, legs, weapon);
+        var modelResolver = new Mock<IModelAssetResolver>(MockBehavior.Strict);
+        modelResolver
+            .Setup(x => x.Resolve(It.IsAny<PackFile>()))
+            .Returns((PackFile file) => CreatePlaceholderAsset(file));
+
+        var result = new VariantMeshCompositionResolver(packFileService.Object, modelResolver.Object).Resolve(root);
+
+        Assert.That(result.Root!.ModelReference, Is.EqualTo("variantmeshes\\root.wsmodel"));
+
+        var legsSlot = result.Root.Slots[0];
+        Assert.That(legsSlot.Name, Is.EqualTo("legs"));
+        Assert.That(legsSlot.SourceAttachmentPoint, Is.Null);
+        Assert.That(legsSlot.Probability, Is.Null);
+        Assert.That(legsSlot.SelectedChild!.ModelReference, Is.EqualTo("variantmeshes\\unit\\legs_01.wsmodel"));
+
+        var weaponSlot = result.Root.Slots[1];
+        Assert.That(weaponSlot.Name, Is.EqualTo("weapon"));
+        Assert.That(weaponSlot.SourceAttachmentPoint, Is.EqualTo(string.Empty));
+        Assert.That(weaponSlot.Probability, Is.EqualTo("0.75"));
+        Assert.That(weaponSlot.UseDifferentAttachPointParts, Is.EqualTo("true"));
+        Assert.That(weaponSlot.SelectedChild!.ModelReference, Is.EqualTo("variantmeshes\\unit\\weapon_01.wsmodel"));
+    }
+
+    [Test]
     public void ParsedDefinitionCacheCanBeClearedBetweenAssetSessions()
     {
         var root = PackFile.CreateFromASCII("root.variantmeshdefinition", """
