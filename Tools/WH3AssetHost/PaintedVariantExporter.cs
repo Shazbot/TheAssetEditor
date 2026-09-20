@@ -730,24 +730,23 @@ internal static class Bc7DdsEncoder
             System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         try
         {
-            var stride = Math.Abs(bitmapData.Stride);
-            var raw = new byte[stride * bitmap.Height];
-            Marshal.Copy(bitmapData.Scan0, raw, 0, raw.Length);
-            var rgba = new byte[bitmap.Width * bitmap.Height * 4];
+            var rowBytes = checked(bitmap.Width * 4);
+            var bgraRow = new byte[rowBytes];
+            var rgba = new byte[checked(rowBytes * bitmap.Height)];
 
             for (var y = 0; y < bitmap.Height; y++)
             {
-                var sourceY = bitmapData.Stride < 0 ? bitmap.Height - 1 - y : y;
-                var sourceRow = sourceY * stride;
-                var targetRow = y * bitmap.Width * 4;
+                var rowPointer = IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride);
+                Marshal.Copy(rowPointer, bgraRow, 0, rowBytes);
+                var targetRow = y * rowBytes;
                 for (var x = 0; x < bitmap.Width; x++)
                 {
-                    var sourceIndex = sourceRow + x * 4;
-                    var targetIndex = targetRow + x * 4;
-                    rgba[targetIndex] = raw[sourceIndex + 2];
-                    rgba[targetIndex + 1] = raw[sourceIndex + 1];
-                    rgba[targetIndex + 2] = raw[sourceIndex];
-                    rgba[targetIndex + 3] = raw[sourceIndex + 3];
+                    var sourceIndex = x * 4;
+                    var targetIndex = targetRow + sourceIndex;
+                    rgba[targetIndex] = bgraRow[sourceIndex + 2];
+                    rgba[targetIndex + 1] = bgraRow[sourceIndex + 1];
+                    rgba[targetIndex + 2] = bgraRow[sourceIndex];
+                    rgba[targetIndex + 3] = bgraRow[sourceIndex + 3];
                 }
             }
 
