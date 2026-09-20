@@ -202,6 +202,15 @@ internal sealed class PaintedVariantExporter
                 warnings,
                 Array.Empty<AssetHostError>());
         }
+        catch (NotSupportedException exception)
+        {
+            return new AssetHostPaintedVariantResult(
+                false,
+                null,
+                writtenVirtualFiles,
+                warnings,
+                [new AssetHostError("UnsupportedPaintedTextureFormat", exception.Message, exception.ToString())]);
+        }
         catch (Exception exception)
         {
             return new AssetHostPaintedVariantResult(
