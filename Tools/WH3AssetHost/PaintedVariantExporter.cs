@@ -682,7 +682,34 @@ internal static class Bc7DdsEncoder
             image.Height,
             BCnEncoder.Encoder.PixelFormat.Rgba32,
             stream);
-        return stream.ToArray();
+
+        var bytes = stream.ToArray();
+        MarkBc7AsSrgb(bytes);
+        return bytes;
+    }
+
+    private static void MarkBc7AsSrgb(byte[] dds)
+    {
+        // BC7 necessarily uses the DDS DX10 extension. BaseColor is sampled in
+        // sRGB space, matching the preview KTX2 export, so change the encoder's
+        // BC7_UNORM (98) DXGI format to BC7_UNORM_SRGB (99).
+        if (dds.Length < 132
+            || dds[84] != (byte)'D'
+            || dds[85] != (byte)'X'
+            || dds[86] != (byte)'1'
+            || dds[87] != (byte)'0')
+        {
+            throw new InvalidDataException("BC7 encoder did not produce the expected DDS DX10 header.");
+        }
+
+        var format = BitConverter.ToUInt32(dds, 128);
+        if (format != 98)
+            throw new InvalidDataException($"BC7 encoder produced unexpected DXGI format {format}.");
+
+        dds[128] = 99;
+        dds[129] = 0;
+        dds[130] = 0;
+        dds[131] = 0;
     }
 
     private static RgbaImage ReadPng(string path)
