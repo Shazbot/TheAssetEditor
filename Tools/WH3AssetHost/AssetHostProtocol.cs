@@ -873,6 +873,13 @@ public sealed class AssetHostDispatcher : IDisposable
         try
         {
             var expectedBytes = checked((long)width * height * 4);
+            if (expectedBytes > 64L * 1024 * 1024)
+            {
+                rgbaPath = string.Empty;
+                error = "Painted texture RGBA data may not exceed 64 MiB.";
+                return false;
+            }
+
             var actualBytes = new FileInfo(rgbaPath).Length;
             if (actualBytes != expectedBytes)
             {
