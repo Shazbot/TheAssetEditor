@@ -64,8 +64,10 @@
     <MakeDir Directories="$(DirectXTexDirectory)" />
     <DownloadFile Condition="!Exists('$(TexconvPath)')"
                   SourceUrl="$(TexconvDownloadUrl)"
-                  DestinationFile="$(TexconvPath)"
-                  SkipUnchangedFiles="true" />
+                  DestinationFolder="$(DirectXTexDirectory)"
+                  DestinationFileName="texconv.exe"
+                  SkipUnchangedFiles="true"
+                  Retries="2" />
     <GetFileHash Files="$(TexconvPath)" Algorithm="SHA512">
       <Output TaskParameter="Items" ItemName="_TexconvHashItem" />
     </GetFileHash>
