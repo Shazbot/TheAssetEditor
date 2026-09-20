@@ -1,8 +1,3 @@
-using BCnEncoder.Encoder;
-using BCnEncoder.Shared;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
@@ -96,6 +91,7 @@ internal sealed class PaintedVariantExporter
                 .Select(NormalizeVirtualPath)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+            var texconv = new TexconvDdsEncoder();
             var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var painted in paintedSources)
             {
@@ -105,10 +101,15 @@ internal sealed class PaintedVariantExporter
                     continue;
                 }
 
+                var sourceTextureFile = _packFileService.FindFile(painted.Source)
+                    ?? throw new InvalidOperationException(
+                        $"Source DDS '{painted.Source}' was referenced by the selected model but could not be loaded.");
+                var sourceFormat = DdsFormatInspector.Inspect(sourceTextureFile.DataSource.ReadData());
+
                 var sourceStem = SafeStem(Path.GetFileNameWithoutExtension(painted.Source));
                 var sourceHash = ShortHash(painted.Source);
                 var ddsVirtualPath = $"{assetRoot}\\textures\\{sourceStem}_{sourceHash}_painted.dds";
-                var ddsBytes = Bc7DdsEncoder.EncodePngFile(painted.Texture.PngPath);
+                var ddsBytes = texconv.EncodePngFile(painted.Texture.PngPath, sourceFormat);
                 WriteVirtualFile(request.OutputDirectory, ddsVirtualPath, ddsBytes);
                 writtenVirtualFiles.Add(ddsVirtualPath);
                 replacements[painted.Source] = ddsVirtualPath;
@@ -663,105 +664,4 @@ internal sealed class PaintedVariantExporter
 
     private sealed record ResolvedComponent(ResolvedModelAsset Asset, string AttachmentPoint);
     private sealed record ExportedComponent(string ModelPath, string AttachmentPoint);
-}
-
-/// <summary>
-/// Encodes painted BaseColor output as BC7 DDS with a full mip chain.
-/// Fast-quality parallel compression keeps export responsive while retaining
-/// substantially more color detail than the earlier BC3 proof of concept.
-/// </summary>
-internal static class Bc7DdsEncoder
-{
-    public static byte[] EncodePngFile(string pngPath)
-    {
-        var image = ReadPng(pngPath);
-        var encoder = new BcEncoder();
-        encoder.OutputOptions.GenerateMipMaps = true;
-        encoder.OutputOptions.Quality = CompressionQuality.Fast;
-        encoder.OutputOptions.Format = CompressionFormat.Bc7;
-        encoder.OutputOptions.FileFormat = OutputFileFormat.Dds;
-        encoder.Options.IsParallel = true;
-
-        using var stream = new MemoryStream();
-        encoder.EncodeToStream(
-            image.Data,
-            image.Width,
-            image.Height,
-            BCnEncoder.Encoder.PixelFormat.Rgba32,
-            stream);
-
-        var bytes = stream.ToArray();
-        MarkBc7AsSrgb(bytes);
-        return bytes;
-    }
-
-    private static void MarkBc7AsSrgb(byte[] dds)
-    {
-        // BC7 necessarily uses the DDS DX10 extension. BaseColor is sampled in
-        // sRGB space, matching the preview KTX2 export, so change the encoder's
-        // BC7_UNORM (98) DXGI format to BC7_UNORM_SRGB (99).
-        if (dds.Length < 132
-            || dds[84] != (byte)'D'
-            || dds[85] != (byte)'X'
-            || dds[86] != (byte)'1'
-            || dds[87] != (byte)'0')
-        {
-            throw new InvalidDataException("BC7 encoder did not produce the expected DDS DX10 header.");
-        }
-
-        var format = BitConverter.ToUInt32(dds, 128);
-        if (format != 98)
-            throw new InvalidDataException($"BC7 encoder produced unexpected DXGI format {format}.");
-
-        dds[128] = 99;
-        dds[129] = 0;
-        dds[130] = 0;
-        dds[131] = 0;
-    }
-
-    private static RgbaImage ReadPng(string path)
-    {
-        using var source = new Bitmap(path);
-        using var bitmap = new Bitmap(source.Width, source.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (var graphics = Graphics.FromImage(bitmap))
-        {
-            graphics.DrawImageUnscaled(source, 0, 0);
-        }
-
-        var rectangle = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
-        var bitmapData = bitmap.LockBits(
-            rectangle,
-            ImageLockMode.ReadOnly,
-            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        try
-        {
-            var rowBytes = checked(bitmap.Width * 4);
-            var bgraRow = new byte[rowBytes];
-            var rgba = new byte[checked(rowBytes * bitmap.Height)];
-
-            for (var y = 0; y < bitmap.Height; y++)
-            {
-                var rowPointer = IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride);
-                Marshal.Copy(rowPointer, bgraRow, 0, rowBytes);
-                var targetRow = y * rowBytes;
-                for (var x = 0; x < bitmap.Width; x++)
-                {
-                    var sourceIndex = x * 4;
-                    var targetIndex = targetRow + sourceIndex;
-                    rgba[targetIndex] = bgraRow[sourceIndex + 2];
-                    rgba[targetIndex + 1] = bgraRow[sourceIndex + 1];
-                    rgba[targetIndex + 2] = bgraRow[sourceIndex];
-                    rgba[targetIndex + 3] = bgraRow[sourceIndex + 3];
-                }
-            }
-
-            return new RgbaImage(bitmap.Width, bitmap.Height, rgba);
-        }
-        finally
-        {
-            bitmap.UnlockBits(bitmapData);
-        }
-    }
-
-    private sealed record RgbaImage(int Width, int Height, byte[] Data);
 }
