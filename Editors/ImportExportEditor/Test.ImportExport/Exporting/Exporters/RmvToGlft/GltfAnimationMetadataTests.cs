@@ -3,6 +3,8 @@ using System.Text;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers;
 using GameWorld.Core.Animation;
+using Moq;
+using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.Animation;
 using Shared.GameFormats.RigidModel.Transforms;
 
@@ -134,6 +136,79 @@ public class GltfAnimationMetadataTests
         Assert.That(dock.SkeletonNameAlternatives, Is.EqualTo(new[] { "hand_right" }));
         Assert.That(dock.StartTime, Is.EqualTo(0.25f));
         Assert.That(dock.EndTime, Is.EqualTo(0.75f));
+    }
+
+    [Test]
+    public void TrimSafeDecoderReadsDockEquipmentV3()
+    {
+        var payload = new List<byte>();
+        payload.AddRange(BitConverter.GetBytes(3));
+        payload.AddRange(BitConverter.GetBytes(0.25f));
+        payload.AddRange(BitConverter.GetBytes(0.75f));
+        payload.AddRange(CaString(""));
+        payload.AddRange(BitConverter.GetBytes(2));
+        payload.AddRange(BitConverter.GetBytes(0.1f));
+        payload.AddRange(BitConverter.GetBytes(0.2f));
+
+        var file = new List<byte>();
+        file.AddRange(BitConverter.GetBytes(2));
+        file.AddRange(BitConverter.GetBytes((uint)1));
+        file.AddRange(CaString("DOCK_EQPT_RHAND"));
+        file.AddRange(payload);
+
+        var decoded = GltfAnimationMetadataDecoder.Decode(file.ToArray());
+
+        var dock = decoded.DockRules.Single();
+        Assert.That(dock.PropBoneId, Is.EqualTo(2));
+        Assert.That(dock.AnimationSlotName, Is.EqualTo("DOCK_EQUIPMENT_RIGHT_HAND"));
+        Assert.That(dock.SkeletonNameAlternatives, Is.EqualTo(new[] { "hand_right" }));
+        Assert.That(dock.StartTime, Is.EqualTo(0.25f));
+        Assert.That(dock.EndTime, Is.EqualTo(0.75f));
+    }
+
+    [Test]
+    public void SelectBestContextPrefersSelectedAnimationPackAndStableFragmentOrder()
+    {
+        var vanillaContainer = new Mock<IPackFileContainer>().Object;
+        var modContainer = new Mock<IPackFileContainer>().Object;
+        var slotAnimations = new Dictionary<string, string>();
+        var candidates = new[]
+        {
+            new GltfAnimationMetadataContextResolver.FragmentEntryContext(
+                "vanilla.fragment",
+                "test_skeleton",
+                "vanilla.meta",
+                null,
+                slotAnimations,
+                vanillaContainer),
+            new GltfAnimationMetadataContextResolver.FragmentEntryContext(
+                "z_mod.fragment",
+                "test_skeleton",
+                "z_mod.meta",
+                null,
+                slotAnimations,
+                modContainer),
+            new GltfAnimationMetadataContextResolver.FragmentEntryContext(
+                "a_mod.fragment",
+                "test_skeleton",
+                "a_mod.meta",
+                null,
+                slotAnimations,
+                modContainer)
+        };
+        var precedence = new Dictionary<IPackFileContainer, int>(ReferenceEqualityComparer.Instance)
+        {
+            [vanillaContainer] = 0,
+            [modContainer] = 1
+        };
+
+        var selected = GltfAnimationMetadataContextResolver.SelectBestContext(
+            candidates,
+            modContainer,
+            precedence);
+
+        Assert.That(selected.Context.FragmentPath, Is.EqualTo("a_mod.fragment"));
+        Assert.That(selected.IsAmbiguous, Is.True);
     }
 
     private static GameSkeleton CreateSkeleton(params (string Name, int ParentId, Vector3 Translation)[] bones)

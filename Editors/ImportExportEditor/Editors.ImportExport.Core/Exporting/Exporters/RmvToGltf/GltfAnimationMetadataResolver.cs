@@ -44,7 +44,8 @@ internal sealed class GltfAnimationMetadataContextResolver
     private readonly GltfAnimationMetadataLookupCache? _cache;
     private readonly object _indexLock = new();
     private Dictionary<string, List<FragmentEntryContext>>? _contextsByAnimation;
-    private List<GltfAnimationMetadataLookupCache.CachedPackIndex>? _cachedPackIndexes;
+    private List<CachedPackMetadataIndex>? _cachedPackIndexes;
+    private Dictionary<IPackFileContainer, int>? _packPrecedenceByContainer;
 
     public GltfAnimationMetadataContextResolver(
         IHeadlessPackFileService packFileService,
@@ -60,18 +61,20 @@ internal sealed class GltfAnimationMetadataContextResolver
     {
         var animationPath = NormalizePath(_packFileService.GetFullPath(animationFile));
         var contexts = GetIndex();
+        var activeContainer = _packFileService.GetPackFileContainer(animationFile);
 
         var candidates = new List<FragmentEntryContext>();
         foreach (var cachedPack in _cachedPackIndexes ?? [])
         {
-            foreach (var cachedContext in cachedPack.GetContexts(animationPath))
+            foreach (var cachedContext in cachedPack.Index.GetContexts(animationPath))
             {
                 candidates.Add(new FragmentEntryContext(
                     cachedContext.FragmentPath,
                     cachedContext.SkeletonName,
                     cachedContext.MetaPath,
                     cachedContext.PersistentMetaPath,
-                    cachedContext.SlotAnimations));
+                    cachedContext.SlotAnimations,
+                    cachedPack.Container));
             }
         }
 
@@ -90,12 +93,16 @@ internal sealed class GltfAnimationMetadataContextResolver
             return null;
 
         var diagnostics = new List<string>();
-        var context = matching.FirstOrDefault(x => string.IsNullOrWhiteSpace(x.MetaPath) == false) ?? matching[0];
-        if (matching.Count > 1)
+        var selection = SelectBestContext(
+            matching,
+            activeContainer,
+            _packPrecedenceByContainer ?? new Dictionary<IPackFileContainer, int>(ReferenceEqualityComparer.Instance));
+        var context = selection.Context;
+        if (selection.IsAmbiguous)
         {
             diagnostics.Add(
                 $"Animation '{animationPath}' appears in {matching.Count} fragments for skeleton '{skeleton.SkeletonName}'; "
-                + $"using '{context.FragmentPath}'.");
+                + $"using '{context.FragmentPath}' from '{context.SourceContainer?.Name ?? "unknown pack"}'.");
         }
 
         var selectedMetadata = ReadMetadata(context.MetaPath, diagnostics);
@@ -174,7 +181,12 @@ internal sealed class GltfAnimationMetadataContextResolver
             var cachedVanillaPackCount = 0;
             var parsedVanillaAnimPackCount = 0;
             var parsedUncachedAnimPackCount = 0;
-            var cachedPackIndexes = new List<GltfAnimationMetadataLookupCache.CachedPackIndex>();
+            var cachedPackIndexes = new List<CachedPackMetadataIndex>();
+
+            var packPrecedenceByContainer = new Dictionary<IPackFileContainer, int>(ReferenceEqualityComparer.Instance);
+            var loadedContainers = _packFileService.GetAllPackfileContainers();
+            for (var containerIndex = 0; containerIndex < loadedContainers.Count; containerIndex++)
+                packPrecedenceByContainer[loadedContainers[containerIndex]] = containerIndex;
 
             var animPacksByContainer = new Dictionary<IPackFileContainer, List<PackFile>>(
                 ReferenceEqualityComparer.Instance);
@@ -204,7 +216,7 @@ internal sealed class GltfAnimationMetadataContextResolver
                 var cachedIndex = _cache?.TryLoad(container);
                 if (cachedIndex != null)
                 {
-                    cachedPackIndexes.Add(cachedIndex);
+                    cachedPackIndexes.Add(new CachedPackMetadataIndex(container, cachedIndex));
                     fragmentCount += cachedIndex.FragmentCount;
                     entryCount += cachedIndex.EntryCount;
                     cachedVanillaPackCount++;
@@ -219,6 +231,7 @@ internal sealed class GltfAnimationMetadataContextResolver
                 {
                     ParseAnimPack(
                         animPack,
+                        container,
                         index,
                         cacheFragments,
                         ref fragmentCount,
@@ -238,8 +251,9 @@ internal sealed class GltfAnimationMetadataContextResolver
             {
                 ParseAnimPack(
                     animPack,
+                    null,
                     index,
-                    cacheFragments: null,
+                    null,
                     ref fragmentCount,
                     ref entryCount);
                 parsedUncachedAnimPackCount++;
@@ -250,8 +264,8 @@ internal sealed class GltfAnimationMetadataContextResolver
             var uniqueAnimations = new HashSet<string>(
                 index.Keys,
                 StringComparer.OrdinalIgnoreCase);
-            foreach (var cachedIndex in cachedPackIndexes)
-                uniqueAnimations.UnionWith(cachedIndex.AnimationPaths);
+            foreach (var cachedPack in cachedPackIndexes)
+                uniqueAnimations.UnionWith(cachedPack.Index.AnimationPaths);
 
             stopwatch.Stop();
             Logger.Here().Information(
@@ -266,6 +280,7 @@ internal sealed class GltfAnimationMetadataContextResolver
                 parsedUncachedAnimPackCount);
 
             _cachedPackIndexes = cachedPackIndexes;
+            _packPrecedenceByContainer = packPrecedenceByContainer;
             _contextsByAnimation = index;
             return index;
         }
@@ -273,6 +288,7 @@ internal sealed class GltfAnimationMetadataContextResolver
 
     private void ParseAnimPack(
         PackFile animPack,
+        IPackFileContainer? sourceContainer,
         Dictionary<string, List<FragmentEntryContext>> index,
         List<GltfAnimationMetadataLookupCache.CachedFragment>? cacheFragments,
         ref int fragmentCount,
@@ -337,7 +353,8 @@ internal sealed class GltfAnimationMetadataContextResolver
                             fragment.SkeletonName,
                             entry.MetaFile,
                             persistentMetaPath,
-                            slotAnimations));
+                            slotAnimations,
+                            sourceContainer));
 
                     cachedFragment?.Entries.Add(
                         new GltfAnimationMetadataLookupCache.CachedEntry
@@ -371,6 +388,34 @@ internal sealed class GltfAnimationMetadataContextResolver
 
         contexts.Add(context);
     }
+
+    internal static GltfAnimationMetadataContextSelection SelectBestContext(
+        IReadOnlyList<FragmentEntryContext> candidates,
+        IPackFileContainer? activeContainer,
+        IReadOnlyDictionary<IPackFileContainer, int> packPrecedenceByContainer)
+    {
+        if (candidates.Count == 0)
+            throw new ArgumentException("At least one metadata context is required.", nameof(candidates));
+
+        var ordered = candidates
+            .OrderByDescending(x => activeContainer != null
+                && x.SourceContainer != null
+                && ReferenceEquals(x.SourceContainer, activeContainer))
+            .ThenByDescending(x => GetPackPrecedence(x.SourceContainer, packPrecedenceByContainer))
+            .ThenByDescending(x => string.IsNullOrWhiteSpace(x.MetaPath) == false)
+            .ThenBy(x => x.FragmentPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.MetaPath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new GltfAnimationMetadataContextSelection(ordered[0], ordered.Count > 1);
+    }
+
+    private static int GetPackPrecedence(
+        IPackFileContainer? container,
+        IReadOnlyDictionary<IPackFileContainer, int> packPrecedenceByContainer)
+        => container != null && packPrecedenceByContainer.TryGetValue(container, out var precedence)
+            ? precedence
+            : -1;
 
     private static bool IsRelevantDockingSlot(string? slotName)
     {
@@ -425,12 +470,21 @@ internal sealed class GltfAnimationMetadataContextResolver
     private static string NormalizePath(string path)
         => path.Replace('/', '\\').Trim().TrimStart('\\');
 
-    private sealed record FragmentEntryContext(
+    internal sealed record FragmentEntryContext(
         string FragmentPath,
         string SkeletonName,
         string? MetaPath,
         string? PersistentMetaPath,
-        IReadOnlyDictionary<string, string> SlotAnimations);
+        IReadOnlyDictionary<string, string> SlotAnimations,
+        IPackFileContainer? SourceContainer);
+
+    internal sealed record GltfAnimationMetadataContextSelection(
+        FragmentEntryContext Context,
+        bool IsAmbiguous);
+
+    private sealed record CachedPackMetadataIndex(
+        IPackFileContainer Container,
+        GltfAnimationMetadataLookupCache.CachedPackIndex Index);
 }
 
 internal sealed record DecodedDockEquipmentMetadata(
@@ -483,7 +537,7 @@ internal static class GltfAnimationMetadataDecoder
                 continue;
             }
 
-            if (attribute.Version >= 10
+            if ((attribute.Version == 3 || attribute.Version >= 10)
                 && TryGetDockDefinition(
                     attribute.Name,
                     out var animationSlotName,
@@ -491,6 +545,7 @@ internal static class GltfAnimationMetadataDecoder
             {
                 dockRules.Add(ReadDockEquipment(
                     attribute.Name,
+                    attribute.Version,
                     animationSlotName,
                     skeletonNameAlternatives,
                     attribute.Data));
@@ -583,6 +638,7 @@ internal static class GltfAnimationMetadataDecoder
 
     private static DecodedDockEquipmentMetadata ReadDockEquipment(
         string tagName,
+        int version,
         string animationSlotName,
         IReadOnlyList<string> skeletonNameAlternatives,
         byte[] data)
@@ -591,8 +647,21 @@ internal static class GltfAnimationMetadataDecoder
         var startTime = ReadSingle(data, ref index);
         var endTime = ReadSingle(data, ref index);
         _ = ReadString(data, ref index); // filter
-        _ = ReadInt32(data, ref index); // id
-        var propBoneId = ReadInt32(data, ref index);
+
+        // DockEquipment_v3 derives from the v2 metadata base and stores
+        // PropBoneId immediately after Filter. v10+ adds the common metadata
+        // Id before PropBoneId.
+        int propBoneId;
+        if (version == 3)
+        {
+            propBoneId = ReadInt32(data, ref index);
+        }
+        else
+        {
+            _ = ReadInt32(data, ref index); // id
+            propBoneId = ReadInt32(data, ref index);
+        }
+
         _ = ReadSingle(data, ref index); // blend in
         _ = ReadSingle(data, ref index); // blend out
 
