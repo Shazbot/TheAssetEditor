@@ -19,6 +19,7 @@ public sealed class AssetHostDispatcherTests
         Assert.That(resultJson, Does.Contain("exportModel"));
         Assert.That(resultJson, Does.Contain("exportPaintedVariant"));
         Assert.That(resultJson, Does.Contain("paintedVariantRgba"));
+        Assert.That(resultJson, Does.Contain("paintedVariantSourceOverride"));
     }
 
     [Test]
