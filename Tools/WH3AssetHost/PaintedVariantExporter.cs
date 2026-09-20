@@ -66,8 +66,10 @@ internal sealed class PaintedVariantExporter
 
             Directory.CreateDirectory(request.OutputDirectory);
             var assetRoot = $"variantmeshes\\whmm_unit_painter\\{variantName}";
-            var vmdVirtualPath =
-                $"variantmeshes\\variantmeshdefinitions\\whmm_unit_painter\\{variantName}.variantmeshdefinition";
+            // The painted mod is an override of the selected source definition,
+            // not a second VMD that callers must wire up manually. Preserve the
+            // exact pack path so loading this pack replaces the input VMD.
+            var vmdVirtualPath = NormalizeVirtualPath(request.AssetPath);
 
             var paintedSources = request.Textures
                 .Select(texture => new
