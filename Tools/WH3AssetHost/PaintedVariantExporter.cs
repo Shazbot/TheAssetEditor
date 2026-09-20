@@ -121,7 +121,11 @@ internal sealed class PaintedVariantExporter
                 var sourceStem = SafeStem(Path.GetFileNameWithoutExtension(painted.Source));
                 var sourceHash = ShortHash(painted.Source);
                 var ddsVirtualPath = $"{assetRoot}\\textures\\{sourceStem}_{sourceHash}_painted.dds";
-                var ddsBytes = ddsEncoder.EncodePngFile(painted.Texture.PngPath, sourceFormat);
+                var ddsBytes = ddsEncoder.EncodeRgbaFile(
+                    painted.Texture.RgbaPath,
+                    painted.Texture.Width,
+                    painted.Texture.Height,
+                    sourceFormat);
                 WriteVirtualFile(request.OutputDirectory, ddsVirtualPath, ddsBytes);
                 writtenVirtualFiles.Add(ddsVirtualPath);
                 replacements[painted.Source] = ddsVirtualPath;
