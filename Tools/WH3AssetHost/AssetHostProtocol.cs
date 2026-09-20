@@ -32,6 +32,24 @@ public sealed record AssetHostBatchExportRequest(
 
 public sealed record AssetHostBatchExportResult(IReadOnlyList<ExportResult> Exports);
 
+public sealed record AssetHostPaintedTextureInput(
+    string SourceVirtualPath,
+    string PngPath);
+
+public sealed record AssetHostPaintedVariantRequest(
+    string AssetPath,
+    string OutputDirectory,
+    string VariantName,
+    IReadOnlyList<AssetHostPaintedTextureInput> Textures,
+    IReadOnlyList<AssetHostVariantMeshSelection>? VariantSelections = null);
+
+public sealed record AssetHostPaintedVariantResult(
+    bool Success,
+    string? VariantMeshVirtualPath,
+    IReadOnlyList<string> Files,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<AssetHostError> Errors);
+
 public sealed record AssetHostAnimationReference(string Path);
 
 public sealed record AssetHostAnimationCatalog(
@@ -80,6 +98,14 @@ public interface IAssetHostRuntime : IDisposable
                 .ToList());
 
     AssetHostAnimationCatalog GetAnimationCatalog(string assetPath);
+
+    AssetHostPaintedVariantResult ExportPaintedVariant(AssetHostPaintedVariantRequest request)
+        => new(
+            false,
+            null,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            [new AssetHostError("UnsupportedOperation", "This runtime does not support painted variant export.")]);
 }
 
 public interface IAssetHostRuntimeFactory
@@ -135,7 +161,7 @@ public sealed record AssetHostResponse(
 
 public static class AssetHostProtocol
 {
-    public const int ProtocolVersion = 1;
+    public const int ProtocolVersion = 2;
     public const int MaxFramePayloadBytes = 1024 * 1024;
     public static string HostVersion { get; } =
         typeof(AssetHostProtocol).Assembly
@@ -144,7 +170,7 @@ public static class AssetHostProtocol
         ?? "unknown";
 
     public static readonly IReadOnlyList<string> Capabilities =
-        ["hello", "initialize", "getAnimationCatalog", "exportModel", "exportModelBatch", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
+        ["hello", "initialize", "getAnimationCatalog", "exportModel", "exportModelBatch", "exportPaintedVariant", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
 }
 
 /// <summary>
@@ -224,6 +250,7 @@ public sealed class AssetHostDispatcher : IDisposable
                 "getAnimationCatalog" => HandleGetAnimationCatalog(request, requestId),
                 "exportModel" => HandleExportModel(request, requestId),
                 "exportModelBatch" => HandleExportModelBatch(request, requestId),
+                "exportPaintedVariant" => HandleExportPaintedVariant(request, requestId),
                 "shutdown" => HandleShutdown(requestId),
                 _ => AssetHostResponse.Fail(requestId, command, "UnknownCommand", $"Unknown command '{command}'.")
             };
@@ -239,6 +266,7 @@ public sealed class AssetHostDispatcher : IDisposable
                     ? "AnimationCatalogFailed"
                     : string.Equals(command, "exportModel", StringComparison.Ordinal)
                         || string.Equals(command, "exportModelBatch", StringComparison.Ordinal)
+                        || string.Equals(command, "exportPaintedVariant", StringComparison.Ordinal)
                         ? "ExportFailed"
                         : "RequestFailed";
             _logger.Error(
@@ -558,6 +586,123 @@ public sealed class AssetHostDispatcher : IDisposable
     }
 
 
+    private AssetHostResponse HandleExportPaintedVariant(JsonElement request, string requestId)
+    {
+        if (_runtime == null || _outputRoot == null)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportPaintedVariant",
+                "NotInitialized",
+                "initialize must succeed before exportPaintedVariant.");
+        }
+
+        var assetPath = ReadString(request, "assetPath")?.Trim();
+        var variantName = ReadString(request, "variantName")?.Trim();
+        var relativeOutputDirectory = ReadString(request, "outputDirectory")?.Trim();
+        if (string.IsNullOrWhiteSpace(assetPath)
+            || string.IsNullOrWhiteSpace(variantName)
+            || string.IsNullOrWhiteSpace(relativeOutputDirectory))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportPaintedVariant",
+                "InvalidPaintedVariantRequest",
+                "assetPath, variantName, and outputDirectory are required.");
+        }
+
+        if (!TryResolveDirectoryPath(_outputRoot, relativeOutputDirectory, out var outputDirectory, out var outputError))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportPaintedVariant",
+                "InvalidOutputDirectory",
+                outputError!);
+        }
+
+        if (!TryReadVariantMeshSelections(request, out var variantSelections, allowMissing: true))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportPaintedVariant",
+                "InvalidVariantMeshSelections",
+                "variantSelections must be an array of slotPath/choiceIndex objects.");
+        }
+
+        if (!request.TryGetProperty("textures", out var texturesProperty)
+            || texturesProperty.ValueKind != JsonValueKind.Array)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportPaintedVariant",
+                "InvalidPaintedTextures",
+                "textures must be a non-empty array.");
+        }
+
+        var textures = new List<AssetHostPaintedTextureInput>();
+        foreach (var texture in texturesProperty.EnumerateArray())
+        {
+            if (texture.ValueKind != JsonValueKind.Object)
+            {
+                return AssetHostResponse.Fail(
+                    requestId,
+                    "exportPaintedVariant",
+                    "InvalidPaintedTextures",
+                    "Each painted texture must be an object.");
+            }
+
+            var sourceVirtualPath = ReadString(texture, "sourceVirtualPath")?.Trim();
+            var relativePngPath = ReadString(texture, "pngPath")?.Trim();
+            if (string.IsNullOrWhiteSpace(sourceVirtualPath)
+                || string.IsNullOrWhiteSpace(relativePngPath)
+                || !TryResolveInputPngPath(_outputRoot, relativePngPath, out var pngPath, out var pngError))
+            {
+                return AssetHostResponse.Fail(
+                    requestId,
+                    "exportPaintedVariant",
+                    "InvalidPaintedTexture",
+                    pngError ?? "Each painted texture requires sourceVirtualPath and a valid PNG path.");
+            }
+
+            textures.Add(new AssetHostPaintedTextureInput(sourceVirtualPath, pngPath));
+            if (textures.Count > 64)
+            {
+                return AssetHostResponse.Fail(
+                    requestId,
+                    "exportPaintedVariant",
+                    "TooManyPaintedTextures",
+                    "A painted variant may contain at most 64 modified textures.");
+            }
+        }
+
+        if (textures.Count == 0)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportPaintedVariant",
+                "InvalidPaintedTextures",
+                "At least one painted texture is required.");
+        }
+
+        var result = _runtime.ExportPaintedVariant(new AssetHostPaintedVariantRequest(
+            assetPath,
+            outputDirectory,
+            variantName,
+            textures,
+            variantSelections));
+        if (result.Success)
+            return AssetHostResponse.Ok(requestId, "exportPaintedVariant", result);
+
+        var firstError = result.Errors.FirstOrDefault();
+        return AssetHostResponse.Fail(
+            requestId,
+            "exportPaintedVariant",
+            firstError?.Code ?? "PaintedVariantExportFailed",
+            firstError?.Message ?? "The painted variant export failed.",
+            firstError?.Details,
+            result);
+    }
+
     private AssetHostResponse HandleShutdown(string requestId)
     {
         _shutdownRequested = true;
@@ -646,6 +791,69 @@ public sealed class AssetHostDispatcher : IDisposable
             error = $"outputPath is invalid: {exception.Message}";
             return false;
         }
+    }
+
+    private static bool TryResolveDirectoryPath(
+        string outputRoot,
+        string relativePath,
+        out string outputPath,
+        out string? error)
+    {
+        outputPath = string.Empty;
+        error = null;
+        try
+        {
+            if (Path.IsPathRooted(relativePath) || relativePath.IndexOf('\0') >= 0)
+            {
+                error = "outputDirectory must be relative to outputRoot.";
+                return false;
+            }
+
+            var normalized = relativePath
+                .Replace('\\', Path.DirectorySeparatorChar)
+                .Replace('/', Path.DirectorySeparatorChar);
+            outputPath = Path.GetFullPath(Path.Combine(outputRoot, normalized));
+            var relativeToRoot = Path.GetRelativePath(outputRoot, outputPath);
+            if (relativeToRoot == ".."
+                || relativeToRoot.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || Path.IsPathRooted(relativeToRoot))
+            {
+                outputPath = string.Empty;
+                error = "outputDirectory must remain under outputRoot.";
+                return false;
+            }
+            return true;
+        }
+        catch (Exception exception)
+        {
+            outputPath = string.Empty;
+            error = $"outputDirectory is invalid: {exception.Message}";
+            return false;
+        }
+    }
+
+    private static bool TryResolveInputPngPath(
+        string outputRoot,
+        string relativePath,
+        out string pngPath,
+        out string? error)
+    {
+        if (!TryResolveDirectoryPath(outputRoot, relativePath, out pngPath, out error))
+            return false;
+
+        if (!Path.GetExtension(pngPath).Equals(".png", StringComparison.OrdinalIgnoreCase))
+        {
+            pngPath = string.Empty;
+            error = "Painted texture input must be a .png file.";
+            return false;
+        }
+        if (!File.Exists(pngPath))
+        {
+            pngPath = string.Empty;
+            error = "Painted texture input does not exist.";
+            return false;
+        }
+        return true;
     }
 
     private static string? ReadString(JsonElement request, string propertyName)
