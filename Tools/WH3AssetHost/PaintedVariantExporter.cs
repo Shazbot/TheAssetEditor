@@ -7,6 +7,7 @@ using System.Xml;
 using GameWorld.Core.Services;
 using Shared.Core.PackFiles;
 using Shared.GameFormats.RigidModel;
+using Shared.GameFormats.Vmd;
 
 namespace WH3AssetHost;
 
@@ -150,7 +151,15 @@ internal sealed class PaintedVariantExporter
                 exportedComponents.Add(new ExportedComponent(exportedPath, component.AttachmentPoint));
             }
 
-            var vmdBytes = BuildFlattenedVariantMesh(exportedComponents);
+            var sourceDefinition = VariantMeshDefinitionLoader.Load(inputFile);
+            if (!string.IsNullOrWhiteSpace(sourceDefinition.ImposterModel))
+            {
+                warnings.Add(
+                    $"Source VMD imposter model '{sourceDefinition.ImposterModel}' is not copied into the painted variant, "
+                    + "because it would still render the original unpainted appearance.");
+            }
+
+            var vmdBytes = BuildFlattenedVariantMesh(exportedComponents, sourceDefinition);
             WriteVirtualFile(request.OutputDirectory, vmdVirtualPath, vmdBytes);
             writtenVirtualFiles.Add(vmdVirtualPath);
 
@@ -413,7 +422,9 @@ internal sealed class PaintedVariantExporter
             .Select(NormalizeVirtualPath)
             .Any(replacements.ContainsKey);
 
-    private static byte[] BuildFlattenedVariantMesh(IReadOnlyList<ExportedComponent> components)
+    private static byte[] BuildFlattenedVariantMesh(
+        IReadOnlyList<ExportedComponent> components,
+        VariantMeshDefinition.VariantMesh sourceDefinition)
     {
         using var stream = new MemoryStream();
         var settings = new XmlWriterSettings
@@ -425,6 +436,17 @@ internal sealed class PaintedVariantExporter
         };
         using var writer = XmlWriter.Create(stream, settings);
         writer.WriteStartElement("VARIANT_MESH");
+
+        if (!string.IsNullOrWhiteSpace(sourceDefinition.DecalDiffuse))
+            writer.WriteAttributeString("decal_diffuse", sourceDefinition.DecalDiffuse);
+        if (!string.IsNullOrWhiteSpace(sourceDefinition.DecalNormal))
+            writer.WriteAttributeString("decal_normal", sourceDefinition.DecalNormal);
+        if (!string.IsNullOrWhiteSpace(sourceDefinition.use_different_attach_point_parts))
+        {
+            writer.WriteAttributeString(
+                "use_different_attach_point_parts",
+                sourceDefinition.use_different_attach_point_parts);
+        }
 
         var rootIndex = -1;
         for (var index = 0; index < components.Count; index++)
@@ -452,6 +474,13 @@ internal sealed class PaintedVariantExporter
             writer.WriteAttributeString("model", component.ModelPath);
             writer.WriteEndElement();
             writer.WriteEndElement();
+        }
+
+        foreach (var metadata in sourceDefinition.MetaDataList ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(metadata.Value))
+                continue;
+            writer.WriteElementString("META_DATA", metadata.Value);
         }
 
         writer.WriteEndElement();
