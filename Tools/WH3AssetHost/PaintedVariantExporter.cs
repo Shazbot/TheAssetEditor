@@ -599,7 +599,7 @@ internal sealed class PaintedVariantExporter
     }
 
     private static string GetVirtualPath(Shared.Core.PackFiles.Models.PackFile file)
-        => NormalizeVirtualPath(file.VirtualPath ?? file.Name);
+        => NormalizeVirtualPath(file.Name);
 
     private static string NormalizeVirtualPath(string path)
         => path.Replace('/', '\\').Trim().TrimStart('\\');
