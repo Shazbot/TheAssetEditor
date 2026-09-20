@@ -105,7 +105,18 @@ internal sealed class PaintedVariantExporter
                 var sourceTextureFile = _packFileService.FindFile(painted.Source)
                     ?? throw new InvalidOperationException(
                         $"Source DDS '{painted.Source}' was referenced by the selected model but could not be loaded.");
-                var sourceFormat = DdsFormatInspector.Inspect(sourceTextureFile.DataSource.ReadData());
+
+                DdsSourceFormat sourceFormat;
+                try
+                {
+                    sourceFormat = DdsFormatInspector.Inspect(sourceTextureFile.DataSource.ReadData());
+                }
+                catch (Exception exception) when (exception is InvalidDataException or OverflowException)
+                {
+                    throw new InvalidDataException(
+                        $"Unable to preserve DDS format for '{painted.Source}': {exception.Message}",
+                        exception);
+                }
 
                 var sourceStem = SafeStem(Path.GetFileNameWithoutExtension(painted.Source));
                 var sourceHash = ShortHash(painted.Source);
