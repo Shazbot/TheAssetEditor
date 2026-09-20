@@ -159,9 +159,9 @@ internal static class DdsFormatInspector
             var legacyFormat = fourCc switch
             {
                 var value when value == FourCc("DXT1") => "BC1_UNORM",
-                var value when value is var _ && value == FourCc("DXT2") => "BC2_UNORM",
+                var value when value == FourCc("DXT2") => "BC2_UNORM",
                 var value when value == FourCc("DXT3") => "BC2_UNORM",
-                var value when value is var _ && value == FourCc("DXT4") => "BC3_UNORM",
+                var value when value == FourCc("DXT4") => "BC3_UNORM",
                 var value when value == FourCc("DXT5") => "BC3_UNORM",
                 var value when value == FourCc("ATI1") || value == FourCc("BC4U") => "BC4_UNORM",
                 var value when value == FourCc("BC4S") => "BC4_SNORM",
