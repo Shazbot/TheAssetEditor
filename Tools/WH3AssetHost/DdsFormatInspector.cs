@@ -83,6 +83,12 @@ internal static class DdsFormatInspector
             [115] = "B4G4R4A4_UNORM"
         };
 
+    public static DdsSourceFormat Inspect(byte[] data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        return Inspect(data.AsSpan());
+    }
+
     public static DdsSourceFormat Inspect(ReadOnlySpan<byte> data)
     {
         if (data.Length < 128)
@@ -251,8 +257,11 @@ internal static class DdsFormatInspector
     {
         Span<byte> bytes = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32LittleEndian(bytes, value);
-        return bytes.All(character => character is >= 0x20 and <= 0x7e)
-            ? Encoding.ASCII.GetString(bytes)
-            : null;
+        foreach (var character in bytes)
+        {
+            if (character is < 0x20 or > 0x7e)
+                return null;
+        }
+        return Encoding.ASCII.GetString(bytes);
     }
 }
