@@ -133,9 +133,9 @@ public class VariantMeshCompositionResolverTests
               </SLOT>
             </VARIANT_MESH>
             """);
-        var rootModel = PackFile.CreateFromASCII("root.wsmodel", "root");
-        var legs = PackFile.CreateFromASCII("legs_01.wsmodel", "legs");
-        var weapon = PackFile.CreateFromASCII("weapon_01.wsmodel", "weapon");
+        var rootModel = PackFile.CreateFromASCII(@"variantmeshes\root.wsmodel", "root");
+        var legs = PackFile.CreateFromASCII(@"variantmeshes\unit\legs_01.wsmodel", "legs");
+        var weapon = PackFile.CreateFromASCII(@"variantmeshes\unit\weapon_01.wsmodel", "weapon");
         var packFileService = CreatePackFileService(root, rootModel, legs, weapon);
         var modelResolver = new Mock<IModelAssetResolver>(MockBehavior.Strict);
         modelResolver
