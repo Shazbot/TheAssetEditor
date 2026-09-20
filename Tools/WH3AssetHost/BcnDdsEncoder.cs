@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using BCnEncoder.Encoder;
@@ -192,6 +193,9 @@ internal sealed class BcnDdsEncoder
             System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using (var graphics = Graphics.FromImage(bitmap))
         {
+            // Copy instead of alpha-blending onto the transparent destination;
+            // BaseColour alpha must survive the PNG staging path byte-for-byte.
+            graphics.CompositingMode = CompositingMode.SourceCopy;
             graphics.DrawImageUnscaled(source, 0, 0);
         }
 
