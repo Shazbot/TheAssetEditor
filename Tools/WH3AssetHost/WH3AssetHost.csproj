@@ -6,16 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-
-    <DirectXTexRelease>may2026</DirectXTexRelease>
-    <DirectXTexDirectory>$(MSBuildThisFileDirectory)ThirdParty\DirectXTex</DirectXTexDirectory>
-    <TexconvPath>$(DirectXTexDirectory)\texconv.exe</TexconvPath>
-    <TexconvDownloadUrl>https://github.com/microsoft/DirectXTex/releases/download/$(DirectXTexRelease)/texconv.exe</TexconvDownloadUrl>
-    <TexconvSha512>AEAF50E4E531182FF44C3879FA68B6FBF43EDA69A9C3E632E9A6D5AE74A8239301C406391AC0A9D4B9A1579F8A0571360AC1E20F01559997F644E19FD33AC4D9</TexconvSha512>
   </PropertyGroup>
 
-  <!-- The managed host is a single self-contained executable; texconv and its MIT license
-       are shipped beside it as explicit third-party runtime files. -->
+  <!-- Release builds are distributed with the mod manager as one self-contained file. -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
@@ -50,35 +43,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Remove default None items first so repeat builds do not trip SDK duplicate-item checks
-         after texconv.exe has been downloaded into the project tree. -->
-    <None Remove="$(TexconvPath)" />
-    <None Include="$(TexconvPath)"
-          Link="texconv.exe"
-          CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest"
-          Visible="false" />
-    <None Remove="ThirdParty\DirectXTex\LICENSE.txt" />
-    <None Include="ThirdParty\DirectXTex\LICENSE.txt"
-          Link="DirectXTex-LICENSE.txt"
-          CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest" />
+    <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.1" />
   </ItemGroup>
-
-  <Target Name="EnsureTexconv" BeforeTargets="PrepareForBuild">
-    <MakeDir Directories="$(DirectXTexDirectory)" />
-    <DownloadFile Condition="!Exists('$(TexconvPath)')"
-                  SourceUrl="$(TexconvDownloadUrl)"
-                  DestinationFolder="$(DirectXTexDirectory)"
-                  DestinationFileName="texconv.exe"
-                  SkipUnchangedFiles="true"
-                  Retries="2" />
-    <GetFileHash Files="$(TexconvPath)" Algorithm="SHA512">
-      <Output TaskParameter="Hash" PropertyName="_TexconvActualSha512" />
-    </GetFileHash>
-    <Error Condition="'$(_TexconvActualSha512)' != '$(TexconvSha512)'"
-           Text="texconv.exe SHA-512 verification failed. Delete '$(TexconvPath)' and rebuild to download the pinned DirectXTex $(DirectXTexRelease) binary." />
-  </Target>
 
   <ItemGroup>
     <TrimmerRootDescriptor Include="Trim/WH3AssetHost.Linker.xml" />
