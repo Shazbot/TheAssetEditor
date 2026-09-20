@@ -32,7 +32,7 @@ internal sealed class BcnDdsEncoder
                 + $"{sourceFormat.Width}x{sourceFormat.Height}.");
         }
 
-        var sourceDeclaresOpaqueAlpha = sourceFormat.UsesDx10Header && sourceFormat.Dx10AlphaMode == 3;
+        var sourceDeclaresOpaqueAlpha = sourceFormat.UsesDx10Header && sourceFormat.Dx10AlphaMode == 3u;
         var useBc1Alpha =
             baseCompressionFormat == CompressionFormat.Bc1
             && image.HasTransparency
