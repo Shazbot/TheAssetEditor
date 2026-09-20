@@ -150,6 +150,8 @@ internal static class DdsFormatInspector
                     Dx10AlphaMode: ReadUInt32(data, 144) & 0x7);
             }
 
+            ValidateLegacyTextureShape(data);
+
             var legacyFormat = fourCc switch
             {
                 var value when value == FourCc("DXT1") => "BC1_UNORM",
@@ -230,12 +232,7 @@ internal static class DdsFormatInspector
                 + $"bits={rgbBitCount}, masks=0x{rMask:X8}/0x{gMask:X8}/0x{bMask:X8}/0x{aMask:X8}.");
         }
 
-        var caps2 = ReadUInt32(data, 112);
-        if ((caps2 & (0x00000200u | 0x00200000u)) != 0 || ReadUInt32(data, 24) > 1)
-        {
-            throw new InvalidDataException(
-                "Painted export currently supports only non-volume, non-cubemap DDS textures.");
-        }
+        ValidateLegacyTextureShape(data);
 
         return new DdsSourceFormat(
             uncompressed,
@@ -246,6 +243,16 @@ internal static class DdsFormatInspector
             PreferLegacyHeader: CanUseLegacyHeader(uncompressed),
             ForceDx10Header: false,
             Dx10AlphaMode: null);
+    }
+
+    private static void ValidateLegacyTextureShape(ReadOnlySpan<byte> data)
+    {
+        var caps2 = ReadUInt32(data, 112);
+        if ((caps2 & (0x00000200u | 0x00200000u)) != 0 || ReadUInt32(data, 24) > 1)
+        {
+            throw new InvalidDataException(
+                "Painted export currently supports only non-volume, non-cubemap DDS textures.");
+        }
     }
 
     private static bool CanUseLegacyHeader(string format)
