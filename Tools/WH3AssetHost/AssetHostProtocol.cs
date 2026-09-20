@@ -161,7 +161,7 @@ public sealed record AssetHostResponse(
 
 public static class AssetHostProtocol
 {
-    public const int ProtocolVersion = 2;
+    public const int ProtocolVersion = 1;
     public const int MaxFramePayloadBytes = 1024 * 1024;
     public static string HostVersion { get; } =
         typeof(AssetHostProtocol).Assembly
