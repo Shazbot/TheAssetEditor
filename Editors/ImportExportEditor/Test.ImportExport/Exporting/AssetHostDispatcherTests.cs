@@ -17,6 +17,7 @@ public sealed class AssetHostDispatcherTests
         Assert.That(response.Command, Is.EqualTo("hello"));
         var resultJson = System.Text.Json.JsonSerializer.Serialize(response.Result);
         Assert.That(resultJson, Does.Contain("exportModel"));
+        Assert.That(resultJson, Does.Contain("exportPaintedVariant"));
     }
 
     [Test]
@@ -206,6 +207,70 @@ public sealed class AssetHostDispatcherTests
     }
 
     [Test]
+    public void ExportPaintedVariant_PassesValidatedPathsAndSelectionsToRuntime()
+    {
+        var factory = new FakeRuntimeFactory();
+        using var dispatcher = new AssetHostDispatcher(factory);
+        var root = Path.Combine(Path.GetTempPath(), "asset-host-root", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "painted", "input"));
+        File.WriteAllBytes(
+            Path.Combine(root, "painted", "input", "body.png"),
+            [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+        dispatcher.Dispatch(Initialize(root, "base.pack"));
+
+        var response = dispatcher.Dispatch(Request(
+            "exportPaintedVariant",
+            "painted-1",
+            "assetPath", "unit.variantmeshdefinition",
+            "outputDirectory", "painted/generated",
+            "variantName", "unit_painted",
+            "textures", new[]
+            {
+                new
+                {
+                    sourceVirtualPath = "variantmeshes\\unit\\body_base_colour.dds",
+                    pngPath = "painted/input/body.png"
+                }
+            },
+            "variantSelections", new[]
+            {
+                new { slotPath = "root/slot[0]", choiceIndex = 3 }
+            }));
+
+        Assert.That(response.Success, Is.True);
+        var request = factory.Created.Single().PaintedExports.Single();
+        Assert.That(request.AssetPath, Is.EqualTo("unit.variantmeshdefinition"));
+        Assert.That(request.VariantName, Is.EqualTo("unit_painted"));
+        Assert.That(request.OutputDirectory, Is.EqualTo(Path.Combine(root, "painted", "generated")));
+        Assert.That(request.Textures.Single().SourceVirtualPath, Is.EqualTo("variantmeshes\\unit\\body_base_colour.dds"));
+        Assert.That(request.Textures.Single().PngPath, Is.EqualTo(Path.Combine(root, "painted", "input", "body.png")));
+        Assert.That(request.VariantSelections, Is.EqualTo(new[]
+        {
+            new AssetHostVariantMeshSelection("root/slot[0]", 3)
+        }));
+    }
+
+    [Test]
+    public void ExportPaintedVariant_RejectsInputsOutsideOutputRoot()
+    {
+        var factory = new FakeRuntimeFactory();
+        using var dispatcher = new AssetHostDispatcher(factory);
+        var root = Path.Combine(Path.GetTempPath(), "asset-host-root", Guid.NewGuid().ToString("N"));
+        dispatcher.Dispatch(Initialize(root, "base.pack"));
+
+        var response = dispatcher.Dispatch(Request(
+            "exportPaintedVariant",
+            "painted-invalid",
+            "assetPath", "unit.variantmeshdefinition",
+            "outputDirectory", "../outside",
+            "variantName", "unit_painted",
+            "textures", Array.Empty<object>()));
+
+        Assert.That(response.Error!.Code, Is.EqualTo("InvalidOutputDirectory"));
+        Assert.That(factory.Created.Single().PaintedExports, Is.Empty);
+    }
+
+    [Test]
     public void Export_PropagatesStableMissingAssetAndAnimationCodes()
     {
         var factory = new FakeRuntimeFactory
@@ -289,6 +354,7 @@ public sealed class AssetHostDispatcherTests
     {
         public bool Disposed { get; private set; }
         public List<AssetHostExportRequest> Exports { get; } = [];
+        public List<AssetHostPaintedVariantRequest> PaintedExports { get; } = [];
 
         public ExportResult ExportModel(AssetHostExportRequest request)
         {
@@ -298,6 +364,17 @@ public sealed class AssetHostDispatcherTests
 
         public AssetHostAnimationCatalog GetAnimationCatalog(string assetPath)
             => new(true, assetPath, null, false, [], []);
+
+        public AssetHostPaintedVariantResult ExportPaintedVariant(AssetHostPaintedVariantRequest request)
+        {
+            PaintedExports.Add(request);
+            return new(
+                true,
+                $"variantmeshes\\variantmeshdefinitions\\whmm_unit_painter\\{request.VariantName}.variantmeshdefinition",
+                [],
+                [],
+                []);
+        }
 
         public void Dispose() => Disposed = true;
     }
