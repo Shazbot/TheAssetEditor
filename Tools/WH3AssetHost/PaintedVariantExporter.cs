@@ -1,3 +1,5 @@
+using BCnEncoder.Encoder;
+using BCnEncoder.Shared;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -106,7 +108,7 @@ internal sealed class PaintedVariantExporter
                 var sourceStem = SafeStem(Path.GetFileNameWithoutExtension(painted.Source));
                 var sourceHash = ShortHash(painted.Source);
                 var ddsVirtualPath = $"{assetRoot}\\textures\\{sourceStem}_{sourceHash}_painted.dds";
-                var ddsBytes = Dxt5DdsEncoder.EncodePngFile(painted.Texture.PngPath);
+                var ddsBytes = Bc7DdsEncoder.EncodePngFile(painted.Texture.PngPath);
                 WriteVirtualFile(request.OutputDirectory, ddsVirtualPath, ddsBytes);
                 writtenVirtualFiles.Add(ddsVirtualPath);
                 replacements[painted.Source] = ddsVirtualPath;
@@ -662,52 +664,42 @@ internal sealed class PaintedVariantExporter
 /// quality; the generated DDS contains a complete mip chain and is accepted by
 /// the same DirectX texture path used by WH3.
 /// </summary>
-internal static class Dxt5DdsEncoder
+internal static class Bc7DdsEncoder
 {
-    private const uint DdsMagic = 0x20534444;
-    private const uint DdpfFourCc = 0x00000004;
-    private const uint DdsCapsTexture = 0x00001000;
-    private const uint DdsCapsComplex = 0x00000008;
-    private const uint DdsCapsMipMap = 0x00400000;
-    private const uint DdsdCaps = 0x00000001;
-    private const uint DdsdHeight = 0x00000002;
-    private const uint DdsdWidth = 0x00000004;
-    private const uint DdsdPixelFormat = 0x00001000;
-    private const uint DdsdMipMapCount = 0x00020000;
-    private const uint DdsdLinearSize = 0x00080000;
-    private const uint FourCcDxt5 = 0x35545844;
-
     public static byte[] EncodePngFile(string pngPath)
     {
-        var level = ReadPng(pngPath);
-        var mipCount = CountMipLevels(level.Width, level.Height);
+        var image = ReadPng(pngPath);
+        var encoder = new BcEncoder();
+        encoder.OutputOptions.GenerateMipMaps = true;
+        encoder.OutputOptions.Quality = CompressionQuality.Balanced;
+        encoder.OutputOptions.Format = CompressionFormat.Bc7;
+        encoder.OutputOptions.FileFormat = OutputFileFormat.Dds;
+        encoder.Options.IsParallel = true;
 
         using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
-        WriteHeader(writer, level.Width, level.Height, mipCount);
-
-        for (var mip = 0; mip < mipCount; mip++)
-        {
-            EncodeLevel(writer, level);
-            if (mip + 1 < mipCount)
-                level = Downsample(level);
-        }
-
-        writer.Flush();
+        encoder.EncodeToStream(
+            image.Data,
+            image.Width,
+            image.Height,
+            BCnEncoder.Encoder.PixelFormat.Rgba32,
+            stream);
         return stream.ToArray();
     }
 
     private static RgbaImage ReadPng(string path)
     {
         using var source = new Bitmap(path);
-        using var bitmap = new Bitmap(source.Width, source.Height, PixelFormat.Format32bppArgb);
+        using var bitmap = new Bitmap(source.Width, source.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using (var graphics = Graphics.FromImage(bitmap))
         {
             graphics.DrawImageUnscaled(source, 0, 0);
         }
 
         var rectangle = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
-        var bitmapData = bitmap.LockBits(rectangle, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        var bitmapData = bitmap.LockBits(
+            rectangle,
+            ImageLockMode.ReadOnly,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         try
         {
             var stride = Math.Abs(bitmapData.Stride);
@@ -739,269 +731,5 @@ internal static class Dxt5DdsEncoder
         }
     }
 
-    private static void WriteHeader(BinaryWriter writer, int width, int height, int mipCount)
-    {
-        writer.Write(DdsMagic);
-        writer.Write(124u);
-        writer.Write(DdsdCaps | DdsdHeight | DdsdWidth | DdsdPixelFormat | DdsdLinearSize
-                     | (mipCount > 1 ? DdsdMipMapCount : 0u));
-        writer.Write((uint)height);
-        writer.Write((uint)width);
-        writer.Write((uint)(
-            Math.Max(1, (width + 3) / 4)
-            * Math.Max(1, (height + 3) / 4)
-            * 16));
-        writer.Write(0u);
-        writer.Write((uint)mipCount);
-        for (var index = 0; index < 11; index++)
-            writer.Write(0u);
-
-        writer.Write(32u);
-        writer.Write(DdpfFourCc);
-        writer.Write(FourCcDxt5);
-        writer.Write(0u);
-        writer.Write(0u);
-        writer.Write(0u);
-        writer.Write(0u);
-        writer.Write(0u);
-
-        var caps = DdsCapsTexture;
-        if (mipCount > 1)
-            caps |= DdsCapsComplex | DdsCapsMipMap;
-        writer.Write(caps);
-        writer.Write(0u);
-        writer.Write(0u);
-        writer.Write(0u);
-        writer.Write(0u);
-    }
-
-    private static void EncodeLevel(BinaryWriter writer, RgbaImage image)
-    {
-        var block = new RgbaPixel[16];
-        for (var blockY = 0; blockY < image.Height; blockY += 4)
-        {
-            for (var blockX = 0; blockX < image.Width; blockX += 4)
-            {
-                var pixelIndex = 0;
-                for (var y = 0; y < 4; y++)
-                {
-                    var sourceY = Math.Min(blockY + y, image.Height - 1);
-                    for (var x = 0; x < 4; x++)
-                    {
-                        var sourceX = Math.Min(blockX + x, image.Width - 1);
-                        var offset = (sourceY * image.Width + sourceX) * 4;
-                        block[pixelIndex++] = new RgbaPixel(
-                            image.Data[offset],
-                            image.Data[offset + 1],
-                            image.Data[offset + 2],
-                            image.Data[offset + 3]);
-                    }
-                }
-
-                EncodeAlphaBlock(writer, block);
-                EncodeColorBlock(writer, block);
-            }
-        }
-    }
-
-    private static void EncodeAlphaBlock(BinaryWriter writer, ReadOnlySpan<RgbaPixel> pixels)
-    {
-        byte alpha0 = 0;
-        byte alpha1 = 255;
-        foreach (var pixel in pixels)
-        {
-            alpha0 = Math.Max(alpha0, pixel.A);
-            alpha1 = Math.Min(alpha1, pixel.A);
-        }
-
-        writer.Write(alpha0);
-        writer.Write(alpha1);
-
-        Span<byte> palette = stackalloc byte[8];
-        palette[0] = alpha0;
-        palette[1] = alpha1;
-        if (alpha0 > alpha1)
-        {
-            for (var index = 1; index <= 6; index++)
-                palette[index + 1] = (byte)(((7 - index) * alpha0 + index * alpha1 + 3) / 7);
-        }
-        else
-        {
-            for (var index = 1; index <= 4; index++)
-                palette[index + 1] = (byte)(((5 - index) * alpha0 + index * alpha1 + 2) / 5);
-            palette[6] = 0;
-            palette[7] = 255;
-        }
-
-        ulong indices = 0;
-        for (var pixelIndex = 0; pixelIndex < 16; pixelIndex++)
-        {
-            var bestIndex = 0;
-            var bestDistance = int.MaxValue;
-            for (var paletteIndex = 0; paletteIndex < 8; paletteIndex++)
-            {
-                var distance = Math.Abs(pixels[pixelIndex].A - palette[paletteIndex]);
-                if (distance >= bestDistance)
-                    continue;
-                bestDistance = distance;
-                bestIndex = paletteIndex;
-            }
-            indices |= (ulong)bestIndex << (pixelIndex * 3);
-        }
-
-        for (var byteIndex = 0; byteIndex < 6; byteIndex++)
-            writer.Write((byte)(indices >> (byteIndex * 8)));
-    }
-
-    private static void EncodeColorBlock(BinaryWriter writer, ReadOnlySpan<RgbaPixel> pixels)
-    {
-        var darkest = pixels[0];
-        var lightest = pixels[0];
-        var darkestScore = LuminanceScore(darkest);
-        var lightestScore = darkestScore;
-        foreach (var pixel in pixels)
-        {
-            var score = LuminanceScore(pixel);
-            if (score < darkestScore)
-            {
-                darkestScore = score;
-                darkest = pixel;
-            }
-            if (score > lightestScore)
-            {
-                lightestScore = score;
-                lightest = pixel;
-            }
-        }
-
-        var color0 = ToRgb565(lightest);
-        var color1 = ToRgb565(darkest);
-        if (color0 == color1)
-        {
-            if (color0 < ushort.MaxValue)
-                color0++;
-            else
-                color1--;
-        }
-        if (color0 < color1)
-            (color0, color1) = (color1, color0);
-
-        writer.Write(color0);
-        writer.Write(color1);
-
-        Span<RgbPixel> palette = stackalloc RgbPixel[4];
-        palette[0] = FromRgb565(color0);
-        palette[1] = FromRgb565(color1);
-        palette[2] = Mix(palette[0], palette[1], 2, 1, 3);
-        palette[3] = Mix(palette[0], palette[1], 1, 2, 3);
-
-        uint indices = 0;
-        for (var pixelIndex = 0; pixelIndex < 16; pixelIndex++)
-        {
-            var pixel = pixels[pixelIndex];
-            var bestIndex = 0;
-            var bestDistance = int.MaxValue;
-            for (var paletteIndex = 0; paletteIndex < 4; paletteIndex++)
-            {
-                var candidate = palette[paletteIndex];
-                var dr = pixel.R - candidate.R;
-                var dg = pixel.G - candidate.G;
-                var db = pixel.B - candidate.B;
-                var distance = dr * dr + dg * dg + db * db;
-                if (distance >= bestDistance)
-                    continue;
-                bestDistance = distance;
-                bestIndex = paletteIndex;
-            }
-            indices |= (uint)bestIndex << (pixelIndex * 2);
-        }
-
-        writer.Write(indices);
-    }
-
-    private static RgbaImage Downsample(RgbaImage source)
-    {
-        var width = Math.Max(1, source.Width / 2);
-        var height = Math.Max(1, source.Height / 2);
-        var output = new byte[width * height * 4];
-
-        for (var y = 0; y < height; y++)
-        {
-            for (var x = 0; x < width; x++)
-            {
-                var sumR = 0;
-                var sumG = 0;
-                var sumB = 0;
-                var sumA = 0;
-                var samples = 0;
-                for (var offsetY = 0; offsetY < 2; offsetY++)
-                {
-                    var sourceY = y * 2 + offsetY;
-                    if (sourceY >= source.Height)
-                        continue;
-                    for (var offsetX = 0; offsetX < 2; offsetX++)
-                    {
-                        var sourceX = x * 2 + offsetX;
-                        if (sourceX >= source.Width)
-                            continue;
-                        var sourceIndex = (sourceY * source.Width + sourceX) * 4;
-                        sumR += source.Data[sourceIndex];
-                        sumG += source.Data[sourceIndex + 1];
-                        sumB += source.Data[sourceIndex + 2];
-                        sumA += source.Data[sourceIndex + 3];
-                        samples++;
-                    }
-                }
-
-                var targetIndex = (y * width + x) * 4;
-                output[targetIndex] = (byte)((sumR + samples / 2) / samples);
-                output[targetIndex + 1] = (byte)((sumG + samples / 2) / samples);
-                output[targetIndex + 2] = (byte)((sumB + samples / 2) / samples);
-                output[targetIndex + 3] = (byte)((sumA + samples / 2) / samples);
-            }
-        }
-
-        return new RgbaImage(width, height, output);
-    }
-
-    private static int CountMipLevels(int width, int height)
-    {
-        var levels = 1;
-        while (width > 1 || height > 1)
-        {
-            width = Math.Max(1, width / 2);
-            height = Math.Max(1, height / 2);
-            levels++;
-        }
-        return levels;
-    }
-
-    private static int LuminanceScore(RgbaPixel pixel)
-        => pixel.R * 299 + pixel.G * 587 + pixel.B * 114;
-
-    private static ushort ToRgb565(RgbaPixel pixel)
-        => (ushort)(((pixel.R * 31 + 127) / 255 << 11)
-                    | ((pixel.G * 63 + 127) / 255 << 5)
-                    | ((pixel.B * 31 + 127) / 255));
-
-    private static RgbPixel FromRgb565(ushort value)
-    {
-        var r5 = (value >> 11) & 31;
-        var g6 = (value >> 5) & 63;
-        var b5 = value & 31;
-        return new RgbPixel(
-            (byte)((r5 * 255 + 15) / 31),
-            (byte)((g6 * 255 + 31) / 63),
-            (byte)((b5 * 255 + 15) / 31));
-    }
-
-    private static RgbPixel Mix(RgbPixel first, RgbPixel second, int firstWeight, int secondWeight, int divisor)
-        => new(
-            (byte)((first.R * firstWeight + second.R * secondWeight + divisor / 2) / divisor),
-            (byte)((first.G * firstWeight + second.G * secondWeight + divisor / 2) / divisor),
-            (byte)((first.B * firstWeight + second.B * secondWeight + divisor / 2) / divisor));
-
     private sealed record RgbaImage(int Width, int Height, byte[] Data);
-    private readonly record struct RgbaPixel(byte R, byte G, byte B, byte A);
-    private readonly record struct RgbPixel(byte R, byte G, byte B);
 }
