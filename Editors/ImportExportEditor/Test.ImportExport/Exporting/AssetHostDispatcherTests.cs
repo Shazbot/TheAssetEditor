@@ -214,8 +214,8 @@ public sealed class AssetHostDispatcherTests
         var root = Path.Combine(Path.GetTempPath(), "asset-host-root", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "painted", "input"));
         File.WriteAllBytes(
-            Path.Combine(root, "painted", "input", "body.png"),
-            [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+            Path.Combine(root, "painted", "input", "body.rgba"),
+            Enumerable.Repeat((byte)255, 2 * 2 * 4).ToArray());
         dispatcher.Dispatch(Initialize(root, "base.pack"));
 
         var response = dispatcher.Dispatch(Request(
@@ -229,7 +229,9 @@ public sealed class AssetHostDispatcherTests
                 new
                 {
                     sourceVirtualPath = "variantmeshes\\unit\\body_base_colour.dds",
-                    pngPath = "painted/input/body.png"
+                    rgbaPath = "painted/input/body.rgba",
+                    width = 2,
+                    height = 2
                 }
             },
             "variantSelections", new[]
@@ -243,11 +245,45 @@ public sealed class AssetHostDispatcherTests
         Assert.That(request.VariantName, Is.EqualTo("unit_painted"));
         Assert.That(request.OutputDirectory, Is.EqualTo(Path.Combine(root, "painted", "generated")));
         Assert.That(request.Textures.Single().SourceVirtualPath, Is.EqualTo("variantmeshes\\unit\\body_base_colour.dds"));
-        Assert.That(request.Textures.Single().PngPath, Is.EqualTo(Path.Combine(root, "painted", "input", "body.png")));
+        Assert.That(request.Textures.Single().RgbaPath, Is.EqualTo(Path.Combine(root, "painted", "input", "body.rgba")));
+        Assert.That(request.Textures.Single().Width, Is.EqualTo(2));
+        Assert.That(request.Textures.Single().Height, Is.EqualTo(2));
         Assert.That(request.VariantSelections, Is.EqualTo(new[]
         {
             new AssetHostVariantMeshSelection("root/slot[0]", 3)
         }));
+    }
+
+    [Test]
+    public void ExportPaintedVariant_RejectsRgbaLengthMismatch()
+    {
+        var factory = new FakeRuntimeFactory();
+        using var dispatcher = new AssetHostDispatcher(factory);
+        var root = Path.Combine(Path.GetTempPath(), "asset-host-root", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "painted", "input"));
+        File.WriteAllBytes(Path.Combine(root, "painted", "input", "body.rgba"), new byte[15]);
+        dispatcher.Dispatch(Initialize(root, "base.pack"));
+
+        var response = dispatcher.Dispatch(Request(
+            "exportPaintedVariant",
+            "painted-invalid-rgba",
+            "assetPath", "unit.variantmeshdefinition",
+            "outputDirectory", "painted/generated",
+            "variantName", "unit_painted",
+            "textures", new[]
+            {
+                new
+                {
+                    sourceVirtualPath = "variantmeshes\\unit\\body_base_colour.dds",
+                    rgbaPath = "painted/input/body.rgba",
+                    width = 2,
+                    height = 2
+                }
+            }));
+
+        Assert.That(response.Error!.Code, Is.EqualTo("InvalidPaintedTexture"));
+        Assert.That(response.Error.Message, Does.Contain("expected 16"));
+        Assert.That(factory.Created.Single().PaintedExports, Is.Empty);
     }
 
     [Test]
