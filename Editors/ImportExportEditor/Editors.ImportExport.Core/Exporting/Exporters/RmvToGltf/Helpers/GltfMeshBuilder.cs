@@ -1,5 +1,6 @@
 using System.IO;
 using System.Numerics;
+using System.Text.Json.Nodes;
 using Editors.ImportExport.Common;
 using GameWorld.Core.Services;
 using Shared.GameFormats.RigidModel;
@@ -231,9 +232,24 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 var channel = material.UseChannel(texture.GltfTextureType);
                 if (channel?.Texture?.PrimaryImage != null)
                 {
+                    var image = channel.Texture.PrimaryImage;
+                    var generatedFileName = Path.GetFileName(texture.SystemFilePath);
+
+                    // Preserve a stable source identity inside the GLB itself. THREE.GLTFLoader
+                    // copies image extras onto Texture.userData, so WHMM can paint an embedded
+                    // image and still map it back to the original pack-relative DDS path without
+                    // depending on blob URLs or texture ordering.
+                    image.Name = generatedFileName;
+                    image.Extras = new JsonObject
+                    {
+                        ["wh3SourceVirtualPath"] = texture.SourceVirtualPath,
+                        ["wh3GeneratedFileName"] = generatedFileName,
+                        ["wh3Channel"] = texture.GltfTextureType.ToString()
+                    };
+
                     // Preserve the generated name even when the image is supplied
                     // from memory so text glTF exports retain their existing paths.
-                    channel.Texture.PrimaryImage.AlternateWriteFileName = Path.GetFileName(texture.SystemFilePath);
+                    image.AlternateWriteFileName = generatedFileName;
                 }
             }
 
