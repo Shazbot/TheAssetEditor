@@ -19,6 +19,26 @@ internal sealed class TexconvDdsEncoder
         }
     }
 
+    private static void PreserveDx10AlphaMode(byte[] dds, DdsSourceFormat sourceFormat)
+    {
+        if (!sourceFormat.ForceDx10Header || !sourceFormat.Dx10AlphaMode.HasValue)
+            return;
+        if (dds.Length < 148
+            || dds[84] != (byte)'D'
+            || dds[85] != (byte)'X'
+            || dds[86] != (byte)'1'
+            || dds[87] != (byte)'0')
+        {
+            throw new InvalidDataException(
+                "texconv was asked to preserve a DX10 DDS header but did not emit one.");
+        }
+
+        var miscFlags2 = BitConverter.ToUInt32(dds, 144);
+        miscFlags2 = (miscFlags2 & ~0x7u) | (sourceFormat.Dx10AlphaMode.Value & 0x7u);
+        var bytes = BitConverter.GetBytes(miscFlags2);
+        Buffer.BlockCopy(bytes, 0, dds, 144, bytes.Length);
+    }
+
     public byte[] EncodePngFile(string pngPath, DdsSourceFormat sourceFormat)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pngPath);
@@ -54,7 +74,9 @@ internal sealed class TexconvDdsEncoder
             startInfo.ArgumentList.Add(sourceFormat.MipCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (sourceFormat.IsSrgb)
                 startInfo.ArgumentList.Add("-srgb");
-            if (sourceFormat.PreferLegacyHeader)
+            if (sourceFormat.ForceDx10Header)
+                startInfo.ArgumentList.Add("-dx10");
+            else if (sourceFormat.PreferLegacyHeader)
                 startInfo.ArgumentList.Add("-dx9");
             startInfo.ArgumentList.Add("-o");
             startInfo.ArgumentList.Add(outputDirectory);
@@ -101,6 +123,7 @@ internal sealed class TexconvDdsEncoder
             }
 
             var dds = File.ReadAllBytes(outputPath);
+            PreserveDx10AlphaMode(dds, sourceFormat);
             var actual = DdsFormatInspector.Inspect(dds);
             if (!string.Equals(actual.TexconvFormat, sourceFormat.TexconvFormat, StringComparison.OrdinalIgnoreCase)
                 || actual.Width != sourceFormat.Width
