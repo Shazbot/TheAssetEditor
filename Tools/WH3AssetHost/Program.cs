@@ -545,6 +545,24 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         return result;
     }
 
+    public AssetHostPaintedVariantResult ExportPaintedVariant(AssetHostPaintedVariantRequest request)
+    {
+        EnsureAssetSession(request.AssetPath);
+        var stopwatch = Stopwatch.StartNew();
+        var result = new PaintedVariantExporter(PackFileService, _compositionResolver).Export(request);
+        stopwatch.Stop();
+
+        Log.ForContext<HeadlessExportRuntime>().Information(
+            "Painted variant export completed in {ElapsedMs}ms for {AssetPath}: success={Success}, textures={TextureCount}, files={FileCount}",
+            stopwatch.ElapsedMilliseconds,
+            request.AssetPath,
+            result.Success,
+            request.Textures.Count,
+            result.Files.Count);
+
+        return result;
+    }
+
     private static ExportResult Failure(string code, string message)
         => new(
             false,
