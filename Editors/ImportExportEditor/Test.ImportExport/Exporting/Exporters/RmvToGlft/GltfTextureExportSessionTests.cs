@@ -212,7 +212,10 @@ public class GltfTextureExportSessionTests
             false,
             false,
             false,
-            false);
+            false)
+        {
+            UseKtx2Textures = true
+        };
         var textures = new List<TextureResult>
         {
             new(0, missingPath, KnownChannel.BaseColor)
