@@ -97,6 +97,7 @@ internal sealed class BcnDdsEncoder
             stream);
 
         var dds = stream.ToArray();
+        NormalizeCompressedHeader(dds, sourceFormat);
         PreserveSourceHeaderMetadata(dds, sourceFormat);
 
         var actual = DdsFormatInspector.Inspect(dds);
@@ -153,6 +154,39 @@ internal sealed class BcnDdsEncoder
             $"BaseColour DDS format '{sourceFormat.FormatName}' cannot be losslessly round-tripped "
             + "through the current 8-bit unit painter. Supported formats are BC1/DXT1, BC2/DXT3, "
             + "BC3/DXT5, and BC7.");
+
+    private static void NormalizeCompressedHeader(byte[] dds, DdsSourceFormat sourceFormat)
+    {
+        // BCnEncoder 2.3 writes the mip count and mip caps, but does not set
+        // DDSD_MIPMAPCOUNT or DDSD_LINEARSIZE. Some DDS readers tolerate that;
+        // WH3 output should be a standards-complete DDS instead of relying on it.
+        const uint ddsdMipmapCount = 0x00020000;
+        const uint ddsdLinearSize = 0x00080000;
+        const uint ddsCapsComplex = 0x00000008;
+        const uint ddsCapsTexture = 0x00001000;
+        const uint ddsCapsMipmap = 0x00400000;
+
+        var flags = ReadUInt32(dds, 8) | ddsdLinearSize;
+        if (sourceFormat.MipCount > 1)
+            flags |= ddsdMipmapCount;
+        else
+            flags &= ~ddsdMipmapCount;
+        WriteUInt32(dds, 8, flags);
+
+        var bytesPerBlock = sourceFormat.FormatName.StartsWith("BC1_", StringComparison.Ordinal)
+            ? 8u
+            : 16u;
+        var blockWidth = Math.Max(1u, ((uint)sourceFormat.Width + 3u) / 4u);
+        var blockHeight = Math.Max(1u, ((uint)sourceFormat.Height + 3u) / 4u);
+        WriteUInt32(dds, 20, checked(blockWidth * blockHeight * bytesPerBlock));
+
+        var caps = ReadUInt32(dds, 108) | ddsCapsTexture;
+        if (sourceFormat.MipCount > 1)
+            caps |= ddsCapsComplex | ddsCapsMipmap;
+        else
+            caps &= ~(ddsCapsComplex | ddsCapsMipmap);
+        WriteUInt32(dds, 108, caps);
+    }
 
     private static void PreserveSourceHeaderMetadata(byte[] dds, DdsSourceFormat sourceFormat)
     {
