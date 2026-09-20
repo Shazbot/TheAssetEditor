@@ -172,7 +172,7 @@ public static class AssetHostProtocol
         ?? "unknown";
 
     public static readonly IReadOnlyList<string> Capabilities =
-        ["hello", "initialize", "getAnimationCatalog", "exportModel", "exportModelBatch", "exportPaintedVariant", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
+        ["hello", "initialize", "getAnimationCatalog", "exportModel", "exportModelBatch", "exportPaintedVariant", "paintedVariantRgba", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
 }
 
 /// <summary>
