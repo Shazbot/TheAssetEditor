@@ -98,6 +98,7 @@ public sealed class PaintedVariantTextureEncoderTests
         var dds = new byte[length];
         WriteUInt32(dds, 0, 0x20534444);
         WriteUInt32(dds, 4, 124);
+        WriteUInt32(dds, 8, mipCount > 1 ? 0x00020000u : 0u);
         WriteUInt32(dds, 12, checked((uint)height));
         WriteUInt32(dds, 16, checked((uint)width));
         WriteUInt32(dds, 28, checked((uint)mipCount));
