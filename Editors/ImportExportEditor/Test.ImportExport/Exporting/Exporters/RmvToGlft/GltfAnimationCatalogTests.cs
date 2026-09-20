@@ -120,6 +120,34 @@ public class GltfAnimationCatalogTests
     }
 
     [Test]
+    public void NestedVmdSlotWithoutAttachmentInheritsParentAttachment()
+    {
+        var input = PackFile.CreateFromASCII("root.variantmeshdefinition", "root");
+        var modelFile = PackFile.CreateFromASCII("spear.rigid_model_v2", "spear");
+        var root = new ResolvedVariantMeshNode("root", input, null);
+        var nested = new ResolvedVariantMeshNode(
+            "nested",
+            PackFile.CreateFromASCII("nested.variantmeshdefinition", "nested"),
+            null);
+        nested.Slots.Add(new ResolvedVariantMeshSlot("spear", string.Empty)
+        {
+            SelectedChild = new ResolvedVariantMeshNode("model", modelFile, null)
+            {
+                ModelAsset = CreateAsset(modelFile, "humanoid07b")
+            }
+        });
+        root.Slots.Add(new ResolvedVariantMeshSlot("weapon2", "be_prop_1")
+        {
+            SelectedChild = nested
+        });
+
+        var component = GltfAnimationCatalogResolver.EnumerateComponents(root).Single();
+
+        Assert.That(component.Asset.InputFile, Is.SameAs(modelFile));
+        Assert.That(component.AttachmentPoint, Is.EqualTo("be_prop_1"));
+    }
+
+    [Test]
     public void ExporterCoreInitializesSupportedExporterBeforeExecute()
     {
         var source = PackFile.CreateFromASCII("model.rigid_model_v2", "model");

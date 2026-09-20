@@ -227,7 +227,13 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
             if (slot.SelectedChild == null)
                 continue;
 
-            foreach (var component in EnumerateComponents(slot.SelectedChild, slot.AttachmentPoint))
+            // A nested VMD commonly uses an intermediate slot without its own
+            // attach_point. In that case the component remains attached to the
+            // parent VMD slot; only an explicit child attachment overrides it.
+            var childAttachmentPoint = string.IsNullOrWhiteSpace(slot.AttachmentPoint)
+                ? attachmentPoint
+                : slot.AttachmentPoint;
+            foreach (var component in EnumerateComponents(slot.SelectedChild, childAttachmentPoint))
                 yield return component;
         }
     }
