@@ -245,7 +245,7 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
             var node = new ResolvedVariantMeshNode(
                 GetDefinitionKey(candidateFile),
                 candidateFile,
-                null)
+                reference)
             {
                 ModelAsset = asset
             };
