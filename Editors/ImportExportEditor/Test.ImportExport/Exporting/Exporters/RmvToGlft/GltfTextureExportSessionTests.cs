@@ -40,7 +40,7 @@ public class GltfTextureExportSessionTests
                 });
 
             var handler = new GltfTextureHandler(new Mock<IDdsToNormalPngExporter>().Object, materialExporter.Object);
-            var asset = CreateAsset("textures\\same\\shared.dds", "textures/same/shared.dds");
+            var asset = CreateAsset("textures\\same\\shared.dds", "textures\\same\\shared.dds");
             var settings = new RmvToGltfExporterSettings(
                 asset.InputFile,
                 [],
@@ -111,8 +111,8 @@ public class GltfTextureExportSessionTests
             Assert.That(textures.Select(x => x.SystemFilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count(), Is.EqualTo(2));
             Assert.That(textures.Select(x => x.SourceVirtualPath), Is.EquivalentTo(new[]
             {
-                "textures/first/shared.dds",
-                "textures/second/shared.dds"
+                "textures\\first\\shared.dds",
+                "textures\\second\\shared.dds"
             }));
             Assert.That(textures.All(x => File.Exists(x.SystemFilePath)), Is.True);
             materialExporter.Verify(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Exactly(2));
