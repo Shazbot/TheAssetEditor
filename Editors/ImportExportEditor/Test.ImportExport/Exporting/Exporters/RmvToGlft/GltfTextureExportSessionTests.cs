@@ -55,6 +55,10 @@ public class GltfTextureExportSessionTests
 
             Assert.That(textures, Has.Count.EqualTo(2));
             Assert.That(textures.Select(x => x.SystemFilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count(), Is.EqualTo(1));
+            Assert.That(textures.Select(x => x.SourceVirtualPath).Distinct(StringComparer.OrdinalIgnoreCase), Is.EqualTo(new[]
+            {
+                "textures/same/shared.dds"
+            }));
             materialExporter.Verify(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Once);
         }
         finally
@@ -105,6 +109,11 @@ public class GltfTextureExportSessionTests
 
             Assert.That(textures, Has.Count.EqualTo(2));
             Assert.That(textures.Select(x => x.SystemFilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count(), Is.EqualTo(2));
+            Assert.That(textures.Select(x => x.SourceVirtualPath), Is.EquivalentTo(new[]
+            {
+                "textures/first/shared.dds",
+                "textures/second/shared.dds"
+            }));
             Assert.That(textures.All(x => File.Exists(x.SystemFilePath)), Is.True);
             materialExporter.Verify(x => x.ExportWithData(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>()), Times.Exactly(2));
         }
