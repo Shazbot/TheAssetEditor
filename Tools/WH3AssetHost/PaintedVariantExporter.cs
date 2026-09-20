@@ -210,6 +210,19 @@ internal sealed class PaintedVariantExporter
 
         if (hasEffectiveWsMaterials && asset.WsModelFile != null)
         {
+            // An effective WSModel material may override only some slots. The same
+            // painted source can therefore be explicit in one XML material and
+            // inherited from RMV2 in another part. Clone both layers when needed.
+            var clonedGeometryPath = RawRmvUsesPaintedTexture(asset, replacements)
+                ? CloneRmvModel(
+                    asset,
+                    componentIndex,
+                    assetRoot,
+                    outputDirectory,
+                    replacements,
+                    writtenVirtualFiles)
+                : null;
+
             var wsModelPath = CloneWsModel(
                 asset,
                 componentIndex,
@@ -217,28 +230,14 @@ internal sealed class PaintedVariantExporter
                 outputDirectory,
                 replacements,
                 materialCloneCache,
-                writtenVirtualFiles);
+                writtenVirtualFiles,
+                clonedGeometryPath);
             if (wsModelPath != null)
                 return wsModelPath;
 
-            // A WSModel can inherit a slot from the RMV2 material when its XML
-            // does not override that texture. Clone the geometry in that case,
-            // then keep every original WS material mapping while pointing the
-            // cloned WSModel at the painted RMV2.
-            var clonedGeometryPath = CloneRmvModel(
-                asset,
-                componentIndex,
-                assetRoot,
-                outputDirectory,
-                replacements,
-                writtenVirtualFiles);
-            return CloneWsModelWithGeometry(
-                asset.WsModelFile,
-                componentIndex,
-                assetRoot,
-                outputDirectory,
-                clonedGeometryPath,
-                writtenVirtualFiles);
+            throw new InvalidOperationException(
+                $"Model '{GetVirtualPath(asset.InputFile)}' uses a painted effective texture, "
+                + "but neither its RMV2 material nor its WSModel material exposed a replaceable source path.");
         }
 
         return CloneRmvModel(
@@ -257,18 +256,28 @@ internal sealed class PaintedVariantExporter
         string outputDirectory,
         IReadOnlyDictionary<string, string> replacements,
         Dictionary<string, string> materialCloneCache,
-        List<string> writtenVirtualFiles)
+        List<string> writtenVirtualFiles,
+        string? geometryOverride)
     {
         var wsModelFile = asset.WsModelFile;
         if (wsModelFile == null)
             return null;
 
         var document = LoadXml(wsModelFile.DataSource.ReadData());
+        var changed = false;
+
+        if (!string.IsNullOrWhiteSpace(geometryOverride))
+        {
+            var geometryNode = document.SelectSingleNode("/model/geometry")
+                ?? throw new InvalidOperationException(
+                    $"WSModel '{GetVirtualPath(wsModelFile)}' does not contain a geometry node.");
+            geometryNode.InnerText = geometryOverride;
+            changed = true;
+        }
+
         var materialNodes = document.SelectNodes("/model/materials/material");
         if (materialNodes == null)
-            return null;
-
-        var changed = false;
+            return changed ? SaveClonedWsModel() : null;
         foreach (XmlNode materialNode in materialNodes)
         {
             var sourceMaterialPath = NormalizeVirtualPath(materialNode.InnerText);
@@ -296,35 +305,18 @@ internal sealed class PaintedVariantExporter
         if (!changed)
             return null;
 
-        var sourcePath = GetVirtualPath(wsModelFile);
-        var fileName = $"{componentIndex:D3}_{SafeStem(Path.GetFileNameWithoutExtension(sourcePath))}_{ShortHash(sourcePath)}.wsmodel";
-        var targetVirtualPath = $"{assetRoot}\\models\\{fileName}";
-        WriteVirtualFile(outputDirectory, targetVirtualPath, SaveXml(document));
-        writtenVirtualFiles.Add(targetVirtualPath);
-        return targetVirtualPath;
-    }
+        return SaveClonedWsModel();
 
-    private static string CloneWsModelWithGeometry(
-        Shared.Core.PackFiles.Models.PackFile wsModelFile,
-        int componentIndex,
-        string assetRoot,
-        string outputDirectory,
-        string geometryVirtualPath,
-        List<string> writtenVirtualFiles)
-    {
-        var document = LoadXml(wsModelFile.DataSource.ReadData());
-        var geometryNode = document.SelectSingleNode("/model/geometry")
-            ?? throw new InvalidOperationException(
-                $"WSModel '{GetVirtualPath(wsModelFile)}' does not contain a geometry node.");
-        geometryNode.InnerText = geometryVirtualPath;
-
-        var sourcePath = GetVirtualPath(wsModelFile);
-        var fileName =
-            $"{componentIndex:D3}_{SafeStem(Path.GetFileNameWithoutExtension(sourcePath))}_{ShortHash(sourcePath)}.wsmodel";
-        var targetVirtualPath = $"{assetRoot}\\models\\{fileName}";
-        WriteVirtualFile(outputDirectory, targetVirtualPath, SaveXml(document));
-        writtenVirtualFiles.Add(targetVirtualPath);
-        return targetVirtualPath;
+        string SaveClonedWsModel()
+        {
+            var sourcePath = GetVirtualPath(wsModelFile);
+            var fileName =
+                $"{componentIndex:D3}_{SafeStem(Path.GetFileNameWithoutExtension(sourcePath))}_{ShortHash(sourcePath)}.wsmodel";
+            var targetVirtualPath = $"{assetRoot}\\models\\{fileName}";
+            WriteVirtualFile(outputDirectory, targetVirtualPath, SaveXml(document));
+            writtenVirtualFiles.Add(targetVirtualPath);
+            return targetVirtualPath;
+        }
     }
 
     private string? CloneMaterialIfAffected(
@@ -413,6 +405,16 @@ internal sealed class PaintedVariantExporter
         writtenVirtualFiles.Add(targetVirtualPath);
         return targetVirtualPath;
     }
+
+    private static bool RawRmvUsesPaintedTexture(
+        ResolvedModelAsset asset,
+        IReadOnlyDictionary<string, string> replacements)
+        => asset.PartsByLod
+            .SelectMany(parts => parts)
+            .SelectMany(part => part.Material.SourceMaterial.GetAllTextures())
+            .Where(texture => !string.IsNullOrWhiteSpace(texture.Path))
+            .Select(texture => NormalizeVirtualPath(texture.Path))
+            .Any(replacements.ContainsKey);
 
     private static bool ComponentUsesPaintedTexture(
         ResolvedModelAsset asset,
