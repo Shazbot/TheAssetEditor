@@ -12,6 +12,7 @@ namespace WH3AssetHost;
 [JsonSerializable(typeof(AssetHostAnimationCatalog))]
 [JsonSerializable(typeof(AssetHostAnimationReference))]
 [JsonSerializable(typeof(AssetHostBatchExportResult))]
+[JsonSerializable(typeof(AssetHostPaintedVariantResult))]
 [JsonSerializable(typeof(AssetHostMissingSkeletonDecisionRequest))]
 [JsonSerializable(typeof(ExportResult))]
 internal partial class AssetHostJsonContext : JsonSerializerContext
