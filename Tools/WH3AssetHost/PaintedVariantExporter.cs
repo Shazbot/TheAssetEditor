@@ -69,7 +69,7 @@ internal sealed class PaintedVariantExporter
             // The painted mod is an override of the selected source definition,
             // not a second VMD that callers must wire up manually. Preserve the
             // exact pack path so loading this pack replaces the input VMD.
-            var vmdVirtualPath = NormalizeVirtualPath(request.AssetPath);
+            var vmdVirtualPath = GetVirtualPath(inputFile);
 
             var paintedSources = request.Textures
                 .Select(texture => new
