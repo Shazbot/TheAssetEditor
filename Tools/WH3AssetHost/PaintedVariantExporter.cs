@@ -91,7 +91,7 @@ internal sealed class PaintedVariantExporter
                 .Select(NormalizeVirtualPath)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            var texconv = new TexconvDdsEncoder();
+            var ddsEncoder = new BcnDdsEncoder();
             var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var exportedTextureFormats = new Dictionary<string, DdsSourceFormat>(StringComparer.OrdinalIgnoreCase);
             foreach (var painted in paintedSources)
@@ -121,7 +121,7 @@ internal sealed class PaintedVariantExporter
                 var sourceStem = SafeStem(Path.GetFileNameWithoutExtension(painted.Source));
                 var sourceHash = ShortHash(painted.Source);
                 var ddsVirtualPath = $"{assetRoot}\\textures\\{sourceStem}_{sourceHash}_painted.dds";
-                var ddsBytes = texconv.EncodePngFile(painted.Texture.PngPath, sourceFormat);
+                var ddsBytes = ddsEncoder.EncodePngFile(painted.Texture.PngPath, sourceFormat);
                 WriteVirtualFile(request.OutputDirectory, ddsVirtualPath, ddsBytes);
                 writtenVirtualFiles.Add(ddsVirtualPath);
                 replacements[painted.Source] = ddsVirtualPath;
@@ -602,9 +602,9 @@ internal sealed class PaintedVariantExporter
             writer.WriteString("painted", pair.Value);
             if (formats.TryGetValue(pair.Key, out var format))
             {
-                writer.WriteString("format", format.TexconvFormat);
+                writer.WriteString("format", format.FormatName);
                 writer.WriteNumber("mipCount", format.MipCount);
-                writer.WriteString("header", format.ForceDx10Header ? "DX10" : "legacy");
+                writer.WriteString("header", format.UsesDx10Header ? "DX10" : "legacy");
             }
             writer.WriteEndObject();
         }
