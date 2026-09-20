@@ -653,15 +653,22 @@ public sealed class AssetHostDispatcher : IDisposable
 
             var sourceVirtualPath = ReadString(texture, "sourceVirtualPath")?.Trim();
             var relativePngPath = ReadString(texture, "pngPath")?.Trim();
-            if (string.IsNullOrWhiteSpace(sourceVirtualPath)
-                || string.IsNullOrWhiteSpace(relativePngPath)
-                || !TryResolveInputPngPath(_outputRoot, relativePngPath, out var pngPath, out var pngError))
+            if (string.IsNullOrWhiteSpace(sourceVirtualPath) || string.IsNullOrWhiteSpace(relativePngPath))
             {
                 return AssetHostResponse.Fail(
                     requestId,
                     "exportPaintedVariant",
                     "InvalidPaintedTexture",
-                    pngError ?? "Each painted texture requires sourceVirtualPath and a valid PNG path.");
+                    "Each painted texture requires sourceVirtualPath and pngPath.");
+            }
+
+            if (!TryResolveInputPngPath(_outputRoot, relativePngPath, out var pngPath, out var pngError))
+            {
+                return AssetHostResponse.Fail(
+                    requestId,
+                    "exportPaintedVariant",
+                    "InvalidPaintedTexture",
+                    pngError ?? "The painted texture PNG path is invalid.");
             }
 
             textures.Add(new AssetHostPaintedTextureInput(sourceVirtualPath, pngPath));
