@@ -9,7 +9,9 @@ internal sealed record DdsSourceFormat(
     int Height,
     int MipCount,
     bool IsSrgb,
-    bool PreferLegacyHeader);
+    bool PreferLegacyHeader,
+    bool ForceDx10Header,
+    uint? Dx10AlphaMode);
 
 internal static class DdsFormatInspector
 {
@@ -100,9 +102,12 @@ internal static class DdsFormatInspector
         if (ReadUInt32(data, 76) != 32)
             throw new InvalidDataException("DDS pixel-format header size is not 32 bytes.");
 
+        var headerFlags = ReadUInt32(data, 8);
         var height = checked((int)ReadUInt32(data, 12));
         var width = checked((int)ReadUInt32(data, 16));
-        var mipCount = checked((int)ReadUInt32(data, 28));
+        var mipCount = (headerFlags & 0x00020000) != 0
+            ? checked((int)ReadUInt32(data, 28))
+            : 1;
         if (width <= 0 || height <= 0)
             throw new InvalidDataException($"DDS has invalid dimensions {width}x{height}.");
         if (mipCount <= 0)
@@ -125,13 +130,24 @@ internal static class DdsFormatInspector
                         $"DDS uses DXGI format {dxgi}, which is not yet mapped for painted export.");
                 }
 
+                var resourceDimension = ReadUInt32(data, 132);
+                var miscFlag = ReadUInt32(data, 136);
+                var arraySize = ReadUInt32(data, 140);
+                if (resourceDimension != 3 || arraySize != 1 || (miscFlag & 0x4) != 0)
+                {
+                    throw new InvalidDataException(
+                        "Painted export currently supports only non-array 2D DDS textures.");
+                }
+
                 return new DdsSourceFormat(
                     format,
                     width,
                     height,
                     mipCount,
                     format.EndsWith("_SRGB", StringComparison.Ordinal),
-                    PreferLegacyHeader: false);
+                    PreferLegacyHeader: false,
+                    ForceDx10Header: true,
+                    Dx10AlphaMode: ReadUInt32(data, 144) & 0x7);
             }
 
             var legacyFormat = fourCc switch
@@ -167,7 +183,9 @@ internal static class DdsFormatInspector
                 height,
                 mipCount,
                 IsSrgb: false,
-                PreferLegacyHeader: CanUseLegacyHeader(legacyFormat));
+                PreferLegacyHeader: CanUseLegacyHeader(legacyFormat),
+                ForceDx10Header: false,
+                Dx10AlphaMode: null);
         }
 
         var rgbBitCount = ReadUInt32(data, 88);
@@ -212,13 +230,22 @@ internal static class DdsFormatInspector
                 + $"bits={rgbBitCount}, masks=0x{rMask:X8}/0x{gMask:X8}/0x{bMask:X8}/0x{aMask:X8}.");
         }
 
+        var caps2 = ReadUInt32(data, 112);
+        if ((caps2 & (0x00000200u | 0x00200000u)) != 0 || ReadUInt32(data, 24) > 1)
+        {
+            throw new InvalidDataException(
+                "Painted export currently supports only non-volume, non-cubemap DDS textures.");
+        }
+
         return new DdsSourceFormat(
             uncompressed,
             width,
             height,
             mipCount,
             IsSrgb: false,
-            PreferLegacyHeader: CanUseLegacyHeader(uncompressed));
+            PreferLegacyHeader: CanUseLegacyHeader(uncompressed),
+            ForceDx10Header: false,
+            Dx10AlphaMode: null);
     }
 
     private static bool CanUseLegacyHeader(string format)
