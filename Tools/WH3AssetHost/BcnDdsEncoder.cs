@@ -91,10 +91,10 @@ internal sealed class BcnDdsEncoder
 
         return sourceFormat.DxgiFormat switch
         {
-            71 or 72 => CompressionFormat.Bc1,
-            74 or 75 => CompressionFormat.Bc2,
-            77 or 78 => CompressionFormat.Bc3,
-            98 or 99 => CompressionFormat.Bc7,
+            71u or 72u => CompressionFormat.Bc1,
+            74u or 75u => CompressionFormat.Bc2,
+            77u or 78u => CompressionFormat.Bc3,
+            98u or 99u => CompressionFormat.Bc7,
             _ => throw Unsupported(sourceFormat)
         };
     }
