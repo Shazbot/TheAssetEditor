@@ -40,6 +40,12 @@ internal sealed class AssetHostResponseResultJsonConverter : JsonConverter<objec
             case AssetHostBatchExportResult batch:
                 JsonSerializer.Serialize(writer, batch, AssetHostJsonContext.Default.AssetHostBatchExportResult);
                 break;
+            case AssetHostPaintedVariantResult paintedVariant:
+                JsonSerializer.Serialize(
+                    writer,
+                    paintedVariant,
+                    AssetHostJsonContext.Default.AssetHostPaintedVariantResult);
+                break;
             case ExportResult export:
                 JsonSerializer.Serialize(writer, export, AssetHostJsonContext.Default.ExportResult);
                 break;
