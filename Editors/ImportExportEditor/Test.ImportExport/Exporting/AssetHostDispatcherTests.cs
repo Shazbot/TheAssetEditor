@@ -408,7 +408,7 @@ public sealed class AssetHostDispatcherTests
             PaintedExports.Add(request);
             return new(
                 true,
-                $"variantmeshes\\variantmeshdefinitions\\whmm_unit_painter\\{request.VariantName}.variantmeshdefinition",
+                request.AssetPath,
                 [],
                 [],
                 []);
