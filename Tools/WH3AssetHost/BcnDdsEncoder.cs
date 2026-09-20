@@ -1,15 +1,11 @@
 using System.Buffers.Binary;
-using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
 using BCnEncoder.Encoder;
 using BCnEncoder.Shared;
 
 namespace WH3AssetHost;
 
 /// <summary>
-/// Encodes the unit painter's 8-bit RGBA output back to the same DDS storage
+/// Encodes the unit painter's RGBA8 staging data back to the same DDS storage
 /// format used by the source BaseColour texture. The vanilla BaseColour set is
 /// overwhelmingly BC1/BC2/BC3/BC7; HDR/float formats are rejected rather than
 /// being silently quantized through the painter's 8-bit path.
@@ -18,24 +14,62 @@ internal sealed class BcnDdsEncoder
 {
     private const uint DdpfAlphaPixels = 0x00000001;
 
-    public byte[] EncodePngFile(string pngPath, DdsSourceFormat sourceFormat)
+    public byte[] EncodeRgbaFile(
+        string rgbaPath,
+        int width,
+        int height,
+        DdsSourceFormat sourceFormat)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(pngPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rgbaPath);
         ArgumentNullException.ThrowIfNull(sourceFormat);
 
-        var baseCompressionFormat = GetSupportedCompressionFormat(sourceFormat);
-        var image = ReadPng(pngPath);
-        if (image.Width != sourceFormat.Width || image.Height != sourceFormat.Height)
+        var fullPath = Path.GetFullPath(rgbaPath);
+        if (!File.Exists(fullPath))
+            throw new FileNotFoundException("Painted RGBA input was not found.", fullPath);
+        if (width != sourceFormat.Width || height != sourceFormat.Height)
         {
             throw new InvalidDataException(
-                $"Painted PNG dimensions {image.Width}x{image.Height} do not match source DDS "
+                $"Painted RGBA dimensions {width}x{height} do not match source DDS "
                 + $"{sourceFormat.Width}x{sourceFormat.Height}.");
         }
 
+        var expectedBytes = checked(width * height * 4);
+        var rgba = File.ReadAllBytes(fullPath);
+        if (rgba.Length != expectedBytes)
+        {
+            throw new InvalidDataException(
+                $"Painted RGBA input has {rgba.Length} bytes; expected {expectedBytes} for {width}x{height}.");
+        }
+
+        return EncodeRgba(rgba, width, height, sourceFormat);
+    }
+
+    internal byte[] EncodeRgba(
+        ReadOnlySpan<byte> rgba,
+        int width,
+        int height,
+        DdsSourceFormat sourceFormat)
+    {
+        ArgumentNullException.ThrowIfNull(sourceFormat);
+        if (width != sourceFormat.Width || height != sourceFormat.Height)
+        {
+            throw new InvalidDataException(
+                $"Painted RGBA dimensions {width}x{height} do not match source DDS "
+                + $"{sourceFormat.Width}x{sourceFormat.Height}.");
+        }
+
+        var expectedBytes = checked(width * height * 4);
+        if (rgba.Length != expectedBytes)
+        {
+            throw new InvalidDataException(
+                $"Painted RGBA input has {rgba.Length} bytes; expected {expectedBytes} for {width}x{height}.");
+        }
+
+        var baseCompressionFormat = GetSupportedCompressionFormat(sourceFormat);
         var sourceDeclaresOpaqueAlpha = sourceFormat.UsesDx10Header && sourceFormat.Dx10AlphaMode == 3u;
         var useBc1Alpha =
             baseCompressionFormat == CompressionFormat.Bc1
-            && image.HasTransparency
+            && HasTransparency(rgba)
             && !sourceDeclaresOpaqueAlpha;
         var compressionFormat = useBc1Alpha
             ? CompressionFormat.Bc1WithAlpha
@@ -56,9 +90,9 @@ internal sealed class BcnDdsEncoder
 
         using var stream = new MemoryStream();
         encoder.EncodeToStream(
-            image.Data,
-            image.Width,
-            image.Height,
+            rgba,
+            width,
+            height,
             BCnEncoder.Encoder.PixelFormat.Rgba32,
             stream);
 
@@ -68,6 +102,16 @@ internal sealed class BcnDdsEncoder
         var actual = DdsFormatInspector.Inspect(dds);
         ValidateRoundTrip(sourceFormat, actual);
         return dds;
+    }
+
+    private static bool HasTransparency(ReadOnlySpan<byte> rgba)
+    {
+        for (var index = 3; index < rgba.Length; index += 4)
+        {
+            if (rgba[index] < byte.MaxValue)
+                return true;
+        }
+        return false;
     }
 
     private static CompressionFormat GetSupportedCompressionFormat(DdsSourceFormat sourceFormat)
@@ -94,7 +138,7 @@ internal sealed class BcnDdsEncoder
             throw Unsupported(sourceFormat);
         }
 
-        return sourceFormat.DxgiFormat switch
+        return sourceFormat.DxgiFormat.GetValueOrDefault() switch
         {
             71u or 72u => CompressionFormat.Bc1,
             74u or 75u => CompressionFormat.Bc2,
@@ -184,67 +228,9 @@ internal sealed class BcnDdsEncoder
                 ? $"DX10/{format.DxgiFormat}"
                 : $"legacy/0x{format.LegacyFourCc ?? 0:X8}");
 
-    private static RgbaImage ReadPng(string path)
-    {
-        var fullPath = Path.GetFullPath(path);
-        if (!File.Exists(fullPath))
-            throw new FileNotFoundException("Painted PNG input was not found.", fullPath);
-
-        using var source = new Bitmap(fullPath);
-        using var bitmap = new Bitmap(
-            source.Width,
-            source.Height,
-            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (var graphics = Graphics.FromImage(bitmap))
-        {
-            // Copy instead of alpha-blending onto the transparent destination;
-            // BaseColour alpha must survive the PNG staging path byte-for-byte.
-            graphics.CompositingMode = CompositingMode.SourceCopy;
-            graphics.DrawImageUnscaled(source, 0, 0);
-        }
-
-        var rectangle = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
-        var bitmapData = bitmap.LockBits(
-            rectangle,
-            ImageLockMode.ReadOnly,
-            System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        try
-        {
-            var rowBytes = checked(bitmap.Width * 4);
-            var bgraRow = new byte[rowBytes];
-            var rgba = new byte[checked(rowBytes * bitmap.Height)];
-            var hasTransparency = false;
-
-            for (var y = 0; y < bitmap.Height; y++)
-            {
-                var rowPointer = IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride);
-                Marshal.Copy(rowPointer, bgraRow, 0, rowBytes);
-                var targetRow = y * rowBytes;
-                for (var x = 0; x < bitmap.Width; x++)
-                {
-                    var sourceIndex = x * 4;
-                    var targetIndex = targetRow + sourceIndex;
-                    rgba[targetIndex] = bgraRow[sourceIndex + 2];
-                    rgba[targetIndex + 1] = bgraRow[sourceIndex + 1];
-                    rgba[targetIndex + 2] = bgraRow[sourceIndex];
-                    rgba[targetIndex + 3] = bgraRow[sourceIndex + 3];
-                    hasTransparency |= bgraRow[sourceIndex + 3] < byte.MaxValue;
-                }
-            }
-
-            return new RgbaImage(bitmap.Width, bitmap.Height, rgba, hasTransparency);
-        }
-        finally
-        {
-            bitmap.UnlockBits(bitmapData);
-        }
-    }
-
     private static uint ReadUInt32(ReadOnlySpan<byte> data, int offset)
         => BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, sizeof(uint)));
 
     private static void WriteUInt32(Span<byte> data, int offset, uint value)
         => BinaryPrimitives.WriteUInt32LittleEndian(data.Slice(offset, sizeof(uint)), value);
-
-    private sealed record RgbaImage(int Width, int Height, byte[] Data, bool HasTransparency);
 }
