@@ -12,8 +12,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         string? PrimaryFile,
         IReadOnlyList<string> AuxiliaryFiles,
         IReadOnlyList<ExportWarning> Warnings,
-        IReadOnlyList<ExportError> Errors,
-        IReadOnlyList<ExportTextureSource>? TextureSources = null);
+        IReadOnlyList<ExportError> Errors);
 
     /// <summary>
     /// A result-producing facade over the existing exporter. The exporter
@@ -69,10 +68,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             Directory.CreateDirectory(outputDirectory);
             var before = CaptureFiles(outputDirectory);
 
-            ExportExecutionResult execution;
             try
             {
-                execution = _exporter.Export(settings with { OutputPath = outputPath });
+                var execution = _exporter.Export(settings with { OutputPath = outputPath });
                 if (execution.Status == ExportExecutionStatus.Cancelled)
                 {
                     return new ExportResult(
@@ -122,8 +120,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 outputPath,
                 CaptureAuxiliaryFiles(outputDirectory, before, outputPath),
                 Array.Empty<ExportWarning>(),
-                Array.Empty<ExportError>(),
-                execution.TextureSources);
+                Array.Empty<ExportError>());
         }
 
         private static ExportResult Failure(string code, string message)
