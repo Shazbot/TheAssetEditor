@@ -1,9 +1,9 @@
 using System.Drawing;
-using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
-using MeshImportExport;
+using Pfim;
+using PfimImageFormat = Pfim.ImageFormat;
 
 namespace Editors.ImportExport.TextureAtlas
 {
@@ -299,15 +299,36 @@ namespace Editors.ImportExport.TextureAtlas
 
         private static Bitmap LoadBitmap(byte[] ddsBytes)
         {
-            var pngBytes = TextureHelper.ConvertDdsToPng(ddsBytes);
-            using var stream = new MemoryStream(pngBytes);
-            using var loaded = new Bitmap(stream);
+            using var stream = new MemoryStream(ddsBytes);
+            using var image = Pfimage.FromStream(stream);
 
-            var copy = new Bitmap(loaded.Width, loaded.Height, PixelFormat.Format32bppArgb);
-            using var graphics = Graphics.FromImage(copy);
-            graphics.CompositingMode = CompositingMode.SourceCopy;
-            graphics.DrawImageUnscaled(loaded, 0, 0);
-            return copy;
+            if (image.Format != PfimImageFormat.Rgba32)
+            {
+                throw new NotSupportedException(
+                    $"Unsupported DDS pixel format for texture atlas generation: {image.Format}. Expected RGBA32.");
+            }
+
+            // Pfim's Rgba32 buffer is already laid out exactly as GDI+'s
+            // Format32bppArgb expects in memory. Do not swap red/blue here.
+            var bitmap = new Bitmap(image.Width, image.Height, PixelFormat.Format32bppArgb);
+            var rectangle = new Rectangle(0, 0, image.Width, image.Height);
+            var bitmapData = bitmap.LockBits(rectangle, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+
+            try
+            {
+                var rowBytes = checked(image.Width * 4);
+                for (var y = 0; y < image.Height; y++)
+                {
+                    var rowPointer = IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride);
+                    Marshal.Copy(image.Data, y * image.Stride, rowPointer, rowBytes);
+                }
+            }
+            finally
+            {
+                bitmap.UnlockBits(bitmapData);
+            }
+
+            return bitmap;
         }
 
         private static void ValidateSource(TextureAtlasLayoutSource source)
