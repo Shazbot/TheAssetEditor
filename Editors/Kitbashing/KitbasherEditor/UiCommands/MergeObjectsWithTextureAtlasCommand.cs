@@ -29,7 +29,7 @@ namespace Editors.KitbasherEditor.UiCommands
             _commandFactory = commandFactory;
         }
 
-        public void Execute()
+        public async void Execute()
         {
             if (_selectionManager.GetState() is not ObjectSelectionState selectionState)
                 return;
@@ -41,14 +41,24 @@ namespace Editors.KitbasherEditor.UiCommands
             if (selectedMeshes.Count < 2)
                 return;
 
-            if (!_textureAtlasMergeService.TryPrepare(selectedMeshes, out var preparedMerge, out var errors))
+            var result = await Task.Run(() =>
             {
-                ErrorListWindow.ShowDialog("Texture Atlas", errors, false);
+                var success = _textureAtlasMergeService.TryPrepare(
+                    selectedMeshes,
+                    out var preparedMerge,
+                    out var errors);
+
+                return (success, preparedMerge, errors);
+            });
+
+            if (!result.success)
+            {
+                ErrorListWindow.ShowDialog("Texture Atlas", result.errors, false);
                 return;
             }
 
             _commandFactory.CreateWithBuilder<ApplyTextureAtlasMergeCommand>()
-                .Configure(x => x.Configure(preparedMerge!))
+                .Configure(x => x.Configure(result.preparedMerge!))
                 .BuildAndExecute();
         }
     }
