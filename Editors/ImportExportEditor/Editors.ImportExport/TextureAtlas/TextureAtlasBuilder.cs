@@ -192,6 +192,234 @@ namespace Editors.ImportExport.TextureAtlas
             return stream.ToArray();
         }
 
+        public static IReadOnlyList<byte[]> BuildMipPngs(
+            TextureAtlasPlan plan,
+            IReadOnlyDictionary<int, byte[]> ddsSources,
+            IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null,
+            IReadOnlySet<int>? omittedSourceIds = null)
+        {
+            var decodedSources = new Dictionary<int, IImage>();
+            try
+            {
+                foreach (var (id, ddsBytes) in ddsSources)
+                {
+                    using var stream = new MemoryStream(ddsBytes);
+                    var image = Pfimage.FromStream(stream);
+                    if (image.Format != PfimImageFormat.Rgba32)
+                    {
+                        image.Dispose();
+                        throw new NotSupportedException(
+                            $"Unsupported DDS pixel format for texture atlas generation: {image.Format}. Expected RGBA32.");
+                    }
+
+                    decodedSources[id] = image;
+                }
+
+                var mipPngs = new List<byte[]>();
+                var mipWidth = plan.Width;
+                var mipHeight = plan.Height;
+                var mipLevel = 0;
+
+                while (true)
+                {
+                    var atlasPixels = new byte[checked(mipWidth * mipHeight * 4)];
+                    var coreOccupancy = new bool[checked(mipWidth * mipHeight)];
+
+                    // Write core regions first so padding can never overwrite another source's
+                    // real texels when placements converge at lower mip levels.
+                    foreach (var placement in plan.Placements)
+                    {
+                        if (omittedSourceIds?.Contains(placement.Id) == true)
+                            continue;
+                        if (!decodedSources.TryGetValue(placement.Id, out var source))
+                            throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
+
+                        var sourceMip = GetMipLevel(source, mipLevel);
+                        var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
+
+                        for (var y = bounds.Top; y < bounds.Bottom; y++)
+                        {
+                            for (var x = bounds.Left; x < bounds.Right; x++)
+                            {
+                                var index = y * mipWidth + x;
+                                if (coreOccupancy[index])
+                                    continue;
+
+                                CopySourceMipPixel(
+                                    atlasPixels,
+                                    mipWidth,
+                                    x,
+                                    y,
+                                    source,
+                                    sourceMip,
+                                    plan,
+                                    placement,
+                                    mipWidth,
+                                    mipHeight,
+                                    clampToCrop: false,
+                                    forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
+                                coreOccupancy[index] = true;
+                            }
+                        }
+                    }
+
+                    // Rebuild an edge extrusion independently at every mip level. This avoids
+                    // the classic atlas problem where a small base-level gutter disappears as
+                    // the whole atlas is downsampled and neighboring/transparent regions bleed
+                    // into the material.
+                    foreach (var placement in plan.Placements)
+                    {
+                        if (omittedSourceIds?.Contains(placement.Id) == true)
+                            continue;
+                        if (!decodedSources.TryGetValue(placement.Id, out var source))
+                            throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
+
+                        var sourceMip = GetMipLevel(source, mipLevel);
+                        var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
+                        var paddingX = Math.Max(1, (int)Math.Ceiling((double)placement.Padding * mipWidth / plan.Width));
+                        var paddingY = Math.Max(1, (int)Math.Ceiling((double)placement.Padding * mipHeight / plan.Height));
+
+                        var left = Math.Max(0, bounds.Left - paddingX);
+                        var top = Math.Max(0, bounds.Top - paddingY);
+                        var right = Math.Min(mipWidth, bounds.Right + paddingX);
+                        var bottom = Math.Min(mipHeight, bounds.Bottom + paddingY);
+
+                        for (var y = top; y < bottom; y++)
+                        {
+                            for (var x = left; x < right; x++)
+                            {
+                                var index = y * mipWidth + x;
+                                if (coreOccupancy[index])
+                                    continue;
+
+                                CopySourceMipPixel(
+                                    atlasPixels,
+                                    mipWidth,
+                                    x,
+                                    y,
+                                    source,
+                                    sourceMip,
+                                    plan,
+                                    placement,
+                                    mipWidth,
+                                    mipHeight,
+                                    clampToCrop: true,
+                                    forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
+                            }
+                        }
+                    }
+
+                    using var bitmap = new Bitmap(mipWidth, mipHeight, PixelFormat.Format32bppArgb);
+                    WritePixels(bitmap, atlasPixels);
+                    using var pngStream = new MemoryStream();
+                    bitmap.Save(pngStream, System.Drawing.Imaging.ImageFormat.Png);
+                    mipPngs.Add(pngStream.ToArray());
+
+                    if (mipWidth == 1 && mipHeight == 1)
+                        break;
+
+                    mipWidth = Math.Max(1, mipWidth / 2);
+                    mipHeight = Math.Max(1, mipHeight / 2);
+                    mipLevel++;
+                }
+
+                return mipPngs;
+            }
+            finally
+            {
+                foreach (var source in decodedSources.Values)
+                    source.Dispose();
+            }
+        }
+
+        private static MipLevelInfo GetMipLevel(IImage source, int requestedLevel)
+        {
+            if (requestedLevel <= 0 || source.MipMaps.Length == 0)
+                return new MipLevelInfo(source.Width, source.Height, source.Stride, 0);
+
+            var mipIndex = Math.Min(requestedLevel - 1, source.MipMaps.Length - 1);
+            var mip = source.MipMaps[mipIndex];
+            return new MipLevelInfo(mip.Width, mip.Height, mip.Stride, mip.DataOffset);
+        }
+
+        private static MipPlacementBounds GetMipPlacementBounds(
+            TextureAtlasPlan plan,
+            TextureAtlasPlacement placement,
+            int mipWidth,
+            int mipHeight)
+        {
+            var left = Math.Clamp(
+                (int)Math.Floor((double)placement.DestinationX * mipWidth / plan.Width),
+                0,
+                mipWidth - 1);
+            var top = Math.Clamp(
+                (int)Math.Floor((double)placement.DestinationY * mipHeight / plan.Height),
+                0,
+                mipHeight - 1);
+            var right = Math.Clamp(
+                (int)Math.Ceiling((double)(placement.DestinationX + placement.CropWidth) * mipWidth / plan.Width),
+                left + 1,
+                mipWidth);
+            var bottom = Math.Clamp(
+                (int)Math.Ceiling((double)(placement.DestinationY + placement.CropHeight) * mipHeight / plan.Height),
+                top + 1,
+                mipHeight);
+
+            return new MipPlacementBounds(left, top, right, bottom);
+        }
+
+        private static void CopySourceMipPixel(
+            byte[] atlasPixels,
+            int atlasRowWidth,
+            int atlasX,
+            int atlasY,
+            IImage source,
+            MipLevelInfo sourceMip,
+            TextureAtlasPlan plan,
+            TextureAtlasPlacement placement,
+            int mipWidth,
+            int mipHeight,
+            bool clampToCrop,
+            bool forceOpaqueAlpha)
+        {
+            // Map the destination mip pixel center back through the exact base-level atlas UV
+            // transform. The source mip level then supplies the authored texel for the same LOD.
+            var atlasBaseX = (atlasX + 0.5) * plan.Width / mipWidth;
+            var atlasBaseY = (atlasY + 0.5) * plan.Height / mipHeight;
+
+            if (clampToCrop)
+            {
+                atlasBaseX = Math.Clamp(
+                    atlasBaseX,
+                    placement.DestinationX + 0.5,
+                    placement.DestinationX + placement.CropWidth - 0.5);
+                atlasBaseY = Math.Clamp(
+                    atlasBaseY,
+                    placement.DestinationY + 0.5,
+                    placement.DestinationY + placement.CropHeight - 0.5);
+            }
+
+            var sourceBaseX = placement.CropX + (atlasBaseX - placement.DestinationX);
+            var sourceBaseY = placement.CropY + (atlasBaseY - placement.DestinationY);
+
+            var sourceX = PositiveModulo(
+                (int)Math.Floor(sourceBaseX * sourceMip.Width / placement.SourceWidth),
+                sourceMip.Width);
+            var sourceY = PositiveModulo(
+                (int)Math.Floor(sourceBaseY * sourceMip.Height / placement.SourceHeight),
+                sourceMip.Height);
+
+            var sourceOffset = sourceMip.DataOffset + sourceY * sourceMip.Stride + sourceX * 4;
+            var destinationOffset = (atlasY * atlasRowWidth + atlasX) * 4;
+
+            atlasPixels[destinationOffset] = source.Data[sourceOffset];
+            atlasPixels[destinationOffset + 1] = source.Data[sourceOffset + 1];
+            atlasPixels[destinationOffset + 2] = source.Data[sourceOffset + 2];
+            atlasPixels[destinationOffset + 3] = forceOpaqueAlpha
+                ? byte.MaxValue
+                : source.Data[sourceOffset + 3];
+        }
+
         public static (int Width, int Height) GetDimensions(byte[] ddsBytes)
         {
             using var bitmap = LoadBitmap(ddsBytes);
@@ -407,6 +635,10 @@ namespace Editors.ImportExport.TextureAtlas
                 result <<= 1;
             return result;
         }
+
+        private sealed record MipLevelInfo(int Width, int Height, int Stride, int DataOffset);
+
+        private sealed record MipPlacementBounds(int Left, int Top, int Right, int Bottom);
 
         private sealed record PendingPlacement(
             int Id,
