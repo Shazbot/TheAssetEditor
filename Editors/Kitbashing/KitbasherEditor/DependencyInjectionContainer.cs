@@ -43,6 +43,7 @@ namespace Editors.KitbasherEditor
 
             // Creators
             serviceCollection.AddScoped<KitbashSceneCreator>();
+            serviceCollection.AddTransient<TextureAtlasMergeService>();
 
             // View models 
             serviceCollection.AddScoped<KitbasherView>();
@@ -61,6 +62,7 @@ namespace Editors.KitbasherEditor
 
             // Commands
             serviceCollection.AddTransient<AssignMaterialFromOtherMeshCommand>();
+            serviceCollection.AddTransient<ApplyTextureAtlasMergeCommand>();
             serviceCollection.AddTransient<ConstructPrimitiveCommand>();
             serviceCollection.AddTransient<PrimitiveConstructor>();
             
