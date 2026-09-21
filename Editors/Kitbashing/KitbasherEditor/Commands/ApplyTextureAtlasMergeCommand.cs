@@ -27,11 +27,9 @@ namespace Editors.KitbasherEditor.Commands
             _packFileService = packFileService;
         }
 
-        public void Configure(
-            IReadOnlyList<Rmv2MeshNode> originalMeshes,
-            PreparedTextureAtlasMerge preparedMerge)
+        public void Configure(PreparedTextureAtlasMerge preparedMerge)
         {
-            _originalMeshes = originalMeshes.ToList();
+            _originalMeshes = preparedMerge.SourceMeshesToReplace.ToList();
             _preparedMerge = preparedMerge;
         }
 
@@ -56,7 +54,11 @@ namespace Editors.KitbasherEditor.Commands
             if (_selectionManager.GetState() is ObjectSelectionState currentState)
             {
                 currentState.Clear();
-                currentState.ModifySelection(_preparedMerge.CombinedMeshes.Cast<ISelectable>(), false);
+                currentState.ModifySelection(
+                    _preparedMerge.CombinedMeshes
+                        .Concat(_preparedMerge.UntouchedMeshes)
+                        .Cast<ISelectable>(),
+                    false);
             }
         }
 
