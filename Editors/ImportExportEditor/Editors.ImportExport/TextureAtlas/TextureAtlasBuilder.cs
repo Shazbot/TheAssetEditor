@@ -188,7 +188,7 @@ namespace Editors.ImportExport.TextureAtlas
             WritePixels(atlas, atlasPixels);
 
             using var stream = new MemoryStream();
-            atlas.Save(stream, ImageFormat.Png);
+            atlas.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
             return stream.ToArray();
         }
 
