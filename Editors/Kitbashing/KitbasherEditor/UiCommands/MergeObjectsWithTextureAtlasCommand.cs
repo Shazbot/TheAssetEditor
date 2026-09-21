@@ -48,7 +48,7 @@ namespace Editors.KitbasherEditor.UiCommands
             }
 
             _commandFactory.CreateWithBuilder<ApplyTextureAtlasMergeCommand>()
-                .Configure(x => x.Configure(selectedMeshes, preparedMerge!))
+                .Configure(x => x.Configure(preparedMerge!))
                 .BuildAndExecute();
         }
     }
