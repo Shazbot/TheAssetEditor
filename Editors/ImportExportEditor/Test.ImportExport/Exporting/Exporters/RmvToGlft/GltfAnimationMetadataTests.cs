@@ -77,6 +77,40 @@ public class GltfAnimationMetadataTests
     }
 
     [Test]
+    public void DockEquipmentLeftHandUsesDockAnimationOffsetRelativeToCurrentTargetBone()
+    {
+        var skeleton = CreateSkeleton(
+            ("root", -1, Vector3.Zero),
+            ("hand_left", 0, new Vector3(1, 0, 0)),
+            ("be_prop_0", 0, Vector3.Zero));
+
+        var source = CreateClip(
+            1.0f,
+            [Vector3.Zero, new Vector3(5, 0, 0), Vector3.Zero]);
+        var dockAnimation = CreateClip(
+            1.0f,
+            [Vector3.Zero, new Vector3(1, 0, 0), new Vector3(3, 0, 0)]);
+
+        var context = new GltfAnimationMetadataContext(
+            "test.bin",
+            [],
+            [
+                new GltfDockEquipmentMetadataRule(
+                    1,
+                    "DOCK_EQUIPMENT_LEFT_HAND",
+                    ["hand_left"],
+                    0,
+                    0,
+                    dockAnimation)
+            ],
+            []);
+
+        var processed = GltfAnimationMetadataProcessor.Apply(source, skeleton, context);
+
+        Assert.That(processed[0].Position[2].X, Is.EqualTo(7).Within(0.0001f));
+    }
+
+    [Test]
     public void DockEquipmentMatchesSuperViewStartTimeAndIgnoredEndTimeBehavior()
     {
         var skeleton = CreateSkeleton(
@@ -134,6 +168,35 @@ public class GltfAnimationMetadataTests
         Assert.That(dock.PropBoneId, Is.EqualTo(1));
         Assert.That(dock.AnimationSlotName, Is.EqualTo("DOCK_EQUIPMENT_RIGHT_HAND"));
         Assert.That(dock.SkeletonNameAlternatives, Is.EqualTo(new[] { "hand_right" }));
+        Assert.That(dock.StartTime, Is.EqualTo(0.25f));
+        Assert.That(dock.EndTime, Is.EqualTo(0.75f));
+    }
+
+    [Test]
+    public void TrimSafeDecoderReadsLeftHandDockEquipmentV10()
+    {
+        var payload = new List<byte>();
+        payload.AddRange(BitConverter.GetBytes(10));
+        payload.AddRange(BitConverter.GetBytes(0.25f));
+        payload.AddRange(BitConverter.GetBytes(0.75f));
+        payload.AddRange(CaString(""));
+        payload.AddRange(BitConverter.GetBytes(0));
+        payload.AddRange(BitConverter.GetBytes(1));
+        payload.AddRange(BitConverter.GetBytes(0.1f));
+        payload.AddRange(BitConverter.GetBytes(0.2f));
+
+        var file = new List<byte>();
+        file.AddRange(BitConverter.GetBytes(2));
+        file.AddRange(BitConverter.GetBytes((uint)1));
+        file.AddRange(CaString("DOCK_EQPT_LHAND"));
+        file.AddRange(payload);
+
+        var decoded = GltfAnimationMetadataDecoder.Decode(file.ToArray());
+
+        var dock = decoded.DockRules.Single();
+        Assert.That(dock.PropBoneId, Is.EqualTo(1));
+        Assert.That(dock.AnimationSlotName, Is.EqualTo("DOCK_EQUIPMENT_LEFT_HAND"));
+        Assert.That(dock.SkeletonNameAlternatives, Is.EqualTo(new[] { "hand_left" }));
         Assert.That(dock.StartTime, Is.EqualTo(0.25f));
         Assert.That(dock.EndTime, Is.EqualTo(0.75f));
     }

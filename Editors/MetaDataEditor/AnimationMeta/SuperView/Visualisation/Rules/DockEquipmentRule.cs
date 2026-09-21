@@ -11,7 +11,6 @@ namespace Editors.AnimationMeta.SuperView.Visualisation.Rules
         bool _hasError = false;
 
         int _equipmentSlotToDock;
-        AnimationClip _dockAnimation;
         ISkeletonProvider _skeletonProvider;
         float _startTime;
         float _endTime;
@@ -21,7 +20,6 @@ namespace Editors.AnimationMeta.SuperView.Visualisation.Rules
         public DockEquipmentRule(int dockTargetkBoneId, int equipmentSlotToDock, AnimationClip dockAnimation, ISkeletonProvider skeletonProvider, float startTime, float endTime)
         {
             _dockTargetkBoneId = dockTargetkBoneId;
-            _dockAnimation = dockAnimation;
             _skeletonProvider = skeletonProvider;
             _startTime = startTime;
             _endTime = endTime;
@@ -29,8 +27,8 @@ namespace Editors.AnimationMeta.SuperView.Visualisation.Rules
             try
             {
                 _equipmentSlotToDock = skeletonProvider.Skeleton.GetBoneIndexByName("be_prop_" + (equipmentSlotToDock - 1));
-                var offsetFrame = AnimationSampler.Sample(0, _skeletonProvider.Skeleton, _dockAnimation);
-                _offset = offsetFrame.GetSkeletonAnimatedWorldDiff(_skeletonProvider.Skeleton, _equipmentSlotToDock, _dockTargetkBoneId);
+                var offsetFrame = AnimationSampler.Sample(0, _skeletonProvider.Skeleton, dockAnimation);
+                _offset = offsetFrame.GetSkeletonAnimatedWorldDiff(_skeletonProvider.Skeleton, _dockTargetkBoneId, _equipmentSlotToDock);
             }
             catch (Exception e)
             {
@@ -48,10 +46,11 @@ namespace Editors.AnimationMeta.SuperView.Visualisation.Rules
             {
                 if (time >= _startTime)
                 {
-                    var offsetFrame = AnimationSampler.Sample(0, _skeletonProvider.Skeleton, _dockAnimation);
-                    _offset = offsetFrame.GetSkeletonAnimatedWorldDiff(_skeletonProvider.Skeleton, _dockTargetkBoneId, _equipmentSlotToDock);
-
-                    var propTransform = _skeletonProvider.Skeleton.GetAnimatedWorldTranform(_dockTargetkBoneId);
+                    // World-space rules run before AnimationSampler removes the skeleton bind
+                    // transform from the sampled frame.  Use the composed world matrix from the
+                    // current frame directly; GetSkeletonAnimatedWorld would apply the bind
+                    // transform a second time here.
+                    var propTransform = frame.BoneTransforms[_dockTargetkBoneId].WorldTransform;
                     frame.BoneTransforms[_equipmentSlotToDock].WorldTransform = _offset * propTransform;
                 }
             }
