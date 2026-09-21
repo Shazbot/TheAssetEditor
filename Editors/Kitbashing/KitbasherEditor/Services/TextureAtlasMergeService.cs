@@ -11,8 +11,8 @@ using Shared.Core.ErrorHandling;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.Settings;
+using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.Types;
-using Shared.Ui.Editors.BoneMapping;
 
 namespace Editors.KitbasherEditor.Services
 {
