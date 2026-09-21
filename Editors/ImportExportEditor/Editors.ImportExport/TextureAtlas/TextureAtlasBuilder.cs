@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Runtime.InteropServices;
 using MeshImportExport;
 
 namespace Editors.ImportExport.TextureAtlas
@@ -138,7 +139,10 @@ namespace Editors.ImportExport.TextureAtlas
             throw new InvalidOperationException($"Selected UV regions do not fit inside a {maxAtlasSize}x{maxAtlasSize} texture atlas.");
         }
 
-        public static byte[] BuildPng(TextureAtlasPlan plan, IReadOnlyDictionary<int, byte[]> ddsSources)
+        public static byte[] BuildPng(
+            TextureAtlasPlan plan,
+            IReadOnlyDictionary<int, byte[]> ddsSources,
+            IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null)
         {
             using var atlas = new Bitmap(plan.Width, plan.Height, PixelFormat.Format32bppArgb);
             using var graphics = Graphics.FromImage(atlas);
@@ -153,6 +157,9 @@ namespace Editors.ImportExport.TextureAtlas
                     throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
 
                 using var source = LoadBitmap(ddsBytes);
+                if (forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true)
+                    ForceOpaqueAlpha(source);
+
                 if (source.Width != placement.SourceWidth || source.Height != placement.SourceHeight)
                 {
                     throw new InvalidOperationException(
@@ -241,6 +248,31 @@ namespace Editors.ImportExport.TextureAtlas
             graphics.CompositingMode = CompositingMode.SourceCopy;
             graphics.DrawImageUnscaled(loaded, 0, 0);
             return copy;
+        }
+
+        private static void ForceOpaqueAlpha(Bitmap bitmap)
+        {
+            var rectangle = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+            var bitmapData = bitmap.LockBits(rectangle, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+            try
+            {
+                var rowSize = Math.Abs(bitmapData.Stride);
+                var bytes = new byte[rowSize * bitmap.Height];
+                Marshal.Copy(bitmapData.Scan0, bytes, 0, bytes.Length);
+
+                for (var y = 0; y < bitmap.Height; y++)
+                {
+                    var rowStart = y * rowSize;
+                    for (var x = 0; x < bitmap.Width; x++)
+                        bytes[rowStart + x * 4 + 3] = byte.MaxValue;
+                }
+
+                Marshal.Copy(bytes, 0, bitmapData.Scan0, bytes.Length);
+            }
+            finally
+            {
+                bitmap.UnlockBits(bitmapData);
+            }
         }
 
         private static void ValidateSource(TextureAtlasLayoutSource source)
