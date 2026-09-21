@@ -20,7 +20,9 @@ namespace Editors.KitbasherEditor.Services
 
     public sealed record PreparedTextureAtlasMerge(
         IPackFileContainer TargetPack,
+        IReadOnlyList<Rmv2MeshNode> SourceMeshesToReplace,
         IReadOnlyList<Rmv2MeshNode> CombinedMeshes,
+        IReadOnlyList<Rmv2MeshNode> UntouchedMeshes,
         IReadOnlyList<GeneratedTextureAtlasFile> GeneratedFiles);
 
     public class TextureAtlasMergeService
@@ -61,7 +63,25 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                var totalIndexCount = sourceMeshes.Sum(x => (long)x.Geometry.GetIndexCount());
+                // Emissive WH3 materials are intentionally excluded from atlas baking for now.
+                // They remain as their original scene nodes while compatible non-emissive meshes
+                // from the same selection are baked and merged.
+                var untouchedMeshes = sourceMeshes
+                    .Where(x => x.Material.Type == CapabilityMaterialsEnum.MetalRoughPbr_Emissive)
+                    .ToList();
+                var bakeMeshes = sourceMeshes
+                    .Where(x => x.Material.Type != CapabilityMaterialsEnum.MetalRoughPbr_Emissive)
+                    .ToList();
+
+                if (bakeMeshes.Count < 2)
+                {
+                    errors.Error(
+                        "Selection",
+                        "Select at least two non-emissive meshes to texture-atlas merge. Emissive meshes are skipped and left unchanged.");
+                    return false;
+                }
+
+                var totalIndexCount = bakeMeshes.Sum(x => (long)x.Geometry.GetIndexCount());
                 if (totalIndexCount > ushort.MaxValue)
                 {
                     errors.Error(
@@ -70,28 +90,28 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                if (!TryResolveTargetVertexFormat(sourceMeshes, out var targetVertexFormat, errors))
+                if (!TryResolveTargetVertexFormat(bakeMeshes, out var targetVertexFormat, errors))
                     return false;
 
-                var materialType = sourceMeshes[0].Material.Type;
-                if (sourceMeshes.Any(x => x.Material.Type != materialType))
+                var materialType = bakeMeshes[0].Material.Type;
+                if (bakeMeshes.Any(x => x.Material.Type != materialType))
                 {
                     errors.Error("Material type", "All selected meshes must use the same material type.");
                     return false;
                 }
 
-                if (!TryGetAtlasConfiguration(sourceMeshes, out var primaryTextureType, out var textureUsage, errors))
+                if (!TryGetAtlasConfiguration(bakeMeshes, out var primaryTextureType, out var textureUsage, errors))
                     return false;
 
-                var useAlphaByMesh = sourceMeshes
+                var useAlphaByMesh = bakeMeshes
                     .Select(x => x.Material.GetCapability<MaterialBaseCapability>().UseAlpha)
                     .ToArray();
                 var combinedUseAlpha = useAlphaByMesh.Any(x => x);
 
-                if (!ValidateNonAtlasMaterialState(sourceMeshes, textureUsage, combinedUseAlpha, errors))
+                if (!ValidateNonAtlasMaterialState(bakeMeshes, textureUsage, combinedUseAlpha, errors))
                     return false;
 
-                var workingMeshes = sourceMeshes
+                var workingMeshes = bakeMeshes
                     .Select(x =>
                     {
                         var clone = SceneNodeHelper.CloneNode(x);
@@ -127,7 +147,7 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var plan = TextureAtlasBuilder.CreatePlanFromDds(primarySources);
-                var atlasStem = BuildAtlasStem(sourceMeshes[0].Name);
+                var atlasStem = BuildAtlasStem(bakeMeshes[0].Name);
                 var generatedFiles = new List<GeneratedTextureAtlasFile>();
                 var generatedPaths = new Dictionary<TextureType, string>();
 
@@ -189,7 +209,12 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                preparedMerge = new PreparedTextureAtlasMerge(targetPack, combinedMeshes, generatedFiles);
+                preparedMerge = new PreparedTextureAtlasMerge(
+                    targetPack,
+                    bakeMeshes,
+                    combinedMeshes,
+                    untouchedMeshes,
+                    generatedFiles);
                 return true;
             }
             catch (Exception ex)
