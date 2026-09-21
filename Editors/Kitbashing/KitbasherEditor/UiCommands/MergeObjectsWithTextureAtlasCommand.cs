@@ -15,7 +15,7 @@ namespace Editors.KitbasherEditor.UiCommands
         private readonly TextureAtlasMergeService _textureAtlasMergeService;
         private readonly IUiCommandFactory _commandFactory;
 
-        public string ToolTip { get; set; } = "Merge selected meshes and consolidate their used texture regions into a shared atlas";
+        public string ToolTip { get; set; } = "Create shared texture atlases for selected meshes without merging their geometry";
         public ActionEnabledRule EnabledRule => ActionEnabledRule.TwoOrMoreObjectsSelected;
         public Hotkey? HotKey => null;
 
@@ -43,7 +43,7 @@ namespace Editors.KitbasherEditor.UiCommands
 
             if (!_textureAtlasMergeService.TryPrepare(selectedMeshes, out var preparedMerge, out var errors))
             {
-                ErrorListWindow.ShowDialog("Texture Atlas Merge", errors, false);
+                ErrorListWindow.ShowDialog("Texture Atlas", errors, false);
                 return;
             }
 
