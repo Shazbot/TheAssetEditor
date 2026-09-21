@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Drawing.Imaging;
+using DrawingImageFormat = System.Drawing.Imaging.ImageFormat;
 using Editors.ImportExport.Importing.Importers.PngToDds;
 using Editors.ImportExport.TextureAtlas;
 using MeshImportExport;
@@ -57,7 +58,7 @@ namespace Test.ImportExport.TextureAtlas
                 graphics.Clear(Color.FromArgb(0, 120, 80, 40));
 
             using var pngStream = new MemoryStream();
-            bitmap.Save(pngStream, ImageFormat.Png);
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
 
             var ddsPack = PngToDdsImporter.ImportRaw(
                 pngStream.ToArray(),
@@ -116,7 +117,7 @@ namespace Test.ImportExport.TextureAtlas
             }
 
             using var pngStream = new MemoryStream();
-            bitmap.Save(pngStream, ImageFormat.Png);
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
 
             var ddsPack = PngToDdsImporter.ImportRaw(
                 pngStream.ToArray(),
@@ -150,7 +151,7 @@ namespace Test.ImportExport.TextureAtlas
                 graphics.Clear(Color.FromArgb(255, 240, 40, 10));
 
             using var pngStream = new MemoryStream();
-            bitmap.Save(pngStream, ImageFormat.Png);
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
 
             var ddsPack = PngToDdsImporter.ImportRaw(
                 pngStream.ToArray(),
@@ -183,7 +184,7 @@ namespace Test.ImportExport.TextureAtlas
                 graphics.Clear(Color.FromArgb(255, 128, 96, 64));
 
             using var pngStream = new MemoryStream();
-            bitmap.Save(pngStream, ImageFormat.Png);
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
 
             var sourceDds = PngToDdsImporter.ImportRaw(
                 pngStream.ToArray(),
@@ -227,7 +228,7 @@ namespace Test.ImportExport.TextureAtlas
                 graphics.Clear(Color.FromArgb(255, 64, 192, 32));
 
             using var pngStream = new MemoryStream();
-            bitmap.Save(pngStream, ImageFormat.Png);
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
 
             var sourceDds = PngToDdsImporter.ImportRaw(
                 pngStream.ToArray(),
@@ -340,7 +341,7 @@ namespace Test.ImportExport.TextureAtlas
                 graphics.Clear(Color.White);
 
             using var pngStream = new MemoryStream();
-            bitmap.Save(pngStream, ImageFormat.Png);
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
 
             var ddsPack = PngToDdsImporter.ImportRaw(
                 pngStream.ToArray(),
