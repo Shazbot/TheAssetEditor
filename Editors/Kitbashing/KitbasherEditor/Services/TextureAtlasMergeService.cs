@@ -6,6 +6,7 @@ using GameWorld.Core.Rendering.Materials.Shaders;
 using GameWorld.Core.SceneNodes;
 using GameWorld.Core.Utility;
 using Microsoft.Xna.Framework;
+using System.IO;
 using Shared.Core.ErrorHandling;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
