@@ -133,13 +133,13 @@ namespace Test.ImportExport.TextureAtlas
             using var atlasStream = new MemoryStream(atlasPng);
             using var atlasBitmap = new Bitmap(atlasStream);
             var placement = plan.Placements.Single();
-            var y = placement.DestinationY;
+            var sampleY = placement.DestinationY;
 
-            Assert.That(atlasBitmap.GetPixel(placement.DestinationX, y), Is.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 4, y)));
-            Assert.That(atlasBitmap.GetPixel(placement.DestinationX + 1, y), Is.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 5, y)));
-            Assert.That(atlasBitmap.GetPixel(placement.DestinationX + 2, y), Is.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 6, y)));
-            Assert.That(atlasBitmap.GetPixel(placement.DestinationX + 3, y), Is.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 7, y)));
-            Assert.That(atlasBitmap.GetPixel(placement.DestinationX, y), Is.Not.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 2, y)));
+            Assert.That(atlasBitmap.GetPixel(placement.DestinationX, sampleY), Is.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 4, sampleY)));
+            Assert.That(atlasBitmap.GetPixel(placement.DestinationX + 1, sampleY), Is.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 5, sampleY)));
+            Assert.That(atlasBitmap.GetPixel(placement.DestinationX + 2, sampleY), Is.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 6, sampleY)));
+            Assert.That(atlasBitmap.GetPixel(placement.DestinationX + 3, sampleY), Is.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 7, sampleY)));
+            Assert.That(atlasBitmap.GetPixel(placement.DestinationX, sampleY), Is.Not.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 2, sampleY)));
         }
     }
 }
