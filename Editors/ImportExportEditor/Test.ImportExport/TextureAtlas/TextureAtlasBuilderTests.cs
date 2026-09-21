@@ -219,6 +219,50 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void MaterialMapAtlasRoundTrip_PreservesDecodedChannelValues()
+        {
+            using var bitmap = new Bitmap(16, 16, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.Clear(Color.FromArgb(255, 64, 192, 32));
+
+            using var pngStream = new MemoryStream();
+            bitmap.Save(pngStream, ImageFormat.Png);
+
+            var sourceDds = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.MaterialMap,
+                GameTypeEnum.Warhammer3,
+                "material-roundtrip-source.dds");
+
+            var sourceBytes = sourceDds.DataSource.ReadData();
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 16, 16, 0, 0, 1, 1)],
+                padding: 0);
+
+            var atlasPng = TextureAtlasBuilder.BuildPng(
+                plan,
+                new Dictionary<int, byte[]> { [0] = sourceBytes });
+
+            var atlasDds = PngToDdsImporter.ImportRaw(
+                atlasPng,
+                TextureType.MaterialMap,
+                GameTypeEnum.Warhammer3,
+                "material-roundtrip-atlas.dds");
+
+            using var sourcePngStream = new MemoryStream(TextureHelper.ConvertDdsToPng(sourceBytes));
+            using var sourceBitmap = new Bitmap(sourcePngStream);
+            using var atlasPngStream = new MemoryStream(TextureHelper.ConvertDdsToPng(atlasDds.DataSource.ReadData()));
+            using var atlasBitmap = new Bitmap(atlasPngStream);
+
+            var sourcePixel = sourceBitmap.GetPixel(8, 8);
+            var atlasPixel = atlasBitmap.GetPixel(8, 8);
+
+            Assert.That(atlasPixel.R, Is.EqualTo(sourcePixel.R).Within(8));
+            Assert.That(atlasPixel.G, Is.EqualTo(sourcePixel.G).Within(8));
+            Assert.That(atlasPixel.B, Is.EqualTo(sourcePixel.B).Within(8));
+        }
+
+        [Test]
         public void BuildPng_CanOmitMissingSecondaryAtlasSources()
         {
             using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
