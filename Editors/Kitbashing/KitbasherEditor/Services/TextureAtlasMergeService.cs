@@ -130,6 +130,9 @@ namespace Editors.KitbasherEditor.Services
                 for (var i = 0; i < workingMeshes.Count; i++)
                     uvBounds[i] = GetUvBounds(workingMeshes[i]);
 
+                if (!ValidateAtlasUvBounds(workingMeshes, uvBounds, errors))
+                    return false;
+
                 var primarySources = new List<TextureAtlasSource>(workingMeshes.Count);
                 for (var i = 0; i < workingMeshes.Count; i++)
                 {
@@ -406,6 +409,36 @@ namespace Editors.KitbasherEditor.Services
 
                 mesh.Geometry.RebuildVertexBuffer();
             }
+        }
+
+        private static bool ValidateAtlasUvBounds(
+            IReadOnlyList<Rmv2MeshNode> meshes,
+            IReadOnlyList<UvBounds> uvBounds,
+            ErrorList errors)
+        {
+            const float epsilon = 0.00001f;
+            var valid = true;
+
+            for (var i = 0; i < meshes.Count; i++)
+            {
+                var bounds = uvBounds[i];
+                if (bounds.MinU >= -epsilon &&
+                    bounds.MinV >= -epsilon &&
+                    bounds.MaxU <= 1 + epsilon &&
+                    bounds.MaxV <= 1 + epsilon)
+                {
+                    continue;
+                }
+
+                valid = false;
+                errors.Error(
+                    "Unsupported UVs",
+                    $"Mesh '{meshes[i].Name}' uses UV coordinates outside 0..1 " +
+                    $"(U {bounds.MinU:0.####}..{bounds.MaxU:0.####}, V {bounds.MinV:0.####}..{bounds.MaxV:0.####}). " +
+                    "Deselect/disable this mesh from the texture-atlas merge and try again.");
+            }
+
+            return valid;
         }
 
         private static UvBounds GetUvBounds(Rmv2MeshNode mesh)
