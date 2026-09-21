@@ -34,7 +34,7 @@ internal sealed class GltfAnimationMetadataLookupCache
 {
     private const uint CacheMagic = 0x434D4147; // GAMC
     private const uint PayloadMagic = 0x58444D47; // GMDX
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 3;
     private const int CurrentPayloadVersion = 1;
     private const string CacheFileName = "animation-metadata-index.bin";
     private const string LegacyCacheFileName = "animation-metadata-index.br";

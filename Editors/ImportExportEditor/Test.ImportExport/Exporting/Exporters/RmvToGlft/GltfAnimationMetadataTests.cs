@@ -275,6 +275,43 @@ public class GltfAnimationMetadataTests
     }
 
     [Test]
+    public void SelectCatalogContextPrefersTheBaseFragmentForAWeaponAnimation()
+    {
+        var candidates = new[]
+        {
+            new GltfAnimationMetadataContextResolver.FragmentEntryContext(
+                "animations/database/battle/bin/hu7_dlc12_skink_bi3_terradon_sword_and_plaque.bin",
+                "humanoid07b",
+                "animations/battle/humanoid07/sword_and_plaque/stand/hu7_swpl_stand_01.anm.meta",
+                null,
+                new Dictionary<string, string>(),
+                null),
+            new GltfAnimationMetadataContextResolver.FragmentEntryContext(
+                "animations/database/battle/bin/hu7_dlc12_skink_hq1_stegadon_wb_sword_and_plaque.bin",
+                "humanoid07b",
+                "animations/battle/humanoid07/sword_and_plaque/stand/hu7_swpl_stand_01.anm.meta",
+                null,
+                new Dictionary<string, string>(),
+                null),
+            new GltfAnimationMetadataContextResolver.FragmentEntryContext(
+                "animations/database/battle/bin/hu7_dlc12_skink_sword_and_plaque.bin",
+                "humanoid07b",
+                "animations/battle/humanoid07/sword_and_plaque/stand/hu7_swpl_stand_01.anm.meta",
+                null,
+                new Dictionary<string, string>(),
+                null)
+        };
+
+        var selected = GltfAnimationMetadataContextResolver.SelectCatalogContext(
+            candidates,
+            "animations/battle/humanoid07/sword_and_plaque/stand/hu7_swpl_stand_01.anim");
+
+        Assert.That(
+            selected.FragmentPath,
+            Is.EqualTo("animations/database/battle/bin/hu7_dlc12_skink_sword_and_plaque.bin"));
+    }
+
+    [Test]
     public void SelectBestContextHonorsExplicitFragmentEntrySelection()
     {
         var container = new Mock<IPackFileContainer>().Object;

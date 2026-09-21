@@ -179,14 +179,64 @@ public sealed class GltfAnimationMetadataContextResolver : IGltfAnimationContext
         IPackFileContainer container)
     {
         var normalizedPath = NormalizePath(animationPath);
-        return GetCandidateContexts(normalizedPath)
+        var candidates = GetCandidateContexts(normalizedPath)
             .Where(x => string.Equals(x.SkeletonName, skeletonName, StringComparison.OrdinalIgnoreCase))
-            .Where(x => x.SourceContainer != null && ReferenceEquals(x.SourceContainer, container))
-            .Select(x => new GltfAnimationMetadataSelection(x.FragmentPath, x.MetaPath))
-            .Distinct()
-            .OrderBy(x => x.FragmentPath, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.MetadataPath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var containerMatches = candidates
+            .Where(x => x.SourceContainer != null && ReferenceEquals(x.SourceContainer, container))
+            .ToList();
+        var preferredCandidates = containerMatches.Count != 0 ? containerMatches : candidates;
+        if (preferredCandidates.Count == 0)
+            return [];
+
+        var selected = SelectCatalogContext(preferredCandidates, normalizedPath);
+        return [new GltfAnimationMetadataSelection(selected.FragmentPath, selected.MetaPath)];
+    }
+
+    /// <summary>
+    /// The animation file and its fragment database are not always stored in the same
+    /// vanilla pack. When that happens, choose the metadata context whose fragment name
+    /// best describes the animation family, with the shortest matching fragment winning
+    /// ties (for example sword_and_plaque over a more specific mount variant).
+    /// </summary>
+    internal static FragmentEntryContext SelectCatalogContext(
+        IReadOnlyList<FragmentEntryContext> candidates,
+        string animationPath)
+    {
+        if (candidates.Count == 0)
+            throw new ArgumentException("At least one metadata context is required.", nameof(candidates));
+
+        var normalizedAnimationPath = NormalizePath(animationPath).ToLowerInvariant();
+        return candidates
+            .OrderByDescending(x => GetFragmentAnimationAffinity(x.FragmentPath, normalizedAnimationPath))
+            .ThenByDescending(x => string.IsNullOrWhiteSpace(x.MetaPath) == false)
+            .ThenBy(x => GetLastPathComponent(x.FragmentPath).Length)
+            .ThenBy(x => x.FragmentPath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.MetaPath ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .First();
+    }
+
+    private static int GetFragmentAnimationAffinity(string fragmentPath, string normalizedAnimationPath)
+    {
+        var fragmentName = GetLastPathComponent(fragmentPath);
+        if (fragmentName.EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
+            fragmentName = fragmentName[..^4];
+        fragmentName = fragmentName.ToLowerInvariant();
+        var score = 0;
+        foreach (var token in fragmentName.Split('_', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (token.Length >= 3 && normalizedAnimationPath.Contains(token, StringComparison.Ordinal))
+                score++;
+        }
+
+        return score;
+    }
+
+    private static string GetLastPathComponent(string path)
+    {
+        var normalized = NormalizePath(path);
+        var separator = normalized.LastIndexOf('\\');
+        return separator < 0 ? normalized : normalized[(separator + 1)..];
     }
 
     private List<FragmentEntryContext> GetCandidateContexts(string animationPath)
