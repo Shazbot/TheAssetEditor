@@ -56,16 +56,27 @@ namespace GameWorld.Core.Services
             _globalEventHub = globalEventHub;
 
             _globalEventHub.Register<PackFileContainerAddedEvent>(this, x => PackfileContainerRefresh(x.Container));
-            _globalEventHub.Register<PackFileContainerFilesAddedEvent>(this, x => PackfileContainerRefresh(x.Container));
+            _globalEventHub.Register<PackFileContainerFilesAddedEvent>(this, x =>
+            {
+                if (x.AddedFiles.Any(IsAnimationFile))
+                    PackfileContainerRefresh(x.Container);
+            });
             _globalEventHub.Register<PackFileContainerFolderRenamedEvent>(this, x => PackfileContainerRefresh(x.Container));
 
             _globalEventHub.Register<PackFileContainerRemovedEvent>(this, x => PackfileContainerRemove(x.Container));
-            _globalEventHub.Register<PackFileContainerFilesRemovedEvent>(this, x => PackfileContainerRemove(x.Container));
+            _globalEventHub.Register<PackFileContainerFilesRemovedEvent>(this, x =>
+            {
+                if (x.RemovedFiles.Any(IsAnimationFile))
+                    PackfileContainerRemove(x.Container);
+            });
             _globalEventHub.Register<PackFileContainerFolderRemovedEvent>(this, x => PackfileContainerRemove(x.Container));
 
             // Initialize in background so startup is not blocked.
             _initialIndexTask = Task.Run(LoadAllContainersInBackground);
         }
+
+        private static bool IsAnimationFile(PackFile file)
+            => file.Extension.Equals(".anim", StringComparison.OrdinalIgnoreCase);
 
         public void Dispose()
         {
