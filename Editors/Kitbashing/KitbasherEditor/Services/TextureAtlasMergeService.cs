@@ -186,12 +186,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var workingMeshes = preparedMeshes
-                .Select(x =>
-                {
-                    var clone = SceneNodeHelper.CloneNode(x.Mesh);
-                    clone.Name = x.Mesh.Name;
-                    return clone;
-                })
+                .Select(x => CloneForAtlas(x.Mesh))
                 .ToList();
 
             var uvBounds = workingMeshes.Select(GetUvBounds).ToArray();
@@ -276,6 +271,15 @@ namespace Editors.KitbasherEditor.Services
                 replacements.Add(new TextureAtlasMeshReplacement(preparedMeshes[i].Mesh, workingMeshes[i]));
         }
 
+        private static Rmv2MeshNode CloneForAtlas(Rmv2MeshNode source)
+        {
+            var clone = (Rmv2MeshNode)source.CreateCopyInstance();
+            source.CopyInto(clone, includeMesh: false);
+            clone.Geometry = source.Geometry.Clone(includeMesh: true, createGraphicsResources: false);
+            clone.Name = source.Name;
+            return clone;
+        }
+
         private bool TryReadTextureBytes(TextureInput input, out byte[] bytes)
         {
             bytes = [];
@@ -327,7 +331,6 @@ namespace Editors.KitbasherEditor.Services
                     mesh.Geometry.VertexArray[vertexIndex].TextureCoordinate = new Vector2(remapped.U, remapped.V);
                 }
 
-                mesh.Geometry.RebuildVertexBuffer();
             }
         }
 
