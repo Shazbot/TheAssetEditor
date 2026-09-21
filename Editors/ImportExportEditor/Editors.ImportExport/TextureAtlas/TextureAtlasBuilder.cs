@@ -150,12 +150,16 @@ namespace Editors.ImportExport.TextureAtlas
         public static byte[] BuildPng(
             TextureAtlasPlan plan,
             IReadOnlyDictionary<int, byte[]> ddsSources,
-            IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null)
+            IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null,
+            IReadOnlySet<int>? omittedSourceIds = null)
         {
             var atlasPixels = new byte[checked(plan.Width * plan.Height * 4)];
 
             foreach (var placement in plan.Placements)
             {
+                if (omittedSourceIds?.Contains(placement.Id) == true)
+                    continue;
+
                 if (!ddsSources.TryGetValue(placement.Id, out var ddsBytes))
                     throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
 
