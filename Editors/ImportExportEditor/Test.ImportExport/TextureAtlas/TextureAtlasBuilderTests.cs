@@ -3,6 +3,7 @@ using System.Drawing.Imaging;
 using Editors.ImportExport.Importing.Importers.PngToDds;
 using Editors.ImportExport.TextureAtlas;
 using MeshImportExport;
+using Pfim;
 using Shared.Core.Settings;
 using Shared.GameFormats.RigidModel.Types;
 
@@ -263,6 +264,75 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void ExplicitAtlasMipChain_PreservesAuthoredSourceMipColours()
+        {
+            var sourceMipPngs = new[]
+            {
+                CreateSolidPng(16, Color.White),
+                CreateSolidPng(8, Color.Red),
+                CreateSolidPng(4, Color.Lime),
+                CreateSolidPng(2, Color.Blue),
+                CreateSolidPng(1, Color.Gray)
+            };
+
+            var sourceDds = PngToDdsImporter.ImportRawMipChain(
+                sourceMipPngs,
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "authored-mips-source.dds");
+
+            var sourceBytes = sourceDds.DataSource.ReadData();
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 16, 16, 0, 0, 1, 1)],
+                padding: 8);
+
+            var atlasMipPngs = TextureAtlasBuilder.BuildMipPngs(
+                plan,
+                new Dictionary<int, byte[]> { [0] = sourceBytes });
+            var atlasDds = PngToDdsImporter.ImportRawMipChain(
+                atlasMipPngs,
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "authored-mips-atlas.dds");
+
+            using var sourceStream = new MemoryStream(sourceBytes);
+            using var sourceImage = Pfimage.FromStream(sourceStream);
+            using var atlasStream = new MemoryStream(atlasDds.DataSource.ReadData());
+            using var atlasImage = Pfimage.FromStream(atlasStream);
+
+            // Mip level 2 was authored as green. Compare the packed atlas sample to the
+            // decoded source mip itself so BC1 quantization is accounted for.
+            var sourceMip = sourceImage.MipMaps[1];
+            var sourcePixel = ReadPfimPixel(
+                sourceImage,
+                sourceMip.DataOffset,
+                sourceMip.Stride,
+                sourceMip.Width / 2,
+                sourceMip.Height / 2);
+
+            var atlasMip = atlasImage.MipMaps[1];
+            var placement = plan.Placements.Single();
+            var atlasX = (int)Math.Floor(
+                (placement.DestinationX + placement.CropWidth / 2.0) *
+                atlasMip.Width / plan.Width);
+            var atlasY = (int)Math.Floor(
+                (placement.DestinationY + placement.CropHeight / 2.0) *
+                atlasMip.Height / plan.Height);
+            var atlasPixel = ReadPfimPixel(
+                atlasImage,
+                atlasMip.DataOffset,
+                atlasMip.Stride,
+                atlasX,
+                atlasY);
+
+            Assert.That(atlasPixel.R, Is.EqualTo(sourcePixel.R).Within(8));
+            Assert.That(atlasPixel.G, Is.EqualTo(sourcePixel.G).Within(8));
+            Assert.That(atlasPixel.B, Is.EqualTo(sourcePixel.B).Within(8));
+            Assert.That(atlasPixel.G, Is.GreaterThan(atlasPixel.R));
+            Assert.That(atlasPixel.G, Is.GreaterThan(atlasPixel.B));
+        }
+
+        [Test]
         public void BuildPng_CanOmitMissingSecondaryAtlasSources()
         {
             using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
@@ -298,6 +368,32 @@ namespace Test.ImportExport.TextureAtlas
 
             Assert.That(atlasBitmap.GetPixel(present.DestinationX, present.DestinationY).A, Is.GreaterThan(0));
             Assert.That(atlasBitmap.GetPixel(omitted.DestinationX, omitted.DestinationY).A, Is.EqualTo(0));
+        }
+
+        private static byte[] CreateSolidPng(int size, Color color)
+        {
+            using var bitmap = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.Clear(color);
+
+            using var stream = new MemoryStream();
+            bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+            return stream.ToArray();
+        }
+
+        private static Color ReadPfimPixel(
+            IImage image,
+            int dataOffset,
+            int stride,
+            int x,
+            int y)
+        {
+            var offset = dataOffset + y * stride + x * 4;
+            return Color.FromArgb(
+                image.Data[offset + 3],
+                image.Data[offset + 2],
+                image.Data[offset + 1],
+                image.Data[offset]);
         }
 
     }
