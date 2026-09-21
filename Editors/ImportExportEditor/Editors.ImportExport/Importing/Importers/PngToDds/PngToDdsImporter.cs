@@ -1,6 +1,7 @@
 using DirectXTexNet;
 using Editors.ImportExport.Common.Interfaces;
 using Editors.ImportExport.Importing.Importers.PngToDds.Helpers;
+using System.IO;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Models.FileSources;
 using Shared.Core.Settings;
