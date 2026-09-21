@@ -139,5 +139,44 @@ namespace Test.ImportExport.TextureAtlas
             Assert.That(atlasBitmap.GetPixel(placement.DestinationX + 4, sampleY), Is.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 12, sampleY)));
             Assert.That(atlasBitmap.GetPixel(placement.DestinationX, sampleY), Is.Not.EqualTo(atlasBitmap.GetPixel(placement.DestinationX + 4, sampleY)));
         }
+
+        [Test]
+        public void BuildPng_CanOmitMissingSecondaryAtlasSources()
+        {
+            using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.Clear(Color.White);
+
+            using var pngStream = new MemoryStream();
+            bitmap.Save(pngStream, ImageFormat.Png);
+
+            var ddsPack = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.MaterialMap,
+                GameTypeEnum.Warhammer3,
+                "material-source.dds");
+
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [
+                    new TextureAtlasLayoutSource(0, 4, 4, 0, 0, 1, 1),
+                    new TextureAtlasLayoutSource(1, 4, 4, 0, 0, 1, 1)
+                ],
+                padding: 0);
+
+            var atlasPng = TextureAtlasBuilder.BuildPng(
+                plan,
+                new Dictionary<int, byte[]> { [0] = ddsPack.DataSource.ReadData() },
+                forceOpaqueAlphaSourceIds: null,
+                omittedSourceIds: new HashSet<int> { 1 });
+
+            using var atlasStream = new MemoryStream(atlasPng);
+            using var atlasBitmap = new Bitmap(atlasStream);
+            var present = plan.Placements.Single(x => x.Id == 0);
+            var omitted = plan.Placements.Single(x => x.Id == 1);
+
+            Assert.That(atlasBitmap.GetPixel(present.DestinationX, present.DestinationY).A, Is.GreaterThan(0));
+            Assert.That(atlasBitmap.GetPixel(omitted.DestinationX, omitted.DestinationY).A, Is.EqualTo(0));
+        }
+
     }
 }
