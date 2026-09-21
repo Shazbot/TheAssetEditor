@@ -35,7 +35,9 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             string outFileName,
             bool processForGame)
         {
-            var wicFlags = IsLinearTexture(textureType) ? WIC_FLAGS.IGNORE_SRGB : WIC_FLAGS.DEFAULT_SRGB;
+            var wicFlags = processForGame
+                ? WIC_FLAGS.DEFAULT_SRGB
+                : IsLinearTexture(textureType) ? WIC_FLAGS.IGNORE_SRGB : WIC_FLAGS.DEFAULT_SRGB;
             var scratchImagePng = TexHelper.Instance.LoadFromWICFile(inputPath, wicFlags);
 
             var processedImage = processForGame
