@@ -12,11 +12,10 @@ namespace Editors.KitbasherEditor.Commands
         private readonly SelectionManager _selectionManager;
         private readonly IPackFileService _packFileService;
 
-        private List<Rmv2MeshNode> _originalMeshes = [];
         private PreparedTextureAtlasMerge? _preparedMerge;
         private ISelectionState? _originalSelectionState;
 
-        public string HintText => "Merge Objects With Texture Atlas";
+        public string HintText => "Create Texture Atlas";
         public bool IsMutation => true;
 
         public ApplyTextureAtlasMergeCommand(
@@ -29,14 +28,13 @@ namespace Editors.KitbasherEditor.Commands
 
         public void Configure(PreparedTextureAtlasMerge preparedMerge)
         {
-            _originalMeshes = preparedMerge.SourceMeshesToReplace.ToList();
             _preparedMerge = preparedMerge;
         }
 
         public void Execute()
         {
             if (_preparedMerge == null)
-                throw new InvalidOperationException("Texture atlas merge command was not configured.");
+                throw new InvalidOperationException("Texture atlas command was not configured.");
 
             _originalSelectionState ??= _selectionManager.GetStateCopy();
 
@@ -45,17 +43,19 @@ namespace Editors.KitbasherEditor.Commands
                 .ToList();
             _packFileService.AddFilesToPack(_preparedMerge.TargetPack, packEntries);
 
-            foreach (var mesh in _originalMeshes)
-                mesh.Parent.RemoveObject(mesh);
-
-            foreach (var mesh in _preparedMerge.CombinedMeshes)
-                mesh.Parent.AddObject(mesh);
+            foreach (var replacement in _preparedMerge.Replacements)
+            {
+                var parent = replacement.OriginalMesh.Parent;
+                parent.RemoveObject(replacement.OriginalMesh);
+                parent.AddObject(replacement.AtlasedMesh);
+            }
 
             if (_selectionManager.GetState() is ObjectSelectionState currentState)
             {
                 currentState.Clear();
                 currentState.ModifySelection(
-                    _preparedMerge.CombinedMeshes
+                    _preparedMerge.Replacements
+                        .Select(x => x.AtlasedMesh)
                         .Concat(_preparedMerge.UntouchedMeshes)
                         .Cast<ISelectable>(),
                     false);
@@ -67,11 +67,12 @@ namespace Editors.KitbasherEditor.Commands
             if (_preparedMerge == null || _originalSelectionState == null)
                 return;
 
-            foreach (var mesh in _preparedMerge.CombinedMeshes)
-                mesh.Parent.RemoveObject(mesh);
-
-            foreach (var mesh in _originalMeshes)
-                mesh.Parent.AddObject(mesh);
+            foreach (var replacement in _preparedMerge.Replacements)
+            {
+                var parent = replacement.AtlasedMesh.Parent;
+                parent.RemoveObject(replacement.AtlasedMesh);
+                parent.AddObject(replacement.OriginalMesh);
+            }
 
             foreach (var generated in _preparedMerge.GeneratedFiles)
             {
