@@ -141,6 +141,39 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void BuildPng_PreservesBaseColourChannelOrder()
+        {
+            using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.Clear(Color.FromArgb(255, 240, 40, 10));
+
+            using var pngStream = new MemoryStream();
+            bitmap.Save(pngStream, ImageFormat.Png);
+
+            var ddsPack = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "channel-order-source.dds");
+
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 4, 4, 0, 0, 1, 1)],
+                padding: 0);
+
+            var atlasPng = TextureAtlasBuilder.BuildPng(
+                plan,
+                new Dictionary<int, byte[]> { [0] = ddsPack.DataSource.ReadData() });
+
+            using var atlasStream = new MemoryStream(atlasPng);
+            using var atlasBitmap = new Bitmap(atlasStream);
+            var placement = plan.Placements.Single();
+            var pixel = atlasBitmap.GetPixel(placement.DestinationX, placement.DestinationY);
+
+            Assert.That(pixel.R, Is.GreaterThan(pixel.B));
+            Assert.That(pixel.R, Is.GreaterThan(pixel.G));
+        }
+
+        [Test]
         public void BuildPng_CanOmitMissingSecondaryAtlasSources()
         {
             using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
