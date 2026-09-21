@@ -95,12 +95,20 @@ namespace Editors.ImportExport.TextureAtlas
             {
                 ValidateSource(source);
 
-                var cropX = Math.Clamp((int)MathF.Floor(source.MinU * source.SourceWidth), 0, source.SourceWidth - 1);
-                var cropY = Math.Clamp((int)MathF.Floor(source.MinV * source.SourceHeight), 0, source.SourceHeight - 1);
-                var cropRight = Math.Clamp((int)MathF.Ceiling(source.MaxU * source.SourceWidth), cropX + 1, source.SourceWidth);
-                var cropBottom = Math.Clamp((int)MathF.Ceiling(source.MaxV * source.SourceHeight), cropY + 1, source.SourceHeight);
-                var cropWidth = cropRight - cropX;
-                var cropHeight = cropBottom - cropY;
+                // Keep the crop in virtual source-pixel space instead of clamping it to the
+                // physical texture. UVs outside 0..1 are valid when the material sampler wraps:
+                // the atlas copies the required repeated tiles and then remaps the original UVs.
+                var cropX = checked((int)MathF.Floor(source.MinU * source.SourceWidth));
+                var cropY = checked((int)MathF.Floor(source.MinV * source.SourceHeight));
+                var cropRight = checked((int)MathF.Ceiling(source.MaxU * source.SourceWidth));
+                var cropBottom = checked((int)MathF.Ceiling(source.MaxV * source.SourceHeight));
+                var cropWidth = checked(cropRight - cropX);
+                var cropHeight = checked(cropBottom - cropY);
+
+                if (cropWidth <= 0)
+                    cropWidth = 1;
+                if (cropHeight <= 0)
+                    cropHeight = 1;
 
                 pending.Add(new PendingPlacement(
                     source.Id,
@@ -144,12 +152,7 @@ namespace Editors.ImportExport.TextureAtlas
             IReadOnlyDictionary<int, byte[]> ddsSources,
             IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null)
         {
-            using var atlas = new Bitmap(plan.Width, plan.Height, PixelFormat.Format32bppArgb);
-            using var graphics = Graphics.FromImage(atlas);
-            graphics.Clear(Color.Transparent);
-            graphics.CompositingMode = CompositingMode.SourceCopy;
-            graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
-            graphics.PixelOffsetMode = PixelOffsetMode.Half;
+            var atlasPixels = new byte[checked(plan.Width * plan.Height * 4)];
 
             foreach (var placement in plan.Placements)
             {
@@ -157,19 +160,28 @@ namespace Editors.ImportExport.TextureAtlas
                     throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
 
                 using var source = LoadBitmap(ddsBytes);
-                if (forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true)
-                    ForceOpaqueAlpha(source);
-
                 if (source.Width != placement.SourceWidth || source.Height != placement.SourceHeight)
                 {
                     throw new InvalidOperationException(
                         $"Texture dimensions for atlas source {placement.Id} are {source.Width}x{source.Height}, " +
                         $"but the shared atlas layout requires {placement.SourceWidth}x{placement.SourceHeight}. " +
-                        "The first atlas implementation intentionally avoids resampling so tangent-space normal maps remain safe.");
+                        "The atlas implementation intentionally avoids resampling so tangent-space normal maps remain safe.");
                 }
 
-                CopyRegionAndPadding(graphics, source, placement);
+                var sourcePixels = ReadPixels(source);
+                CopyWrappedRegionAndPadding(
+                    atlasPixels,
+                    plan.Width,
+                    plan.Height,
+                    sourcePixels,
+                    source.Width,
+                    source.Height,
+                    placement,
+                    forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
             }
+
+            using var atlas = new Bitmap(plan.Width, plan.Height, PixelFormat.Format32bppArgb);
+            WritePixels(atlas, atlasPixels);
 
             using var stream = new MemoryStream();
             atlas.Save(stream, ImageFormat.Png);
@@ -182,59 +194,103 @@ namespace Editors.ImportExport.TextureAtlas
             return (bitmap.Width, bitmap.Height);
         }
 
-        private static void CopyRegionAndPadding(Graphics graphics, Bitmap source, TextureAtlasPlacement placement)
+        private static void CopyWrappedRegionAndPadding(
+            byte[] atlasPixels,
+            int atlasWidth,
+            int atlasHeight,
+            byte[] sourcePixels,
+            int sourceWidth,
+            int sourceHeight,
+            TextureAtlasPlacement placement,
+            bool forceOpaqueAlpha)
         {
-            var sourceRect = new Rectangle(placement.CropX, placement.CropY, placement.CropWidth, placement.CropHeight);
-            var destinationRect = new Rectangle(placement.DestinationX, placement.DestinationY, placement.CropWidth, placement.CropHeight);
-            graphics.DrawImage(source, destinationRect, sourceRect, GraphicsUnit.Pixel);
-
             var padding = placement.Padding;
-            if (padding == 0)
-                return;
 
-            var left = placement.DestinationX;
-            var top = placement.DestinationY;
-            var right = left + placement.CropWidth;
-            var bottom = top + placement.CropHeight;
-            var srcLeft = placement.CropX;
-            var srcTop = placement.CropY;
-            var srcRight = placement.CropX + placement.CropWidth - 1;
-            var srcBottom = placement.CropY + placement.CropHeight - 1;
+            for (var localY = -padding; localY < placement.CropHeight + padding; localY++)
+            {
+                var destinationY = placement.DestinationY + localY;
+                if (destinationY < 0 || destinationY >= atlasHeight)
+                    throw new InvalidOperationException($"Atlas placement {placement.Id} exceeds atlas bounds.");
 
-            graphics.DrawImage(
-                source,
-                new Rectangle(left, top - padding, placement.CropWidth, padding),
-                new Rectangle(srcLeft, srcTop, placement.CropWidth, 1),
-                GraphicsUnit.Pixel);
-            graphics.DrawImage(
-                source,
-                new Rectangle(left, bottom, placement.CropWidth, padding),
-                new Rectangle(srcLeft, srcBottom, placement.CropWidth, 1),
-                GraphicsUnit.Pixel);
-            graphics.DrawImage(
-                source,
-                new Rectangle(left - padding, top, padding, placement.CropHeight),
-                new Rectangle(srcLeft, srcTop, 1, placement.CropHeight),
-                GraphicsUnit.Pixel);
-            graphics.DrawImage(
-                source,
-                new Rectangle(right, top, padding, placement.CropHeight),
-                new Rectangle(srcRight, srcTop, 1, placement.CropHeight),
-                GraphicsUnit.Pixel);
+                // Padding is an edge extrusion, not another wrapped tile. Clamp to the virtual
+                // crop edge first, then wrap that virtual source coordinate into the DDS.
+                var cropLocalY = Math.Clamp(localY, 0, placement.CropHeight - 1);
+                var virtualSourceY = checked(placement.CropY + cropLocalY);
+                var sourceY = PositiveModulo(virtualSourceY, sourceHeight);
 
-            DrawCorner(graphics, source, left - padding, top - padding, padding, srcLeft, srcTop);
-            DrawCorner(graphics, source, right, top - padding, padding, srcRight, srcTop);
-            DrawCorner(graphics, source, left - padding, bottom, padding, srcLeft, srcBottom);
-            DrawCorner(graphics, source, right, bottom, padding, srcRight, srcBottom);
+                for (var localX = -padding; localX < placement.CropWidth + padding; localX++)
+                {
+                    var destinationX = placement.DestinationX + localX;
+                    if (destinationX < 0 || destinationX >= atlasWidth)
+                        throw new InvalidOperationException($"Atlas placement {placement.Id} exceeds atlas bounds.");
+
+                    var cropLocalX = Math.Clamp(localX, 0, placement.CropWidth - 1);
+                    var virtualSourceX = checked(placement.CropX + cropLocalX);
+                    var sourceX = PositiveModulo(virtualSourceX, sourceWidth);
+
+                    var sourceOffset = (sourceY * sourceWidth + sourceX) * 4;
+                    var destinationOffset = (destinationY * atlasWidth + destinationX) * 4;
+
+                    atlasPixels[destinationOffset] = sourcePixels[sourceOffset];
+                    atlasPixels[destinationOffset + 1] = sourcePixels[sourceOffset + 1];
+                    atlasPixels[destinationOffset + 2] = sourcePixels[sourceOffset + 2];
+                    atlasPixels[destinationOffset + 3] = forceOpaqueAlpha
+                        ? byte.MaxValue
+                        : sourcePixels[sourceOffset + 3];
+                }
+            }
         }
 
-        private static void DrawCorner(Graphics graphics, Bitmap source, int x, int y, int padding, int sourceX, int sourceY)
+        private static byte[] ReadPixels(Bitmap bitmap)
         {
-            graphics.DrawImage(
-                source,
-                new Rectangle(x, y, padding, padding),
-                new Rectangle(sourceX, sourceY, 1, 1),
-                GraphicsUnit.Pixel);
+            var rectangle = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+            var bitmapData = bitmap.LockBits(rectangle, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                var pixels = new byte[checked(bitmap.Width * bitmap.Height * 4)];
+                var rowBytes = bitmap.Width * 4;
+
+                for (var y = 0; y < bitmap.Height; y++)
+                {
+                    var rowPointer = IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride);
+                    Marshal.Copy(rowPointer, pixels, y * rowBytes, rowBytes);
+                }
+
+                return pixels;
+            }
+            finally
+            {
+                bitmap.UnlockBits(bitmapData);
+            }
+        }
+
+        private static void WritePixels(Bitmap bitmap, byte[] pixels)
+        {
+            var rectangle = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+            var bitmapData = bitmap.LockBits(rectangle, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                var expectedLength = checked(bitmap.Width * bitmap.Height * 4);
+                if (pixels.Length != expectedLength)
+                    throw new ArgumentException($"Expected {expectedLength} pixel bytes, got {pixels.Length}.", nameof(pixels));
+
+                var rowBytes = bitmap.Width * 4;
+                for (var y = 0; y < bitmap.Height; y++)
+                {
+                    var rowPointer = IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride);
+                    Marshal.Copy(pixels, y * rowBytes, rowPointer, rowBytes);
+                }
+            }
+            finally
+            {
+                bitmap.UnlockBits(bitmapData);
+            }
+        }
+
+        private static int PositiveModulo(int value, int modulus)
+        {
+            var result = value % modulus;
+            return result < 0 ? result + modulus : result;
         }
 
         private static Bitmap LoadBitmap(byte[] ddsBytes)
@@ -250,43 +306,17 @@ namespace Editors.ImportExport.TextureAtlas
             return copy;
         }
 
-        private static void ForceOpaqueAlpha(Bitmap bitmap)
-        {
-            var rectangle = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
-            var bitmapData = bitmap.LockBits(rectangle, ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
-            try
-            {
-                var rowSize = Math.Abs(bitmapData.Stride);
-                var rowBytes = new byte[rowSize];
-
-                for (var y = 0; y < bitmap.Height; y++)
-                {
-                    var rowPointer = IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride);
-                    Marshal.Copy(rowPointer, rowBytes, 0, rowBytes.Length);
-
-                    for (var x = 0; x < bitmap.Width; x++)
-                        rowBytes[x * 4 + 3] = byte.MaxValue;
-
-                    Marshal.Copy(rowBytes, 0, rowPointer, rowBytes.Length);
-                }
-            }
-            finally
-            {
-                bitmap.UnlockBits(bitmapData);
-            }
-        }
-
         private static void ValidateSource(TextureAtlasLayoutSource source)
         {
             if (source.SourceWidth <= 0 || source.SourceHeight <= 0)
                 throw new ArgumentException($"Atlas source {source.Id} has invalid texture dimensions.");
 
-            const float epsilon = 0.00001f;
-            if (source.MinU < -epsilon || source.MinV < -epsilon || source.MaxU > 1 + epsilon || source.MaxV > 1 + epsilon)
+            if (!float.IsFinite(source.MinU) ||
+                !float.IsFinite(source.MinV) ||
+                !float.IsFinite(source.MaxU) ||
+                !float.IsFinite(source.MaxV))
             {
-                throw new InvalidOperationException(
-                    $"Atlas source {source.Id} uses UV coordinates outside 0..1. " +
-                    "Wrapped/tiled UVs are intentionally not supported by the safe atlas path.");
+                throw new ArgumentException($"Atlas source {source.Id} has non-finite UV coordinates.");
             }
 
             if (source.MaxU < source.MinU || source.MaxV < source.MinV)
