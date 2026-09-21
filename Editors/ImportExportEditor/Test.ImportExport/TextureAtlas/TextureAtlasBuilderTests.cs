@@ -1,4 +1,9 @@
+using System.Drawing;
+using System.Drawing.Imaging;
+using Editors.ImportExport.Importing.Importers.PngToDds;
 using Editors.ImportExport.TextureAtlas;
+using Shared.Core.Settings;
+using Shared.GameFormats.RigidModel.Types;
 
 namespace Test.ImportExport.TextureAtlas
 {
@@ -40,6 +45,38 @@ namespace Test.ImportExport.TextureAtlas
             Assert.That(placement.DestinationX, Is.GreaterThanOrEqualTo(8));
             Assert.That(placement.DestinationY, Is.GreaterThanOrEqualTo(8));
             Assert.That(placement.Padding, Is.EqualTo(8));
+        }
+
+        [Test]
+        public void BuildPng_CanForceSelectedSourceAlphaOpaque()
+        {
+            using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.Clear(Color.FromArgb(0, 120, 80, 40));
+
+            using var pngStream = new MemoryStream();
+            bitmap.Save(pngStream, ImageFormat.Png);
+
+            var ddsPack = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "source.dds");
+
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 4, 4, 0, 0, 1, 1)],
+                padding: 0);
+
+            var atlasPng = TextureAtlasBuilder.BuildPng(
+                plan,
+                new Dictionary<int, byte[]> { [0] = ddsPack.DataSource.ReadData() },
+                new HashSet<int> { 0 });
+
+            using var atlasStream = new MemoryStream(atlasPng);
+            using var atlasBitmap = new Bitmap(atlasStream);
+
+            Assert.That(atlasBitmap.GetPixel(0, 0).A, Is.EqualTo(255));
+            Assert.That(atlasBitmap.GetPixel(3, 3).A, Is.EqualTo(255));
         }
 
         [Test]
