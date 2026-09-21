@@ -257,17 +257,18 @@ namespace Editors.ImportExport.TextureAtlas
             try
             {
                 var rowSize = Math.Abs(bitmapData.Stride);
-                var bytes = new byte[rowSize * bitmap.Height];
-                Marshal.Copy(bitmapData.Scan0, bytes, 0, bytes.Length);
+                var rowBytes = new byte[rowSize];
 
                 for (var y = 0; y < bitmap.Height; y++)
                 {
-                    var rowStart = y * rowSize;
-                    for (var x = 0; x < bitmap.Width; x++)
-                        bytes[rowStart + x * 4 + 3] = byte.MaxValue;
-                }
+                    var rowPointer = IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride);
+                    Marshal.Copy(rowPointer, rowBytes, 0, rowBytes.Length);
 
-                Marshal.Copy(bytes, 0, bitmapData.Scan0, bytes.Length);
+                    for (var x = 0; x < bitmap.Width; x++)
+                        rowBytes[x * 4 + 3] = byte.MaxValue;
+
+                    Marshal.Copy(rowBytes, 0, rowPointer, rowBytes.Length);
+                }
             }
             finally
             {
