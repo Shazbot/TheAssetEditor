@@ -12,6 +12,7 @@ using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.Settings;
 using Shared.GameFormats.RigidModel.Types;
+using Shared.Ui.Editors.BoneMapping;
 
 namespace Editors.KitbasherEditor.Services
 {
@@ -69,12 +70,8 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                var vertexFormat = sourceMeshes[0].Geometry.VertexFormat;
-                if (sourceMeshes.Any(x => x.Geometry.VertexFormat != vertexFormat))
-                {
-                    errors.Error("Vertex format", "All selected meshes must use the same vertex format.");
+                if (!TryResolveTargetVertexFormat(sourceMeshes, out var targetVertexFormat, errors))
                     return false;
-                }
 
                 var materialType = sourceMeshes[0].Material.Type;
                 if (sourceMeshes.Any(x => x.Material.Type != materialType))
@@ -86,7 +83,12 @@ namespace Editors.KitbasherEditor.Services
                 if (!TryGetAtlasConfiguration(sourceMeshes, out var primaryTextureType, out var textureUsage, errors))
                     return false;
 
-                if (!ValidateNonAtlasMaterialState(sourceMeshes, textureUsage, errors))
+                var useAlphaByMesh = sourceMeshes
+                    .Select(x => x.Material.GetCapability<MaterialBaseCapability>().UseAlpha)
+                    .ToArray();
+                var combinedUseAlpha = useAlphaByMesh.Any(x => x);
+
+                if (!ValidateNonAtlasMaterialState(sourceMeshes, textureUsage, combinedUseAlpha, errors))
                     return false;
 
                 var workingMeshes = sourceMeshes
@@ -97,6 +99,12 @@ namespace Editors.KitbasherEditor.Services
                         return clone;
                     })
                     .ToList();
+
+                if (targetVertexFormat == UiVertexFormat.Cinematic)
+                {
+                    foreach (var mesh in workingMeshes.Where(x => x.Geometry.VertexFormat == UiVertexFormat.Weighted))
+                        mesh.Geometry.ChangeVertexType(UiVertexFormat.Cinematic);
+                }
 
                 var uvBounds = new UvBounds[workingMeshes.Count];
                 for (var i = 0; i < workingMeshes.Count; i++)
@@ -135,7 +143,17 @@ namespace Editors.KitbasherEditor.Services
                         textureBytes[i] = ReadTextureBytes(input, workingMeshes[i].Name);
                     }
 
-                    var pngBytes = TextureAtlasBuilder.BuildPng(plan, textureBytes);
+                    IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null;
+                    if (textureType == primaryTextureType && combinedUseAlpha)
+                    {
+                        forceOpaqueAlphaSourceIds = useAlphaByMesh
+                            .Select((useAlpha, index) => (useAlpha, index))
+                            .Where(x => !x.useAlpha)
+                            .Select(x => x.index)
+                            .ToHashSet();
+                    }
+
+                    var pngBytes = TextureAtlasBuilder.BuildPng(plan, textureBytes, forceOpaqueAlphaSourceIds);
                     var fileName = $"{atlasStem}_{GetTextureSuffix(textureType)}.dds";
                     var packFile = PngToDdsImporter.ImportRaw(
                         pngBytes,
@@ -148,7 +166,7 @@ namespace Editors.KitbasherEditor.Services
                     generatedPaths[textureType] = fullPath;
                 }
 
-                ApplyAtlasMaterials(workingMeshes, textureUsage, generatedPaths);
+                ApplyAtlasMaterials(workingMeshes, textureUsage, generatedPaths, combinedUseAlpha);
                 ApplyAtlasUvs(workingMeshes, plan);
 
                 if (!ModelCombiner.HasPotentialCombineMeshes(workingMeshes, out var combineErrors))
@@ -179,6 +197,35 @@ namespace Editors.KitbasherEditor.Services
                 errors.Error("Texture atlas", ex.Message);
                 return false;
             }
+        }
+
+        private static bool TryResolveTargetVertexFormat(
+            IReadOnlyList<Rmv2MeshNode> meshes,
+            out UiVertexFormat targetVertexFormat,
+            ErrorList errors)
+        {
+            var formats = meshes
+                .Select(x => x.Geometry.VertexFormat)
+                .Distinct()
+                .ToList();
+
+            if (formats.Count == 1)
+            {
+                targetVertexFormat = formats[0];
+                return true;
+            }
+
+            if (formats.All(x => x is UiVertexFormat.Weighted or UiVertexFormat.Cinematic))
+            {
+                targetVertexFormat = UiVertexFormat.Cinematic;
+                return true;
+            }
+
+            targetVertexFormat = UiVertexFormat.Unknown;
+            errors.Error(
+                "Vertex format",
+                "Selected meshes may mix Weighted and Cinematic vertex formats, but Static meshes cannot be mixed with skinned meshes.");
+            return false;
         }
 
         private bool TryGetAtlasConfiguration(
@@ -251,11 +298,14 @@ namespace Editors.KitbasherEditor.Services
         private static bool ValidateNonAtlasMaterialState(
             IReadOnlyList<Rmv2MeshNode> meshes,
             IReadOnlyDictionary<TextureType, bool> textureUsage,
+            bool combinedUseAlpha,
             ErrorList errors)
         {
             var normalizedMaterials = meshes.Select(x => x.Material.Clone()).ToList();
             foreach (var material in normalizedMaterials)
             {
+                material.GetCapability<MaterialBaseCapability>().UseAlpha = combinedUseAlpha;
+
                 foreach (var input in GetAtlasTextureInputs(material))
                 {
                     var isUsed = textureUsage[input.Type];
@@ -299,10 +349,13 @@ namespace Editors.KitbasherEditor.Services
         private static void ApplyAtlasMaterials(
             IReadOnlyList<Rmv2MeshNode> meshes,
             IReadOnlyDictionary<TextureType, bool> textureUsage,
-            IReadOnlyDictionary<TextureType, string> generatedPaths)
+            IReadOnlyDictionary<TextureType, string> generatedPaths,
+            bool combinedUseAlpha)
         {
             foreach (var mesh in meshes)
             {
+                mesh.Material.GetCapability<MaterialBaseCapability>().UseAlpha = combinedUseAlpha;
+
                 foreach (var input in GetAtlasTextureInputs(mesh.Material))
                 {
                     var isUsed = textureUsage[input.Type];
