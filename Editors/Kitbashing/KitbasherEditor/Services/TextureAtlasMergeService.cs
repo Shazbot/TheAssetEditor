@@ -240,15 +240,15 @@ namespace Editors.KitbasherEditor.Services
                 if (textureBytes.Count == 0)
                     continue;
 
-                var pngBytes = TextureAtlasBuilder.BuildPng(
+                var mipPngs = TextureAtlasBuilder.BuildMipPngs(
                     plan,
                     textureBytes,
                     forceOpaqueAlphaSourceIds: null,
                     omittedSourceIds);
 
                 var fileName = $"{atlasStem}_{GetTextureSuffix(textureType)}.dds";
-                var packFile = PngToDdsImporter.ImportRaw(
-                    pngBytes,
+                var packFile = PngToDdsImporter.ImportRawMipChain(
+                    mipPngs,
                     textureType,
                     _applicationSettingsService.CurrentSettings.CurrentGame,
                     fileName);
