@@ -4,24 +4,24 @@ using GameWorld.Core.Rendering.Materials.Capabilities;
 using GameWorld.Core.Rendering.Materials.Capabilities.Utility;
 using GameWorld.Core.Rendering.Materials.Shaders;
 using GameWorld.Core.SceneNodes;
-using GameWorld.Core.Utility;
 using Microsoft.Xna.Framework;
-using System.IO;
 using Shared.Core.ErrorHandling;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.Settings;
-using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.Types;
 
 namespace Editors.KitbasherEditor.Services
 {
     public sealed record GeneratedTextureAtlasFile(string Directory, string FullPath, PackFile PackFile);
 
+    public sealed record TextureAtlasMeshReplacement(
+        Rmv2MeshNode OriginalMesh,
+        Rmv2MeshNode AtlasedMesh);
+
     public sealed record PreparedTextureAtlasMerge(
         IPackFileContainer TargetPack,
-        IReadOnlyList<Rmv2MeshNode> SourceMeshesToReplace,
-        IReadOnlyList<Rmv2MeshNode> CombinedMeshes,
+        IReadOnlyList<TextureAtlasMeshReplacement> Replacements,
         IReadOnlyList<Rmv2MeshNode> UntouchedMeshes,
         IReadOnlyList<GeneratedTextureAtlasFile> GeneratedFiles);
 
@@ -63,157 +63,55 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                // Emissive WH3 materials are intentionally excluded from atlas baking for now.
-                // They remain as their original scene nodes while compatible non-emissive meshes
-                // from the same selection are baked and merged.
-                var untouchedMeshes = sourceMeshes
-                    .Where(x => x.Material.Type == CapabilityMaterialsEnum.MetalRoughPbr_Emissive)
-                    .ToList();
-                var bakeMeshes = sourceMeshes
-                    .Where(x => x.Material.Type != CapabilityMaterialsEnum.MetalRoughPbr_Emissive)
-                    .ToList();
+                var untouchedMeshes = new List<Rmv2MeshNode>();
+                var candidates = new List<(Rmv2MeshNode Mesh, TextureType PrimaryTextureType)>();
 
-                if (bakeMeshes.Count < 2)
+                foreach (var mesh in sourceMeshes)
+                {
+                    // Emissive materials use an additional UV0 texture and are intentionally
+                    // excluded until emissive atlas generation is implemented.
+                    if (mesh.Material.Type == CapabilityMaterialsEnum.MetalRoughPbr_Emissive)
+                    {
+                        untouchedMeshes.Add(mesh);
+                        continue;
+                    }
+
+                    if (!TryGetPrimaryTextureType(mesh.Material, out var primaryTextureType))
+                    {
+                        untouchedMeshes.Add(mesh);
+                        continue;
+                    }
+
+                    candidates.Add((mesh, primaryTextureType));
+                }
+
+                var replacements = new List<TextureAtlasMeshReplacement>();
+                var generatedFiles = new List<GeneratedTextureAtlasFile>();
+
+                foreach (var group in candidates.GroupBy(x => x.PrimaryTextureType))
+                {
+                    var groupMeshes = group.Select(x => x.Mesh).ToList();
+                    PrepareAtlasGroup(
+                        groupMeshes,
+                        group.Key,
+                        replacements,
+                        untouchedMeshes,
+                        generatedFiles);
+                }
+
+                if (replacements.Count < 2)
                 {
                     errors.Error(
                         "Selection",
-                        "Select at least two non-emissive meshes to texture-atlas merge. Emissive meshes are skipped and left unchanged.");
-                    return false;
-                }
-
-                var totalIndexCount = bakeMeshes.Sum(x => (long)x.Geometry.GetIndexCount());
-                if (totalIndexCount > ushort.MaxValue)
-                {
-                    errors.Error(
-                        "Index limit exceeded",
-                        $"Combined mesh would have {totalIndexCount} indices, which exceeds the maximum of {ushort.MaxValue}.");
-                    return false;
-                }
-
-                if (!TryResolveTargetVertexFormat(bakeMeshes, out var targetVertexFormat, errors))
-                    return false;
-
-                var materialType = bakeMeshes[0].Material.Type;
-                if (bakeMeshes.Any(x => x.Material.Type != materialType))
-                {
-                    errors.Error("Material type", "All selected meshes must use the same material type.");
-                    return false;
-                }
-
-                if (!TryGetAtlasConfiguration(bakeMeshes, out var primaryTextureType, out var textureUsage, errors))
-                    return false;
-
-                var useAlphaByMesh = bakeMeshes
-                    .Select(x => x.Material.GetCapability<MaterialBaseCapability>().UseAlpha)
-                    .ToArray();
-                var combinedUseAlpha = useAlphaByMesh.Any(x => x);
-
-                if (!ValidateNonAtlasMaterialState(bakeMeshes, textureUsage, combinedUseAlpha, errors))
-                    return false;
-
-                var workingMeshes = bakeMeshes
-                    .Select(x =>
-                    {
-                        var clone = SceneNodeHelper.CloneNode(x);
-                        clone.Name = x.Name;
-                        return clone;
-                    })
-                    .ToList();
-
-                if (targetVertexFormat == UiVertexFormat.Cinematic)
-                {
-                    foreach (var mesh in workingMeshes.Where(x => x.Geometry.VertexFormat == UiVertexFormat.Weighted))
-                        mesh.Geometry.ChangeVertexType(UiVertexFormat.Cinematic);
-                }
-
-                var uvBounds = new UvBounds[workingMeshes.Count];
-                for (var i = 0; i < workingMeshes.Count; i++)
-                    uvBounds[i] = GetUvBounds(workingMeshes[i]);
-
-                var primarySources = new List<TextureAtlasSource>(workingMeshes.Count);
-                for (var i = 0; i < workingMeshes.Count; i++)
-                {
-                    var input = GetTextureInput(workingMeshes[i].Material, primaryTextureType);
-                    var bytes = ReadTextureBytes(input, workingMeshes[i].Name);
-                    var bounds = uvBounds[i];
-
-                    primarySources.Add(new TextureAtlasSource(
-                        i,
-                        bytes,
-                        bounds.MinU,
-                        bounds.MinV,
-                        bounds.MaxU,
-                        bounds.MaxV));
-                }
-
-                var plan = TextureAtlasBuilder.CreatePlanFromDds(primarySources);
-                var atlasStem = BuildAtlasStem(bakeMeshes[0].Name);
-                var generatedFiles = new List<GeneratedTextureAtlasFile>();
-                var generatedPaths = new Dictionary<TextureType, string>();
-
-                foreach (var (textureType, isUsed) in textureUsage)
-                {
-                    if (!isUsed)
-                        continue;
-
-                    var textureBytes = new Dictionary<int, byte[]>(workingMeshes.Count);
-                    for (var i = 0; i < workingMeshes.Count; i++)
-                    {
-                        var input = GetTextureInput(workingMeshes[i].Material, textureType);
-                        textureBytes[i] = ReadTextureBytes(input, workingMeshes[i].Name);
-                    }
-
-                    IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null;
-                    if (textureType == primaryTextureType && combinedUseAlpha)
-                    {
-                        forceOpaqueAlphaSourceIds = useAlphaByMesh
-                            .Select((useAlpha, index) => (useAlpha, index))
-                            .Where(x => !x.useAlpha)
-                            .Select(x => x.index)
-                            .ToHashSet();
-                    }
-
-                    var pngBytes = TextureAtlasBuilder.BuildPng(plan, textureBytes, forceOpaqueAlphaSourceIds);
-                    var fileName = $"{atlasStem}_{GetTextureSuffix(textureType)}.dds";
-                    var packFile = PngToDdsImporter.ImportRaw(
-                        pngBytes,
-                        textureType,
-                        _applicationSettingsService.CurrentSettings.CurrentGame,
-                        fileName);
-                    var fullPath = $@"{AtlasDirectory}\{fileName}";
-
-                    generatedFiles.Add(new GeneratedTextureAtlasFile(AtlasDirectory, fullPath, packFile));
-                    generatedPaths[textureType] = fullPath;
-                }
-
-                ApplyAtlasMaterials(workingMeshes, textureUsage, generatedPaths, combinedUseAlpha);
-                ApplyAtlasUvs(workingMeshes, plan);
-
-                if (!ModelCombiner.HasPotentialCombineMeshes(workingMeshes, out var combineErrors))
-                {
-                    var description = string.Join(
-                        Environment.NewLine,
-                        combineErrors.Errors.Select(x => $"{x.ItemName}: {x.Description}"));
-                    errors.Error("Combine", string.IsNullOrWhiteSpace(description)
-                        ? "The atlased meshes are still not compatible for merging."
-                        : description);
-                    return false;
-                }
-
-                var combinedMeshes = ModelCombiner.CombineMeshes(workingMeshes, addPrefix: true);
-                if (combinedMeshes.Count != 1)
-                {
-                    errors.Error(
-                        "Combine",
-                        $"Expected the atlas operation to produce one combined mesh, but it produced {combinedMeshes.Count}.");
+                        "No compatible group of at least two non-emissive meshes could be texture-atlased. " +
+                        "Meshes that cannot safely share an atlas are left unchanged.");
                     return false;
                 }
 
                 preparedMerge = new PreparedTextureAtlasMerge(
                     targetPack,
-                    bakeMeshes,
-                    combinedMeshes,
-                    untouchedMeshes,
+                    replacements,
+                    untouchedMeshes.Distinct().ToList(),
                     generatedFiles);
                 return true;
             }
@@ -224,170 +122,195 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private static bool TryResolveTargetVertexFormat(
-            IReadOnlyList<Rmv2MeshNode> meshes,
-            out UiVertexFormat targetVertexFormat,
-            ErrorList errors)
+        private void PrepareAtlasGroup(
+            IReadOnlyList<Rmv2MeshNode> groupMeshes,
+            TextureType primaryTextureType,
+            List<TextureAtlasMeshReplacement> replacements,
+            List<Rmv2MeshNode> untouchedMeshes,
+            List<GeneratedTextureAtlasFile> generatedFiles)
         {
-            var formats = meshes
-                .Select(x => x.Geometry.VertexFormat)
-                .Distinct()
-                .ToList();
-
-            if (formats.Count == 1)
+            if (groupMeshes.Count < 2)
             {
-                targetVertexFormat = formats[0];
-                return true;
+                untouchedMeshes.AddRange(groupMeshes);
+                return;
             }
 
-            if (formats.All(x => x is UiVertexFormat.Weighted or UiVertexFormat.Cinematic))
+            var preparedMeshes = new List<PreparedMeshSource>();
+            foreach (var mesh in groupMeshes)
             {
-                targetVertexFormat = UiVertexFormat.Cinematic;
-                return true;
-            }
-
-            targetVertexFormat = UiVertexFormat.Unknown;
-            errors.Error(
-                "Vertex format",
-                "Selected meshes may mix Weighted and Cinematic vertex formats, but Static meshes cannot be mixed with skinned meshes.");
-            return false;
-        }
-
-        private bool TryGetAtlasConfiguration(
-            IReadOnlyList<Rmv2MeshNode> meshes,
-            out TextureType primaryTextureType,
-            out Dictionary<TextureType, bool> textureUsage,
-            ErrorList errors)
-        {
-            primaryTextureType = default;
-            textureUsage = [];
-
-            var firstInputs = GetAtlasTextureInputs(meshes[0].Material);
-            if (firstInputs.Count == 0)
-            {
-                errors.Error("Material", "The selected material type does not expose a supported BaseColour/Diffuse texture set.");
-                return false;
-            }
-
-            primaryTextureType = meshes[0].Material.TryGetCapability<MetalRoughCapability>() != null
-                ? TextureType.BaseColour
-                : TextureType.Diffuse;
-
-            var expectedTypes = firstInputs.Select(x => x.Type).ToArray();
-            foreach (var mesh in meshes)
-            {
-                var inputs = GetAtlasTextureInputs(mesh.Material);
-                if (!inputs.Select(x => x.Type).SequenceEqual(expectedTypes))
+                var primaryInput = GetTextureInput(mesh.Material, primaryTextureType);
+                if (!TryReadTextureBytes(primaryInput, out var primaryBytes))
                 {
-                    errors.Error("Material", $"Mesh '{mesh.Name}' has a different atlas texture layout.");
-                    return false;
+                    // A missing BaseColour/Diffuse cannot be reconstructed safely. Keep this
+                    // mesh exactly as it is rather than blocking the rest of the selection.
+                    untouchedMeshes.Add(mesh);
+                    continue;
                 }
 
-                foreach (var input in inputs)
+                var (width, height) = TextureAtlasBuilder.GetDimensions(primaryBytes);
+
+                // UV0 is shared by all of these texture channels. A resolvable secondary map
+                // with different dimensions cannot use the same no-resampling atlas transform,
+                // so leave that mesh untouched. Missing secondary files are allowed and their
+                // original texture paths are preserved.
+                var dimensionsCompatible = true;
+                foreach (var input in GetAtlasTextureInputs(mesh.Material))
                 {
-                    if (input.UseTexture && string.IsNullOrWhiteSpace(input.TexturePath))
+                    if (input.Type == primaryTextureType || !IsTextureUsed(input))
+                        continue;
+
+                    if (!TryReadTextureBytes(input, out var secondaryBytes))
+                        continue;
+
+                    var secondaryDimensions = TextureAtlasBuilder.GetDimensions(secondaryBytes);
+                    if (secondaryDimensions.Width != width || secondaryDimensions.Height != height)
                     {
-                        errors.Error("Texture", $"Mesh '{mesh.Name}' enables {input.Type}, but its texture path is empty.");
-                        return false;
+                        dimensionsCompatible = false;
+                        break;
                     }
                 }
-            }
 
-            foreach (var textureType in expectedTypes)
-            {
-                var states = meshes
-                    .Select(x => IsTextureUsed(GetTextureInput(x.Material, textureType)))
-                    .Distinct()
-                    .ToList();
-
-                if (states.Count != 1)
+                if (!dimensionsCompatible)
                 {
-                    errors.Error(
-                        "Texture set",
-                        $"All selected meshes must either all use or all omit {textureType}. Mixed usage is not supported by the safe atlas path.");
-                    return false;
+                    untouchedMeshes.Add(mesh);
+                    continue;
                 }
 
-                textureUsage[textureType] = states[0];
+                preparedMeshes.Add(new PreparedMeshSource(mesh, primaryBytes, width, height));
             }
 
-            if (!textureUsage.TryGetValue(primaryTextureType, out var primaryUsed) || !primaryUsed)
+            if (preparedMeshes.Count < 2)
             {
-                errors.Error("Texture set", $"All selected meshes must use {primaryTextureType}.");
-                return false;
+                untouchedMeshes.AddRange(preparedMeshes.Select(x => x.Mesh));
+                return;
             }
 
-            return true;
+            var workingMeshes = preparedMeshes
+                .Select(x =>
+                {
+                    var clone = SceneNodeHelper.CloneNode(x.Mesh);
+                    clone.Name = x.Mesh.Name;
+                    return clone;
+                })
+                .ToList();
+
+            var uvBounds = workingMeshes.Select(GetUvBounds).ToArray();
+            var primarySources = new List<TextureAtlasSource>(workingMeshes.Count);
+            for (var i = 0; i < workingMeshes.Count; i++)
+            {
+                var source = preparedMeshes[i];
+                var bounds = uvBounds[i];
+                primarySources.Add(new TextureAtlasSource(
+                    i,
+                    source.PrimaryBytes,
+                    bounds.MinU,
+                    bounds.MinV,
+                    bounds.MaxU,
+                    bounds.MaxV));
+            }
+
+            var plan = TextureAtlasBuilder.CreatePlanFromDds(primarySources);
+            var atlasStem = BuildAtlasStem(workingMeshes[0].Name);
+            var atlasInputs = GetAtlasTextureInputs(workingMeshes[0].Material);
+
+            foreach (var textureType in atlasInputs.Select(x => x.Type))
+            {
+                var textureBytes = new Dictionary<int, byte[]>();
+                var omittedSourceIds = new HashSet<int>();
+
+                for (var i = 0; i < workingMeshes.Count; i++)
+                {
+                    var input = GetTextureInput(workingMeshes[i].Material, textureType);
+                    if (!IsTextureUsed(input) || !TryReadTextureBytes(input, out var bytes))
+                    {
+                        omittedSourceIds.Add(i);
+                        continue;
+                    }
+
+                    var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
+                    if (dimensions.Width != preparedMeshes[i].Width ||
+                        dimensions.Height != preparedMeshes[i].Height)
+                    {
+                        // This should already have been filtered above; keep the guard here so
+                        // future material channels cannot accidentally be resampled.
+                        throw new InvalidOperationException(
+                            $"Mesh '{workingMeshes[i].Name}' has {textureType} dimensions " +
+                            $"{dimensions.Width}x{dimensions.Height}, but its primary texture is " +
+                            $"{preparedMeshes[i].Width}x{preparedMeshes[i].Height}.");
+                    }
+
+                    textureBytes[i] = bytes;
+                }
+
+                if (textureBytes.Count == 0)
+                    continue;
+
+                var pngBytes = TextureAtlasBuilder.BuildPng(
+                    plan,
+                    textureBytes,
+                    forceOpaqueAlphaSourceIds: null,
+                    omittedSourceIds);
+
+                var fileName = $"{atlasStem}_{GetTextureSuffix(textureType)}.dds";
+                var packFile = PngToDdsImporter.ImportRaw(
+                    pngBytes,
+                    textureType,
+                    _applicationSettingsService.CurrentSettings.CurrentGame,
+                    fileName);
+                var fullPath = $@"{AtlasDirectory}\{fileName}";
+
+                generatedFiles.Add(new GeneratedTextureAtlasFile(AtlasDirectory, fullPath, packFile));
+
+                // Only meshes whose original texture actually resolved are redirected to this
+                // atlas channel. Missing secondary texture paths stay exactly as they were.
+                foreach (var sourceId in textureBytes.Keys)
+                {
+                    var input = GetTextureInput(workingMeshes[sourceId].Material, textureType);
+                    input.TexturePath = fullPath;
+                }
+            }
+
+            ApplyAtlasUvs(workingMeshes, plan);
+
+            for (var i = 0; i < workingMeshes.Count; i++)
+                replacements.Add(new TextureAtlasMeshReplacement(preparedMeshes[i].Mesh, workingMeshes[i]));
         }
 
-        private static bool ValidateNonAtlasMaterialState(
-            IReadOnlyList<Rmv2MeshNode> meshes,
-            IReadOnlyDictionary<TextureType, bool> textureUsage,
-            bool combinedUseAlpha,
-            ErrorList errors)
+        private bool TryReadTextureBytes(TextureInput input, out byte[] bytes)
         {
-            var normalizedMaterials = meshes.Select(x => x.Material.Clone()).ToList();
-            foreach (var material in normalizedMaterials)
-            {
-                material.GetCapability<MaterialBaseCapability>().UseAlpha = combinedUseAlpha;
+            bytes = [];
 
-                foreach (var input in GetAtlasTextureInputs(material))
-                {
-                    var isUsed = textureUsage[input.Type];
-                    input.UseTexture = isUsed;
-                    input.TexturePath = isUsed ? $"__asset_editor_atlas_{input.Type}__" : string.Empty;
-                }
-            }
-
-            var first = normalizedMaterials[0];
-            for (var i = 1; i < normalizedMaterials.Count; i++)
-            {
-                var comparison = first.AreEqual(normalizedMaterials[i]);
-                if (!comparison.Result)
-                {
-                    errors.Error(
-                        "Material mismatch",
-                        $"Selected meshes differ in a material property that is not consolidated by the texture atlas: {comparison.Message}");
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        private byte[] ReadTextureBytes(TextureInput input, string meshName)
-        {
             if (!IsTextureUsed(input))
-                throw new InvalidOperationException($"Mesh '{meshName}' does not use required texture {input.Type}.");
+                return false;
 
             var file = _packFileService.FindFile(input.TexturePath);
             if (file == null)
-                throw new FileNotFoundException($"Could not find {input.Type} texture '{input.TexturePath}' for mesh '{meshName}'.");
+                return false;
 
-            var bytes = file.DataSource.ReadData();
-            if (bytes == null || bytes.Length == 0)
-                throw new InvalidOperationException($"Texture '{input.TexturePath}' is empty.");
+            var fileBytes = file.DataSource.ReadData();
+            if (fileBytes == null || fileBytes.Length == 0)
+                return false;
 
-            return bytes;
+            bytes = fileBytes;
+            return true;
         }
 
-        private static void ApplyAtlasMaterials(
-            IReadOnlyList<Rmv2MeshNode> meshes,
-            IReadOnlyDictionary<TextureType, bool> textureUsage,
-            IReadOnlyDictionary<TextureType, string> generatedPaths,
-            bool combinedUseAlpha)
+        private static bool TryGetPrimaryTextureType(CapabilityMaterial material, out TextureType primaryTextureType)
         {
-            foreach (var mesh in meshes)
+            if (material.TryGetCapability<MetalRoughCapability>() != null)
             {
-                mesh.Material.GetCapability<MaterialBaseCapability>().UseAlpha = combinedUseAlpha;
-
-                foreach (var input in GetAtlasTextureInputs(mesh.Material))
-                {
-                    var isUsed = textureUsage[input.Type];
-                    input.UseTexture = isUsed;
-                    input.TexturePath = isUsed ? generatedPaths[input.Type] : string.Empty;
-                }
+                primaryTextureType = TextureType.BaseColour;
+                return true;
             }
+
+            if (material.TryGetCapability<SpecGlossCapability>() != null)
+            {
+                primaryTextureType = TextureType.Diffuse;
+                return true;
+            }
+
+            primaryTextureType = default;
+            return false;
         }
 
         private static void ApplyAtlasUvs(IReadOnlyList<Rmv2MeshNode> meshes, TextureAtlasPlan plan)
@@ -502,6 +425,12 @@ namespace Editors.KitbasherEditor.Services
                 _ => textureType.ToString().ToLowerInvariant()
             };
         }
+
+        private sealed record PreparedMeshSource(
+            Rmv2MeshNode Mesh,
+            byte[] PrimaryBytes,
+            int Width,
+            int Height);
 
         private sealed record UvBounds(float MinU, float MinV, float MaxU, float MaxV);
     }
