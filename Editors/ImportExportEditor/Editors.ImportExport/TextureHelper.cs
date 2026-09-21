@@ -29,7 +29,7 @@ namespace MeshImportExport
                 var data = Marshal.UnsafeAddrOfPinnedArrayElement(image.Data, 0);
                 using var bitmap = new Bitmap(image.Width, image.Height, image.Stride, pixelFormat, data);
                 using var output = new MemoryStream();
-                bitmap.Save(output, ImageFormat.Png);
+                bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Png);
                 return output.ToArray();
             }
             finally
