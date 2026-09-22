@@ -22,6 +22,7 @@ namespace GameWorld.Core.Services.SceneSaving
         public int NumberOfLodsToGenerate { get; set; } = 4;
         public List<RmvAttachmentPoint> AttachmentPoints { get; set; } = [];
         public bool DisplayDialogOnNextSave { get; set; } = true;
+        public bool RequiresWarhammer3WsModelOutput { get; private set; } = false;
 
         public GeometrySaveSettings(ApplicationSettingsService applicationSettingsService)
         {
@@ -41,6 +42,21 @@ namespace GameWorld.Core.Services.SceneSaving
                 GameTypeEnum.Pharaoh => MaterialStrategy.WsModel_Pharaoh,
                 _ => MaterialStrategy.None,
             };
+        }
+
+        public void SetWarhammer3WsModelOutputRequired(bool required)
+        {
+            RequiresWarhammer3WsModelOutput =
+                required &&
+                _applicationSettingsService.CurrentSettings.CurrentGame == GameTypeEnum.Warhammer3;
+
+            EnforceRequiredMaterialOutput();
+        }
+
+        public void EnforceRequiredMaterialOutput()
+        {
+            if (RequiresWarhammer3WsModelOutput)
+                MaterialOutputType = MaterialStrategy.WsModel_Warhammer3;
         }
 
         public void RefreshLodSettings()
