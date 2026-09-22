@@ -6,6 +6,8 @@ using Microsoft.Xna.Framework;
 using Shared.Core.Events;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
+using GameWorld.Core.Services.SceneSaving;
+using GameWorld.Core.Services.SceneSaving.Material;
 
 namespace Editors.KitbasherEditor.Commands
 {
@@ -13,20 +15,25 @@ namespace Editors.KitbasherEditor.Commands
     {
         private readonly SelectionManager _selectionManager;
         private readonly IPackFileService _packFileService;
+        private readonly GeometrySaveSettings _saveSettings;
 
         private PreparedTextureAtlasMerge? _preparedMerge;
         private ISelectionState? _originalSelectionState;
         private List<OriginalMeshState>? _originalMeshStates;
+        private bool? _originalRequiresWarhammer3WsModelOutput;
+        private MaterialStrategy? _originalMaterialOutputType;
 
         public string HintText => "Create Texture Atlas";
         public bool IsMutation => true;
 
         public ApplyTextureAtlasMergeCommand(
             SelectionManager selectionManager,
-            IPackFileService packFileService)
+            IPackFileService packFileService,
+            GeometrySaveSettings saveSettings)
         {
             _selectionManager = selectionManager;
             _packFileService = packFileService;
+            _saveSettings = saveSettings;
         }
 
         public void Configure(PreparedTextureAtlasMerge preparedMerge)
@@ -40,6 +47,10 @@ namespace Editors.KitbasherEditor.Commands
                 throw new InvalidOperationException("Texture atlas command was not configured.");
 
             _originalSelectionState ??= _selectionManager.GetStateCopy();
+            _originalRequiresWarhammer3WsModelOutput ??= _saveSettings.RequiresWarhammer3WsModelOutput;
+            _originalMaterialOutputType ??= _saveSettings.MaterialOutputType;
+            _saveSettings.SetWarhammer3WsModelOutputRequired(true);
+
             _originalMeshStates ??= _preparedMerge.Replacements
                 .Select(x => new OriginalMeshState(
                     x.OriginalMesh,
@@ -84,6 +95,13 @@ namespace Editors.KitbasherEditor.Commands
                 var storedFile = _preparedMerge.TargetPack.FindFile(generated.FullPath);
                 if (storedFile != null)
                     _packFileService.DeleteFile(_preparedMerge.TargetPack, storedFile);
+            }
+
+            if (_originalRequiresWarhammer3WsModelOutput.HasValue)
+            {
+                _saveSettings.SetWarhammer3WsModelOutputRequired(_originalRequiresWarhammer3WsModelOutput.Value);
+                if (_originalMaterialOutputType.HasValue)
+                    _saveSettings.MaterialOutputType = _originalMaterialOutputType.Value;
             }
 
             _selectionManager.SetState(_originalSelectionState);
