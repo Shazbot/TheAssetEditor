@@ -42,6 +42,7 @@ namespace GameWorld.Core.Services.SceneSaving
             }
 
             var outputPath = settings.OutputName;
+            settings.EnforceRequiredMaterialOutput();
             _lodStrategyProvider.GetStrategy(settings.LodGenerationMethod).Generate(mainNode, settings.LodSettingsPerLod);
 
 
