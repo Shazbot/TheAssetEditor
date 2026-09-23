@@ -51,6 +51,37 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void CreatePlan_UsesSmallestFittingRectangularPowerOfTwoAtlas()
+        {
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [
+                    new TextureAtlasLayoutSource(0, 8, 8, 0, 0, 1, 1),
+                    new TextureAtlasLayoutSource(1, 8, 8, 0, 0, 1, 1)
+                ],
+                padding: 0);
+
+            Assert.That((long)plan.Width * plan.Height, Is.EqualTo(128));
+            Assert.That(plan.Width, Is.Not.EqualTo(plan.Height));
+            Assert.That(plan.Width, Is.AnyOf(8, 16));
+            Assert.That(plan.Height, Is.AnyOf(8, 16));
+        }
+
+        [Test]
+        public void CreatePlan_PrefersRectangularAtlasOverNextSquareSize()
+        {
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [
+                    new TextureAtlasLayoutSource(0, 16, 8, 0, 0, 1, 1),
+                    new TextureAtlasLayoutSource(1, 16, 8, 0, 0, 1, 1)
+                ],
+                padding: 0);
+
+            Assert.That((long)plan.Width * plan.Height, Is.EqualTo(256));
+            Assert.That(Math.Max(plan.Width, plan.Height), Is.EqualTo(16));
+            Assert.That(Math.Min(plan.Width, plan.Height), Is.EqualTo(16));
+        }
+
+        [Test]
         public void BuildPng_CanForceSelectedSourceAlphaOpaque()
         {
             using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
