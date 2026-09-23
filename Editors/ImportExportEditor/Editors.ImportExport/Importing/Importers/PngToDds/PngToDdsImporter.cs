@@ -112,6 +112,12 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                 }
 
                 var destinationStride = checked((int)destination.RowPitch);
+                if (destinationStride == rowBytes)
+                {
+                    Marshal.Copy(bgraPixels, 0, destination.Pixels, bgraPixels.Length);
+                    return;
+                }
+
                 for (var y = 0; y < destination.Height; y++)
                 {
                     Marshal.Copy(
