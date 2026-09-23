@@ -207,6 +207,7 @@ namespace Editors.KitbasherEditor.Services
                 state = new BatchState(
                     source,
                     output,
+                    _packFileService,
                     sourcePath,
                     outputPath,
                     reportPath,
@@ -507,7 +508,7 @@ namespace Editors.KitbasherEditor.Services
                 XmlDocument materialDoc;
                 try
                 {
-                    materialDoc = LoadXml(materialFile);
+                    materialDoc = GetMaterialDocument(state, materialPaths[0], materialFile);
                 }
                 catch
                 {
@@ -797,9 +798,7 @@ namespace Editors.KitbasherEditor.Services
             XmlDocument materialDoc;
             try
             {
-                var materialXml = Encoding.UTF8.GetString(materialFile.DataSource.ReadData());
-                materialDoc = new XmlDocument();
-                materialDoc.LoadXml(materialXml);
+                materialDoc = GetMaterialDocument(state, materialPath, materialFile);
             }
             catch (Exception ex)
             {
@@ -2638,6 +2637,31 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+        private static XmlDocument GetMaterialDocument(
+            BatchState state,
+            string materialPath,
+            PackFile? materialFile = null)
+        {
+            materialPath = Normalize(materialPath);
+            if (state.MaterialDocuments.TryGetValue(materialPath, out var cached))
+                return cached;
+
+            materialFile ??= FindForReadStatic(state, materialPath)
+                ?? throw new FileNotFoundException($"Material file could not be resolved: {materialPath}");
+
+            var doc = LoadXml(materialFile);
+            state.MaterialDocuments[materialPath] = doc;
+            return doc;
+        }
+
+        private static PackFile? FindForReadStatic(BatchState state, string path)
+        {
+            path = Normalize(path);
+            return state.Output.FindFile(path)
+                   ?? state.Source.FindFile(path)
+                   ?? state.PackFileService.FindFile(path);
+        }
+
         private XmlDocument? GetWsDocument(BatchState state, string wsPath)
         {
             wsPath = Normalize(wsPath);
@@ -3543,10 +3567,12 @@ namespace Editors.KitbasherEditor.Services
         {
             public IPackFileContainer Source { get; }
             public IPackFileContainer Output { get; }
+            public IPackFileService PackFileService { get; }
             public string SourcePath { get; }
             public string OutputPath { get; }
             public string ReportPath { get; }
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedWsModelsIgnored { get; } = [];
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -3590,6 +3616,7 @@ namespace Editors.KitbasherEditor.Services
             public BatchState(
                 IPackFileContainer source,
                 IPackFileContainer output,
+                IPackFileService packFileService,
                 string sourcePath,
                 string outputPath,
                 string reportPath,
@@ -3599,6 +3626,7 @@ namespace Editors.KitbasherEditor.Services
             {
                 Source = source;
                 Output = output;
+                PackFileService = packFileService;
                 SourcePath = sourcePath;
                 OutputPath = outputPath;
                 ReportPath = reportPath;
