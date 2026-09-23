@@ -3005,9 +3005,22 @@ namespace Editors.KitbasherEditor.Services
                                     out _,
                                     out var assignmentReason))
                             {
-                                errors.Add(
-                                    $"WSModel material table does not match rewritten rigid: " +
-                                    $"{wsPath} -> {geometryPath} ({assignmentReason})");
+                                if (HasSameSourceWsMaterialMismatch(
+                                        state,
+                                        wsPath,
+                                        geometryPath,
+                                        assignmentReason))
+                                {
+                                    state.ValidationMessages.Add(
+                                        $"WARNING: Preserved pre-existing WSModel material-table mismatch: " +
+                                        $"{wsPath} -> {geometryPath} ({assignmentReason})");
+                                }
+                                else
+                                {
+                                    errors.Add(
+                                        $"WSModel material table does not match rewritten rigid: " +
+                                        $"{wsPath} -> {geometryPath} ({assignmentReason})");
+                                }
                             }
                         }
                         catch (Exception ex)
@@ -3113,6 +3126,43 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.MeshMergeInvariantGroupCount} merged group(s) across " +
                     $"{state.MeshMergeInvariantLodCount} LOD(s); " +
                     $"{state.MeshMergeInvariantWsModelCount} WSModel non-material structure check(s) passed.");
+            }
+        }
+
+        private static bool HasSameSourceWsMaterialMismatch(
+            BatchState state,
+            string wsPath,
+            string geometryPath,
+            string outputReason)
+        {
+            try
+            {
+                var sourceWsFile = state.Source.FindFile(wsPath);
+                var sourceGeometryFile = state.Source.FindFile(geometryPath);
+                if (sourceWsFile == null || sourceGeometryFile == null)
+                    return false;
+
+                var sourceWsDocument = LoadXml(sourceWsFile);
+                var sourceRmv = ModelFactory.Create().Load(sourceGeometryFile.DataSource.ReadData());
+                if (TryReadWsMaterialAssignments(
+                        sourceWsDocument,
+                        sourceRmv,
+                        out _,
+                        out var sourceReason))
+                {
+                    return false;
+                }
+
+                return string.Equals(
+                    sourceReason,
+                    outputReason,
+                    StringComparison.Ordinal);
+            }
+            catch
+            {
+                // If the source baseline cannot be established reliably, retain strict
+                // validation and let the rewritten-output mismatch remain fatal.
+                return false;
             }
         }
 
