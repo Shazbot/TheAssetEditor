@@ -68,9 +68,11 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var mesh in sourceMeshes)
                 {
-                    // Emissive materials use an additional UV0 texture and are intentionally
-                    // excluded until emissive atlas generation is implemented.
-                    if (mesh.Material.Type == CapabilityMaterialsEnum.MetalRoughPbr_Emissive)
+                    // Emissive shaders sample additional textures through the mesh's original
+                    // UV0 mapping. This includes prop_emissive shaders, which Asset Editor may
+                    // represent internally as MetalRoughPbr_Default, so use source-shader
+                    // provenance as well as the capability type.
+                    if (mesh.Material.UsesEmissiveShader)
                     {
                         untouchedMeshes.Add(mesh);
                         continue;

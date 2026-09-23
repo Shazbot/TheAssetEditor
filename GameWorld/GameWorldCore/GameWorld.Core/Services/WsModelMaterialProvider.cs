@@ -89,6 +89,7 @@ namespace GameWorld.Core.Services
                 var mFile = new WsModelMaterialFile(wsMaterialPath);
                 var wsModelMaterial = mFile;
                 shader = _materialFactory.Create(fallbackMaterial, wsModelMaterial);
+                shader.SourceWsModelShaderPath = wsModelMaterial.ShaderPath;
             }
             catch (Exception e)
             {
@@ -100,6 +101,8 @@ namespace GameWorld.Core.Services
                 _standardDialogs.ShowExceptionWindow(e, errorMessage);
                 shader = _materialFactory.CreateMaterial(CapabilityMaterialsEnum.MetalRoughPbr_Default);
             }
+
+            shader.SourceWsModelMaterialPath = materialPath.MaterialPath;
 
             _materialCache.Add(materialPath.MaterialPath, shader);
             return shader;

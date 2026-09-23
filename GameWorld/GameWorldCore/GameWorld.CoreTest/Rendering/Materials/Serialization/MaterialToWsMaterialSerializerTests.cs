@@ -89,5 +89,26 @@ namespace GameWorld.Core.Test.Rendering.Materials.Serialization
             // Assert
             Assert.That(pathToCreatedMaterial0, Is.EqualTo("materials\\mymesh0_weighted2_alpha_off.xml.material"));
         }
+
+        [Test]
+        public void ProsessMaterial_PreservesRequestedSourceWsModelMaterial()
+        {
+            const string sourceMaterialPath = "variantmeshes/wh_variantmodels/test/materials/test_prop_emissive.xml.material";
+            _testMaterial.SourceWsModelMaterialPath = sourceMaterialPath;
+            _testMaterial.SourceWsModelShaderPath = "shaders/rigid_character_prop_emissive.xml.shader";
+            _testMaterial.PreserveSourceWsModelMaterialOnSave = true;
+
+            var materialClone = _testMaterial.Clone();
+            var returnedPath = _wsMaterialSerializer.ProsessMaterial(
+                "variantmeshes/wh_variantmodels/test/test.rigid_model_v2",
+                "mymesh0",
+                UiVertexFormat.Weighted,
+                materialClone);
+
+            Assert.That(materialClone.UsesEmissiveShader, Is.True);
+            Assert.That(materialClone.SourceWsModelShaderPath, Is.EqualTo(_testMaterial.SourceWsModelShaderPath));
+            Assert.That(returnedPath, Is.EqualTo(sourceMaterialPath));
+            Assert.That(_outputPack.GetFileCount(), Is.EqualTo(0));
+        }
     }
 }

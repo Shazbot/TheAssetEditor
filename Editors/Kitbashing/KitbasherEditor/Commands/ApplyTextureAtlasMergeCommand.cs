@@ -20,6 +20,7 @@ namespace Editors.KitbasherEditor.Commands
         private PreparedTextureAtlasMerge? _preparedMerge;
         private ISelectionState? _originalSelectionState;
         private List<OriginalMeshState>? _originalMeshStates;
+        private List<OriginalMaterialPreservationState>? _originalMaterialPreservationStates;
         private bool? _originalRequiresWarhammer3WsModelOutput;
         private MaterialStrategy? _originalMaterialOutputType;
 
@@ -60,6 +61,17 @@ namespace Editors.KitbasherEditor.Commands
                         .ToArray()))
                 .ToList();
 
+            _originalMaterialPreservationStates ??= _preparedMerge.UntouchedMeshes
+                .Where(x => x.Material.UsesEmissiveShader &&
+                            !string.IsNullOrWhiteSpace(x.Material.SourceWsModelMaterialPath))
+                .Select(x => new OriginalMaterialPreservationState(
+                    x.Material,
+                    x.Material.PreserveSourceWsModelMaterialOnSave))
+                .ToList();
+
+            foreach (var state in _originalMaterialPreservationStates)
+                state.Material.PreserveSourceWsModelMaterialOnSave = true;
+
             var packEntries = _preparedMerge.GeneratedFiles
                 .Select(x => new NewPackFileEntry(x.Directory, x.PackFile))
                 .ToList();
@@ -88,6 +100,12 @@ namespace Editors.KitbasherEditor.Commands
                     state.Mesh.Geometry.VertexArray[i].TextureCoordinate = state.TextureCoordinates[i];
 
                 state.Mesh.Geometry.RebuildVertexBuffer();
+            }
+
+            if (_originalMaterialPreservationStates != null)
+            {
+                foreach (var state in _originalMaterialPreservationStates)
+                    state.Material.PreserveSourceWsModelMaterialOnSave = state.PreserveSourceWsModelMaterialOnSave;
             }
 
             foreach (var generated in _preparedMerge.GeneratedFiles)
@@ -127,5 +145,9 @@ namespace Editors.KitbasherEditor.Commands
             Rmv2MeshNode Mesh,
             CapabilityMaterial Material,
             Vector2[] TextureCoordinates);
+
+        private sealed record OriginalMaterialPreservationState(
+            CapabilityMaterial Material,
+            bool PreserveSourceWsModelMaterialOnSave);
     }
 }
