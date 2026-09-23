@@ -208,21 +208,40 @@ namespace Editors.KitbasherEditor.Services
                 state.PhaseDurations["Scan source dependencies"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
-                for (var i = 0; i < sourcePaths.Count; i++)
+                ReportProgress(
+                    progress,
+                    "Copying source pack",
+                    0,
+                    sourcePaths.Count,
+                    $"{sourcePaths.Count:N0} files");
+
+                var sourceFiles = source.GetAllFiles();
+                var bulkCopyEntries = new List<NewPackFileEntry>(sourcePaths.Count);
+                foreach (var sourcePathEntry in sourcePaths)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (i == 0 || i == sourcePaths.Count - 1 || i % 25 == 0)
-                    {
-                        ReportProgress(
-                            progress,
-                            "Copying source pack",
-                            i + 1,
-                            sourcePaths.Count,
-                            sourcePaths[i]);
-                    }
 
-                    _packFileService.CopyFileFromOtherPackFile(source, sourcePaths[i], output);
+                    if (!sourceFiles.TryGetValue(sourcePathEntry, out var sourceFile))
+                        continue;
+
+                    // Keep unchanged files backed by the source IDataSource until the final save.
+                    // This avoids eagerly reading/copying every file into a new MemorySource and
+                    // also avoids the per-file logging/event overhead of CopyFileFromOtherPackFile.
+                    var directory = Path.GetDirectoryName(sourcePathEntry) ?? string.Empty;
+                    var fileName = Path.GetFileName(sourcePathEntry);
+                    bulkCopyEntries.Add(new NewPackFileEntry(
+                        directory,
+                        new PackFile(fileName, sourceFile.DataSource)));
                 }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                _packFileService.AddFilesToPack(output, bulkCopyEntries);
+                ReportProgress(
+                    progress,
+                    "Copying source pack",
+                    sourcePaths.Count,
+                    sourcePaths.Count,
+                    $"{bulkCopyEntries.Count:N0} files copied");
                 state.PhaseDurations["Copy source pack"] = phaseStopwatch.Elapsed;
 
                 state.MalformedVmdRoots.AddRange(malformedVmdRoots);
