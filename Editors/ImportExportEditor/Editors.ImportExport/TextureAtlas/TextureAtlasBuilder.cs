@@ -134,20 +134,48 @@ namespace Editors.ImportExport.TextureAtlas
                 return heightCompare != 0 ? heightCompare : b.PaddedWidth.CompareTo(a.PaddedWidth);
             });
 
-            var largestDimension = pending.Max(x => Math.Max(x.PaddedWidth, x.PaddedHeight));
-            var totalArea = pending.Sum(x => (long)x.PaddedWidth * x.PaddedHeight);
-            var minimumSize = Math.Max(largestDimension, (int)Math.Ceiling(Math.Sqrt(totalArea)));
-            var atlasSize = NextPowerOfTwo(Math.Max(1, minimumSize));
-
-            while (atlasSize <= maxAtlasSize)
+            var largestWidth = pending.Max(x => x.PaddedWidth);
+            var largestHeight = pending.Max(x => x.PaddedHeight);
+            if (largestWidth > maxAtlasSize || largestHeight > maxAtlasSize)
             {
-                if (TryPack(pending, atlasSize, padding, out var placements))
-                    return new TextureAtlasPlan(atlasSize, atlasSize, placements);
+                throw new InvalidOperationException(
+                    $"Selected UV regions do not fit inside a {maxAtlasSize}x{maxAtlasSize} texture atlas.");
+            }
 
-                if (atlasSize == maxAtlasSize)
-                    break;
+            var totalArea = pending.Sum(x => (long)x.PaddedWidth * x.PaddedHeight);
+            var minimumWidth = NextPowerOfTwo(Math.Max(1, largestWidth));
+            var minimumHeight = NextPowerOfTwo(Math.Max(1, largestHeight));
+            var candidateSizes = new List<(int Width, int Height)>();
 
-                atlasSize = Math.Min(atlasSize * 2, maxAtlasSize);
+            for (var width = minimumWidth; width <= maxAtlasSize; width *= 2)
+            {
+                for (var height = minimumHeight; height <= maxAtlasSize; height *= 2)
+                {
+                    if ((long)width * height < totalArea)
+                        continue;
+
+                    candidateSizes.Add((width, height));
+                }
+            }
+
+            foreach (var candidate in candidateSizes
+                         .OrderBy(x => (long)x.Width * x.Height)
+                         .ThenBy(x => Math.Max(x.Width, x.Height))
+                         .ThenBy(x => x.Width)
+                         .ThenBy(x => x.Height))
+            {
+                if (TryPack(
+                        pending,
+                        candidate.Width,
+                        candidate.Height,
+                        padding,
+                        out var placements))
+                {
+                    return new TextureAtlasPlan(
+                        candidate.Width,
+                        candidate.Height,
+                        placements);
+                }
             }
 
             throw new InvalidOperationException($"Selected UV regions do not fit inside a {maxAtlasSize}x{maxAtlasSize} texture atlas.");
@@ -866,7 +894,8 @@ namespace Editors.ImportExport.TextureAtlas
 
         private static bool TryPack(
             IReadOnlyList<PendingPlacement> pending,
-            int atlasSize,
+            int atlasWidth,
+            int atlasHeight,
             int padding,
             out IReadOnlyList<TextureAtlasPlacement> placements)
         {
@@ -877,20 +906,20 @@ namespace Editors.ImportExport.TextureAtlas
 
             foreach (var item in pending)
             {
-                if (item.PaddedWidth > atlasSize || item.PaddedHeight > atlasSize)
+                if (item.PaddedWidth > atlasWidth || item.PaddedHeight > atlasHeight)
                 {
                     placements = [];
                     return false;
                 }
 
-                if (x + item.PaddedWidth > atlasSize)
+                if (x + item.PaddedWidth > atlasWidth)
                 {
                     y += shelfHeight;
                     x = 0;
                     shelfHeight = 0;
                 }
 
-                if (y + item.PaddedHeight > atlasSize)
+                if (y + item.PaddedHeight > atlasHeight)
                 {
                     placements = [];
                     return false;
