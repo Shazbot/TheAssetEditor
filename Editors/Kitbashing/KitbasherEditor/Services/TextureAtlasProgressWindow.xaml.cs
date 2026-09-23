@@ -9,6 +9,7 @@ namespace Editors.KitbasherEditor.Services
     {
         private readonly Action<
             bool,
+            bool,
             CancellationToken,
             IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> _worker;
         private readonly CancellationTokenSource _cancellation = new();
@@ -25,6 +26,17 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+            : this((mergeCompatibleMeshes, _, cancellationToken, progress) =>
+                worker(mergeCompatibleMeshes, cancellationToken, progress))
+        {
+        }
+
+        public TextureAtlasProgressWindow(
+            Action<
+                bool,
+                bool,
+                CancellationToken,
+                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
         {
             InitializeComponent();
             _worker = worker;
@@ -38,6 +50,7 @@ namespace Editors.KitbasherEditor.Services
             _started = true;
             StartButton.IsEnabled = false;
             MergeMeshesCheckBox.IsEnabled = false;
+            ShareAcrossVmdsCheckBox.IsEnabled = false;
             PhaseText.Text = "Preparing texture atlas pack...";
             ProgressBar.IsIndeterminate = true;
 
@@ -47,6 +60,7 @@ namespace Editors.KitbasherEditor.Services
             {
                 _worker(
                     MergeMeshesCheckBox.IsChecked == true,
+                    ShareAcrossVmdsCheckBox.IsChecked == true,
                     _cancellation.Token,
                     progress);
                 _allowClose = true;
