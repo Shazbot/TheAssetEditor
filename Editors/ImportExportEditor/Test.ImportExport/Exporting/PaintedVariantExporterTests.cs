@@ -105,4 +105,101 @@ public sealed class PaintedVariantExporterTests
         Assert.That(xml, Does.Not.Contain("whmm_painted_"));
         Assert.That(xml, Does.Not.Contain("probability=\"1\""));
     }
+    [Test]
+    public void MaterialRewrite_NeutralizesFactionMaskWhenBaseColourIsPainted()
+    {
+        var exporterType = typeof(AssetHostProtocol).Assembly.GetType(
+            "WH3AssetHost.PaintedVariantExporter",
+            throwOnError: true)!;
+        var rewrite = exporterType.GetMethod(
+            "RewriteMaterialTextureReferences",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new AssertionException("RewriteMaterialTextureReferences was not found.");
+
+        var document = new XmlDocument();
+        document.LoadXml("""
+            <material>
+              <textures>
+                <texture>
+                  <slot version="2">t_xml_base_colour</slot>
+                  <source>variantmeshes/source_base.dds</source>
+                </texture>
+                <texture>
+                  <slot version="2">t_xml_mask</slot>
+                  <source>variantmeshes/source_mask.dds</source>
+                </texture>
+                <texture>
+                  <slot version="2">t_xml_normal</slot>
+                  <source>variantmeshes/source_normal.dds</source>
+                </texture>
+              </textures>
+            </material>
+            """);
+
+        var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"variantmeshes\source_base.dds"] = @"variantmeshes\painted_base.dds"
+        };
+        var changed = (bool)(rewrite.Invoke(null, [document, replacements])
+            ?? throw new AssertionException("RewriteMaterialTextureReferences returned null."));
+
+        Assert.That(changed, Is.True);
+        Assert.That(
+            document.SelectSingleNode("//texture[slot='t_xml_base_colour']/source")!.InnerText,
+            Is.EqualTo(@"variantmeshes\painted_base.dds"));
+        Assert.That(
+            document.SelectSingleNode("//texture[slot='t_xml_mask']/source")!.InnerText,
+            Is.EqualTo("commontextures/default_black.dds"));
+        Assert.That(
+            document.SelectSingleNode("//texture[slot='t_xml_normal']/source")!.InnerText,
+            Is.EqualTo("variantmeshes/source_normal.dds"));
+    }
+
+    [Test]
+    public void MaterialRewrite_PreservesFactionMaskWhenOnlyNormalIsPainted()
+    {
+        var exporterType = typeof(AssetHostProtocol).Assembly.GetType(
+            "WH3AssetHost.PaintedVariantExporter",
+            throwOnError: true)!;
+        var rewrite = exporterType.GetMethod(
+            "RewriteMaterialTextureReferences",
+            BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new AssertionException("RewriteMaterialTextureReferences was not found.");
+
+        var document = new XmlDocument();
+        document.LoadXml("""
+            <material>
+              <textures>
+                <texture>
+                  <slot version="2">t_xml_base_colour</slot>
+                  <source>variantmeshes/source_base.dds</source>
+                </texture>
+                <texture>
+                  <slot version="2">t_xml_mask</slot>
+                  <source>variantmeshes/source_mask.dds</source>
+                </texture>
+                <texture>
+                  <slot version="2">t_xml_normal</slot>
+                  <source>variantmeshes/source_normal.dds</source>
+                </texture>
+              </textures>
+            </material>
+            """);
+
+        var replacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [@"variantmeshes\source_normal.dds"] = @"variantmeshes\painted_normal.dds"
+        };
+        var changed = (bool)(rewrite.Invoke(null, [document, replacements])
+            ?? throw new AssertionException("RewriteMaterialTextureReferences returned null."));
+
+        Assert.That(changed, Is.True);
+        Assert.That(
+            document.SelectSingleNode("//texture[slot='t_xml_normal']/source")!.InnerText,
+            Is.EqualTo(@"variantmeshes\painted_normal.dds"));
+        Assert.That(
+            document.SelectSingleNode("//texture[slot='t_xml_mask']/source")!.InnerText,
+            Is.EqualTo("variantmeshes/source_mask.dds"));
+    }
+
 }
