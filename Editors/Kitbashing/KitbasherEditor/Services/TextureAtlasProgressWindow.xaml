@@ -1,0 +1,65 @@
+<windowhandling:AssetEditorWindow
+    x:Class="Editors.KitbasherEditor.Services.TextureAtlasProgressWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:windowhandling="clr-namespace:WindowHandling;assembly=Shared.Ui"
+    Title="Texture Atlas Pack"
+    Width="680"
+    SizeToContent="Height"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterOwner"
+    ContentRendered="Window_OnContentRendered"
+    Closing="Window_OnClosing"
+    Style="{StaticResource CustomWindowStyle}">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock
+            x:Name="PhaseText"
+            Grid.Row="0"
+            FontSize="15"
+            FontWeight="SemiBold"
+            Text="Preparing texture atlas pack..." />
+
+        <TextBlock
+            x:Name="ItemText"
+            Grid.Row="1"
+            Margin="0,8,0,0"
+            MinHeight="36"
+            MaxWidth="640"
+            TextWrapping="Wrap"
+            TextTrimming="CharacterEllipsis"
+            Opacity="0.8" />
+
+        <ProgressBar
+            x:Name="ProgressBar"
+            Grid.Row="2"
+            Height="20"
+            Margin="0,12,0,0"
+            Minimum="0"
+            Maximum="100"
+            IsIndeterminate="True" />
+
+        <TextBlock
+            x:Name="CountText"
+            Grid.Row="3"
+            Margin="0,6,0,0"
+            HorizontalAlignment="Right"
+            Opacity="0.75" />
+
+        <Button
+            x:Name="CancelButton"
+            Grid.Row="4"
+            Width="100"
+            Margin="0,14,0,0"
+            HorizontalAlignment="Right"
+            Click="CancelButton_Click"
+            Content="Cancel" />
+    </Grid>
+</windowhandling:AssetEditorWindow>
