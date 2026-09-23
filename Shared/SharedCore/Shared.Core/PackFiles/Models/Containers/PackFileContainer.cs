@@ -191,6 +191,19 @@ namespace Shared.Core.PackFiles.Models.Containers
             return file;
         }
 
+        public virtual List<PackFile> DeleteFiles(IReadOnlyCollection<string> paths)
+        {
+            var removed = new List<PackFile>(paths.Count);
+            foreach (var path in paths)
+            {
+                var normalizedPath = PathNormalization.NormalizeFileName(path);
+                if (FileList.Remove(normalizedPath, out var file))
+                    removed.Add(file);
+            }
+
+            return removed;
+        }
+
         public virtual void DeleteFolder(string folder)
         {
             var filesToDelete = new List<string>();
