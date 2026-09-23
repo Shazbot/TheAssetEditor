@@ -1578,8 +1578,14 @@ namespace Editors.KitbasherEditor.Services
         {
             var clone = new XmlDocument();
             clone.LoadXml(document.OuterXml);
-            var materialsNode = clone.SelectSingleNode("/model/materials");
-            materialsNode?.ParentNode?.RemoveChild(materialsNode);
+
+            var materialNodes = clone.SelectNodes("/model/materials/material");
+            if (materialNodes != null)
+            {
+                foreach (XmlNode materialNode in materialNodes.Cast<XmlNode>().ToList())
+                    materialNode.ParentNode?.RemoveChild(materialNode);
+            }
+
             return clone.OuterXml;
         }
 
