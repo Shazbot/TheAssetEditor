@@ -983,6 +983,7 @@ namespace Editors.KitbasherEditor.Services
         private static string BuildAtlasPlanningOrderKey(AtlasCandidate candidate)
         {
             var identity = BuildAtlasTextureSetIdentity(candidate);
+            var crop = GetEffectiveCrop(candidate);
             return string.Join(
                 "\u001f",
                 identity.SourceWidth,
@@ -990,7 +991,11 @@ namespace Editors.KitbasherEditor.Services
                 identity.BaseColour,
                 identity.MaterialMap,
                 identity.Normal,
-                identity.Mask);
+                identity.Mask,
+                crop.X,
+                crop.Y,
+                crop.Width,
+                crop.Height);
         }
 
         private static bool CanCreatePlan(
