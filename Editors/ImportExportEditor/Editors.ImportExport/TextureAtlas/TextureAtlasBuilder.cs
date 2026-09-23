@@ -267,7 +267,7 @@ namespace Editors.ImportExport.TextureAtlas
                             constantSources != null &&
                             constantSources.TryGetValue(placement.Id, out constantColor);
                         IImage? source = null;
-                        var sourceMip = default(MipLevelInfo);
+                        MipLevelInfo? sourceMip = null;
                         if (!isConstant)
                         {
                             if (!decodedSources.TryGetValue(placement.Id, out source))
@@ -303,7 +303,7 @@ namespace Editors.ImportExport.TextureAtlas
                                         x,
                                         y,
                                         source!,
-                                        sourceMip,
+                                        sourceMip!,
                                         plan,
                                         placement,
                                         mipWidth,
@@ -331,7 +331,7 @@ namespace Editors.ImportExport.TextureAtlas
                             constantSources != null &&
                             constantSources.TryGetValue(placement.Id, out constantColor);
                         IImage? source = null;
-                        var sourceMip = default(MipLevelInfo);
+                        MipLevelInfo? sourceMip = null;
                         if (!isConstant)
                         {
                             if (!decodedSources.TryGetValue(placement.Id, out source))
@@ -374,7 +374,7 @@ namespace Editors.ImportExport.TextureAtlas
                                         x,
                                         y,
                                         source!,
-                                        sourceMip,
+                                        sourceMip!,
                                         plan,
                                         placement,
                                         mipWidth,
