@@ -51,6 +51,12 @@ namespace Editors.ImportExport.TextureAtlas
         int Height,
         IReadOnlyList<TextureAtlasPlacement> Placements);
 
+    public readonly record struct TextureAtlasConstantColor(
+        byte B,
+        byte G,
+        byte R,
+        byte A);
+
     public static class TextureAtlasBuilder
     {
         public const int DefaultPadding = 8;
@@ -151,7 +157,8 @@ namespace Editors.ImportExport.TextureAtlas
             TextureAtlasPlan plan,
             IReadOnlyDictionary<int, byte[]> ddsSources,
             IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null,
-            IReadOnlySet<int>? omittedSourceIds = null)
+            IReadOnlySet<int>? omittedSourceIds = null,
+            IReadOnlyDictionary<int, TextureAtlasConstantColor>? constantSources = null)
         {
             var atlasPixels = new byte[checked(plan.Width * plan.Height * 4)];
 
@@ -159,6 +166,18 @@ namespace Editors.ImportExport.TextureAtlas
             {
                 if (omittedSourceIds?.Contains(placement.Id) == true)
                     continue;
+
+                if (constantSources?.TryGetValue(placement.Id, out var constantColor) == true)
+                {
+                    CopyConstantRegionAndPadding(
+                        atlasPixels,
+                        plan.Width,
+                        plan.Height,
+                        placement,
+                        constantColor,
+                        forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
+                    continue;
+                }
 
                 if (!ddsSources.TryGetValue(placement.Id, out var ddsBytes))
                     throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
@@ -198,7 +217,8 @@ namespace Editors.ImportExport.TextureAtlas
             IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null,
             IReadOnlySet<int>? omittedSourceIds = null,
             CancellationToken cancellationToken = default,
-            Action? heartbeat = null)
+            Action? heartbeat = null,
+            IReadOnlyDictionary<int, TextureAtlasConstantColor>? constantSources = null)
         {
             void Pulse()
             {
@@ -242,10 +262,17 @@ namespace Editors.ImportExport.TextureAtlas
                         Pulse();
                         if (omittedSourceIds?.Contains(placement.Id) == true)
                             continue;
-                        if (!decodedSources.TryGetValue(placement.Id, out var source))
-                            throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
+                        var isConstant =
+                            constantSources?.TryGetValue(placement.Id, out var constantColor) == true;
+                        IImage? source = null;
+                        var sourceMip = default(MipLevelInfo);
+                        if (!isConstant)
+                        {
+                            if (!decodedSources.TryGetValue(placement.Id, out source))
+                                throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
+                            sourceMip = GetMipLevel(source, mipLevel);
+                        }
 
-                        var sourceMip = GetMipLevel(source, mipLevel);
                         var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
 
                         for (var y = bounds.Top; y < bounds.Bottom; y++)
@@ -256,19 +283,33 @@ namespace Editors.ImportExport.TextureAtlas
                                 if (coreOccupancy[index])
                                     continue;
 
-                                CopySourceMipPixel(
-                                    atlasPixels,
-                                    mipWidth,
-                                    x,
-                                    y,
-                                    source,
-                                    sourceMip,
-                                    plan,
-                                    placement,
-                                    mipWidth,
-                                    mipHeight,
-                                    clampToCrop: false,
-                                    forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
+                                if (isConstant)
+                                {
+                                    WriteConstantPixel(
+                                        atlasPixels,
+                                        mipWidth,
+                                        x,
+                                        y,
+                                        constantColor,
+                                        forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
+                                }
+                                else
+                                {
+                                    CopySourceMipPixel(
+                                        atlasPixels,
+                                        mipWidth,
+                                        x,
+                                        y,
+                                        source!,
+                                        sourceMip,
+                                        plan,
+                                        placement,
+                                        mipWidth,
+                                        mipHeight,
+                                        clampToCrop: false,
+                                        forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
+                                }
+
                                 coreOccupancy[index] = true;
                             }
                         }
@@ -283,10 +324,17 @@ namespace Editors.ImportExport.TextureAtlas
                         Pulse();
                         if (omittedSourceIds?.Contains(placement.Id) == true)
                             continue;
-                        if (!decodedSources.TryGetValue(placement.Id, out var source))
-                            throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
+                        var isConstant =
+                            constantSources?.TryGetValue(placement.Id, out var constantColor) == true;
+                        IImage? source = null;
+                        var sourceMip = default(MipLevelInfo);
+                        if (!isConstant)
+                        {
+                            if (!decodedSources.TryGetValue(placement.Id, out source))
+                                throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
+                            sourceMip = GetMipLevel(source, mipLevel);
+                        }
 
-                        var sourceMip = GetMipLevel(source, mipLevel);
                         var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
                         var paddingX = Math.Max(1, (int)Math.Ceiling((double)placement.Padding * mipWidth / plan.Width));
                         var paddingY = Math.Max(1, (int)Math.Ceiling((double)placement.Padding * mipHeight / plan.Height));
@@ -304,19 +352,32 @@ namespace Editors.ImportExport.TextureAtlas
                                 if (coreOccupancy[index])
                                     continue;
 
-                                CopySourceMipPixel(
-                                    atlasPixels,
-                                    mipWidth,
-                                    x,
-                                    y,
-                                    source,
-                                    sourceMip,
-                                    plan,
-                                    placement,
-                                    mipWidth,
-                                    mipHeight,
-                                    clampToCrop: true,
-                                    forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
+                                if (isConstant)
+                                {
+                                    WriteConstantPixel(
+                                        atlasPixels,
+                                        mipWidth,
+                                        x,
+                                        y,
+                                        constantColor,
+                                        forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
+                                }
+                                else
+                                {
+                                    CopySourceMipPixel(
+                                        atlasPixels,
+                                        mipWidth,
+                                        x,
+                                        y,
+                                        source!,
+                                        sourceMip,
+                                        plan,
+                                        placement,
+                                        mipWidth,
+                                        mipHeight,
+                                        clampToCrop: true,
+                                        forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
+                                }
                             }
                         }
                     }
@@ -436,6 +497,129 @@ namespace Editors.ImportExport.TextureAtlas
         {
             using var bitmap = LoadBitmap(ddsBytes);
             return (bitmap.Width, bitmap.Height);
+        }
+
+        public static bool TryGetUniformColor(
+            byte[] ddsBytes,
+            out TextureAtlasConstantColor color)
+        {
+            color = default;
+
+            using var stream = new MemoryStream(ddsBytes);
+            using var image = Pfimage.FromStream(stream);
+            if (image.Format != PfimImageFormat.Rgba32 || image.Width <= 0 || image.Height <= 0)
+                return false;
+
+            TextureAtlasConstantColor? expected = null;
+            if (!TryValidateUniformLevel(
+                    image,
+                    image.Width,
+                    image.Height,
+                    image.Stride,
+                    0,
+                    ref expected))
+                return false;
+
+            foreach (var mip in image.MipMaps)
+            {
+                if (!TryValidateUniformLevel(
+                        image,
+                        mip.Width,
+                        mip.Height,
+                        mip.Stride,
+                        mip.DataOffset,
+                        ref expected))
+                    return false;
+            }
+
+            if (!expected.HasValue)
+                return false;
+
+            color = expected.Value;
+            return true;
+        }
+
+        private static bool TryValidateUniformLevel(
+            IImage image,
+            int width,
+            int height,
+            int stride,
+            int dataOffset,
+            ref TextureAtlasConstantColor? expected)
+        {
+            for (var y = 0; y < height; y++)
+            {
+                for (var x = 0; x < width; x++)
+                {
+                    var offset = dataOffset + y * stride + x * 4;
+                    var current = new TextureAtlasConstantColor(
+                        image.Data[offset],
+                        image.Data[offset + 1],
+                        image.Data[offset + 2],
+                        image.Data[offset + 3]);
+
+                    if (!expected.HasValue)
+                    {
+                        expected = current;
+                        continue;
+                    }
+
+                    if (current != expected.Value)
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void WriteConstantPixel(
+            byte[] atlasPixels,
+            int atlasWidth,
+            int x,
+            int y,
+            TextureAtlasConstantColor color,
+            bool forceOpaqueAlpha)
+        {
+            var offset = (y * atlasWidth + x) * 4;
+            atlasPixels[offset] = color.B;
+            atlasPixels[offset + 1] = color.G;
+            atlasPixels[offset + 2] = color.R;
+            atlasPixels[offset + 3] = forceOpaqueAlpha ? byte.MaxValue : color.A;
+        }
+
+        private static void CopyConstantRegionAndPadding(
+            byte[] atlasPixels,
+            int atlasWidth,
+            int atlasHeight,
+            TextureAtlasPlacement placement,
+            TextureAtlasConstantColor color,
+            bool forceOpaqueAlpha)
+        {
+            for (var localY = -placement.Padding;
+                 localY < placement.CropHeight + placement.Padding;
+                 localY++)
+            {
+                var destinationY = placement.DestinationY + localY;
+                if (destinationY < 0 || destinationY >= atlasHeight)
+                    throw new InvalidOperationException($"Atlas placement {placement.Id} exceeds atlas bounds.");
+
+                for (var localX = -placement.Padding;
+                     localX < placement.CropWidth + placement.Padding;
+                     localX++)
+                {
+                    var destinationX = placement.DestinationX + localX;
+                    if (destinationX < 0 || destinationX >= atlasWidth)
+                        throw new InvalidOperationException($"Atlas placement {placement.Id} exceeds atlas bounds.");
+
+                    WriteConstantPixel(
+                        atlasPixels,
+                        atlasWidth,
+                        destinationX,
+                        destinationY,
+                        color,
+                        forceOpaqueAlpha);
+                }
+            }
         }
 
         private static void CopyWrappedRegionAndPadding(
