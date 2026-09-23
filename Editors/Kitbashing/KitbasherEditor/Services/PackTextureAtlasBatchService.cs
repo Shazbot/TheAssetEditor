@@ -1443,7 +1443,17 @@ namespace Editors.KitbasherEditor.Services
                     ? TextureAtlasBuilder.CalculateOutputDimensions(plan, sourceDimensions)
                     : (plan.Width, plan.Height);
 
-                var mipPixels = TextureAtlasBuilder.BuildMipPixels(
+                var fileName = $"{atlasStem}_{channel.Suffix}.dds";
+                using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
+                    outputDimensions.Width,
+                    outputDimensions.Height,
+                    TextureAtlasBuilder.CalculateMipLevelCount(
+                        outputDimensions.Width,
+                        outputDimensions.Height),
+                    channel.Type,
+                    GameTypeEnum.Warhammer3);
+
+                _ = TextureAtlasBuilder.BuildMipPixels(
                     plan,
                     textureBytes,
                     forceOpaqueAlphaSourceIds: null,
@@ -1461,16 +1471,12 @@ namespace Editors.KitbasherEditor.Services
                     },
                     constantSources: constantSources,
                     outputWidth: outputDimensions.Width,
-                    outputHeight: outputDimensions.Height);
+                    outputHeight: outputDimensions.Height,
+                    mipConsumer: (mipLevel, mipWidth, mipHeight, pixels) =>
+                        mipWriter.WriteMip(mipLevel, pixels),
+                    retainMipPixels: false);
 
-                var fileName = $"{atlasStem}_{channel.Suffix}.dds";
-                var atlasPackFile = PngToDdsImporter.ImportRawBgraMipChain(
-                    mipPixels,
-                    outputDimensions.Width,
-                    outputDimensions.Height,
-                    channel.Type,
-                    GameTypeEnum.Warhammer3,
-                    fileName);
+                var atlasPackFile = mipWriter.Complete(fileName);
                 var atlasPath = Normalize($@"{AtlasDirectory}\{fileName}");
 
                 WriteFile(state.Output, atlasPath, atlasPackFile.DataSource.ReadData());
