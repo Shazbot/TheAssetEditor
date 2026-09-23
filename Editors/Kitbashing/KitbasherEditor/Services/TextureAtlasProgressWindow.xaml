@@ -8,7 +8,6 @@
     SizeToContent="Height"
     ResizeMode="NoResize"
     WindowStartupLocation="CenterOwner"
-    ContentRendered="Window_OnContentRendered"
     Closing="Window_OnClosing"
     Style="{StaticResource CustomWindowStyle}">
     <Grid Margin="18">
@@ -18,18 +17,41 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
-            x:Name="PhaseText"
             Grid.Row="0"
             FontSize="15"
             FontWeight="SemiBold"
-            Text="Preparing texture atlas pack..." />
+            Text="Create Texture Atlas Pack" />
+
+        <CheckBox
+            x:Name="MergeMeshesCheckBox"
+            Grid.Row="1"
+            Margin="0,12,0,0"
+            Content="Merge compatible mesh parts (experimental, improves draw calls)"
+            IsChecked="False" />
+
+        <TextBlock
+            Grid.Row="2"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="When enabled, compatible parts within the same rigid and LOD may be combined. This changes mesh part indices; WSModel material indices are rewritten automatically."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
+        <TextBlock
+            x:Name="PhaseText"
+            Grid.Row="3"
+            Margin="0,16,0,0"
+            FontWeight="SemiBold"
+            Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="1"
+            Grid.Row="4"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -39,27 +61,40 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="2"
+            Grid.Row="5"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
             Maximum="100"
-            IsIndeterminate="True" />
+            IsIndeterminate="False"
+            Value="0" />
 
-        <TextBlock
-            x:Name="CountText"
-            Grid.Row="3"
-            Margin="0,6,0,0"
-            HorizontalAlignment="Right"
-            Opacity="0.75" />
+        <Grid Grid.Row="6" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
 
-        <Button
-            x:Name="CancelButton"
-            Grid.Row="4"
-            Width="100"
-            Margin="0,14,0,0"
-            HorizontalAlignment="Right"
-            Click="CancelButton_Click"
-            Content="Cancel" />
+            <TextBlock
+                x:Name="CountText"
+                Grid.Column="0"
+                VerticalAlignment="Center"
+                Opacity="0.75" />
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button
+                    x:Name="StartButton"
+                    Width="100"
+                    Margin="0,6,8,0"
+                    Click="StartButton_Click"
+                    Content="Start" />
+                <Button
+                    x:Name="CancelButton"
+                    Width="100"
+                    Margin="0,6,0,0"
+                    Click="CancelButton_Click"
+                    Content="Cancel" />
+            </StackPanel>
+        </Grid>
     </Grid>
 </windowhandling:AssetEditorWindow>
