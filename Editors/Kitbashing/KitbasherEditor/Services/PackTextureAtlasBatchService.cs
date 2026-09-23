@@ -469,7 +469,7 @@ namespace Editors.KitbasherEditor.Services
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 reachableWsModels.UnionWith(
-                    CollectReachableWsModels(state.Source, vmdPath, cancellationToken));
+                    GetReachableWsModels(state, vmdPath, cancellationToken));
             }
 
             var result = new List<MissingTextureDependency>();
@@ -690,7 +690,7 @@ namespace Editors.KitbasherEditor.Services
             HashSet<MeshKey>? inspectedKeys = null)
         {
             ReportProgress(progress, "Discovering atlas candidates", vmdIndex, vmdCount, rootVmdPath);
-            var wsModels = CollectReachableWsModels(state.Source, rootVmdPath, cancellationToken);
+            var wsModels = GetReachableWsModels(state, rootVmdPath, cancellationToken);
             var candidates = new List<AtlasCandidate>();
             var localInspectedKeys = inspectedKeys ?? new HashSet<MeshKey>();
 
@@ -2564,6 +2564,23 @@ namespace Editors.KitbasherEditor.Services
             return reachable;
         }
 
+        private static HashSet<string> GetReachableWsModels(
+            BatchState state,
+            string rootVmdPath,
+            CancellationToken cancellationToken = default)
+        {
+            rootVmdPath = Normalize(rootVmdPath);
+            if (state.ReachableWsModelsByRoot.TryGetValue(rootVmdPath, out var cached))
+                return cached;
+
+            var reachable = CollectReachableWsModels(
+                state.Source,
+                rootVmdPath,
+                cancellationToken);
+            state.ReachableWsModelsByRoot[rootVmdPath] = reachable;
+            return reachable;
+        }
+
         private static HashSet<string> CollectReachableWsModels(
             IPackFileContainer container,
             string rootVmdPath,
@@ -3573,6 +3590,7 @@ namespace Editors.KitbasherEditor.Services
             public string ReportPath { get; }
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedWsModelsIgnored { get; } = [];
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
