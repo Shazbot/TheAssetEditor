@@ -802,8 +802,7 @@ namespace Editors.KitbasherEditor.Services
         {
             try
             {
-                var sharedBatch = BuildSharedAtlasBatch(candidates);
-                TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(sharedBatch.Sources));
+                _ = CreateSharedAtlasPlan(candidates);
                 error = string.Empty;
                 return true;
             }
@@ -815,6 +814,26 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+        private static (SharedAtlasBatch Batch, TextureAtlasPlan Plan) CreateSharedAtlasPlan(
+            IReadOnlyList<AtlasCandidate> candidates)
+        {
+            var mergedBatch = BuildSharedAtlasBatch(candidates, mergeCompatibleCrops: true);
+            try
+            {
+                return (
+                    mergedBatch,
+                    TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(mergedBatch.Sources)));
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or ArgumentException or OverflowException)
+            {
+                var exactBatch = BuildSharedAtlasBatch(candidates, mergeCompatibleCrops: false);
+                return (
+                    exactBatch,
+                    TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(exactBatch.Sources)));
+            }
+        }
+
         private void ProcessBatch(
             BatchState state,
             string rootVmdPath,
@@ -823,8 +842,9 @@ namespace Editors.KitbasherEditor.Services
             IProgress<TextureAtlasPackProgress>? progress)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var sharedBatch = BuildSharedAtlasBatch(candidates);
-            var plan = TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(sharedBatch.Sources));
+            var sharedPlan = CreateSharedAtlasPlan(candidates);
+            var sharedBatch = sharedPlan.Batch;
+            var plan = sharedPlan.Plan;
             state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
             state.AtlasPlacementsReused += candidates.Count - sharedBatch.Sources.Count;
 
@@ -1841,7 +1861,8 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static SharedAtlasBatch BuildSharedAtlasBatch(
-            IReadOnlyList<AtlasCandidate> candidates)
+            IReadOnlyList<AtlasCandidate> candidates,
+            bool mergeCompatibleCrops)
         {
             var sources = new List<SharedAtlasSource>();
             var sourceIdByMesh = new Dictionary<MeshKey, int>();
@@ -1849,16 +1870,18 @@ namespace Editors.KitbasherEditor.Services
             foreach (var group in candidates.GroupBy(BuildAtlasTextureSetIdentity))
             {
                 var clusters = group
-                    .Select(candidate => new AtlasCropCluster(
-                        GetEffectiveCrop(candidate),
-                        [candidate]))
+                    .GroupBy(GetEffectiveCrop)
+                    .Select(cropGroup => new AtlasCropCluster(
+                        cropGroup.Key,
+                        cropGroup.ToList()))
                     .ToList();
 
                 // Different LODs commonly use the exact same texture set but touch slightly
                 // different UV extents. Requiring an identical crop duplicates most of the
                 // texture in the atlas. Merge crops whenever their union costs less atlas area
                 // (including padding) than storing them separately.
-                while (TryFindBestCropMerge(clusters, out var leftIndex, out var rightIndex, out var union))
+                while (mergeCompatibleCrops &&
+                       TryFindBestCropMerge(clusters, out var leftIndex, out var rightIndex, out var union))
                 {
                     var left = clusters[leftIndex];
                     var right = clusters[rightIndex];
