@@ -934,10 +934,12 @@ namespace Editors.KitbasherEditor.Services
                 var orphan = current[0];
                 RecordSkip(
                     state,
-                    rootVmdPath,
+                    orphan.RootVmdPath,
                     orphan.Key,
                     orphan.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
-                    "No second compatible mesh was available in this VMD dependency set.");
+                    packWide
+                        ? "No second compatible mesh was available in the pack-wide atlas candidate set."
+                        : "No second compatible mesh was available in this VMD dependency set.");
             }
 
             return batches;
@@ -2668,6 +2670,15 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas material assignments reused: {state.GeneratedMaterialReuses}");
             sb.AppendLine($"Atlas placements generated: {state.AtlasPlacementsGenerated}");
             sb.AppendLine($"Atlas placements reused: {state.AtlasPlacementsReused}");
+            sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
+            sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
+            if (state.ShareAtlasesAcrossVmdsEnabled)
+            {
+                sb.AppendLine($"Pack-wide atlas candidates: {state.PackWideCandidateCount}");
+                sb.AppendLine($"Cross-VMD shared atlas batches: {state.CrossVmdSharedAtlasBatches}");
+                sb.AppendLine($"Cross-VMD shared placements: {state.CrossVmdSharedAtlasPlacements}");
+                sb.AppendLine($"Cross-VMD material reuses: {state.CrossVmdMaterialReuses}");
+            }
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
             sb.AppendLine($"Atlas meshes with missing textures: {(state.AtlasMeshesWithMissingTextures ? "YES" : "NO")}");
             sb.AppendLine($"Merge compatible mesh parts: {(state.MergeCompatibleMeshesEnabled ? "YES" : "NO")}");
