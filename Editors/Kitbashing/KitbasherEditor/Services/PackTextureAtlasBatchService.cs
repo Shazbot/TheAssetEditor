@@ -341,6 +341,7 @@ namespace Editors.KitbasherEditor.Services
             {
                 if (state != null)
                 {
+                    state.TotalElapsed = totalStopwatch.Elapsed;
                     try
                     {
                         WriteReport(state, vmdRoots, succeeded: false, failure: ex);
