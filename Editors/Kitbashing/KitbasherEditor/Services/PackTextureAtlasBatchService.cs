@@ -257,7 +257,7 @@ namespace Editors.KitbasherEditor.Services
                 if (reachableUsages.Count == 0)
                     continue;
 
-                var materialPaths = reachableUsages
+                var materialPaths = usages
                     .Select(x => x.MaterialPath)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
