@@ -13,6 +13,7 @@ using Shared.Core.Settings;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
 using Shared.GameFormats.RigidModel.Types;
+using Shared.GameFormats.RigidModel.Vertex;
 using Shared.GameFormats.Vmd;
 using static Shared.GameFormats.Vmd.VariantMeshDefinition;
 
@@ -1277,7 +1278,7 @@ namespace Editors.KitbasherEditor.Services
                     $"Merged RMV mesh would contain {totalVertices} vertices, exceeding the 16-bit index limit.");
             }
 
-            var vertices = new List<Shared.GameFormats.RigidModel.Vertex.CommonVertex>(totalVertices);
+            var vertices = new List<CommonVertex>(totalVertices);
             var indices = new List<ushort>(models.Sum(x => x.Mesh.IndexList.Length));
             var vertexOffset = 0;
 
