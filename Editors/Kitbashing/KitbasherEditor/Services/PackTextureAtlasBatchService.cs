@@ -872,15 +872,16 @@ namespace Editors.KitbasherEditor.Services
 
             var bytes = file.DataSource.ReadData();
             var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
+            var constantColor = default(TextureAtlasConstantColor);
             var isUniformConstant =
                 IsKnownConstantTexturePath(texturePath) &&
-                TextureAtlasBuilder.TryGetUniformColor(bytes, out var constantColor);
+                TextureAtlasBuilder.TryGetUniformColor(bytes, out constantColor);
 
             var inspection = new TextureInspection(
                 dimensions.Width,
                 dimensions.Height,
                 isUniformConstant,
-                isUniformConstant ? constantColor : default);
+                constantColor);
             state.TextureInspections[texturePath] = inspection;
             return inspection;
         }
