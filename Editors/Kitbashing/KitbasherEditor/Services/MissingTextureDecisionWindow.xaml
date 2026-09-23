@@ -1,0 +1,72 @@
+<windowhandling:AssetEditorWindow
+    x:Class="Editors.KitbasherEditor.Services.MissingTextureDecisionWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:windowhandling="clr-namespace:WindowHandling;assembly=Shared.Ui"
+    Title="Texture Atlas Pack - Missing Textures"
+    Width="900"
+    MinWidth="640"
+    MinHeight="360"
+    ResizeMode="CanResize"
+    WindowStartupLocation="CenterOwner"
+    Style="{StaticResource CustomWindowStyle}">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock
+            Grid.Row="0"
+            FontSize="15"
+            FontWeight="SemiBold"
+            Text="Unresolved texture dependencies were found" />
+
+        <TextBlock
+            Grid.Row="1"
+            Margin="0,8,0,10"
+            Text="Review the missing texture paths below. The list is scrollable; the action buttons remain visible."
+            TextWrapping="Wrap"
+            Opacity="0.75" />
+
+        <TextBox
+            x:Name="DetailsTextBox"
+            Grid.Row="2"
+            MinHeight="180"
+            Padding="8"
+            AcceptsReturn="True"
+            AcceptsTab="True"
+            FontFamily="Consolas"
+            HorizontalScrollBarVisibility="Auto"
+            IsReadOnly="True"
+            TextWrapping="NoWrap"
+            VerticalScrollBarVisibility="Auto" />
+
+        <TextBlock
+            Grid.Row="3"
+            Margin="0,10,0,0"
+            Text="Atlas anyway keeps the missing texture paths unchanged. Skip affected meshes is the safer choice."
+            TextWrapping="Wrap"
+            Opacity="0.75" />
+
+        <StackPanel
+            Grid.Row="4"
+            Margin="0,14,0,0"
+            HorizontalAlignment="Right"
+            Orientation="Horizontal">
+            <Button
+                Width="140"
+                Margin="0,0,8,0"
+                Click="AtlasAnywayButton_Click"
+                Content="Atlas anyway" />
+            <Button
+                Width="150"
+                Click="SkipAffectedButton_Click"
+                Content="Skip affected meshes"
+                IsDefault="True" />
+        </StackPanel>
+    </Grid>
+</windowhandling:AssetEditorWindow>
