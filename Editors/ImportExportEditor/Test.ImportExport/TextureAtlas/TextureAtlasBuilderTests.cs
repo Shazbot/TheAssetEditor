@@ -371,6 +371,86 @@ namespace Test.ImportExport.TextureAtlas
             Assert.That(atlasBitmap.GetPixel(omitted.DestinationX, omitted.DestinationY).A, Is.EqualTo(0));
         }
 
+        [Test]
+        public void BuildMipPngs_CanPaintConstantSourceAtVirtualDimensions()
+        {
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(7, 32, 16, 0, 0, 1, 1)],
+                padding: 2);
+
+            var constant = new TextureAtlasConstantColor(
+                B: 30,
+                G: 20,
+                R: 10,
+                A: 255);
+
+            var mipPngs = TextureAtlasBuilder.BuildMipPngs(
+                plan,
+                new Dictionary<int, byte[]>(),
+                constantSources: new Dictionary<int, TextureAtlasConstantColor>
+                {
+                    [7] = constant
+                });
+
+            using var stream = new MemoryStream(mipPngs[0]);
+            using var bitmap = new Bitmap(stream);
+            var placement = plan.Placements.Single();
+            var pixel = bitmap.GetPixel(
+                placement.DestinationX + placement.CropWidth / 2,
+                placement.DestinationY + placement.CropHeight / 2);
+
+            Assert.That(pixel.R, Is.EqualTo(10));
+            Assert.That(pixel.G, Is.EqualTo(20));
+            Assert.That(pixel.B, Is.EqualTo(30));
+            Assert.That(pixel.A, Is.EqualTo(255));
+        }
+
+        [Test]
+        public void TryGetUniformColor_RejectsNonUniformDds()
+        {
+            using var solid = new Bitmap(8, 8, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(solid))
+                graphics.Clear(Color.Black);
+
+            using var solidStream = new MemoryStream();
+            solid.Save(solidStream, DrawingImageFormat.Png);
+            var solidDds = PngToDdsImporter.ImportRaw(
+                solidStream.ToArray(),
+                TextureType.Mask,
+                GameTypeEnum.Warhammer3,
+                "solid.dds");
+
+            Assert.That(
+                TextureAtlasBuilder.TryGetUniformColor(
+                    solidDds.DataSource.ReadData(),
+                    out var constant),
+                Is.True);
+            Assert.That(constant.R, Is.EqualTo(0));
+            Assert.That(constant.G, Is.EqualTo(0));
+            Assert.That(constant.B, Is.EqualTo(0));
+
+            using var varied = new Bitmap(8, 8, PixelFormat.Format32bppArgb);
+            for (var y = 0; y < varied.Height; y++)
+            {
+                for (var x = 0; x < varied.Width; x++)
+                    varied.SetPixel(x, y, x < 4 ? Color.Black : Color.White);
+            }
+
+            using var variedStream = new MemoryStream();
+            varied.Save(variedStream, DrawingImageFormat.Png);
+            var variedDds = PngToDdsImporter.ImportRaw(
+                variedStream.ToArray(),
+                TextureType.Mask,
+                GameTypeEnum.Warhammer3,
+                "varied.dds");
+
+            Assert.That(
+                TextureAtlasBuilder.TryGetUniformColor(
+                    variedDds.DataSource.ReadData(),
+                    out _),
+                Is.False);
+        }
+
         private static byte[] CreateSolidPng(int size, Color color)
         {
             using var bitmap = new Bitmap(size, size, PixelFormat.Format32bppArgb);
