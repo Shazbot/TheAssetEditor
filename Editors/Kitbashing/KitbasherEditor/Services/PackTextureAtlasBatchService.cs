@@ -787,32 +787,30 @@ namespace Editors.KitbasherEditor.Services
 
                 try
                 {
-                    var bytes = file.DataSource.ReadData();
-                    var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
+                    var inspection = GetTextureInspection(state, path, file);
 
                     if (channel.Slot.Equals("t_xml_base_colour", StringComparison.OrdinalIgnoreCase))
                     {
-                        primaryWidth = dimensions.Width;
-                        primaryHeight = dimensions.Height;
+                        primaryWidth = inspection.Width;
+                        primaryHeight = inspection.Height;
                     }
 
-                    if (IsKnownConstantTexturePath(path) &&
-                        TextureAtlasBuilder.TryGetUniformColor(bytes, out var constantColor))
+                    if (inspection.IsUniformConstant)
                     {
-                        constantChannels[channel.Slot] = constantColor;
+                        constantChannels[channel.Slot] = inspection.ConstantColor;
                         continue;
                     }
 
                     if (!layoutWidth.HasValue)
                     {
-                        layoutWidth = dimensions.Width;
-                        layoutHeight = dimensions.Height;
+                        layoutWidth = inspection.Width;
+                        layoutHeight = inspection.Height;
                     }
-                    else if (dimensions.Width != layoutWidth.Value ||
-                             dimensions.Height != layoutHeight!.Value)
+                    else if (inspection.Width != layoutWidth.Value ||
+                             inspection.Height != layoutHeight!.Value)
                     {
                         skipReason =
-                            $"{channel.Slot} dimensions {dimensions.Width}x{dimensions.Height} do not match " +
+                            $"{channel.Slot} dimensions {inspection.Width}x{inspection.Height} do not match " +
                             $"atlas layout {layoutWidth.Value}x{layoutHeight.Value}: {path}";
                         return null;
                     }
@@ -861,6 +859,30 @@ namespace Editors.KitbasherEditor.Services
                 bounds,
                 resolvedChannels,
                 constantChannels);
+        }
+
+        private static TextureInspection GetTextureInspection(
+            BatchState state,
+            string texturePath,
+            PackFile file)
+        {
+            texturePath = Normalize(texturePath);
+            if (state.TextureInspections.TryGetValue(texturePath, out var cached))
+                return cached;
+
+            var bytes = file.DataSource.ReadData();
+            var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
+            var isUniformConstant =
+                IsKnownConstantTexturePath(texturePath) &&
+                TextureAtlasBuilder.TryGetUniformColor(bytes, out var constantColor);
+
+            var inspection = new TextureInspection(
+                dimensions.Width,
+                dimensions.Height,
+                isUniformConstant,
+                isUniformConstant ? constantColor : default);
+            state.TextureInspections[texturePath] = inspection;
+            return inspection;
         }
 
         private static List<List<AtlasCandidate>> CreateBatches(
@@ -3236,6 +3258,7 @@ namespace Editors.KitbasherEditor.Services
             public string ReportPath { get; }
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, TextureInspection> TextureInspections { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<MeshKey, List<WsUsage>> Usages { get; } = [];
             public HashSet<MeshKey> ProcessedMeshes { get; } = [];
             public HashSet<string> ModifiedWsModels { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -3319,6 +3342,12 @@ namespace Editors.KitbasherEditor.Services
             int VertexCount,
             int IndexCount,
             int TriangleCount);
+
+        private readonly record struct TextureInspection(
+            int Width,
+            int Height,
+            bool IsUniformConstant,
+            TextureAtlasConstantColor ConstantColor);
 
         private sealed record GeneratedMaterialEntry(
             string Path,
