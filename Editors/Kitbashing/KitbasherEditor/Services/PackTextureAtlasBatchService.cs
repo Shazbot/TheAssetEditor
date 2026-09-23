@@ -2519,7 +2519,10 @@ namespace Editors.KitbasherEditor.Services
 
                 var rmv = state.RigidModels[rigidPath];
                 rmv.RecalculateOffsets();
-                var data = ModelFactory.Create().Save(rmv);
+                // ValidateOutput reloads every rewritten rigid after all replacements are
+                // committed, so doing ModelFactory.Save's immediate round-trip load here would
+                // validate the same bytes twice.
+                var data = ModelFactory.Create().Save(rmv, validateByReloading: false);
                 replacements.Add(CreateReplacementEntry(rigidPath, data));
             }
             AddPhaseDuration(state, "Serialize modified rigids", serializeStopwatch.Elapsed);
