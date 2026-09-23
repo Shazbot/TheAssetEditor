@@ -72,12 +72,14 @@ namespace Test.ImportExport.TextureAtlas
             var plan = TextureAtlasBuilder.CreatePlan(
                 [
                     new TextureAtlasLayoutSource(0, 16, 8, 0, 0, 1, 1),
-                    new TextureAtlasLayoutSource(1, 16, 8, 0, 0, 1, 1)
+                    new TextureAtlasLayoutSource(1, 16, 8, 0, 0, 1, 1),
+                    new TextureAtlasLayoutSource(2, 16, 8, 0, 0, 1, 1)
                 ],
                 padding: 0);
 
-            Assert.That((long)plan.Width * plan.Height, Is.EqualTo(256));
-            Assert.That(Math.Max(plan.Width, plan.Height), Is.EqualTo(16));
+            Assert.That((long)plan.Width * plan.Height, Is.EqualTo(512));
+            Assert.That(plan.Width, Is.Not.EqualTo(plan.Height));
+            Assert.That(Math.Max(plan.Width, plan.Height), Is.EqualTo(32));
             Assert.That(Math.Min(plan.Width, plan.Height), Is.EqualTo(16));
         }
 
