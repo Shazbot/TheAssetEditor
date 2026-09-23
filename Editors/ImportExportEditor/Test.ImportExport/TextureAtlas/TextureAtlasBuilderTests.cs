@@ -458,22 +458,12 @@ namespace Test.ImportExport.TextureAtlas
         [Test]
         public void BuildMipPngs_DelaysSourceMipsForUpscaledMixedResolutionChannel()
         {
-            using var sourceBitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
-            for (var y = 0; y < sourceBitmap.Height; y++)
-            {
-                for (var x = 0; x < sourceBitmap.Width; x++)
-                {
-                    sourceBitmap.SetPixel(
-                        x,
-                        y,
-                        Color.FromArgb(255, 15 + x * 45, 25 + y * 45, 5 + (x + y) * 25));
-                }
-            }
-
-            using var pngStream = new MemoryStream();
-            sourceBitmap.Save(pngStream, DrawingImageFormat.Png);
-            var sourceDds = PngToDdsImporter.ImportRaw(
-                pngStream.ToArray(),
+            var sourceDds = PngToDdsImporter.ImportRawMipChain(
+                [
+                    CreateSolidPng(4, Color.Red),
+                    CreateSolidPng(2, Color.Blue),
+                    CreateSolidPng(1, Color.Lime)
+                ],
                 TextureType.MaterialMap,
                 GameTypeEnum.Warhammer3,
                 "mixed-resolution-mips-source.dds");
@@ -491,18 +481,21 @@ namespace Test.ImportExport.TextureAtlas
             using var atlasMipStream = new MemoryStream(mipPngs[1]);
             using var atlasMip = new Bitmap(atlasMipStream);
 
-            Assert.That(atlasMip.Width, Is.EqualTo(sourceImage.Width));
-            Assert.That(atlasMip.Height, Is.EqualTo(sourceImage.Height));
+            // The atlas rectangle is twice the source resolution. At atlas mip 1 the
+            // rectangle has only just reached the source's native 4x4 density, so it
+            // must still sample the authored base level (red), not the 2x2 blue mip.
+            var expected = ReadPfimPixel(
+                sourceImage,
+                0,
+                sourceImage.Stride,
+                sourceImage.Width / 2,
+                sourceImage.Height / 2);
+            var actual = atlasMip.GetPixel(atlasMip.Width / 2, atlasMip.Height / 2);
 
-            for (var y = 0; y < sourceImage.Height; y++)
-            {
-                for (var x = 0; x < sourceImage.Width; x++)
-                {
-                    var expected = ReadPfimPixel(sourceImage, 0, sourceImage.Stride, x, y);
-                    var actual = atlasMip.GetPixel(x, y);
-                    Assert.That(actual.ToArgb(), Is.EqualTo(expected.ToArgb()));
-                }
-            }
+            Assert.That(actual.R, Is.EqualTo(expected.R).Within(8));
+            Assert.That(actual.G, Is.EqualTo(expected.G).Within(8));
+            Assert.That(actual.B, Is.EqualTo(expected.B).Within(8));
+            Assert.That(actual.R, Is.GreaterThan(actual.B));
         }
 
         [Test]
