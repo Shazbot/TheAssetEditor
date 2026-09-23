@@ -354,6 +354,23 @@ namespace Editors.ImportExport.TextureAtlas
 
                         var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
 
+                        if (!isConstant &&
+                            mipLevel == 0 &&
+                            TryCopyCorePlacementRows(
+                                atlasPixels,
+                                coreOccupancy,
+                                source!,
+                                sourceMip!,
+                                plan,
+                                placement,
+                                bounds,
+                                mipWidth,
+                                mipHeight,
+                                forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true))
+                        {
+                            continue;
+                        }
+
                         for (var y = bounds.Top; y < bounds.Bottom; y++)
                         {
                             for (var x = bounds.Left; x < bounds.Right; x++)
@@ -594,6 +611,73 @@ namespace Editors.ImportExport.TextureAtlas
                 mipHeight);
 
             return new MipPlacementBounds(left, top, right, bottom);
+        }
+
+        private static bool TryCopyCorePlacementRows(
+            byte[] atlasPixels,
+            bool[] coreOccupancy,
+            IImage source,
+            MipLevelInfo sourceMip,
+            TextureAtlasPlan plan,
+            TextureAtlasPlacement placement,
+            MipPlacementBounds bounds,
+            int mipWidth,
+            int mipHeight,
+            bool forceOpaqueAlpha)
+        {
+            if (forceOpaqueAlpha ||
+                placement.CropX < 0 ||
+                placement.CropY < 0 ||
+                placement.CropX + placement.CropWidth > placement.SourceWidth ||
+                placement.CropY + placement.CropHeight > placement.SourceHeight)
+            {
+                return false;
+            }
+
+            // If source and destination advance at exactly one source texel per atlas texel,
+            // the base mip can be copied a row at a time instead of doing floating-point UV
+            // mapping, floor and modulo operations for every individual pixel.
+            if ((long)sourceMip.Width * plan.Width != (long)placement.SourceWidth * mipWidth ||
+                (long)sourceMip.Height * plan.Height != (long)placement.SourceHeight * mipHeight)
+            {
+                return false;
+            }
+
+            var copyWidth = bounds.Right - bounds.Left;
+            var copyHeight = bounds.Bottom - bounds.Top;
+            if (copyWidth <= 0 || copyHeight <= 0)
+                return false;
+
+            var atlasBaseX = (bounds.Left + 0.5) * plan.Width / mipWidth;
+            var atlasBaseY = (bounds.Top + 0.5) * plan.Height / mipHeight;
+            var sourceBaseX = placement.CropX + (atlasBaseX - placement.DestinationX);
+            var sourceBaseY = placement.CropY + (atlasBaseY - placement.DestinationY);
+            var sourceStartX = (int)Math.Floor(sourceBaseX * sourceMip.Width / placement.SourceWidth);
+            var sourceStartY = (int)Math.Floor(sourceBaseY * sourceMip.Height / placement.SourceHeight);
+
+            if (sourceStartX < 0 ||
+                sourceStartY < 0 ||
+                sourceStartX + copyWidth > sourceMip.Width ||
+                sourceStartY + copyHeight > sourceMip.Height)
+            {
+                return false;
+            }
+
+            var rowBytes = checked(copyWidth * 4);
+            for (var row = 0; row < copyHeight; row++)
+            {
+                var sourceOffset = checked(
+                    sourceMip.DataOffset +
+                    (sourceStartY + row) * sourceMip.Stride +
+                    sourceStartX * 4);
+                var destinationPixelOffset = checked((bounds.Top + row) * mipWidth + bounds.Left);
+                var destinationOffset = checked(destinationPixelOffset * 4);
+
+                Buffer.BlockCopy(source.Data, sourceOffset, atlasPixels, destinationOffset, rowBytes);
+                Array.Fill(coreOccupancy, true, destinationPixelOffset, copyWidth);
+            }
+
+            return true;
         }
 
         private static void CopySourceMipPixel(
