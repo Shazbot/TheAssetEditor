@@ -31,6 +31,13 @@ namespace Editors.KitbasherEditor.Services
             ("t_xml_mask", TextureType.Mask, "mask"),
         ];
 
+        private static readonly HashSet<string> KnownConstantTexturePaths =
+        [
+            @"commontextures\default_black.dds",
+            @"commontextures\default_white.dds",
+            @"commontextures\default_normal.dds",
+        ];
+
         private readonly IPackFileService _packFileService;
         private readonly IPackFileContainerLoader _packFileContainerLoader;
         private readonly ApplicationSettingsService _settingsService;
@@ -656,6 +663,8 @@ namespace Editors.KitbasherEditor.Services
             {
                 ["t_xml_base_colour"] = primaryBytes
             };
+            var constantChannels = new Dictionary<string, TextureAtlasConstantColor>(
+                StringComparer.OrdinalIgnoreCase);
 
             foreach (var channel in AtlasChannels.Skip(1))
             {
@@ -683,6 +692,14 @@ namespace Editors.KitbasherEditor.Services
                 {
                     var bytes = file.DataSource.ReadData();
                     var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
+
+                    if (IsKnownConstantTexturePath(path) &&
+                        TextureAtlasBuilder.TryGetUniformColor(bytes, out var constantColor))
+                    {
+                        constantChannels[channel.Slot] = constantColor;
+                        continue;
+                    }
+
                     if (dimensions.Width != width || dimensions.Height != height)
                     {
                         skipReason =
@@ -721,7 +738,8 @@ namespace Editors.KitbasherEditor.Services
                 width,
                 height,
                 bounds,
-                channelBytes);
+                channelBytes,
+                constantChannels);
         }
 
         private static List<List<AtlasCandidate>> CreateBatches(
@@ -870,17 +888,22 @@ namespace Editors.KitbasherEditor.Services
                     AtlasChannels.Length,
                     $"{rootVmdPath} — {channel.Suffix}");
                 var textureBytes = new Dictionary<int, byte[]>();
+                var constantSources = new Dictionary<int, TextureAtlasConstantColor>();
                 var omitted = new HashSet<int>();
 
                 foreach (var source in sharedBatch.Sources)
                 {
                     if (source.Representative.ChannelBytes.TryGetValue(channel.Slot, out var bytes))
                         textureBytes[source.Id] = bytes;
+                    else if (source.Representative.ConstantChannels.TryGetValue(
+                                 channel.Slot,
+                                 out var constantColor))
+                        constantSources[source.Id] = constantColor;
                     else
                         omitted.Add(source.Id);
                 }
 
-                if (textureBytes.Count == 0)
+                if (textureBytes.Count == 0 && constantSources.Count == 0)
                     continue;
 
                 var mipPngs = TextureAtlasBuilder.BuildMipPngs(
@@ -898,7 +921,8 @@ namespace Editors.KitbasherEditor.Services
                             AtlasChannels.Length,
                             $"{rootVmdPath} — {channel.Suffix}");
                         cancellationToken.ThrowIfCancellationRequested();
-                    });
+                    },
+                    constantSources: constantSources);
 
                 var fileName = $"{atlasStem}_{channel.Suffix}.dds";
                 var atlasPackFile = PngToDdsImporter.ImportRawMipChain(
@@ -942,7 +966,8 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var channel in AtlasChannels)
                 {
-                    if (!candidate.ChannelBytes.ContainsKey(channel.Slot))
+                    if (!candidate.ChannelBytes.ContainsKey(channel.Slot) &&
+                        !candidate.ConstantChannels.ContainsKey(channel.Slot))
                         continue;
                     if (generatedPaths.TryGetValue(channel.Slot, out var atlasPath))
                         SetTexturePath(clonedMaterial, channel.Slot, atlasPath);
@@ -2508,6 +2533,8 @@ namespace Editors.KitbasherEditor.Services
                 return "<none>";
             if (IsTexturePlaceholder(path))
                 return $"<placeholder>:{path}";
+            if (candidate.ConstantChannels.ContainsKey(slot))
+                return $"<constant>:{path}";
             if (candidate.ChannelBytes.ContainsKey(slot))
                 return $"<resolved>:{path}";
             return $"<unresolved>:{path}";
@@ -2610,6 +2637,9 @@ namespace Editors.KitbasherEditor.Services
 
         private static bool IsTexturePlaceholder(string? path)
             => Normalize(path).Equals("mask_path", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsKnownConstantTexturePath(string? path)
+            => KnownConstantTexturePaths.Contains(Normalize(path));
 
         private static string Normalize(string? path)
             => string.IsNullOrWhiteSpace(path)
@@ -2727,7 +2757,8 @@ namespace Editors.KitbasherEditor.Services
             int Width,
             int Height,
             UvBounds Bounds,
-            Dictionary<string, byte[]> ChannelBytes);
+            Dictionary<string, byte[]> ChannelBytes,
+            Dictionary<string, TextureAtlasConstantColor> ConstantChannels);
 
         private sealed record SharedAtlasBatch(
             List<SharedAtlasSource> Sources,
