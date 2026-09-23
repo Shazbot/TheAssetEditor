@@ -283,7 +283,9 @@ namespace Editors.ImportExport.TextureAtlas
             Action? heartbeat = null,
             IReadOnlyDictionary<int, TextureAtlasConstantColor>? constantSources = null,
             int? outputWidth = null,
-            int? outputHeight = null)
+            int? outputHeight = null,
+            Action<int, int, int, byte[]>? mipConsumer = null,
+            bool retainMipPixels = true)
         {
             var atlasWidth = outputWidth ?? plan.Width;
             var atlasHeight = outputHeight ?? plan.Height;
@@ -486,7 +488,9 @@ namespace Editors.ImportExport.TextureAtlas
                         }
                     }
 
-                    mipPixels.Add(atlasPixels);
+                    mipConsumer?.Invoke(mipLevel, mipWidth, mipHeight, atlasPixels);
+                    if (retainMipPixels)
+                        mipPixels.Add(atlasPixels);
 
                     if (mipWidth == 1 && mipHeight == 1)
                         break;
@@ -503,6 +507,24 @@ namespace Editors.ImportExport.TextureAtlas
                 foreach (var source in decodedSources.Values)
                     source.Dispose();
             }
+        }
+
+        public static int CalculateMipLevelCount(int width, int height)
+        {
+            if (width <= 0)
+                throw new ArgumentOutOfRangeException(nameof(width));
+            if (height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(height));
+
+            var count = 1;
+            while (width > 1 || height > 1)
+            {
+                width = Math.Max(1, width / 2);
+                height = Math.Max(1, height / 2);
+                count++;
+            }
+
+            return count;
         }
 
         public static (int Width, int Height) CalculateOutputDimensions(
