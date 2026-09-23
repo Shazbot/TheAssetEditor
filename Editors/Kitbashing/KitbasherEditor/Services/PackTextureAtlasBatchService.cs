@@ -485,7 +485,8 @@ namespace Editors.KitbasherEditor.Services
                     extension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
                     extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase) ||
                     (extension.Equals(".dds", StringComparison.OrdinalIgnoreCase) &&
-                     Normalize(path).StartsWith(@"variantmeshes\", StringComparison.OrdinalIgnoreCase)))
+                     (Normalize(path).StartsWith(@"variantmeshes\", StringComparison.OrdinalIgnoreCase) ||
+                      Normalize(path).StartsWith(AtlasDirectory, StringComparison.OrdinalIgnoreCase))))
                 {
                     if (!currentReachable.Contains(Normalize(path)))
                         toRemove.Add(Normalize(path));
