@@ -214,22 +214,28 @@ namespace Editors.KitbasherEditor.Services
                     plan,
                     sourceDimensions);
 
-                var mipPixels = TextureAtlasBuilder.BuildMipPixels(
+                var fileName = $"{atlasStem}_{GetTextureSuffix(textureType)}.dds";
+                using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
+                    outputDimensions.Width,
+                    outputDimensions.Height,
+                    TextureAtlasBuilder.CalculateMipLevelCount(
+                        outputDimensions.Width,
+                        outputDimensions.Height),
+                    textureType,
+                    _applicationSettingsService.CurrentSettings.CurrentGame);
+
+                _ = TextureAtlasBuilder.BuildMipPixels(
                     plan,
                     textureBytes,
                     forceOpaqueAlphaSourceIds: null,
                     omittedSourceIds,
                     outputWidth: outputDimensions.Width,
-                    outputHeight: outputDimensions.Height);
+                    outputHeight: outputDimensions.Height,
+                    mipConsumer: (mipLevel, mipWidth, mipHeight, pixels) =>
+                        mipWriter.WriteMip(mipLevel, pixels),
+                    retainMipPixels: false);
 
-                var fileName = $"{atlasStem}_{GetTextureSuffix(textureType)}.dds";
-                var packFile = PngToDdsImporter.ImportRawBgraMipChain(
-                    mipPixels,
-                    outputDimensions.Width,
-                    outputDimensions.Height,
-                    textureType,
-                    _applicationSettingsService.CurrentSettings.CurrentGame,
-                    fileName);
+                var packFile = mipWriter.Complete(fileName);
                 var fullPath = $@"{AtlasDirectory}\{fileName}";
 
                 generatedFiles.Add(new GeneratedTextureAtlasFile(AtlasDirectory, fullPath, packFile));
