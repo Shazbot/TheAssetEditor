@@ -1248,7 +1248,6 @@ namespace Editors.KitbasherEditor.Services
                 material);
 
             var shaderParams = model.CommonHeader.ShaderParams;
-            var zeros = shaderParams.AllZeroValues ?? [];
 
             var identity = string.Join(
                 "|",
@@ -1256,11 +1255,10 @@ namespace Editors.KitbasherEditor.Services
                 model.CommonHeader.RenderFlag,
                 model.Material.BinaryVertexFormat,
                 shaderParams.ShaderName,
-                // UnknownValues are preserved from the representative RMV header when meshes
-                // are merged, but are intentionally excluded from compatibility. Asset Editor
-                // has no known semantics for these bytes and Morrigan shows otherwise-identical
-                // render groups fragmented solely by differing values here.
-                Convert.ToHexString(zeros),
+                // UnknownValues and AllZeroValues are preserved from the representative RMV
+                // header when meshes are merged, but intentionally excluded from compatibility.
+                // Asset Editor has no known semantics for either field, and Morrigan contains
+                // otherwise-identical render groups fragmented only by non-zero garbage bytes.
                 Convert.ToHexString(materialBytes));
 
             return ContentHash(identity);
