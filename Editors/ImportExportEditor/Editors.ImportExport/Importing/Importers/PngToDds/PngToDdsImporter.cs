@@ -30,6 +30,60 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             }
         }
 
+        public static PackFile ImportRawBgraMipChain(
+            IReadOnlyList<byte[]> bgraMipLevels,
+            int width,
+            int height,
+            TextureType textureType,
+            GameTypeEnum gameType,
+            string outFileName)
+        {
+            if (bgraMipLevels.Count == 0)
+                throw new ArgumentException("At least one mip level is required.", nameof(bgraMipLevels));
+            if (width <= 0)
+                throw new ArgumentOutOfRangeException(nameof(width));
+            if (height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(height));
+
+            var sourceFormat = IsLinearTexture(textureType)
+                ? DXGI_FORMAT.B8G8R8A8_UNORM
+                : DXGI_FORMAT.B8G8R8A8_UNORM_SRGB;
+
+            using var imageWithMips = TexHelper.Instance.Initialize2D(
+                sourceFormat,
+                width,
+                height,
+                1,
+                bgraMipLevels.Count,
+                CP_FLAGS.NONE);
+
+            for (var mip = 0; mip < bgraMipLevels.Count; mip++)
+            {
+                var source = bgraMipLevels[mip];
+                var destination = imageWithMips.GetImage(mip, 0, 0);
+                var rowBytes = checked(destination.Width * 4);
+                var expectedLength = checked(rowBytes * destination.Height);
+                if (source.Length != expectedLength)
+                {
+                    throw new InvalidOperationException(
+                        $"Atlas mip {mip} has {source.Length} BGRA bytes, expected {expectedLength} " +
+                        $"for {destination.Width}x{destination.Height}.");
+                }
+
+                var destinationStride = checked((int)destination.RowPitch);
+                for (var y = 0; y < destination.Height; y++)
+                {
+                    Marshal.Copy(
+                        source,
+                        checked(y * rowBytes),
+                        IntPtr.Add(destination.Pixels, checked(y * destinationStride)),
+                        rowBytes);
+                }
+            }
+
+            return CompressAndSave(imageWithMips, textureType, gameType, outFileName);
+        }
+
         public static PackFile ImportRawMipChain(
             IReadOnlyList<byte[]> pngMipLevels,
             TextureType textureType,
