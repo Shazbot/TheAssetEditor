@@ -801,19 +801,11 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    if (!layoutWidth.HasValue)
-                    {
-                        layoutWidth = inspection.Width;
-                        layoutHeight = inspection.Height;
-                    }
-                    else if (inspection.Width != layoutWidth.Value ||
-                             inspection.Height != layoutHeight!.Value)
-                    {
-                        skipReason =
-                            $"{channel.Slot} dimensions {inspection.Width}x{inspection.Height} do not match " +
-                            $"atlas layout {layoutWidth.Value}x{layoutHeight.Value}: {path}";
-                        return null;
-                    }
+                    // All material channels share normalized UV0, but they do not have to share
+                    // a pixel resolution. Size this mesh's atlas rectangle for its most detailed
+                    // resolved channel so no channel has to be downsampled just to participate.
+                    layoutWidth = Math.Max(layoutWidth ?? 0, inspection.Width);
+                    layoutHeight = Math.Max(layoutHeight ?? 0, inspection.Height);
 
                     resolvedChannels.Add(channel.Slot);
                 }
