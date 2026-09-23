@@ -62,17 +62,12 @@ namespace Editors.KitbasherEditor.Services
 
             var sourcePath = browse.FilePaths[0];
             var outputPath = BuildOutputPath(sourcePath);
-            var atlasMeshesWithMissingTextures = _standardDialogs.ShowYesNoBox(
-                "Atlas meshes even when their material references texture files that cannot be resolved?\n\n" +
-                "Yes: atlas the mesh and keep the missing texture paths unchanged. This can produce incorrect rendering if the game later resolves those textures.\n\n" +
-                "No: skip those meshes (recommended).",
-                "Texture Atlas Pack - Missing Textures") == ShowMessageBoxResult.OK;
 
             using (_standardDialogs.ShowWaitCursor())
             {
                 try
                 {
-                    var result = Process(sourcePath, outputPath, atlasMeshesWithMissingTextures);
+                    var result = Process(sourcePath, outputPath, atlasMeshesWithMissingTextures: null);
                     _standardDialogs.ShowDialogBox(
                         $"Texture atlas pack created successfully.\n\n" +
                         $"Output: {outputPath}\n" +
@@ -94,7 +89,7 @@ namespace Editors.KitbasherEditor.Services
         public BatchResult Process(
             string sourcePath,
             string outputPath,
-            bool atlasMeshesWithMissingTextures = false)
+            bool? atlasMeshesWithMissingTextures = false)
         {
             var reportPath = BuildReportPath(outputPath);
             IPackFileContainer? output = null;
@@ -134,8 +129,19 @@ namespace Editors.KitbasherEditor.Services
                     sourcePath,
                     outputPath,
                     reportPath,
-                    atlasMeshesWithMissingTextures);
+                    atlasMeshesWithMissingTextures ?? false);
                 BuildWsUsageIndex(state);
+
+                if (!atlasMeshesWithMissingTextures.HasValue)
+                {
+                    var missingTextures = FindMissingTextureDependencies(state, vmdRoots);
+                    if (missingTextures.Count != 0)
+                    {
+                        state.AtlasMeshesWithMissingTextures = _standardDialogs.ShowYesNoBox(
+                            BuildMissingTexturePrompt(missingTextures),
+                            "Texture Atlas Pack - Missing Textures") == ShowMessageBoxResult.OK;
+                    }
+                }
 
                 foreach (var vmdPath in vmdRoots)
                     ProcessVmd(state, vmdPath);
@@ -231,6 +237,115 @@ namespace Editors.KitbasherEditor.Services
                     usages.Add(new WsUsage(wsPath, doc, node, materialPath));
                 }
             }
+        }
+
+        private List<MissingTextureDependency> FindMissingTextureDependencies(
+            BatchState state,
+            IReadOnlyList<string> vmdRoots)
+        {
+            var reachableWsModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var vmdPath in vmdRoots)
+                reachableWsModels.UnionWith(CollectReachableWsModels(state.Source, vmdPath));
+
+            var result = new List<MissingTextureDependency>();
+
+            foreach (var (key, usages) in state.Usages)
+            {
+                var reachableUsages = usages
+                    .Where(x => reachableWsModels.Contains(x.WsModelPath))
+                    .ToList();
+                if (reachableUsages.Count == 0)
+                    continue;
+
+                var materialPaths = reachableUsages
+                    .Select(x => x.MaterialPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (materialPaths.Count != 1)
+                    continue;
+
+                var materialFile = FindForRead(state, materialPaths[0]);
+                if (materialFile == null)
+                    continue;
+
+                XmlDocument materialDoc;
+                try
+                {
+                    materialDoc = LoadXml(materialFile);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                var shaderPath = materialDoc.SelectSingleNode("/material/shader")?.InnerText ?? string.Empty;
+                if (shaderPath.Contains("emissive", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (materialDoc.SelectNodes("/material/textures/texture")?
+                        .Cast<XmlNode>()
+                        .Any(x => GetTextureSlot(x).Contains("emissive", StringComparison.OrdinalIgnoreCase)) == true)
+                {
+                    continue;
+                }
+
+                var primaryPath = GetTexturePath(materialDoc, "t_xml_base_colour");
+                if (string.IsNullOrWhiteSpace(primaryPath) || FindForRead(state, primaryPath) == null)
+                    continue;
+
+                foreach (var channel in AtlasChannels.Skip(1))
+                {
+                    var texturePath = GetTexturePath(materialDoc, channel.Slot);
+                    if (string.IsNullOrWhiteSpace(texturePath) || IsTexturePlaceholder(texturePath))
+                        continue;
+
+                    if (FindForRead(state, texturePath) == null)
+                    {
+                        result.Add(new MissingTextureDependency(
+                            key,
+                            channel.Slot,
+                            texturePath));
+                    }
+                }
+            }
+
+            return result
+                .Distinct()
+                .OrderBy(x => x.TexturePath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.Key.LodIndex)
+                .ThenBy(x => x.Key.PartIndex)
+                .ThenBy(x => x.Slot, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string BuildMissingTexturePrompt(
+            IReadOnlyList<MissingTextureDependency> missingTextures)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Unresolved texture dependencies were found:");
+            sb.AppendLine();
+
+            foreach (var group in missingTextures.GroupBy(
+                         x => x.TexturePath,
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine(group.Key);
+                foreach (var dependency in group)
+                {
+                    sb.AppendLine(
+                        $"  {dependency.Key.GeometryPath} [lod {dependency.Key.LodIndex}, part {dependency.Key.PartIndex}] " +
+                        $"({dependency.Slot})");
+                }
+
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("Atlas these meshes anyway?");
+            sb.AppendLine();
+            sb.AppendLine("Yes: atlas them and keep the missing texture paths unchanged.");
+            sb.AppendLine("No: skip the affected meshes (recommended).");
+            return sb.ToString();
         }
 
         private void ProcessVmd(BatchState state, string rootVmdPath)
@@ -1513,7 +1628,7 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> AllowedMissingTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
-            public bool AtlasMeshesWithMissingTextures { get; }
+            public bool AtlasMeshesWithMissingTextures { get; set; }
             public List<string> RemovedFiles { get; } = [];
             public List<string> ValidationMessages { get; } = [];
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
@@ -1536,6 +1651,11 @@ namespace Editors.KitbasherEditor.Services
                 AtlasMeshesWithMissingTextures = atlasMeshesWithMissingTextures;
             }
         }
+
+        private sealed record MissingTextureDependency(
+            MeshKey Key,
+            string Slot,
+            string TexturePath);
 
         private sealed record WsUsage(
             string WsModelPath,
