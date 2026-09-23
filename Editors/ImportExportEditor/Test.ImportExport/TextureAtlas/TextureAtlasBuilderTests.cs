@@ -320,11 +320,13 @@ namespace Test.ImportExport.TextureAtlas
                 [new TextureAtlasLayoutSource(0, 16, 16, 0, 0, 1, 1)],
                 padding: 8);
 
-            var atlasMipPngs = TextureAtlasBuilder.BuildMipPngs(
+            var atlasMipPixels = TextureAtlasBuilder.BuildMipPixels(
                 plan,
                 new Dictionary<int, byte[]> { [0] = sourceBytes });
-            var atlasDds = PngToDdsImporter.ImportRawMipChain(
-                atlasMipPngs,
+            var atlasDds = PngToDdsImporter.ImportRawBgraMipChain(
+                atlasMipPixels,
+                plan.Width,
+                plan.Height,
                 TextureType.BaseColour,
                 GameTypeEnum.Warhammer3,
                 "authored-mips-atlas.dds");
