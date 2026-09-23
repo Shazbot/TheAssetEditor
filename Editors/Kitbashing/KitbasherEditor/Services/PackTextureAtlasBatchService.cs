@@ -653,6 +653,7 @@ namespace Editors.KitbasherEditor.Services
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
+            var stopwatch = Stopwatch.StartNew();
             var candidates = new List<AtlasCandidate>();
             var inspectedKeys = new HashSet<MeshKey>();
 
@@ -670,14 +671,18 @@ namespace Editors.KitbasherEditor.Services
             }
 
             state.PackWideCandidateCount = candidates.Count;
+            AddPhaseDuration(state, "Discover atlas candidates", stopwatch.Elapsed);
 
+            stopwatch.Restart();
             var batches = CreateBatches(
                 state,
                 candidates,
                 packWide: true,
                 cancellationToken: cancellationToken,
                 progress: progress);
+            AddPhaseDuration(state, "Plan atlas batches", stopwatch.Elapsed);
 
+            stopwatch.Restart();
             var packName = Path.GetFileNameWithoutExtension(state.SourcePath);
             ProcessAtlasBatches(
                 state,
@@ -686,6 +691,7 @@ namespace Editors.KitbasherEditor.Services
                 batches,
                 cancellationToken,
                 progress);
+            AddPhaseDuration(state, "Execute atlas batches", stopwatch.Elapsed);
         }
 
         private void ProcessAtlasBatches(
@@ -1484,6 +1490,7 @@ namespace Editors.KitbasherEditor.Services
                     channel.Type,
                     GameTypeEnum.Warhammer3);
 
+                var rasterStopwatch = Stopwatch.StartNew();
                 _ = TextureAtlasBuilder.BuildMipPixels(
                     plan,
                     textureBytes,
@@ -1506,8 +1513,11 @@ namespace Editors.KitbasherEditor.Services
                     mipConsumer: (mipLevel, mipWidth, mipHeight, pixels) =>
                         mipWriter.WriteMip(mipLevel, pixels),
                     retainMipPixels: false);
+                AddPhaseDuration(state, "Rasterize atlas pixels", rasterStopwatch.Elapsed);
 
+                var compressionStopwatch = Stopwatch.StartNew();
                 var atlasPackFile = mipWriter.Complete(fileName);
+                AddPhaseDuration(state, "Compress atlas DDS", compressionStopwatch.Elapsed);
                 var atlasPath = Normalize($@"{AtlasDirectory}\{fileName}");
 
                 WriteFile(state.Output, atlasPath, atlasPackFile.DataSource.ReadData());
@@ -1516,6 +1526,7 @@ namespace Editors.KitbasherEditor.Services
                 state.GeneratedTextureDimensions[atlasPath] = outputDimensions;
             }
 
+            var rewriteStopwatch = Stopwatch.StartNew();
             for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1617,6 +1628,7 @@ namespace Editors.KitbasherEditor.Services
                 state.ModifiedRigids.Add(candidate.Key.GeometryPath);
                 state.ProcessedMeshes.Add(candidate.Key);
             }
+            AddPhaseDuration(state, "Rewrite mesh UVs and materials", rewriteStopwatch.Elapsed);
         }
 
         private void MergeCompatibleMeshes(
@@ -3659,6 +3671,17 @@ namespace Editors.KitbasherEditor.Services
             int Current = 0,
             int Total = 0,
             string? Item = null);
+
+        private static void AddPhaseDuration(
+            BatchState state,
+            string phase,
+            TimeSpan elapsed)
+        {
+            if (state.PhaseDurations.TryGetValue(phase, out var existing))
+                state.PhaseDurations[phase] = existing + elapsed;
+            else
+                state.PhaseDurations[phase] = elapsed;
+        }
 
         private static void ReportProgress(
             IProgress<TextureAtlasPackProgress>? progress,
