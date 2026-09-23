@@ -941,7 +941,7 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var materialXml = clonedMaterial.OuterXml;
-                var materialContentHash = StableHash(materialXml);
+                var materialContentHash = ContentHash(materialXml);
                 if (!state.GeneratedMaterialByContentHash.TryGetValue(
                         materialContentHash,
                         out var generatedMaterial))
@@ -2097,6 +2097,12 @@ namespace Editors.KitbasherEditor.Services
         {
             var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
             return Convert.ToHexString(bytes)[..8].ToLowerInvariant();
+        }
+
+        private static string ContentHash(string value)
+        {
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+            return Convert.ToHexString(bytes);
         }
 
         private static bool IsTexturePlaceholder(string? path)
