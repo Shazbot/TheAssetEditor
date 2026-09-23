@@ -150,12 +150,13 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var (width, height) = TextureAtlasBuilder.GetDimensions(primaryBytes);
+                var layoutWidth = width;
+                var layoutHeight = height;
 
-                // UV0 is shared by all of these texture channels. A resolvable secondary map
-                // with different dimensions cannot use the same no-resampling atlas transform,
-                // so leave that mesh untouched. Missing secondary files are allowed and their
-                // original texture paths are preserved.
-                var dimensionsCompatible = true;
+                // Material channels share normalized UV0, not necessarily pixel dimensions.
+                // Preserve the highest available texel density by sizing this mesh's atlas
+                // rectangle for its largest resolved channel and resampling lower-resolution
+                // channels into that shared normalized placement.
                 foreach (var input in GetAtlasTextureInputs(mesh.Material))
                 {
                     if (input.Type == primaryTextureType || !IsTextureUsed(input))
@@ -165,20 +166,11 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     var secondaryDimensions = TextureAtlasBuilder.GetDimensions(secondaryBytes);
-                    if (secondaryDimensions.Width != width || secondaryDimensions.Height != height)
-                    {
-                        dimensionsCompatible = false;
-                        break;
-                    }
+                    layoutWidth = Math.Max(layoutWidth, secondaryDimensions.Width);
+                    layoutHeight = Math.Max(layoutHeight, secondaryDimensions.Height);
                 }
 
-                if (!dimensionsCompatible)
-                {
-                    untouchedMeshes.Add(mesh);
-                    continue;
-                }
-
-                preparedMeshes.Add(new PreparedMeshSource(mesh, primaryBytes, width, height));
+                preparedMeshes.Add(new PreparedMeshSource(mesh, primaryBytes, layoutWidth, layoutHeight));
             }
 
             if (preparedMeshes.Count < 2)
@@ -192,21 +184,22 @@ namespace Editors.KitbasherEditor.Services
                 .ToList();
 
             var uvBounds = workingMeshes.Select(GetUvBounds).ToArray();
-            var primarySources = new List<TextureAtlasSource>(workingMeshes.Count);
+            var layoutSources = new List<TextureAtlasLayoutSource>(workingMeshes.Count);
             for (var i = 0; i < workingMeshes.Count; i++)
             {
                 var source = preparedMeshes[i];
                 var bounds = uvBounds[i];
-                primarySources.Add(new TextureAtlasSource(
+                layoutSources.Add(new TextureAtlasLayoutSource(
                     i,
-                    source.PrimaryBytes,
+                    source.Width,
+                    source.Height,
                     bounds.MinU,
                     bounds.MinV,
                     bounds.MaxU,
                     bounds.MaxV));
             }
 
-            var plan = TextureAtlasBuilder.CreatePlanFromDds(primarySources);
+            var plan = TextureAtlasBuilder.CreatePlan(layoutSources);
             var atlasStem = BuildAtlasStem(workingMeshes[0].Name);
             var atlasInputs = GetAtlasTextureInputs(workingMeshes[0].Material);
 
@@ -222,18 +215,6 @@ namespace Editors.KitbasherEditor.Services
                     {
                         omittedSourceIds.Add(i);
                         continue;
-                    }
-
-                    var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
-                    if (dimensions.Width != preparedMeshes[i].Width ||
-                        dimensions.Height != preparedMeshes[i].Height)
-                    {
-                        // This should already have been filtered above; keep the guard here so
-                        // future material channels cannot accidentally be resampled.
-                        throw new InvalidOperationException(
-                            $"Mesh '{workingMeshes[i].Name}' has {textureType} dimensions " +
-                            $"{dimensions.Width}x{dimensions.Height}, but its primary texture is " +
-                            $"{preparedMeshes[i].Width}x{preparedMeshes[i].Height}.");
                     }
 
                     textureBytes[i] = bytes;
