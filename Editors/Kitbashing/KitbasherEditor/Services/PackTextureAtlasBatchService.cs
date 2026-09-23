@@ -11,6 +11,7 @@ using Shared.Core.PackFiles.Utility;
 using Shared.Core.Services;
 using Shared.Core.Settings;
 using Shared.GameFormats.RigidModel;
+using Shared.GameFormats.RigidModel.MaterialHeaders;
 using Shared.GameFormats.RigidModel.Types;
 using Shared.GameFormats.Vmd;
 using static Shared.GameFormats.Vmd.VariantMeshDefinition;
@@ -64,14 +65,15 @@ namespace Editors.KitbasherEditor.Services
             var outputPath = BuildOutputPath(sourcePath);
 
             BatchResult? result = null;
-            var progressWindow = new TextureAtlasProgressWindow((cancellationToken, progress) =>
+            var progressWindow = new TextureAtlasProgressWindow((mergeCompatibleMeshes, cancellationToken, progress) =>
             {
                 result = Process(
                     sourcePath,
                     outputPath,
                     atlasMeshesWithMissingTextures: null,
                     cancellationToken: cancellationToken,
-                    progress: progress);
+                    progress: progress,
+                    mergeCompatibleMeshes: mergeCompatibleMeshes);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -107,7 +109,8 @@ namespace Editors.KitbasherEditor.Services
             string outputPath,
             bool? atlasMeshesWithMissingTextures = false,
             CancellationToken cancellationToken = default,
-            IProgress<TextureAtlasPackProgress>? progress = null)
+            IProgress<TextureAtlasPackProgress>? progress = null,
+            bool mergeCompatibleMeshes = false)
         {
             var reportPath = BuildReportPath(outputPath);
             cancellationToken.ThrowIfCancellationRequested();
@@ -170,7 +173,8 @@ namespace Editors.KitbasherEditor.Services
                     sourcePath,
                     outputPath,
                     reportPath,
-                    atlasMeshesWithMissingTextures ?? false);
+                    atlasMeshesWithMissingTextures ?? false,
+                    mergeCompatibleMeshes);
                 BuildWsUsageIndex(state, cancellationToken, progress);
 
                 if (!atlasMeshesWithMissingTextures.HasValue)
@@ -200,6 +204,9 @@ namespace Editors.KitbasherEditor.Services
                         cancellationToken,
                         progress);
                 }
+
+                if (mergeCompatibleMeshes)
+                    MergeCompatibleMeshes(state, cancellationToken, progress);
 
                 SaveModifiedDocuments(state, cancellationToken, progress);
 
@@ -988,6 +995,413 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+        private void MergeCompatibleMeshes(
+            BatchState state,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            var rigidPaths = state.ModifiedRigids
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            for (var rigidIndex = 0; rigidIndex < rigidPaths.Count; rigidIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rigidPath = rigidPaths[rigidIndex];
+                ReportProgress(
+                    progress,
+                    "Merging compatible mesh parts",
+                    rigidIndex + 1,
+                    rigidPaths.Count,
+                    rigidPath);
+
+                if (!state.RigidModels.TryGetValue(rigidPath, out var rmv))
+                    continue;
+
+                var wsModels = state.WsDocuments
+                    .Where(x =>
+                        Normalize(x.Value.SelectSingleNode("/model/geometry")?.InnerText)
+                            .Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (wsModels.Count == 0)
+                {
+                    state.MeshMergeSkipMessages.Add(
+                        $"{rigidPath}: no in-pack WSModel material table was available.");
+                    continue;
+                }
+
+                var assignmentsByWsModel = new Dictionary<string, string[][]>(StringComparer.OrdinalIgnoreCase);
+                var assignmentsValid = true;
+                foreach (var (wsPath, wsDocument) in wsModels)
+                {
+                    if (!TryReadWsMaterialAssignments(wsDocument, rmv, out var assignments, out var reason))
+                    {
+                        state.MeshMergeSkipMessages.Add($"{rigidPath}: {wsPath}: {reason}");
+                        assignmentsValid = false;
+                        break;
+                    }
+
+                    assignmentsByWsModel[wsPath] = assignments;
+                }
+
+                if (!assignmentsValid)
+                    continue;
+
+                var rigidBefore = rmv.ModelList.Sum(x => x.Length);
+                var rigidAfter = rigidBefore;
+                var rigidChanged = false;
+
+                for (var lodIndex = 0; lodIndex < rmv.ModelList.Length; lodIndex++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var originalModels = rmv.ModelList[lodIndex];
+                    if (originalModels.Length < 2)
+                        continue;
+
+                    var groups = BuildMeshMergeGroups(
+                        originalModels,
+                        lodIndex,
+                        wsModels.Select(x => x.Key).ToList(),
+                        assignmentsByWsModel);
+
+                    if (groups.All(x => x.PartIndices.Count == 1))
+                        continue;
+
+                    var mergedModels = new List<RmvModel>(groups.Count);
+                    for (var newPartIndex = 0; newPartIndex < groups.Count; newPartIndex++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var group = groups[newPartIndex];
+                        var models = group.PartIndices.Select(x => originalModels[x]).ToList();
+                        var merged = models.Count == 1
+                            ? models[0]
+                            : MergeRmvModels(models);
+
+                        mergedModels.Add(merged);
+
+                        if (models.Count > 1)
+                        {
+                            state.MeshMergeEntries.Add(new MeshMergeReportEntry(
+                                rigidPath,
+                                lodIndex,
+                                group.PartIndices.ToArray(),
+                                newPartIndex,
+                                merged.Mesh.VertexList.Length,
+                                group.MaterialPathsByWsModel[0]));
+                        }
+                    }
+
+                    foreach (var (wsPath, _) in wsModels)
+                    {
+                        var assignments = assignmentsByWsModel[wsPath];
+                        assignments[lodIndex] = groups
+                            .Select((group, _) => group.MaterialPathsByWsModel[
+                                wsModels.FindIndex(x => x.Key.Equals(wsPath, StringComparison.OrdinalIgnoreCase))])
+                            .ToArray();
+                    }
+
+                    rmv.ModelList[lodIndex] = mergedModels.ToArray();
+                    rigidAfter -= originalModels.Length - mergedModels.Count;
+                    rigidChanged = true;
+                }
+
+                state.MeshPartsBeforeMerging += rigidBefore;
+                state.MeshPartsAfterMerging += rigidAfter;
+
+                if (!rigidChanged)
+                    continue;
+
+                foreach (var (wsPath, wsDocument) in wsModels)
+                {
+                    RewriteWsMaterialAssignments(
+                        wsDocument,
+                        assignmentsByWsModel[wsPath]);
+                    state.ModifiedWsModels.Add(wsPath);
+                }
+            }
+        }
+
+        private static List<MeshMergeGroup> BuildMeshMergeGroups(
+            IReadOnlyList<RmvModel> models,
+            int lodIndex,
+            IReadOnlyList<string> wsModelPaths,
+            IReadOnlyDictionary<string, string[][]> assignmentsByWsModel)
+        {
+            var buckets = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+
+            for (var partIndex = 0; partIndex < models.Count; partIndex++)
+            {
+                var materialPaths = wsModelPaths
+                    .Select(wsPath => assignmentsByWsModel[wsPath][lodIndex][partIndex])
+                    .ToArray();
+
+                var identity = string.Join(
+                    "\u001e",
+                    GetRmvMergeIdentity(models[partIndex]),
+                    string.Join("\u001f", materialPaths.Select(Normalize)));
+
+                if (!buckets.TryGetValue(identity, out var parts))
+                {
+                    parts = [];
+                    buckets.Add(identity, parts);
+                }
+
+                parts.Add(partIndex);
+            }
+
+            var groups = new List<MeshMergeGroup>();
+            foreach (var parts in buckets.Values)
+            {
+                var current = new List<int>();
+                var currentVertexCount = 0;
+
+                foreach (var partIndex in parts.OrderBy(x => x))
+                {
+                    var vertexCount = models[partIndex].Mesh.VertexList.Length;
+                    if (vertexCount > ushort.MaxValue)
+                    {
+                        if (current.Count != 0)
+                        {
+                            groups.Add(CreateMeshMergeGroup(
+                                current,
+                                lodIndex,
+                                wsModelPaths,
+                                assignmentsByWsModel));
+                            current = [];
+                            currentVertexCount = 0;
+                        }
+
+                        groups.Add(CreateMeshMergeGroup(
+                            [partIndex],
+                            lodIndex,
+                            wsModelPaths,
+                            assignmentsByWsModel));
+                        continue;
+                    }
+
+                    if (current.Count != 0 &&
+                        currentVertexCount + vertexCount > ushort.MaxValue)
+                    {
+                        groups.Add(CreateMeshMergeGroup(
+                            current,
+                            lodIndex,
+                            wsModelPaths,
+                            assignmentsByWsModel));
+                        current = [];
+                        currentVertexCount = 0;
+                    }
+
+                    current.Add(partIndex);
+                    currentVertexCount += vertexCount;
+                }
+
+                if (current.Count != 0)
+                {
+                    groups.Add(CreateMeshMergeGroup(
+                        current,
+                        lodIndex,
+                        wsModelPaths,
+                        assignmentsByWsModel));
+                }
+            }
+
+            return groups
+                .OrderBy(x => x.PartIndices.Min())
+                .ToList();
+        }
+
+        private static MeshMergeGroup CreateMeshMergeGroup(
+            List<int> partIndices,
+            int lodIndex,
+            IReadOnlyList<string> wsModelPaths,
+            IReadOnlyDictionary<string, string[][]> assignmentsByWsModel)
+        {
+            var representativePart = partIndices[0];
+            var materialPaths = wsModelPaths
+                .Select(wsPath => assignmentsByWsModel[wsPath][lodIndex][representativePart])
+                .ToArray();
+
+            return new MeshMergeGroup(partIndices.ToList(), materialPaths);
+        }
+
+        private static string GetRmvMergeIdentity(RmvModel model)
+        {
+            var material = model.Material.Clone();
+            if (material is WeightedMaterial weighted)
+            {
+                // WSModel materials own texture/shader selection in this workflow. Keep all
+                // transform/bone/parameter state strict, but ignore redundant embedded texture
+                // paths and descriptive names that do not affect the merged geometry.
+                weighted.ModelName = string.Empty;
+                weighted.TextureDirectory = string.Empty;
+                weighted.TexturesParams = [];
+            }
+
+            var materialBytes = MaterialFactory.Create().Save(
+                model.CommonHeader.ModelTypeFlag,
+                material);
+
+            var shaderParams = model.CommonHeader.ShaderParams;
+            var unknown = shaderParams.UnknownValues ?? [];
+            var zeros = shaderParams.AllZeroValues ?? [];
+
+            var identity = string.Join(
+                "|",
+                model.CommonHeader.ModelTypeFlag,
+                model.CommonHeader.RenderFlag,
+                model.Material.BinaryVertexFormat,
+                shaderParams.ShaderName,
+                Convert.ToHexString(unknown),
+                Convert.ToHexString(zeros),
+                Convert.ToHexString(materialBytes));
+
+            return ContentHash(identity);
+        }
+
+        private static RmvModel MergeRmvModels(IReadOnlyList<RmvModel> models)
+        {
+            if (models.Count == 0)
+                throw new ArgumentException("At least one RMV model is required.", nameof(models));
+            if (models.Count == 1)
+                return models[0];
+
+            var totalVertices = models.Sum(x => x.Mesh.VertexList.Length);
+            if (totalVertices > ushort.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    $"Merged RMV mesh would contain {totalVertices} vertices, exceeding the 16-bit index limit.");
+            }
+
+            var vertices = new List<Shared.GameFormats.RigidModel.Vertex.CommonVertex>(totalVertices);
+            var indices = new List<ushort>(models.Sum(x => x.Mesh.IndexList.Length));
+            var vertexOffset = 0;
+
+            foreach (var model in models)
+            {
+                vertices.AddRange(model.Mesh.VertexList);
+
+                foreach (var index in model.Mesh.IndexList)
+                {
+                    var mergedIndex = checked(index + vertexOffset);
+                    if (mergedIndex > ushort.MaxValue)
+                        throw new InvalidOperationException("Merged RMV mesh index exceeds 16-bit range.");
+                    indices.Add((ushort)mergedIndex);
+                }
+
+                vertexOffset += model.Mesh.VertexList.Length;
+            }
+
+            var header = models[0].CommonHeader;
+            header.BoundingBox.MinimumX = models.Min(x => x.CommonHeader.BoundingBox.MinimumX);
+            header.BoundingBox.MinimumY = models.Min(x => x.CommonHeader.BoundingBox.MinimumY);
+            header.BoundingBox.MinimumZ = models.Min(x => x.CommonHeader.BoundingBox.MinimumZ);
+            header.BoundingBox.MaximumX = models.Max(x => x.CommonHeader.BoundingBox.MaximumX);
+            header.BoundingBox.MaximumY = models.Max(x => x.CommonHeader.BoundingBox.MaximumY);
+            header.BoundingBox.MaximumZ = models.Max(x => x.CommonHeader.BoundingBox.MaximumZ);
+
+            return new RmvModel
+            {
+                CommonHeader = header,
+                Material = models[0].Material.Clone(),
+                Mesh = new RmvMesh
+                {
+                    VertexList = vertices.ToArray(),
+                    IndexList = indices.ToArray()
+                }
+            };
+        }
+
+        private static bool TryReadWsMaterialAssignments(
+            XmlDocument document,
+            RmvFile rmv,
+            out string[][] assignments,
+            out string reason)
+        {
+            assignments = new string[rmv.ModelList.Length][];
+            reason = string.Empty;
+
+            var materialNodes = document.SelectNodes("/model/materials/material");
+            if (materialNodes == null)
+            {
+                reason = "WSModel has no material table.";
+                return false;
+            }
+
+            var byKey = new Dictionary<(int Lod, int Part), string>();
+            foreach (XmlNode node in materialNodes)
+            {
+                if (!TryParseIndex(node, "lod_index", out var lodIndex) ||
+                    !TryParseIndex(node, "part_index", out var partIndex))
+                {
+                    reason = "WSModel contains a material entry without valid lod_index/part_index.";
+                    return false;
+                }
+
+                if (!byKey.TryAdd((lodIndex, partIndex), Normalize(node.InnerText)))
+                {
+                    reason = $"WSModel contains duplicate material entry for LOD {lodIndex}, part {partIndex}.";
+                    return false;
+                }
+            }
+
+            var expectedCount = 0;
+            for (var lodIndex = 0; lodIndex < rmv.ModelList.Length; lodIndex++)
+            {
+                assignments[lodIndex] = new string[rmv.ModelList[lodIndex].Length];
+                expectedCount += assignments[lodIndex].Length;
+
+                for (var partIndex = 0; partIndex < assignments[lodIndex].Length; partIndex++)
+                {
+                    if (!byKey.TryGetValue((lodIndex, partIndex), out var materialPath) ||
+                        string.IsNullOrWhiteSpace(materialPath))
+                    {
+                        reason = $"WSModel is missing material entry for LOD {lodIndex}, part {partIndex}.";
+                        return false;
+                    }
+
+                    assignments[lodIndex][partIndex] = materialPath;
+                }
+            }
+
+            if (byKey.Count != expectedCount)
+            {
+                reason =
+                    $"WSModel material table contains {byKey.Count} entries but rigid expects {expectedCount}.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static void RewriteWsMaterialAssignments(
+            XmlDocument document,
+            IReadOnlyList<string[]> assignments)
+        {
+            var materialsNode = document.SelectSingleNode("/model/materials")
+                ?? throw new InvalidOperationException("WSModel has no materials node.");
+
+            var existingNodes = materialsNode.SelectNodes("material");
+            if (existingNodes != null)
+            {
+                foreach (XmlNode node in existingNodes.Cast<XmlNode>().ToList())
+                    materialsNode.RemoveChild(node);
+            }
+
+            for (var lodIndex = 0; lodIndex < assignments.Count; lodIndex++)
+            {
+                for (var partIndex = 0; partIndex < assignments[lodIndex].Length; partIndex++)
+                {
+                    var materialNode = document.CreateElement("material");
+                    materialNode.SetAttribute("lod_index", lodIndex.ToString());
+                    materialNode.SetAttribute("part_index", partIndex.ToString());
+                    materialNode.InnerText = assignments[lodIndex][partIndex];
+                    materialsNode.AppendChild(materialNode);
+                }
+            }
+        }
+
         private void SaveModifiedDocuments(
             BatchState state,
             CancellationToken cancellationToken,
@@ -1749,6 +2163,13 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas placements reused: {state.AtlasPlacementsReused}");
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
             sb.AppendLine($"Atlas meshes with missing textures: {(state.AtlasMeshesWithMissingTextures ? "YES" : "NO")}");
+            sb.AppendLine($"Merge compatible mesh parts: {(state.MergeCompatibleMeshesEnabled ? "YES" : "NO")}");
+            if (state.MergeCompatibleMeshesEnabled)
+            {
+                sb.AppendLine($"Mesh parts before merging: {state.MeshPartsBeforeMerging}");
+                sb.AppendLine($"Mesh parts after merging: {state.MeshPartsAfterMerging}");
+                sb.AppendLine($"Mesh parts eliminated: {state.MeshPartsEliminated}");
+            }
             sb.AppendLine();
 
             sb.AppendLine("VMD roots");
@@ -1818,6 +2239,42 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
             sb.AppendLine();
+
+            if (state.MergeCompatibleMeshesEnabled)
+            {
+                sb.AppendLine("Merged mesh groups");
+                sb.AppendLine("------------------");
+                if (state.MeshMergeEntries.Count == 0)
+                {
+                    sb.AppendLine("(none)");
+                }
+                else
+                {
+                    foreach (var entry in state.MeshMergeEntries
+                                 .OrderBy(x => x.RigidPath, StringComparer.OrdinalIgnoreCase)
+                                 .ThenBy(x => x.LodIndex)
+                                 .ThenBy(x => x.NewPartIndex))
+                    {
+                        sb.AppendLine($"Rigid: {entry.RigidPath}");
+                        sb.AppendLine($"  LOD: {entry.LodIndex}");
+                        sb.AppendLine($"  Old parts: {string.Join(", ", entry.OldPartIndices)}");
+                        sb.AppendLine($"  New part: {entry.NewPartIndex}");
+                        sb.AppendLine($"  Vertices: {entry.VertexCount}");
+                        sb.AppendLine($"  Material: {entry.MaterialPath}");
+                    }
+                }
+
+                if (state.MeshMergeSkipMessages.Count != 0)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("Mesh merge skips");
+                    sb.AppendLine("----------------");
+                    foreach (var message in state.MeshMergeSkipMessages)
+                        sb.AppendLine(message);
+                }
+
+                sb.AppendLine();
+            }
 
             sb.AppendLine("Generated atlas textures");
             sb.AppendLine("------------------------");
@@ -2168,8 +2625,14 @@ namespace Editors.KitbasherEditor.Services
             public int GeneratedMaterialReuses { get; set; }
             public HashSet<string> AllowedMissingTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public bool AtlasMeshesWithMissingTextures { get; set; }
+            public bool MergeCompatibleMeshesEnabled { get; }
             public int AtlasPlacementsGenerated { get; set; }
             public int AtlasPlacementsReused { get; set; }
+            public int MeshPartsBeforeMerging { get; set; }
+            public int MeshPartsAfterMerging { get; set; }
+            public int MeshPartsEliminated => MeshPartsBeforeMerging - MeshPartsAfterMerging;
+            public List<MeshMergeReportEntry> MeshMergeEntries { get; } = [];
+            public List<string> MeshMergeSkipMessages { get; } = [];
             public List<string> RemovedFiles { get; } = [];
             public List<string> ValidationMessages { get; } = [];
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
@@ -2182,7 +2645,8 @@ namespace Editors.KitbasherEditor.Services
                 string sourcePath,
                 string outputPath,
                 string reportPath,
-                bool atlasMeshesWithMissingTextures)
+                bool atlasMeshesWithMissingTextures,
+                bool mergeCompatibleMeshesEnabled)
             {
                 Source = source;
                 Output = output;
@@ -2190,8 +2654,21 @@ namespace Editors.KitbasherEditor.Services
                 OutputPath = outputPath;
                 ReportPath = reportPath;
                 AtlasMeshesWithMissingTextures = atlasMeshesWithMissingTextures;
+                MergeCompatibleMeshesEnabled = mergeCompatibleMeshesEnabled;
             }
         }
+
+        private sealed record MeshMergeReportEntry(
+            string RigidPath,
+            int LodIndex,
+            int[] OldPartIndices,
+            int NewPartIndex,
+            int VertexCount,
+            string MaterialPath);
+
+        private sealed record MeshMergeGroup(
+            List<int> PartIndices,
+            string[] MaterialPathsByWsModel);
 
         private sealed record GeneratedMaterialEntry(
             string Path,
