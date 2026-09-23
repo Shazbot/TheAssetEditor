@@ -111,12 +111,7 @@ namespace Editors.KitbasherEditor.Services
             var frame = new DispatcherFrame();
             Dispatcher.BeginInvoke(
                 DispatcherPriority.Background,
-                new DispatcherOperationCallback(_ =>
-                {
-                    frame.Continue = false;
-                    return null;
-                }),
-                null);
+                new Action(() => frame.Continue = false));
             Dispatcher.PushFrame(frame);
         }
 
