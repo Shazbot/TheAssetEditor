@@ -954,8 +954,8 @@ namespace Editors.KitbasherEditor.Services
                 }
                 else if (!generatedMaterial.Xml.Equals(materialXml, StringComparison.Ordinal))
                 {
-                    // StableHash is intentionally short for filenames/readability. A collision
-                    // must never cause two distinct materials to be shared.
+                    // The hash is only an index. Exact XML equality remains the final
+                    // guard so even a theoretical SHA-256 collision cannot share materials.
                     var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
                     WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
                     state.GeneratedMaterialPaths.Add(newMaterialPath);
