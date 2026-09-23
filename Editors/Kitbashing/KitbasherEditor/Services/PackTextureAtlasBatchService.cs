@@ -91,6 +91,7 @@ namespace Editors.KitbasherEditor.Services
             var reportPath = BuildReportPath(outputPath);
             IPackFileContainer? output = null;
             BatchState? state = null;
+            List<string> vmdRoots = [];
 
             try
             {
@@ -99,7 +100,7 @@ namespace Editors.KitbasherEditor.Services
                     sourcePath,
                     loadAsReadOnly: true);
 
-                var vmdRoots = source.GetAllFiles().Keys
+                vmdRoots = source.GetAllFiles().Keys
                     .Where(x => Path.GetExtension(x).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                     .ToList();
@@ -151,7 +152,7 @@ namespace Editors.KitbasherEditor.Services
                 {
                     try
                     {
-                        WriteReport(state, [], succeeded: false, failure: ex);
+                        WriteReport(state, vmdRoots, succeeded: false, failure: ex);
                     }
                     catch
                     {
