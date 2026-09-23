@@ -1111,7 +1111,7 @@ namespace Editors.KitbasherEditor.Services
                     progress,
                     "Rewriting mesh UVs and materials",
                     candidateIndex + 1,
-                    planningCandidates.Count,
+                    candidates.Count,
                     candidate.Key.ToString());
                 var sourceId = sharedBatch.SourceIdByMesh[candidate.Key];
                 var placement = plan.Placements.Single(x => x.Id == sourceId);
