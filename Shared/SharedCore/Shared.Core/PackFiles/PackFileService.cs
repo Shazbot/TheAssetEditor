@@ -261,6 +261,21 @@ namespace Shared.Core.PackFiles
             container.DeleteFile(file);
         }
 
+        public void DeleteFiles(IPackFileContainer pf, IReadOnlyCollection<string> paths)
+        {
+            var container = CastContainer(pf);
+            if (container.IsReadOnly)
+                throw new Exception("Can not delete files inside readonly pack file");
+            if (paths.Count == 0)
+                return;
+
+            _logger.Here().Information($"Deleting {paths.Count} file(s) from '{DescribeContainer(container)}'");
+            var removedFiles = container.DeleteFiles(paths);
+            if (removedFiles.Count != 0)
+                _globalEventHub?.PublishGlobalEvent(new PackFileContainerFilesRemovedEvent(container, removedFiles));
+            _logger.Here().Information($"Deleted {removedFiles.Count} file(s) from '{DescribeContainer(container)}'");
+        }
+
         public void MoveFile(IPackFileContainer pf, PackFile file, string newFolderPath)
         {
             var container = CastContainer(pf);
