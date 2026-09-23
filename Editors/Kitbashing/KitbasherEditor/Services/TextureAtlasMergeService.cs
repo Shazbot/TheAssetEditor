@@ -150,27 +150,11 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var (width, height) = TextureAtlasBuilder.GetDimensions(primaryBytes);
-                var layoutWidth = width;
-                var layoutHeight = height;
 
-                // Material channels share normalized UV0, not necessarily pixel dimensions.
-                // Preserve the highest available texel density by sizing this mesh's atlas
-                // rectangle for its largest resolved channel and resampling lower-resolution
-                // channels into that shared normalized placement.
-                foreach (var input in GetAtlasTextureInputs(mesh.Material))
-                {
-                    if (input.Type == primaryTextureType || !IsTextureUsed(input))
-                        continue;
-
-                    if (!TryReadTextureBytes(input, out var secondaryBytes))
-                        continue;
-
-                    var secondaryDimensions = TextureAtlasBuilder.GetDimensions(secondaryBytes);
-                    layoutWidth = Math.Max(layoutWidth, secondaryDimensions.Width);
-                    layoutHeight = Math.Max(layoutHeight, secondaryDimensions.Height);
-                }
-
-                preparedMeshes.Add(new PreparedMeshSource(mesh, primaryBytes, layoutWidth, layoutHeight));
+                // Use the primary BaseColour/Diffuse resolution as the shared UV-plan density.
+                // Secondary channels keep the same normalized placements but choose their own
+                // physical atlas dimensions below.
+                preparedMeshes.Add(new PreparedMeshSource(mesh, primaryBytes, width, height));
             }
 
             if (preparedMeshes.Count < 2)
@@ -223,11 +207,20 @@ namespace Editors.KitbasherEditor.Services
                 if (textureBytes.Count == 0)
                     continue;
 
+                var sourceDimensions = textureBytes.ToDictionary(
+                    x => x.Key,
+                    x => TextureAtlasBuilder.GetDimensions(x.Value));
+                var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
+                    plan,
+                    sourceDimensions);
+
                 var mipPngs = TextureAtlasBuilder.BuildMipPngs(
                     plan,
                     textureBytes,
                     forceOpaqueAlphaSourceIds: null,
-                    omittedSourceIds);
+                    omittedSourceIds,
+                    outputWidth: outputDimensions.Width,
+                    outputHeight: outputDimensions.Height);
 
                 var fileName = $"{atlasStem}_{GetTextureSuffix(textureType)}.dds";
                 var packFile = PngToDdsImporter.ImportRawMipChain(
