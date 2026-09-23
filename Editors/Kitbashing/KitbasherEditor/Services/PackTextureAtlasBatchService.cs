@@ -401,7 +401,24 @@ namespace Editors.KitbasherEditor.Services
                         wsPaths.Count,
                         wsPath);
                 }
-                var doc = GetWsDocument(state, wsPath);
+
+                XmlDocument? doc;
+                try
+                {
+                    doc = GetWsDocument(state, wsPath);
+                }
+                catch (Exception ex) when (
+                    ex is InvalidOperationException or
+                    XmlException or
+                    FormatException or
+                    ArgumentException)
+                {
+                    state.MalformedWsModelsIgnored.Add(new MalformedXmlAssetEntry(
+                        Normalize(wsPath),
+                        ex.Message.Replace("\r", " ").Replace("\n", " ")));
+                    continue;
+                }
+
                 if (doc == null)
                     continue;
 
@@ -3018,6 +3035,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine("-------");
             sb.AppendLine($"VMD roots: {vmdRoots.Count}");
             sb.AppendLine($"Malformed VMD files ignored: {state.MalformedVmdRoots.Count}");
+            sb.AppendLine($"Malformed unrelated WSModels ignored: {state.MalformedWsModelsIgnored.Count}");
             sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
@@ -3062,6 +3080,17 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"  Reason: {entry.Reason}");
             }
             if (state.MalformedVmdRoots.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Malformed unrelated WSModels ignored");
+            sb.AppendLine("------------------------------------");
+            foreach (var entry in state.MalformedWsModelsIgnored.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine(entry.Path);
+                sb.AppendLine($"  Reason: {entry.Reason}");
+            }
+            if (state.MalformedWsModelsIgnored.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
@@ -3516,6 +3545,7 @@ namespace Editors.KitbasherEditor.Services
             public string ReportPath { get; }
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
+            public List<MalformedXmlAssetEntry> MalformedWsModelsIgnored { get; } = [];
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, TextureInspection> TextureInspections { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<MeshKey, List<WsUsage>> Usages { get; } = [];
@@ -3617,6 +3647,10 @@ namespace Editors.KitbasherEditor.Services
             HashSet<string> RootVmdPaths);
 
         private sealed record MalformedVmdEntry(
+            string Path,
+            string Reason);
+
+        private sealed record MalformedXmlAssetEntry(
             string Path,
             string Reason);
 
