@@ -1552,6 +1552,215 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+        private List<AtlasChannelWorkItem> CreateAtlasChannelWorkItems(
+            BatchState state,
+            SharedAtlasBatch sharedBatch,
+            TextureAtlasPlan plan,
+            string atlasStem)
+        {
+            var workItems = new List<AtlasChannelWorkItem>();
+
+            for (var channelIndex = 0; channelIndex < AtlasChannels.Length; channelIndex++)
+            {
+                var channel = AtlasChannels[channelIndex];
+                var sourcePaths = new Dictionary<int, string>();
+                var constantSources = new Dictionary<int, TextureAtlasConstantColor>();
+                var omitted = new HashSet<int>();
+                var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
+
+                foreach (var source in sharedBatch.Sources)
+                {
+                    var representative = source.Representative;
+                    if (representative.ResolvedChannels.Contains(channel.Slot))
+                    {
+                        var sourcePath = GetTexturePath(representative.MaterialDocument, channel.Slot);
+                        if (string.IsNullOrWhiteSpace(sourcePath))
+                        {
+                            throw new InvalidOperationException(
+                                $"Resolved atlas channel {channel.Slot} has no texture path for {representative.Key}.");
+                        }
+
+                        sourcePaths[source.Id] = Normalize(sourcePath);
+                        if (representative.ChannelDimensions.TryGetValue(
+                                channel.Slot,
+                                out var dimensions))
+                        {
+                            sourceDimensions[source.Id] = dimensions;
+                        }
+                    }
+                    else if (representative.ConstantChannels.TryGetValue(
+                                 channel.Slot,
+                                 out var constantColor))
+                    {
+                        constantSources[source.Id] = constantColor;
+                    }
+                    else
+                    {
+                        omitted.Add(source.Id);
+                    }
+                }
+
+                if (sourcePaths.Count == 0 && constantSources.Count == 0)
+                    continue;
+
+                var outputDimensions = sourceDimensions.Count > 0
+                    ? TextureAtlasBuilder.CalculateOutputDimensions(plan, sourceDimensions)
+                    : (plan.Width, plan.Height);
+
+                var estimatedPeakBytes = EstimateAtlasChannelPeakBytes(
+                    outputDimensions,
+                    sourceDimensions);
+
+                workItems.Add(new AtlasChannelWorkItem(
+                    channelIndex,
+                    channel.Slot,
+                    channel.Type,
+                    channel.Suffix,
+                    $"{atlasStem}_{channel.Suffix}.dds",
+                    sourcePaths,
+                    constantSources,
+                    omitted,
+                    outputDimensions,
+                    estimatedPeakBytes));
+            }
+
+            return workItems;
+        }
+
+        private AtlasChannelBuildResult BuildAtlasChannel(
+            BatchState state,
+            SharedAtlasBatch sharedBatch,
+            TextureAtlasPlan plan,
+            AtlasChannelWorkItem work,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var textureBytes = new Dictionary<int, byte[]>();
+            var textureBytesByPath = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var source in sharedBatch.Sources)
+            {
+                if (!work.SourcePaths.TryGetValue(source.Id, out var sourcePath))
+                    continue;
+
+                if (!textureBytesByPath.TryGetValue(sourcePath, out var bytes))
+                {
+                    var file = FindForRead(state, sourcePath)
+                        ?? throw new InvalidOperationException(
+                            $"Resolved atlas texture no longer exists: {sourcePath}");
+                    bytes = file.DataSource.ReadData();
+                    textureBytesByPath[sourcePath] = bytes;
+                }
+
+                textureBytes[source.Id] = bytes;
+            }
+
+            using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
+                work.OutputDimensions.Width,
+                work.OutputDimensions.Height,
+                TextureAtlasBuilder.CalculateMipLevelCount(
+                    work.OutputDimensions.Width,
+                    work.OutputDimensions.Height),
+                work.Type,
+                GameTypeEnum.Warhammer3);
+
+            var rasterStopwatch = Stopwatch.StartNew();
+            _ = TextureAtlasBuilder.BuildMipPixels(
+                plan,
+                textureBytes,
+                forceOpaqueAlphaSourceIds: null,
+                omittedSourceIds: work.OmittedSourceIds,
+                cancellationToken: cancellationToken,
+                heartbeat: cancellationToken.ThrowIfCancellationRequested,
+                constantSources: work.ConstantSources,
+                outputWidth: work.OutputDimensions.Width,
+                outputHeight: work.OutputDimensions.Height,
+                mipConsumer: (mipLevel, mipWidth, mipHeight, pixels) =>
+                    mipWriter.WriteMip(mipLevel, pixels),
+                retainMipPixels: false);
+            var rasterTime = rasterStopwatch.Elapsed;
+
+            var compressionStopwatch = Stopwatch.StartNew();
+            var atlasPackFile = mipWriter.Complete(work.FileName);
+            var compressionTime = compressionStopwatch.Elapsed;
+            var atlasPath = Normalize($@"{AtlasDirectory}\{work.FileName}");
+
+            return new AtlasChannelBuildResult(
+                work.ChannelIndex,
+                work.Slot,
+                atlasPath,
+                atlasPackFile.DataSource.ReadData(),
+                work.OutputDimensions,
+                rasterTime,
+                compressionTime);
+        }
+
+        private static List<AtlasChannelWorkItem> TakeAtlasChannelWorkGroup(
+            List<AtlasChannelWorkItem> pending,
+            long memoryBudgetBytes,
+            int maxConcurrency)
+        {
+            var group = new List<AtlasChannelWorkItem>(maxConcurrency)
+            {
+                pending[0],
+            };
+            pending.RemoveAt(0);
+
+            while (group.Count < maxConcurrency && pending.Count > 0)
+            {
+                var usedBytes = group.Sum(x => x.EstimatedPeakBytes);
+                var partnerIndex = -1;
+                for (var i = 0; i < pending.Count; i++)
+                {
+                    if (usedBytes + pending[i].EstimatedPeakBytes <= memoryBudgetBytes)
+                    {
+                        partnerIndex = i;
+                        break;
+                    }
+                }
+
+                if (partnerIndex < 0)
+                    break;
+
+                group.Add(pending[partnerIndex]);
+                pending.RemoveAt(partnerIndex);
+            }
+
+            return group;
+        }
+
+        private static long CalculateAtlasChannelMemoryBudget()
+        {
+            const long minBudget = 512L * 1024 * 1024;
+            const long maxBudget = 1280L * 1024 * 1024;
+
+            var availableBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
+            if (availableBytes <= 0)
+                return minBudget;
+
+            return Math.Clamp(availableBytes / 6, minBudget, maxBudget);
+        }
+
+        private static long EstimateAtlasChannelPeakBytes(
+            (int Width, int Height) outputDimensions,
+            IReadOnlyDictionary<int, (int Width, int Height)> sourceDimensions)
+        {
+            // Approximate the simultaneously-live allocations:
+            // - DirectXTex BGRA mip chain (~4/3 of the base RGBA level)
+            // - current managed atlas mip + occupancy map
+            // - decoded DDS source mip chains.
+            // This intentionally overestimates somewhat so two full 8K channels normally
+            // remain serialized while smaller/rectangular channels can overlap.
+            var atlasPixels = checked(
+                (long)outputDimensions.Width * outputDimensions.Height);
+            var sourcePixels = sourceDimensions.Values.Sum(
+                x => checked((long)x.Width * x.Height));
+
+            return checked(
+                atlasPixels * 7L +
+                sourcePixels * 6L);
+        }
+
         private void ProcessBatch(
             BatchState state,
             string atlasScopeKey,
@@ -1588,121 +1797,86 @@ namespace Editors.KitbasherEditor.Services
 
             var atlasStem = BuildAtlasStem(atlasScopeKey, state.BatchIndex++);
             var generatedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var channelWorkItems = CreateAtlasChannelWorkItems(
+                state,
+                sharedBatch,
+                plan,
+                atlasStem);
 
-            for (var channelIndex = 0; channelIndex < AtlasChannels.Length; channelIndex++)
+            var atlasChannelMemoryBudget = CalculateAtlasChannelMemoryBudget();
+            state.AtlasChannelMemoryBudgetBytes = Math.Max(
+                state.AtlasChannelMemoryBudgetBytes,
+                atlasChannelMemoryBudget);
+
+            var pendingWork = new List<AtlasChannelWorkItem>(channelWorkItems);
+            var completedChannels = 0;
+            while (pendingWork.Count > 0)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var channel = AtlasChannels[channelIndex];
-                ReportProgress(
-                    progress,
-                    "Building texture atlases",
-                    channelIndex + 1,
-                    AtlasChannels.Length,
-                    $"{progressScope} — {channel.Suffix}");
-                var textureBytes = new Dictionary<int, byte[]>();
-                var textureBytesByPath = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-                var constantSources = new Dictionary<int, TextureAtlasConstantColor>();
-                var omitted = new HashSet<int>();
 
-                foreach (var source in sharedBatch.Sources)
+                var group = TakeAtlasChannelWorkGroup(
+                    pendingWork,
+                    atlasChannelMemoryBudget,
+                    maxConcurrency: 2);
+                state.MaxConcurrentAtlasChannels = Math.Max(
+                    state.MaxConcurrentAtlasChannels,
+                    group.Count);
+
+                foreach (var work in group)
                 {
-                    var representative = source.Representative;
-                    if (representative.ResolvedChannels.Contains(channel.Slot))
-                    {
-                        var sourcePath = GetTexturePath(representative.MaterialDocument, channel.Slot);
-                        if (string.IsNullOrWhiteSpace(sourcePath))
-                        {
-                            throw new InvalidOperationException(
-                                $"Resolved atlas channel {channel.Slot} has no texture path for {representative.Key}.");
-                        }
-
-                        sourcePath = Normalize(sourcePath);
-                        if (!textureBytesByPath.TryGetValue(sourcePath, out var bytes))
-                        {
-                            var file = FindForRead(state, sourcePath)
-                                ?? throw new InvalidOperationException(
-                                    $"Resolved atlas texture no longer exists: {sourcePath}");
-                            bytes = file.DataSource.ReadData();
-                            textureBytesByPath[sourcePath] = bytes;
-                        }
-
-                        textureBytes[source.Id] = bytes;
-                    }
-                    else if (representative.ConstantChannels.TryGetValue(
-                                 channel.Slot,
-                                 out var constantColor))
-                    {
-                        constantSources[source.Id] = constantColor;
-                    }
-                    else
-                    {
-                        omitted.Add(source.Id);
-                    }
+                    ReportProgress(
+                        progress,
+                        "Building texture atlases",
+                        completedChannels + 1,
+                        channelWorkItems.Count,
+                        $"{progressScope} — {work.Suffix}");
                 }
 
-                if (textureBytes.Count == 0 && constantSources.Count == 0)
-                    continue;
+                var groupStopwatch = Stopwatch.StartNew();
+                var tasks = group
+                    .Select(work => Task.Run(
+                        () => BuildAtlasChannel(
+                            state,
+                            sharedBatch,
+                            plan,
+                            work,
+                            cancellationToken),
+                        cancellationToken))
+                    .ToArray();
 
-                var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
-                foreach (var source in sharedBatch.Sources)
+                while (tasks.Any(task => !task.IsCompleted))
                 {
-                    if (textureBytes.ContainsKey(source.Id) &&
-                        source.Representative.ChannelDimensions.TryGetValue(
-                            channel.Slot,
-                            out var dimensions))
-                    {
-                        sourceDimensions[source.Id] = dimensions;
-                    }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var incomplete = tasks
+                        .Where(task => !task.IsCompleted)
+                        .Cast<Task>()
+                        .ToArray();
+                    if (incomplete.Length == 0)
+                        break;
+
+                    _ = Task.WaitAny(incomplete, millisecondsTimeout: 75);
+                    ReportProgress(
+                        progress,
+                        "Building texture atlases",
+                        completedChannels,
+                        channelWorkItems.Count,
+                        $"{progressScope} — {completedChannels}/{channelWorkItems.Count} channel(s) complete");
                 }
 
-                var outputDimensions = sourceDimensions.Count > 0
-                    ? TextureAtlasBuilder.CalculateOutputDimensions(plan, sourceDimensions)
-                    : (plan.Width, plan.Height);
+                foreach (var task in tasks)
+                {
+                    var result = task.GetAwaiter().GetResult();
+                    AddPhaseDuration(state, "Rasterize atlas pixels", result.RasterTime);
+                    AddPhaseDuration(state, "Compress atlas DDS", result.CompressionTime);
 
-                var fileName = $"{atlasStem}_{channel.Suffix}.dds";
-                using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
-                    outputDimensions.Width,
-                    outputDimensions.Height,
-                    TextureAtlasBuilder.CalculateMipLevelCount(
-                        outputDimensions.Width,
-                        outputDimensions.Height),
-                    channel.Type,
-                    GameTypeEnum.Warhammer3);
+                    WriteFile(state.Output, result.AtlasPath, result.DdsBytes);
+                    generatedPaths[result.Slot] = result.AtlasPath;
+                    state.GeneratedTexturePaths.Add(result.AtlasPath);
+                    state.GeneratedTextureDimensions[result.AtlasPath] = result.OutputDimensions;
+                    completedChannels++;
+                }
 
-                var rasterStopwatch = Stopwatch.StartNew();
-                _ = TextureAtlasBuilder.BuildMipPixels(
-                    plan,
-                    textureBytes,
-                    forceOpaqueAlphaSourceIds: null,
-                    omittedSourceIds: omitted,
-                    cancellationToken: cancellationToken,
-                    heartbeat: () =>
-                    {
-                        ReportProgress(
-                            progress,
-                            "Building texture atlases",
-                            channelIndex + 1,
-                            AtlasChannels.Length,
-                            $"{progressScope} — {channel.Suffix}");
-                        cancellationToken.ThrowIfCancellationRequested();
-                    },
-                    constantSources: constantSources,
-                    outputWidth: outputDimensions.Width,
-                    outputHeight: outputDimensions.Height,
-                    mipConsumer: (mipLevel, mipWidth, mipHeight, pixels) =>
-                        mipWriter.WriteMip(mipLevel, pixels),
-                    retainMipPixels: false);
-                AddPhaseDuration(state, "Rasterize atlas pixels", rasterStopwatch.Elapsed);
-
-                var compressionStopwatch = Stopwatch.StartNew();
-                var atlasPackFile = mipWriter.Complete(fileName);
-                AddPhaseDuration(state, "Compress atlas DDS", compressionStopwatch.Elapsed);
-                var atlasPath = Normalize($@"{AtlasDirectory}\{fileName}");
-
-                WriteFile(state.Output, atlasPath, atlasPackFile.DataSource.ReadData());
-                generatedPaths[channel.Slot] = atlasPath;
-                state.GeneratedTexturePaths.Add(atlasPath);
-                state.GeneratedTextureDimensions[atlasPath] = outputDimensions;
+                AddPhaseDuration(state, "Atlas channel parallel wall time", groupStopwatch.Elapsed);
             }
 
             var rewriteStopwatch = Stopwatch.StartNew();
@@ -3452,6 +3626,8 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas placements generated: {state.AtlasPlacementsGenerated}");
             sb.AppendLine($"Atlas placements reused: {state.AtlasPlacementsReused}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
+            sb.AppendLine($"Max concurrent atlas channels: {state.MaxConcurrentAtlasChannels}");
+            sb.AppendLine($"Atlas channel memory budget: {state.AtlasChannelMemoryBudgetBytes / (1024 * 1024):N0} MiB");
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
             sb.AppendLine($"Atlas pixel-area optimized splits: {state.AtlasPixelAreaOptimizedSplits}");
             sb.AppendLine($"Atlas pixel-area split evaluations: {state.AtlasPixelAreaSplitEvaluations}");
@@ -4025,6 +4201,8 @@ namespace Editors.KitbasherEditor.Services
             public int BatchIndex { get; set; }
             public Dictionary<string, TimeSpan> PhaseDurations { get; } = new(StringComparer.Ordinal);
             public TimeSpan TotalElapsed { get; set; }
+            public int MaxConcurrentAtlasChannels { get; set; } = 1;
+            public long AtlasChannelMemoryBudgetBytes { get; set; }
 
             public BatchState(
                 IPackFileContainer source,
@@ -4132,6 +4310,27 @@ namespace Editors.KitbasherEditor.Services
             List<AtlasCandidate> Candidates,
             AtlasCandidate Representative,
             AtlasCrop Crop);
+
+        private sealed record AtlasChannelWorkItem(
+            int ChannelIndex,
+            string Slot,
+            TextureType Type,
+            string Suffix,
+            string FileName,
+            Dictionary<int, string> SourcePaths,
+            Dictionary<int, TextureAtlasConstantColor> ConstantSources,
+            HashSet<int> OmittedSourceIds,
+            (int Width, int Height) OutputDimensions,
+            long EstimatedPeakBytes);
+
+        private sealed record AtlasChannelBuildResult(
+            int ChannelIndex,
+            string Slot,
+            string AtlasPath,
+            byte[] DdsBytes,
+            (int Width, int Height) OutputDimensions,
+            TimeSpan RasterTime,
+            TimeSpan CompressionTime);
 
         private sealed record SharedAtlasBatch(
             List<SharedAtlasSource> Sources,
