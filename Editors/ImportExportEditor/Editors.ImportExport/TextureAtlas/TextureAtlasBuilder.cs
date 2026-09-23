@@ -244,6 +244,48 @@ namespace Editors.ImportExport.TextureAtlas
         {
             var atlasWidth = outputWidth ?? plan.Width;
             var atlasHeight = outputHeight ?? plan.Height;
+            var mipPixels = BuildMipPixels(
+                plan,
+                ddsSources,
+                forceOpaqueAlphaSourceIds,
+                omittedSourceIds,
+                cancellationToken,
+                heartbeat,
+                constantSources,
+                outputWidth,
+                outputHeight);
+
+            var result = new List<byte[]>(mipPixels.Count);
+            var mipWidth = atlasWidth;
+            var mipHeight = atlasHeight;
+            foreach (var pixels in mipPixels)
+            {
+                using var bitmap = new Bitmap(mipWidth, mipHeight, PixelFormat.Format32bppArgb);
+                WritePixels(bitmap, pixels);
+                using var pngStream = new MemoryStream();
+                bitmap.Save(pngStream, System.Drawing.Imaging.ImageFormat.Png);
+                result.Add(pngStream.ToArray());
+
+                mipWidth = Math.Max(1, mipWidth / 2);
+                mipHeight = Math.Max(1, mipHeight / 2);
+            }
+
+            return result;
+        }
+
+        public static IReadOnlyList<byte[]> BuildMipPixels(
+            TextureAtlasPlan plan,
+            IReadOnlyDictionary<int, byte[]> ddsSources,
+            IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null,
+            IReadOnlySet<int>? omittedSourceIds = null,
+            CancellationToken cancellationToken = default,
+            Action? heartbeat = null,
+            IReadOnlyDictionary<int, TextureAtlasConstantColor>? constantSources = null,
+            int? outputWidth = null,
+            int? outputHeight = null)
+        {
+            var atlasWidth = outputWidth ?? plan.Width;
+            var atlasHeight = outputHeight ?? plan.Height;
             if (atlasWidth <= 0)
                 throw new ArgumentOutOfRangeException(nameof(outputWidth));
             if (atlasHeight <= 0)
@@ -272,7 +314,7 @@ namespace Editors.ImportExport.TextureAtlas
                     decodedSources[id] = image;
                 }
 
-                var mipPngs = new List<byte[]>();
+                var mipPixels = new List<byte[]>();
                 var mipWidth = atlasWidth;
                 var mipHeight = atlasHeight;
                 var mipLevel = 0;
@@ -426,11 +468,7 @@ namespace Editors.ImportExport.TextureAtlas
                         }
                     }
 
-                    using var bitmap = new Bitmap(mipWidth, mipHeight, PixelFormat.Format32bppArgb);
-                    WritePixels(bitmap, atlasPixels);
-                    using var pngStream = new MemoryStream();
-                    bitmap.Save(pngStream, System.Drawing.Imaging.ImageFormat.Png);
-                    mipPngs.Add(pngStream.ToArray());
+                    mipPixels.Add(atlasPixels);
 
                     if (mipWidth == 1 && mipHeight == 1)
                         break;
@@ -440,7 +478,7 @@ namespace Editors.ImportExport.TextureAtlas
                     mipLevel++;
                 }
 
-                return mipPngs;
+                return mipPixels;
             }
             finally
             {
