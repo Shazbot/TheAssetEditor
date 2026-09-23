@@ -19,6 +19,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
@@ -42,16 +44,31 @@
             TextWrapping="Wrap"
             Opacity="0.7" />
 
+        <CheckBox
+            x:Name="ShareAcrossVmdsCheckBox"
+            Grid.Row="3"
+            Margin="0,12,0,0"
+            Content="Share atlases and generated materials across VMDs"
+            IsChecked="True" />
+
+        <TextBlock
+            Grid.Row="4"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="When enabled, compatible mesh parts from all VMD roots in the pack are planned together so they can share atlas placements, atlas textures, and generated materials."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
         <TextBlock
             x:Name="PhaseText"
-            Grid.Row="3"
+            Grid.Row="5"
             Margin="0,16,0,0"
             FontWeight="SemiBold"
             Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="4"
+            Grid.Row="6"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -61,7 +78,7 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="5"
+            Grid.Row="7"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
@@ -69,7 +86,7 @@
             IsIndeterminate="False"
             Value="0" />
 
-        <Grid Grid.Row="6" Margin="0,8,0,0">
+        <Grid Grid.Row="8" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
