@@ -940,21 +940,45 @@ namespace Editors.KitbasherEditor.Services
                         SetTexturePath(clonedMaterial, channel.Slot, atlasPath);
                 }
 
-                var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
-                WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(clonedMaterial.OuterXml));
-                state.GeneratedMaterialPaths.Add(newMaterialPath);
+                var materialXml = clonedMaterial.OuterXml;
+                var materialContentHash = StableHash(materialXml);
+                if (!state.GeneratedMaterialByContentHash.TryGetValue(
+                        materialContentHash,
+                        out var generatedMaterial))
+                {
+                    var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
+                    WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
+                    state.GeneratedMaterialPaths.Add(newMaterialPath);
+                    generatedMaterial = new GeneratedMaterialEntry(newMaterialPath, materialXml);
+                    state.GeneratedMaterialByContentHash.Add(materialContentHash, generatedMaterial);
+                }
+                else if (!generatedMaterial.Xml.Equals(materialXml, StringComparison.Ordinal))
+                {
+                    // StableHash is intentionally short for filenames/readability. A collision
+                    // must never cause two distinct materials to be shared.
+                    var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
+                    WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
+                    state.GeneratedMaterialPaths.Add(newMaterialPath);
+                    generatedMaterial = new GeneratedMaterialEntry(newMaterialPath, materialXml);
+                }
+                else
+                {
+                    state.GeneratedMaterialReuses++;
+                }
+
+                var resolvedMaterialPath = generatedMaterial.Path;
 
                 state.AtlasedMeshes.Add(new AtlasedMeshReportEntry(
                     rootVmdPath,
                     candidate.Key,
                     candidate.Usages.Select(x => x.WsModelPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                     candidate.MaterialPath,
-                    newMaterialPath,
+                    resolvedMaterialPath,
                     generatedPaths.Values.Distinct(StringComparer.OrdinalIgnoreCase).ToArray()));
 
                 foreach (var usage in candidate.Usages)
                 {
-                    usage.MaterialNode.InnerText = newMaterialPath;
+                    usage.MaterialNode.InnerText = resolvedMaterialPath;
                     state.ModifiedWsModels.Add(usage.WsModelPath);
                 }
 
@@ -1719,6 +1743,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
             sb.AppendLine($"Atlas materials generated: {state.GeneratedMaterialPaths.Count}");
+            sb.AppendLine($"Atlas material assignments reused: {state.GeneratedMaterialReuses}");
             sb.AppendLine($"Atlas placements generated: {state.AtlasPlacementsGenerated}");
             sb.AppendLine($"Atlas placements reused: {state.AtlasPlacementsReused}");
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
@@ -2119,6 +2144,8 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> ModifiedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, GeneratedMaterialEntry> GeneratedMaterialByContentHash { get; } = new(StringComparer.Ordinal);
+            public int GeneratedMaterialReuses { get; set; }
             public HashSet<string> AllowedMissingTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public bool AtlasMeshesWithMissingTextures { get; set; }
             public int AtlasPlacementsGenerated { get; set; }
@@ -2145,6 +2172,10 @@ namespace Editors.KitbasherEditor.Services
                 AtlasMeshesWithMissingTextures = atlasMeshesWithMissingTextures;
             }
         }
+
+        private sealed record GeneratedMaterialEntry(
+            string Path,
+            string Xml);
 
         private sealed record MissingTextureDependency(
             MeshKey Key,
