@@ -1251,8 +1251,15 @@ namespace Editors.KitbasherEditor.Services
             }
 
             state.AtlasPixelAreaOptimizedSplits++;
+            var savedPixels = checked(parentPixelCost - bestCombinedPixelCost);
+            state.AtlasPixelAreaSavedByOptimizedSplits = checked(
+                state.AtlasPixelAreaSavedByOptimizedSplits + savedPixels);
             if (bestSplitWasNonContiguous)
+            {
                 state.AtlasNonContiguousOptimizedSplits++;
+                state.AtlasPixelAreaSavedByNonContiguousSplits = checked(
+                    state.AtlasPixelAreaSavedByNonContiguousSplits + savedPixels);
+            }
 
             OptimizeMaxSizeBatchForPixelArea(state, bestLeft, output);
             OptimizeMaxSizeBatchForPixelArea(state, bestRight, output);
@@ -3415,6 +3422,8 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas pixel-area split evaluations: {state.AtlasPixelAreaSplitEvaluations}");
             sb.AppendLine($"Atlas non-contiguous optimized splits: {state.AtlasNonContiguousOptimizedSplits}");
             sb.AppendLine($"Atlas non-contiguous split evaluations: {state.AtlasNonContiguousSplitEvaluations}");
+            sb.AppendLine($"Atlas pixels saved by split optimization: {state.AtlasPixelAreaSavedByOptimizedSplits:N0}");
+            sb.AppendLine($"Atlas pixels saved by non-contiguous splits: {state.AtlasPixelAreaSavedByNonContiguousSplits:N0}");
             if (state.ShareAtlasesAcrossVmdsEnabled)
             {
                 sb.AppendLine($"Pack-wide atlas candidates: {state.PackWideCandidateCount}");
@@ -3959,6 +3968,8 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasPixelAreaSplitEvaluations { get; set; }
             public int AtlasNonContiguousOptimizedSplits { get; set; }
             public int AtlasNonContiguousSplitEvaluations { get; set; }
+            public long AtlasPixelAreaSavedByOptimizedSplits { get; set; }
+            public long AtlasPixelAreaSavedByNonContiguousSplits { get; set; }
             public int CrossVmdSharedAtlasBatches { get; set; }
             public int CrossVmdSharedAtlasPlacements { get; set; }
             public int CrossVmdMaterialReuses { get; set; }
