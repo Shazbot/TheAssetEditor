@@ -406,6 +406,96 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void CalculateOutputDimensions_SizesChannelAgainstPrimaryPlan()
+        {
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [
+                    new TextureAtlasLayoutSource(0, 8, 8, 0, 0, 1, 1),
+                    new TextureAtlasLayoutSource(1, 8, 8, 0, 0, 1, 1)
+                ],
+                padding: 0);
+
+            var baseColour = TextureAtlasBuilder.CalculateOutputDimensions(
+                plan,
+                new Dictionary<int, (int Width, int Height)>
+                {
+                    [0] = (8, 8),
+                    [1] = (8, 8)
+                });
+            var highResolutionMask = TextureAtlasBuilder.CalculateOutputDimensions(
+                plan,
+                new Dictionary<int, (int Width, int Height)>
+                {
+                    [0] = (32, 32),
+                    [1] = (8, 8)
+                });
+            var lowResolutionNormal = TextureAtlasBuilder.CalculateOutputDimensions(
+                plan,
+                new Dictionary<int, (int Width, int Height)>
+                {
+                    [0] = (4, 4),
+                    [1] = (4, 4)
+                });
+
+            Assert.That(baseColour, Is.EqualTo((plan.Width, plan.Height)));
+            Assert.That(
+                highResolutionMask,
+                Is.EqualTo((plan.Width * 4, plan.Height * 4)));
+            Assert.That(
+                lowResolutionNormal,
+                Is.EqualTo((plan.Width / 2, plan.Height / 2)));
+        }
+
+        [Test]
+        public void BuildMipPngs_CanEmitSmallerPhysicalChannelAtlas()
+        {
+            var sourceDds = PngToDdsImporter.ImportRaw(
+                CreateSolidPng(4, Color.Orange),
+                TextureType.Normal,
+                GameTypeEnum.Warhammer3,
+                "smaller-physical-channel.dds");
+            var sourceBytes = sourceDds.DataSource.ReadData();
+
+            // The UV plan is expressed at the 8x8 primary-texture density, while this
+            // channel is natively 4x4 and should therefore emit a 4x4 physical atlas.
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 8, 8, 0, 0, 1, 1)],
+                padding: 0);
+            var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
+                plan,
+                new Dictionary<int, (int Width, int Height)> { [0] = (4, 4) });
+
+            var mipPngs = TextureAtlasBuilder.BuildMipPngs(
+                plan,
+                new Dictionary<int, byte[]> { [0] = sourceBytes },
+                outputWidth: outputDimensions.Width,
+                outputHeight: outputDimensions.Height);
+
+            using var atlasStream = new MemoryStream(mipPngs[0]);
+            using var atlasBitmap = new Bitmap(atlasStream);
+
+            Assert.That(atlasBitmap.Width, Is.EqualTo(4));
+            Assert.That(atlasBitmap.Height, Is.EqualTo(4));
+        }
+
+        [Test]
+        public void CalculateOutputDimensions_RejectsChannelAboveAtlasLimit()
+        {
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 4096, 4096, 0, 0, 1, 1)],
+                padding: 0);
+
+            Assert.That(
+                () => TextureAtlasBuilder.CalculateOutputDimensions(
+                    plan,
+                    new Dictionary<int, (int Width, int Height)>
+                    {
+                        [0] = (16384, 16384)
+                    }),
+                Throws.TypeOf<InvalidOperationException>());
+        }
+
+        [Test]
         public void BuildPng_ResamplesMixedResolutionChannelIntoSharedLayout()
         {
             using var sourceBitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
