@@ -2596,11 +2596,13 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            var protectStopwatch = Stopwatch.StartNew();
             ProtectStillReferencedAssets(
                 state.Output,
                 toRemove,
                 cancellationToken,
                 progress);
+            AddPhaseDuration(state, "Protect referenced assets", protectStopwatch.Elapsed);
 
             var removePaths = toRemove
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
@@ -2615,7 +2617,9 @@ namespace Editors.KitbasherEditor.Services
                 removePaths.Count,
                 $"{removePaths.Count:N0} files");
 
+            var deleteStopwatch = Stopwatch.StartNew();
             _packFileService.DeleteFiles(state.Output, removePaths);
+            AddPhaseDuration(state, "Delete pruned assets", deleteStopwatch.Elapsed);
             state.RemovedFiles.AddRange(removePaths);
         }
 
@@ -3028,12 +3032,11 @@ namespace Editors.KitbasherEditor.Services
         private void WriteFile(IPackFileContainer output, string fullPath, byte[] data)
         {
             fullPath = Normalize(fullPath);
-            var existing = output.FindFile(fullPath);
-            if (existing != null)
-                _packFileService.DeleteFile(output, existing);
-
             var directory = Path.GetDirectoryName(fullPath) ?? string.Empty;
             var name = Path.GetFileName(fullPath);
+
+            // AddFiles replaces an existing normalized path in-place. Avoid a preceding DeleteFile:
+            // deletion performs a linear reverse lookup and emits an extra event/log entry.
             _packFileService.AddFilesToPack(
                 output,
                 [new NewPackFileEntry(directory, PackFile.CreateFromBytes(name, data))]);
