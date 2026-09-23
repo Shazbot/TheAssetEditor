@@ -1224,6 +1224,7 @@ namespace Editors.KitbasherEditor.Services
                 WriteFile(state.Output, atlasPath, atlasPackFile.DataSource.ReadData());
                 generatedPaths[channel.Slot] = atlasPath;
                 state.GeneratedTexturePaths.Add(atlasPath);
+                state.GeneratedTextureDimensions[atlasPath] = outputDimensions;
             }
 
             for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
@@ -2943,7 +2944,12 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine("Generated atlas textures");
             sb.AppendLine("------------------------");
             foreach (var path in state.GeneratedTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
-                sb.AppendLine(path);
+            {
+                if (state.GeneratedTextureDimensions.TryGetValue(path, out var dimensions))
+                    sb.AppendLine($"{path} ({dimensions.Width}x{dimensions.Height})");
+                else
+                    sb.AppendLine(path);
+            }
             if (state.GeneratedTexturePaths.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
@@ -3296,6 +3302,8 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> ModifiedWsModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> ModifiedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, (int Width, int Height)> GeneratedTextureDimensions { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, GeneratedMaterialEntry> GeneratedMaterialByContentHash { get; } = new(StringComparer.Ordinal);
             public int GeneratedMaterialReuses { get; set; }
