@@ -89,7 +89,6 @@ namespace GameWorld.Core.Services
                 var mFile = new WsModelMaterialFile(wsMaterialPath);
                 var wsModelMaterial = mFile;
                 shader = _materialFactory.Create(fallbackMaterial, wsModelMaterial);
-                shader.SourceWsModelShaderPath = wsModelMaterial.ShaderPath;
             }
             catch (Exception e)
             {
