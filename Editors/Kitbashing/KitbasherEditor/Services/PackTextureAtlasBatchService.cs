@@ -226,9 +226,16 @@ namespace Editors.KitbasherEditor.Services
                     if (missingTextures.Count != 0)
                     {
                         ReportProgress(progress, "Waiting for missing-texture choice");
-                        state.AtlasMeshesWithMissingTextures = _standardDialogs.ShowYesNoBox(
-                            BuildMissingTexturePrompt(missingTextures),
-                            "Texture Atlas Pack - Missing Textures") == ShowMessageBoxResult.OK;
+
+                        var dialog = new MissingTextureDecisionWindow(
+                            BuildMissingTextureDetails(missingTextures));
+                        var activeOwner = System.Windows.Application.Current?.Windows
+                            .OfType<System.Windows.Window>()
+                            .FirstOrDefault(x => x.IsActive);
+                        if (activeOwner != null)
+                            dialog.Owner = activeOwner;
+
+                        state.AtlasMeshesWithMissingTextures = dialog.ShowDialog() == true;
                     }
                 }
 
@@ -548,12 +555,10 @@ namespace Editors.KitbasherEditor.Services
                 .ToList();
         }
 
-        private static string BuildMissingTexturePrompt(
+        private static string BuildMissingTextureDetails(
             IReadOnlyList<MissingTextureDependency> missingTextures)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("Unresolved texture dependencies were found:");
-            sb.AppendLine();
 
             foreach (var group in missingTextures.GroupBy(
                          x => x.TexturePath,
@@ -570,10 +575,6 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine();
             }
 
-            sb.AppendLine("Atlas these meshes anyway?");
-            sb.AppendLine();
-            sb.AppendLine("Yes: atlas them and keep the missing texture paths unchanged.");
-            sb.AppendLine("No: skip the affected meshes (recommended).");
             return sb.ToString();
         }
 
