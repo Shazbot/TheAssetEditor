@@ -1135,6 +1135,14 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
             sb.AppendLine();
 
+            sb.AppendLine("VMD roots");
+            sb.AppendLine("---------");
+            foreach (var vmdPath in vmdRoots.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                sb.AppendLine(vmdPath);
+            if (vmdRoots.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
             if (failure != null)
             {
                 sb.AppendLine("Failure");
