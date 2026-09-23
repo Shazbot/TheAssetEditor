@@ -1844,39 +1844,123 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<AtlasCandidate> candidates)
         {
             var sources = new List<SharedAtlasSource>();
-            var byIdentity = new Dictionary<AtlasPlacementIdentity, SharedAtlasSource>();
             var sourceIdByMesh = new Dictionary<MeshKey, int>();
 
-            foreach (var candidate in candidates)
+            foreach (var group in candidates.GroupBy(BuildAtlasTextureSetIdentity))
             {
-                var identity = BuildAtlasPlacementIdentity(candidate);
-                if (!byIdentity.TryGetValue(identity, out var source))
+                var clusters = group
+                    .Select(candidate => new AtlasCropCluster(
+                        GetEffectiveCrop(candidate),
+                        [candidate]))
+                    .ToList();
+
+                // Different LODs commonly use the exact same texture set but touch slightly
+                // different UV extents. Requiring an identical crop duplicates most of the
+                // texture in the atlas. Merge crops whenever their union costs less atlas area
+                // (including padding) than storing them separately.
+                while (TryFindBestCropMerge(clusters, out var leftIndex, out var rightIndex, out var union))
                 {
-                    source = new SharedAtlasSource(sources.Count, candidate);
-                    sources.Add(source);
-                    byIdentity.Add(identity, source);
+                    var left = clusters[leftIndex];
+                    var right = clusters[rightIndex];
+                    var members = left.Members.Concat(right.Members).ToList();
+
+                    if (rightIndex > leftIndex)
+                    {
+                        clusters.RemoveAt(rightIndex);
+                        clusters.RemoveAt(leftIndex);
+                    }
+                    else
+                    {
+                        clusters.RemoveAt(leftIndex);
+                        clusters.RemoveAt(rightIndex);
+                    }
+
+                    clusters.Add(new AtlasCropCluster(union, members));
                 }
 
-                sourceIdByMesh[candidate.Key] = source.Id;
+                foreach (var cluster in clusters)
+                {
+                    var source = new SharedAtlasSource(
+                        sources.Count,
+                        cluster.Members[0],
+                        cluster.Crop);
+                    sources.Add(source);
+
+                    foreach (var candidate in cluster.Members)
+                        sourceIdByMesh[candidate.Key] = source.Id;
+                }
             }
 
             return new SharedAtlasBatch(sources, sourceIdByMesh);
         }
 
-        private static AtlasPlacementIdentity BuildAtlasPlacementIdentity(AtlasCandidate candidate)
-        {
-            var crop = GetEffectiveCrop(candidate);
-            return new AtlasPlacementIdentity(
+        private static AtlasTextureSetIdentity BuildAtlasTextureSetIdentity(AtlasCandidate candidate)
+            => new(
                 candidate.Width,
                 candidate.Height,
-                crop.X,
-                crop.Y,
-                crop.Width,
-                crop.Height,
                 GetChannelIdentity(candidate, "t_xml_base_colour"),
                 GetChannelIdentity(candidate, "t_xml_material_map"),
                 GetChannelIdentity(candidate, "t_xml_normal"),
                 GetChannelIdentity(candidate, "t_xml_mask"));
+
+        private static bool TryFindBestCropMerge(
+            IReadOnlyList<AtlasCropCluster> clusters,
+            out int leftIndex,
+            out int rightIndex,
+            out AtlasCrop union)
+        {
+            leftIndex = -1;
+            rightIndex = -1;
+            union = default;
+            long bestSavings = 0;
+
+            for (var i = 0; i < clusters.Count; i++)
+            {
+                for (var j = i + 1; j < clusters.Count; j++)
+                {
+                    var candidateUnion = Union(clusters[i].Crop, clusters[j].Crop);
+                    var separateArea =
+                        GetPaddedCropArea(clusters[i].Crop) +
+                        GetPaddedCropArea(clusters[j].Crop);
+                    var mergedArea = GetPaddedCropArea(candidateUnion);
+                    var savings = separateArea - mergedArea;
+
+                    if (savings <= bestSavings)
+                        continue;
+
+                    bestSavings = savings;
+                    leftIndex = i;
+                    rightIndex = j;
+                    union = candidateUnion;
+                }
+            }
+
+            return leftIndex >= 0;
+        }
+
+        private static AtlasCrop Union(AtlasCrop left, AtlasCrop right)
+        {
+            var x = Math.Min(left.X, right.X);
+            var y = Math.Min(left.Y, right.Y);
+            var rightEdge = Math.Max(
+                checked(left.X + left.Width),
+                checked(right.X + right.Width));
+            var bottomEdge = Math.Max(
+                checked(left.Y + left.Height),
+                checked(right.Y + right.Height));
+
+            return new AtlasCrop(
+                x,
+                y,
+                checked(rightEdge - x),
+                checked(bottomEdge - y));
+        }
+
+        private static long GetPaddedCropArea(AtlasCrop crop)
+        {
+            var width = checked(crop.Width + TextureAtlasBuilder.DefaultPadding * 2L);
+            var height = checked(crop.Height + TextureAtlasBuilder.DefaultPadding * 2L);
+            return checked(width * height);
         }
 
         private static string GetChannelIdentity(AtlasCandidate candidate, string slot)
@@ -1918,10 +2002,10 @@ namespace Editors.KitbasherEditor.Services
                 sources.Add(new TextureAtlasSource(
                     source.Id,
                     candidate.PrimaryBytes,
-                    candidate.Bounds.MinU,
-                    candidate.Bounds.MinV,
-                    candidate.Bounds.MaxU,
-                    candidate.Bounds.MaxV));
+                    source.Crop.X / (float)candidate.Width,
+                    source.Crop.Y / (float)candidate.Height,
+                    checked(source.Crop.X + source.Crop.Width) / (float)candidate.Width,
+                    checked(source.Crop.Y + source.Crop.Height) / (float)candidate.Height));
             }
 
             return sources;
@@ -2068,15 +2152,16 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record SharedAtlasSource(
             int Id,
-            AtlasCandidate Representative);
+            AtlasCandidate Representative,
+            AtlasCrop Crop);
 
-        private readonly record struct AtlasPlacementIdentity(
+        private sealed record AtlasCropCluster(
+            AtlasCrop Crop,
+            List<AtlasCandidate> Members);
+
+        private readonly record struct AtlasTextureSetIdentity(
             int SourceWidth,
             int SourceHeight,
-            int CropX,
-            int CropY,
-            int CropWidth,
-            int CropHeight,
             string BaseColour,
             string MaterialMap,
             string Normal,
