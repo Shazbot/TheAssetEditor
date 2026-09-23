@@ -1076,6 +1076,10 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
+                var wsStructureBeforeMerge = wsModels.ToDictionary(
+                    x => x.Key,
+                    x => GetWsModelNonMaterialIdentity(x.Value),
+                    StringComparer.OrdinalIgnoreCase);
                 var assignmentsByWsModel = new Dictionary<string, string[][]>(StringComparer.OrdinalIgnoreCase);
                 var wsModelIndexByPath = wsModels
                     .Select((entry, index) => (entry.Key, index))
@@ -1107,6 +1111,8 @@ namespace Editors.KitbasherEditor.Services
                     if (originalModels.Length < 2)
                         continue;
 
+                    var lodInvariant = CaptureLodGeometryInvariant(originalModels, rigidPath, lodIndex);
+
                     var groups = BuildMeshMergeGroups(
                         originalModels,
                         lodIndex,
@@ -1122,9 +1128,24 @@ namespace Editors.KitbasherEditor.Services
                         cancellationToken.ThrowIfCancellationRequested();
                         var group = groups[newPartIndex];
                         var models = group.PartIndices.Select(x => originalModels[x]).ToList();
+                        MergeGeometryInvariantSnapshot? groupInvariant = null;
+                        if (models.Count > 1)
+                            groupInvariant = CaptureMergeGroupInvariant(models, rigidPath, lodIndex, group.PartIndices);
+
                         var merged = models.Count == 1
                             ? models[0]
                             : MergeRmvModels(models);
+
+                        if (groupInvariant != null)
+                        {
+                            ValidateMergedGroupGeometry(
+                                groupInvariant,
+                                merged,
+                                rigidPath,
+                                lodIndex,
+                                group.PartIndices);
+                            state.MeshMergeInvariantGroupCount++;
+                        }
 
                         mergedModels.Add(merged);
 
@@ -1149,6 +1170,13 @@ namespace Editors.KitbasherEditor.Services
                             .ToArray();
                     }
 
+                    ValidateLodGeometryInvariant(
+                        lodInvariant,
+                        mergedModels,
+                        rigidPath,
+                        lodIndex);
+                    state.MeshMergeInvariantLodCount++;
+
                     rmv.ModelList[lodIndex] = mergedModels.ToArray();
                     rigidAfter -= originalModels.Length - mergedModels.Count;
                     rigidChanged = true;
@@ -1165,6 +1193,15 @@ namespace Editors.KitbasherEditor.Services
                     RewriteWsMaterialAssignments(
                         wsDocument,
                         assignmentsByWsModel[wsPath]);
+
+                    var nonMaterialIdentity = GetWsModelNonMaterialIdentity(wsDocument);
+                    if (!wsStructureBeforeMerge[wsPath].Equals(nonMaterialIdentity, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"Mesh merge changed non-material WSModel structure: {wsPath}");
+                    }
+
+                    state.MeshMergeInvariantWsModelCount++;
                     state.ModifiedWsModels.Add(wsPath);
                 }
             }
@@ -1305,6 +1342,245 @@ namespace Editors.KitbasherEditor.Services
                 Convert.ToHexString(materialBytes));
 
             return ContentHash(identity);
+        }
+
+        private static MergeGeometryInvariantSnapshot CaptureMergeGroupInvariant(
+            IReadOnlyList<RmvModel> models,
+            string rigidPath,
+            int lodIndex,
+            IReadOnlyList<int> partIndices)
+        {
+            var vertexCount = models.Sum(x => x.Mesh.VertexList.Length);
+            var indexCount = models.Sum(x => x.Mesh.IndexList.Length);
+            if (indexCount % 3 != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot merge {rigidPath} LOD {lodIndex} parts " +
+                    $"[{string.Join(", ", partIndices)}]: index count {indexCount} is not divisible by 3.");
+            }
+
+            var expectedIndices = new ushort[indexCount];
+            var indexOffset = 0;
+            var vertexOffset = 0;
+            foreach (var model in models)
+            {
+                for (var i = 0; i < model.Mesh.IndexList.Length; i++)
+                {
+                    var sourceIndex = model.Mesh.IndexList[i];
+                    if (sourceIndex >= model.Mesh.VertexList.Length)
+                    {
+                        throw new InvalidOperationException(
+                            $"Cannot merge {rigidPath} LOD {lodIndex}: source mesh contains " +
+                            $"invalid vertex index {sourceIndex} for {model.Mesh.VertexList.Length} vertices.");
+                    }
+
+                    var mergedIndex = checked(sourceIndex + vertexOffset);
+                    if (mergedIndex > ushort.MaxValue)
+                    {
+                        throw new InvalidOperationException(
+                            $"Cannot merge {rigidPath} LOD {lodIndex}: merged index exceeds 16-bit range.");
+                    }
+
+                    expectedIndices[indexOffset++] = (ushort)mergedIndex;
+                }
+
+                vertexOffset += model.Mesh.VertexList.Length;
+            }
+
+            return new MergeGeometryInvariantSnapshot(
+                vertexCount,
+                indexCount,
+                indexCount / 3,
+                ComputeVertexSequenceHash(models.SelectMany(x => x.Mesh.VertexList)),
+                expectedIndices,
+                models.Min(x => x.CommonHeader.BoundingBox.MinimumX),
+                models.Min(x => x.CommonHeader.BoundingBox.MinimumY),
+                models.Min(x => x.CommonHeader.BoundingBox.MinimumZ),
+                models.Max(x => x.CommonHeader.BoundingBox.MaximumX),
+                models.Max(x => x.CommonHeader.BoundingBox.MaximumY),
+                models.Max(x => x.CommonHeader.BoundingBox.MaximumZ));
+        }
+
+        private static void ValidateMergedGroupGeometry(
+            MergeGeometryInvariantSnapshot expected,
+            RmvModel merged,
+            string rigidPath,
+            int lodIndex,
+            IReadOnlyList<int> partIndices)
+        {
+            var label = $"{rigidPath} LOD {lodIndex} parts [{string.Join(", ", partIndices)}]";
+
+            if (merged.Mesh.VertexList.Length != expected.VertexCount)
+            {
+                throw new InvalidOperationException(
+                    $"Mesh merge geometry invariant failed for {label}: vertex count changed " +
+                    $"from {expected.VertexCount} to {merged.Mesh.VertexList.Length}.");
+            }
+
+            if (merged.Mesh.IndexList.Length != expected.IndexCount)
+            {
+                throw new InvalidOperationException(
+                    $"Mesh merge geometry invariant failed for {label}: index count changed " +
+                    $"from {expected.IndexCount} to {merged.Mesh.IndexList.Length}.");
+            }
+
+            if (merged.Mesh.IndexList.Length % 3 != 0 ||
+                merged.Mesh.IndexList.Length / 3 != expected.TriangleCount)
+            {
+                throw new InvalidOperationException(
+                    $"Mesh merge geometry invariant failed for {label}: triangle count changed.");
+            }
+
+            var mergedVertexHash = ComputeVertexSequenceHash(merged.Mesh.VertexList);
+            if (!expected.VertexHash.Equals(mergedVertexHash, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Mesh merge geometry invariant failed for {label}: vertex data/order changed.");
+            }
+
+            if (!merged.Mesh.IndexList.SequenceEqual(expected.ExpectedIndices))
+            {
+                throw new InvalidOperationException(
+                    $"Mesh merge geometry invariant failed for {label}: triangle/index mapping changed.");
+            }
+
+            var bounds = merged.CommonHeader.BoundingBox;
+            if (!bounds.MinimumX.Equals(expected.MinimumX) ||
+                !bounds.MinimumY.Equals(expected.MinimumY) ||
+                !bounds.MinimumZ.Equals(expected.MinimumZ) ||
+                !bounds.MaximumX.Equals(expected.MaximumX) ||
+                !bounds.MaximumY.Equals(expected.MaximumY) ||
+                !bounds.MaximumZ.Equals(expected.MaximumZ))
+            {
+                throw new InvalidOperationException(
+                    $"Mesh merge geometry invariant failed for {label}: merged bounds do not equal " +
+                    $"the union of source bounds.");
+            }
+        }
+
+        private static LodGeometryInvariantSnapshot CaptureLodGeometryInvariant(
+            IReadOnlyList<RmvModel> models,
+            string rigidPath,
+            int lodIndex)
+        {
+            var indexCount = models.Sum(x => x.Mesh.IndexList.Length);
+            if (indexCount % 3 != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot merge {rigidPath} LOD {lodIndex}: total index count {indexCount} is not divisible by 3.");
+            }
+
+            return new LodGeometryInvariantSnapshot(
+                models.Sum(x => x.Mesh.VertexList.Length),
+                indexCount,
+                indexCount / 3);
+        }
+
+        private static void ValidateLodGeometryInvariant(
+            LodGeometryInvariantSnapshot expected,
+            IReadOnlyList<RmvModel> models,
+            string rigidPath,
+            int lodIndex)
+        {
+            var vertexCount = models.Sum(x => x.Mesh.VertexList.Length);
+            var indexCount = models.Sum(x => x.Mesh.IndexList.Length);
+            if (indexCount % 3 != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Mesh merge geometry invariant failed for {rigidPath} LOD {lodIndex}: " +
+                    $"post-merge index count {indexCount} is not divisible by 3.");
+            }
+
+            var triangleCount = indexCount / 3;
+            if (vertexCount != expected.VertexCount ||
+                indexCount != expected.IndexCount ||
+                triangleCount != expected.TriangleCount)
+            {
+                throw new InvalidOperationException(
+                    $"Mesh merge geometry invariant failed for {rigidPath} LOD {lodIndex}: " +
+                    $"geometry totals changed from {expected.VertexCount} vertices / " +
+                    $"{expected.IndexCount} indices / {expected.TriangleCount} triangles to " +
+                    $"{vertexCount} / {indexCount} / {triangleCount}.");
+            }
+        }
+
+        private static string ComputeVertexSequenceHash(IEnumerable<CommonVertex> vertices)
+        {
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+            static void AppendInt32(IncrementalHash hash, int value)
+                => hash.AppendData(BitConverter.GetBytes(value));
+
+            static void AppendSingle(IncrementalHash hash, float value)
+                => AppendInt32(hash, BitConverter.SingleToInt32Bits(value));
+
+            static void AppendBytes(IncrementalHash hash, byte[]? values)
+            {
+                if (values == null)
+                {
+                    AppendInt32(hash, -1);
+                    return;
+                }
+
+                AppendInt32(hash, values.Length);
+                hash.AppendData(values);
+            }
+
+            static void AppendSingles(IncrementalHash hash, float[]? values)
+            {
+                if (values == null)
+                {
+                    AppendInt32(hash, -1);
+                    return;
+                }
+
+                AppendInt32(hash, values.Length);
+                foreach (var value in values)
+                    AppendSingle(hash, value);
+            }
+
+            foreach (var vertex in vertices)
+            {
+                AppendSingle(hash, vertex.Position.X);
+                AppendSingle(hash, vertex.Position.Y);
+                AppendSingle(hash, vertex.Position.Z);
+                AppendSingle(hash, vertex.Position.W);
+
+                AppendSingle(hash, vertex.Normal.X);
+                AppendSingle(hash, vertex.Normal.Y);
+                AppendSingle(hash, vertex.Normal.Z);
+                AppendSingle(hash, vertex.BiNormal.X);
+                AppendSingle(hash, vertex.BiNormal.Y);
+                AppendSingle(hash, vertex.BiNormal.Z);
+                AppendSingle(hash, vertex.Tangent.X);
+                AppendSingle(hash, vertex.Tangent.Y);
+                AppendSingle(hash, vertex.Tangent.Z);
+
+                AppendSingle(hash, vertex.Uv.X);
+                AppendSingle(hash, vertex.Uv.Y);
+                AppendSingle(hash, vertex.Uv1.X);
+                AppendSingle(hash, vertex.Uv1.Y);
+
+                AppendSingle(hash, vertex.Colour.X);
+                AppendSingle(hash, vertex.Colour.Y);
+                AppendSingle(hash, vertex.Colour.Z);
+                AppendSingle(hash, vertex.Colour.W);
+
+                AppendBytes(hash, vertex.BoneIndex);
+                AppendSingles(hash, vertex.BoneWeight);
+                AppendInt32(hash, vertex.WeightCount);
+            }
+
+            return Convert.ToHexString(hash.GetHashAndReset());
+        }
+
+        private static string GetWsModelNonMaterialIdentity(XmlDocument document)
+        {
+            var clone = new XmlDocument();
+            clone.LoadXml(document.OuterXml);
+            var materialsNode = clone.SelectSingleNode("/model/materials");
+            materialsNode?.ParentNode?.RemoveChild(materialsNode);
+            return clone.OuterXml;
         }
 
         private static RmvModel MergeRmvModels(IReadOnlyList<RmvModel> models)
@@ -2146,6 +2422,14 @@ namespace Editors.KitbasherEditor.Services
                 $"{state.GeneratedTexturePaths.Count} atlas texture(s) validated.");
             state.ValidationMessages.Add(
                 "PASS: VMD, WSModel, and rigid_model_v2 path sets are unchanged.");
+            if (state.MergeCompatibleMeshesEnabled && state.MeshMergeInvariantGroupCount != 0)
+            {
+                state.ValidationMessages.Add(
+                    $"PASS: merge geometry invariants validated for " +
+                    $"{state.MeshMergeInvariantGroupCount} merged group(s) across " +
+                    $"{state.MeshMergeInvariantLodCount} LOD(s); " +
+                    $"{state.MeshMergeInvariantWsModelCount} WSModel non-material structure check(s) passed.");
+            }
         }
 
         private static void ValidateUnchangedModelPathSet(
@@ -2714,6 +2998,9 @@ namespace Editors.KitbasherEditor.Services
             public int MeshPartsEliminated => MeshPartsBeforeMerging - MeshPartsAfterMerging;
             public List<MeshMergeReportEntry> MeshMergeEntries { get; } = [];
             public List<string> MeshMergeSkipMessages { get; } = [];
+            public int MeshMergeInvariantGroupCount { get; set; }
+            public int MeshMergeInvariantLodCount { get; set; }
+            public int MeshMergeInvariantWsModelCount { get; set; }
             public List<string> RemovedFiles { get; } = [];
             public List<string> ValidationMessages { get; } = [];
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
@@ -2750,6 +3037,24 @@ namespace Editors.KitbasherEditor.Services
         private sealed record MeshMergeGroup(
             List<int> PartIndices,
             string[] MaterialPathsByWsModel);
+
+        private sealed record MergeGeometryInvariantSnapshot(
+            int VertexCount,
+            int IndexCount,
+            int TriangleCount,
+            string VertexHash,
+            ushort[] ExpectedIndices,
+            float MinimumX,
+            float MinimumY,
+            float MinimumZ,
+            float MaximumX,
+            float MaximumY,
+            float MaximumZ);
+
+        private sealed record LodGeometryInvariantSnapshot(
+            int VertexCount,
+            int IndexCount,
+            int TriangleCount);
 
         private sealed record GeneratedMaterialEntry(
             string Path,
