@@ -882,6 +882,8 @@ namespace Editors.KitbasherEditor.Services
 
             var batches = new List<List<AtlasCandidate>>();
             var current = new List<AtlasCandidate>();
+            var currentPlanningRepresentatives = new List<AtlasCandidate>();
+            var currentPlanningIdentities = new HashSet<AtlasPlanningSourceIdentity>();
 
             for (var candidateIndex = 0; candidateIndex < planningCandidates.Count; candidateIndex++)
             {
@@ -893,6 +895,8 @@ namespace Editors.KitbasherEditor.Services
                     candidateIndex + 1,
                     planningCandidates.Count,
                     candidate.Key.ToString());
+
+                var planningIdentity = GetAtlasPlanningSourceIdentity(candidate);
                 if (!CanCreatePlan([candidate], out var singleError))
                 {
                     RecordSkip(
@@ -907,13 +911,26 @@ namespace Editors.KitbasherEditor.Services
                 if (current.Count == 0)
                 {
                     current.Add(candidate);
+                    currentPlanningRepresentatives.Add(candidate);
+                    currentPlanningIdentities.Add(planningIdentity);
                     continue;
                 }
 
-                var trial = current.Concat([candidate]).ToList();
-                if (CanCreatePlan(trial, out _))
+                // Exact source/crop duplicates consume no additional atlas space. Keep every
+                // candidate in the execution batch, but only one representative in fit checks.
+                if (currentPlanningIdentities.Contains(planningIdentity))
                 {
                     current.Add(candidate);
+                    continue;
+                }
+
+                var trialPlanningRepresentatives =
+                    currentPlanningRepresentatives.Concat([candidate]).ToList();
+                if (CanCreatePlan(trialPlanningRepresentatives, out _))
+                {
+                    current.Add(candidate);
+                    currentPlanningRepresentatives.Add(candidate);
+                    currentPlanningIdentities.Add(planningIdentity);
                     continue;
                 }
 
@@ -933,6 +950,11 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 current = [candidate];
+                currentPlanningRepresentatives = [candidate];
+                currentPlanningIdentities =
+                [
+                    planningIdentity
+                ];
             }
 
             if (current.Count >= 2)
@@ -954,6 +976,9 @@ namespace Editors.KitbasherEditor.Services
 
             return batches;
         }
+
+        private static AtlasPlanningSourceIdentity GetAtlasPlanningSourceIdentity(AtlasCandidate candidate)
+            => new(BuildAtlasTextureSetIdentity(candidate), GetEffectiveCrop(candidate));
 
         private static string BuildAtlasPlanningOrderKey(AtlasCandidate candidate)
         {
@@ -3300,6 +3325,10 @@ namespace Editors.KitbasherEditor.Services
             string MaterialMap,
             string Normal,
             string Mask);
+
+        private readonly record struct AtlasPlanningSourceIdentity(
+            AtlasTextureSetIdentity TextureSet,
+            AtlasCrop Crop);
 
         private readonly record struct AtlasCrop(
             int X,
