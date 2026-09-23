@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -127,6 +128,7 @@ namespace Editors.KitbasherEditor.Services
             bool shareAtlasesAcrossVmds = true)
         {
             var reportPath = BuildReportPath(outputPath);
+            var totalStopwatch = Stopwatch.StartNew();
             cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(progress, "Loading source pack", item: Path.GetFileName(sourcePath));
             IPackFileContainer? output = null;
@@ -173,12 +175,14 @@ namespace Editors.KitbasherEditor.Services
                     progress,
                     "Validating VMD roots",
                     item: $"{allVmdPaths.Count} VMD file(s)");
+                var phaseStopwatch = Stopwatch.StartNew();
                 (vmdRoots, malformedVmdRoots) = ValidateVmdRoots(
                     state,
                     source,
                     allVmdPaths,
                     cancellationToken,
                     progress);
+                state.PhaseDurations["Validate VMD roots"] = phaseStopwatch.Elapsed;
 
                 if (vmdRoots.Count == 0)
                 {
@@ -193,6 +197,7 @@ namespace Editors.KitbasherEditor.Services
                     item: malformedVmdRoots.Count == 0
                         ? $"{vmdRoots.Count} VMD root(s)"
                         : $"{vmdRoots.Count} valid VMD root(s), {malformedVmdRoots.Count} malformed file(s) ignored");
+                phaseStopwatch.Restart();
                 var originalReachable = CollectReachableAssetFiles(
                     state,
                     source,
@@ -200,7 +205,9 @@ namespace Editors.KitbasherEditor.Services
                     cancellationToken,
                     progress,
                     "Scanning source dependencies");
+                state.PhaseDurations["Scan source dependencies"] = phaseStopwatch.Elapsed;
 
+                phaseStopwatch.Restart();
                 for (var i = 0; i < sourcePaths.Count; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -216,12 +223,16 @@ namespace Editors.KitbasherEditor.Services
 
                     _packFileService.CopyFileFromOtherPackFile(source, sourcePaths[i], output);
                 }
+                state.PhaseDurations["Copy source pack"] = phaseStopwatch.Elapsed;
 
                 state.MalformedVmdRoots.AddRange(malformedVmdRoots);
+                phaseStopwatch.Restart();
                 BuildWsUsageIndex(state, cancellationToken, progress);
+                state.PhaseDurations["Index WSModels"] = phaseStopwatch.Elapsed;
 
                 if (!atlasMeshesWithMissingTextures.HasValue)
                 {
+                    phaseStopwatch.Restart();
                     var missingTextures = FindMissingTextureDependencies(
                         state,
                         vmdRoots,
@@ -241,8 +252,10 @@ namespace Editors.KitbasherEditor.Services
 
                         state.AtlasMeshesWithMissingTextures = dialog.ShowDialog() == true;
                     }
+                    state.PhaseDurations["Check missing textures"] = phaseStopwatch.Elapsed;
                 }
 
+                phaseStopwatch.Restart();
                 if (shareAtlasesAcrossVmds)
                 {
                     ProcessPackWideAtlases(
@@ -265,13 +278,21 @@ namespace Editors.KitbasherEditor.Services
                             progress);
                     }
                 }
+                state.PhaseDurations["Plan and build atlases"] = phaseStopwatch.Elapsed;
 
                 if (mergeCompatibleMeshes)
+                {
+                    phaseStopwatch.Restart();
                     MergeCompatibleMeshes(state, cancellationToken, progress);
+                    state.PhaseDurations["Merge compatible meshes"] = phaseStopwatch.Elapsed;
+                }
 
+                phaseStopwatch.Restart();
                 SaveModifiedDocuments(state, cancellationToken, progress);
+                state.PhaseDurations["Write modified assets"] = phaseStopwatch.Elapsed;
 
                 ReportProgress(progress, "Scanning rewritten dependencies");
+                phaseStopwatch.Restart();
                 var currentReachable = CollectReachableAssetFiles(
                     state,
                     output,
@@ -279,19 +300,28 @@ namespace Editors.KitbasherEditor.Services
                     cancellationToken,
                     progress,
                     "Scanning rewritten dependencies");
+                state.PhaseDurations["Scan rewritten dependencies"] = phaseStopwatch.Elapsed;
+
+                phaseStopwatch.Restart();
                 PruneUnusedAssetFiles(
                     state,
                     originalReachable,
                     currentReachable,
                     cancellationToken,
                     progress);
+                state.PhaseDurations["Prune unused assets"] = phaseStopwatch.Elapsed;
 
+                phaseStopwatch.Restart();
                 ValidateOutput(state, vmdRoots, cancellationToken, progress);
+                state.PhaseDurations["Validate output"] = phaseStopwatch.Elapsed;
 
                 cancellationToken.ThrowIfCancellationRequested();
                 ReportProgress(progress, "Saving output pack", item: Path.GetFileName(outputPath));
+                phaseStopwatch.Restart();
                 var game = GameInformationDatabase.GetGameById(GameTypeEnum.Warhammer3);
                 _packFileService.SavePackContainer(output, outputPath, false, game);
+                state.PhaseDurations["Save output pack"] = phaseStopwatch.Elapsed;
+                state.TotalElapsed = totalStopwatch.Elapsed;
 
                 WriteReport(state, vmdRoots, succeeded: true, failure: null);
 
@@ -3166,6 +3196,13 @@ namespace Editors.KitbasherEditor.Services
             }
             sb.AppendLine();
 
+            sb.AppendLine("Phase timings");
+            sb.AppendLine("-------------");
+            foreach (var phase in state.PhaseDurations)
+                sb.AppendLine($"{phase.Key}: {phase.Value.TotalMilliseconds:N0} ms");
+            sb.AppendLine($"Total: {state.TotalElapsed.TotalMilliseconds:N0} ms");
+            sb.AppendLine();
+
             sb.AppendLine("VMD roots");
             sb.AppendLine("---------");
             foreach (var vmdPath in vmdRoots.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
@@ -3690,6 +3727,8 @@ namespace Editors.KitbasherEditor.Services
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
             public Dictionary<MeshKey, List<SkipDetail>> SkipDetails { get; } = [];
             public int BatchIndex { get; set; }
+            public Dictionary<string, TimeSpan> PhaseDurations { get; } = new(StringComparer.Ordinal);
+            public TimeSpan TotalElapsed { get; set; }
 
             public BatchState(
                 IPackFileContainer source,
