@@ -63,35 +63,55 @@ namespace Editors.KitbasherEditor.Services
             var sourcePath = browse.FilePaths[0];
             var outputPath = BuildOutputPath(sourcePath);
 
-            using (_standardDialogs.ShowWaitCursor())
+            BatchResult? result = null;
+            var progressWindow = new TextureAtlasProgressWindow((cancellationToken, progress) =>
             {
-                try
-                {
-                    var result = Process(sourcePath, outputPath, atlasMeshesWithMissingTextures: null);
-                    _standardDialogs.ShowDialogBox(
-                        $"Texture atlas pack created successfully.\n\n" +
-                        $"Output: {outputPath}\n" +
-                        $"VMD roots: {result.VmdCount}\n" +
-                        $"Mesh parts atlased: {result.AtlasedMeshCount}\n" +
-                        $"Atlas textures generated: {result.GeneratedTextureCount}\n" +
-                        $"Unused asset files removed: {result.RemovedFileCount}\n" +
-                        $"Mesh parts skipped: {result.SkippedMeshCount}\n" +
-                        $"Report: {result.ReportPath}",
-                        "Texture Atlas Pack");
-                }
-                catch (Exception ex)
-                {
-                    _standardDialogs.ShowExceptionWindow(ex, "Failed to create texture atlas pack.");
-                }
+                result = Process(
+                    sourcePath,
+                    outputPath,
+                    atlasMeshesWithMissingTextures: null,
+                    cancellationToken,
+                    progress);
+            });
+
+            if (System.Windows.Application.Current?.MainWindow != null)
+                progressWindow.Owner = System.Windows.Application.Current.MainWindow;
+
+            progressWindow.ShowDialog();
+
+            if (progressWindow.Failure != null)
+            {
+                _standardDialogs.ShowExceptionWindow(
+                    progressWindow.Failure,
+                    "Failed to create texture atlas pack.");
+                return;
             }
+
+            if (progressWindow.WasCancelled || result == null)
+                return;
+
+            _standardDialogs.ShowDialogBox(
+                $"Texture atlas pack created successfully.\n\n" +
+                $"Output: {outputPath}\n" +
+                $"VMD roots: {result.VmdCount}\n" +
+                $"Mesh parts atlased: {result.AtlasedMeshCount}\n" +
+                $"Atlas textures generated: {result.GeneratedTextureCount}\n" +
+                $"Unused asset files removed: {result.RemovedFileCount}\n" +
+                $"Mesh parts skipped: {result.SkippedMeshCount}\n" +
+                $"Report: {result.ReportPath}",
+                "Texture Atlas Pack");
         }
 
         public BatchResult Process(
             string sourcePath,
             string outputPath,
-            bool? atlasMeshesWithMissingTextures = false)
+            bool? atlasMeshesWithMissingTextures = false,
+            CancellationToken cancellationToken = default,
+            IProgress<TextureAtlasPackProgress>? progress = null)
         {
             var reportPath = BuildReportPath(outputPath);
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(progress, "Loading source pack", item: Path.GetFileName(sourcePath));
             IPackFileContainer? output = null;
             BatchState? state = null;
             List<string> vmdRoots = [];
@@ -102,8 +122,10 @@ namespace Editors.KitbasherEditor.Services
                     PackFileContainerType.Normal,
                     sourcePath,
                     loadAsReadOnly: true);
+                cancellationToken.ThrowIfCancellationRequested();
 
-                vmdRoots = source.GetAllFiles().Keys
+                var sourcePaths = source.GetAllFiles().Keys.ToList();
+                vmdRoots = sourcePaths
                     .Where(x => Path.GetExtension(x).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                     .ToList();
@@ -111,7 +133,13 @@ namespace Editors.KitbasherEditor.Services
                 if (vmdRoots.Count == 0)
                     throw new InvalidOperationException("The selected pack contains no .variantmeshdefinition files.");
 
-                var originalReachable = CollectReachableAssetFiles(source, vmdRoots);
+                ReportProgress(progress, "Scanning source dependencies", item: $"{vmdRoots.Count} VMD root(s)");
+                var originalReachable = CollectReachableAssetFiles(
+                    source,
+                    vmdRoots,
+                    cancellationToken,
+                    progress,
+                    "Scanning source dependencies");
 
                 var outputName = Path.GetFileNameWithoutExtension(outputPath);
                 output = _packFileService.CreateNewPackFileContainer(
@@ -120,8 +148,21 @@ namespace Editors.KitbasherEditor.Services
                     PackFileCAType.MOD,
                     setEditablePack: false);
 
-                foreach (var path in source.GetAllFiles().Keys)
-                    _packFileService.CopyFileFromOtherPackFile(source, path, output);
+                for (var i = 0; i < sourcePaths.Count; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (i == 0 || i == sourcePaths.Count - 1 || i % 25 == 0)
+                    {
+                        ReportProgress(
+                            progress,
+                            "Copying source pack",
+                            i + 1,
+                            sourcePaths.Count,
+                            sourcePaths[i]);
+                    }
+
+                    _packFileService.CopyFileFromOtherPackFile(source, sourcePaths[i], output);
+                }
 
                 state = new BatchState(
                     source,
@@ -130,29 +171,56 @@ namespace Editors.KitbasherEditor.Services
                     outputPath,
                     reportPath,
                     atlasMeshesWithMissingTextures ?? false);
-                BuildWsUsageIndex(state);
+                BuildWsUsageIndex(state, cancellationToken, progress);
 
                 if (!atlasMeshesWithMissingTextures.HasValue)
                 {
-                    var missingTextures = FindMissingTextureDependencies(state, vmdRoots);
+                    var missingTextures = FindMissingTextureDependencies(
+                        state,
+                        vmdRoots,
+                        cancellationToken,
+                        progress);
                     if (missingTextures.Count != 0)
                     {
+                        ReportProgress(progress, "Waiting for missing-texture choice");
                         state.AtlasMeshesWithMissingTextures = _standardDialogs.ShowYesNoBox(
                             BuildMissingTexturePrompt(missingTextures),
                             "Texture Atlas Pack - Missing Textures") == ShowMessageBoxResult.OK;
                     }
                 }
 
-                foreach (var vmdPath in vmdRoots)
-                    ProcessVmd(state, vmdPath);
+                for (var i = 0; i < vmdRoots.Count; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    ProcessVmd(
+                        state,
+                        vmdRoots[i],
+                        i + 1,
+                        vmdRoots.Count,
+                        cancellationToken,
+                        progress);
+                }
 
-                SaveModifiedDocuments(state);
+                SaveModifiedDocuments(state, cancellationToken, progress);
 
-                var currentReachable = CollectReachableAssetFiles(output, vmdRoots);
-                PruneUnusedAssetFiles(state, originalReachable, currentReachable);
+                ReportProgress(progress, "Scanning rewritten dependencies");
+                var currentReachable = CollectReachableAssetFiles(
+                    output,
+                    vmdRoots,
+                    cancellationToken,
+                    progress,
+                    "Scanning rewritten dependencies");
+                PruneUnusedAssetFiles(
+                    state,
+                    originalReachable,
+                    currentReachable,
+                    cancellationToken,
+                    progress);
 
-                ValidateOutput(state, vmdRoots);
+                ValidateOutput(state, vmdRoots, cancellationToken, progress);
 
+                cancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(progress, "Saving output pack", item: Path.GetFileName(outputPath));
                 var game = GameInformationDatabase.GetGameById(GameTypeEnum.Warhammer3);
                 _packFileService.SavePackContainer(output, outputPath, false, game);
 
@@ -165,6 +233,10 @@ namespace Editors.KitbasherEditor.Services
                     state.RemovedFiles.Count,
                     GetEffectiveSkippedMeshCount(state),
                     reportPath);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -203,11 +275,28 @@ namespace Editors.KitbasherEditor.Services
             return Path.Combine(directory, stem + "_report.txt");
         }
 
-        private void BuildWsUsageIndex(BatchState state)
+        private void BuildWsUsageIndex(
+            BatchState state,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
-            foreach (var wsPath in state.Source.GetAllFiles().Keys
-                         .Where(x => Path.GetExtension(x).Equals(".wsmodel", StringComparison.OrdinalIgnoreCase)))
+            var wsPaths = state.Source.GetAllFiles().Keys
+                .Where(x => Path.GetExtension(x).Equals(".wsmodel", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            for (var wsIndex = 0; wsIndex < wsPaths.Count; wsIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var wsPath = wsPaths[wsIndex];
+                if (wsIndex == 0 || wsIndex == wsPaths.Count - 1 || wsIndex % 10 == 0)
+                {
+                    ReportProgress(
+                        progress,
+                        "Indexing WSModels",
+                        wsIndex + 1,
+                        wsPaths.Count,
+                        wsPath);
+                }
                 var doc = GetWsDocument(state, wsPath);
                 if (doc == null)
                     continue;
@@ -222,6 +311,7 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (XmlNode node in materialNodes)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!TryParseIndex(node, "lod_index", out var lodIndex) ||
                         !TryParseIndex(node, "part_index", out var partIndex))
                         continue;
@@ -241,16 +331,34 @@ namespace Editors.KitbasherEditor.Services
 
         private List<MissingTextureDependency> FindMissingTextureDependencies(
             BatchState state,
-            IReadOnlyList<string> vmdRoots)
+            IReadOnlyList<string> vmdRoots,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
             var reachableWsModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var vmdPath in vmdRoots)
-                reachableWsModels.UnionWith(CollectReachableWsModels(state.Source, vmdPath));
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                reachableWsModels.UnionWith(
+                    CollectReachableWsModels(state.Source, vmdPath, cancellationToken));
+            }
 
             var result = new List<MissingTextureDependency>();
+            var usagesList = state.Usages.ToList();
 
-            foreach (var (key, usages) in state.Usages)
+            for (var usageIndex = 0; usageIndex < usagesList.Count; usageIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (key, usages) = usagesList[usageIndex];
+                if (usageIndex == 0 || usageIndex == usagesList.Count - 1 || usageIndex % 10 == 0)
+                {
+                    ReportProgress(
+                        progress,
+                        "Checking texture dependencies",
+                        usageIndex + 1,
+                        usagesList.Count,
+                        key.ToString());
+                }
                 var reachableUsages = usages
                     .Where(x => reachableWsModels.Contains(x.WsModelPath))
                     .ToList();
@@ -348,13 +456,21 @@ namespace Editors.KitbasherEditor.Services
             return sb.ToString();
         }
 
-        private void ProcessVmd(BatchState state, string rootVmdPath)
+        private void ProcessVmd(
+            BatchState state,
+            string rootVmdPath,
+            int vmdIndex,
+            int vmdCount,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
-            var wsModels = CollectReachableWsModels(state.Source, rootVmdPath);
+            ReportProgress(progress, "Processing VMDs", vmdIndex, vmdCount, rootVmdPath);
+            var wsModels = CollectReachableWsModels(state.Source, rootVmdPath, cancellationToken);
             var candidates = new List<AtlasCandidate>();
 
             foreach (var wsPath in wsModels)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var doc = GetWsDocument(state, wsPath);
                 if (doc == null)
                     continue;
@@ -382,6 +498,12 @@ namespace Editors.KitbasherEditor.Services
                     }
 
                     var key = new MeshKey(geometryPath, lodIndex, partIndex);
+                    ReportProgress(
+                        progress,
+                        "Processing VMDs",
+                        vmdIndex,
+                        vmdCount,
+                        $"{rootVmdPath} — {key}");
                     if (state.ProcessedMeshes.Contains(key) ||
                         candidates.Any(x => x.Key == key))
                         continue;
@@ -425,8 +547,28 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            foreach (var batch in CreateBatches(state, rootVmdPath, candidates))
-                ProcessBatch(state, rootVmdPath, batch);
+            var batches = CreateBatches(
+                state,
+                rootVmdPath,
+                candidates,
+                cancellationToken,
+                progress);
+            for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(
+                    progress,
+                    "Building texture atlases",
+                    batchIndex + 1,
+                    batches.Count,
+                    $"{rootVmdPath} — batch {batchIndex + 1}");
+                ProcessBatch(
+                    state,
+                    rootVmdPath,
+                    batches[batchIndex],
+                    cancellationToken,
+                    progress);
+            }
         }
 
         private AtlasCandidate? TryCreateCandidate(
@@ -576,13 +718,23 @@ namespace Editors.KitbasherEditor.Services
         private static List<List<AtlasCandidate>> CreateBatches(
             BatchState state,
             string rootVmdPath,
-            List<AtlasCandidate> candidates)
+            List<AtlasCandidate> candidates,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
             var batches = new List<List<AtlasCandidate>>();
             var current = new List<AtlasCandidate>();
 
-            foreach (var candidate in candidates)
+            for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var candidate = candidates[candidateIndex];
+                ReportProgress(
+                    progress,
+                    "Planning atlas batches",
+                    candidateIndex + 1,
+                    candidates.Count,
+                    candidate.Key.ToString());
                 if (!CanCreatePlan([candidate], out var singleError))
                 {
                     RecordSkip(
@@ -662,8 +814,14 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private void ProcessBatch(BatchState state, string rootVmdPath, List<AtlasCandidate> candidates)
+        private void ProcessBatch(
+            BatchState state,
+            string rootVmdPath,
+            List<AtlasCandidate> candidates,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var sharedBatch = BuildSharedAtlasBatch(candidates);
             var plan = TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(sharedBatch.Sources));
             state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
@@ -672,8 +830,16 @@ namespace Editors.KitbasherEditor.Services
             var atlasStem = BuildAtlasStem(rootVmdPath, state.BatchIndex++);
             var generatedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var channel in AtlasChannels)
+            for (var channelIndex = 0; channelIndex < AtlasChannels.Length; channelIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var channel = AtlasChannels[channelIndex];
+                ReportProgress(
+                    progress,
+                    "Building texture atlases",
+                    channelIndex + 1,
+                    AtlasChannels.Length,
+                    $"{rootVmdPath} — {channel.Suffix}");
                 var textureBytes = new Dictionary<int, byte[]>();
                 var omitted = new HashSet<int>();
 
@@ -692,7 +858,18 @@ namespace Editors.KitbasherEditor.Services
                     plan,
                     textureBytes,
                     forceOpaqueAlphaSourceIds: null,
-                    omitted);
+                    omitted,
+                    cancellationToken,
+                    () =>
+                    {
+                        ReportProgress(
+                            progress,
+                            "Building texture atlases",
+                            channelIndex + 1,
+                            AtlasChannels.Length,
+                            $"{rootVmdPath} — {channel.Suffix}");
+                        cancellationToken.ThrowIfCancellationRequested();
+                    });
 
                 var fileName = $"{atlasStem}_{channel.Suffix}.dds";
                 var atlasPackFile = PngToDdsImporter.ImportRawMipChain(
@@ -707,8 +884,16 @@ namespace Editors.KitbasherEditor.Services
                 state.GeneratedTexturePaths.Add(atlasPath);
             }
 
-            foreach (var candidate in candidates)
+            for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var candidate = candidates[candidateIndex];
+                ReportProgress(
+                    progress,
+                    "Rewriting mesh UVs and materials",
+                    candidateIndex + 1,
+                    candidates.Count,
+                    candidate.Key.ToString());
                 var sourceId = sharedBatch.SourceIdByMesh[candidate.Key];
                 var placement = plan.Placements.Single(x => x.Id == sourceId);
 
@@ -757,10 +942,18 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private void SaveModifiedDocuments(BatchState state)
+        private void SaveModifiedDocuments(
+            BatchState state,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
+            var total = state.ModifiedRigids.Count + state.ModifiedWsModels.Count;
+            var current = 0;
+
             foreach (var rigidPath in state.ModifiedRigids)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(progress, "Writing modified assets", ++current, total, rigidPath);
                 var rmv = state.RigidModels[rigidPath];
                 rmv.RecalculateOffsets();
                 WriteFile(state.Output, rigidPath, ModelFactory.Create().Save(rmv));
@@ -768,6 +961,8 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var wsPath in state.ModifiedWsModels)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(progress, "Writing modified assets", ++current, total, wsPath);
                 var doc = state.WsDocuments[wsPath];
                 WriteFile(state.Output, wsPath, Encoding.UTF8.GetBytes(doc.OuterXml));
             }
@@ -776,8 +971,12 @@ namespace Editors.KitbasherEditor.Services
         private void PruneUnusedAssetFiles(
             BatchState state,
             HashSet<string> originalReachable,
-            HashSet<string> currentReachable)
+            HashSet<string> currentReachable,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(progress, "Pruning unused assets");
             var toRemove = new HashSet<string>(
                 originalReachable.Except(currentReachable, StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
@@ -792,10 +991,23 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            ProtectStillReferencedAssets(state.Output, toRemove);
+            ProtectStillReferencedAssets(
+                state.Output,
+                toRemove,
+                cancellationToken,
+                progress);
 
-            foreach (var path in toRemove.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            var removePaths = toRemove.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+            for (var removeIndex = 0; removeIndex < removePaths.Count; removeIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var path = removePaths[removeIndex];
+                ReportProgress(
+                    progress,
+                    "Pruning unused assets",
+                    removeIndex + 1,
+                    removePaths.Count,
+                    path);
                 var file = state.Output.FindFile(path);
                 if (file == null)
                     continue;
@@ -807,12 +1019,17 @@ namespace Editors.KitbasherEditor.Services
 
         private static void ProtectStillReferencedAssets(
             IPackFileContainer output,
-            HashSet<string> toRemove)
+            HashSet<string> toRemove,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
             if (toRemove.Count == 0)
                 return;
 
-            var reverseReferences = BuildReverseAssetReferences(output);
+            var reverseReferences = BuildReverseAssetReferences(
+                output,
+                cancellationToken,
+                progress);
 
             // Removing one candidate can make another candidate unsafe to remove. Iterate until
             // every remaining candidate is referenced only by other files that are also being
@@ -834,7 +1051,9 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static Dictionary<string, HashSet<string>> BuildReverseAssetReferences(
-            IPackFileContainer container)
+            IPackFileContainer container,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
             var reverse = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
@@ -858,8 +1077,21 @@ namespace Editors.KitbasherEditor.Services
                 referrers.Add(source);
             }
 
-            foreach (var (path, file) in container.GetAllFiles())
+            var allFiles = container.GetAllFiles().ToList();
+            for (var fileIndex = 0; fileIndex < allFiles.Count; fileIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (path, file) = allFiles[fileIndex];
+                if (fileIndex == 0 || fileIndex == allFiles.Count - 1 || fileIndex % 25 == 0)
+                {
+                    ReportProgress(
+                        progress,
+                        "Checking retained references",
+                        fileIndex + 1,
+                        allFiles.Count,
+                        path);
+                }
+
                 var extension = Path.GetExtension(path);
 
                 try
@@ -925,15 +1157,21 @@ namespace Editors.KitbasherEditor.Services
 
         private HashSet<string> CollectReachableAssetFiles(
             IPackFileContainer container,
-            IReadOnlyList<string> rootVmdPaths)
+            IReadOnlyList<string> rootVmdPaths,
+            CancellationToken cancellationToken = default,
+            IProgress<TextureAtlasPackProgress>? progress = null,
+            string phase = "Scanning dependencies")
         {
             var reachable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var vmdQueue = new Queue<string>(rootVmdPaths.Select(Normalize));
             var visitedVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            var processedVmdCount = 0;
             while (vmdQueue.Count > 0)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var vmdPath = vmdQueue.Dequeue();
+                ReportProgress(progress, phase, ++processedVmdCount, 0, vmdPath);
                 if (!visitedVmds.Add(vmdPath))
                     continue;
 
@@ -1006,7 +1244,10 @@ namespace Editors.KitbasherEditor.Services
             return reachable;
         }
 
-        private static HashSet<string> CollectReachableWsModels(IPackFileContainer container, string rootVmdPath)
+        private static HashSet<string> CollectReachableWsModels(
+            IPackFileContainer container,
+            string rootVmdPath,
+            CancellationToken cancellationToken = default)
         {
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var queue = new Queue<string>();
@@ -1015,6 +1256,7 @@ namespace Editors.KitbasherEditor.Services
 
             while (queue.Count > 0)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var vmdPath = queue.Dequeue();
                 if (!visited.Add(vmdPath))
                     continue;
@@ -1174,16 +1416,31 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private void ValidateOutput(BatchState state, IReadOnlyList<string> vmdRoots)
+        private void ValidateOutput(
+            BatchState state,
+            IReadOnlyList<string> vmdRoots,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(progress, "Validating output");
             var errors = new List<string>();
 
             ValidateUnchangedModelPathSet(state, ".variantmeshdefinition", errors);
             ValidateUnchangedModelPathSet(state, ".wsmodel", errors);
             ValidateUnchangedModelPathSet(state, ".rigid_model_v2", errors);
 
-            foreach (var rigidPath in state.ModifiedRigids.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            var validationRigids = state.ModifiedRigids.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+            for (var rigidIndex = 0; rigidIndex < validationRigids.Count; rigidIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rigidPath = validationRigids[rigidIndex];
+                ReportProgress(
+                    progress,
+                    "Validating modified rigids",
+                    rigidIndex + 1,
+                    validationRigids.Count,
+                    rigidPath);
                 var file = state.Output.FindFile(rigidPath);
                 if (file == null)
                 {
@@ -1243,8 +1500,19 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            foreach (var materialPath in state.GeneratedMaterialPaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            var validationMaterials = state.GeneratedMaterialPaths
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            for (var materialIndex = 0; materialIndex < validationMaterials.Count; materialIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var materialPath = validationMaterials[materialIndex];
+                ReportProgress(
+                    progress,
+                    "Validating atlas materials",
+                    materialIndex + 1,
+                    validationMaterials.Count,
+                    materialPath);
                 var file = state.Output.FindFile(materialPath);
                 if (file == null)
                 {
@@ -1680,6 +1948,20 @@ namespace Editors.KitbasherEditor.Services
             => string.IsNullOrWhiteSpace(path)
                 ? string.Empty
                 : path.Trim().Replace('/', '\\').Replace("\\\\", "\\").ToLowerInvariant();
+
+        public sealed record TextureAtlasPackProgress(
+            string Phase,
+            int Current = 0,
+            int Total = 0,
+            string? Item = null);
+
+        private static void ReportProgress(
+            IProgress<TextureAtlasPackProgress>? progress,
+            string phase,
+            int current = 0,
+            int total = 0,
+            string? item = null)
+            => progress?.Report(new TextureAtlasPackProgress(phase, current, total, item));
 
         public sealed record BatchResult(
             int VmdCount,
