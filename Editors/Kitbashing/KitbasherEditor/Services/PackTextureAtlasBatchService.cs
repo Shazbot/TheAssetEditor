@@ -345,6 +345,7 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static (List<string> ValidRoots, List<MalformedVmdEntry> MalformedRoots) ValidateVmdRoots(
+            BatchState state,
             IPackFileContainer source,
             IReadOnlyList<string> vmdPaths,
             CancellationToken cancellationToken,
@@ -373,7 +374,7 @@ namespace Editors.KitbasherEditor.Services
 
                 try
                 {
-                    _ = VariantMeshDefinitionLoader.Load(file);
+                    _ = GetVmd(state, source, path, file);
                     validRoots.Add(path);
                 }
                 catch (Exception ex) when (
@@ -2501,6 +2502,7 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private HashSet<string> CollectReachableAssetFiles(
+            BatchState state,
             IPackFileContainer container,
             IReadOnlyList<string> rootVmdPaths,
             CancellationToken cancellationToken = default,
@@ -2525,7 +2527,7 @@ namespace Editors.KitbasherEditor.Services
                     continue;
 
                 reachable.Add(vmdPath);
-                var vmd = VariantMeshDefinitionLoader.Load(vmdFile);
+                var vmd = GetVmd(state, container, vmdPath, vmdFile);
                 var modelRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var childVmdRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var directTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -2553,7 +2555,9 @@ namespace Editors.KitbasherEditor.Services
                     if (!Path.GetExtension(modelPath).Equals(".wsmodel", StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    var wsDoc = LoadXml(modelFile);
+                    var wsDoc = ReferenceEquals(container, state.Source)
+                        ? GetWsDocument(state, modelPath) ?? LoadXml(modelFile)
+                        : LoadXml(modelFile);
                     var geometryPath = Normalize(wsDoc.SelectSingleNode("/model/geometry")?.InnerText);
                     if (!string.IsNullOrWhiteSpace(geometryPath) && container.FindFile(geometryPath) != null)
                         reachable.Add(geometryPath);
@@ -2570,7 +2574,9 @@ namespace Editors.KitbasherEditor.Services
                             continue;
 
                         reachable.Add(materialPath);
-                        var materialDoc = LoadXml(materialFile);
+                        var materialDoc = ReferenceEquals(container, state.Source)
+                            ? GetMaterialDocument(state, materialPath, materialFile)
+                            : LoadXml(materialFile);
                         var textureNodes = materialDoc.SelectNodes("/material/textures/texture");
                         if (textureNodes == null)
                             continue;
@@ -2589,6 +2595,24 @@ namespace Editors.KitbasherEditor.Services
             return reachable;
         }
 
+        private static VariantMesh GetVmd(
+            BatchState state,
+            IPackFileContainer container,
+            string vmdPath,
+            PackFile? file = null)
+        {
+            vmdPath = Normalize(vmdPath);
+            if (state.VmdDocuments.TryGetValue(vmdPath, out var cached))
+                return cached;
+
+            file ??= container.FindFile(vmdPath)
+                ?? throw new FileNotFoundException($"VMD file could not be resolved: {vmdPath}");
+
+            var vmd = VariantMeshDefinitionLoader.Load(file);
+            state.VmdDocuments[vmdPath] = vmd;
+            return vmd;
+        }
+
         private static HashSet<string> GetReachableWsModels(
             BatchState state,
             string rootVmdPath,
@@ -2599,6 +2623,7 @@ namespace Editors.KitbasherEditor.Services
                 return cached;
 
             var reachable = CollectReachableWsModels(
+                state,
                 state.Source,
                 rootVmdPath,
                 cancellationToken);
@@ -2607,6 +2632,7 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static HashSet<string> CollectReachableWsModels(
+            BatchState state,
             IPackFileContainer container,
             string rootVmdPath,
             CancellationToken cancellationToken = default)
@@ -2627,7 +2653,7 @@ namespace Editors.KitbasherEditor.Services
                 if (file == null)
                     continue;
 
-                var vmd = VariantMeshDefinitionLoader.Load(file);
+                var vmd = GetVmd(state, container, vmdPath, file);
                 var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var children = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3614,6 +3640,7 @@ namespace Editors.KitbasherEditor.Services
             public string SourcePath { get; }
             public string OutputPath { get; }
             public string ReportPath { get; }
+            public Dictionary<string, VariantMesh> VmdDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
