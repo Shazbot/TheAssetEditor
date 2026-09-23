@@ -949,12 +949,14 @@ namespace Editors.KitbasherEditor.Services
             if (state.TextureInspections.TryGetValue(texturePath, out var cached))
                 return cached;
 
-            var bytes = file.DataSource.ReadData();
-            var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
+            var dimensions = TextureAtlasBuilder.GetDimensions(file.DataSource.PeekData(20));
             var constantColor = default(TextureAtlasConstantColor);
-            var isUniformConstant =
-                IsKnownConstantTexturePath(texturePath) &&
-                TextureAtlasBuilder.TryGetUniformColor(bytes, out constantColor);
+            var isUniformConstant = false;
+            if (IsKnownConstantTexturePath(texturePath))
+            {
+                var bytes = file.DataSource.ReadData();
+                isUniformConstant = TextureAtlasBuilder.TryGetUniformColor(bytes, out constantColor);
+            }
 
             var inspection = new TextureInspection(
                 dimensions.Width,
