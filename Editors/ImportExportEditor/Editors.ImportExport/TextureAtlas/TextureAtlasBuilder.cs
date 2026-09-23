@@ -210,8 +210,16 @@ namespace Editors.ImportExport.TextureAtlas
             IReadOnlySet<int>? omittedSourceIds = null,
             CancellationToken cancellationToken = default,
             Action? heartbeat = null,
-            IReadOnlyDictionary<int, TextureAtlasConstantColor>? constantSources = null)
+            IReadOnlyDictionary<int, TextureAtlasConstantColor>? constantSources = null,
+            int? outputWidth = null,
+            int? outputHeight = null)
         {
+            var atlasWidth = outputWidth ?? plan.Width;
+            var atlasHeight = outputHeight ?? plan.Height;
+            if (atlasWidth <= 0)
+                throw new ArgumentOutOfRangeException(nameof(outputWidth));
+            if (atlasHeight <= 0)
+                throw new ArgumentOutOfRangeException(nameof(outputHeight));
             void Pulse()
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -237,8 +245,8 @@ namespace Editors.ImportExport.TextureAtlas
                 }
 
                 var mipPngs = new List<byte[]>();
-                var mipWidth = plan.Width;
-                var mipHeight = plan.Height;
+                var mipWidth = atlasWidth;
+                var mipHeight = atlasHeight;
                 var mipLevel = 0;
 
                 while (true)
@@ -264,7 +272,13 @@ namespace Editors.ImportExport.TextureAtlas
                         {
                             if (!decodedSources.TryGetValue(placement.Id, out source))
                                 throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
-                            sourceMip = GetMipLevelForLayoutMip(source, placement, mipLevel);
+                            sourceMip = GetMipLevelForLayoutMip(
+                                source,
+                                placement,
+                                plan,
+                                atlasWidth,
+                                atlasHeight,
+                                mipLevel);
                         }
 
                         var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
@@ -328,7 +342,13 @@ namespace Editors.ImportExport.TextureAtlas
                         {
                             if (!decodedSources.TryGetValue(placement.Id, out source))
                                 throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
-                            sourceMip = GetMipLevelForLayoutMip(source, placement, mipLevel);
+                            sourceMip = GetMipLevelForLayoutMip(
+                                source,
+                                placement,
+                                plan,
+                                atlasWidth,
+                                atlasHeight,
+                                mipLevel);
                         }
 
                         var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
@@ -401,20 +421,71 @@ namespace Editors.ImportExport.TextureAtlas
             }
         }
 
+        public static (int Width, int Height) CalculateOutputDimensions(
+            TextureAtlasPlan plan,
+            IReadOnlyDictionary<int, (int Width, int Height)> sourceDimensions,
+            int maxAtlasSize = DefaultMaxAtlasSize)
+        {
+            if (maxAtlasSize <= 0)
+                throw new ArgumentOutOfRangeException(nameof(maxAtlasSize));
+            if (sourceDimensions.Count == 0)
+                return (plan.Width, plan.Height);
+
+            double requiredScaleX = 0;
+            double requiredScaleY = 0;
+
+            foreach (var placement in plan.Placements)
+            {
+                if (!sourceDimensions.TryGetValue(placement.Id, out var dimensions))
+                    continue;
+                if (dimensions.Width <= 0 || dimensions.Height <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(sourceDimensions));
+
+                requiredScaleX = Math.Max(
+                    requiredScaleX,
+                    (double)dimensions.Width / placement.SourceWidth);
+                requiredScaleY = Math.Max(
+                    requiredScaleY,
+                    (double)dimensions.Height / placement.SourceHeight);
+            }
+
+            if (requiredScaleX <= 0 || requiredScaleY <= 0)
+                return (plan.Width, plan.Height);
+
+            var width = NextPowerOfTwo(Math.Max(
+                1,
+                checked((int)Math.Ceiling(plan.Width * requiredScaleX))));
+            var height = NextPowerOfTwo(Math.Max(
+                1,
+                checked((int)Math.Ceiling(plan.Height * requiredScaleY))));
+
+            if (width > maxAtlasSize || height > maxAtlasSize)
+            {
+                throw new InvalidOperationException(
+                    $"Channel atlas requires {width}x{height}, exceeding the {maxAtlasSize}x{maxAtlasSize} atlas limit.");
+            }
+
+            return (width, height);
+        }
+
         private static MipLevelInfo GetMipLevelForLayoutMip(
             IImage source,
             TextureAtlasPlacement placement,
+            TextureAtlasPlan plan,
+            int atlasWidth,
+            int atlasHeight,
             int atlasMipLevel)
         {
             if (atlasMipLevel <= 0)
                 return GetMipLevel(source, 0);
 
-            // A shared placement is sized for the highest-resolution texture channel used by
-            // that mesh. Lower-resolution channels therefore occupy the same normalized UV
-            // rectangle but need their authored mip chain delayed until the atlas rectangle has
-            // shrunk to roughly the source texture's native texel density.
-            var scaleX = (double)placement.SourceWidth / source.Width;
-            var scaleY = (double)placement.SourceHeight / source.Height;
+            // The shared UV plan is expressed in primary-texture pixels, while each material
+            // channel may have a different physical atlas size. Delay authored source mips only
+            // when this channel's physical rectangle is larger than the source texture itself.
+            var destinationWidth = placement.SourceWidth * (double)atlasWidth / plan.Width;
+            var destinationHeight = placement.SourceHeight * (double)atlasHeight / plan.Height;
+            var scaleX = destinationWidth / source.Width;
+            var scaleY = destinationHeight / source.Height;
             var layoutScale = Math.Max(1.0, Math.Max(scaleX, scaleY));
             var delayedMipLevels = (int)Math.Ceiling(Math.Log2(layoutScale));
             var sourceMipLevel = Math.Max(0, atlasMipLevel - delayedMipLevels);
