@@ -743,9 +743,9 @@ namespace Editors.KitbasherEditor.Services
             var resolvedChannels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var constantChannels = new Dictionary<string, TextureAtlasConstantColor>(
                 StringComparer.OrdinalIgnoreCase);
+            var channelDimensions = new Dictionary<string, (int Width, int Height)>(
+                StringComparer.OrdinalIgnoreCase);
 
-            int? layoutWidth = null;
-            int? layoutHeight = null;
             int? primaryWidth = null;
             int? primaryHeight = null;
 
@@ -801,12 +801,10 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    // All material channels share normalized UV0, but they do not have to share
-                    // a pixel resolution. Size this mesh's atlas rectangle for its most detailed
-                    // resolved channel so no channel has to be downsampled just to participate.
-                    layoutWidth = Math.Max(layoutWidth ?? 0, inspection.Width);
-                    layoutHeight = Math.Max(layoutHeight ?? 0, inspection.Height);
-
+                    // The shared placement is expressed in primary BaseColour pixels. Record
+                    // each secondary channel's native resolution separately so its physical
+                    // atlas can be sized independently without changing the normalized UVs.
+                    channelDimensions[channel.Slot] = (inspection.Width, inspection.Height);
                     resolvedChannels.Add(channel.Slot);
                 }
                 catch (Exception ex)
@@ -823,9 +821,9 @@ namespace Editors.KitbasherEditor.Services
                 return null;
             }
 
-            var width = layoutWidth ?? primaryWidth
+            var width = primaryWidth
                 ?? throw new InvalidOperationException("Base-colour dimensions were not resolved.");
-            var height = layoutHeight ?? primaryHeight
+            var height = primaryHeight
                 ?? throw new InvalidOperationException("Base-colour dimensions were not resolved.");
 
             UvBounds bounds;
@@ -850,7 +848,8 @@ namespace Editors.KitbasherEditor.Services
                 height,
                 bounds,
                 resolvedChannels,
-                constantChannels);
+                constantChannels,
+                channelDimensions);
         }
 
         private static TextureInspection GetTextureInspection(
@@ -1051,17 +1050,39 @@ namespace Editors.KitbasherEditor.Services
             var mergedBatch = BuildSharedAtlasBatch(candidates, mergeCompatibleCrops: true);
             try
             {
-                return (
-                    mergedBatch,
-                    TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(mergedBatch.Sources)));
+                var mergedPlan = TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(mergedBatch.Sources));
+                ValidateChannelAtlasDimensions(mergedBatch, mergedPlan);
+                return (mergedBatch, mergedPlan);
             }
             catch (Exception ex) when (
                 ex is InvalidOperationException or ArgumentException or OverflowException)
             {
                 var exactBatch = BuildSharedAtlasBatch(candidates, mergeCompatibleCrops: false);
-                return (
-                    exactBatch,
-                    TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(exactBatch.Sources)));
+                var exactPlan = TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(exactBatch.Sources));
+                ValidateChannelAtlasDimensions(exactBatch, exactPlan);
+                return (exactBatch, exactPlan);
+            }
+        }
+
+        private static void ValidateChannelAtlasDimensions(
+            SharedAtlasBatch batch,
+            TextureAtlasPlan plan)
+        {
+            foreach (var channel in AtlasChannels)
+            {
+                var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
+                foreach (var source in batch.Sources)
+                {
+                    if (source.Representative.ChannelDimensions.TryGetValue(
+                            channel.Slot,
+                            out var dimensions))
+                    {
+                        sourceDimensions[source.Id] = dimensions;
+                    }
+                }
+
+                if (sourceDimensions.Count > 0)
+                    _ = TextureAtlasBuilder.CalculateOutputDimensions(plan, sourceDimensions);
             }
         }
 
@@ -1156,6 +1177,22 @@ namespace Editors.KitbasherEditor.Services
                 if (textureBytes.Count == 0 && constantSources.Count == 0)
                     continue;
 
+                var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
+                foreach (var source in sharedBatch.Sources)
+                {
+                    if (textureBytes.ContainsKey(source.Id) &&
+                        source.Representative.ChannelDimensions.TryGetValue(
+                            channel.Slot,
+                            out var dimensions))
+                    {
+                        sourceDimensions[source.Id] = dimensions;
+                    }
+                }
+
+                var outputDimensions = sourceDimensions.Count > 0
+                    ? TextureAtlasBuilder.CalculateOutputDimensions(plan, sourceDimensions)
+                    : (plan.Width, plan.Height);
+
                 var mipPngs = TextureAtlasBuilder.BuildMipPngs(
                     plan,
                     textureBytes,
@@ -1172,7 +1209,9 @@ namespace Editors.KitbasherEditor.Services
                             $"{progressScope} — {channel.Suffix}");
                         cancellationToken.ThrowIfCancellationRequested();
                     },
-                    constantSources: constantSources);
+                    constantSources: constantSources,
+                    outputWidth: outputDimensions.Width,
+                    outputHeight: outputDimensions.Height);
 
                 var fileName = $"{atlasStem}_{channel.Suffix}.dds";
                 var atlasPackFile = PngToDdsImporter.ImportRawMipChain(
@@ -3369,7 +3408,8 @@ namespace Editors.KitbasherEditor.Services
             int Height,
             UvBounds Bounds,
             HashSet<string> ResolvedChannels,
-            Dictionary<string, TextureAtlasConstantColor> ConstantChannels);
+            Dictionary<string, TextureAtlasConstantColor> ConstantChannels,
+            Dictionary<string, (int Width, int Height)> ChannelDimensions);
 
         private sealed record SharedAtlasBatch(
             List<SharedAtlasSource> Sources,
