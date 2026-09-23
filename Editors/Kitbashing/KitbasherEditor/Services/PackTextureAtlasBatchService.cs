@@ -1846,7 +1846,6 @@ namespace Editors.KitbasherEditor.Services
 
                 while (tasks.Any(task => !task.IsCompleted))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
                     var incomplete = tasks
                         .Where(task => !task.IsCompleted)
                         .Cast<Task>()
@@ -1860,8 +1859,15 @@ namespace Editors.KitbasherEditor.Services
                         "Building texture atlases",
                         completedChannels,
                         channelWorkItems.Count,
-                        $"{progressScope} — {completedChannels}/{channelWorkItems.Count} channel(s) complete");
+                        cancellationToken.IsCancellationRequested
+                            ? $"{progressScope} — waiting for active channel worker(s) to stop"
+                            : $"{progressScope} — {completedChannels}/{channelWorkItems.Count} channel(s) complete");
                 }
+
+                // Do not abandon compression workers while Process() unwinds and unloads the
+                // temporary output container. BuildMipPixels observes this token cooperatively;
+                // DirectXTex compression itself is allowed to finish before cancellation escapes.
+                cancellationToken.ThrowIfCancellationRequested();
 
                 foreach (var task in tasks)
                 {
@@ -2696,7 +2702,10 @@ namespace Editors.KitbasherEditor.Services
                 // ValidateOutput reloads every rewritten rigid after all replacements are
                 // committed, so doing ModelFactory.Save's immediate round-trip load here would
                 // validate the same bytes twice.
-                var data = ModelFactory.Create().Save(rmv, validateByReloading: false);
+                var data = ModelFactory.Create().Save(
+                    rmv,
+                    validateByReloading: false,
+                    logProgress: false);
                 replacements.Add(CreateReplacementEntry(rigidPath, data));
             }
             AddPhaseDuration(state, "Serialize modified rigids", serializeStopwatch.Elapsed);
