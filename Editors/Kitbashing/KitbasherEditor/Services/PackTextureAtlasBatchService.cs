@@ -1111,16 +1111,35 @@ namespace Editors.KitbasherEditor.Services
 
             var bestSplitIndex = -1;
             var bestCombinedPixelCost = parentPixelCost;
+            var validSplitIndices = new List<int>();
 
             for (var splitIndex = 2; splitIndex <= batch.Count - 2; splitIndex++)
             {
                 // Keep identical source/crop identities together. Splitting inside one of these
                 // groups only duplicates an atlas placement and cannot improve packing.
-                if (GetAtlasPlanningSourceIdentity(batch[splitIndex - 1]) ==
+                if (GetAtlasPlanningSourceIdentity(batch[splitIndex - 1]) !=
                     GetAtlasPlanningSourceIdentity(batch[splitIndex]))
                 {
-                    continue;
+                    validSplitIndices.Add(splitIndex);
                 }
+            }
+
+            const int maxSplitEvaluations = 32;
+            IEnumerable<int> splitIndices = validSplitIndices;
+            if (validSplitIndices.Count > maxSplitEvaluations)
+            {
+                // This is only an optional size optimization. Exhaustively rebuilding two atlas
+                // plans for every possible boundary becomes quadratic on very large packs, so
+                // sample the ordered boundary set evenly and keep conversion time bounded.
+                splitIndices = Enumerable.Range(0, maxSplitEvaluations)
+                    .Select(i => validSplitIndices[
+                        i * (validSplitIndices.Count - 1) / (maxSplitEvaluations - 1)])
+                    .Distinct();
+            }
+
+            foreach (var splitIndex in splitIndices)
+            {
+                state.AtlasPixelAreaSplitEvaluations++;
 
                 var left = batch.Take(splitIndex).ToList();
                 var right = batch.Skip(splitIndex).ToList();
@@ -3092,6 +3111,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
             sb.AppendLine($"Atlas pixel-area optimized splits: {state.AtlasPixelAreaOptimizedSplits}");
+            sb.AppendLine($"Atlas pixel-area split evaluations: {state.AtlasPixelAreaSplitEvaluations}");
             if (state.ShareAtlasesAcrossVmdsEnabled)
             {
                 sb.AppendLine($"Pack-wide atlas candidates: {state.PackWideCandidateCount}");
@@ -3614,6 +3634,7 @@ namespace Editors.KitbasherEditor.Services
             public int PackWideCandidateCount { get; set; }
             public int AtlasBatchCount { get; set; }
             public int AtlasPixelAreaOptimizedSplits { get; set; }
+            public int AtlasPixelAreaSplitEvaluations { get; set; }
             public int CrossVmdSharedAtlasBatches { get; set; }
             public int CrossVmdSharedAtlasPlacements { get; set; }
             public int CrossVmdMaterialReuses { get; set; }
