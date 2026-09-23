@@ -562,7 +562,7 @@ namespace Editors.KitbasherEditor.Services
                 progress);
         }
 
-        private static void ProcessAtlasBatches(
+        private void ProcessAtlasBatches(
             BatchState state,
             string atlasScopeKey,
             string progressScope,
@@ -580,10 +580,13 @@ namespace Editors.KitbasherEditor.Services
                     batches.Count,
                     $"{progressScope} — batch {batchIndex + 1}");
 
-                state.PendingAtlasBatches.Add(new PendingAtlasBatch(
+                ProcessBatch(
+                    state,
                     atlasScopeKey,
                     progressScope,
-                    batches[batchIndex]));
+                    batches[batchIndex],
+                    cancellationToken,
+                    progress);
             }
         }
 
@@ -862,8 +865,8 @@ namespace Editors.KitbasherEditor.Services
 
         private static List<List<AtlasCandidate>> CreateBatches(
             BatchState state,
-            string rootVmdPath,
             List<AtlasCandidate> candidates,
+            bool packWide,
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
@@ -884,7 +887,7 @@ namespace Editors.KitbasherEditor.Services
                 {
                     RecordSkip(
                         state,
-                        rootVmdPath,
+                        candidate.RootVmdPath,
                         candidate.Key,
                         candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
                         $"Atlas planner rejected this mesh: {singleError}");
@@ -913,7 +916,7 @@ namespace Editors.KitbasherEditor.Services
                     var orphan = current[0];
                     RecordSkip(
                         state,
-                        rootVmdPath,
+                        orphan.RootVmdPath,
                         orphan.Key,
                         orphan.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
                         "Could not form a compatible multi-mesh atlas before the atlas size/layout limit was reached.");
@@ -980,7 +983,8 @@ namespace Editors.KitbasherEditor.Services
 
         private void ProcessBatch(
             BatchState state,
-            string rootVmdPath,
+            string atlasScopeKey,
+            string progressScope,
             List<AtlasCandidate> candidates,
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
@@ -992,7 +996,26 @@ namespace Editors.KitbasherEditor.Services
             state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
             state.AtlasPlacementsReused += candidates.Count - sharedBatch.Sources.Count;
 
-            var atlasStem = BuildAtlasStem(rootVmdPath, state.BatchIndex++);
+            state.AtlasBatchCount++;
+            if (state.ShareAtlasesAcrossVmdsEnabled &&
+                candidates.Select(x => x.RootVmdPath).Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any())
+            {
+                state.CrossVmdSharedAtlasBatches++;
+            }
+
+            foreach (var sourceGroup in candidates.GroupBy(x => sharedBatch.SourceIdByMesh[x.Key]))
+            {
+                if (sourceGroup
+                    .Select(x => x.RootVmdPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Skip(1)
+                    .Any())
+                {
+                    state.CrossVmdSharedAtlasPlacements++;
+                }
+            }
+
+            var atlasStem = BuildAtlasStem(atlasScopeKey, state.BatchIndex++);
             var generatedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             for (var channelIndex = 0; channelIndex < AtlasChannels.Length; channelIndex++)
@@ -1004,7 +1027,7 @@ namespace Editors.KitbasherEditor.Services
                     "Building texture atlases",
                     channelIndex + 1,
                     AtlasChannels.Length,
-                    $"{rootVmdPath} — {channel.Suffix}");
+                    $"{progressScope} — {channel.Suffix}");
                 var textureBytes = new Dictionary<int, byte[]>();
                 var constantSources = new Dictionary<int, TextureAtlasConstantColor>();
                 var omitted = new HashSet<int>();
@@ -1037,7 +1060,7 @@ namespace Editors.KitbasherEditor.Services
                             "Building texture atlases",
                             channelIndex + 1,
                             AtlasChannels.Length,
-                            $"{rootVmdPath} — {channel.Suffix}");
+                            $"{progressScope} — {channel.Suffix}");
                         cancellationToken.ThrowIfCancellationRequested();
                     },
                     constantSources: constantSources);
@@ -1101,7 +1124,13 @@ namespace Editors.KitbasherEditor.Services
                     var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
                     WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
                     state.GeneratedMaterialPaths.Add(newMaterialPath);
-                    generatedMaterial = new GeneratedMaterialEntry(newMaterialPath, renderingIdentity);
+                    generatedMaterial = new GeneratedMaterialEntry(
+                        newMaterialPath,
+                        renderingIdentity,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            candidate.RootVmdPath
+                        });
                     state.GeneratedMaterialByContentHash.Add(materialContentHash, generatedMaterial);
                 }
                 else if (!generatedMaterial.RenderingIdentity.Equals(renderingIdentity, StringComparison.Ordinal))
@@ -1111,17 +1140,30 @@ namespace Editors.KitbasherEditor.Services
                     var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
                     WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
                     state.GeneratedMaterialPaths.Add(newMaterialPath);
-                    generatedMaterial = new GeneratedMaterialEntry(newMaterialPath, renderingIdentity);
+                    generatedMaterial = new GeneratedMaterialEntry(
+                        newMaterialPath,
+                        renderingIdentity,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            candidate.RootVmdPath
+                        });
                 }
                 else
                 {
                     state.GeneratedMaterialReuses++;
+                    if (!generatedMaterial.RootVmdPaths.Contains(candidate.RootVmdPath) &&
+                        generatedMaterial.RootVmdPaths.Count != 0)
+                    {
+                        state.CrossVmdMaterialReuses++;
+                    }
+
+                    generatedMaterial.RootVmdPaths.Add(candidate.RootVmdPath);
                 }
 
                 var resolvedMaterialPath = generatedMaterial.Path;
 
                 state.AtlasedMeshes.Add(new AtlasedMeshReportEntry(
-                    rootVmdPath,
+                    candidate.RootVmdPath,
                     candidate.Key,
                     candidate.Usages.Select(x => x.WsModelPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                     candidate.MaterialPath,
@@ -2992,10 +3034,15 @@ namespace Editors.KitbasherEditor.Services
             return attribute != null && int.TryParse(attribute.Value, out value);
         }
 
-        private static string BuildAtlasStem(string rootVmdPath, int batchIndex)
+        private static string BuildAtlasStem(string atlasScopeKey, int batchIndex)
         {
-            var stem = SafeName(Path.GetFileNameWithoutExtension(rootVmdPath));
-            var hash = StableHash(Normalize(rootVmdPath));
+            const string packPrefix = "pack:";
+            var isPackWide = atlasScopeKey.StartsWith(packPrefix, StringComparison.OrdinalIgnoreCase);
+            var stemSource = isPackWide
+                ? atlasScopeKey[packPrefix.Length..]
+                : Path.GetFileNameWithoutExtension(atlasScopeKey);
+            var stem = SafeName(stemSource);
+            var hash = StableHash(Normalize(atlasScopeKey));
             return $"{stem}_{hash}_atlas_{batchIndex:D3}";
         }
 
@@ -3097,6 +3144,12 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> AllowedMissingTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public bool AtlasMeshesWithMissingTextures { get; set; }
             public bool MergeCompatibleMeshesEnabled { get; }
+            public bool ShareAtlasesAcrossVmdsEnabled { get; }
+            public int PackWideCandidateCount { get; set; }
+            public int AtlasBatchCount { get; set; }
+            public int CrossVmdSharedAtlasBatches { get; set; }
+            public int CrossVmdSharedAtlasPlacements { get; set; }
+            public int CrossVmdMaterialReuses { get; set; }
             public int AtlasPlacementsGenerated { get; set; }
             public int AtlasPlacementsReused { get; set; }
             public int MeshPartsBeforeMerging { get; set; }
@@ -3120,7 +3173,8 @@ namespace Editors.KitbasherEditor.Services
                 string outputPath,
                 string reportPath,
                 bool atlasMeshesWithMissingTextures,
-                bool mergeCompatibleMeshesEnabled)
+                bool mergeCompatibleMeshesEnabled,
+                bool shareAtlasesAcrossVmdsEnabled)
             {
                 Source = source;
                 Output = output;
@@ -3129,6 +3183,7 @@ namespace Editors.KitbasherEditor.Services
                 ReportPath = reportPath;
                 AtlasMeshesWithMissingTextures = atlasMeshesWithMissingTextures;
                 MergeCompatibleMeshesEnabled = mergeCompatibleMeshesEnabled;
+                ShareAtlasesAcrossVmdsEnabled = shareAtlasesAcrossVmdsEnabled;
             }
         }
 
@@ -3164,7 +3219,8 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record GeneratedMaterialEntry(
             string Path,
-            string RenderingIdentity);
+            string RenderingIdentity,
+            HashSet<string> RootVmdPaths);
 
         private sealed record MissingTextureDependency(
             MeshKey Key,
@@ -3178,6 +3234,7 @@ namespace Editors.KitbasherEditor.Services
             string MaterialPath);
 
         private sealed record AtlasCandidate(
+            string RootVmdPath,
             MeshKey Key,
             RmvModel Model,
             List<WsUsage> Usages,
