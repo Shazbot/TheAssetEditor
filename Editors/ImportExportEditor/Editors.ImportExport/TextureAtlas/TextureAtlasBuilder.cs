@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
@@ -649,8 +650,20 @@ namespace Editors.ImportExport.TextureAtlas
 
         public static (int Width, int Height) GetDimensions(byte[] ddsBytes)
         {
-            using var bitmap = LoadBitmap(ddsBytes);
-            return (bitmap.Width, bitmap.Height);
+            // DDS dimensions live in the fixed header. Reading them directly avoids decoding
+            // the full BC texture merely to discover width/height during pack planning.
+            if (ddsBytes.Length < 20 ||
+                BinaryPrimitives.ReadUInt32LittleEndian(ddsBytes.AsSpan(0, 4)) != 0x20534444)
+            {
+                throw new InvalidDataException("Texture is not a valid DDS file.");
+            }
+
+            var height = BinaryPrimitives.ReadInt32LittleEndian(ddsBytes.AsSpan(12, 4));
+            var width = BinaryPrimitives.ReadInt32LittleEndian(ddsBytes.AsSpan(16, 4));
+            if (width <= 0 || height <= 0)
+                throw new InvalidDataException($"DDS has invalid dimensions {width}x{height}.");
+
+            return (width, height);
         }
 
         public static bool TryGetUniformColor(
