@@ -941,7 +941,8 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var materialXml = clonedMaterial.OuterXml;
-                var materialContentHash = ContentHash(materialXml);
+                var renderingIdentity = GetMaterialRenderingIdentity(clonedMaterial);
+                var materialContentHash = ContentHash(renderingIdentity);
                 if (!state.GeneratedMaterialByContentHash.TryGetValue(
                         materialContentHash,
                         out var generatedMaterial))
@@ -949,17 +950,17 @@ namespace Editors.KitbasherEditor.Services
                     var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
                     WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
                     state.GeneratedMaterialPaths.Add(newMaterialPath);
-                    generatedMaterial = new GeneratedMaterialEntry(newMaterialPath, materialXml);
+                    generatedMaterial = new GeneratedMaterialEntry(newMaterialPath, renderingIdentity);
                     state.GeneratedMaterialByContentHash.Add(materialContentHash, generatedMaterial);
                 }
-                else if (!generatedMaterial.Xml.Equals(materialXml, StringComparison.Ordinal))
+                else if (!generatedMaterial.RenderingIdentity.Equals(renderingIdentity, StringComparison.Ordinal))
                 {
-                    // The hash is only an index. Exact XML equality remains the final
-                    // guard so even a theoretical SHA-256 collision cannot share materials.
+                    // The hash is only an index. Exact rendering-identity equality remains
+                    // the final guard so even a theoretical SHA-256 collision cannot share materials.
                     var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
                     WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
                     state.GeneratedMaterialPaths.Add(newMaterialPath);
-                    generatedMaterial = new GeneratedMaterialEntry(newMaterialPath, materialXml);
+                    generatedMaterial = new GeneratedMaterialEntry(newMaterialPath, renderingIdentity);
                 }
                 else
                 {
@@ -2105,6 +2106,19 @@ namespace Editors.KitbasherEditor.Services
             return Convert.ToHexString(bytes);
         }
 
+        private static string GetMaterialRenderingIdentity(XmlDocument material)
+        {
+            var normalized = new XmlDocument();
+            normalized.LoadXml(material.OuterXml);
+
+            // The material name is descriptive identity, not render state. Keeping it in the
+            // dedupe signature prevents otherwise-identical atlas materials from being shared.
+            var nameNode = normalized.SelectSingleNode("/material/name");
+            nameNode?.ParentNode?.RemoveChild(nameNode);
+
+            return normalized.OuterXml;
+        }
+
         private static bool IsTexturePlaceholder(string? path)
             => Normalize(path).Equals("mask_path", StringComparison.OrdinalIgnoreCase);
 
@@ -2181,7 +2195,7 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record GeneratedMaterialEntry(
             string Path,
-            string Xml);
+            string RenderingIdentity);
 
         private sealed record MissingTextureDependency(
             MeshKey Key,
