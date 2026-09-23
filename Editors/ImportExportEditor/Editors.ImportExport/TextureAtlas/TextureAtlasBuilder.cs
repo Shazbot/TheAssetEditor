@@ -196,13 +196,22 @@ namespace Editors.ImportExport.TextureAtlas
             TextureAtlasPlan plan,
             IReadOnlyDictionary<int, byte[]> ddsSources,
             IReadOnlySet<int>? forceOpaqueAlphaSourceIds = null,
-            IReadOnlySet<int>? omittedSourceIds = null)
+            IReadOnlySet<int>? omittedSourceIds = null,
+            CancellationToken cancellationToken = default,
+            Action? heartbeat = null)
         {
+            void Pulse()
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                heartbeat?.Invoke();
+            }
+
             var decodedSources = new Dictionary<int, IImage>();
             try
             {
                 foreach (var (id, ddsBytes) in ddsSources)
                 {
+                    Pulse();
                     using var stream = new MemoryStream(ddsBytes);
                     var image = Pfimage.FromStream(stream);
                     if (image.Format != PfimImageFormat.Rgba32)
@@ -222,6 +231,7 @@ namespace Editors.ImportExport.TextureAtlas
 
                 while (true)
                 {
+                    Pulse();
                     var atlasPixels = new byte[checked(mipWidth * mipHeight * 4)];
                     var coreOccupancy = new bool[checked(mipWidth * mipHeight)];
 
@@ -229,6 +239,7 @@ namespace Editors.ImportExport.TextureAtlas
                     // real texels when placements converge at lower mip levels.
                     foreach (var placement in plan.Placements)
                     {
+                        Pulse();
                         if (omittedSourceIds?.Contains(placement.Id) == true)
                             continue;
                         if (!decodedSources.TryGetValue(placement.Id, out var source))
@@ -269,6 +280,7 @@ namespace Editors.ImportExport.TextureAtlas
                     // into the material.
                     foreach (var placement in plan.Placements)
                     {
+                        Pulse();
                         if (omittedSourceIds?.Contains(placement.Id) == true)
                             continue;
                         if (!decodedSources.TryGetValue(placement.Id, out var source))
