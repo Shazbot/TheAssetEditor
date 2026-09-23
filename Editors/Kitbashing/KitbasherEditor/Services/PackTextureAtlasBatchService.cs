@@ -638,39 +638,28 @@ namespace Editors.KitbasherEditor.Services
                 return null;
             }
 
-            var primaryFile = FindForRead(state, primaryPath);
-            if (primaryFile == null)
-            {
-                skipReason = $"Base-colour texture could not be resolved: {primaryPath}";
-                return null;
-            }
-
-            byte[] primaryBytes;
-            int width;
-            int height;
-            try
-            {
-                primaryBytes = primaryFile.DataSource.ReadData();
-                (width, height) = TextureAtlasBuilder.GetDimensions(primaryBytes);
-            }
-            catch (Exception ex)
-            {
-                skipReason = $"Base-colour texture is not a usable DDS: {primaryPath} ({ex.Message})";
-                return null;
-            }
-
-            var channelBytes = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["t_xml_base_colour"] = primaryBytes
-            };
+            var channelBytes = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
             var constantChannels = new Dictionary<string, TextureAtlasConstantColor>(
                 StringComparer.OrdinalIgnoreCase);
 
-            foreach (var channel in AtlasChannels.Skip(1))
+            int? layoutWidth = null;
+            int? layoutHeight = null;
+            int? primaryWidth = null;
+            int? primaryHeight = null;
+
+            foreach (var channel in AtlasChannels)
             {
                 var path = GetTexturePath(materialDoc, channel.Slot);
                 if (string.IsNullOrWhiteSpace(path))
+                {
+                    if (channel.Slot.Equals("t_xml_base_colour", StringComparison.OrdinalIgnoreCase))
+                    {
+                        skipReason = "Material has no t_xml_base_colour texture.";
+                        return null;
+                    }
+
                     continue;
+                }
 
                 if (IsTexturePlaceholder(path))
                     continue;
@@ -678,6 +667,12 @@ namespace Editors.KitbasherEditor.Services
                 var file = FindForRead(state, path);
                 if (file == null)
                 {
+                    if (channel.Slot.Equals("t_xml_base_colour", StringComparison.OrdinalIgnoreCase))
+                    {
+                        skipReason = $"Base-colour texture could not be resolved: {path}";
+                        return null;
+                    }
+
                     if (state.AtlasMeshesWithMissingTextures)
                     {
                         state.AllowedMissingTexturePaths.Add(path);
@@ -693,6 +688,12 @@ namespace Editors.KitbasherEditor.Services
                     var bytes = file.DataSource.ReadData();
                     var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
 
+                    if (channel.Slot.Equals("t_xml_base_colour", StringComparison.OrdinalIgnoreCase))
+                    {
+                        primaryWidth = dimensions.Width;
+                        primaryHeight = dimensions.Height;
+                    }
+
                     if (IsKnownConstantTexturePath(path) &&
                         TextureAtlasBuilder.TryGetUniformColor(bytes, out var constantColor))
                     {
@@ -700,11 +701,17 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    if (dimensions.Width != width || dimensions.Height != height)
+                    if (!layoutWidth.HasValue)
+                    {
+                        layoutWidth = dimensions.Width;
+                        layoutHeight = dimensions.Height;
+                    }
+                    else if (dimensions.Width != layoutWidth.Value ||
+                             dimensions.Height != layoutHeight!.Value)
                     {
                         skipReason =
                             $"{channel.Slot} dimensions {dimensions.Width}x{dimensions.Height} do not match " +
-                            $"base colour {width}x{height}: {path}";
+                            $"atlas layout {layoutWidth.Value}x{layoutHeight.Value}: {path}";
                         return null;
                     }
 
@@ -716,6 +723,18 @@ namespace Editors.KitbasherEditor.Services
                     return null;
                 }
             }
+
+            if (!channelBytes.ContainsKey("t_xml_base_colour") &&
+                !constantChannels.ContainsKey("t_xml_base_colour"))
+            {
+                skipReason = $"Base-colour texture could not be prepared: {primaryPath}";
+                return null;
+            }
+
+            var width = layoutWidth ?? primaryWidth
+                ?? throw new InvalidOperationException("Base-colour dimensions were not resolved.");
+            var height = layoutHeight ?? primaryHeight
+                ?? throw new InvalidOperationException("Base-colour dimensions were not resolved.");
 
             UvBounds bounds;
             try
@@ -734,7 +753,6 @@ namespace Editors.KitbasherEditor.Services
                 usages,
                 materialPath,
                 materialDoc,
-                primaryBytes,
                 width,
                 height,
                 bounds,
@@ -848,7 +866,7 @@ namespace Editors.KitbasherEditor.Services
             {
                 return (
                     mergedBatch,
-                    TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(mergedBatch.Sources)));
+                    TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(mergedBatch.Sources)));
             }
             catch (Exception ex) when (
                 ex is InvalidOperationException or ArgumentException or OverflowException)
@@ -856,7 +874,7 @@ namespace Editors.KitbasherEditor.Services
                 var exactBatch = BuildSharedAtlasBatch(candidates, mergeCompatibleCrops: false);
                 return (
                     exactBatch,
-                    TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(exactBatch.Sources)));
+                    TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(exactBatch.Sources)));
             }
         }
 
@@ -2557,16 +2575,17 @@ namespace Editors.KitbasherEditor.Services
             return new AtlasCrop(cropX, cropY, cropWidth, cropHeight);
         }
 
-        private static List<TextureAtlasSource> ToAtlasSources(
+        private static List<TextureAtlasLayoutSource> ToAtlasLayoutSources(
             IReadOnlyList<SharedAtlasSource> sharedSources)
         {
-            var sources = new List<TextureAtlasSource>(sharedSources.Count);
+            var sources = new List<TextureAtlasLayoutSource>(sharedSources.Count);
             foreach (var source in sharedSources)
             {
                 var candidate = source.Representative;
-                sources.Add(new TextureAtlasSource(
+                sources.Add(new TextureAtlasLayoutSource(
                     source.Id,
-                    candidate.PrimaryBytes,
+                    candidate.Width,
+                    candidate.Height,
                     source.Crop.X / (float)candidate.Width,
                     source.Crop.Y / (float)candidate.Height,
                     checked(source.Crop.X + source.Crop.Width) / (float)candidate.Width,
@@ -2753,7 +2772,6 @@ namespace Editors.KitbasherEditor.Services
             List<WsUsage> Usages,
             string MaterialPath,
             XmlDocument MaterialDocument,
-            byte[] PrimaryBytes,
             int Width,
             int Height,
             UvBounds Bounds,
