@@ -107,9 +107,12 @@ namespace Shared.GameFormats.RigidModel
             return mesh;
         }
 
+        public byte[] Save(RmvFile file)
+            => Save(file, validateByReloading: true, logProgress: true);
+
         public byte[] Save(
             RmvFile file,
-            bool validateByReloading = true,
+            bool validateByReloading,
             bool logProgress = true)
         {
             if (logProgress)
