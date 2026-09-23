@@ -40,33 +40,74 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
         {
             if (bgraMipLevels.Count == 0)
                 throw new ArgumentException("At least one mip level is required.", nameof(bgraMipLevels));
-            if (width <= 0)
-                throw new ArgumentOutOfRangeException(nameof(width));
-            if (height <= 0)
-                throw new ArgumentOutOfRangeException(nameof(height));
 
-            var sourceFormat = IsLinearTexture(textureType)
-                ? DXGI_FORMAT.B8G8R8A8_UNORM
-                : DXGI_FORMAT.B8G8R8A8_UNORM_SRGB;
-
-            using var imageWithMips = TexHelper.Instance.Initialize2D(
-                sourceFormat,
+            using var writer = CreateRawBgraMipChainWriter(
                 width,
                 height,
-                1,
                 bgraMipLevels.Count,
-                CP_FLAGS.NONE);
-
+                textureType,
+                gameType);
             for (var mip = 0; mip < bgraMipLevels.Count; mip++)
+                writer.WriteMip(mip, bgraMipLevels[mip]);
+
+            return writer.Complete(outFileName);
+        }
+
+        public static RawBgraMipChainWriter CreateRawBgraMipChainWriter(
+            int width,
+            int height,
+            int mipLevelCount,
+            TextureType textureType,
+            GameTypeEnum gameType)
+            => new(width, height, mipLevelCount, textureType, gameType);
+
+        public sealed class RawBgraMipChainWriter : IDisposable
+        {
+            private readonly ScratchImage _imageWithMips;
+            private readonly TextureType _textureType;
+            private readonly GameTypeEnum _gameType;
+            private bool _disposed;
+
+            internal RawBgraMipChainWriter(
+                int width,
+                int height,
+                int mipLevelCount,
+                TextureType textureType,
+                GameTypeEnum gameType)
             {
-                var source = bgraMipLevels[mip];
-                var destination = imageWithMips.GetImage(mip, 0, 0);
+                if (width <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(width));
+                if (height <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(height));
+                if (mipLevelCount <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(mipLevelCount));
+
+                var sourceFormat = IsLinearTexture(textureType)
+                    ? DXGI_FORMAT.B8G8R8A8_UNORM
+                    : DXGI_FORMAT.B8G8R8A8_UNORM_SRGB;
+
+                _imageWithMips = TexHelper.Instance.Initialize2D(
+                    sourceFormat,
+                    width,
+                    height,
+                    1,
+                    mipLevelCount,
+                    CP_FLAGS.NONE);
+                _textureType = textureType;
+                _gameType = gameType;
+            }
+
+            public void WriteMip(int mipLevel, byte[] bgraPixels)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+
+                var destination = _imageWithMips.GetImage(mipLevel, 0, 0);
                 var rowBytes = checked(destination.Width * 4);
                 var expectedLength = checked(rowBytes * destination.Height);
-                if (source.Length != expectedLength)
+                if (bgraPixels.Length != expectedLength)
                 {
                     throw new InvalidOperationException(
-                        $"Atlas mip {mip} has {source.Length} BGRA bytes, expected {expectedLength} " +
+                        $"Atlas mip {mipLevel} has {bgraPixels.Length} BGRA bytes, expected {expectedLength} " +
                         $"for {destination.Width}x{destination.Height}.");
                 }
 
@@ -74,14 +115,31 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                 for (var y = 0; y < destination.Height; y++)
                 {
                     Marshal.Copy(
-                        source,
+                        bgraPixels,
                         checked(y * rowBytes),
                         IntPtr.Add(destination.Pixels, checked(y * destinationStride)),
                         rowBytes);
                 }
             }
 
-            return CompressAndSave(imageWithMips, textureType, gameType, outFileName);
+            public PackFile Complete(string outFileName)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return CompressAndSave(
+                    _imageWithMips,
+                    _textureType,
+                    _gameType,
+                    outFileName);
+            }
+
+            public void Dispose()
+            {
+                if (_disposed)
+                    return;
+
+                _disposed = true;
+                _imageWithMips.Dispose();
+            }
         }
 
         public static PackFile ImportRawMipChain(
