@@ -70,8 +70,8 @@ namespace Editors.KitbasherEditor.Services
                     sourcePath,
                     outputPath,
                     atlasMeshesWithMissingTextures: null,
-                    cancellationToken,
-                    progress);
+                    cancellationToken: cancellationToken,
+                    progress: progress);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -859,9 +859,9 @@ namespace Editors.KitbasherEditor.Services
                     plan,
                     textureBytes,
                     forceOpaqueAlphaSourceIds: null,
-                    omitted,
-                    cancellationToken,
-                    () =>
+                    omittedSourceIds: omitted,
+                    cancellationToken: cancellationToken,
+                    heartbeat: () =>
                     {
                         ReportProgress(
                             progress,
