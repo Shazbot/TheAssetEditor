@@ -107,7 +107,7 @@ namespace Shared.GameFormats.RigidModel
             return mesh;
         }
 
-        public byte[] Save(RmvFile file)
+        public byte[] Save(RmvFile file, bool validateByReloading = true)
         {
             _logger.Here().Information("Converting RmvFile to bytes");
 
@@ -146,13 +146,18 @@ namespace Shared.GameFormats.RigidModel
                 }
             }
 
-            // Reload the model to make sure we created something the game can load. Better to get an error here then later.
             var bytes = ms.ToArray();
 
-            _logger.Here().Information("Attempting to reload model");
-            var reloadedModel = Load(bytes);
-            if (reloadedModel == null)
-                throw new Exception("Failed to save model - Could not load the result");
+            // Most callers want immediate round-trip validation. Large batch workflows that
+            // perform a later full output validation can opt out to avoid loading every model
+            // twice after serialization.
+            if (validateByReloading)
+            {
+                _logger.Here().Information("Attempting to reload model");
+                var reloadedModel = Load(bytes);
+                if (reloadedModel == null)
+                    throw new Exception("Failed to save model - Could not load the result");
+            }
 
             _logger.Here().Information("Converting RmvFile to bytes - Done");
             return bytes;
