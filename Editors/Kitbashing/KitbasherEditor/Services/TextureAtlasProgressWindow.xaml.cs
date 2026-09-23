@@ -8,18 +8,21 @@ namespace Editors.KitbasherEditor.Services
     public partial class TextureAtlasProgressWindow : AssetEditorWindow
     {
         private readonly Action<
+            bool,
             CancellationToken,
             IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> _worker;
         private readonly CancellationTokenSource _cancellation = new();
 
         private bool _started;
         private bool _allowClose;
+        private bool _disposed;
 
         public Exception? Failure { get; private set; }
         public bool WasCancelled { get; private set; }
 
         public TextureAtlasProgressWindow(
             Action<
+                bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
         {
@@ -27,17 +30,25 @@ namespace Editors.KitbasherEditor.Services
             _worker = worker;
         }
 
-        private void Window_OnContentRendered(object? sender, EventArgs e)
+        private void StartButton_Click(object sender, RoutedEventArgs e)
         {
             if (_started)
                 return;
 
             _started = true;
+            StartButton.IsEnabled = false;
+            MergeMeshesCheckBox.IsEnabled = false;
+            PhaseText.Text = "Preparing texture atlas pack...";
+            ProgressBar.IsIndeterminate = true;
+
             var progress = new PumpingProgress(this);
 
             try
             {
-                _worker(_cancellation.Token, progress);
+                _worker(
+                    MergeMeshesCheckBox.IsChecked == true,
+                    _cancellation.Token,
+                    progress);
                 _allowClose = true;
                 DialogResult = true;
             }
@@ -55,17 +66,36 @@ namespace Editors.KitbasherEditor.Services
             }
             finally
             {
-                _cancellation.Dispose();
+                DisposeCancellation();
             }
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
-            => RequestCancellation();
+        {
+            if (!_started)
+            {
+                WasCancelled = true;
+                _allowClose = true;
+                DisposeCancellation();
+                DialogResult = false;
+                return;
+            }
+
+            RequestCancellation();
+        }
 
         private void Window_OnClosing(object? sender, CancelEventArgs e)
         {
             if (_allowClose)
                 return;
+
+            if (!_started)
+            {
+                WasCancelled = true;
+                _allowClose = true;
+                DisposeCancellation();
+                return;
+            }
 
             e.Cancel = true;
             RequestCancellation();
@@ -113,6 +143,15 @@ namespace Editors.KitbasherEditor.Services
                 DispatcherPriority.Background,
                 new Action(() => frame.Continue = false));
             Dispatcher.PushFrame(frame);
+        }
+
+        private void DisposeCancellation()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            _cancellation.Dispose();
         }
 
         private sealed class PumpingProgress : IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>
