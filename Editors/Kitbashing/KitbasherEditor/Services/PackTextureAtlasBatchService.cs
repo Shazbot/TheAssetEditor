@@ -472,24 +472,23 @@ namespace Editors.KitbasherEditor.Services
             HashSet<string> originalReachable,
             HashSet<string> currentReachable)
         {
+            // Only remove dependencies that were reachable from this pack's VMD graph before
+            // atlasing but are no longer reachable afterwards. Do not treat every unreferenced
+            // material/rigid as dead: a mod can intentionally override an asset consumed by a
+            // vanilla or otherwise external WSModel/VMD that is not present in the selected pack.
             var toRemove = new HashSet<string>(
                 originalReachable.Except(currentReachable, StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
 
-            // Also remove orphaned model assets from the selected pack. Keep unrelated pack
-            // content (DB, scripts, localisation, UI textures, etc.) untouched.
+            // A previous atlas pass may already have left generated textures in the input pack.
+            // These are safe to prune when the rewritten material graph no longer references them.
             foreach (var path in output.GetAllFiles().Keys)
             {
-                var extension = Path.GetExtension(path);
-                if (extension.Equals(".xml.material", StringComparison.OrdinalIgnoreCase) ||
-                    extension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
-                    extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase) ||
-                    (extension.Equals(".dds", StringComparison.OrdinalIgnoreCase) &&
-                     (Normalize(path).StartsWith(@"variantmeshes\", StringComparison.OrdinalIgnoreCase) ||
-                      Normalize(path).StartsWith(AtlasDirectory, StringComparison.OrdinalIgnoreCase))))
+                var normalized = Normalize(path);
+                if (normalized.StartsWith(AtlasDirectory, StringComparison.OrdinalIgnoreCase) &&
+                    !currentReachable.Contains(normalized))
                 {
-                    if (!currentReachable.Contains(Normalize(path)))
-                        toRemove.Add(Normalize(path));
+                    toRemove.Add(normalized);
                 }
             }
 
