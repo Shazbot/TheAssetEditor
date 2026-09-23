@@ -896,7 +896,6 @@ namespace Editors.KitbasherEditor.Services
                     planningCandidates.Count,
                     candidate.Key.ToString());
 
-                var planningIdentity = GetAtlasPlanningSourceIdentity(candidate);
                 if (!CanCreatePlan([candidate], out var singleError))
                 {
                     RecordSkip(
@@ -907,6 +906,8 @@ namespace Editors.KitbasherEditor.Services
                         $"Atlas planner rejected this mesh: {singleError}");
                     continue;
                 }
+
+                var planningIdentity = GetAtlasPlanningSourceIdentity(candidate);
 
                 if (current.Count == 0)
                 {
@@ -983,19 +984,32 @@ namespace Editors.KitbasherEditor.Services
         private static string BuildAtlasPlanningOrderKey(AtlasCandidate candidate)
         {
             var identity = BuildAtlasTextureSetIdentity(candidate);
-            var crop = GetEffectiveCrop(candidate);
-            return string.Join(
+            var prefix = string.Join(
                 "\u001f",
                 identity.SourceWidth,
                 identity.SourceHeight,
                 identity.BaseColour,
                 identity.MaterialMap,
                 identity.Normal,
-                identity.Mask,
-                crop.X,
-                crop.Y,
-                crop.Width,
-                crop.Height);
+                identity.Mask);
+
+            try
+            {
+                var crop = GetEffectiveCrop(candidate);
+                return string.Join(
+                    "\u001f",
+                    prefix,
+                    crop.X,
+                    crop.Y,
+                    crop.Width,
+                    crop.Height);
+            }
+            catch (OverflowException)
+            {
+                // CanCreatePlan records the real per-mesh error. Sorting must never turn a
+                // safely-skippable bad candidate into a failure for the whole pack.
+                return $"{prefix}\u001finvalid\u001f{candidate.Key}";
+            }
         }
 
         private static bool CanCreatePlan(
