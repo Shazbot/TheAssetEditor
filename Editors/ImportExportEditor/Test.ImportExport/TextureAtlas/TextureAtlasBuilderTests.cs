@@ -406,6 +406,106 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void BuildPng_ResamplesMixedResolutionChannelIntoSharedLayout()
+        {
+            using var sourceBitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
+            for (var y = 0; y < sourceBitmap.Height; y++)
+            {
+                for (var x = 0; x < sourceBitmap.Width; x++)
+                {
+                    sourceBitmap.SetPixel(
+                        x,
+                        y,
+                        Color.FromArgb(255, 20 + x * 40, 30 + y * 40, 10 + (x + y) * 20));
+                }
+            }
+
+            using var pngStream = new MemoryStream();
+            sourceBitmap.Save(pngStream, DrawingImageFormat.Png);
+            var sourceDds = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.MaterialMap,
+                GameTypeEnum.Warhammer3,
+                "mixed-resolution-source.dds");
+            var sourceBytes = sourceDds.DataSource.ReadData();
+
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 8, 8, 0, 0, 1, 1)],
+                padding: 0);
+            var atlasPng = TextureAtlasBuilder.BuildPng(
+                plan,
+                new Dictionary<int, byte[]> { [0] = sourceBytes });
+
+            using var sourceStream = new MemoryStream(sourceBytes);
+            using var sourceImage = Pfimage.FromStream(sourceStream);
+            using var atlasStream = new MemoryStream(atlasPng);
+            using var atlasBitmap = new Bitmap(atlasStream);
+            var placement = plan.Placements.Single();
+
+            for (var y = 0; y < sourceImage.Height; y++)
+            {
+                for (var x = 0; x < sourceImage.Width; x++)
+                {
+                    var expected = ReadPfimPixel(sourceImage, 0, sourceImage.Stride, x, y);
+                    var actual = atlasBitmap.GetPixel(
+                        placement.DestinationX + x * 2,
+                        placement.DestinationY + y * 2);
+                    Assert.That(actual.ToArgb(), Is.EqualTo(expected.ToArgb()));
+                }
+            }
+        }
+
+        [Test]
+        public void BuildMipPngs_DelaysSourceMipsForUpscaledMixedResolutionChannel()
+        {
+            using var sourceBitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
+            for (var y = 0; y < sourceBitmap.Height; y++)
+            {
+                for (var x = 0; x < sourceBitmap.Width; x++)
+                {
+                    sourceBitmap.SetPixel(
+                        x,
+                        y,
+                        Color.FromArgb(255, 15 + x * 45, 25 + y * 45, 5 + (x + y) * 25));
+                }
+            }
+
+            using var pngStream = new MemoryStream();
+            sourceBitmap.Save(pngStream, DrawingImageFormat.Png);
+            var sourceDds = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.MaterialMap,
+                GameTypeEnum.Warhammer3,
+                "mixed-resolution-mips-source.dds");
+            var sourceBytes = sourceDds.DataSource.ReadData();
+
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 8, 8, 0, 0, 1, 1)],
+                padding: 0);
+            var mipPngs = TextureAtlasBuilder.BuildMipPngs(
+                plan,
+                new Dictionary<int, byte[]> { [0] = sourceBytes });
+
+            using var sourceStream = new MemoryStream(sourceBytes);
+            using var sourceImage = Pfimage.FromStream(sourceStream);
+            using var atlasMipStream = new MemoryStream(mipPngs[1]);
+            using var atlasMip = new Bitmap(atlasMipStream);
+
+            Assert.That(atlasMip.Width, Is.EqualTo(sourceImage.Width));
+            Assert.That(atlasMip.Height, Is.EqualTo(sourceImage.Height));
+
+            for (var y = 0; y < sourceImage.Height; y++)
+            {
+                for (var x = 0; x < sourceImage.Width; x++)
+                {
+                    var expected = ReadPfimPixel(sourceImage, 0, sourceImage.Stride, x, y);
+                    var actual = atlasMip.GetPixel(x, y);
+                    Assert.That(actual.ToArgb(), Is.EqualTo(expected.ToArgb()));
+                }
+            }
+        }
+
+        [Test]
         public void TryGetUniformColor_RejectsNonUniformDds()
         {
             using var solid = new Bitmap(8, 8, PixelFormat.Format32bppArgb);
