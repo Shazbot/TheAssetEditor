@@ -132,6 +132,7 @@ namespace Editors.KitbasherEditor.Services
             IPackFileContainer? output = null;
             BatchState? state = null;
             List<string> vmdRoots = [];
+            List<MalformedVmdEntry> malformedVmdRoots = [];
 
             try
             {
@@ -142,15 +143,37 @@ namespace Editors.KitbasherEditor.Services
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var sourcePaths = source.GetAllFiles().Keys.ToList();
-                vmdRoots = sourcePaths
+                var allVmdPaths = sourcePaths
                     .Where(x => Path.GetExtension(x).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                if (vmdRoots.Count == 0)
+                if (allVmdPaths.Count == 0)
                     throw new InvalidOperationException("The selected pack contains no .variantmeshdefinition files.");
 
-                ReportProgress(progress, "Scanning source dependencies", item: $"{vmdRoots.Count} VMD root(s)");
+                ReportProgress(
+                    progress,
+                    "Validating VMD roots",
+                    item: $"{allVmdPaths.Count} VMD file(s)");
+                (vmdRoots, malformedVmdRoots) = ValidateVmdRoots(
+                    source,
+                    allVmdPaths,
+                    cancellationToken,
+                    progress);
+
+                if (vmdRoots.Count == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"The selected pack contains {allVmdPaths.Count} .variantmeshdefinition file(s), " +
+                        "but none could be parsed.");
+                }
+
+                ReportProgress(
+                    progress,
+                    "Scanning source dependencies",
+                    item: malformedVmdRoots.Count == 0
+                        ? $"{vmdRoots.Count} VMD root(s)"
+                        : $"{vmdRoots.Count} valid VMD root(s), {malformedVmdRoots.Count} malformed file(s) ignored");
                 var originalReachable = CollectReachableAssetFiles(
                     source,
                     vmdRoots,
@@ -190,6 +213,7 @@ namespace Editors.KitbasherEditor.Services
                     atlasMeshesWithMissingTextures ?? false,
                     mergeCompatibleMeshes,
                     shareAtlasesAcrossVmds);
+                state.MalformedVmdRoots.AddRange(malformedVmdRoots);
                 BuildWsUsageIndex(state, cancellationToken, progress);
 
                 if (!atlasMeshesWithMissingTextures.HasValue)
@@ -306,6 +330,53 @@ namespace Editors.KitbasherEditor.Services
             var directory = Path.GetDirectoryName(outputPath) ?? string.Empty;
             var stem = Path.GetFileNameWithoutExtension(outputPath);
             return Path.Combine(directory, stem + "_report.txt");
+        }
+
+        private static (List<string> ValidRoots, List<MalformedVmdEntry> MalformedRoots) ValidateVmdRoots(
+            IPackFileContainer source,
+            IReadOnlyList<string> vmdPaths,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            var validRoots = new List<string>(vmdPaths.Count);
+            var malformedRoots = new List<MalformedVmdEntry>();
+
+            for (var i = 0; i < vmdPaths.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var path = Normalize(vmdPaths[i]);
+                if (i == 0 || i == vmdPaths.Count - 1 || i % 25 == 0)
+                {
+                    ReportProgress(
+                        progress,
+                        "Validating VMD roots",
+                        i + 1,
+                        vmdPaths.Count,
+                        path);
+                }
+
+                var file = source.FindFile(path);
+                if (file == null)
+                    continue;
+
+                try
+                {
+                    _ = VariantMeshDefinitionLoader.Load(file);
+                    validRoots.Add(path);
+                }
+                catch (Exception ex) when (
+                    ex is InvalidOperationException or
+                    XmlException or
+                    FormatException or
+                    ArgumentException)
+                {
+                    malformedRoots.Add(new MalformedVmdEntry(
+                        path,
+                        ex.Message.Replace("\r", " ").Replace("\n", " ")));
+                }
+            }
+
+            return (validRoots, malformedRoots);
         }
 
         private void BuildWsUsageIndex(
@@ -2946,6 +3017,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine("Summary");
             sb.AppendLine("-------");
             sb.AppendLine($"VMD roots: {vmdRoots.Count}");
+            sb.AppendLine($"Malformed VMD files ignored: {state.MalformedVmdRoots.Count}");
             sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
@@ -2979,6 +3051,17 @@ namespace Editors.KitbasherEditor.Services
             foreach (var vmdPath in vmdRoots.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                 sb.AppendLine(vmdPath);
             if (vmdRoots.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Malformed VMD files ignored");
+            sb.AppendLine("---------------------------");
+            foreach (var entry in state.MalformedVmdRoots.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine(entry.Path);
+                sb.AppendLine($"  Reason: {entry.Reason}");
+            }
+            if (state.MalformedVmdRoots.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
@@ -3432,6 +3515,7 @@ namespace Editors.KitbasherEditor.Services
             public string OutputPath { get; }
             public string ReportPath { get; }
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, TextureInspection> TextureInspections { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<MeshKey, List<WsUsage>> Usages { get; } = [];
@@ -3531,6 +3615,10 @@ namespace Editors.KitbasherEditor.Services
             string Path,
             string RenderingIdentity,
             HashSet<string> RootVmdPaths);
+
+        private sealed record MalformedVmdEntry(
+            string Path,
+            string Reason);
 
         private sealed record MissingTextureDependency(
             MeshKey Key,
