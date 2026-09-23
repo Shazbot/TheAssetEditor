@@ -645,6 +645,8 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            ProtectStillReferencedAssets(state.Output, toRemove);
+
             foreach (var path in toRemove.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
             {
                 var file = state.Output.FindFile(path);
@@ -654,6 +656,120 @@ namespace Editors.KitbasherEditor.Services
                 _packFileService.DeleteFile(state.Output, file);
                 state.RemovedFiles.Add(path);
             }
+        }
+
+        private static void ProtectStillReferencedAssets(
+            IPackFileContainer output,
+            HashSet<string> toRemove)
+        {
+            if (toRemove.Count == 0)
+                return;
+
+            var reverseReferences = BuildReverseAssetReferences(output);
+
+            // Removing one candidate can make another candidate unsafe to remove. Iterate until
+            // every remaining candidate is referenced only by other files that are also being
+            // removed, or has no remaining in-pack referrer at all.
+            while (true)
+            {
+                var protectedPaths = toRemove
+                    .Where(path =>
+                        reverseReferences.TryGetValue(path, out var referrers) &&
+                        referrers.Any(referrer => !toRemove.Contains(referrer)))
+                    .ToList();
+
+                if (protectedPaths.Count == 0)
+                    break;
+
+                foreach (var path in protectedPaths)
+                    toRemove.Remove(path);
+            }
+        }
+
+        private static Dictionary<string, HashSet<string>> BuildReverseAssetReferences(
+            IPackFileContainer container)
+        {
+            var reverse = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+            void AddReference(string sourcePath, string? targetPath)
+            {
+                var source = Normalize(sourcePath);
+                var target = Normalize(targetPath);
+                if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target))
+                    return;
+
+                if (!reverse.TryGetValue(target, out var referrers))
+                {
+                    referrers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    reverse[target] = referrers;
+                }
+
+                referrers.Add(source);
+            }
+
+            foreach (var (path, file) in container.GetAllFiles())
+            {
+                var extension = Path.GetExtension(path);
+
+                try
+                {
+                    if (extension.Equals(".xml.material", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var materialDoc = LoadXml(file);
+                        var textureNodes = materialDoc.SelectNodes("/material/textures/texture");
+                        if (textureNodes == null)
+                            continue;
+
+                        foreach (XmlNode textureNode in textureNodes)
+                        {
+                            AddReference(
+                                path,
+                                textureNode.SelectSingleNode("source")?.InnerText ?? textureNode.InnerText);
+                        }
+
+                        continue;
+                    }
+
+                    if (extension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var wsDoc = LoadXml(file);
+                        AddReference(path, wsDoc.SelectSingleNode("/model/geometry")?.InnerText);
+
+                        var materialNodes = wsDoc.SelectNodes("/model/materials/material");
+                        if (materialNodes == null)
+                            continue;
+
+                        foreach (XmlNode materialNode in materialNodes)
+                            AddReference(path, materialNode.InnerText);
+
+                        continue;
+                    }
+
+                    if (extension.Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var vmd = VariantMeshDefinitionLoader.Load(file);
+                        var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        var childVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        CollectVmdReferences(vmd, models, childVmds, textures);
+
+                        foreach (var target in models)
+                            AddReference(path, target);
+                        foreach (var target in childVmds)
+                            AddReference(path, target);
+                        foreach (var target in textures)
+                            AddReference(path, target);
+                    }
+                }
+                catch
+                {
+                    // Cleanup is deliberately conservative, but a malformed unrelated asset
+                    // should not make the whole atlas conversion fail. Converted dependencies
+                    // are validated separately before the pack is written.
+                }
+            }
+
+            return reverse;
         }
 
         private HashSet<string> CollectReachableAssetFiles(
