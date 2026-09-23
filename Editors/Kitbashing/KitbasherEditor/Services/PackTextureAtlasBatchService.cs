@@ -740,7 +740,7 @@ namespace Editors.KitbasherEditor.Services
                 return null;
             }
 
-            var channelBytes = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            var resolvedChannels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var constantChannels = new Dictionary<string, TextureAtlasConstantColor>(
                 StringComparer.OrdinalIgnoreCase);
 
@@ -817,7 +817,7 @@ namespace Editors.KitbasherEditor.Services
                         return null;
                     }
 
-                    channelBytes[channel.Slot] = bytes;
+                    resolvedChannels.Add(channel.Slot);
                 }
                 catch (Exception ex)
                 {
@@ -826,7 +826,7 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            if (!channelBytes.ContainsKey("t_xml_base_colour") &&
+            if (!resolvedChannels.Contains("t_xml_base_colour") &&
                 !constantChannels.ContainsKey("t_xml_base_colour"))
             {
                 skipReason = $"Base-colour texture could not be prepared: {primaryPath}";
@@ -859,7 +859,7 @@ namespace Editors.KitbasherEditor.Services
                 width,
                 height,
                 bounds,
-                channelBytes,
+                resolvedChannels,
                 constantChannels);
         }
 
@@ -1098,19 +1098,44 @@ namespace Editors.KitbasherEditor.Services
                     AtlasChannels.Length,
                     $"{progressScope} — {channel.Suffix}");
                 var textureBytes = new Dictionary<int, byte[]>();
+                var textureBytesByPath = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
                 var constantSources = new Dictionary<int, TextureAtlasConstantColor>();
                 var omitted = new HashSet<int>();
 
                 foreach (var source in sharedBatch.Sources)
                 {
-                    if (source.Representative.ChannelBytes.TryGetValue(channel.Slot, out var bytes))
+                    var representative = source.Representative;
+                    if (representative.ResolvedChannels.Contains(channel.Slot))
+                    {
+                        var sourcePath = GetTexturePath(representative.MaterialDocument, channel.Slot);
+                        if (string.IsNullOrWhiteSpace(sourcePath))
+                        {
+                            throw new InvalidOperationException(
+                                $"Resolved atlas channel {channel.Slot} has no texture path for {representative.Key}.");
+                        }
+
+                        sourcePath = Normalize(sourcePath);
+                        if (!textureBytesByPath.TryGetValue(sourcePath, out var bytes))
+                        {
+                            var file = FindForRead(state, sourcePath)
+                                ?? throw new InvalidOperationException(
+                                    $"Resolved atlas texture no longer exists: {sourcePath}");
+                            bytes = file.DataSource.ReadData();
+                            textureBytesByPath[sourcePath] = bytes;
+                        }
+
                         textureBytes[source.Id] = bytes;
-                    else if (source.Representative.ConstantChannels.TryGetValue(
+                    }
+                    else if (representative.ConstantChannels.TryGetValue(
                                  channel.Slot,
                                  out var constantColor))
+                    {
                         constantSources[source.Id] = constantColor;
+                    }
                     else
+                    {
                         omitted.Add(source.Id);
+                    }
                 }
 
                 if (textureBytes.Count == 0 && constantSources.Count == 0)
@@ -1176,7 +1201,7 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var channel in AtlasChannels)
                 {
-                    if (!candidate.ChannelBytes.ContainsKey(channel.Slot) &&
+                    if (!candidate.ResolvedChannels.Contains(channel.Slot) &&
                         !candidate.ConstantChannels.ContainsKey(channel.Slot))
                         continue;
                     if (generatedPaths.TryGetValue(channel.Slot, out var atlasPath))
@@ -3063,7 +3088,7 @@ namespace Editors.KitbasherEditor.Services
                 return $"<placeholder>:{path}";
             if (candidate.ConstantChannels.ContainsKey(slot))
                 return $"<constant>:{path}";
-            if (candidate.ChannelBytes.ContainsKey(slot))
+            if (candidate.ResolvedChannels.Contains(slot))
                 return $"<resolved>:{path}";
             return $"<unresolved>:{path}";
         }
@@ -3321,7 +3346,7 @@ namespace Editors.KitbasherEditor.Services
             int Width,
             int Height,
             UvBounds Bounds,
-            Dictionary<string, byte[]> ChannelBytes,
+            HashSet<string> ResolvedChannels,
             Dictionary<string, TextureAtlasConstantColor> ConstantChannels);
 
         private sealed record SharedAtlasBatch(
