@@ -214,7 +214,7 @@ namespace Editors.KitbasherEditor.Services
                     plan,
                     sourceDimensions);
 
-                var mipPngs = TextureAtlasBuilder.BuildMipPngs(
+                var mipPixels = TextureAtlasBuilder.BuildMipPixels(
                     plan,
                     textureBytes,
                     forceOpaqueAlphaSourceIds: null,
