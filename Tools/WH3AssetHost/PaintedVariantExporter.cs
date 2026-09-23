@@ -18,6 +18,7 @@ internal sealed class PaintedVariantExporter
 {
     private readonly IHeadlessPackFileService _packFileService;
     private readonly VariantMeshCompositionResolver _compositionResolver;
+    private readonly ModelAssetResolver _modelAssetResolver;
 
     public PaintedVariantExporter(
         IHeadlessPackFileService packFileService,
@@ -25,6 +26,7 @@ internal sealed class PaintedVariantExporter
     {
         _packFileService = packFileService;
         _compositionResolver = compositionResolver;
+        _modelAssetResolver = new ModelAssetResolver(packFileService, packFileService);
     }
 
     public AssetHostPaintedVariantResult Export(AssetHostPaintedVariantRequest request)
@@ -142,57 +144,29 @@ internal sealed class PaintedVariantExporter
                     warnings);
             }
 
-            var assetCloneCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var materialCloneCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var exportedComponents = new List<ExportedComponent>(components.Length);
+            // Preserve the original VMD graph instead of flattening only the currently
+            // selected combination. Referenced VMDs are cloned under the painter namespace
+            // only when they (or a nested reference) need a painted model replacement.
+            // This keeps all original variants, stump slots, metadata, probabilities, and
+            // attachment points while avoiding global overrides of shared vanilla VMDs.
+            var graphContext = new VariantGraphExportContext();
+            RewriteVariantMeshDefinition(
+                inputFile,
+                isRoot: true,
+                assetRoot,
+                request.OutputDirectory,
+                replacements,
+                graphContext,
+                warnings,
+                writtenVirtualFiles);
 
-            for (var index = 0; index < components.Length; index++)
+            if (graphContext.ClonedModelCount == 0)
             {
-                var component = components[index];
-                var sourceModelPath = !string.IsNullOrWhiteSpace(component.SourceModelPath)
-                    ? NormalizeVirtualPath(component.SourceModelPath)
-                    : GetEffectiveModelPath(component.Asset);
-                var affected = ComponentUsesPaintedTexture(component.Asset, replacements);
-                var exportedPath = sourceModelPath;
-
-                if (affected)
-                {
-                    var cloneCacheKey = GetEffectiveModelPath(component.Asset);
-                    if (!assetCloneCache.TryGetValue(cloneCacheKey, out exportedPath!))
-                    {
-                        exportedPath = CloneAffectedAsset(
-                            component.Asset,
-                            index,
-                            assetRoot,
-                            request.OutputDirectory,
-                            replacements,
-                            materialCloneCache,
-                            writtenVirtualFiles);
-                        assetCloneCache[cloneCacheKey] = exportedPath;
-                    }
-                }
-
-                exportedComponents.Add(
-                    new ExportedComponent(
-                        exportedPath,
-                        component.SlotName,
-                        component.AttachmentPoint,
-                        component.SourceAttachmentPoint,
-                        component.Probability,
-                        component.UseDifferentAttachPointParts));
+                return Failure(
+                    "NoMatchingPaintedModels",
+                    "The painted textures were not referenced by any model in the source VMD graph.",
+                    warnings);
             }
-
-            var sourceDefinition = VariantMeshDefinitionLoader.Load(inputFile);
-            if (!string.IsNullOrWhiteSpace(sourceDefinition.ImposterModel))
-            {
-                warnings.Add(
-                    $"Source VMD imposter model '{sourceDefinition.ImposterModel}' is not copied into the painted variant, "
-                    + "because it would still render the original unpainted appearance.");
-            }
-
-            var vmdBytes = BuildFlattenedVariantMesh(exportedComponents, sourceDefinition);
-            WriteVirtualFile(request.OutputDirectory, vmdVirtualPath, vmdBytes);
-            writtenVirtualFiles.Add(vmdVirtualPath);
 
             var manifestVirtualPath = $"whmm_unit_painter_manifest_{variantName}.json";
             WriteManifest(
@@ -231,6 +205,214 @@ internal sealed class PaintedVariantExporter
                 warnings,
                 [new AssetHostError("PaintedVariantExportFailed", exception.Message, exception.ToString())]);
         }
+    }
+
+    private string RewriteVariantMeshDefinition(
+        Shared.Core.PackFiles.Models.PackFile definitionFile,
+        bool isRoot,
+        string assetRoot,
+        string outputDirectory,
+        IReadOnlyDictionary<string, string> replacements,
+        VariantGraphExportContext context,
+        List<string> warnings,
+        List<string> writtenVirtualFiles)
+    {
+        var sourcePath = GetVirtualPath(definitionFile);
+        if (context.DefinitionCloneCache.TryGetValue(sourcePath, out var cachedPath))
+            return cachedPath;
+
+        if (!context.ActiveDefinitions.Add(sourcePath))
+        {
+            warnings.Add($"VariantMeshDefinition cycle encountered while preserving '{sourcePath}'; keeping the original reference.");
+            return sourcePath;
+        }
+
+        try
+        {
+            var document = LoadXml(definitionFile.DataSource.ReadData());
+            var changed = RewriteVariantMeshDocument(
+                document,
+                sourceModelPath => RewriteVariantMeshModelReference(
+                    sourceModelPath,
+                    assetRoot,
+                    outputDirectory,
+                    replacements,
+                    context,
+                    warnings,
+                    writtenVirtualFiles),
+                sourceDefinitionPath => RewriteVariantMeshDefinitionReference(
+                    sourceDefinitionPath,
+                    assetRoot,
+                    outputDirectory,
+                    replacements,
+                    context,
+                    warnings,
+                    writtenVirtualFiles));
+
+            if (!isRoot && !changed)
+            {
+                context.DefinitionCloneCache[sourcePath] = sourcePath;
+                return sourcePath;
+            }
+
+            var targetPath = isRoot
+                ? sourcePath
+                : $"{assetRoot}\\variantmeshdefinitions\\{SafeStem(Path.GetFileNameWithoutExtension(sourcePath))}_{ShortHash(sourcePath)}.variantmeshdefinition";
+            WriteVirtualFile(outputDirectory, targetPath, SaveXml(document));
+            writtenVirtualFiles.Add(targetPath);
+            context.DefinitionCloneCache[sourcePath] = targetPath;
+            return targetPath;
+        }
+        finally
+        {
+            context.ActiveDefinitions.Remove(sourcePath);
+        }
+    }
+
+    private string RewriteVariantMeshModelReference(
+        string sourceReference,
+        string assetRoot,
+        string outputDirectory,
+        IReadOnlyDictionary<string, string> replacements,
+        VariantGraphExportContext context,
+        List<string> warnings,
+        List<string> writtenVirtualFiles)
+    {
+        var normalizedReference = NormalizeVirtualPath(sourceReference);
+        var sourceFile = _packFileService.FindFile(normalizedReference);
+        if (sourceFile == null)
+        {
+            warnings.Add($"VMD model reference '{sourceReference}' could not be resolved while preserving the painted variant.");
+            return sourceReference;
+        }
+
+        if (sourceFile.Name.EndsWith(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
+        {
+            return RewriteVariantMeshDefinition(
+                sourceFile,
+                isRoot: false,
+                assetRoot,
+                outputDirectory,
+                replacements,
+                context,
+                warnings,
+                writtenVirtualFiles);
+        }
+
+        if (!sourceFile.Name.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase)
+            && !sourceFile.Name.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+        {
+            return sourceReference;
+        }
+
+        ResolvedModelAsset asset;
+        try
+        {
+            asset = _modelAssetResolver.Resolve(sourceFile);
+        }
+        catch (Exception exception)
+        {
+            warnings.Add(
+                $"Model '{sourceReference}' could not be inspected for painted texture reuse; keeping the original reference. "
+                + exception.Message);
+            return sourceReference;
+        }
+
+        if (!ComponentUsesPaintedTexture(asset, replacements))
+            return sourceReference;
+
+        var cloneCacheKey = GetEffectiveModelPath(asset);
+        if (context.AssetCloneCache.TryGetValue(cloneCacheKey, out var cachedPath))
+            return cachedPath;
+
+        var clonedPath = CloneAffectedAsset(
+            asset,
+            context.NextAssetIndex++,
+            assetRoot,
+            outputDirectory,
+            replacements,
+            context.MaterialCloneCache,
+            writtenVirtualFiles);
+        context.AssetCloneCache[cloneCacheKey] = clonedPath;
+        context.ClonedModelCount += 1;
+        return clonedPath;
+    }
+
+    private string RewriteVariantMeshDefinitionReference(
+        string sourceReference,
+        string assetRoot,
+        string outputDirectory,
+        IReadOnlyDictionary<string, string> replacements,
+        VariantGraphExportContext context,
+        List<string> warnings,
+        List<string> writtenVirtualFiles)
+    {
+        var normalizedReference = NormalizeVirtualPath(sourceReference);
+        var sourceFile = _packFileService.FindFile(normalizedReference);
+        if (sourceFile == null)
+        {
+            warnings.Add($"VMD reference '{sourceReference}' could not be resolved while preserving the painted variant.");
+            return sourceReference;
+        }
+
+        if (!sourceFile.Name.EndsWith(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
+            return sourceReference;
+
+        return RewriteVariantMeshDefinition(
+            sourceFile,
+            isRoot: false,
+            assetRoot,
+            outputDirectory,
+            replacements,
+            context,
+            warnings,
+            writtenVirtualFiles);
+    }
+
+    private static bool RewriteVariantMeshDocument(
+        XmlDocument document,
+        Func<string, string> rewriteModelReference,
+        Func<string, string> rewriteDefinitionReference)
+    {
+        var changed = false;
+
+        var modelNodes = document.SelectNodes("//VARIANT_MESH[@model]");
+        if (modelNodes != null)
+        {
+            foreach (XmlNode modelNode in modelNodes)
+            {
+                var modelAttribute = modelNode.Attributes?["model"];
+                if (modelAttribute == null || string.IsNullOrWhiteSpace(modelAttribute.Value))
+                    continue;
+
+                var rewritten = rewriteModelReference(modelAttribute.Value);
+                if (string.Equals(rewritten, modelAttribute.Value, StringComparison.Ordinal))
+                    continue;
+
+                modelAttribute.Value = rewritten;
+                changed = true;
+            }
+        }
+
+        var referenceNodes = document.SelectNodes("//VARIANT_MESH_REFERENCE[@definition]");
+        if (referenceNodes != null)
+        {
+            foreach (XmlNode referenceNode in referenceNodes)
+            {
+                var definitionAttribute = referenceNode.Attributes?["definition"];
+                if (definitionAttribute == null || string.IsNullOrWhiteSpace(definitionAttribute.Value))
+                    continue;
+
+                var rewritten = rewriteDefinitionReference(definitionAttribute.Value);
+                if (string.Equals(rewritten, definitionAttribute.Value, StringComparison.Ordinal))
+                    continue;
+
+                definitionAttribute.Value = rewritten;
+                changed = true;
+            }
+        }
+
+        return changed;
     }
 
     private string CloneAffectedAsset(
@@ -769,6 +951,16 @@ internal sealed class PaintedVariantExporter
             Array.Empty<string>(),
             warnings ?? Array.Empty<string>(),
             [new AssetHostError(code, message)]);
+
+    private sealed class VariantGraphExportContext
+    {
+        public Dictionary<string, string> AssetCloneCache { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> MaterialCloneCache { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> DefinitionCloneCache { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> ActiveDefinitions { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public int NextAssetIndex { get; set; }
+        public int ClonedModelCount { get; set; }
+    }
 
     private sealed record ResolvedComponent(
         ResolvedModelAsset Asset,
