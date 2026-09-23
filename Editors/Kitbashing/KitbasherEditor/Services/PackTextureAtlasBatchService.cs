@@ -75,7 +75,8 @@ namespace Editors.KitbasherEditor.Services
                         $"Mesh parts atlased: {result.AtlasedMeshCount}\n" +
                         $"Atlas textures generated: {result.GeneratedTextureCount}\n" +
                         $"Unused asset files removed: {result.RemovedFileCount}\n" +
-                        $"Mesh parts skipped: {result.SkippedMeshCount}",
+                        $"Mesh parts skipped: {result.SkippedMeshCount}\n" +
+                        $"Report: {result.ReportPath}",
                         "Texture Atlas Pack");
                 }
                 catch (Exception ex)
@@ -87,51 +88,84 @@ namespace Editors.KitbasherEditor.Services
 
         public BatchResult Process(string sourcePath, string outputPath)
         {
-            var source = _packFileContainerLoader.CreateFromPackFile(
-                PackFileContainerType.Normal,
-                sourcePath,
-                loadAsReadOnly: true);
+            var reportPath = BuildReportPath(outputPath);
+            IPackFileContainer? output = null;
+            BatchState? state = null;
 
-            var vmdRoots = source.GetAllFiles().Keys
-                .Where(x => Path.GetExtension(x).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            try
+            {
+                var source = _packFileContainerLoader.CreateFromPackFile(
+                    PackFileContainerType.Normal,
+                    sourcePath,
+                    loadAsReadOnly: true);
 
-            if (vmdRoots.Count == 0)
-                throw new InvalidOperationException("The selected pack contains no .variantmeshdefinition files.");
+                var vmdRoots = source.GetAllFiles().Keys
+                    .Where(x => Path.GetExtension(x).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
 
-            var originalReachable = CollectReachableAssetFiles(source, vmdRoots);
+                if (vmdRoots.Count == 0)
+                    throw new InvalidOperationException("The selected pack contains no .variantmeshdefinition files.");
 
-            var outputName = Path.GetFileNameWithoutExtension(outputPath);
-            var output = _packFileService.CreateNewPackFileContainer(
-                outputName,
-                PackFileVersion.PFH5,
-                PackFileCAType.MOD,
-                setEditablePack: false);
+                var originalReachable = CollectReachableAssetFiles(source, vmdRoots);
 
-            foreach (var path in source.GetAllFiles().Keys)
-                _packFileService.CopyFileFromOtherPackFile(source, path, output);
+                var outputName = Path.GetFileNameWithoutExtension(outputPath);
+                output = _packFileService.CreateNewPackFileContainer(
+                    outputName,
+                    PackFileVersion.PFH5,
+                    PackFileCAType.MOD,
+                    setEditablePack: false);
 
-            var state = new BatchState(source, output);
-            BuildWsUsageIndex(state);
+                foreach (var path in source.GetAllFiles().Keys)
+                    _packFileService.CopyFileFromOtherPackFile(source, path, output);
 
-            foreach (var vmdPath in vmdRoots)
-                ProcessVmd(state, vmdPath);
+                state = new BatchState(source, output, sourcePath, outputPath, reportPath);
+                BuildWsUsageIndex(state);
 
-            SaveModifiedDocuments(state);
+                foreach (var vmdPath in vmdRoots)
+                    ProcessVmd(state, vmdPath);
 
-            var currentReachable = CollectReachableAssetFiles(output, vmdRoots);
-            var removed = PruneUnusedAssetFiles(output, originalReachable, currentReachable);
+                SaveModifiedDocuments(state);
 
-            var game = GameInformationDatabase.GetGameById(GameTypeEnum.Warhammer3);
-            _packFileService.SavePackContainer(output, outputPath, false, game);
+                var currentReachable = CollectReachableAssetFiles(output, vmdRoots);
+                PruneUnusedAssetFiles(state, originalReachable, currentReachable);
 
-            return new BatchResult(
-                vmdRoots.Count,
-                state.ProcessedMeshes.Count,
-                state.GeneratedTextureCount,
-                removed,
-                state.SkippedMeshCount);
+                ValidateOutput(state, vmdRoots);
+
+                var game = GameInformationDatabase.GetGameById(GameTypeEnum.Warhammer3);
+                _packFileService.SavePackContainer(output, outputPath, false, game);
+
+                WriteReport(state, vmdRoots, succeeded: true, failure: null);
+
+                return new BatchResult(
+                    vmdRoots.Count,
+                    state.ProcessedMeshes.Count,
+                    state.GeneratedTexturePaths.Count,
+                    state.RemovedFiles.Count,
+                    GetEffectiveSkippedMeshCount(state),
+                    reportPath);
+            }
+            catch (Exception ex)
+            {
+                if (state != null)
+                {
+                    try
+                    {
+                        WriteReport(state, [], succeeded: false, failure: ex);
+                    }
+                    catch
+                    {
+                        // Keep the original conversion/validation exception.
+                    }
+                }
+
+                throw;
+            }
+            finally
+            {
+                if (output != null)
+                    _packFileService.UnloadPackContainer(output, force: true);
+            }
         }
 
         public static string BuildOutputPath(string sourcePath)
@@ -139,6 +173,13 @@ namespace Editors.KitbasherEditor.Services
             var directory = Path.GetDirectoryName(sourcePath) ?? string.Empty;
             var stem = Path.GetFileNameWithoutExtension(sourcePath);
             return Path.Combine(directory, stem + "_atlas.pack");
+        }
+
+        public static string BuildReportPath(string outputPath)
+        {
+            var directory = Path.GetDirectoryName(outputPath) ?? string.Empty;
+            var stem = Path.GetFileNameWithoutExtension(outputPath);
+            return Path.Combine(directory, stem + "_report.txt");
         }
 
         private void BuildWsUsageIndex(BatchState state)
@@ -229,14 +270,24 @@ namespace Editors.KitbasherEditor.Services
                     // untouched rather than silently breaking one of the users.
                     if (materialPaths.Count != 1)
                     {
-                        state.SkippedMeshCount++;
+                        RecordSkip(
+                            state,
+                            rootVmdPath,
+                            key,
+                            wsPath,
+                            $"Rigid mesh is shared by WSModels using {materialPaths.Count} different materials.");
                         continue;
                     }
 
-                    var candidate = TryCreateCandidate(state, key, rmv.ModelList[lodIndex][partIndex], usages);
+                    var candidate = TryCreateCandidate(
+                        state,
+                        key,
+                        rmv.ModelList[lodIndex][partIndex],
+                        usages,
+                        out var skipReason);
                     if (candidate == null)
                     {
-                        state.SkippedMeshCount++;
+                        RecordSkip(state, rootVmdPath, key, wsPath, skipReason);
                         continue;
                     }
 
@@ -244,7 +295,7 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            foreach (var batch in CreateBatches(candidates))
+            foreach (var batch in CreateBatches(state, rootVmdPath, candidates))
                 ProcessBatch(state, rootVmdPath, batch);
         }
 
@@ -252,38 +303,73 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             MeshKey key,
             RmvModel model,
-            List<WsUsage> usages)
+            List<WsUsage> usages,
+            out string skipReason)
         {
+            skipReason = string.Empty;
             var materialPath = usages[0].MaterialPath;
             var materialFile = FindForRead(state, materialPath);
             if (materialFile == null)
+            {
+                skipReason = $"Material file could not be resolved: {materialPath}";
                 return null;
+            }
 
-            var materialXml = Encoding.UTF8.GetString(materialFile.DataSource.ReadData());
-            var materialDoc = new XmlDocument();
-            materialDoc.LoadXml(materialXml);
+            XmlDocument materialDoc;
+            try
+            {
+                var materialXml = Encoding.UTF8.GetString(materialFile.DataSource.ReadData());
+                materialDoc = new XmlDocument();
+                materialDoc.LoadXml(materialXml);
+            }
+            catch (Exception ex)
+            {
+                skipReason = $"Material XML could not be parsed: {materialPath} ({ex.Message})";
+                return null;
+            }
 
             var shaderPath = materialDoc.SelectSingleNode("/material/shader")?.InnerText ?? string.Empty;
             if (shaderPath.Contains("emissive", StringComparison.OrdinalIgnoreCase))
+            {
+                skipReason = $"Emissive shader is intentionally not atlased: {shaderPath}";
                 return null;
+            }
 
             if (materialDoc.SelectNodes("/material/textures/texture")?
                     .Cast<XmlNode>()
                     .Any(x => GetTextureSlot(x).Contains("emissive", StringComparison.OrdinalIgnoreCase)) == true)
             {
+                skipReason = "Material contains an emissive texture slot and must retain its original UV0 mapping.";
                 return null;
             }
 
             var primaryPath = GetTexturePath(materialDoc, "t_xml_base_colour");
             if (string.IsNullOrWhiteSpace(primaryPath))
+            {
+                skipReason = "Material has no t_xml_base_colour texture.";
                 return null;
+            }
 
             var primaryFile = FindForRead(state, primaryPath);
             if (primaryFile == null)
+            {
+                skipReason = $"Base-colour texture could not be resolved: {primaryPath}";
                 return null;
+            }
 
-            var primaryBytes = primaryFile.DataSource.ReadData();
-            var (width, height) = TextureAtlasBuilder.GetDimensions(primaryBytes);
+            byte[] primaryBytes;
+            int width;
+            int height;
+            try
+            {
+                primaryBytes = primaryFile.DataSource.ReadData();
+                (width, height) = TextureAtlasBuilder.GetDimensions(primaryBytes);
+            }
+            catch (Exception ex)
+            {
+                skipReason = $"Base-colour texture is not a usable DDS: {primaryPath} ({ex.Message})";
+                return null;
+            }
 
             var channelBytes = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
             {
@@ -300,15 +386,38 @@ namespace Editors.KitbasherEditor.Services
                 if (file == null)
                     continue;
 
-                var bytes = file.DataSource.ReadData();
-                var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
-                if (dimensions.Width != width || dimensions.Height != height)
-                    return null;
+                try
+                {
+                    var bytes = file.DataSource.ReadData();
+                    var dimensions = TextureAtlasBuilder.GetDimensions(bytes);
+                    if (dimensions.Width != width || dimensions.Height != height)
+                    {
+                        skipReason =
+                            $"{channel.Slot} dimensions {dimensions.Width}x{dimensions.Height} do not match " +
+                            $"base colour {width}x{height}: {path}";
+                        return null;
+                    }
 
-                channelBytes[channel.Slot] = bytes;
+                    channelBytes[channel.Slot] = bytes;
+                }
+                catch (Exception ex)
+                {
+                    skipReason = $"{channel.Slot} is not a usable DDS: {path} ({ex.Message})";
+                    return null;
+                }
             }
 
-            var bounds = GetUvBounds(model);
+            UvBounds bounds;
+            try
+            {
+                bounds = GetUvBounds(model);
+            }
+            catch (Exception ex)
+            {
+                skipReason = $"UV0 could not be prepared safely: {ex.Message}";
+                return null;
+            }
+
             return new AtlasCandidate(
                 key,
                 model,
@@ -322,15 +431,26 @@ namespace Editors.KitbasherEditor.Services
                 channelBytes);
         }
 
-        private static List<List<AtlasCandidate>> CreateBatches(List<AtlasCandidate> candidates)
+        private static List<List<AtlasCandidate>> CreateBatches(
+            BatchState state,
+            string rootVmdPath,
+            List<AtlasCandidate> candidates)
         {
             var batches = new List<List<AtlasCandidate>>();
             var current = new List<AtlasCandidate>();
 
             foreach (var candidate in candidates)
             {
-                if (!CanCreatePlan([candidate]))
+                if (!CanCreatePlan([candidate], out var singleError))
+                {
+                    RecordSkip(
+                        state,
+                        rootVmdPath,
+                        candidate.Key,
+                        candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                        $"Atlas planner rejected this mesh: {singleError}");
                     continue;
+                }
 
                 if (current.Count == 0)
                 {
@@ -339,33 +459,61 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var trial = current.Concat([candidate]).ToList();
-                if (CanCreatePlan(trial))
+                if (CanCreatePlan(trial, out _))
                 {
                     current.Add(candidate);
                     continue;
                 }
 
                 if (current.Count >= 2)
+                {
                     batches.Add(current);
+                }
+                else
+                {
+                    var orphan = current[0];
+                    RecordSkip(
+                        state,
+                        rootVmdPath,
+                        orphan.Key,
+                        orphan.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                        "Could not form a compatible multi-mesh atlas before the atlas size/layout limit was reached.");
+                }
 
                 current = [candidate];
             }
 
             if (current.Count >= 2)
+            {
                 batches.Add(current);
+            }
+            else if (current.Count == 1)
+            {
+                var orphan = current[0];
+                RecordSkip(
+                    state,
+                    rootVmdPath,
+                    orphan.Key,
+                    orphan.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                    "No second compatible mesh was available in this VMD dependency set.");
+            }
 
             return batches;
         }
 
-        private static bool CanCreatePlan(IReadOnlyList<AtlasCandidate> candidates)
+        private static bool CanCreatePlan(
+            IReadOnlyList<AtlasCandidate> candidates,
+            out string error)
         {
             try
             {
                 TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(candidates));
+                error = string.Empty;
                 return true;
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
+                error = ex.Message;
                 return false;
             }
         }
@@ -408,7 +556,7 @@ namespace Editors.KitbasherEditor.Services
 
                 WriteFile(state.Output, atlasPath, atlasPackFile.DataSource.ReadData());
                 generatedPaths[channel.Slot] = atlasPath;
-                state.GeneratedTextureCount++;
+                state.GeneratedTexturePaths.Add(atlasPath);
             }
 
             for (var i = 0; i < candidates.Count; i++)
@@ -440,6 +588,15 @@ namespace Editors.KitbasherEditor.Services
 
                 var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
                 WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(clonedMaterial.OuterXml));
+                state.GeneratedMaterialPaths.Add(newMaterialPath);
+
+                state.AtlasedMeshes.Add(new AtlasedMeshReportEntry(
+                    rootVmdPath,
+                    candidate.Key,
+                    candidate.Usages.Select(x => x.WsModelPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                    candidate.MaterialPath,
+                    newMaterialPath,
+                    generatedPaths.Values.Distinct(StringComparer.OrdinalIgnoreCase).ToArray()));
 
                 foreach (var usage in candidate.Usages)
                 {
@@ -468,22 +625,16 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private int PruneUnusedAssetFiles(
-            IPackFileContainer output,
+        private void PruneUnusedAssetFiles(
+            BatchState state,
             HashSet<string> originalReachable,
             HashSet<string> currentReachable)
         {
-            // Only remove dependencies that were reachable from this pack's VMD graph before
-            // atlasing but are no longer reachable afterwards. Do not treat every unreferenced
-            // material/rigid as dead: a mod can intentionally override an asset consumed by a
-            // vanilla or otherwise external WSModel/VMD that is not present in the selected pack.
             var toRemove = new HashSet<string>(
                 originalReachable.Except(currentReachable, StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
 
-            // A previous atlas pass may already have left generated textures in the input pack.
-            // These are safe to prune when the rewritten material graph no longer references them.
-            foreach (var path in output.GetAllFiles().Keys)
+            foreach (var path in state.Output.GetAllFiles().Keys)
             {
                 var normalized = Normalize(path);
                 if (normalized.StartsWith(AtlasDirectory, StringComparison.OrdinalIgnoreCase) &&
@@ -493,18 +644,15 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            var removed = 0;
-            foreach (var path in toRemove)
+            foreach (var path in toRemove.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
             {
-                var file = output.FindFile(path);
+                var file = state.Output.FindFile(path);
                 if (file == null)
                     continue;
 
-                _packFileService.DeleteFile(output, file);
-                removed++;
+                _packFileService.DeleteFile(state.Output, file);
+                state.RemovedFiles.Add(path);
             }
-
-            return removed;
         }
 
         private HashSet<string> CollectReachableAssetFiles(
@@ -702,10 +850,7 @@ namespace Editors.KitbasherEditor.Services
             fullPath = Normalize(fullPath);
             var existing = output.FindFile(fullPath);
             if (existing != null)
-            {
-                _packFileService.SaveFile(existing, data);
-                return;
-            }
+                _packFileService.DeleteFile(output, existing);
 
             var directory = Path.GetDirectoryName(fullPath) ?? string.Empty;
             var name = Path.GetFileName(fullPath);
@@ -759,6 +904,328 @@ namespace Editors.KitbasherEditor.Services
                     node.InnerText = path;
                 return;
             }
+        }
+
+        private void ValidateOutput(BatchState state, IReadOnlyList<string> vmdRoots)
+        {
+            var errors = new List<string>();
+
+            ValidateUnchangedModelPathSet(state, ".variantmeshdefinition", errors);
+            ValidateUnchangedModelPathSet(state, ".wsmodel", errors);
+            ValidateUnchangedModelPathSet(state, ".rigid_model_v2", errors);
+
+            foreach (var rigidPath in state.ModifiedRigids.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                var file = state.Output.FindFile(rigidPath);
+                if (file == null)
+                {
+                    errors.Add($"Modified rigid is missing from output: {rigidPath}");
+                    continue;
+                }
+
+                try
+                {
+                    _ = ModelFactory.Create().Load(file.DataSource.ReadData());
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Modified rigid failed to reload: {rigidPath} ({ex.Message})");
+                }
+            }
+
+            foreach (var wsPath in state.ModifiedWsModels.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                var file = state.Output.FindFile(wsPath);
+                if (file == null)
+                {
+                    errors.Add($"Modified WSModel is missing from output: {wsPath}");
+                    continue;
+                }
+
+                XmlDocument wsDoc;
+                try
+                {
+                    wsDoc = LoadXml(file);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Modified WSModel XML is invalid: {wsPath} ({ex.Message})");
+                    continue;
+                }
+
+                var geometryPath = Normalize(wsDoc.SelectSingleNode("/model/geometry")?.InnerText);
+                if (!string.IsNullOrWhiteSpace(geometryPath) &&
+                    !CanResolveAfterRewrite(state, geometryPath))
+                {
+                    errors.Add($"WSModel geometry no longer resolves: {wsPath} -> {geometryPath}");
+                }
+
+                var materialNodes = wsDoc.SelectNodes("/model/materials/material");
+                if (materialNodes == null)
+                    continue;
+
+                foreach (XmlNode materialNode in materialNodes)
+                {
+                    var materialPath = Normalize(materialNode.InnerText);
+                    if (!string.IsNullOrWhiteSpace(materialPath) &&
+                        !CanResolveAfterRewrite(state, materialPath))
+                    {
+                        errors.Add($"WSModel material no longer resolves: {wsPath} -> {materialPath}");
+                    }
+                }
+            }
+
+            foreach (var materialPath in state.GeneratedMaterialPaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                var file = state.Output.FindFile(materialPath);
+                if (file == null)
+                {
+                    errors.Add($"Generated atlas material is missing: {materialPath}");
+                    continue;
+                }
+
+                XmlDocument materialDoc;
+                try
+                {
+                    materialDoc = LoadXml(file);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Generated atlas material XML is invalid: {materialPath} ({ex.Message})");
+                    continue;
+                }
+
+                var textureNodes = materialDoc.SelectNodes("/material/textures/texture");
+                if (textureNodes == null)
+                    continue;
+
+                foreach (XmlNode textureNode in textureNodes)
+                {
+                    var texturePath = Normalize(
+                        textureNode.SelectSingleNode("source")?.InnerText ?? textureNode.InnerText);
+                    if (string.IsNullOrWhiteSpace(texturePath))
+                        continue;
+
+                    if (!CanResolveAfterRewrite(state, texturePath))
+                    {
+                        errors.Add(
+                            $"Generated material texture no longer resolves: {materialPath} -> {texturePath}");
+                    }
+                }
+            }
+
+            foreach (var atlasPath in state.GeneratedTexturePaths)
+            {
+                if (state.Output.FindFile(atlasPath) == null)
+                    errors.Add($"Generated atlas texture is missing from output: {atlasPath}");
+            }
+
+            foreach (var vmdPath in vmdRoots)
+            {
+                if (state.Output.FindFile(vmdPath) == null)
+                    errors.Add($"VMD root is missing from output: {vmdPath}");
+            }
+
+            if (errors.Count != 0)
+            {
+                foreach (var error in errors)
+                    state.ValidationMessages.Add("ERROR: " + error);
+
+                throw new InvalidOperationException(
+                    $"Post-atlas dependency validation failed with {errors.Count} error(s). " +
+                    $"See {state.ReportPath} for the full report.\n" +
+                    string.Join("\n", errors.Take(10)));
+            }
+
+            state.ValidationMessages.Add(
+                $"PASS: {state.ModifiedRigids.Count} modified rigid(s), " +
+                $"{state.ModifiedWsModels.Count} modified WSModel(s), " +
+                $"{state.GeneratedMaterialPaths.Count} generated material(s), and " +
+                $"{state.GeneratedTexturePaths.Count} atlas texture(s) validated.");
+            state.ValidationMessages.Add(
+                "PASS: VMD, WSModel, and rigid_model_v2 path sets are unchanged.");
+        }
+
+        private static void ValidateUnchangedModelPathSet(
+            BatchState state,
+            string extension,
+            List<string> errors)
+        {
+            var sourcePaths = state.Source.GetAllFiles().Keys
+                .Where(x => Path.GetExtension(x).Equals(extension, StringComparison.OrdinalIgnoreCase))
+                .Select(Normalize)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var outputPaths = state.Output.GetAllFiles().Keys
+                .Where(x => Path.GetExtension(x).Equals(extension, StringComparison.OrdinalIgnoreCase))
+                .Select(Normalize)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var missing in sourcePaths.Except(outputPaths, StringComparer.OrdinalIgnoreCase))
+                errors.Add($"{extension} path was removed instead of rewritten in place: {missing}");
+            foreach (var added in outputPaths.Except(sourcePaths, StringComparer.OrdinalIgnoreCase))
+                errors.Add($"Unexpected new {extension} path was created: {added}");
+        }
+
+        private bool CanResolveAfterRewrite(BatchState state, string path)
+        {
+            path = Normalize(path);
+            if (string.IsNullOrWhiteSpace(path))
+                return true;
+
+            if (state.Output.FindFile(path) != null)
+                return true;
+
+            // If the selected source pack owned the path, it must still exist in the output.
+            // Do not let another loaded pack with the same path mask an accidental deletion.
+            if (state.Source.FindFile(path) != null)
+                return false;
+
+            return _packFileService.FindFile(path) != null;
+        }
+
+        private static void RecordSkip(
+            BatchState state,
+            string rootVmdPath,
+            MeshKey key,
+            string wsModelPath,
+            string reason)
+        {
+            if (!state.SkipDetails.TryGetValue(key, out var details))
+            {
+                details = [];
+                state.SkipDetails[key] = details;
+            }
+
+            if (!details.Any(x =>
+                    x.RootVmdPath.Equals(rootVmdPath, StringComparison.OrdinalIgnoreCase) &&
+                    x.WsModelPath.Equals(wsModelPath, StringComparison.OrdinalIgnoreCase) &&
+                    x.Reason.Equals(reason, StringComparison.Ordinal)))
+            {
+                details.Add(new SkipDetail(rootVmdPath, wsModelPath, reason));
+            }
+        }
+
+        private static int GetEffectiveSkippedMeshCount(BatchState state)
+            => state.SkipDetails.Keys.Count(x => !state.ProcessedMeshes.Contains(x));
+
+        private static void WriteReport(
+            BatchState state,
+            IReadOnlyList<string> vmdRoots,
+            bool succeeded,
+            Exception? failure)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Texture Atlas Pack Report");
+            sb.AppendLine("=========================");
+            sb.AppendLine($"Status: {(succeeded ? "SUCCESS" : "FAILED")}");
+            sb.AppendLine($"Source: {state.SourcePath}");
+            sb.AppendLine($"Output: {state.OutputPath}");
+            sb.AppendLine($"Report: {state.ReportPath}");
+            sb.AppendLine($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine();
+
+            sb.AppendLine("Summary");
+            sb.AppendLine("-------");
+            sb.AppendLine($"VMD roots: {vmdRoots.Count}");
+            sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
+            sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
+            sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
+            sb.AppendLine($"Atlas materials generated: {state.GeneratedMaterialPaths.Count}");
+            sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
+            sb.AppendLine();
+
+            if (failure != null)
+            {
+                sb.AppendLine("Failure");
+                sb.AppendLine("-------");
+                sb.AppendLine(failure.ToString());
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("Atlased mesh parts");
+            sb.AppendLine("-------------------");
+            if (state.AtlasedMeshes.Count == 0)
+            {
+                sb.AppendLine("(none)");
+            }
+            else
+            {
+                foreach (var entry in state.AtlasedMeshes
+                             .OrderBy(x => x.RootVmdPath, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(x => x.Key.LodIndex)
+                             .ThenBy(x => x.Key.PartIndex))
+                {
+                    sb.AppendLine($"VMD: {entry.RootVmdPath}");
+                    sb.AppendLine($"  Mesh: {entry.Key}");
+                    sb.AppendLine($"  WSModel(s): {string.Join(", ", entry.WsModelPaths)}");
+                    sb.AppendLine($"  Material: {entry.OriginalMaterialPath} -> {entry.NewMaterialPath}");
+                    sb.AppendLine($"  Atlas texture(s): {string.Join(", ", entry.AtlasPaths)}");
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Skipped mesh parts");
+            sb.AppendLine("------------------");
+            var effectiveSkips = state.SkipDetails
+                .Where(x => !state.ProcessedMeshes.Contains(x.Key))
+                .OrderBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.Key.LodIndex)
+                .ThenBy(x => x.Key.PartIndex)
+                .ToList();
+
+            if (effectiveSkips.Count == 0)
+            {
+                sb.AppendLine("(none)");
+            }
+            else
+            {
+                foreach (var (key, details) in effectiveSkips)
+                {
+                    sb.AppendLine($"Mesh: {key}");
+                    foreach (var detail in details)
+                    {
+                        sb.AppendLine($"  VMD: {detail.RootVmdPath}");
+                        if (!string.IsNullOrWhiteSpace(detail.WsModelPath))
+                            sb.AppendLine($"  WSModel: {detail.WsModelPath}");
+                        sb.AppendLine($"  Reason: {detail.Reason}");
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Generated atlas textures");
+            sb.AppendLine("------------------------");
+            foreach (var path in state.GeneratedTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                sb.AppendLine(path);
+            if (state.GeneratedTexturePaths.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Generated atlas materials");
+            sb.AppendLine("-------------------------");
+            foreach (var path in state.GeneratedMaterialPaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                sb.AppendLine(path);
+            if (state.GeneratedMaterialPaths.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Removed superseded files");
+            sb.AppendLine("------------------------");
+            foreach (var path in state.RemovedFiles.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                sb.AppendLine(path);
+            if (state.RemovedFiles.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Validation");
+            sb.AppendLine("----------");
+            foreach (var message in state.ValidationMessages)
+                sb.AppendLine(message);
+            if (state.ValidationMessages.Count == 0)
+                sb.AppendLine("(not completed)");
+
+            File.WriteAllText(state.ReportPath, sb.ToString(), Encoding.UTF8);
         }
 
         private static UvBounds GetUvBounds(RmvModel model)
@@ -854,26 +1321,42 @@ namespace Editors.KitbasherEditor.Services
             int AtlasedMeshCount,
             int GeneratedTextureCount,
             int RemovedFileCount,
-            int SkippedMeshCount);
+            int SkippedMeshCount,
+            string ReportPath);
 
         private sealed class BatchState
         {
             public IPackFileContainer Source { get; }
             public IPackFileContainer Output { get; }
+            public string SourcePath { get; }
+            public string OutputPath { get; }
+            public string ReportPath { get; }
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<MeshKey, List<WsUsage>> Usages { get; } = [];
             public HashSet<MeshKey> ProcessedMeshes { get; } = [];
             public HashSet<string> ModifiedWsModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> ModifiedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
-            public int GeneratedTextureCount { get; set; }
-            public int SkippedMeshCount { get; set; }
+            public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public List<string> RemovedFiles { get; } = [];
+            public List<string> ValidationMessages { get; } = [];
+            public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
+            public Dictionary<MeshKey, List<SkipDetail>> SkipDetails { get; } = [];
             public int BatchIndex { get; set; }
 
-            public BatchState(IPackFileContainer source, IPackFileContainer output)
+            public BatchState(
+                IPackFileContainer source,
+                IPackFileContainer output,
+                string sourcePath,
+                string outputPath,
+                string reportPath)
             {
                 Source = source;
                 Output = output;
+                SourcePath = sourcePath;
+                OutputPath = outputPath;
+                ReportPath = reportPath;
             }
         }
 
@@ -894,6 +1377,19 @@ namespace Editors.KitbasherEditor.Services
             int Height,
             UvBounds Bounds,
             Dictionary<string, byte[]> ChannelBytes);
+
+        private sealed record AtlasedMeshReportEntry(
+            string RootVmdPath,
+            MeshKey Key,
+            string[] WsModelPaths,
+            string OriginalMaterialPath,
+            string NewMaterialPath,
+            string[] AtlasPaths);
+
+        private sealed record SkipDetail(
+            string RootVmdPath,
+            string WsModelPath,
+            string Reason);
 
         private readonly record struct MeshKey(string GeometryPath, int LodIndex, int PartIndex)
         {

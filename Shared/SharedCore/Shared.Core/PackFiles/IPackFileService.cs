@@ -26,7 +26,7 @@ namespace Shared.Core.PackFiles
         void SaveFile(PackFile file, byte[] data);
         void SavePackContainer(IPackFileContainer pf, string path, bool createBackup, GameInformation gameInformation);
         void SetEditablePack(IPackFileContainer? pf);
-        void UnloadPackContainer(IPackFileContainer pf);
+        void UnloadPackContainer(IPackFileContainer pf, bool force = false);
         List<(string FileName, PackFile Pack)> FindAllWithExtention(string extention, IPackFileContainer? container = null);
     }
 }

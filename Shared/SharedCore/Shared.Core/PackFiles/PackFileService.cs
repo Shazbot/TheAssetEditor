@@ -179,17 +179,21 @@ namespace Shared.Core.PackFiles
 
         public IPackFileContainer? GetEditablePack() => _packFileContainerSelectedForEdit;
 
-        public void UnloadPackContainer(IPackFileContainer pf)
+        public void UnloadPackContainer(IPackFileContainer pf, bool force = false)
         {
             var container = CastContainer(pf);
-            _logger.Here().Information($"Unload requested for pack file container '{DescribeContainer(container)}'");
-            var e = new BeforePackFileContainerRemovedEvent(container);
-            _globalEventHub?.PublishGlobalEvent(e);
+            _logger.Here().Information($"Unload requested for pack file container '{DescribeContainer(container)}' (Force:{force})");
 
-            if (e.AllowClose == false)
+            if (!force)
             {
-                _logger.Here().Information($"Unload cancelled for pack file container '{DescribeContainer(container)}'");
-                return;
+                var e = new BeforePackFileContainerRemovedEvent(container);
+                _globalEventHub?.PublishGlobalEvent(e);
+
+                if (e.AllowClose == false)
+                {
+                    _logger.Here().Information($"Unload cancelled for pack file container '{DescribeContainer(container)}'");
+                    return;
+                }
             }
 
             if (container is SystemFolderContainer systemFolderContainer)
