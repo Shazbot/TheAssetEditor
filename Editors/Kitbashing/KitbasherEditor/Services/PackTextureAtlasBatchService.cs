@@ -509,8 +509,8 @@ namespace Editors.KitbasherEditor.Services
                 state,
                 candidates,
                 packWide: false,
-                cancellationToken,
-                progress);
+                cancellationToken: cancellationToken,
+                progress: progress);
 
             ProcessAtlasBatches(
                 state,
@@ -549,8 +549,8 @@ namespace Editors.KitbasherEditor.Services
                 state,
                 candidates,
                 packWide: true,
-                cancellationToken,
-                progress);
+                cancellationToken: cancellationToken,
+                progress: progress);
 
             var packName = Path.GetFileNameWithoutExtension(state.SourcePath);
             ProcessAtlasBatches(
@@ -870,18 +870,28 @@ namespace Editors.KitbasherEditor.Services
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
+            var planningCandidates = packWide
+                ? candidates
+                    .OrderBy(BuildAtlasPlanningOrderKey, StringComparer.Ordinal)
+                    .ThenBy(x => x.RootVmdPath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(x => x.Key.LodIndex)
+                    .ThenBy(x => x.Key.PartIndex)
+                    .ToList()
+                : candidates;
+
             var batches = new List<List<AtlasCandidate>>();
             var current = new List<AtlasCandidate>();
 
-            for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
+            for (var candidateIndex = 0; candidateIndex < planningCandidates.Count; candidateIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var candidate = candidates[candidateIndex];
+                var candidate = planningCandidates[candidateIndex];
                 ReportProgress(
                     progress,
                     "Planning atlas batches",
                     candidateIndex + 1,
-                    candidates.Count,
+                    planningCandidates.Count,
                     candidate.Key.ToString());
                 if (!CanCreatePlan([candidate], out var singleError))
                 {
@@ -943,6 +953,19 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return batches;
+        }
+
+        private static string BuildAtlasPlanningOrderKey(AtlasCandidate candidate)
+        {
+            var identity = BuildAtlasTextureSetIdentity(candidate);
+            return string.Join(
+                "\u001f",
+                identity.SourceWidth,
+                identity.SourceHeight,
+                identity.BaseColour,
+                identity.MaterialMap,
+                identity.Normal,
+                identity.Mask);
         }
 
         private static bool CanCreatePlan(
@@ -1088,7 +1111,7 @@ namespace Editors.KitbasherEditor.Services
                     progress,
                     "Rewriting mesh UVs and materials",
                     candidateIndex + 1,
-                    candidates.Count,
+                    planningCandidates.Count,
                     candidate.Key.ToString());
                 var sourceId = sharedBatch.SourceIdByMesh[candidate.Key];
                 var placement = plan.Placements.Single(x => x.Id == sourceId);
