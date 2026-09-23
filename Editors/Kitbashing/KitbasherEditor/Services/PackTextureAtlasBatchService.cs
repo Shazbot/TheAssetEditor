@@ -1170,8 +1170,10 @@ namespace Editors.KitbasherEditor.Services
                 return;
             }
 
-            var bestSplitIndex = -1;
+            List<AtlasCandidate>? bestLeft = null;
+            List<AtlasCandidate>? bestRight = null;
             var bestCombinedPixelCost = parentPixelCost;
+            var bestSplitWasNonContiguous = false;
             var validSplitIndices = new List<int>();
 
             for (var splitIndex = 2; splitIndex <= batch.Count - 2; splitIndex++)
@@ -1185,16 +1187,16 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            const int maxSplitEvaluations = 32;
+            const int maxOrderedSplitEvaluations = 32;
             IEnumerable<int> splitIndices = validSplitIndices;
-            if (validSplitIndices.Count > maxSplitEvaluations)
+            if (validSplitIndices.Count > maxOrderedSplitEvaluations)
             {
                 // This is only an optional size optimization. Exhaustively rebuilding two atlas
                 // plans for every possible boundary becomes quadratic on very large packs, so
                 // sample the ordered boundary set evenly and keep conversion time bounded.
-                splitIndices = Enumerable.Range(0, maxSplitEvaluations)
+                splitIndices = Enumerable.Range(0, maxOrderedSplitEvaluations)
                     .Select(i => validSplitIndices[
-                        i * (validSplitIndices.Count - 1) / (maxSplitEvaluations - 1)])
+                        i * (validSplitIndices.Count - 1) / (maxOrderedSplitEvaluations - 1)])
                     .Distinct();
             }
 
@@ -1216,21 +1218,172 @@ namespace Editors.KitbasherEditor.Services
                     continue;
 
                 bestCombinedPixelCost = combinedCost;
-                bestSplitIndex = splitIndex;
+                bestLeft = left;
+                bestRight = right;
+                bestSplitWasNonContiguous = false;
             }
 
-            if (bestSplitIndex < 0)
+            foreach (var proposal in CreateNonContiguousSplitProposals(batch))
+            {
+                state.AtlasPixelAreaSplitEvaluations++;
+                state.AtlasNonContiguousSplitEvaluations++;
+
+                if (!TryGetGeneratedAtlasPixelCost(proposal.Left, out var leftCost, out _) ||
+                    !TryGetGeneratedAtlasPixelCost(proposal.Right, out var rightCost, out _))
+                {
+                    continue;
+                }
+
+                var combinedCost = checked(leftCost + rightCost);
+                if (combinedCost >= bestCombinedPixelCost)
+                    continue;
+
+                bestCombinedPixelCost = combinedCost;
+                bestLeft = proposal.Left;
+                bestRight = proposal.Right;
+                bestSplitWasNonContiguous = true;
+            }
+
+            if (bestLeft == null || bestRight == null)
             {
                 output.Add(batch);
                 return;
             }
 
             state.AtlasPixelAreaOptimizedSplits++;
-            var bestLeft = batch.Take(bestSplitIndex).ToList();
-            var bestRight = batch.Skip(bestSplitIndex).ToList();
+            if (bestSplitWasNonContiguous)
+                state.AtlasNonContiguousOptimizedSplits++;
+
             OptimizeMaxSizeBatchForPixelArea(state, bestLeft, output);
             OptimizeMaxSizeBatchForPixelArea(state, bestRight, output);
         }
+
+        private static IReadOnlyList<AtlasBatchSplitProposal> CreateNonContiguousSplitProposals(
+            IReadOnlyList<AtlasCandidate> batch)
+        {
+            var groups = batch
+                .GroupBy(GetAtlasPlanningSourceIdentity)
+                .Select(group =>
+                {
+                    var candidates = group
+                        .OrderBy(x => x.RootVmdPath, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(x => x.Key.LodIndex)
+                        .ThenBy(x => x.Key.PartIndex)
+                        .ToList();
+                    return new AtlasPlanningCandidateGroup(
+                        group.Key,
+                        candidates,
+                        candidates[0],
+                        GetEffectiveCrop(candidates[0]));
+                })
+                .ToList();
+
+            if (groups.Count < 4)
+                return [];
+
+            var proposals = new List<AtlasBatchSplitProposal>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            void AddProposals(
+                IEnumerable<AtlasPlanningCandidateGroup> orderedGroups,
+                IReadOnlyList<int> requestedSplitIndices)
+            {
+                var ordered = orderedGroups.ToList();
+                foreach (var requestedIndex in requestedSplitIndices)
+                {
+                    var splitIndex = Math.Clamp(requestedIndex, 1, ordered.Count - 1);
+                    var leftGroups = ordered.Take(splitIndex).ToList();
+                    var rightGroups = ordered.Skip(splitIndex).ToList();
+                    var left = leftGroups.SelectMany(x => x.Candidates).ToList();
+                    var right = rightGroups.SelectMany(x => x.Candidates).ToList();
+
+                    // A one-candidate atlas has no consolidation benefit and the normal planner
+                    // deliberately avoids creating it.
+                    if (left.Count < 2 || right.Count < 2)
+                        continue;
+
+                    var signature = string.Join(
+                        "",
+                        leftGroups
+                            .Select(x => BuildAtlasPlanningOrderKey(x.Representative))
+                            .OrderBy(x => x, StringComparer.Ordinal));
+                    if (!seen.Add(signature))
+                        continue;
+
+                    proposals.Add(new AtlasBatchSplitProposal(left, right));
+                }
+            }
+
+            var groupCount = groups.Count;
+            var broadSplitIndices = new[]
+            {
+                1,
+                2,
+                Math.Max(1, groupCount / 3),
+                Math.Max(1, groupCount / 2),
+                Math.Min(groupCount - 1, (groupCount * 2) / 3),
+                Math.Max(1, groupCount - 2)
+            };
+
+            // First separate sources with very different per-channel resolution pressure. A
+            // small number of 4x masks/normals can otherwise force the physical size of that
+            // entire channel up for every placement in the batch.
+            foreach (var channel in AtlasChannels)
+            {
+                var orderedByChannelPressure = groups
+                    .OrderByDescending(x => GetChannelScalePressure(x.Representative, channel.Slot))
+                    .ThenByDescending(x => (long)x.Crop.Width * x.Crop.Height)
+                    .ThenBy(x => BuildAtlasPlanningOrderKey(x.Representative), StringComparer.Ordinal);
+                AddProposals(
+                    orderedByChannelPressure,
+                    [1, 2, Math.Max(1, groupCount / 2), Math.Max(1, groupCount - 2)]);
+            }
+
+            // Wide and tall crops frequently combine into a square 8K atlas. Separating them can
+            // turn one 8192x8192 batch into two substantially cheaper rectangular atlases.
+            AddProposals(
+                groups
+                    .OrderBy(x => GetCropAspectScore(x.Crop))
+                    .ThenByDescending(x => (long)x.Crop.Width * x.Crop.Height)
+                    .ThenBy(x => BuildAtlasPlanningOrderKey(x.Representative), StringComparer.Ordinal),
+                broadSplitIndices);
+
+            // Also try isolating the largest placements regardless of aspect. This catches mixed
+            // size-class batches where a few large sources force a power-of-two jump.
+            AddProposals(
+                groups
+                    .OrderByDescending(x => (long)x.Crop.Width * x.Crop.Height)
+                    .ThenByDescending(x => Math.Max(x.Crop.Width, x.Crop.Height))
+                    .ThenBy(x => BuildAtlasPlanningOrderKey(x.Representative), StringComparer.Ordinal),
+                broadSplitIndices);
+
+            const int maxNonContiguousSplitEvaluations = 32;
+            return proposals.Count <= maxNonContiguousSplitEvaluations
+                ? proposals
+                : proposals.Take(maxNonContiguousSplitEvaluations).ToList();
+        }
+
+        private static double GetChannelScalePressure(AtlasCandidate candidate, string slot)
+        {
+            if (candidate.ConstantChannels.ContainsKey(slot))
+                return 0;
+
+            if (!candidate.ResolvedChannels.Contains(slot) ||
+                !candidate.ChannelDimensions.TryGetValue(slot, out var dimensions))
+            {
+                return 0;
+            }
+
+            return Math.Max(
+                dimensions.Width / (double)Math.Max(1, candidate.Width),
+                dimensions.Height / (double)Math.Max(1, candidate.Height));
+        }
+
+        private static double GetCropAspectScore(AtlasCrop crop)
+            => Math.Log2(
+                Math.Max(1, crop.Width) /
+                (double)Math.Max(1, crop.Height));
 
         private static bool TryGetGeneratedAtlasPixelCost(
             IReadOnlyList<AtlasCandidate> candidates,
@@ -3260,6 +3413,8 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
             sb.AppendLine($"Atlas pixel-area optimized splits: {state.AtlasPixelAreaOptimizedSplits}");
             sb.AppendLine($"Atlas pixel-area split evaluations: {state.AtlasPixelAreaSplitEvaluations}");
+            sb.AppendLine($"Atlas non-contiguous optimized splits: {state.AtlasNonContiguousOptimizedSplits}");
+            sb.AppendLine($"Atlas non-contiguous split evaluations: {state.AtlasNonContiguousSplitEvaluations}");
             if (state.ShareAtlasesAcrossVmdsEnabled)
             {
                 sb.AppendLine($"Pack-wide atlas candidates: {state.PackWideCandidateCount}");
@@ -3802,6 +3957,8 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasBatchCount { get; set; }
             public int AtlasPixelAreaOptimizedSplits { get; set; }
             public int AtlasPixelAreaSplitEvaluations { get; set; }
+            public int AtlasNonContiguousOptimizedSplits { get; set; }
+            public int AtlasNonContiguousSplitEvaluations { get; set; }
             public int CrossVmdSharedAtlasBatches { get; set; }
             public int CrossVmdSharedAtlasPlacements { get; set; }
             public int CrossVmdMaterialReuses { get; set; }
@@ -3919,6 +4076,16 @@ namespace Editors.KitbasherEditor.Services
             HashSet<string> ResolvedChannels,
             Dictionary<string, TextureAtlasConstantColor> ConstantChannels,
             Dictionary<string, (int Width, int Height)> ChannelDimensions);
+
+        private sealed record AtlasBatchSplitProposal(
+            List<AtlasCandidate> Left,
+            List<AtlasCandidate> Right);
+
+        private sealed record AtlasPlanningCandidateGroup(
+            AtlasPlanningSourceIdentity Identity,
+            List<AtlasCandidate> Candidates,
+            AtlasCandidate Representative,
+            AtlasCrop Crop);
 
         private sealed record SharedAtlasBatch(
             List<SharedAtlasSource> Sources,
