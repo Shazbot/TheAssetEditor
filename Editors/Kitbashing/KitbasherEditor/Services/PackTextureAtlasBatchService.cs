@@ -2509,23 +2509,55 @@ namespace Editors.KitbasherEditor.Services
         {
             var total = state.ModifiedRigids.Count + state.ModifiedWsModels.Count;
             var current = 0;
+            var replacements = new List<NewPackFileEntry>(total);
 
+            var serializeStopwatch = Stopwatch.StartNew();
             foreach (var rigidPath in state.ModifiedRigids)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                ReportProgress(progress, "Writing modified assets", ++current, total, rigidPath);
+                ReportProgress(progress, "Serializing modified rigids", ++current, total, rigidPath);
+
                 var rmv = state.RigidModels[rigidPath];
                 rmv.RecalculateOffsets();
-                WriteFile(state.Output, rigidPath, ModelFactory.Create().Save(rmv));
+                var data = ModelFactory.Create().Save(rmv);
+                replacements.Add(CreateReplacementEntry(rigidPath, data));
             }
+            AddPhaseDuration(state, "Serialize modified rigids", serializeStopwatch.Elapsed);
 
+            serializeStopwatch.Restart();
             foreach (var wsPath in state.ModifiedWsModels)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                ReportProgress(progress, "Writing modified assets", ++current, total, wsPath);
+                ReportProgress(progress, "Serializing modified WSModels", ++current, total, wsPath);
+
                 var doc = state.WsDocuments[wsPath];
-                WriteFile(state.Output, wsPath, Encoding.UTF8.GetBytes(doc.OuterXml));
+                replacements.Add(CreateReplacementEntry(
+                    wsPath,
+                    Encoding.UTF8.GetBytes(doc.OuterXml)));
             }
+            AddPhaseDuration(state, "Serialize modified WSModels", serializeStopwatch.Elapsed);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(
+                progress,
+                "Replacing modified assets",
+                replacements.Count,
+                replacements.Count,
+                $"{replacements.Count:N0} files");
+
+            var replaceStopwatch = Stopwatch.StartNew();
+            _packFileService.AddFilesToPack(state.Output, replacements);
+            AddPhaseDuration(state, "Replace modified assets in pack", replaceStopwatch.Elapsed);
+        }
+
+        private static NewPackFileEntry CreateReplacementEntry(string fullPath, byte[] data)
+        {
+            fullPath = Normalize(fullPath);
+            var directory = Path.GetDirectoryName(fullPath) ?? string.Empty;
+            var name = Path.GetFileName(fullPath);
+            return new NewPackFileEntry(
+                directory,
+                PackFile.CreateFromBytes(name, data));
         }
 
         private void PruneUnusedAssetFiles(
@@ -2570,24 +2602,21 @@ namespace Editors.KitbasherEditor.Services
                 cancellationToken,
                 progress);
 
-            var removePaths = toRemove.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
-            for (var removeIndex = 0; removeIndex < removePaths.Count; removeIndex++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var path = removePaths[removeIndex];
-                ReportProgress(
-                    progress,
-                    "Pruning unused assets",
-                    removeIndex + 1,
-                    removePaths.Count,
-                    path);
-                var file = state.Output.FindFile(path);
-                if (file == null)
-                    continue;
+            var removePaths = toRemove
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .Where(state.Output.ContainsFile)
+                .ToList();
 
-                _packFileService.DeleteFile(state.Output, file);
-                state.RemovedFiles.Add(path);
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(
+                progress,
+                "Pruning unused assets",
+                removePaths.Count,
+                removePaths.Count,
+                $"{removePaths.Count:N0} files");
+
+            _packFileService.DeleteFiles(state.Output, removePaths);
+            state.RemovedFiles.AddRange(removePaths);
         }
 
         private static void ProtectStillReferencedAssets(
