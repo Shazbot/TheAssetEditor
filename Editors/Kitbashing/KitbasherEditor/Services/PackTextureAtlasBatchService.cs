@@ -383,9 +383,15 @@ namespace Editors.KitbasherEditor.Services
                 if (string.IsNullOrWhiteSpace(path))
                     continue;
 
+                if (IsTexturePlaceholder(path))
+                    continue;
+
                 var file = FindForRead(state, path);
                 if (file == null)
-                    continue;
+                {
+                    skipReason = $\"{channel.Slot} texture could not be resolved: {path}\";
+                    return null;
+                }
 
                 try
                 {
@@ -695,8 +701,12 @@ namespace Editors.KitbasherEditor.Services
             {
                 var source = Normalize(sourcePath);
                 var target = Normalize(targetPath);
-                if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target))
+                if (string.IsNullOrWhiteSpace(source) ||
+                    string.IsNullOrWhiteSpace(target) ||
+                    IsTexturePlaceholder(target))
+                {
                     return;
+                }
 
                 if (!reverse.TryGetValue(target, out var referrers))
                 {
@@ -1120,7 +1130,7 @@ namespace Editors.KitbasherEditor.Services
                 {
                     var texturePath = Normalize(
                         textureNode.SelectSingleNode("source")?.InnerText ?? textureNode.InnerText);
-                    if (string.IsNullOrWhiteSpace(texturePath))
+                    if (string.IsNullOrWhiteSpace(texturePath) || IsTexturePlaceholder(texturePath))
                         continue;
 
                     if (!CanResolveAfterRewrite(state, texturePath))
@@ -1435,6 +1445,9 @@ namespace Editors.KitbasherEditor.Services
             var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
             return Convert.ToHexString(bytes)[..8].ToLowerInvariant();
         }
+
+        private static bool IsTexturePlaceholder(string? path)
+            => Normalize(path).Equals("mask_path", StringComparison.OrdinalIgnoreCase);
 
         private static string Normalize(string? path)
             => string.IsNullOrWhiteSpace(path)
