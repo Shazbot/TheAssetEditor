@@ -497,9 +497,109 @@ namespace Editors.KitbasherEditor.Services
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
-            ReportProgress(progress, "Processing VMDs", vmdIndex, vmdCount, rootVmdPath);
+            var candidates = CollectVmdCandidates(
+                state,
+                rootVmdPath,
+                vmdIndex,
+                vmdCount,
+                cancellationToken,
+                progress);
+
+            var batches = CreateBatches(
+                state,
+                candidates,
+                packWide: false,
+                cancellationToken,
+                progress);
+
+            ProcessAtlasBatches(
+                state,
+                rootVmdPath,
+                rootVmdPath,
+                batches,
+                cancellationToken,
+                progress);
+        }
+
+        private void ProcessPackWideAtlases(
+            BatchState state,
+            IReadOnlyList<string> vmdRoots,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            var candidates = new List<AtlasCandidate>();
+            var inspectedKeys = new HashSet<MeshKey>();
+
+            for (var vmdIndex = 0; vmdIndex < vmdRoots.Count; vmdIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                candidates.AddRange(CollectVmdCandidates(
+                    state,
+                    vmdRoots[vmdIndex],
+                    vmdIndex + 1,
+                    vmdRoots.Count,
+                    cancellationToken,
+                    progress,
+                    inspectedKeys));
+            }
+
+            state.PackWideCandidateCount = candidates.Count;
+
+            var batches = CreateBatches(
+                state,
+                candidates,
+                packWide: true,
+                cancellationToken,
+                progress);
+
+            var packName = Path.GetFileNameWithoutExtension(state.SourcePath);
+            ProcessAtlasBatches(
+                state,
+                $"pack:{packName}",
+                "Pack-wide",
+                batches,
+                cancellationToken,
+                progress);
+        }
+
+        private static void ProcessAtlasBatches(
+            BatchState state,
+            string atlasScopeKey,
+            string progressScope,
+            IReadOnlyList<List<AtlasCandidate>> batches,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(
+                    progress,
+                    "Building texture atlases",
+                    batchIndex + 1,
+                    batches.Count,
+                    $"{progressScope} — batch {batchIndex + 1}");
+
+                state.PendingAtlasBatches.Add(new PendingAtlasBatch(
+                    atlasScopeKey,
+                    progressScope,
+                    batches[batchIndex]));
+            }
+        }
+
+        private List<AtlasCandidate> CollectVmdCandidates(
+            BatchState state,
+            string rootVmdPath,
+            int vmdIndex,
+            int vmdCount,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress,
+            HashSet<MeshKey>? inspectedKeys = null)
+        {
+            ReportProgress(progress, "Discovering atlas candidates", vmdIndex, vmdCount, rootVmdPath);
             var wsModels = CollectReachableWsModels(state.Source, rootVmdPath, cancellationToken);
             var candidates = new List<AtlasCandidate>();
+            var localInspectedKeys = inspectedKeys ?? new HashSet<MeshKey>();
 
             foreach (var wsPath in wsModels)
             {
@@ -534,12 +634,12 @@ namespace Editors.KitbasherEditor.Services
                     var key = new MeshKey(geometryPath, lodIndex, partIndex);
                     ReportProgress(
                         progress,
-                        "Processing VMDs",
+                        "Discovering atlas candidates",
                         vmdIndex,
                         vmdCount,
                         $"{rootVmdPath} — {key}");
-                    if (state.ProcessedMeshes.Contains(key) ||
-                        candidates.Any(x => x.Key == key))
+
+                    if (state.ProcessedMeshes.Contains(key) || !localInspectedKeys.Add(key))
                         continue;
 
                     if (!state.Usages.TryGetValue(key, out var usages) || usages.Count == 0)
@@ -567,6 +667,7 @@ namespace Editors.KitbasherEditor.Services
 
                     var candidate = TryCreateCandidate(
                         state,
+                        rootVmdPath,
                         key,
                         rmv.ModelList[lodIndex][partIndex],
                         usages,
@@ -581,32 +682,12 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            var batches = CreateBatches(
-                state,
-                rootVmdPath,
-                candidates,
-                cancellationToken,
-                progress);
-            for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                ReportProgress(
-                    progress,
-                    "Building texture atlases",
-                    batchIndex + 1,
-                    batches.Count,
-                    $"{rootVmdPath} — batch {batchIndex + 1}");
-                ProcessBatch(
-                    state,
-                    rootVmdPath,
-                    batches[batchIndex],
-                    cancellationToken,
-                    progress);
-            }
+            return candidates;
         }
 
         private AtlasCandidate? TryCreateCandidate(
             BatchState state,
+            string rootVmdPath,
             MeshKey key,
             RmvModel model,
             List<WsUsage> usages,
@@ -766,6 +847,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return new AtlasCandidate(
+                rootVmdPath,
                 key,
                 model,
                 usages,
