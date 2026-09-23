@@ -62,12 +62,17 @@ namespace Editors.KitbasherEditor.Services
 
             var sourcePath = browse.FilePaths[0];
             var outputPath = BuildOutputPath(sourcePath);
+            var atlasMeshesWithMissingTextures = _standardDialogs.ShowYesNoBox(
+                "Atlas meshes even when their material references texture files that cannot be resolved?\n\n" +
+                "Yes: atlas the mesh and keep the missing texture paths unchanged. This can produce incorrect rendering if the game later resolves those textures.\n\n" +
+                "No: skip those meshes (recommended).",
+                "Texture Atlas Pack - Missing Textures") == ShowMessageBoxResult.OK;
 
             using (_standardDialogs.ShowWaitCursor())
             {
                 try
                 {
-                    var result = Process(sourcePath, outputPath);
+                    var result = Process(sourcePath, outputPath, atlasMeshesWithMissingTextures);
                     _standardDialogs.ShowDialogBox(
                         $"Texture atlas pack created successfully.\n\n" +
                         $"Output: {outputPath}\n" +
@@ -86,7 +91,10 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        public BatchResult Process(string sourcePath, string outputPath)
+        public BatchResult Process(
+            string sourcePath,
+            string outputPath,
+            bool atlasMeshesWithMissingTextures = false)
         {
             var reportPath = BuildReportPath(outputPath);
             IPackFileContainer? output = null;
@@ -120,7 +128,13 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var path in source.GetAllFiles().Keys)
                     _packFileService.CopyFileFromOtherPackFile(source, path, output);
 
-                state = new BatchState(source, output, sourcePath, outputPath, reportPath);
+                state = new BatchState(
+                    source,
+                    output,
+                    sourcePath,
+                    outputPath,
+                    reportPath,
+                    atlasMeshesWithMissingTextures);
                 BuildWsUsageIndex(state);
 
                 foreach (var vmdPath in vmdRoots)
@@ -389,6 +403,12 @@ namespace Editors.KitbasherEditor.Services
                 var file = FindForRead(state, path);
                 if (file == null)
                 {
+                    if (state.AtlasMeshesWithMissingTextures)
+                    {
+                        state.AllowedMissingTexturePaths.Add(path);
+                        continue;
+                    }
+
                     skipReason = $"{channel.Slot} texture could not be resolved: {path}";
                     return null;
                 }
@@ -1133,6 +1153,12 @@ namespace Editors.KitbasherEditor.Services
                     if (string.IsNullOrWhiteSpace(texturePath) || IsTexturePlaceholder(texturePath))
                         continue;
 
+                    if (state.AtlasMeshesWithMissingTextures &&
+                        state.AllowedMissingTexturePaths.Contains(texturePath))
+                    {
+                        continue;
+                    }
+
                     if (!CanResolveAfterRewrite(state, texturePath))
                     {
                         errors.Add(
@@ -1259,6 +1285,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
             sb.AppendLine($"Atlas materials generated: {state.GeneratedMaterialPaths.Count}");
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
+            sb.AppendLine($"Atlas meshes with missing textures: {(state.AtlasMeshesWithMissingTextures ? "YES" : "NO")}");
             sb.AppendLine();
 
             sb.AppendLine("VMD roots");
@@ -1350,6 +1377,14 @@ namespace Editors.KitbasherEditor.Services
             foreach (var path in state.RemovedFiles.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                 sb.AppendLine(path);
             if (state.RemovedFiles.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Allowed unresolved texture paths");
+            sb.AppendLine("--------------------------------");
+            foreach (var path in state.AllowedMissingTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                sb.AppendLine(path);
+            if (state.AllowedMissingTexturePaths.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
@@ -1477,6 +1512,8 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> ModifiedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> AllowedMissingTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public bool AtlasMeshesWithMissingTextures { get; }
             public List<string> RemovedFiles { get; } = [];
             public List<string> ValidationMessages { get; } = [];
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
@@ -1488,13 +1525,15 @@ namespace Editors.KitbasherEditor.Services
                 IPackFileContainer output,
                 string sourcePath,
                 string outputPath,
-                string reportPath)
+                string reportPath,
+                bool atlasMeshesWithMissingTextures)
             {
                 Source = source;
                 Output = output;
                 SourcePath = sourcePath;
                 OutputPath = outputPath;
                 ReportPath = reportPath;
+                AtlasMeshesWithMissingTextures = atlasMeshesWithMissingTextures;
             }
         }
 
