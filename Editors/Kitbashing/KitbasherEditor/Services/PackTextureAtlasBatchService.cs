@@ -389,7 +389,7 @@ namespace Editors.KitbasherEditor.Services
                 var file = FindForRead(state, path);
                 if (file == null)
                 {
-                    skipReason = $\"{channel.Slot} texture could not be resolved: {path}\";
+                    skipReason = $"{channel.Slot} texture could not be resolved: {path}";
                     return null;
                 }
 
