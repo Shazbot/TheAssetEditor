@@ -143,6 +143,24 @@ namespace Editors.KitbasherEditor.Services
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var sourcePaths = source.GetAllFiles().Keys.ToList();
+
+                var outputName = Path.GetFileNameWithoutExtension(outputPath);
+                output = _packFileService.CreateNewPackFileContainer(
+                    outputName,
+                    PackFileVersion.PFH5,
+                    PackFileCAType.MOD,
+                    setEditablePack: false);
+                state = new BatchState(
+                    source,
+                    output,
+                    _packFileService,
+                    sourcePath,
+                    outputPath,
+                    reportPath,
+                    atlasMeshesWithMissingTextures ?? false,
+                    mergeCompatibleMeshes,
+                    shareAtlasesAcrossVmds);
+
                 var allVmdPaths = sourcePaths
                     .Where(x => Path.GetExtension(x).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
@@ -156,6 +174,7 @@ namespace Editors.KitbasherEditor.Services
                     "Validating VMD roots",
                     item: $"{allVmdPaths.Count} VMD file(s)");
                 (vmdRoots, malformedVmdRoots) = ValidateVmdRoots(
+                    state,
                     source,
                     allVmdPaths,
                     cancellationToken,
@@ -175,18 +194,12 @@ namespace Editors.KitbasherEditor.Services
                         ? $"{vmdRoots.Count} VMD root(s)"
                         : $"{vmdRoots.Count} valid VMD root(s), {malformedVmdRoots.Count} malformed file(s) ignored");
                 var originalReachable = CollectReachableAssetFiles(
+                    state,
                     source,
                     vmdRoots,
                     cancellationToken,
                     progress,
                     "Scanning source dependencies");
-
-                var outputName = Path.GetFileNameWithoutExtension(outputPath);
-                output = _packFileService.CreateNewPackFileContainer(
-                    outputName,
-                    PackFileVersion.PFH5,
-                    PackFileCAType.MOD,
-                    setEditablePack: false);
 
                 for (var i = 0; i < sourcePaths.Count; i++)
                 {
@@ -204,16 +217,6 @@ namespace Editors.KitbasherEditor.Services
                     _packFileService.CopyFileFromOtherPackFile(source, sourcePaths[i], output);
                 }
 
-                state = new BatchState(
-                    source,
-                    output,
-                    _packFileService,
-                    sourcePath,
-                    outputPath,
-                    reportPath,
-                    atlasMeshesWithMissingTextures ?? false,
-                    mergeCompatibleMeshes,
-                    shareAtlasesAcrossVmds);
                 state.MalformedVmdRoots.AddRange(malformedVmdRoots);
                 BuildWsUsageIndex(state, cancellationToken, progress);
 
@@ -270,6 +273,7 @@ namespace Editors.KitbasherEditor.Services
 
                 ReportProgress(progress, "Scanning rewritten dependencies");
                 var currentReachable = CollectReachableAssetFiles(
+                    state,
                     output,
                     vmdRoots,
                     cancellationToken,
