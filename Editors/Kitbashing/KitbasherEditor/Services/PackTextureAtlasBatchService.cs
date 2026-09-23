@@ -1248,7 +1248,6 @@ namespace Editors.KitbasherEditor.Services
                 material);
 
             var shaderParams = model.CommonHeader.ShaderParams;
-            var unknown = shaderParams.UnknownValues ?? [];
             var zeros = shaderParams.AllZeroValues ?? [];
 
             var identity = string.Join(
@@ -1257,7 +1256,10 @@ namespace Editors.KitbasherEditor.Services
                 model.CommonHeader.RenderFlag,
                 model.Material.BinaryVertexFormat,
                 shaderParams.ShaderName,
-                Convert.ToHexString(unknown),
+                // UnknownValues are preserved from the representative RMV header when meshes
+                // are merged, but are intentionally excluded from compatibility. Asset Editor
+                // has no known semantics for these bytes and Morrigan shows otherwise-identical
+                // render groups fragmented solely by differing values here.
                 Convert.ToHexString(zeros),
                 Convert.ToHexString(materialBytes));
 
