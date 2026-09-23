@@ -223,8 +223,10 @@ namespace Editors.KitbasherEditor.Services
                     outputHeight: outputDimensions.Height);
 
                 var fileName = $"{atlasStem}_{GetTextureSuffix(textureType)}.dds";
-                var packFile = PngToDdsImporter.ImportRawMipChain(
-                    mipPngs,
+                var packFile = PngToDdsImporter.ImportRawBgraMipChain(
+                    mipPixels,
+                    outputDimensions.Width,
+                    outputDimensions.Height,
                     textureType,
                     _applicationSettingsService.CurrentSettings.CurrentGame,
                     fileName);
