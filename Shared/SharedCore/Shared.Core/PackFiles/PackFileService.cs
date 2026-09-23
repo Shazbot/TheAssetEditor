@@ -270,9 +270,23 @@ namespace Shared.Core.PackFiles
                 return;
 
             _logger.Here().Information($"Deleting {paths.Count} file(s) from '{DescribeContainer(container)}'");
+
+            // Match DeleteFile's event-order contract: subscribers such as the pack-file tree
+            // resolve each PackFile back to its full path while handling the removal event.
+            // Therefore the files must still exist in the container when the event is published.
+            var filesToRemove = new List<PackFile>(paths.Count);
+            foreach (var path in paths)
+            {
+                var file = container.FindFile(path);
+                if (file != null)
+                    filesToRemove.Add(file);
+            }
+
+            if (filesToRemove.Count != 0)
+                _globalEventHub?.PublishGlobalEvent(
+                    new PackFileContainerFilesRemovedEvent(container, filesToRemove));
+
             var removedFiles = container.DeleteFiles(paths);
-            if (removedFiles.Count != 0)
-                _globalEventHub?.PublishGlobalEvent(new PackFileContainerFilesRemovedEvent(container, removedFiles));
             _logger.Here().Information($"Deleted {removedFiles.Count} file(s) from '{DescribeContainer(container)}'");
         }
 
