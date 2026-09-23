@@ -1033,6 +1033,9 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var assignmentsByWsModel = new Dictionary<string, string[][]>(StringComparer.OrdinalIgnoreCase);
+                var wsModelIndexByPath = wsModels
+                    .Select((entry, index) => (entry.Key, index))
+                    .ToDictionary(x => x.Key, x => x.index, StringComparer.OrdinalIgnoreCase);
                 var assignmentsValid = true;
                 foreach (var (wsPath, wsDocument) in wsModels)
                 {
@@ -1096,9 +1099,9 @@ namespace Editors.KitbasherEditor.Services
                     foreach (var (wsPath, _) in wsModels)
                     {
                         var assignments = assignmentsByWsModel[wsPath];
+                        var wsModelIndex = wsModelIndexByPath[wsPath];
                         assignments[lodIndex] = groups
-                            .Select((group, _) => group.MaterialPathsByWsModel[
-                                wsModels.FindIndex(x => x.Key.Equals(wsPath, StringComparison.OrdinalIgnoreCase))])
+                            .Select(group => group.MaterialPathsByWsModel[wsModelIndex])
                             .ToArray();
                     }
 
@@ -1981,6 +1984,34 @@ namespace Editors.KitbasherEditor.Services
                         !CanResolveAfterRewrite(state, materialPath))
                     {
                         errors.Add($"WSModel material no longer resolves: {wsPath} -> {materialPath}");
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(geometryPath))
+                {
+                    var geometryFile = state.Output.FindFile(geometryPath);
+                    if (geometryFile != null)
+                    {
+                        try
+                        {
+                            var outputRmv = ModelFactory.Create().Load(geometryFile.DataSource.ReadData());
+                            if (!TryReadWsMaterialAssignments(
+                                    wsDoc,
+                                    outputRmv,
+                                    out _,
+                                    out var assignmentReason))
+                            {
+                                errors.Add(
+                                    $"WSModel material table does not match rewritten rigid: " +
+                                    $"{wsPath} -> {geometryPath} ({assignmentReason})");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            errors.Add(
+                                $"Could not validate WSModel material table against rigid: " +
+                                $"{wsPath} -> {geometryPath} ({ex.Message})");
+                        }
                     }
                 }
             }
