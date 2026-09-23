@@ -489,6 +489,7 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (XmlNode node in materialNodes)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!TryParseIndex(node, "lod_index", out var lodIndex) ||
                         !TryParseIndex(node, "part_index", out var partIndex) ||
                         lodIndex < 0 || lodIndex >= rmv.ModelList.Length ||
@@ -981,8 +982,21 @@ namespace Editors.KitbasherEditor.Services
                 originalReachable.Except(currentReachable, StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
 
-            foreach (var path in state.Output.GetAllFiles().Keys)
+            var outputPaths = state.Output.GetAllFiles().Keys.ToList();
+            for (var outputIndex = 0; outputIndex < outputPaths.Count; outputIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var path = outputPaths[outputIndex];
+                if (outputIndex == 0 || outputIndex == outputPaths.Count - 1 || outputIndex % 25 == 0)
+                {
+                    ReportProgress(
+                        progress,
+                        "Finding unused assets",
+                        outputIndex + 1,
+                        outputPaths.Count,
+                        path);
+                }
+
                 var normalized = Normalize(path);
                 if (normalized.StartsWith(AtlasDirectory, StringComparison.OrdinalIgnoreCase) &&
                     !currentReachable.Contains(normalized))
@@ -1036,6 +1050,7 @@ namespace Editors.KitbasherEditor.Services
             // removed, or has no remaining in-pack referrer at all.
             while (true)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var protectedPaths = toRemove
                     .Where(path =>
                         reverseReferences.TryGetValue(path, out var referrers) &&
@@ -1458,8 +1473,19 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            foreach (var wsPath in state.ModifiedWsModels.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            var validationWsModels = state.ModifiedWsModels
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            for (var wsIndex = 0; wsIndex < validationWsModels.Count; wsIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                var wsPath = validationWsModels[wsIndex];
+                ReportProgress(
+                    progress,
+                    "Validating WSModels",
+                    wsIndex + 1,
+                    validationWsModels.Count,
+                    wsPath);
                 var file = state.Output.FindFile(wsPath);
                 if (file == null)
                 {
