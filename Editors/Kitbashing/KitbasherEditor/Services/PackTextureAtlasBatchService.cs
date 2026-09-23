@@ -989,7 +989,143 @@ namespace Editors.KitbasherEditor.Services
                         : "No second compatible mesh was available in this VMD dependency set.");
             }
 
-            return batches;
+            return OptimizeMaxSizeBatchesForPixelArea(state, batches);
+        }
+
+        private static List<List<AtlasCandidate>> OptimizeMaxSizeBatchesForPixelArea(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            var optimized = new List<List<AtlasCandidate>>();
+            foreach (var batch in batches)
+                OptimizeMaxSizeBatchForPixelArea(state, batch, optimized);
+
+            return optimized;
+        }
+
+        private static void OptimizeMaxSizeBatchForPixelArea(
+            BatchState state,
+            List<AtlasCandidate> batch,
+            List<List<AtlasCandidate>> output)
+        {
+            if (batch.Count < 4 ||
+                !TryGetGeneratedAtlasPixelCost(
+                    batch,
+                    out var parentPixelCost,
+                    out var parentTouchesMaxSize) ||
+                !parentTouchesMaxSize)
+            {
+                output.Add(batch);
+                return;
+            }
+
+            var bestSplitIndex = -1;
+            var bestCombinedPixelCost = parentPixelCost;
+
+            for (var splitIndex = 2; splitIndex <= batch.Count - 2; splitIndex++)
+            {
+                // Keep identical source/crop identities together. Splitting inside one of these
+                // groups only duplicates an atlas placement and cannot improve packing.
+                if (GetAtlasPlanningSourceIdentity(batch[splitIndex - 1]) ==
+                    GetAtlasPlanningSourceIdentity(batch[splitIndex]))
+                {
+                    continue;
+                }
+
+                var left = batch.Take(splitIndex).ToList();
+                var right = batch.Skip(splitIndex).ToList();
+
+                if (!TryGetGeneratedAtlasPixelCost(left, out var leftCost, out _) ||
+                    !TryGetGeneratedAtlasPixelCost(right, out var rightCost, out _))
+                {
+                    continue;
+                }
+
+                var combinedCost = checked(leftCost + rightCost);
+                if (combinedCost >= bestCombinedPixelCost)
+                    continue;
+
+                bestCombinedPixelCost = combinedCost;
+                bestSplitIndex = splitIndex;
+            }
+
+            if (bestSplitIndex < 0)
+            {
+                output.Add(batch);
+                return;
+            }
+
+            state.AtlasPixelAreaOptimizedSplits++;
+            var bestLeft = batch.Take(bestSplitIndex).ToList();
+            var bestRight = batch.Skip(bestSplitIndex).ToList();
+            OptimizeMaxSizeBatchForPixelArea(state, bestLeft, output);
+            OptimizeMaxSizeBatchForPixelArea(state, bestRight, output);
+        }
+
+        private static bool TryGetGeneratedAtlasPixelCost(
+            IReadOnlyList<AtlasCandidate> candidates,
+            out long pixelCost,
+            out bool touchesMaxSize)
+        {
+            pixelCost = 0;
+            touchesMaxSize = false;
+
+            try
+            {
+                var sharedPlan = CreateSharedAtlasPlan(candidates);
+                foreach (var channel in AtlasChannels)
+                {
+                    var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
+                    var hasChannel = false;
+
+                    foreach (var source in sharedPlan.Batch.Sources)
+                    {
+                        var representative = source.Representative;
+                        if (representative.ResolvedChannels.Contains(channel.Slot))
+                        {
+                            hasChannel = true;
+                            if (representative.ChannelDimensions.TryGetValue(
+                                    channel.Slot,
+                                    out var dimensions))
+                            {
+                                sourceDimensions[source.Id] = dimensions;
+                            }
+                        }
+                        else if (representative.ConstantChannels.ContainsKey(channel.Slot))
+                        {
+                            hasChannel = true;
+                        }
+                    }
+
+                    if (!hasChannel)
+                        continue;
+
+                    var outputDimensions = sourceDimensions.Count > 0
+                        ? TextureAtlasBuilder.CalculateOutputDimensions(
+                            sharedPlan.Plan,
+                            sourceDimensions)
+                        : (sharedPlan.Plan.Width, sharedPlan.Plan.Height);
+
+                    pixelCost = checked(
+                        pixelCost +
+                        (long)outputDimensions.Width * outputDimensions.Height);
+
+                    if (outputDimensions.Width == TextureAtlasBuilder.DefaultMaxAtlasSize ||
+                        outputDimensions.Height == TextureAtlasBuilder.DefaultMaxAtlasSize)
+                    {
+                        touchesMaxSize = true;
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or ArgumentException or OverflowException)
+            {
+                pixelCost = 0;
+                touchesMaxSize = false;
+                return false;
+            }
         }
 
         private static AtlasPlanningSourceIdentity GetAtlasPlanningSourceIdentity(AtlasCandidate candidate)
@@ -2819,6 +2955,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas placements reused: {state.AtlasPlacementsReused}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
+            sb.AppendLine($"Atlas pixel-area optimized splits: {state.AtlasPixelAreaOptimizedSplits}");
             if (state.ShareAtlasesAcrossVmdsEnabled)
             {
                 sb.AppendLine($"Pack-wide atlas candidates: {state.PackWideCandidateCount}");
@@ -3313,6 +3450,7 @@ namespace Editors.KitbasherEditor.Services
             public bool ShareAtlasesAcrossVmdsEnabled { get; }
             public int PackWideCandidateCount { get; set; }
             public int AtlasBatchCount { get; set; }
+            public int AtlasPixelAreaOptimizedSplits { get; set; }
             public int CrossVmdSharedAtlasBatches { get; set; }
             public int CrossVmdSharedAtlasPlacements { get; set; }
             public int CrossVmdMaterialReuses { get; set; }
