@@ -340,13 +340,30 @@ internal sealed class PaintedVariantExporter
             return null;
 
         var document = LoadXml(sourceFile.DataSource.ReadData());
-        var textureNodes = document.SelectNodes("//texture");
-        if (textureNodes == null)
+        if (!RewriteMaterialTextureReferences(document, replacements))
             return null;
 
+        var fileName =
+            $"{SafeStem(Path.GetFileNameWithoutExtension(sourceMaterialPath))}_{ShortHash(sourceMaterialPath)}.xml.material";
+        var targetVirtualPath = $"{assetRoot}\\materials\\{fileName}";
+        WriteVirtualFile(outputDirectory, targetVirtualPath, SaveXml(document));
+        writtenVirtualFiles.Add(targetVirtualPath);
+        return targetVirtualPath;
+    }
+
+    private static bool RewriteMaterialTextureReferences(
+        XmlDocument document,
+        IReadOnlyDictionary<string, string> replacements)
+    {
+        var textureNodes = document.SelectNodes("//texture");
+        if (textureNodes == null)
+            return false;
+
         var changed = false;
+        var replacedBaseColour = false;
         foreach (XmlNode textureNode in textureNodes)
         {
+            var slotName = textureNode.SelectSingleNode("./slot")?.InnerText.Trim();
             var textNodes = textureNode.SelectNodes(".//text()");
             if (textNodes == null)
                 continue;
@@ -356,20 +373,36 @@ internal sealed class PaintedVariantExporter
                 var currentPath = NormalizeVirtualPath(textNode.Value ?? string.Empty);
                 if (!replacements.TryGetValue(currentPath, out var replacement))
                     continue;
+
                 textNode.Value = replacement;
                 changed = true;
+                if (string.Equals(slotName, "t_xml_base_colour", StringComparison.OrdinalIgnoreCase))
+                    replacedBaseColour = true;
             }
         }
 
-        if (!changed)
-            return null;
+        if (replacedBaseColour)
+            NeutralizeFactionMask(document);
 
-        var fileName =
-            $"{SafeStem(Path.GetFileNameWithoutExtension(sourceMaterialPath))}_{ShortHash(sourceMaterialPath)}.xml.material";
-        var targetVirtualPath = $"{assetRoot}\\materials\\{fileName}";
-        WriteVirtualFile(outputDirectory, targetVirtualPath, SaveXml(document));
-        writtenVirtualFiles.Add(targetVirtualPath);
-        return targetVirtualPath;
+        return changed;
+    }
+
+    private static void NeutralizeFactionMask(XmlDocument document)
+    {
+        var textureNodes = document.SelectNodes("//texture");
+        if (textureNodes == null)
+            return;
+
+        foreach (XmlNode textureNode in textureNodes)
+        {
+            var slotName = textureNode.SelectSingleNode("./slot")?.InnerText.Trim();
+            if (!string.Equals(slotName, "t_xml_mask", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var sourceNode = textureNode.SelectSingleNode("./source");
+            if (sourceNode != null)
+                sourceNode.InnerText = "commontextures/default_black.dds";
+        }
     }
 
     private string CloneRmvModel(
@@ -388,6 +421,7 @@ internal sealed class PaintedVariantExporter
             foreach (var part in lod)
             {
                 var textures = part.Material.GetAllTextures().ToArray();
+                var replacedBaseColour = false;
                 foreach (var texture in textures)
                 {
                     var sourcePath = NormalizeVirtualPath(texture.Path);
@@ -396,6 +430,18 @@ internal sealed class PaintedVariantExporter
 
                     part.Material.SetTexture(texture.TexureType, replacement);
                     changed = true;
+                    if (texture.TexureType is Shared.GameFormats.RigidModel.Types.TextureType.BaseColour
+                        or Shared.GameFormats.RigidModel.Types.TextureType.Diffuse)
+                    {
+                        replacedBaseColour = true;
+                    }
+                }
+
+                if (replacedBaseColour)
+                {
+                    part.Material.SetTexture(
+                        Shared.GameFormats.RigidModel.Types.TextureType.Mask,
+                        "commontextures/default_black.dds");
                 }
             }
         }
