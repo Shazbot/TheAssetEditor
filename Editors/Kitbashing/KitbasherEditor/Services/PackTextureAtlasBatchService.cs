@@ -73,7 +73,11 @@ namespace Editors.KitbasherEditor.Services
             var outputPath = BuildOutputPath(sourcePath);
 
             BatchResult? result = null;
-            var progressWindow = new TextureAtlasProgressWindow((mergeCompatibleMeshes, cancellationToken, progress) =>
+            var progressWindow = new TextureAtlasProgressWindow((
+                mergeCompatibleMeshes,
+                shareAtlasesAcrossVmds,
+                cancellationToken,
+                progress) =>
             {
                 result = Process(
                     sourcePath,
@@ -81,7 +85,8 @@ namespace Editors.KitbasherEditor.Services
                     atlasMeshesWithMissingTextures: null,
                     cancellationToken: cancellationToken,
                     progress: progress,
-                    mergeCompatibleMeshes: mergeCompatibleMeshes);
+                    mergeCompatibleMeshes: mergeCompatibleMeshes,
+                    shareAtlasesAcrossVmds: shareAtlasesAcrossVmds);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -118,7 +123,8 @@ namespace Editors.KitbasherEditor.Services
             bool? atlasMeshesWithMissingTextures = false,
             CancellationToken cancellationToken = default,
             IProgress<TextureAtlasPackProgress>? progress = null,
-            bool mergeCompatibleMeshes = false)
+            bool mergeCompatibleMeshes = false,
+            bool shareAtlasesAcrossVmds = true)
         {
             var reportPath = BuildReportPath(outputPath);
             cancellationToken.ThrowIfCancellationRequested();
@@ -182,7 +188,8 @@ namespace Editors.KitbasherEditor.Services
                     outputPath,
                     reportPath,
                     atlasMeshesWithMissingTextures ?? false,
-                    mergeCompatibleMeshes);
+                    mergeCompatibleMeshes,
+                    shareAtlasesAcrossVmds);
                 BuildWsUsageIndex(state, cancellationToken, progress);
 
                 if (!atlasMeshesWithMissingTextures.HasValue)
@@ -201,16 +208,27 @@ namespace Editors.KitbasherEditor.Services
                     }
                 }
 
-                for (var i = 0; i < vmdRoots.Count; i++)
+                if (shareAtlasesAcrossVmds)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    ProcessVmd(
+                    ProcessPackWideAtlases(
                         state,
-                        vmdRoots[i],
-                        i + 1,
-                        vmdRoots.Count,
+                        vmdRoots,
                         cancellationToken,
                         progress);
+                }
+                else
+                {
+                    for (var i = 0; i < vmdRoots.Count; i++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        ProcessVmd(
+                            state,
+                            vmdRoots[i],
+                            i + 1,
+                            vmdRoots.Count,
+                            cancellationToken,
+                            progress);
+                    }
                 }
 
                 if (mergeCompatibleMeshes)
