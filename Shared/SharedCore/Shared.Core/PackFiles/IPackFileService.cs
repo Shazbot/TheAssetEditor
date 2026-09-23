@@ -13,6 +13,7 @@ namespace Shared.Core.PackFiles
         void CopyFileFromOtherPackFile(IPackFileContainer source, string path, IPackFileContainer target);
         IPackFileContainer CreateNewPackFileContainer(string name, PackFileVersion packFileVersion, PackFileCAType type, bool setEditablePack = false);
         void DeleteFile(IPackFileContainer pf, PackFile file);
+        void DeleteFiles(IPackFileContainer pf, IReadOnlyCollection<string> paths);
         void DeleteFolder(IPackFileContainer pf, string folder);
         PackFile? FindFile(string path, IPackFileContainer? container = null);
         List<IPackFileContainer> GetAllPackfileContainers();
