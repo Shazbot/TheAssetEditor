@@ -183,14 +183,6 @@ namespace Editors.ImportExport.TextureAtlas
                     throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
 
                 using var source = LoadBitmap(ddsBytes);
-                if (source.Width != placement.SourceWidth || source.Height != placement.SourceHeight)
-                {
-                    throw new InvalidOperationException(
-                        $"Texture dimensions for atlas source {placement.Id} are {source.Width}x{source.Height}, " +
-                        $"but the shared atlas layout requires {placement.SourceWidth}x{placement.SourceHeight}. " +
-                        "The atlas implementation intentionally avoids resampling so tangent-space normal maps remain safe.");
-                }
-
                 var sourcePixels = ReadPixels(source);
                 CopyWrappedRegionAndPadding(
                     atlasPixels,
@@ -272,7 +264,7 @@ namespace Editors.ImportExport.TextureAtlas
                         {
                             if (!decodedSources.TryGetValue(placement.Id, out source))
                                 throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
-                            sourceMip = GetMipLevel(source, mipLevel);
+                            sourceMip = GetMipLevelForLayoutMip(source, placement, mipLevel);
                         }
 
                         var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
@@ -336,7 +328,7 @@ namespace Editors.ImportExport.TextureAtlas
                         {
                             if (!decodedSources.TryGetValue(placement.Id, out source))
                                 throw new InvalidOperationException($"Missing texture data for atlas source {placement.Id}.");
-                            sourceMip = GetMipLevel(source, mipLevel);
+                            sourceMip = GetMipLevelForLayoutMip(source, placement, mipLevel);
                         }
 
                         var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
@@ -407,6 +399,27 @@ namespace Editors.ImportExport.TextureAtlas
                 foreach (var source in decodedSources.Values)
                     source.Dispose();
             }
+        }
+
+        private static MipLevelInfo GetMipLevelForLayoutMip(
+            IImage source,
+            TextureAtlasPlacement placement,
+            int atlasMipLevel)
+        {
+            if (atlasMipLevel <= 0)
+                return GetMipLevel(source, 0);
+
+            // A shared placement is sized for the highest-resolution texture channel used by
+            // that mesh. Lower-resolution channels therefore occupy the same normalized UV
+            // rectangle but need their authored mip chain delayed until the atlas rectangle has
+            // shrunk to roughly the source texture's native texel density.
+            var scaleX = (double)placement.SourceWidth / source.Width;
+            var scaleY = (double)placement.SourceHeight / source.Height;
+            var layoutScale = Math.Max(1.0, Math.Max(scaleX, scaleY));
+            var delayedMipLevels = (int)Math.Ceiling(Math.Log2(layoutScale));
+            var sourceMipLevel = Math.Max(0, atlasMipLevel - delayedMipLevels);
+
+            return GetMipLevel(source, sourceMipLevel);
         }
 
         private static MipLevelInfo GetMipLevel(IImage source, int requestedLevel)
@@ -648,7 +661,9 @@ namespace Editors.ImportExport.TextureAtlas
                 // crop edge first, then wrap that virtual source coordinate into the DDS.
                 var cropLocalY = Math.Clamp(localY, 0, placement.CropHeight - 1);
                 var virtualSourceY = checked(placement.CropY + cropLocalY);
-                var sourceY = PositiveModulo(virtualSourceY, sourceHeight);
+                var sourceY = PositiveModulo(
+                    (int)Math.Floor(virtualSourceY * (double)sourceHeight / placement.SourceHeight),
+                    sourceHeight);
 
                 for (var localX = -padding; localX < placement.CropWidth + padding; localX++)
                 {
@@ -658,7 +673,9 @@ namespace Editors.ImportExport.TextureAtlas
 
                     var cropLocalX = Math.Clamp(localX, 0, placement.CropWidth - 1);
                     var virtualSourceX = checked(placement.CropX + cropLocalX);
-                    var sourceX = PositiveModulo(virtualSourceX, sourceWidth);
+                    var sourceX = PositiveModulo(
+                        (int)Math.Floor(virtualSourceX * (double)sourceWidth / placement.SourceWidth),
+                        sourceWidth);
 
                     var sourceOffset = (sourceY * sourceWidth + sourceX) * 4;
                     var destinationOffset = (destinationY * atlasWidth + destinationX) * 4;
