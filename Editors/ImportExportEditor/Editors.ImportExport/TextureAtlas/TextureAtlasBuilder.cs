@@ -262,8 +262,10 @@ namespace Editors.ImportExport.TextureAtlas
                         Pulse();
                         if (omittedSourceIds?.Contains(placement.Id) == true)
                             continue;
+                        var constantColor = default(TextureAtlasConstantColor);
                         var isConstant =
-                            constantSources?.TryGetValue(placement.Id, out var constantColor) == true;
+                            constantSources != null &&
+                            constantSources.TryGetValue(placement.Id, out constantColor);
                         IImage? source = null;
                         var sourceMip = default(MipLevelInfo);
                         if (!isConstant)
@@ -324,8 +326,10 @@ namespace Editors.ImportExport.TextureAtlas
                         Pulse();
                         if (omittedSourceIds?.Contains(placement.Id) == true)
                             continue;
+                        var constantColor = default(TextureAtlasConstantColor);
                         var isConstant =
-                            constantSources?.TryGetValue(placement.Id, out var constantColor) == true;
+                            constantSources != null &&
+                            constantSources.TryGetValue(placement.Id, out constantColor);
                         IImage? source = null;
                         var sourceMip = default(MipLevelInfo);
                         if (!isConstant)
