@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Threading;
@@ -170,7 +171,11 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed class PumpingProgress : IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>
         {
+            private const int MinimumUiUpdateIntervalMs = 75;
+
             private readonly TextureAtlasProgressWindow _window;
+            private readonly Stopwatch _sinceLastUpdate = Stopwatch.StartNew();
+            private string? _lastPhase;
 
             public PumpingProgress(TextureAtlasProgressWindow window)
             {
@@ -178,7 +183,20 @@ namespace Editors.KitbasherEditor.Services
             }
 
             public void Report(PackTextureAtlasBatchService.TextureAtlasPackProgress value)
-                => _window.UpdateProgress(value);
+            {
+                var phaseChanged = !string.Equals(_lastPhase, value.Phase, StringComparison.Ordinal);
+                var phaseCompleted = value.Total > 0 && value.Current >= value.Total;
+                if (!phaseChanged &&
+                    !phaseCompleted &&
+                    _sinceLastUpdate.ElapsedMilliseconds < MinimumUiUpdateIntervalMs)
+                {
+                    return;
+                }
+
+                _lastPhase = value.Phase;
+                _sinceLastUpdate.Restart();
+                _window.UpdateProgress(value);
+            }
         }
     }
 }
