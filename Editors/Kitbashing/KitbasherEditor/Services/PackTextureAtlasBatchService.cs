@@ -951,10 +951,10 @@ namespace Editors.KitbasherEditor.Services
 
                 current = [candidate];
                 currentPlanningRepresentatives = [candidate];
-                currentPlanningIdentities =
-                [
+                currentPlanningIdentities = new HashSet<AtlasPlanningSourceIdentity>
+                {
                     planningIdentity
-                ];
+                };
             }
 
             if (current.Count >= 2)
