@@ -1418,7 +1418,7 @@ namespace Editors.KitbasherEditor.Services
                     ? TextureAtlasBuilder.CalculateOutputDimensions(plan, sourceDimensions)
                     : (plan.Width, plan.Height);
 
-                var mipPngs = TextureAtlasBuilder.BuildMipPngs(
+                var mipPixels = TextureAtlasBuilder.BuildMipPixels(
                     plan,
                     textureBytes,
                     forceOpaqueAlphaSourceIds: null,
@@ -1439,8 +1439,10 @@ namespace Editors.KitbasherEditor.Services
                     outputHeight: outputDimensions.Height);
 
                 var fileName = $"{atlasStem}_{channel.Suffix}.dds";
-                var atlasPackFile = PngToDdsImporter.ImportRawMipChain(
-                    mipPngs,
+                var atlasPackFile = PngToDdsImporter.ImportRawBgraMipChain(
+                    mipPixels,
+                    outputDimensions.Width,
+                    outputDimensions.Height,
                     channel.Type,
                     GameTypeEnum.Warhammer3,
                     fileName);
