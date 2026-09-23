@@ -66,13 +66,22 @@ public sealed record AssetHostAnimationReference(
     string? FragmentPath = null,
     string? MetadataPath = null);
 
+public sealed record AssetHostAnimationDefault(string Path, string Slot);
+
+public sealed record AssetHostAnimationDefaults(
+    AssetHostAnimationDefault? Ground,
+    AssetHostAnimationDefault? Rider,
+    AssetHostAnimationDefault? Flying,
+    AssetHostAnimationDefault? RiderFlying);
+
 public sealed record AssetHostAnimationCatalog(
     bool Success,
     string AssetPath,
     string? SkeletonName,
     bool HasSkeletonFile,
     IReadOnlyList<AssetHostAnimationReference> Animations,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics,
+    AssetHostAnimationDefaults? AnimationDefaults = null);
 
 public sealed record AssetHostHelloResult(
     string HostVersion,

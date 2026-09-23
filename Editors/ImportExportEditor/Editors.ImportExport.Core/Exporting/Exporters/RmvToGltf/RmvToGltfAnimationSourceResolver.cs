@@ -16,13 +16,15 @@ public sealed class GltfAnimationCatalog
         bool hasSkeletonFile,
         IReadOnlyList<AnimationReference> animations,
         IReadOnlyList<string> diagnostics,
-        IReadOnlyList<GltfAnimationCatalogSelection>? selections = null)
+        IReadOnlyList<GltfAnimationCatalogSelection>? selections = null,
+        GltfAnimationDefaults? animationDefaults = null)
     {
         SkeletonName = skeletonName;
         HasSkeletonFile = hasSkeletonFile;
         Animations = new ReadOnlyCollection<AnimationReference>(animations.ToList());
         Diagnostics = new ReadOnlyCollection<string>(diagnostics.ToList());
         Selections = new ReadOnlyCollection<GltfAnimationCatalogSelection>((selections ?? []).ToList());
+        AnimationDefaults = animationDefaults;
     }
 
     public string? SkeletonName { get; }
@@ -30,6 +32,7 @@ public sealed class GltfAnimationCatalog
     public IReadOnlyList<AnimationReference> Animations { get; }
     public IReadOnlyList<string> Diagnostics { get; }
     public IReadOnlyList<GltfAnimationCatalogSelection> Selections { get; }
+    public GltfAnimationDefaults? AnimationDefaults { get; }
 }
 
 /// <summary>
@@ -41,6 +44,19 @@ public sealed record GltfAnimationCatalogSelection(
     IPackFileContainer Container,
     string? FragmentPath,
     string? MetadataPath);
+
+public sealed record GltfAnimationDefault(string Path, string Slot);
+
+public sealed record GltfAnimationDefaults(
+    GltfAnimationDefault? Ground,
+    GltfAnimationDefault? Rider,
+    GltfAnimationDefault? Flying,
+    GltfAnimationDefault? RiderFlying);
+
+public interface IGltfAnimationDefaultResolver
+{
+    GltfAnimationDefaults? Resolve(string skeletonName, IReadOnlySet<string> availableAnimationPaths);
+}
 
 public interface IGltfAnimationCatalogResolver
 {
@@ -59,17 +75,20 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
     private readonly IVariantMeshCompositionResolver _variantMeshResolver;
     private readonly ISkeletonAnimationLookUpHelper _skeletonAnimationLookUpHelper;
     private readonly IGltfAnimationContextReferenceProvider? _metadataResolver;
+    private readonly IGltfAnimationDefaultResolver? _defaultResolver;
 
     public GltfAnimationCatalogResolver(
         IModelAssetResolver modelAssetResolver,
         IVariantMeshCompositionResolver variantMeshResolver,
         ISkeletonAnimationLookUpHelper skeletonAnimationLookUpHelper,
-        IGltfAnimationContextReferenceProvider? metadataResolver = null)
+        IGltfAnimationContextReferenceProvider? metadataResolver = null,
+        IGltfAnimationDefaultResolver? defaultResolver = null)
     {
         _modelAssetResolver = modelAssetResolver;
         _variantMeshResolver = variantMeshResolver;
         _skeletonAnimationLookUpHelper = skeletonAnimationLookUpHelper;
         _metadataResolver = metadataResolver;
+        _defaultResolver = defaultResolver;
     }
 
     public GltfAnimationCatalog Resolve(PackFile inputFile)
@@ -96,7 +115,12 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
 
             var animations = _skeletonAnimationLookUpHelper.GetAnimationsForSkeleton(skeletonName);
             var selections = BuildSelections(animations, skeletonName);
-            return new GltfAnimationCatalog(skeletonName, true, animations, diagnostics, selections);
+            var animationDefaults = _defaultResolver?.Resolve(
+                skeletonName,
+                animations
+                    .Select(animation => NormalizeAnimationPath(animation.AnimationFile))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase));
+            return new GltfAnimationCatalog(skeletonName, true, animations, diagnostics, selections, animationDefaults);
         }
         catch (Exception exception)
         {
@@ -104,6 +128,8 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
             return new GltfAnimationCatalog(skeletonName, false, [], diagnostics);
         }
     }
+
+    private static string NormalizeAnimationPath(string path) => path.Replace('\\', '/').Trim();
 
     private IReadOnlyList<GltfAnimationCatalogSelection> BuildSelections(
         IEnumerable<AnimationReference> animations,

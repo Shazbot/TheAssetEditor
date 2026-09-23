@@ -291,7 +291,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             modelResolver,
             compositionResolver,
             skeletonLookup,
-            animationMetadataResolver);
+            animationMetadataResolver,
+            new GltfAnimationDefaultResolver(packFileService));
         var imageSaveHandler = new SystemImageSaveHandler();
         var materialExporter = new DdsToMaterialPngExporter(packFileService, imageSaveHandler);
         var normalExporter = new DdsToNormalPngExporter(packFileService, imageSaveHandler);
@@ -448,7 +449,23 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             catalog.SkeletonName,
             catalog.HasSkeletonFile,
             animations,
-            catalog.Diagnostics);
+            catalog.Diagnostics,
+            ToAssetHostAnimationDefaults(catalog.AnimationDefaults));
+    }
+
+    private static AssetHostAnimationDefaults? ToAssetHostAnimationDefaults(GltfAnimationDefaults? defaults)
+    {
+        if (defaults == null)
+            return null;
+
+        static AssetHostAnimationDefault? Convert(GltfAnimationDefault? value)
+            => value == null ? null : new AssetHostAnimationDefault(value.Path, value.Slot);
+
+        return new AssetHostAnimationDefaults(
+            Convert(defaults.Ground),
+            Convert(defaults.Rider),
+            Convert(defaults.Flying),
+            Convert(defaults.RiderFlying));
     }
 
     public ExportResult ExportModel(AssetHostExportRequest request)

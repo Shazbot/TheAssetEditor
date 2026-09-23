@@ -11,6 +11,8 @@ namespace WH3AssetHost;
 [JsonSerializable(typeof(AssetHostShutdownResult))]
 [JsonSerializable(typeof(AssetHostAnimationCatalog))]
 [JsonSerializable(typeof(AssetHostAnimationReference))]
+[JsonSerializable(typeof(AssetHostAnimationDefault))]
+[JsonSerializable(typeof(AssetHostAnimationDefaults))]
 [JsonSerializable(typeof(AssetHostBatchExportResult))]
 [JsonSerializable(typeof(AssetHostPaintedVariantResult))]
 [JsonSerializable(typeof(AssetHostMissingSkeletonDecisionRequest))]
