@@ -649,11 +649,13 @@ namespace Editors.KitbasherEditor.Services
         {
             try
             {
-                TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(candidates));
+                var sharedBatch = BuildSharedAtlasBatch(candidates);
+                TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(sharedBatch.Sources));
                 error = string.Empty;
                 return true;
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex) when (
+                ex is InvalidOperationException or ArgumentException or OverflowException)
             {
                 error = ex.Message;
                 return false;
@@ -662,7 +664,11 @@ namespace Editors.KitbasherEditor.Services
 
         private void ProcessBatch(BatchState state, string rootVmdPath, List<AtlasCandidate> candidates)
         {
-            var plan = TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(candidates));
+            var sharedBatch = BuildSharedAtlasBatch(candidates);
+            var plan = TextureAtlasBuilder.CreatePlanFromDds(ToAtlasSources(sharedBatch.Sources));
+            state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
+            state.AtlasPlacementsReused += candidates.Count - sharedBatch.Sources.Count;
+
             var atlasStem = BuildAtlasStem(rootVmdPath, state.BatchIndex++);
             var generatedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -671,12 +677,12 @@ namespace Editors.KitbasherEditor.Services
                 var textureBytes = new Dictionary<int, byte[]>();
                 var omitted = new HashSet<int>();
 
-                for (var i = 0; i < candidates.Count; i++)
+                foreach (var source in sharedBatch.Sources)
                 {
-                    if (candidates[i].ChannelBytes.TryGetValue(channel.Slot, out var bytes))
-                        textureBytes[i] = bytes;
+                    if (source.Representative.ChannelBytes.TryGetValue(channel.Slot, out var bytes))
+                        textureBytes[source.Id] = bytes;
                     else
-                        omitted.Add(i);
+                        omitted.Add(source.Id);
                 }
 
                 if (textureBytes.Count == 0)
@@ -701,10 +707,10 @@ namespace Editors.KitbasherEditor.Services
                 state.GeneratedTexturePaths.Add(atlasPath);
             }
 
-            for (var i = 0; i < candidates.Count; i++)
+            foreach (var candidate in candidates)
             {
-                var candidate = candidates[i];
-                var placement = plan.Placements.Single(x => x.Id == i);
+                var sourceId = sharedBatch.SourceIdByMesh[candidate.Key];
+                var placement = plan.Placements.Single(x => x.Id == sourceId);
 
                 foreach (var vertexIndex in candidate.Model.Mesh.IndexList.Distinct())
                 {
@@ -1399,6 +1405,8 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
             sb.AppendLine($"Atlas materials generated: {state.GeneratedMaterialPaths.Count}");
+            sb.AppendLine($"Atlas placements generated: {state.AtlasPlacementsGenerated}");
+            sb.AppendLine($"Atlas placements reused: {state.AtlasPlacementsReused}");
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
             sb.AppendLine($"Atlas meshes with missing textures: {(state.AtlasMeshesWithMissingTextures ? "YES" : "NO")}");
             sb.AppendLine();
@@ -1538,14 +1546,83 @@ namespace Editors.KitbasherEditor.Services
             return new UvBounds(minU, minV, maxU, maxV);
         }
 
-        private static List<TextureAtlasSource> ToAtlasSources(IReadOnlyList<AtlasCandidate> candidates)
+        private static SharedAtlasBatch BuildSharedAtlasBatch(
+            IReadOnlyList<AtlasCandidate> candidates)
         {
-            var sources = new List<TextureAtlasSource>(candidates.Count);
-            for (var i = 0; i < candidates.Count; i++)
+            var sources = new List<SharedAtlasSource>();
+            var byIdentity = new Dictionary<AtlasPlacementIdentity, SharedAtlasSource>();
+            var sourceIdByMesh = new Dictionary<MeshKey, int>();
+
+            foreach (var candidate in candidates)
             {
-                var candidate = candidates[i];
+                var identity = BuildAtlasPlacementIdentity(candidate);
+                if (!byIdentity.TryGetValue(identity, out var source))
+                {
+                    source = new SharedAtlasSource(sources.Count, candidate);
+                    sources.Add(source);
+                    byIdentity.Add(identity, source);
+                }
+
+                sourceIdByMesh[candidate.Key] = source.Id;
+            }
+
+            return new SharedAtlasBatch(sources, sourceIdByMesh);
+        }
+
+        private static AtlasPlacementIdentity BuildAtlasPlacementIdentity(AtlasCandidate candidate)
+        {
+            var crop = GetEffectiveCrop(candidate);
+            return new AtlasPlacementIdentity(
+                candidate.Width,
+                candidate.Height,
+                crop.X,
+                crop.Y,
+                crop.Width,
+                crop.Height,
+                GetChannelIdentity(candidate, "t_xml_base_colour"),
+                GetChannelIdentity(candidate, "t_xml_material_map"),
+                GetChannelIdentity(candidate, "t_xml_normal"),
+                GetChannelIdentity(candidate, "t_xml_mask"));
+        }
+
+        private static string GetChannelIdentity(AtlasCandidate candidate, string slot)
+        {
+            var path = GetTexturePath(candidate.MaterialDocument, slot);
+            if (string.IsNullOrWhiteSpace(path))
+                return "<none>";
+            if (IsTexturePlaceholder(path))
+                return $"<placeholder>:{path}";
+            if (candidate.ChannelBytes.ContainsKey(slot))
+                return $"<resolved>:{path}";
+            return $"<unresolved>:{path}";
+        }
+
+        private static AtlasCrop GetEffectiveCrop(AtlasCandidate candidate)
+        {
+            var cropX = checked((int)MathF.Floor(candidate.Bounds.MinU * candidate.Width));
+            var cropY = checked((int)MathF.Floor(candidate.Bounds.MinV * candidate.Height));
+            var cropRight = checked((int)MathF.Ceiling(candidate.Bounds.MaxU * candidate.Width));
+            var cropBottom = checked((int)MathF.Ceiling(candidate.Bounds.MaxV * candidate.Height));
+            var cropWidth = checked(cropRight - cropX);
+            var cropHeight = checked(cropBottom - cropY);
+
+            if (cropWidth <= 0)
+                cropWidth = 1;
+            if (cropHeight <= 0)
+                cropHeight = 1;
+
+            return new AtlasCrop(cropX, cropY, cropWidth, cropHeight);
+        }
+
+        private static List<TextureAtlasSource> ToAtlasSources(
+            IReadOnlyList<SharedAtlasSource> sharedSources)
+        {
+            var sources = new List<TextureAtlasSource>(sharedSources.Count);
+            foreach (var source in sharedSources)
+            {
+                var candidate = source.Representative;
                 sources.Add(new TextureAtlasSource(
-                    i,
+                    source.Id,
                     candidate.PrimaryBytes,
                     candidate.Bounds.MinU,
                     candidate.Bounds.MinV,
@@ -1629,6 +1706,8 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> AllowedMissingTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public bool AtlasMeshesWithMissingTextures { get; set; }
+            public int AtlasPlacementsGenerated { get; set; }
+            public int AtlasPlacementsReused { get; set; }
             public List<string> RemovedFiles { get; } = [];
             public List<string> ValidationMessages { get; } = [];
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
@@ -1674,6 +1753,32 @@ namespace Editors.KitbasherEditor.Services
             int Height,
             UvBounds Bounds,
             Dictionary<string, byte[]> ChannelBytes);
+
+        private sealed record SharedAtlasBatch(
+            List<SharedAtlasSource> Sources,
+            Dictionary<MeshKey, int> SourceIdByMesh);
+
+        private sealed record SharedAtlasSource(
+            int Id,
+            AtlasCandidate Representative);
+
+        private readonly record struct AtlasPlacementIdentity(
+            int SourceWidth,
+            int SourceHeight,
+            int CropX,
+            int CropY,
+            int CropWidth,
+            int CropHeight,
+            string BaseColour,
+            string MaterialMap,
+            string Normal,
+            string Mask);
+
+        private readonly record struct AtlasCrop(
+            int X,
+            int Y,
+            int Width,
+            int Height);
 
         private sealed record AtlasedMeshReportEntry(
             string RootVmdPath,
