@@ -3275,15 +3275,32 @@ namespace Editors.KitbasherEditor.Services
                 {
                     left.TextureAssignments.TryGetValue(slot, out var leftPath);
                     right.TextureAssignments.TryGetValue(slot, out var rightPath);
-                    var classes = new[]
+
+                    var texturePair = new[]
                     {
-                        ClassifyMaterialTexturePath(state, leftPath),
-                        ClassifyMaterialTexturePath(state, rightPath)
-                    }.OrderBy(x => x, StringComparer.Ordinal).ToArray();
+                        (
+                            Class: ClassifyMaterialTexturePath(state, leftPath),
+                            Path: Normalize(leftPath)),
+                        (
+                            Class: ClassifyMaterialTexturePath(state, rightPath),
+                            Path: Normalize(rightPath))
+                    }.OrderBy(
+                        x => $"{x.Class}\0{x.Path}",
+                        StringComparer.OrdinalIgnoreCase).ToArray();
+
+                    var blockerKey =
+                        $"{slot} [{texturePair[0].Class} <> {texturePair[1].Class}]";
+                    if (texturePair.Any(x =>
+                            x.Class.Equals("preserved", StringComparison.Ordinal)))
+                    {
+                        blockerKey +=
+                            $": {FormatDiagnosticValue(texturePair[0].Path)} <> " +
+                            $"{FormatDiagnosticValue(texturePair[1].Path)}";
+                    }
 
                     IncrementDiagnosticCount(
                         state.MaterialTextureSlotBlockerCounts,
-                        $"{slot} [{classes[0]} <> {classes[1]}]");
+                        blockerKey);
                 }
 
                 return;
@@ -3300,9 +3317,17 @@ namespace Editors.KitbasherEditor.Services
                                  return !string.Equals(leftValue, rightValue, StringComparison.Ordinal);
                              }))
                 {
+                    left.NonTextureFields.TryGetValue(field, out var leftValue);
+                    right.NonTextureFields.TryGetValue(field, out var rightValue);
+                    var values = new[]
+                    {
+                        FormatDiagnosticValue(leftValue ?? string.Empty),
+                        FormatDiagnosticValue(rightValue ?? string.Empty)
+                    }.OrderBy(x => x, StringComparer.Ordinal).ToArray();
+
                     IncrementDiagnosticCount(
                         state.MaterialParameterFieldBlockerCounts,
-                        field);
+                        $"{field}: {values[0]} <> {values[1]}");
                 }
             }
         }
@@ -5362,12 +5387,12 @@ namespace Editors.KitbasherEditor.Services
                     maxEntries: 24);
                 AppendDiagnosticCounts(
                     sb,
-                    "Texture slots",
+                    "Texture slot/value pairs",
                     state.MaterialTextureSlotBlockerCounts,
                     maxEntries: 32);
                 AppendDiagnosticCounts(
                     sb,
-                    "Material parameter fields",
+                    "Material parameter/value pairs",
                     state.MaterialParameterFieldBlockerCounts,
                     maxEntries: 32);
 
