@@ -36,6 +36,8 @@ namespace Editors.KitbasherEditor.Services
             ("t_xml_mask", TextureType.Mask, "mask"),
         ];
 
+        private const long MaxAutomaticCommonTextureConstantProbePixels = 4096;
+
         private static readonly HashSet<string> KnownConstantTexturePaths =
         [
             @"commontextures\default_black.dds",
@@ -1092,11 +1094,24 @@ namespace Editors.KitbasherEditor.Services
             var dimensions = TextureAtlasBuilder.GetDimensions(file.DataSource.PeekData(20));
             var constantColor = default(TextureAtlasConstantColor);
             var isUniformConstant = false;
-            if (IsKnownConstantTexturePath(texturePath))
+            if (ShouldProbeUniformTexture(texturePath, dimensions.Width, dimensions.Height))
             {
-                var bytes = file.DataSource.ReadData();
-                isUniformConstant = TextureAtlasBuilder.TryGetUniformColor(bytes, out constantColor);
+                try
+                {
+                    var bytes = file.DataSource.ReadData();
+                    isUniformConstant = TextureAtlasBuilder.TryGetUniformColor(bytes, out constantColor);
+                }
+                catch
+                {
+                    // Uniform probing is only an optimization. Unsupported/odd DDS variants
+                    // must fall back to the normal atlas path rather than making the mesh ineligible.
+                    isUniformConstant = false;
+                    constantColor = default;
+                }
             }
+
+            if (isUniformConstant)
+                state.UniformConstantTexturePaths.Add(texturePath);
 
             var inspection = new TextureInspection(
                 dimensions.Width,
@@ -1719,8 +1734,15 @@ namespace Editors.KitbasherEditor.Services
                     }
                 }
 
-                if (textureBytes.Count == 0 && constantSources.Count == 0)
+                if (textureBytes.Count == 0)
+                {
+                    // UV remapping cannot change a uniform texture. If every present source
+                    // for this channel is constant, keep each material's original shared
+                    // constant texture path instead of allocating/compressing an atlas.
+                    if (constantSources.Count != 0)
+                        state.ConstantOnlyAtlasChannelsSkipped++;
                     continue;
+                }
 
                 var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
                 foreach (var source in sharedBatch.Sources)
@@ -3665,6 +3687,8 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
+            sb.AppendLine($"Constant-only atlas channels skipped: {state.ConstantOnlyAtlasChannelsSkipped}");
+            sb.AppendLine($"Uniform constant source textures detected: {state.UniformConstantTexturePaths.Count}");
             sb.AppendLine($"Large BC split-compression channels: {state.LargeBcSplitCompressionChannels}");
             sb.AppendLine($"Atlas materials generated: {state.GeneratedMaterialPaths.Count}");
             sb.AppendLine($"Atlas material assignments reused: {state.GeneratedMaterialReuses}");
@@ -3913,6 +3937,14 @@ namespace Editors.KitbasherEditor.Services
 
                 sb.AppendLine();
             }
+
+            sb.AppendLine("Uniform constant source textures");
+            sb.AppendLine("--------------------------------");
+            foreach (var path in state.UniformConstantTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                sb.AppendLine(path);
+            if (state.UniformConstantTexturePaths.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
 
             sb.AppendLine("Generated atlas textures");
             sb.AppendLine("------------------------");
@@ -4233,6 +4265,25 @@ namespace Editors.KitbasherEditor.Services
         private static bool IsKnownConstantTexturePath(string? path)
             => KnownConstantTexturePaths.Contains(Normalize(path));
 
+        private static bool ShouldProbeUniformTexture(
+            string? path,
+            int width,
+            int height)
+        {
+            var normalized = Normalize(path);
+            if (IsKnownConstantTexturePath(normalized))
+                return true;
+
+            // WH3 ships many tiny shared defaults in commontextures (default_base_colour,
+            // default_diffuse, default_material_map, default colours, flat normals, etc.).
+            // Probe small common textures generically so new/default aliases do not require
+            // a brittle hard-coded filename list. TryGetUniformColor remains the final guard.
+            return normalized.StartsWith(@"commontextures\", StringComparison.OrdinalIgnoreCase) &&
+                   width > 0 &&
+                   height > 0 &&
+                   (long)width * height <= MaxAutomaticCommonTextureConstantProbePixels;
+        }
+
         private static string Normalize(string? path)
             => string.IsNullOrWhiteSpace(path)
                 ? string.Empty
@@ -4330,6 +4381,8 @@ namespace Editors.KitbasherEditor.Services
             public bool OptimizeGeometryEnabled { get; }
             public int PackWideCandidateCount { get; set; }
             public int AtlasBatchCount { get; set; }
+            public int ConstantOnlyAtlasChannelsSkipped { get; set; }
+            public HashSet<string> UniformConstantTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public int LargeBcSplitCompressionChannels { get; set; }
             public int AtlasPixelAreaOptimizedSplits { get; set; }
             public int AtlasPixelAreaSplitEvaluations { get; set; }
