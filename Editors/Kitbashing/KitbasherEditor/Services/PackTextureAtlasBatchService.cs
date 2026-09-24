@@ -1514,7 +1514,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<MergeAffinityGroup> affinityGroups,
             List<List<AtlasCandidate>> output)
         {
-            const int maxAcceptedLocalitySplits = 64;
+            const int maxAcceptedLocalitySplits = 32;
             const int maxGlobalPixelIncreasePercent = 25;
             const int minimumResidentPixelSavingPercent = 10;
 
@@ -1722,7 +1722,7 @@ namespace Editors.KitbasherEditor.Services
                          .OrderByDescending(root =>
                              groups.Count(group => rootsByGroup[group.Identity].Contains(root)))
                          .ThenBy(root => root, StringComparer.OrdinalIgnoreCase)
-                         .Take(24))
+                         .Take(12))
             {
                 AddProposal(groups.Where(group =>
                     rootsByGroup[group.Identity].Contains(root)));
@@ -1751,7 +1751,7 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            const int maxOrderedLocalitySplitEvaluations = 24;
+            const int maxOrderedLocalitySplitEvaluations = 12;
             IEnumerable<int> selectedBoundaries = boundaries;
             if (boundaries.Count > maxOrderedLocalitySplitEvaluations)
             {
@@ -1765,7 +1765,7 @@ namespace Editors.KitbasherEditor.Services
             foreach (var boundary in selectedBoundaries)
                 AddProposal(ordered.Take(boundary));
 
-            const int maxLocalitySplitProposals = 48;
+            const int maxLocalitySplitProposals = 24;
             return proposals.Count <= maxLocalitySplitProposals
                 ? proposals
                 : proposals.Take(maxLocalitySplitProposals).ToList();
