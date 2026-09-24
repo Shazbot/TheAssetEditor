@@ -357,7 +357,6 @@ namespace Editors.ImportExport.TextureAtlas
                         var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
 
                         if (!isConstant &&
-                            mipLevel == 0 &&
                             TryCopyCorePlacementRows(
                                 atlasPixels,
                                 coreOccupancy,
@@ -368,8 +367,27 @@ namespace Editors.ImportExport.TextureAtlas
                                 bounds,
                                 mipWidth,
                                 mipHeight,
-                                forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true))
+                                forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true,
+                                requireUnoccupiedCheck: mipLevel != 0))
                         {
+                            continue;
+                        }
+
+                        var forceOpaqueAlpha =
+                            forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true;
+                        if (!isConstant)
+                        {
+                            CopyMappedCorePlacement(
+                                atlasPixels,
+                                coreOccupancy,
+                                source!,
+                                sourceMip!,
+                                plan,
+                                placement,
+                                bounds,
+                                mipWidth,
+                                mipHeight,
+                                forceOpaqueAlpha);
                             continue;
                         }
 
@@ -381,33 +399,13 @@ namespace Editors.ImportExport.TextureAtlas
                                 if (coreOccupancy[index])
                                     continue;
 
-                                if (isConstant)
-                                {
-                                    WriteConstantPixel(
-                                        atlasPixels,
-                                        mipWidth,
-                                        x,
-                                        y,
-                                        constantColor,
-                                        forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
-                                }
-                                else
-                                {
-                                    CopySourceMipPixel(
-                                        atlasPixels,
-                                        mipWidth,
-                                        x,
-                                        y,
-                                        source!,
-                                        sourceMip!,
-                                        plan,
-                                        placement,
-                                        mipWidth,
-                                        mipHeight,
-                                        clampToCrop: false,
-                                        forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
-                                }
-
+                                WriteConstantPixel(
+                                    atlasPixels,
+                                    mipWidth,
+                                    x,
+                                    y,
+                                    constantColor,
+                                    forceOpaqueAlpha);
                                 coreOccupancy[index] = true;
                             }
                         }
@@ -450,42 +448,77 @@ namespace Editors.ImportExport.TextureAtlas
                         var right = Math.Min(mipWidth, bounds.Right + paddingX);
                         var bottom = Math.Min(mipHeight, bounds.Bottom + paddingY);
 
-                        for (var y = top; y < bottom; y++)
-                        {
-                            for (var x = left; x < right; x++)
-                            {
-                                var index = y * mipWidth + x;
-                                if (coreOccupancy[index])
-                                    continue;
+                        var forceOpaqueAlpha =
+                            forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true;
 
-                                if (isConstant)
-                                {
-                                    WriteConstantPixel(
-                                        atlasPixels,
-                                        mipWidth,
-                                        x,
-                                        y,
-                                        constantColor,
-                                        forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
-                                }
-                                else
-                                {
-                                    CopySourceMipPixel(
-                                        atlasPixels,
-                                        mipWidth,
-                                        x,
-                                        y,
-                                        source!,
-                                        sourceMip!,
-                                        plan,
-                                        placement,
-                                        mipWidth,
-                                        mipHeight,
-                                        clampToCrop: true,
-                                        forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true);
-                                }
-                            }
-                        }
+                        // Only visit the actual gutter bands. The old path scanned the full
+                        // padded rectangle, including every core texel, merely to discover that
+                        // coreOccupancy was already true. On large atlases that effectively
+                        // traversed most of the atlas twice.
+                        CopyPaddingRectangle(
+                            atlasPixels,
+                            coreOccupancy,
+                            source,
+                            sourceMip,
+                            plan,
+                            placement,
+                            constantColor,
+                            isConstant,
+                            mipWidth,
+                            mipHeight,
+                            left,
+                            top,
+                            right,
+                            bounds.Top,
+                            forceOpaqueAlpha);
+                        CopyPaddingRectangle(
+                            atlasPixels,
+                            coreOccupancy,
+                            source,
+                            sourceMip,
+                            plan,
+                            placement,
+                            constantColor,
+                            isConstant,
+                            mipWidth,
+                            mipHeight,
+                            left,
+                            bounds.Bottom,
+                            right,
+                            bottom,
+                            forceOpaqueAlpha);
+                        CopyPaddingRectangle(
+                            atlasPixels,
+                            coreOccupancy,
+                            source,
+                            sourceMip,
+                            plan,
+                            placement,
+                            constantColor,
+                            isConstant,
+                            mipWidth,
+                            mipHeight,
+                            left,
+                            bounds.Top,
+                            bounds.Left,
+                            bounds.Bottom,
+                            forceOpaqueAlpha);
+                        CopyPaddingRectangle(
+                            atlasPixels,
+                            coreOccupancy,
+                            source,
+                            sourceMip,
+                            plan,
+                            placement,
+                            constantColor,
+                            isConstant,
+                            mipWidth,
+                            mipHeight,
+                            bounds.Right,
+                            bounds.Top,
+                            right,
+                            bounds.Bottom,
+                            forceOpaqueAlpha);
                     }
 
                     mipConsumer?.Invoke(mipLevel, mipWidth, mipHeight, atlasPixels);
@@ -645,7 +678,8 @@ namespace Editors.ImportExport.TextureAtlas
             MipPlacementBounds bounds,
             int mipWidth,
             int mipHeight,
-            bool forceOpaqueAlpha)
+            bool forceOpaqueAlpha,
+            bool requireUnoccupiedCheck)
         {
             if (forceOpaqueAlpha ||
                 placement.CropX < 0 ||
@@ -657,8 +691,9 @@ namespace Editors.ImportExport.TextureAtlas
             }
 
             // If source and destination advance at exactly one source texel per atlas texel,
-            // the base mip can be copied a row at a time instead of doing floating-point UV
-            // mapping, floor and modulo operations for every individual pixel.
+            // any mip can be copied a row at a time instead of doing floating-point UV mapping,
+            // floor and modulo operations for every individual pixel. Lower mips first verify
+            // that rounding has not caused this core rectangle to overlap an earlier placement.
             if ((long)sourceMip.Width * plan.Width != (long)placement.SourceWidth * mipWidth ||
                 (long)sourceMip.Height * plan.Height != (long)placement.SourceHeight * mipHeight)
             {
@@ -685,6 +720,23 @@ namespace Editors.ImportExport.TextureAtlas
                 return false;
             }
 
+            if (requireUnoccupiedCheck)
+            {
+                for (var row = 0; row < copyHeight; row++)
+                {
+                    var destinationPixelOffset =
+                        checked((bounds.Top + row) * mipWidth + bounds.Left);
+                    if (Array.IndexOf(
+                            coreOccupancy,
+                            true,
+                            destinationPixelOffset,
+                            copyWidth) >= 0)
+                    {
+                        return false;
+                    }
+                }
+            }
+
             var rowBytes = checked(copyWidth * 4);
             for (var row = 0; row < copyHeight; row++)
             {
@@ -700,6 +752,173 @@ namespace Editors.ImportExport.TextureAtlas
             }
 
             return true;
+        }
+
+        private static void CopyMappedCorePlacement(
+            byte[] atlasPixels,
+            bool[] coreOccupancy,
+            IImage source,
+            MipLevelInfo sourceMip,
+            TextureAtlasPlan plan,
+            TextureAtlasPlacement placement,
+            MipPlacementBounds bounds,
+            int mipWidth,
+            int mipHeight,
+            bool forceOpaqueAlpha)
+        {
+            var width = bounds.Right - bounds.Left;
+            if (width <= 0 || bounds.Bottom <= bounds.Top)
+                return;
+
+            // X mapping is identical for every destination row. Precompute it once instead of
+            // repeating floating-point transform/floor/modulo work for every pixel.
+            var sourceXOffsets = new int[width];
+            for (var localX = 0; localX < width; localX++)
+            {
+                var atlasX = bounds.Left + localX;
+                var atlasBaseX = (atlasX + 0.5) * plan.Width / mipWidth;
+                var sourceBaseX =
+                    placement.CropX + (atlasBaseX - placement.DestinationX);
+                var sourceX = PositiveModulo(
+                    (int)Math.Floor(
+                        sourceBaseX * sourceMip.Width / placement.SourceWidth),
+                    sourceMip.Width);
+                sourceXOffsets[localX] = sourceX * 4;
+            }
+
+            for (var y = bounds.Top; y < bounds.Bottom; y++)
+            {
+                var atlasBaseY = (y + 0.5) * plan.Height / mipHeight;
+                var sourceBaseY =
+                    placement.CropY + (atlasBaseY - placement.DestinationY);
+                var sourceY = PositiveModulo(
+                    (int)Math.Floor(
+                        sourceBaseY * sourceMip.Height / placement.SourceHeight),
+                    sourceMip.Height);
+                var sourceRowOffset =
+                    sourceMip.DataOffset + sourceY * sourceMip.Stride;
+                var destinationPixelOffset = y * mipWidth + bounds.Left;
+                var destinationOffset = destinationPixelOffset * 4;
+
+                for (var localX = 0; localX < width; localX++)
+                {
+                    var occupancyIndex = destinationPixelOffset + localX;
+                    if (coreOccupancy[occupancyIndex])
+                        continue;
+
+                    var sourceOffset = sourceRowOffset + sourceXOffsets[localX];
+                    var pixelOffset = destinationOffset + localX * 4;
+                    atlasPixels[pixelOffset] = source.Data[sourceOffset];
+                    atlasPixels[pixelOffset + 1] = source.Data[sourceOffset + 1];
+                    atlasPixels[pixelOffset + 2] = source.Data[sourceOffset + 2];
+                    atlasPixels[pixelOffset + 3] = forceOpaqueAlpha
+                        ? byte.MaxValue
+                        : source.Data[sourceOffset + 3];
+                    coreOccupancy[occupancyIndex] = true;
+                }
+            }
+        }
+
+        private static void CopyPaddingRectangle(
+            byte[] atlasPixels,
+            bool[] coreOccupancy,
+            IImage? source,
+            MipLevelInfo? sourceMip,
+            TextureAtlasPlan plan,
+            TextureAtlasPlacement placement,
+            TextureAtlasConstantColor constantColor,
+            bool isConstant,
+            int mipWidth,
+            int mipHeight,
+            int left,
+            int top,
+            int right,
+            int bottom,
+            bool forceOpaqueAlpha)
+        {
+            if (left >= right || top >= bottom)
+                return;
+
+            if (isConstant)
+            {
+                for (var y = top; y < bottom; y++)
+                {
+                    var occupancyIndex = y * mipWidth + left;
+                    for (var x = left; x < right; x++, occupancyIndex++)
+                    {
+                        if (coreOccupancy[occupancyIndex])
+                            continue;
+
+                        WriteConstantPixel(
+                            atlasPixels,
+                            mipWidth,
+                            x,
+                            y,
+                            constantColor,
+                            forceOpaqueAlpha);
+                    }
+                }
+
+                return;
+            }
+
+            if (source == null || sourceMip == null)
+                throw new InvalidOperationException(
+                    $"Missing decoded source for atlas placement {placement.Id}.");
+
+            var width = right - left;
+            var sourceXOffsets = new int[width];
+            for (var localX = 0; localX < width; localX++)
+            {
+                var atlasX = left + localX;
+                var atlasBaseX = (atlasX + 0.5) * plan.Width / mipWidth;
+                atlasBaseX = Math.Clamp(
+                    atlasBaseX,
+                    placement.DestinationX + 0.5,
+                    placement.DestinationX + placement.CropWidth - 0.5);
+                var sourceBaseX =
+                    placement.CropX + (atlasBaseX - placement.DestinationX);
+                var sourceX = PositiveModulo(
+                    (int)Math.Floor(
+                        sourceBaseX * sourceMip.Width / placement.SourceWidth),
+                    sourceMip.Width);
+                sourceXOffsets[localX] = sourceX * 4;
+            }
+
+            for (var y = top; y < bottom; y++)
+            {
+                var atlasBaseY = (y + 0.5) * plan.Height / mipHeight;
+                atlasBaseY = Math.Clamp(
+                    atlasBaseY,
+                    placement.DestinationY + 0.5,
+                    placement.DestinationY + placement.CropHeight - 0.5);
+                var sourceBaseY =
+                    placement.CropY + (atlasBaseY - placement.DestinationY);
+                var sourceY = PositiveModulo(
+                    (int)Math.Floor(
+                        sourceBaseY * sourceMip.Height / placement.SourceHeight),
+                    sourceMip.Height);
+                var sourceRowOffset =
+                    sourceMip.DataOffset + sourceY * sourceMip.Stride;
+                var destinationPixelOffset = y * mipWidth + left;
+                var destinationOffset = destinationPixelOffset * 4;
+
+                for (var localX = 0; localX < width; localX++)
+                {
+                    var occupancyIndex = destinationPixelOffset + localX;
+                    if (coreOccupancy[occupancyIndex])
+                        continue;
+
+                    var sourceOffset = sourceRowOffset + sourceXOffsets[localX];
+                    var pixelOffset = destinationOffset + localX * 4;
+                    atlasPixels[pixelOffset] = source.Data[sourceOffset];
+                    atlasPixels[pixelOffset + 1] = source.Data[sourceOffset + 1];
+                    atlasPixels[pixelOffset + 2] = source.Data[sourceOffset + 2];
+                    atlasPixels[pixelOffset + 3] = forceOpaqueAlpha
+                        ? byte.MaxValue
+                        : source.Data[sourceOffset + 3];
+                }
+            }
         }
 
         private static void CopySourceMipPixel(
