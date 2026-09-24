@@ -5307,7 +5307,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Mesh merge near-miss blocker occurrences: {state.MeshMergeBlockerCounts.Values.Sum()}");
                 var mergeOpportunities = state.TextureMergeOpportunities.Values.ToList();
                 sb.AppendLine($"Texture-blocked merge opportunities: {mergeOpportunities.Count}");
-                sb.AppendLine($"Potential additional mesh parts eliminable: {mergeOpportunities.Count(x => x.Combination.Fits)}");
+                sb.AppendLine($"Texture-blocked merge opportunities whose atlas combination fits: {mergeOpportunities.Count(x => x.Combination.Fits)}");
                 sb.AppendLine($"Zero-cost atlas batch combinations: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPixels <= 0)}");
                 sb.AppendLine($"Atlas combinations <=10% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPixels > 0 && x.Combination.AdditionalPercent <= 10)}");
                 sb.AppendLine($"Atlas combinations 10-25% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPercent > 10 && x.Combination.AdditionalPercent <= 25)}");
@@ -5602,7 +5602,7 @@ namespace Editors.KitbasherEditor.Services
                 else
                 {
                     sb.AppendLine($"Planner-actionable opportunities: {opportunities.Count}");
-                    sb.AppendLine($"Potential additional mesh parts eliminable: {opportunities.Count(x => x.Combination.Fits)}");
+                    sb.AppendLine($"Opportunities whose atlas combination fits: {opportunities.Count(x => x.Combination.Fits)}");
                     sb.AppendLine($"Unique atlas-batch combinations evaluated: {state.AtlasBatchCombinationDiagnostics.Count}");
                     sb.AppendLine();
 
