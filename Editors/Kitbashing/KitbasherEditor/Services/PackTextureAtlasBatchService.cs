@@ -3547,7 +3547,10 @@ namespace Editors.KitbasherEditor.Services
 
                     var raster = timing.RasterStatistics;
                     sb.AppendLine(
-                        $"  raster paths: decoded={raster.DecodedSourceCount} | " +
+                        $"  raster paths: source-ids={raster.DecodedSourceCount} | " +
+                        $"unique-dds={raster.UniqueDecodedDdsCount} | " +
+                        $"decode={Math.Round(raster.DdsDecodeElapsed.TotalMilliseconds)}ms | " +
+                        $"compose={Math.Round(raster.ComposeElapsed.TotalMilliseconds)}ms | " +
                         $"mips={raster.MipLevelsBuilt} | " +
                         $"row-copy-attempts={raster.RowCopyAttempts} | " +
                         $"row-copy-placements={raster.RowCopyPlacements} | " +
