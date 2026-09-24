@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using Pfim;
@@ -61,6 +62,9 @@ namespace Editors.ImportExport.TextureAtlas
     public sealed class TextureAtlasBuildStatistics
     {
         public int DecodedSourceCount { get; internal set; }
+        public int UniqueDecodedDdsCount { get; internal set; }
+        public TimeSpan DdsDecodeElapsed { get; internal set; }
+        public TimeSpan ComposeElapsed { get; internal set; }
         public int MipLevelsBuilt { get; internal set; }
         public int RowCopyAttempts { get; internal set; }
         public int RowCopyPlacements { get; internal set; }
@@ -314,26 +318,40 @@ namespace Editors.ImportExport.TextureAtlas
             }
 
             var decodedSources = new Dictionary<int, IImage>();
+            var decodedByDdsBytes = new Dictionary<byte[], IImage>(ReferenceEqualityComparer.Instance);
             try
             {
+                var decodeStopwatch = Stopwatch.StartNew();
                 foreach (var (id, ddsBytes) in ddsSources)
                 {
                     Pulse();
-                    using var stream = new MemoryStream(ddsBytes);
-                    var image = Pfimage.FromStream(stream);
-                    if (image.Format != PfimImageFormat.Rgba32)
+
+                    if (!decodedByDdsBytes.TryGetValue(ddsBytes, out var image))
                     {
-                        image.Dispose();
-                        throw new NotSupportedException(
-                            $"Unsupported DDS pixel format for texture atlas generation: {image.Format}. Expected RGBA32.");
+                        using var stream = new MemoryStream(ddsBytes);
+                        image = Pfimage.FromStream(stream);
+                        if (image.Format != PfimImageFormat.Rgba32)
+                        {
+                            image.Dispose();
+                            throw new NotSupportedException(
+                                $"Unsupported DDS pixel format for texture atlas generation: {image.Format}. Expected RGBA32.");
+                        }
+
+                        decodedByDdsBytes.Add(ddsBytes, image);
                     }
 
                     decodedSources[id] = image;
                 }
+                decodeStopwatch.Stop();
 
                 if (statistics != null)
+                {
                     statistics.DecodedSourceCount = decodedSources.Count;
+                    statistics.UniqueDecodedDdsCount = decodedByDdsBytes.Count;
+                    statistics.DdsDecodeElapsed = decodeStopwatch.Elapsed;
+                }
 
+                var composeStopwatch = Stopwatch.StartNew();
                 var mipPixels = new List<byte[]>();
                 var mipWidth = atlasWidth;
                 var mipHeight = atlasHeight;
@@ -589,11 +607,15 @@ namespace Editors.ImportExport.TextureAtlas
                     mipLevel++;
                 }
 
+                composeStopwatch.Stop();
+                if (statistics != null)
+                    statistics.ComposeElapsed = composeStopwatch.Elapsed;
+
                 return mipPixels;
             }
             finally
             {
-                foreach (var source in decodedSources.Values)
+                foreach (var source in decodedByDdsBytes.Values)
                     source.Dispose();
             }
         }
