@@ -1661,6 +1661,19 @@ namespace Editors.KitbasherEditor.Services
             state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
             state.AtlasPlacementsReused += candidates.Count - sharedBatch.Sources.Count;
 
+            var atlasBatchId = state.BatchIndex;
+            if (!TryGetGeneratedAtlasPixelCost(candidates, out var atlasBatchPixelCost, out _))
+                atlasBatchPixelCost = 0;
+
+            state.AtlasBatchDiagnostics[atlasBatchId] = new AtlasBatchDiagnosticSnapshot(
+                candidates.ToList(),
+                atlasBatchPixelCost);
+            foreach (var candidate in candidates)
+            {
+                state.AtlasBatchByMesh[candidate.Key] = atlasBatchId;
+                state.AtlasCandidateByKey[candidate.Key] = candidate;
+            }
+
             state.AtlasBatchCount++;
             if (state.ShareAtlasesAcrossVmdsEnabled &&
                 candidates.Select(x => x.RootVmdPath).Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any())
@@ -2242,6 +2255,21 @@ namespace Editors.KitbasherEditor.Services
                                 leftIndex,
                                 rightIndex,
                                 materialComparison.Detail));
+
+                        if (reason.Equals(
+                                "WSModel texture assignments differ",
+                                StringComparison.Ordinal))
+                        {
+                            AnalyzeTextureBlockedMergeOpportunity(
+                                state,
+                                rigidPath,
+                                lodIndex,
+                                leftIndex,
+                                rightIndex,
+                                models,
+                                materialComparison);
+                        }
+
                         continue;
                     }
 
@@ -2268,6 +2296,188 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+        private static void AnalyzeTextureBlockedMergeOpportunity(
+            BatchState state,
+            string rigidPath,
+            int lodIndex,
+            int leftPartIndex,
+            int rightPartIndex,
+            IReadOnlyList<RmvModel> models,
+            MaterialMergeDiagnosticComparison materialComparison)
+        {
+            var leftKey = new MeshKey(rigidPath, lodIndex, leftPartIndex);
+            var rightKey = new MeshKey(rigidPath, lodIndex, rightPartIndex);
+
+            if (!state.AtlasBatchByMesh.TryGetValue(leftKey, out var leftBatchId) ||
+                !state.AtlasBatchByMesh.TryGetValue(rightKey, out var rightBatchId) ||
+                leftBatchId == rightBatchId)
+            {
+                return;
+            }
+
+            if (!TryGetAtlasOnlyTextureDifference(
+                    state,
+                    materialComparison.LeftMaterialPath,
+                    materialComparison.RightMaterialPath,
+                    out var textureDifferenceDetail))
+            {
+                return;
+            }
+
+            var leftVertices = models[leftPartIndex].Mesh.VertexList.Length;
+            var rightVertices = models[rightPartIndex].Mesh.VertexList.Length;
+            if ((long)leftVertices + rightVertices > ushort.MaxValue)
+                return;
+
+            var firstBatchId = Math.Min(leftBatchId, rightBatchId);
+            var secondBatchId = Math.Max(leftBatchId, rightBatchId);
+            var batchPair = new AtlasBatchPair(firstBatchId, secondBatchId);
+
+            if (!state.AtlasBatchCombinationDiagnostics.TryGetValue(batchPair, out var combination))
+            {
+                combination = BuildAtlasBatchCombinationDiagnostic(state, batchPair);
+                state.AtlasBatchCombinationDiagnostics[batchPair] = combination;
+            }
+
+            var leftMaterial = GetMaterialMergeDiagnosticSnapshot(
+                state,
+                materialComparison.LeftMaterialPath);
+            if (leftMaterial == null)
+                return;
+
+            var opportunityKey = new TextureMergeOpportunityKey(
+                rigidPath,
+                lodIndex,
+                GetRmvMergeIdentity(models[leftPartIndex]),
+                ContentHash(leftMaterial.NonTextureIdentity),
+                firstBatchId,
+                secondBatchId);
+
+            if (!state.TextureMergeOpportunities.TryGetValue(opportunityKey, out var opportunity))
+            {
+                opportunity = new TextureMergeOpportunityAccumulator(
+                    rigidPath,
+                    lodIndex,
+                    firstBatchId,
+                    secondBatchId,
+                    combination);
+                state.TextureMergeOpportunities[opportunityKey] = opportunity;
+            }
+
+            opportunity.PartIndices.Add(leftPartIndex);
+            opportunity.PartIndices.Add(rightPartIndex);
+            if (opportunity.Examples.Count < 4)
+            {
+                var example =
+                    $"parts {leftPartIndex}/{rightPartIndex}: {textureDifferenceDetail}";
+                if (!opportunity.Examples.Contains(example, StringComparer.Ordinal))
+                    opportunity.Examples.Add(example);
+            }
+        }
+
+        private static AtlasBatchCombinationDiagnostic BuildAtlasBatchCombinationDiagnostic(
+            BatchState state,
+            AtlasBatchPair batchPair)
+        {
+            if (!state.AtlasBatchDiagnostics.TryGetValue(batchPair.FirstBatchId, out var first) ||
+                !state.AtlasBatchDiagnostics.TryGetValue(batchPair.SecondBatchId, out var second))
+            {
+                return new AtlasBatchCombinationDiagnostic(
+                    false,
+                    0,
+                    0,
+                    0,
+                    0,
+                    "Atlas batch metadata was unavailable.");
+            }
+
+            var baselinePixelCost = checked(first.PixelCost + second.PixelCost);
+            var combinedCandidates = first.Candidates
+                .Concat(second.Candidates)
+                .GroupBy(x => x.Key)
+                .Select(group => group.First())
+                .ToList();
+
+            if (!TryGetGeneratedAtlasPixelCost(
+                    combinedCandidates,
+                    out var combinedPixelCost,
+                    out _))
+            {
+                return new AtlasBatchCombinationDiagnostic(
+                    false,
+                    baselinePixelCost,
+                    0,
+                    0,
+                    0,
+                    "The combined batch exceeds the atlas size/layout limit.");
+            }
+
+            var additionalPixels = combinedPixelCost - baselinePixelCost;
+            var additionalPercent = baselinePixelCost > 0
+                ? additionalPixels * 100.0 / baselinePixelCost
+                : 0;
+
+            return new AtlasBatchCombinationDiagnostic(
+                true,
+                baselinePixelCost,
+                combinedPixelCost,
+                additionalPixels,
+                additionalPercent,
+                string.Empty);
+        }
+
+        private static bool TryGetAtlasOnlyTextureDifference(
+            BatchState state,
+            string leftMaterialPath,
+            string rightMaterialPath,
+            out string detail)
+        {
+            detail = string.Empty;
+            var left = GetMaterialMergeDiagnosticSnapshot(state, leftMaterialPath);
+            var right = GetMaterialMergeDiagnosticSnapshot(state, rightMaterialPath);
+            if (left == null || right == null)
+                return false;
+
+            var differingSlots = left.TextureAssignments.Keys
+                .Union(right.TextureAssignments.Keys, StringComparer.OrdinalIgnoreCase)
+                .Where(slot =>
+                {
+                    left.TextureAssignments.TryGetValue(slot, out var leftPath);
+                    right.TextureAssignments.TryGetValue(slot, out var rightPath);
+                    return !Normalize(leftPath).Equals(
+                        Normalize(rightPath),
+                        StringComparison.OrdinalIgnoreCase);
+                })
+                .ToList();
+
+            if (differingSlots.Count == 0)
+                return false;
+
+            foreach (var slot in differingSlots)
+            {
+                left.TextureAssignments.TryGetValue(slot, out var leftPath);
+                right.TextureAssignments.TryGetValue(slot, out var rightPath);
+                leftPath = Normalize(leftPath);
+                rightPath = Normalize(rightPath);
+
+                // Co-locating batches can only resolve a difference caused by generated atlas
+                // paths. Missing channels, constants, vanilla textures, and other preserved
+                // sources are semantic differences and are intentionally not counted here.
+                if (string.IsNullOrWhiteSpace(leftPath) ||
+                    string.IsNullOrWhiteSpace(rightPath) ||
+                    !state.GeneratedTexturePaths.Contains(leftPath) ||
+                    !state.GeneratedTexturePaths.Contains(rightPath))
+                {
+                    return false;
+                }
+            }
+
+            detail = string.Join(
+                ", ",
+                differingSlots.OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
+            return true;
+        }
+
         private static MaterialMergeDiagnosticComparison CompareWsMaterialAssignmentsForDiagnostics(
             BatchState state,
             int lodIndex,
@@ -2280,6 +2490,8 @@ namespace Editors.KitbasherEditor.Services
             var semanticallyEquivalent = true;
             var reasons = new HashSet<string>(StringComparer.Ordinal);
             string? firstDetail = null;
+            string? firstLeftMaterialPath = null;
+            string? firstRightMaterialPath = null;
 
             foreach (var wsPath in wsModelPaths)
             {
@@ -2290,6 +2502,8 @@ namespace Editors.KitbasherEditor.Services
 
                 pathsEqual = false;
                 firstDetail ??= $"{Path.GetFileName(wsPath)}: {leftPath} <> {rightPath}";
+                firstLeftMaterialPath ??= leftPath;
+                firstRightMaterialPath ??= rightPath;
 
                 var left = GetMaterialMergeDiagnosticSnapshot(state, leftPath);
                 var right = GetMaterialMergeDiagnosticSnapshot(state, rightPath);
@@ -2329,7 +2543,9 @@ namespace Editors.KitbasherEditor.Services
                     true,
                     true,
                     string.Empty,
-                    "Material assignments are identical.");
+                    "Material assignments are identical.",
+                    string.Empty,
+                    string.Empty);
             }
 
             if (semanticallyEquivalent)
@@ -2338,7 +2554,9 @@ namespace Editors.KitbasherEditor.Services
                     false,
                     true,
                     "WSModel material paths differ but rendering identity is identical",
-                    firstDetail ?? "Material paths differ.");
+                    firstDetail ?? "Material paths differ.",
+                    firstLeftMaterialPath ?? string.Empty,
+                    firstRightMaterialPath ?? string.Empty);
             }
 
             var reason = reasons.Count == 1
@@ -2348,7 +2566,9 @@ namespace Editors.KitbasherEditor.Services
                 false,
                 false,
                 reason,
-                firstDetail ?? reason);
+                firstDetail ?? reason,
+                firstLeftMaterialPath ?? string.Empty,
+                firstRightMaterialPath ?? string.Empty);
         }
 
         private static MaterialMergeDiagnosticSnapshot? GetMaterialMergeDiagnosticSnapshot(
@@ -2371,18 +2591,26 @@ namespace Editors.KitbasherEditor.Services
                 var material = GetMaterialDocument(state, materialPath, file);
                 var shader = Normalize(material.SelectSingleNode("/material/shader")?.InnerText);
 
-                var textures = material.SelectNodes("/material/textures/texture")?
+                var textureAssignments = material.SelectNodes("/material/textures/texture")?
                     .Cast<XmlNode>()
-                    .Select(node =>
+                    .Select(node => new
                     {
-                        var slot = GetTextureSlot(node);
-                        var source = Normalize(
-                            node.SelectSingleNode("source")?.InnerText ?? node.InnerText);
-                        return $"{slot}={source}";
+                        Slot = GetTextureSlot(node),
+                        Source = Normalize(
+                            node.SelectSingleNode("source")?.InnerText ?? node.InnerText)
                     })
-                    .OrderBy(x => x, StringComparer.Ordinal)
-                    .ToArray() ?? [];
-                var textureIdentity = string.Join("\u001f", textures);
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Slot))
+                    .GroupBy(x => x.Slot, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.First().Source,
+                        StringComparer.OrdinalIgnoreCase)
+                    ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var textureIdentity = string.Join(
+                    "\u001f",
+                    textureAssignments
+                        .OrderBy(x => x.Key, StringComparer.Ordinal)
+                        .Select(x => $"{x.Key}={x.Value}"));
 
                 var nonTexture = new XmlDocument();
                 nonTexture.LoadXml(material.OuterXml);
@@ -2395,7 +2623,8 @@ namespace Editors.KitbasherEditor.Services
                     GetMaterialRenderingIdentity(material),
                     shader,
                     textureIdentity,
-                    nonTexture.OuterXml);
+                    nonTexture.OuterXml,
+                    textureAssignments);
                 state.MeshMergeMaterialDiagnostics[materialPath] = snapshot;
                 return snapshot;
             }
@@ -4051,6 +4280,14 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Mesh parts after merging: {state.MeshPartsAfterMerging}");
                 sb.AppendLine($"Mesh parts eliminated: {state.MeshPartsEliminated}");
                 sb.AppendLine($"Mesh merge near-miss blocker occurrences: {state.MeshMergeBlockerCounts.Values.Sum()}");
+                var mergeOpportunities = state.TextureMergeOpportunities.Values.ToList();
+                sb.AppendLine($"Texture-blocked merge opportunities: {mergeOpportunities.Count}");
+                sb.AppendLine($"Potential additional mesh parts eliminable: {mergeOpportunities.Count(x => x.Combination.Fits)}");
+                sb.AppendLine($"Zero-cost atlas batch combinations: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPixels <= 0)}");
+                sb.AppendLine($"Atlas combinations <=10% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPixels > 0 && x.Combination.AdditionalPercent <= 10)}");
+                sb.AppendLine($"Atlas combinations 10-25% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPercent > 10 && x.Combination.AdditionalPercent <= 25)}");
+                sb.AppendLine($"Atlas combinations >25% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPercent > 25)}");
+                sb.AppendLine($"Atlas combinations that do not fit: {mergeOpportunities.Count(x => !x.Combination.Fits)}");
             }
             sb.AppendLine($"Optimize geometry: {(state.OptimizeGeometryEnabled ? "YES" : "NO")}");
             if (state.OptimizeGeometryEnabled)
@@ -4281,6 +4518,58 @@ namespace Editors.KitbasherEditor.Services
                                 sb.AppendLine($"  Example: {example}");
                         }
                     }
+                }
+
+                sb.AppendLine();
+                sb.AppendLine("Texture-blocked merge opportunities");
+                sb.AppendLine("-----------------------------------");
+                sb.AppendLine("Each entry is one additional merge group potentially removable by combining two existing atlas batches.");
+                sb.AppendLine("Pixel cost compares the two current complete batches with one hypothetical combined batch.");
+                var opportunities = state.TextureMergeOpportunities.Values
+                    .OrderBy(x => x.Combination.Fits ? 0 : 1)
+                    .ThenBy(x => x.Combination.AdditionalPercent)
+                    .ThenBy(x => x.Combination.AdditionalPixels)
+                    .ThenBy(x => x.RigidPath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(x => x.LodIndex)
+                    .ToList();
+
+                if (opportunities.Count == 0)
+                {
+                    sb.AppendLine("(none)");
+                }
+                else
+                {
+                    sb.AppendLine($"Planner-actionable opportunities: {opportunities.Count}");
+                    sb.AppendLine($"Potential additional mesh parts eliminable: {opportunities.Count(x => x.Combination.Fits)}");
+                    sb.AppendLine($"Unique atlas-batch combinations evaluated: {state.AtlasBatchCombinationDiagnostics.Count}");
+                    sb.AppendLine();
+
+                    foreach (var opportunity in opportunities.Take(80))
+                    {
+                        var combination = opportunity.Combination;
+                        sb.AppendLine($"Rigid: {opportunity.RigidPath}");
+                        sb.AppendLine($"  LOD: {opportunity.LodIndex}");
+                        sb.AppendLine($"  Parts: {string.Join(", ", opportunity.PartIndices.OrderBy(x => x))}");
+                        sb.AppendLine($"  Atlas batches: {opportunity.FirstBatchId} + {opportunity.SecondBatchId}");
+                        if (combination.Fits)
+                        {
+                            sb.AppendLine($"  Current atlas pixels: {combination.BaselinePixelCost:N0}");
+                            sb.AppendLine($"  Combined atlas pixels: {combination.CombinedPixelCost:N0}");
+                            sb.AppendLine(
+                                $"  Additional pixels: {combination.AdditionalPixels:N0} " +
+                                $"({combination.AdditionalPercent:+0.##;-0.##;0}%)");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"  Result: DOES NOT FIT ({combination.FailureReason})");
+                        }
+
+                        foreach (var example in opportunity.Examples)
+                            sb.AppendLine($"  Texture difference: {example}");
+                    }
+
+                    if (opportunities.Count > 80)
+                        sb.AppendLine($"... {opportunities.Count - 80} additional opportunities omitted.");
                 }
 
                 if (state.MeshMergeSkipMessages.Count != 0)
@@ -4761,6 +5050,11 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, List<string>> MeshMergeBlockerExamples { get; } = new(StringComparer.Ordinal);
             public Dictionary<string, MaterialMergeDiagnosticSnapshot?> MeshMergeMaterialDiagnostics { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<MeshKey, int> AtlasBatchByMesh { get; } = [];
+            public Dictionary<MeshKey, AtlasCandidate> AtlasCandidateByKey { get; } = [];
+            public Dictionary<int, AtlasBatchDiagnosticSnapshot> AtlasBatchDiagnostics { get; } = [];
+            public Dictionary<AtlasBatchPair, AtlasBatchCombinationDiagnostic> AtlasBatchCombinationDiagnostics { get; } = [];
+            public Dictionary<TextureMergeOpportunityKey, TextureMergeOpportunityAccumulator> TextureMergeOpportunities { get; } = [];
             public int MeshMergeInvariantGroupCount { get; set; }
             public int MeshMergeInvariantLodCount { get; set; }
             public int MeshMergeInvariantWsModelCount { get; set; }
@@ -4808,13 +5102,65 @@ namespace Editors.KitbasherEditor.Services
             string RenderingIdentity,
             string Shader,
             string TextureIdentity,
-            string NonTextureIdentity);
+            string NonTextureIdentity,
+            IReadOnlyDictionary<string, string> TextureAssignments);
 
         private sealed record MaterialMergeDiagnosticComparison(
             bool PathsEqual,
             bool SemanticallyEquivalent,
             string Reason,
-            string Detail);
+            string Detail,
+            string LeftMaterialPath,
+            string RightMaterialPath);
+
+        private sealed record AtlasBatchDiagnosticSnapshot(
+            List<AtlasCandidate> Candidates,
+            long PixelCost);
+
+        private readonly record struct AtlasBatchPair(
+            int FirstBatchId,
+            int SecondBatchId);
+
+        private sealed record AtlasBatchCombinationDiagnostic(
+            bool Fits,
+            long BaselinePixelCost,
+            long CombinedPixelCost,
+            long AdditionalPixels,
+            double AdditionalPercent,
+            string FailureReason);
+
+        private readonly record struct TextureMergeOpportunityKey(
+            string RigidPath,
+            int LodIndex,
+            string RmvIdentity,
+            string NonTextureMaterialIdentity,
+            int FirstBatchId,
+            int SecondBatchId);
+
+        private sealed class TextureMergeOpportunityAccumulator
+        {
+            public string RigidPath { get; }
+            public int LodIndex { get; }
+            public int FirstBatchId { get; }
+            public int SecondBatchId { get; }
+            public AtlasBatchCombinationDiagnostic Combination { get; }
+            public HashSet<int> PartIndices { get; } = [];
+            public List<string> Examples { get; } = [];
+
+            public TextureMergeOpportunityAccumulator(
+                string rigidPath,
+                int lodIndex,
+                int firstBatchId,
+                int secondBatchId,
+                AtlasBatchCombinationDiagnostic combination)
+            {
+                RigidPath = rigidPath;
+                LodIndex = lodIndex;
+                FirstBatchId = firstBatchId;
+                SecondBatchId = secondBatchId;
+                Combination = combination;
+            }
+        }
 
         private sealed record RmvMergeDiagnosticComponents(
             string ModelTypeFlag,
