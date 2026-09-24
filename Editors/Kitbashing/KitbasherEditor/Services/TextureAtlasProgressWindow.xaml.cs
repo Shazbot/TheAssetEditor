@@ -11,6 +11,7 @@ namespace Editors.KitbasherEditor.Services
         private readonly Action<
             bool,
             bool,
+            bool,
             CancellationToken,
             IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> _worker;
         private readonly CancellationTokenSource _cancellation = new();
@@ -27,13 +28,25 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
-            : this((mergeCompatibleMeshes, _, cancellationToken, progress) =>
+            : this((mergeCompatibleMeshes, _, _, cancellationToken, progress) =>
                 worker(mergeCompatibleMeshes, cancellationToken, progress))
         {
         }
 
         public TextureAtlasProgressWindow(
             Action<
+                bool,
+                bool,
+                CancellationToken,
+                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+            : this((mergeCompatibleMeshes, shareAcrossVmds, _, cancellationToken, progress) =>
+                worker(mergeCompatibleMeshes, shareAcrossVmds, cancellationToken, progress))
+        {
+        }
+
+        public TextureAtlasProgressWindow(
+            Action<
+                bool,
                 bool,
                 bool,
                 CancellationToken,
@@ -52,6 +65,7 @@ namespace Editors.KitbasherEditor.Services
             StartButton.IsEnabled = false;
             MergeMeshesCheckBox.IsEnabled = false;
             ShareAcrossVmdsCheckBox.IsEnabled = false;
+            OptimizeGeometryCheckBox.IsEnabled = false;
             PhaseText.Text = "Preparing texture atlas pack...";
             ProgressBar.IsIndeterminate = true;
 
@@ -62,6 +76,7 @@ namespace Editors.KitbasherEditor.Services
                 _worker(
                     MergeMeshesCheckBox.IsChecked == true,
                     ShareAcrossVmdsCheckBox.IsChecked == true,
+                    OptimizeGeometryCheckBox.IsChecked == true,
                     _cancellation.Token,
                     progress);
                 _allowClose = true;
