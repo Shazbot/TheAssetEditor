@@ -1149,15 +1149,45 @@ namespace Editors.KitbasherEditor.Services
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
-            var planningCandidates = packWide
-                ? candidates
-                    .OrderBy(BuildAtlasPlanningOrderKey, StringComparer.Ordinal)
-                    .ThenBy(x => x.RootVmdPath, StringComparer.OrdinalIgnoreCase)
+            List<AtlasCandidate> planningCandidates;
+            if (packWide)
+            {
+                var rootsByMesh = BuildCandidateRootVmdPaths(state, candidates);
+                var localitySignatureBySource = candidates
+                    .GroupBy(GetAtlasPlanningSourceIdentity)
+                    .ToDictionary(
+                        group => group.Key,
+                        group =>
+                        {
+                            var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var candidate in group)
+                            {
+                                if (rootsByMesh.TryGetValue(candidate.Key, out var candidateRoots))
+                                    roots.UnionWith(candidateRoots);
+                                else
+                                    roots.Add(Normalize(candidate.RootVmdPath));
+                            }
+
+                            return string.Join(
+                                "\u001f",
+                                roots.OrderBy(root => root, StringComparer.OrdinalIgnoreCase));
+                        });
+
+                planningCandidates = candidates
+                    .OrderBy(
+                        candidate => localitySignatureBySource[
+                            GetAtlasPlanningSourceIdentity(candidate)],
+                        StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(BuildAtlasPlanningOrderKey, StringComparer.Ordinal)
                     .ThenBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(x => x.Key.LodIndex)
                     .ThenBy(x => x.Key.PartIndex)
-                    .ToList()
-                : candidates;
+                    .ToList();
+            }
+            else
+            {
+                planningCandidates = candidates;
+            }
 
             var batches = new List<List<AtlasCandidate>>();
             var current = new List<AtlasCandidate>();
