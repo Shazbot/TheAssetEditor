@@ -3717,6 +3717,7 @@ namespace Editors.KitbasherEditor.Services
                 }
                 sb.AppendLine();
             }
+            }
             else
             {
                 sb.AppendLine(

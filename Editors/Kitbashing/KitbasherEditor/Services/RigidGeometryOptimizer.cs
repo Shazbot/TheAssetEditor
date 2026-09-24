@@ -1,3 +1,4 @@
+using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.Types;
 using Shared.GameFormats.RigidModel.Vertex;
 
