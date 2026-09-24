@@ -1,6 +1,7 @@
 using DirectXTexNet;
 using Editors.ImportExport.Common.Interfaces;
 using Editors.ImportExport.Importing.Importers.PngToDds.Helpers;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using Shared.Core.PackFiles.Models;
@@ -10,6 +11,14 @@ using Shared.GameFormats.RigidModel.Types;
 
 namespace Editors.ImportExport.Importing.Importers.PngToDds
 {
+    public sealed record RawBgraMipChainCompressionStatistics(
+        bool UsedLargeBcSplitCompression,
+        int MaxDegreeOfParallelism,
+        IReadOnlyList<TimeSpan> Mip0StripeElapsed,
+        TimeSpan MipTailElapsed,
+        TimeSpan ParallelWallElapsed,
+        TimeSpan StitchElapsed);
+
     public class PngToDdsImporter
     {
         public static PackFile Import(string inputPath, TextureType textureType, GameTypeEnum gameType, string outFileName)
@@ -103,6 +112,8 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                 _mipLevelCount = mipLevelCount;
             }
 
+            public RawBgraMipChainCompressionStatistics? LastCompressionStatistics { get; private set; }
+
             public bool UsesLargeBcSplitCompression
             {
                 get
@@ -150,7 +161,7 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             public PackFile Complete(string outFileName)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                return CompressAndSave(
+                var result = CompressAndSaveCore(
                     _imageWithMips,
                     _textureType,
                     _gameType,
@@ -159,6 +170,8 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                     width: _width,
                     height: _height,
                     mipLevelCount: _mipLevelCount);
+                LastCompressionStatistics = result.Statistics;
+                return result.PackFile;
             }
 
             public void Dispose()
@@ -264,26 +277,67 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             int width = 0,
             int height = 0,
             int mipLevelCount = 0)
+            => CompressAndSaveCore(
+                imageWithMips,
+                textureType,
+                gameType,
+                outFileName,
+                allowLargeBcSplitCompression,
+                width,
+                height,
+                mipLevelCount).PackFile;
+
+        private static CompressionSaveResult CompressAndSaveCore(
+            ScratchImage imageWithMips,
+            TextureType textureType,
+            GameTypeEnum gameType,
+            string outFileName,
+            bool allowLargeBcSplitCompression,
+            int width,
+            int height,
+            int mipLevelCount)
         {
             var ddsFormat = DDSFormatHelper.GetDDSFormat(gameType, textureType);
-            using var ddsImage =
-                allowLargeBcSplitCompression &&
-                ShouldUseLargeBcSplitCompression(ddsFormat, width, height, mipLevelCount)
-                    ? CompressLargeBcMipChain(
-                        imageWithMips,
-                        ddsFormat,
-                        width,
-                        height,
-                        mipLevelCount)
-                    : imageWithMips.Compress(
-                        ddsFormat,
-                        TEX_COMPRESS_FLAGS.DEFAULT,
-                        0.5f);
-            using var ddsMemStream = ddsImage.SaveToDDSMemory(DDS_FLAGS.NONE);
+            RawBgraMipChainCompressionStatistics statistics;
+            ScratchImage ddsImage;
 
-            var ddsBytes = new byte[ddsMemStream.Length];
-            ddsMemStream.Read(ddsBytes, 0, ddsBytes.Length);
-            return new PackFile(outFileName, new MemorySource(ddsBytes));
+            if (allowLargeBcSplitCompression &&
+                ShouldUseLargeBcSplitCompression(ddsFormat, width, height, mipLevelCount))
+            {
+                ddsImage = CompressLargeBcMipChain(
+                    imageWithMips,
+                    ddsFormat,
+                    width,
+                    height,
+                    mipLevelCount,
+                    out statistics);
+            }
+            else
+            {
+                var compressionStopwatch = Stopwatch.StartNew();
+                ddsImage = imageWithMips.Compress(
+                    ddsFormat,
+                    TEX_COMPRESS_FLAGS.DEFAULT,
+                    0.5f);
+                compressionStopwatch.Stop();
+                statistics = new RawBgraMipChainCompressionStatistics(
+                    UsedLargeBcSplitCompression: false,
+                    MaxDegreeOfParallelism: 1,
+                    Mip0StripeElapsed: [],
+                    MipTailElapsed: TimeSpan.Zero,
+                    ParallelWallElapsed: compressionStopwatch.Elapsed,
+                    StitchElapsed: TimeSpan.Zero);
+            }
+
+            using (ddsImage)
+            using (var ddsMemStream = ddsImage.SaveToDDSMemory(DDS_FLAGS.NONE))
+            {
+                var ddsBytes = new byte[ddsMemStream.Length];
+                ddsMemStream.Read(ddsBytes, 0, ddsBytes.Length);
+                return new CompressionSaveResult(
+                    new PackFile(outFileName, new MemorySource(ddsBytes)),
+                    statistics);
+            }
         }
 
         private static bool ShouldUseLargeBcSplitCompression(
@@ -314,7 +368,8 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             DXGI_FORMAT ddsFormat,
             int width,
             int height,
-            int mipLevelCount)
+            int mipLevelCount,
+            out RawBgraMipChainCompressionStatistics statistics)
         {
             var sourceBase = sourceMipChain.GetImage(0, 0, 0);
             var sourceFormat = sourceBase.Format;
@@ -353,10 +408,14 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                     mipLevelCount);
             });
 
+            const int maxDegreeOfParallelism = 2;
+            var parallelStopwatch = Stopwatch.StartNew();
             Parallel.Invoke(
-                new ParallelOptions { MaxDegreeOfParallelism = 2 },
+                new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism },
                 [.. actions]);
+            parallelStopwatch.Stop();
 
+            var stitchStopwatch = Stopwatch.StartNew();
             var result = TexHelper.Instance.Initialize2D(
                 ddsFormat,
                 width,
@@ -411,6 +470,16 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                         compressedMip.Bytes.Length);
                 }
 
+                stitchStopwatch.Stop();
+                statistics = new RawBgraMipChainCompressionStatistics(
+                    UsedLargeBcSplitCompression: true,
+                    MaxDegreeOfParallelism: maxDegreeOfParallelism,
+                    Mip0StripeElapsed: stripes
+                        .Select(x => x?.Elapsed ?? TimeSpan.Zero)
+                        .ToArray(),
+                    MipTailElapsed: tail.Elapsed,
+                    ParallelWallElapsed: parallelStopwatch.Elapsed,
+                    StitchElapsed: stitchStopwatch.Elapsed);
                 return result;
             }
             catch
@@ -428,6 +497,7 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             int startBlockRow,
             int blockRows)
         {
+            var stopwatch = Stopwatch.StartNew();
             var stripeHeight = checked(blockRows * 4);
             using var stripe = TexHelper.Instance.Initialize2D(
                 sourceFormat,
@@ -457,10 +527,12 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             var bytes = new byte[checked((int)compressedImage.SlicePitch)];
             Marshal.Copy(compressedImage.Pixels, bytes, 0, bytes.Length);
 
+            stopwatch.Stop();
             return new CompressedBcStripe(
                 startBlockRow,
                 checked((int)compressedImage.RowPitch),
-                bytes);
+                bytes,
+                stopwatch.Elapsed);
         }
 
         private static CompressedBcMipTail CompressBcMipTail(
@@ -471,6 +543,7 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             int height,
             int mipLevelCount)
         {
+            var stopwatch = Stopwatch.StartNew();
             var tailMipCount = mipLevelCount - 1;
             using var tail = TexHelper.Instance.Initialize2D(
                 sourceFormat,
@@ -518,7 +591,8 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                     bytes));
             }
 
-            return new CompressedBcMipTail(mips);
+            stopwatch.Stop();
+            return new CompressedBcMipTail(mips, stopwatch.Elapsed);
         }
 
         private static int[] SplitBlockRows(int totalBlockRows, int parts)
@@ -534,17 +608,23 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             return rows;
         }
 
+        private sealed record CompressionSaveResult(
+            PackFile PackFile,
+            RawBgraMipChainCompressionStatistics Statistics);
+
         private sealed record CompressedBcStripe(
             int StartBlockRow,
             int RowPitch,
-            byte[] Bytes);
+            byte[] Bytes,
+            TimeSpan Elapsed);
 
         private sealed record CompressedBcMip(
             int RowPitch,
             byte[] Bytes);
 
         private sealed record CompressedBcMipTail(
-            List<CompressedBcMip> Mips);
+            List<CompressedBcMip> Mips,
+            TimeSpan Elapsed);
 
         private static bool IsLinearTexture(TextureType textureType)
             => textureType is TextureType.Normal or TextureType.Mask or TextureType.Gloss;
