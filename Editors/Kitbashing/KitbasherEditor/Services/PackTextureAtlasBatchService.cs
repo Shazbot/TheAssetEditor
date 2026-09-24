@@ -1393,7 +1393,7 @@ namespace Editors.KitbasherEditor.Services
             if (affinityGroups.Count == 0)
                 return working;
 
-            state.MergeAwareAffinityPotentialBefore =
+            state.MergeAwareAffinityPotentialBefore +=
                 CalculateMergeAffinityScore(working, affinityGroups);
 
             const int maxPasses = 2;
@@ -1527,8 +1527,8 @@ namespace Editors.KitbasherEditor.Services
                         bestAffinity - baselineAffinity;
                     state.MergeAwareRepartitionEntries.Add(
                         new MergeAwareRepartitionReportEntry(
-                            leftIndex,
-                            rightIndex,
+                            state.BatchIndex + leftIndex,
+                            state.BatchIndex + rightIndex,
                             baselinePixels,
                             bestPixels,
                             baselineAffinity,
@@ -1540,7 +1540,7 @@ namespace Editors.KitbasherEditor.Services
                     break;
             }
 
-            state.MergeAwareAffinityPotentialAfter =
+            state.MergeAwareAffinityPotentialAfter +=
                 CalculateMergeAffinityScore(working, affinityGroups);
             return working;
         }
