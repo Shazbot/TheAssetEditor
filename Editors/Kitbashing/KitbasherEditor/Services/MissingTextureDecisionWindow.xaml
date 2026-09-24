@@ -58,7 +58,7 @@
             HorizontalAlignment="Right"
             Orientation="Horizontal">
             <Button
-                Width="140"
+                Width="180"
                 Margin="0,0,8,0"
                 Click="AtlasAnywayButton_Click"
                 Content="Atlas available textures" />
