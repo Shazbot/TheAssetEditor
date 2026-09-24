@@ -321,7 +321,8 @@ namespace Editors.ImportExport.TextureAtlas
             var decodedByDdsBytes = new Dictionary<byte[], IImage>(ReferenceEqualityComparer.Instance);
             try
             {
-                var decodeStopwatch = Stopwatch.StartNew();
+                Stopwatch? decodeStopwatch =
+                    statistics != null ? Stopwatch.StartNew() : null;
                 foreach (var (id, ddsBytes) in ddsSources)
                 {
                     Pulse();
@@ -342,16 +343,17 @@ namespace Editors.ImportExport.TextureAtlas
 
                     decodedSources[id] = image;
                 }
-                decodeStopwatch.Stop();
+                decodeStopwatch?.Stop();
 
                 if (statistics != null)
                 {
                     statistics.DecodedSourceCount = decodedSources.Count;
                     statistics.UniqueDecodedDdsCount = decodedByDdsBytes.Count;
-                    statistics.DdsDecodeElapsed = decodeStopwatch.Elapsed;
+                    statistics.DdsDecodeElapsed = decodeStopwatch!.Elapsed;
                 }
 
-                var composeStopwatch = Stopwatch.StartNew();
+                Stopwatch? composeStopwatch =
+                    statistics != null ? Stopwatch.StartNew() : null;
                 var mipPixels = new List<byte[]>();
                 var mipWidth = atlasWidth;
                 var mipHeight = atlasHeight;
@@ -441,13 +443,15 @@ namespace Editors.ImportExport.TextureAtlas
                                 bounds,
                                 mipWidth,
                                 mipHeight,
-                                forceOpaqueAlpha);
+                                forceOpaqueAlpha,
+                                collectStatistics: statistics != null);
                             if (statistics != null)
                                 statistics.MappedCorePixels += mappedPixels;
                             continue;
                         }
 
                         long constantCoreSkippedPixels = 0;
+                        var collectStatistics = statistics != null;
                         for (var y = bounds.Top; y < bounds.Bottom; y++)
                         {
                             for (var x = bounds.Left; x < bounds.Right; x++)
@@ -455,7 +459,8 @@ namespace Editors.ImportExport.TextureAtlas
                                 var index = y * mipWidth + x;
                                 if (coreOccupancy[index])
                                 {
-                                    constantCoreSkippedPixels++;
+                                    if (collectStatistics)
+                                        constantCoreSkippedPixels++;
                                     continue;
                                 }
 
@@ -539,7 +544,8 @@ namespace Editors.ImportExport.TextureAtlas
                             top,
                             right,
                             bounds.Top,
-                            forceOpaqueAlpha);
+                            forceOpaqueAlpha,
+                            collectStatistics: statistics != null);
 
                         paddingPixels += CopyPaddingRectangle(
                             atlasPixels,
@@ -556,7 +562,8 @@ namespace Editors.ImportExport.TextureAtlas
                             bounds.Bottom,
                             right,
                             bottom,
-                            forceOpaqueAlpha);
+                            forceOpaqueAlpha,
+                            collectStatistics: statistics != null);
 
                         paddingPixels += CopyPaddingRectangle(
                             atlasPixels,
@@ -573,7 +580,8 @@ namespace Editors.ImportExport.TextureAtlas
                             bounds.Top,
                             bounds.Left,
                             bounds.Bottom,
-                            forceOpaqueAlpha);
+                            forceOpaqueAlpha,
+                            collectStatistics: statistics != null);
 
                         paddingPixels += CopyPaddingRectangle(
                             atlasPixels,
@@ -590,7 +598,8 @@ namespace Editors.ImportExport.TextureAtlas
                             bounds.Top,
                             right,
                             bounds.Bottom,
-                            forceOpaqueAlpha);
+                            forceOpaqueAlpha,
+                            collectStatistics: statistics != null);
                         if (statistics != null)
                             statistics.PaddingPixels += paddingPixels;
                     }
@@ -607,9 +616,9 @@ namespace Editors.ImportExport.TextureAtlas
                     mipLevel++;
                 }
 
-                composeStopwatch.Stop();
+                composeStopwatch?.Stop();
                 if (statistics != null)
-                    statistics.ComposeElapsed = composeStopwatch.Elapsed;
+                    statistics.ComposeElapsed = composeStopwatch!.Elapsed;
 
                 return mipPixels;
             }
@@ -842,7 +851,8 @@ namespace Editors.ImportExport.TextureAtlas
             MipPlacementBounds bounds,
             int mipWidth,
             int mipHeight,
-            bool forceOpaqueAlpha)
+            bool forceOpaqueAlpha,
+            bool collectStatistics)
         {
             var width = bounds.Right - bounds.Left;
             if (width <= 0 || bounds.Bottom <= bounds.Top)
@@ -885,7 +895,8 @@ namespace Editors.ImportExport.TextureAtlas
                     var occupancyIndex = destinationPixelOffset + localX;
                     if (coreOccupancy[occupancyIndex])
                     {
-                        skippedPixels++;
+                        if (collectStatistics)
+                            skippedPixels++;
                         continue;
                     }
 
@@ -901,7 +912,9 @@ namespace Editors.ImportExport.TextureAtlas
                 }
             }
 
-            return (long)width * (bounds.Bottom - bounds.Top) - skippedPixels;
+            return collectStatistics
+                ? (long)width * (bounds.Bottom - bounds.Top) - skippedPixels
+                : 0;
         }
 
         private static long CopyPaddingRectangle(
@@ -919,7 +932,8 @@ namespace Editors.ImportExport.TextureAtlas
             int top,
             int right,
             int bottom,
-            bool forceOpaqueAlpha)
+            bool forceOpaqueAlpha,
+            bool collectStatistics)
         {
             if (left >= right || top >= bottom)
                 return 0;
@@ -936,7 +950,8 @@ namespace Editors.ImportExport.TextureAtlas
                     {
                         if (coreOccupancy[occupancyIndex])
                         {
-                            skippedPixels++;
+                            if (collectStatistics)
+                                skippedPixels++;
                             continue;
                         }
 
@@ -950,7 +965,7 @@ namespace Editors.ImportExport.TextureAtlas
                     }
                 }
 
-                return totalPixels - skippedPixels;
+                return collectStatistics ? totalPixels - skippedPixels : 0;
             }
 
             if (source == null || sourceMip == null)
@@ -1014,7 +1029,7 @@ namespace Editors.ImportExport.TextureAtlas
                 }
             }
 
-            return totalPixels - skippedPixels;
+            return collectStatistics ? totalPixels - skippedPixels : 0;
         }
 
         public static (int Width, int Height) GetDimensions(byte[] ddsBytes)
