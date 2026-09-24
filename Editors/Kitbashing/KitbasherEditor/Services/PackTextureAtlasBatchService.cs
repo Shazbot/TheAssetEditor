@@ -1056,9 +1056,12 @@ namespace Editors.KitbasherEditor.Services
                 ?? throw new InvalidOperationException("Base-colour dimensions were not resolved.");
 
             UvBounds bounds;
+            UvIslandNormalization? uvIslandNormalization;
             try
             {
-                bounds = GetUvBounds(model);
+                var originalBounds = GetUvBounds(model);
+                uvIslandNormalization = BuildUvIslandNormalization(model, width, height, originalBounds);
+                bounds = uvIslandNormalization?.NormalizedBounds ?? originalBounds;
             }
             catch (Exception ex)
             {
@@ -1079,7 +1082,8 @@ namespace Editors.KitbasherEditor.Services
                 resolvedChannels,
                 constantChannels,
                 channelDimensions,
-                candidateMissingTextures);
+                candidateMissingTextures,
+                uvIslandNormalization);
         }
 
         private static TextureInspection GetTextureInspection(
@@ -1679,6 +1683,26 @@ namespace Editors.KitbasherEditor.Services
             state.ContentCanonicalizedMeshReferences += sharedBatch.MappingByMesh.Values.Count(
                 x => x.ContentCanonicalized);
 
+            foreach (var candidate in candidates)
+            {
+                if (candidate.UvIslandNormalization == null)
+                    continue;
+
+                var normalization = candidate.UvIslandNormalization;
+                state.UvIslandNormalizedMeshes++;
+                state.UvIslandsShifted += normalization.ShiftedIslandCount;
+                state.UvIslandCropPixelsSaved = checked(
+                    state.UvIslandCropPixelsSaved +
+                    (long)normalization.OriginalCrop.Width * normalization.OriginalCrop.Height -
+                    (long)normalization.NormalizedCrop.Width * normalization.NormalizedCrop.Height);
+                state.UvIslandNormalizationEntries.Add(new UvIslandNormalizationReportEntry(
+                    candidate.Key,
+                    normalization.IslandCount,
+                    normalization.ShiftedIslandCount,
+                    normalization.OriginalCrop,
+                    normalization.NormalizedCrop));
+            }
+
             var atlasBatchId = state.BatchIndex;
             if (!TryGetGeneratedAtlasPixelCost(
                     state,
@@ -1899,9 +1923,11 @@ namespace Editors.KitbasherEditor.Services
                             $"Mesh {candidate.Key} contains invalid vertex index {vertexIndex}.");
 
                     var uv = candidate.Model.Mesh.VertexList[vertexIndex].Uv;
+                    var islandOffsetU = candidate.UvIslandNormalization?.TileOffsetUByVertex[vertexIndex] ?? 0;
+                    var islandOffsetV = candidate.UvIslandNormalization?.TileOffsetVByVertex[vertexIndex] ?? 0;
                     var remapped = placement.TransformUv(
-                        uv.X - mapping.UvOffsetU,
-                        uv.Y - mapping.UvOffsetV,
+                        uv.X + islandOffsetU - mapping.UvOffsetU,
+                        uv.Y + islandOffsetV - mapping.UvOffsetV,
                         plan.Width,
                         plan.Height);
                     candidate.Model.Mesh.VertexList[vertexIndex].Uv = new Microsoft.Xna.Framework.Vector2(remapped.U, remapped.V);
@@ -4292,6 +4318,9 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas placements generated: {state.AtlasPlacementsGenerated}");
             sb.AppendLine($"Atlas placements reused: {state.AtlasPlacementsReused}");
             sb.AppendLine($"Wrapped-UV placements canonicalized: {state.WrappedUvPlacementsCanonicalized}");
+            sb.AppendLine($"UV-island normalized meshes: {state.UvIslandNormalizedMeshes}");
+            sb.AppendLine($"UV islands shifted by integer tiles: {state.UvIslandsShifted}");
+            sb.AppendLine($"UV-island source crop pixels saved: {state.UvIslandCropPixelsSaved:N0}");
             sb.AppendLine($"Content-deduplicated atlas placements: {state.ContentDeduplicatedAtlasPlacements}");
             sb.AppendLine($"Mesh references remapped by content dedupe: {state.ContentCanonicalizedMeshReferences}");
             sb.AppendLine($"Cropped-content hashes computed: {state.AtlasRegionContentHashes.Count}");
@@ -4631,6 +4660,30 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
+            sb.AppendLine("UV island normalizations");
+            sb.AppendLine("------------------------");
+            if (state.UvIslandNormalizationEntries.Count == 0)
+            {
+                sb.AppendLine("(none)");
+            }
+            else
+            {
+                foreach (var entry in state.UvIslandNormalizationEntries
+                             .OrderBy(x => x.Mesh.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(x => x.Mesh.LodIndex)
+                             .ThenBy(x => x.Mesh.PartIndex))
+                {
+                    sb.AppendLine($"Mesh: {entry.Mesh}");
+                    sb.AppendLine($"  Islands: {entry.IslandCount}, shifted: {entry.ShiftedIslandCount}");
+                    sb.AppendLine(
+                        $"  Crop: ({entry.OriginalCrop.X},{entry.OriginalCrop.Y}) " +
+                        $"{entry.OriginalCrop.Width}x{entry.OriginalCrop.Height} -> " +
+                        $"({entry.NormalizedCrop.X},{entry.NormalizedCrop.Y}) " +
+                        $"{entry.NormalizedCrop.Width}x{entry.NormalizedCrop.Height}");
+                }
+            }
+            sb.AppendLine();
+
             sb.AppendLine("Atlas placement diagnostics");
             sb.AppendLine("---------------------------");
             if (state.AtlasPlacementDiagnostics.Count == 0)
@@ -4695,6 +4748,8 @@ namespace Editors.KitbasherEditor.Services
                         foreach (var mapping in placement.MeshMappings)
                         {
                             var flags = new List<string>();
+                            if (mapping.UvIslandCanonicalized)
+                                flags.Add("uv-islands");
                             if (mapping.WrappedUvCanonicalized)
                                 flags.Add("wrapped-uv");
                             if (mapping.ContentCanonicalized)
@@ -4758,6 +4813,72 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("(not completed)");
 
             File.WriteAllText(state.ReportPath, sb.ToString(), Encoding.UTF8);
+        }
+
+        private static UvIslandNormalization? BuildUvIslandNormalization(
+            RmvModel model,
+            int sourceWidth,
+            int sourceHeight,
+            UvBounds originalBounds)
+        {
+            var uvs = model.Mesh.VertexList
+                .Select(vertex => (U: vertex.Uv.X, V: vertex.Uv.Y))
+                .ToArray();
+            var proposal = TextureAtlasBuilder.CalculateDisconnectedUvIslandNormalization(
+                uvs,
+                model.Mesh.IndexList);
+
+            var proposedBounds = new UvBounds(
+                proposal.NormalizedMinU,
+                proposal.NormalizedMinV,
+                proposal.NormalizedMaxU,
+                proposal.NormalizedMaxV);
+            var originalCrop = GetEffectiveCrop(originalBounds, sourceWidth, sourceHeight);
+            var proposedCrop = GetEffectiveCrop(proposedBounds, sourceWidth, sourceHeight);
+
+            var useU = proposedCrop.Width < originalCrop.Width;
+            var useV = proposedCrop.Height < originalCrop.Height;
+            if (!useU && !useV)
+                return null;
+
+            var tileOffsetUByVertex = useU
+                ? proposal.TileOffsetUByVertex
+                : new int[proposal.TileOffsetUByVertex.Length];
+            var tileOffsetVByVertex = useV
+                ? proposal.TileOffsetVByVertex
+                : new int[proposal.TileOffsetVByVertex.Length];
+
+            var normalizedBounds = new UvBounds(
+                useU ? proposedBounds.MinU : originalBounds.MinU,
+                useV ? proposedBounds.MinV : originalBounds.MinV,
+                useU ? proposedBounds.MaxU : originalBounds.MaxU,
+                useV ? proposedBounds.MaxV : originalBounds.MaxV);
+            var normalizedCrop = GetEffectiveCrop(normalizedBounds, sourceWidth, sourceHeight);
+
+            var shiftedIslandIds = new HashSet<int>();
+            foreach (var vertexIndex in model.Mesh.IndexList.Distinct())
+            {
+                if (tileOffsetUByVertex[vertexIndex] == 0 &&
+                    tileOffsetVByVertex[vertexIndex] == 0)
+                    continue;
+
+                var islandId = proposal.IslandIdByVertex[vertexIndex];
+                if (islandId >= 0)
+                    shiftedIslandIds.Add(islandId);
+            }
+
+            if (shiftedIslandIds.Count == 0)
+                return null;
+
+            return new UvIslandNormalization(
+                proposal.ComponentCount,
+                shiftedIslandIds.Count,
+                tileOffsetUByVertex,
+                tileOffsetVByVertex,
+                originalBounds,
+                normalizedBounds,
+                originalCrop,
+                normalizedCrop);
         }
 
         private static string FormatDiagnosticTexturePath(string path)
@@ -4849,6 +4970,7 @@ namespace Editors.KitbasherEditor.Services
                             candidate.RootVmdPath,
                             x.Value.UvOffsetU,
                             x.Value.UvOffsetV,
+                            candidate.UvIslandNormalization != null,
                             x.Value.WrappedUvCanonicalized,
                             x.Value.ContentCanonicalized);
                     })
@@ -5242,19 +5364,21 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static AtlasCrop GetEffectiveCrop(AtlasCandidate candidate)
+            => GetEffectiveCrop(candidate.Bounds, candidate.Width, candidate.Height);
+
+        private static AtlasCrop GetEffectiveCrop(
+            UvBounds bounds,
+            int sourceWidth,
+            int sourceHeight)
         {
-            var cropX = checked((int)MathF.Floor(candidate.Bounds.MinU * candidate.Width));
-            var cropY = checked((int)MathF.Floor(candidate.Bounds.MinV * candidate.Height));
-            var cropRight = checked((int)MathF.Ceiling(candidate.Bounds.MaxU * candidate.Width));
-            var cropBottom = checked((int)MathF.Ceiling(candidate.Bounds.MaxV * candidate.Height));
+            var cropX = checked((int)MathF.Floor(bounds.MinU * sourceWidth));
+            var cropY = checked((int)MathF.Floor(bounds.MinV * sourceHeight));
+            var cropRight = checked((int)MathF.Ceiling(bounds.MaxU * sourceWidth));
+            var cropBottom = checked((int)MathF.Ceiling(bounds.MaxV * sourceHeight));
             var cropWidth = checked(cropRight - cropX);
             var cropHeight = checked(cropBottom - cropY);
-
-            if (cropWidth <= 0)
-                cropWidth = 1;
-            if (cropHeight <= 0)
-                cropHeight = 1;
-
+            if (cropWidth <= 0) cropWidth = 1;
+            if (cropHeight <= 0) cropHeight = 1;
             return new AtlasCrop(cropX, cropY, cropWidth, cropHeight);
         }
 
@@ -5495,6 +5619,7 @@ namespace Editors.KitbasherEditor.Services
             string RootVmdPath,
             float UvOffsetU,
             float UvOffsetV,
+            bool UvIslandCanonicalized,
             bool WrappedUvCanonicalized,
             bool ContentCanonicalized);
 
@@ -5549,6 +5674,10 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasPlacementsGenerated { get; set; }
             public int AtlasPlacementsReused { get; set; }
             public int WrappedUvPlacementsCanonicalized { get; set; }
+            public int UvIslandNormalizedMeshes { get; set; }
+            public int UvIslandsShifted { get; set; }
+            public long UvIslandCropPixelsSaved { get; set; }
+            public List<UvIslandNormalizationReportEntry> UvIslandNormalizationEntries { get; } = [];
             public int ContentDeduplicatedAtlasPlacements { get; set; }
             public int ContentCanonicalizedMeshReferences { get; set; }
             public int MeshPartsBeforeMerging { get; set; }
@@ -5751,7 +5880,8 @@ namespace Editors.KitbasherEditor.Services
             HashSet<string> ResolvedChannels,
             Dictionary<string, TextureAtlasConstantColor> ConstantChannels,
             Dictionary<string, (int Width, int Height)> ChannelDimensions,
-            List<MissingTextureDependency> MissingTextures);
+            List<MissingTextureDependency> MissingTextures,
+            UvIslandNormalization? UvIslandNormalization);
 
         private sealed record CandidateDiscoveryResult(
             List<AtlasCandidate> Candidates,
@@ -5832,6 +5962,23 @@ namespace Editors.KitbasherEditor.Services
             int Y,
             int Width,
             int Height);
+
+        private sealed record UvIslandNormalization(
+            int IslandCount,
+            int ShiftedIslandCount,
+            int[] TileOffsetUByVertex,
+            int[] TileOffsetVByVertex,
+            UvBounds OriginalBounds,
+            UvBounds NormalizedBounds,
+            AtlasCrop OriginalCrop,
+            AtlasCrop NormalizedCrop);
+
+        private sealed record UvIslandNormalizationReportEntry(
+            MeshKey Mesh,
+            int IslandCount,
+            int ShiftedIslandCount,
+            AtlasCrop OriginalCrop,
+            AtlasCrop NormalizedCrop);
 
         private sealed record AtlasedMeshReportEntry(
             string RootVmdPath,

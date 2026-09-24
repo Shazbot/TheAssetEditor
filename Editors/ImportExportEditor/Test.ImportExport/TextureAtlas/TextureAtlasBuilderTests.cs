@@ -116,6 +116,66 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void CalculateDisconnectedUvIslandNormalization_ShiftsSeparatedWrappedIslandByWholeTile()
+        {
+            var uvs = new (float U, float V)[]
+            {
+                (-0.83f, 0.1f), (-0.20f, 0.1f), (-0.50f, 0.8f),
+                (0.20f, 0.1f), (0.99f, 0.1f), (0.60f, 0.8f)
+            };
+            ushort[] indices = [0, 1, 2, 3, 4, 5];
+
+            var result = TextureAtlasBuilder.CalculateDisconnectedUvIslandNormalization(uvs, indices);
+
+            Assert.That(result.ComponentCount, Is.EqualTo(2));
+            Assert.That(result.NormalizedMaxU - result.NormalizedMinU,
+                Is.LessThan(result.OriginalMaxU - result.OriginalMinU));
+            Assert.That(result.TileOffsetUByVertex.Take(3).Distinct().Single(), Is.EqualTo(1));
+            Assert.That(result.TileOffsetUByVertex.Skip(3).Distinct().Single(), Is.EqualTo(0));
+        }
+
+        [Test]
+        public void CalculateDisconnectedUvIslandNormalization_DoesNotSplitConnectedWrappedTriangles()
+        {
+            var uvs = new (float U, float V)[]
+            {
+                (-0.8f, 0.1f), (0.2f, 0.1f), (0.9f, 0.8f), (1.1f, 0.8f)
+            };
+            ushort[] indices = [0, 1, 2, 1, 3, 2];
+
+            var result = TextureAtlasBuilder.CalculateDisconnectedUvIslandNormalization(uvs, indices);
+
+            Assert.That(result.ComponentCount, Is.EqualTo(1));
+            Assert.That(result.TileOffsetUByVertex, Is.All.EqualTo(0));
+            Assert.That(result.TileOffsetVByVertex, Is.All.EqualTo(0));
+            Assert.That(result.NormalizedMinU, Is.EqualTo(result.OriginalMinU));
+            Assert.That(result.NormalizedMaxU, Is.EqualTo(result.OriginalMaxU));
+        }
+
+        [Test]
+        public void CalculateDisconnectedUvIslandNormalization_PreservesWrappedSamplingModuloOne()
+        {
+            var uvs = new (float U, float V)[]
+            {
+                (-1.4f, -0.7f), (-1.1f, -0.3f), (-1.2f, -0.5f),
+                (0.1f, 0.2f), (0.4f, 0.7f), (0.2f, 0.5f)
+            };
+            ushort[] indices = [0, 1, 2, 3, 4, 5];
+
+            var result = TextureAtlasBuilder.CalculateDisconnectedUvIslandNormalization(uvs, indices);
+
+            for (var vertex = 0; vertex < uvs.Length; vertex++)
+            {
+                var shiftedU = uvs[vertex].U + result.TileOffsetUByVertex[vertex];
+                var shiftedV = uvs[vertex].V + result.TileOffsetVByVertex[vertex];
+                Assert.That(shiftedU - MathF.Floor(shiftedU),
+                    Is.EqualTo(uvs[vertex].U - MathF.Floor(uvs[vertex].U)).Within(0.000001f));
+                Assert.That(shiftedV - MathF.Floor(shiftedV),
+                    Is.EqualTo(uvs[vertex].V - MathF.Floor(uvs[vertex].V)).Within(0.000001f));
+            }
+        }
+
+        [Test]
         public void CreatePlan_PreservesVirtualCropForWrappedUvs()
         {
             var source = new TextureAtlasLayoutSource(3, 8, 4, -0.25f, -0.5f, 1.25f, 0.5f);

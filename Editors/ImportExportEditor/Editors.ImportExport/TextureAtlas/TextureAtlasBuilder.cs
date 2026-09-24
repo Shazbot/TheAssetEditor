@@ -60,6 +60,20 @@ namespace Editors.ImportExport.TextureAtlas
         byte R,
         byte A);
 
+    public sealed record TextureAtlasUvIslandNormalization(
+        int ComponentCount,
+        int[] IslandIdByVertex,
+        int[] TileOffsetUByVertex,
+        int[] TileOffsetVByVertex,
+        float OriginalMinU,
+        float OriginalMinV,
+        float OriginalMaxU,
+        float OriginalMaxV,
+        float NormalizedMinU,
+        float NormalizedMinV,
+        float NormalizedMaxU,
+        float NormalizedMaxV);
+
     public sealed class TextureAtlasBuildStatistics
     {
         public int DecodedSourceCount { get; internal set; }
@@ -628,6 +642,213 @@ namespace Editors.ImportExport.TextureAtlas
                 foreach (var source in decodedByDdsBytes.Values)
                     source.Dispose();
             }
+        }
+
+        public static TextureAtlasUvIslandNormalization CalculateDisconnectedUvIslandNormalization(
+            IReadOnlyList<(float U, float V)> uvs,
+            IReadOnlyList<ushort> indices)
+        {
+            if (uvs.Count == 0)
+                throw new ArgumentException("At least one UV vertex is required.", nameof(uvs));
+            if (indices.Count == 0 || indices.Count % 3 != 0)
+                throw new ArgumentException("Triangle indices are required for UV-island normalization.", nameof(indices));
+
+            var parent = Enumerable.Range(0, uvs.Count).ToArray();
+            var rank = new byte[uvs.Count];
+            var used = new bool[uvs.Count];
+
+            int Find(int vertex)
+            {
+                while (parent[vertex] != vertex)
+                {
+                    parent[vertex] = parent[parent[vertex]];
+                    vertex = parent[vertex];
+                }
+                return vertex;
+            }
+
+            void Union(int left, int right)
+            {
+                var leftRoot = Find(left);
+                var rightRoot = Find(right);
+                if (leftRoot == rightRoot)
+                    return;
+                if (rank[leftRoot] < rank[rightRoot])
+                {
+                    parent[leftRoot] = rightRoot;
+                    return;
+                }
+                if (rank[leftRoot] > rank[rightRoot])
+                {
+                    parent[rightRoot] = leftRoot;
+                    return;
+                }
+                parent[rightRoot] = leftRoot;
+                rank[leftRoot]++;
+            }
+
+            for (var index = 0; index < indices.Count; index += 3)
+            {
+                var a = indices[index];
+                var b = indices[index + 1];
+                var c = indices[index + 2];
+                if (a >= uvs.Count || b >= uvs.Count || c >= uvs.Count)
+                    throw new ArgumentException("Triangle index references a missing UV vertex.", nameof(indices));
+
+                used[a] = true;
+                used[b] = true;
+                used[c] = true;
+                Union(a, b);
+                Union(b, c);
+            }
+
+            var verticesByRoot = new Dictionary<int, List<int>>();
+            for (var vertex = 0; vertex < uvs.Count; vertex++)
+            {
+                if (!used[vertex])
+                    continue;
+
+                var uv = uvs[vertex];
+                if (!float.IsFinite(uv.U) || !float.IsFinite(uv.V))
+                    throw new ArgumentException("UV coordinates must be finite.", nameof(uvs));
+
+                var root = Find(vertex);
+                if (!verticesByRoot.TryGetValue(root, out var vertices))
+                {
+                    vertices = [];
+                    verticesByRoot[root] = vertices;
+                }
+                vertices.Add(vertex);
+            }
+
+            if (verticesByRoot.Count == 0)
+                throw new ArgumentException("Triangle indices do not reference any UV vertices.", nameof(indices));
+
+            var components = verticesByRoot.Values
+                .OrderBy(vertices => vertices.Min())
+                .Select((vertices, islandId) =>
+                {
+                    var minU = vertices.Min(vertex => uvs[vertex].U);
+                    var minV = vertices.Min(vertex => uvs[vertex].V);
+                    var maxU = vertices.Max(vertex => uvs[vertex].U);
+                    var maxV = vertices.Max(vertex => uvs[vertex].V);
+                    return new UvIslandComponent(islandId, vertices.ToArray(), minU, minV, maxU, maxV);
+                })
+                .ToList();
+
+            var uOffsetsByIsland = CalculateBestIslandTileOffsets(
+                components.Select(x => (x.MinU, x.MaxU)).ToArray());
+            var vOffsetsByIsland = CalculateBestIslandTileOffsets(
+                components.Select(x => (x.MinV, x.MaxV)).ToArray());
+
+            var islandIdByVertex = Enumerable.Repeat(-1, uvs.Count).ToArray();
+            var tileOffsetUByVertex = new int[uvs.Count];
+            var tileOffsetVByVertex = new int[uvs.Count];
+            foreach (var component in components)
+            {
+                var uOffset = uOffsetsByIsland[component.Id];
+                var vOffset = vOffsetsByIsland[component.Id];
+                foreach (var vertex in component.Vertices)
+                {
+                    islandIdByVertex[vertex] = component.Id;
+                    tileOffsetUByVertex[vertex] = uOffset;
+                    tileOffsetVByVertex[vertex] = vOffset;
+                }
+            }
+
+            var originalMinU = components.Min(x => x.MinU);
+            var originalMinV = components.Min(x => x.MinV);
+            var originalMaxU = components.Max(x => x.MaxU);
+            var originalMaxV = components.Max(x => x.MaxV);
+            var normalizedMinU = components.Min(x => x.MinU + uOffsetsByIsland[x.Id]);
+            var normalizedMinV = components.Min(x => x.MinV + vOffsetsByIsland[x.Id]);
+            var normalizedMaxU = components.Max(x => x.MaxU + uOffsetsByIsland[x.Id]);
+            var normalizedMaxV = components.Max(x => x.MaxV + vOffsetsByIsland[x.Id]);
+
+            return new TextureAtlasUvIslandNormalization(
+                components.Count,
+                islandIdByVertex,
+                tileOffsetUByVertex,
+                tileOffsetVByVertex,
+                originalMinU,
+                originalMinV,
+                originalMaxU,
+                originalMaxV,
+                normalizedMinU,
+                normalizedMinV,
+                normalizedMaxU,
+                normalizedMaxV);
+        }
+
+        private static int[] CalculateBestIslandTileOffsets(
+            IReadOnlyList<(float Min, float Max)> intervals)
+        {
+            if (intervals.Count == 0)
+                return [];
+
+            var fractionalStarts = new double[intervals.Count];
+            var baseTiles = new int[intervals.Count];
+            for (var index = 0; index < intervals.Count; index++)
+            {
+                var floor = Math.Floor(intervals[index].Min);
+                baseTiles[index] = checked((int)floor);
+                fractionalStarts[index] = intervals[index].Min - floor;
+            }
+
+            var candidateCuts = fractionalStarts.Append(0).Distinct().OrderBy(x => x).ToArray();
+            int[]? bestOffsets = null;
+            double bestSpan = double.PositiveInfinity;
+            var bestShiftedCount = int.MaxValue;
+            long bestAbsoluteShift = long.MaxValue;
+            const double epsilon = 1e-7;
+
+            foreach (var cut in candidateCuts)
+            {
+                var offsets = new int[intervals.Count];
+                for (var index = 0; index < intervals.Count; index++)
+                {
+                    offsets[index] = checked(
+                        -baseTiles[index] +
+                        (fractionalStarts[index] + epsilon < cut ? 1 : 0));
+                }
+
+                var commonOffset = offsets
+                    .GroupBy(x => x)
+                    .OrderByDescending(x => x.Count())
+                    .ThenBy(x => Math.Abs((long)x.Key))
+                    .ThenBy(x => x.Key)
+                    .First()
+                    .Key;
+                for (var index = 0; index < offsets.Length; index++)
+                    offsets[index] = checked(offsets[index] - commonOffset);
+
+                var min = double.PositiveInfinity;
+                var max = double.NegativeInfinity;
+                var shiftedCount = 0;
+                long absoluteShift = 0;
+                for (var index = 0; index < intervals.Count; index++)
+                {
+                    min = Math.Min(min, intervals[index].Min + offsets[index]);
+                    max = Math.Max(max, intervals[index].Max + offsets[index]);
+                    if (offsets[index] != 0)
+                        shiftedCount++;
+                    absoluteShift = checked(absoluteShift + Math.Abs((long)offsets[index]));
+                }
+
+                var span = max - min;
+                if (span < bestSpan - epsilon ||
+                    (Math.Abs(span - bestSpan) <= epsilon &&
+                     (shiftedCount < bestShiftedCount ||
+                      (shiftedCount == bestShiftedCount && absoluteShift < bestAbsoluteShift))))
+                {
+                    bestSpan = span;
+                    bestShiftedCount = shiftedCount;
+                    bestAbsoluteShift = absoluteShift;
+                    bestOffsets = offsets;
+                }
+            }
+
+            return bestOffsets ?? new int[intervals.Count];
         }
 
         public static int CalculateMipLevelCount(int width, int height)
@@ -1474,6 +1695,14 @@ namespace Editors.ImportExport.TextureAtlas
                 result <<= 1;
             return result;
         }
+
+        private sealed record UvIslandComponent(
+            int Id,
+            int[] Vertices,
+            float MinU,
+            float MinV,
+            float MaxU,
+            float MaxV);
 
         private sealed record MipLevelInfo(int Width, int Height, int Stride, int DataOffset);
 
