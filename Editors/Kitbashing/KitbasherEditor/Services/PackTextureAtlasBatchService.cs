@@ -4645,10 +4645,12 @@ namespace Editors.KitbasherEditor.Services
                     sb.AppendLine(
                         $"{batch.AtlasStem}: layout={batch.PlanWidth}x{batch.PlanHeight}, " +
                         $"placements={batch.Placements.Count}");
-                    if (batch.GeneratedTexturePaths.Length != 0)
+                    foreach (var path in batch.GeneratedTexturePaths)
                     {
-                        sb.AppendLine(
-                            $"  Generated texture(s): {string.Join(", ", batch.GeneratedTexturePaths)}");
+                        if (state.GeneratedTextureDimensions.TryGetValue(path, out var dimensions))
+                            sb.AppendLine($"  Generated texture: {path} ({dimensions.Width}x{dimensions.Height})");
+                        else
+                            sb.AppendLine($"  Generated texture: {path}");
                     }
 
                     foreach (var placement in batch.Placements.OrderBy(x => x.SourceId))
@@ -4779,7 +4781,6 @@ namespace Editors.KitbasherEditor.Services
         {
             var placements = new List<AtlasPlacementDiagnostic>(sharedBatch.Sources.Count);
             var candidatesByKey = candidates.ToDictionary(x => x.Key);
-            var sourceById = sharedBatch.Sources.ToDictionary(x => x.Id);
 
             foreach (var source in sharedBatch.Sources.OrderBy(x => x.Id))
             {
