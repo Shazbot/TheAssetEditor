@@ -4909,7 +4909,7 @@ namespace Editors.KitbasherEditor.Services
                 crop);
             if (!state.AtlasRegionContentHashes.TryGetValue(cacheKey, out var contentHash))
             {
-                var file = FindForRead(state, texturePath)
+                var file = FindForReadStatic(state, texturePath)
                     ?? throw new InvalidOperationException(
                         $"Resolved atlas texture no longer exists: {texturePath}");
                 var bytes = file.DataSource.ReadData();
