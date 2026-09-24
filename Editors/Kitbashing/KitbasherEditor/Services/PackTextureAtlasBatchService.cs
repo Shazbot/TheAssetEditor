@@ -2621,7 +2621,8 @@ namespace Editors.KitbasherEditor.Services
 
                     var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
                         sharedPlan.Plan,
-                        sourceDimensions);
+                        sourceDimensions,
+                        PackAtlasMaxSize);
 
                     pixelCost = checked(
                         pixelCost +
