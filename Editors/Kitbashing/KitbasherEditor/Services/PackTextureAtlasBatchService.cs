@@ -1491,14 +1491,18 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             IReadOnlyList<AtlasCandidate> candidates,
             out long pixelCost,
-            out bool touchesMaxSize)
+            out bool touchesMaxSize,
+            bool deduplicateByContent = false)
         {
             pixelCost = 0;
             touchesMaxSize = false;
 
             try
             {
-                var sharedPlan = CreateSharedAtlasPlan(state, candidates);
+                var sharedPlan = CreateSharedAtlasPlan(
+                    state,
+                    candidates,
+                    deduplicateByContent);
                 foreach (var channel in AtlasChannels)
                 {
                     var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
@@ -1602,9 +1606,14 @@ namespace Editors.KitbasherEditor.Services
 
         private static (SharedAtlasBatch Batch, TextureAtlasPlan Plan) CreateSharedAtlasPlan(
             BatchState state,
-            IReadOnlyList<AtlasCandidate> candidates)
+            IReadOnlyList<AtlasCandidate> candidates,
+            bool deduplicateByContent = false)
         {
-            var mergedBatch = BuildSharedAtlasBatch(state, candidates, mergeCompatibleCrops: true);
+            var mergedBatch = BuildSharedAtlasBatch(
+                state,
+                candidates,
+                mergeCompatibleCrops: true,
+                deduplicateByContent);
             try
             {
                 var mergedPlan = TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(mergedBatch.Sources));
@@ -1614,7 +1623,11 @@ namespace Editors.KitbasherEditor.Services
             catch (Exception ex) when (
                 ex is InvalidOperationException or ArgumentException or OverflowException)
             {
-                var exactBatch = BuildSharedAtlasBatch(state, candidates, mergeCompatibleCrops: false);
+                var exactBatch = BuildSharedAtlasBatch(
+                    state,
+                    candidates,
+                    mergeCompatibleCrops: false,
+                    deduplicateByContent);
                 var exactPlan = TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(exactBatch.Sources));
                 ValidateChannelAtlasDimensions(exactBatch, exactPlan);
                 return (exactBatch, exactPlan);
@@ -1652,7 +1665,10 @@ namespace Editors.KitbasherEditor.Services
             IProgress<TextureAtlasPackProgress>? progress)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var sharedPlan = CreateSharedAtlasPlan(state, candidates);
+            var sharedPlan = CreateSharedAtlasPlan(
+                state,
+                candidates,
+                deduplicateByContent: true);
             var sharedBatch = sharedPlan.Batch;
             var plan = sharedPlan.Plan;
             state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
@@ -1664,7 +1680,12 @@ namespace Editors.KitbasherEditor.Services
                 x => x.ContentCanonicalized);
 
             var atlasBatchId = state.BatchIndex;
-            if (!TryGetGeneratedAtlasPixelCost(state, candidates, out var atlasBatchPixelCost, out _))
+            if (!TryGetGeneratedAtlasPixelCost(
+                    state,
+                    candidates,
+                    out var atlasBatchPixelCost,
+                    out _,
+                    deduplicateByContent: true))
                 atlasBatchPixelCost = 0;
 
             state.AtlasBatchDiagnostics[atlasBatchId] = new AtlasBatchDiagnosticSnapshot(
@@ -4677,7 +4698,8 @@ namespace Editors.KitbasherEditor.Services
         private static SharedAtlasBatch BuildSharedAtlasBatch(
             BatchState state,
             IReadOnlyList<AtlasCandidate> candidates,
-            bool mergeCompatibleCrops)
+            bool mergeCompatibleCrops,
+            bool deduplicateByContent)
         {
             var sources = new List<SharedAtlasSource>();
             var mappingByMesh = new Dictionary<MeshKey, SharedAtlasMeshMapping>();
@@ -4748,7 +4770,8 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var structuralSourceCount = sources.Count;
-            DeduplicateAtlasSourcesByContent(state, sources, mappingByMesh);
+            if (deduplicateByContent)
+                DeduplicateAtlasSourcesByContent(state, sources, mappingByMesh);
 
             return new SharedAtlasBatch(
                 sources,
