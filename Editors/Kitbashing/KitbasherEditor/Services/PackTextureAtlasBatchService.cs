@@ -3359,34 +3359,11 @@ namespace Editors.KitbasherEditor.Services
                         group => group.First().Source,
                         StringComparer.OrdinalIgnoreCase)
                     ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                var textureMergeIdentities = textureAssignments
-                    .ToDictionary(
-                        x => x.Key,
-                        x => GetExactPreservedTextureMergeIdentity(state, x.Value),
-                        StringComparer.OrdinalIgnoreCase);
                 var textureIdentity = string.Join(
                     "\u001f",
-                    textureMergeIdentities
+                    textureAssignments
                         .OrderBy(x => x.Key, StringComparer.Ordinal)
                         .Select(x => $"{x.Key}={x.Value}"));
-
-                var renderingMaterial = new XmlDocument();
-                renderingMaterial.LoadXml(material.OuterXml);
-                foreach (var texture in renderingMaterial
-                             .SelectNodes("/material/textures/texture")?
-                             .Cast<XmlNode>() ?? Enumerable.Empty<XmlNode>())
-                {
-                    var slot = GetTextureSlot(texture);
-                    if (string.IsNullOrWhiteSpace(slot) ||
-                        !textureMergeIdentities.TryGetValue(slot, out var mergeIdentity))
-                    {
-                        continue;
-                    }
-
-                    var sourceNode = texture.SelectSingleNode("source");
-                    if (sourceNode != null)
-                        sourceNode.InnerText = mergeIdentity;
-                }
 
                 var nonTexture = new XmlDocument();
                 nonTexture.LoadXml(material.OuterXml);
@@ -3396,7 +3373,7 @@ namespace Editors.KitbasherEditor.Services
                 texturesNode?.ParentNode?.RemoveChild(texturesNode);
 
                 var snapshot = new MaterialMergeDiagnosticSnapshot(
-                    GetMaterialRenderingIdentity(renderingMaterial),
+                    GetMaterialRenderingIdentity(material),
                     shader,
                     textureIdentity,
                     nonTexture.OuterXml,
@@ -3510,63 +3487,6 @@ namespace Editors.KitbasherEditor.Services
                         state.MaterialParameterFieldBlockerCounts,
                         $"{fieldLabel}: {values[0]} <> {values[1]}");
                 }
-            }
-        }
-
-        private static string GetExactPreservedTextureMergeIdentity(
-            BatchState state,
-            string? texturePath)
-        {
-            var normalized = Normalize(texturePath);
-            if (string.IsNullOrWhiteSpace(normalized))
-                return "path:<missing>";
-
-            // Generated atlases already encode UV-placement semantics in their path/batch
-            // assignment. Keep them path-strict here; the merge-aware planner is responsible
-            // for making those assignments identical. Placeholders must remain strict too.
-            if (state.GeneratedTexturePaths.Contains(normalized) ||
-                IsTexturePlaceholder(normalized))
-            {
-                return $"path:{normalized}";
-            }
-
-            if (state.ExactPreservedTextureMergeIdentityByPath.TryGetValue(
-                    normalized,
-                    out var cached))
-            {
-                return cached;
-            }
-
-            var file = FindForReadStatic(state, normalized);
-            if (file == null)
-            {
-                var unresolvedIdentity = $"path:{normalized}";
-                state.ExactPreservedTextureMergeIdentityByPath[normalized] = unresolvedIdentity;
-                return unresolvedIdentity;
-            }
-
-            try
-            {
-                var hash = Convert.ToHexString(SHA256.HashData(file.DataSource.ReadData()));
-                var identity = $"sha256:{hash}";
-                state.ExactPreservedTextureMergeIdentityByPath[normalized] = identity;
-
-                if (!state.ExactPreservedTexturePathsByHash.TryGetValue(hash, out var paths))
-                {
-                    paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    state.ExactPreservedTexturePathsByHash[hash] = paths;
-                }
-
-                paths.Add(normalized);
-                return identity;
-            }
-            catch
-            {
-                // Hashing is only a merge optimization. Any unreadable/odd dependency remains
-                // path-strict rather than making the atlas conversion fail.
-                var fallbackIdentity = $"path:{normalized}";
-                state.ExactPreservedTextureMergeIdentityByPath[normalized] = fallbackIdentity;
-                return fallbackIdentity;
             }
         }
 
@@ -5350,12 +5270,6 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Content-deduplicated atlas placements: {state.ContentDeduplicatedAtlasPlacements}");
             sb.AppendLine($"Mesh references remapped by content dedupe: {state.ContentCanonicalizedMeshReferences}");
             sb.AppendLine($"Cropped-content hashes computed: {state.AtlasRegionContentHashes.Count}");
-            var exactTextureEquivalenceGroups = state.ExactPreservedTexturePathsByHash.Values
-                .Count(paths => paths.Count > 1);
-            var exactTexturePathAliases = state.ExactPreservedTexturePathsByHash.Values
-                .Sum(paths => Math.Max(0, paths.Count - 1));
-            sb.AppendLine($"Exact-content preserved texture equivalence groups: {exactTextureEquivalenceGroups}");
-            sb.AppendLine($"Exact-content preserved texture path aliases: {exactTexturePathAliases}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
             sb.AppendLine($"Atlas pixel-area optimized splits: {state.AtlasPixelAreaOptimizedSplits}");
@@ -5667,31 +5581,6 @@ namespace Editors.KitbasherEditor.Services
                     "Material parameter/value pairs",
                     state.MaterialParameterFieldBlockerCounts,
                     maxEntries: 32);
-
-                sb.AppendLine();
-                sb.AppendLine("Exact-content preserved texture equivalence");
-                sb.AppendLine("-------------------------------------------");
-                var exactTextureGroups = state.ExactPreservedTexturePathsByHash
-                    .Where(x => x.Value.Count > 1)
-                    .OrderByDescending(x => x.Value.Count)
-                    .ThenBy(x => x.Key, StringComparer.Ordinal)
-                    .ToList();
-                if (exactTextureGroups.Count == 0)
-                {
-                    sb.AppendLine("(none)");
-                }
-                else
-                {
-                    foreach (var group in exactTextureGroups)
-                    {
-                        sb.AppendLine($"SHA-256 {group.Key}:");
-                        foreach (var texturePath in group.Value
-                                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
-                        {
-                            sb.AppendLine($"  {texturePath}");
-                        }
-                    }
-                }
 
                 sb.AppendLine();
                 sb.AppendLine("Texture-blocked merge opportunities");
@@ -6937,10 +6826,6 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, int> MaterialParameterFieldBlockerCounts { get; } = new(StringComparer.Ordinal);
             public Dictionary<string, MaterialMergeDiagnosticSnapshot?> MeshMergeMaterialDiagnostics { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
-            public Dictionary<string, string> ExactPreservedTextureMergeIdentityByPath { get; } =
-                new(StringComparer.OrdinalIgnoreCase);
-            public Dictionary<string, HashSet<string>> ExactPreservedTexturePathsByHash { get; } =
-                new(StringComparer.Ordinal);
             public Dictionary<MeshKey, int> AtlasBatchByMesh { get; } = [];
             public Dictionary<int, AtlasBatchDiagnosticSnapshot> AtlasBatchDiagnostics { get; } = [];
             public Dictionary<AtlasBatchPair, AtlasBatchCombinationDiagnostic> AtlasBatchCombinationDiagnostics { get; } = [];
