@@ -2851,22 +2851,26 @@ namespace Editors.KitbasherEditor.Services
             }
 
             state.AtlasBatchCount++;
+            var rootsByMesh = BuildCandidateRootVmdPaths(state, candidates);
             if (state.ShareAtlasesAcrossVmdsEnabled &&
-                candidates.Select(x => x.RootVmdPath).Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any())
+                GetBatchRootCount(candidates, rootsByMesh) > 1)
             {
                 state.CrossVmdSharedAtlasBatches++;
             }
 
             foreach (var sourceGroup in candidates.GroupBy(x => sharedBatch.MappingByMesh[x.Key].SourceId))
             {
-                if (sourceGroup
-                    .Select(x => x.RootVmdPath)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Skip(1)
-                    .Any())
+                var sourceRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var candidate in sourceGroup)
                 {
-                    state.CrossVmdSharedAtlasPlacements++;
+                    if (rootsByMesh.TryGetValue(candidate.Key, out var candidateRoots))
+                        sourceRoots.UnionWith(candidateRoots);
+                    else
+                        sourceRoots.Add(Normalize(candidate.RootVmdPath));
                 }
+
+                if (sourceRoots.Count > 1)
+                    state.CrossVmdSharedAtlasPlacements++;
             }
 
             var atlasStem = BuildAtlasStem(atlasScopeKey, state.BatchIndex++);
@@ -5863,6 +5867,76 @@ namespace Editors.KitbasherEditor.Services
                 rootsByGeometry.Values.Count(roots => roots.Count > 1));
         }
 
+        private static AtlasResidencySummary BuildAtlasResidencySummary(
+            BatchState state)
+        {
+            var allCandidates = state.AtlasBatchDiagnostics.Values
+                .SelectMany(batch => batch.Candidates)
+                .GroupBy(candidate => candidate.Key)
+                .Select(group => group.First())
+                .ToList();
+            if (allCandidates.Count == 0)
+            {
+                return new AtlasResidencySummary(
+                    0,
+                    0,
+                    0,
+                    0,
+                    string.Empty,
+                    0);
+            }
+
+            var rootsByMesh = BuildCandidateRootVmdPaths(state, allCandidates);
+            var pixelsByRoot = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            long globalPixels = 0;
+            long aggregateResidentPixels = 0;
+            var multiRootBatches = 0;
+            var maxRootsPerBatch = 0;
+
+            foreach (var batch in state.AtlasBatchDiagnostics.Values)
+            {
+                globalPixels = checked(globalPixels + batch.PixelCost);
+
+                var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var candidate in batch.Candidates)
+                {
+                    if (rootsByMesh.TryGetValue(candidate.Key, out var candidateRoots))
+                        roots.UnionWith(candidateRoots);
+                    else
+                        roots.Add(Normalize(candidate.RootVmdPath));
+                }
+
+                var rootCount = Math.Max(1, roots.Count);
+                maxRootsPerBatch = Math.Max(maxRootsPerBatch, rootCount);
+                if (rootCount > 1)
+                    multiRootBatches++;
+
+                aggregateResidentPixels = checked(
+                    aggregateResidentPixels +
+                    GetAtlasResidencyProxy(batch.PixelCost, rootCount));
+
+                foreach (var root in roots)
+                {
+                    pixelsByRoot[root] = checked(
+                        pixelsByRoot.GetValueOrDefault(root) +
+                        batch.PixelCost);
+                }
+            }
+
+            var worstRoot = pixelsByRoot
+                .OrderByDescending(entry => entry.Value)
+                .ThenBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+
+            return new AtlasResidencySummary(
+                globalPixels,
+                aggregateResidentPixels,
+                multiRootBatches,
+                maxRootsPerBatch,
+                worstRoot.Key ?? string.Empty,
+                worstRoot.Value);
+        }
+
         private static void WriteReport(
             BatchState state,
             IReadOnlyList<string> vmdRoots,
@@ -5870,6 +5944,7 @@ namespace Editors.KitbasherEditor.Services
             Exception? failure)
         {
             var componentReuse = BuildAtlasComponentReuseAnalysis(state);
+            var residency = BuildAtlasResidencySummary(state);
             var sb = new StringBuilder();
             sb.AppendLine("Texture Atlas Pack Report");
             sb.AppendLine("=========================");
@@ -5917,6 +5992,16 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Estimated VMD-resident atlas pixels saved by locality splits: {state.VmdLocalityResidentPixelsSaved:N0}");
             sb.AppendLine($"Global atlas pixels added by locality splits: {state.VmdLocalityGlobalPixelsAdded:N0}");
             sb.AppendLine($"Merge-aware locality regressions rejected: {state.MergeAwareLocalityRegressionsRejected}");
+            sb.AppendLine($"Final global atlas pixel cost: {residency.GlobalPixels:N0}");
+            sb.AppendLine($"Estimated aggregate VMD-resident atlas pixel cost: {residency.AggregateResidentPixels:N0}");
+            sb.AppendLine($"Atlas batches spanning multiple actual VMD roots: {residency.MultiRootBatchCount}");
+            sb.AppendLine($"Maximum VMD roots sharing one atlas batch: {residency.MaxRootsPerBatch}");
+            if (!string.IsNullOrWhiteSpace(residency.WorstRootVmdPath))
+            {
+                sb.AppendLine(
+                    $"Highest estimated single-VMD atlas pixel residency: " +
+                    $"{residency.WorstRootPixels:N0} ({residency.WorstRootVmdPath})");
+            }
             sb.AppendLine($"Merge-aware batch pairs considered: {state.MergeAwareBatchPairsConsidered}");
             sb.AppendLine($"Merge-aware repartition evaluations: {state.MergeAwareRepartitionEvaluations}");
             sb.AppendLine($"Merge-aware repartitions accepted: {state.MergeAwareRepartitionsAccepted}");
@@ -7626,6 +7711,14 @@ namespace Editors.KitbasherEditor.Services
                 OptimizeGeometryEnabled = optimizeGeometryEnabled;
             }
         }
+
+        private sealed record AtlasResidencySummary(
+            long GlobalPixels,
+            long AggregateResidentPixels,
+            int MultiRootBatchCount,
+            int MaxRootsPerBatch,
+            string WorstRootVmdPath,
+            long WorstRootPixels);
 
         private sealed record AtlasComponentReuseAnalysis(
             List<AtlasComponentReuseEntry> Components,
