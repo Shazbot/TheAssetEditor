@@ -301,8 +301,8 @@ namespace Editors.KitbasherEditor.Services
                 hash.Add(obj.Uv);
                 hash.Add(obj.Uv1);
                 hash.Add(obj.Colour);
-                AddSequence(hash, obj.BoneIndex);
-                AddSequence(hash, obj.BoneWeight);
+                AddSequence(ref hash, obj.BoneIndex);
+                AddSequence(ref hash, obj.BoneWeight);
                 hash.Add(obj.WeightCount);
                 return hash.ToHashCode();
             }
@@ -316,7 +316,7 @@ namespace Editors.KitbasherEditor.Services
                 return left.AsSpan().SequenceEqual(right);
             }
 
-            private static void AddSequence<T>(HashCode hash, T[]? values)
+            private static void AddSequence<T>(ref HashCode hash, T[]? values)
             {
                 if (values == null)
                 {
