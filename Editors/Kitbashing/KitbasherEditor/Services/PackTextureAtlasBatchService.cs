@@ -250,41 +250,44 @@ namespace Editors.KitbasherEditor.Services
                 BuildWsUsageIndex(state, cancellationToken, progress);
                 state.PhaseDurations["Index WSModels"] = phaseStopwatch.Elapsed;
 
-                if (!atlasMeshesWithMissingTextures.HasValue)
+                phaseStopwatch.Restart();
+                var candidateDiscovery = DiscoverAtlasCandidates(
+                    state,
+                    vmdRoots,
+                    shareAtlasesAcrossVmds,
+                    cancellationToken,
+                    progress);
+                state.PhaseDurations["Discover atlas candidates"] = phaseStopwatch.Elapsed;
+
+                if (!atlasMeshesWithMissingTextures.HasValue &&
+                    candidateDiscovery.MissingTextures.Count != 0)
                 {
-                    phaseStopwatch.Restart();
-                    var missingTextures = FindMissingTextureDependencies(
-                        state,
-                        vmdRoots,
-                        cancellationToken,
-                        progress);
-                    state.PhaseDurations["Check missing textures"] = phaseStopwatch.Elapsed;
+                    ReportProgress(progress, "Waiting for missing-texture choice");
 
-                    if (missingTextures.Count != 0)
-                    {
-                        ReportProgress(progress, "Waiting for missing-texture choice");
+                    var dialogStopwatch = Stopwatch.StartNew();
+                    var dialog = new MissingTextureDecisionWindow(
+                        BuildMissingTextureDetails(candidateDiscovery.MissingTextures));
+                    var activeOwner = System.Windows.Application.Current?.Windows
+                        .OfType<System.Windows.Window>()
+                        .FirstOrDefault(x => x.IsActive);
+                    if (activeOwner != null)
+                        dialog.Owner = activeOwner;
 
-                        var dialogStopwatch = Stopwatch.StartNew();
-                        var dialog = new MissingTextureDecisionWindow(
-                            BuildMissingTextureDetails(missingTextures));
-                        var activeOwner = System.Windows.Application.Current?.Windows
-                            .OfType<System.Windows.Window>()
-                            .FirstOrDefault(x => x.IsActive);
-                        if (activeOwner != null)
-                            dialog.Owner = activeOwner;
-
-                        state.AtlasMeshesWithMissingTextures = dialog.ShowDialog() == true;
-                        state.PhaseDurations["Wait for missing-texture choice"] =
-                            dialogStopwatch.Elapsed;
-                    }
+                    state.AtlasMeshesWithMissingTextures = dialog.ShowDialog() == true;
+                    state.PhaseDurations["Wait for missing-texture choice"] =
+                        dialogStopwatch.Elapsed;
                 }
+
+                var discoveredCandidates = ApplyMissingTextureDecision(
+                    state,
+                    candidateDiscovery.Candidates);
 
                 phaseStopwatch.Restart();
                 if (shareAtlasesAcrossVmds)
                 {
                     ProcessPackWideAtlases(
                         state,
-                        vmdRoots,
+                        discoveredCandidates,
                         cancellationToken,
                         progress);
                 }
@@ -293,11 +296,16 @@ namespace Editors.KitbasherEditor.Services
                     for (var i = 0; i < vmdRoots.Count; i++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
+                        var rootCandidates = discoveredCandidates
+                            .Where(x =>
+                                x.RootVmdPath.Equals(
+                                    vmdRoots[i],
+                                    StringComparison.OrdinalIgnoreCase))
+                            .ToList();
                         ProcessVmd(
                             state,
                             vmdRoots[i],
-                            i + 1,
-                            vmdRoots.Count,
+                            rootCandidates,
                             cancellationToken,
                             progress);
                     }
@@ -639,21 +647,87 @@ namespace Editors.KitbasherEditor.Services
             return sb.ToString();
         }
 
-        private void ProcessVmd(
+        private CandidateDiscoveryResult DiscoverAtlasCandidates(
             BatchState state,
-            string rootVmdPath,
-            int vmdIndex,
-            int vmdCount,
+            IReadOnlyList<string> vmdRoots,
+            bool packWide,
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
-            var candidates = CollectVmdCandidates(
-                state,
-                rootVmdPath,
-                vmdIndex,
-                vmdCount,
-                cancellationToken,
-                progress);
+            var candidates = new List<AtlasCandidate>();
+            var missingTextures = new List<MissingTextureDependency>();
+            var inspectedKeys = packWide ? new HashSet<MeshKey>() : null;
+
+            for (var vmdIndex = 0; vmdIndex < vmdRoots.Count; vmdIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                candidates.AddRange(CollectVmdCandidates(
+                    state,
+                    vmdRoots[vmdIndex],
+                    vmdIndex + 1,
+                    vmdRoots.Count,
+                    cancellationToken,
+                    progress,
+                    inspectedKeys,
+                    missingTextures));
+            }
+
+            return new CandidateDiscoveryResult(
+                candidates,
+                missingTextures
+                    .Distinct()
+                    .OrderBy(x => x.TexturePath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(x => x.Key.LodIndex)
+                    .ThenBy(x => x.Key.PartIndex)
+                    .ThenBy(x => x.Slot, StringComparer.OrdinalIgnoreCase)
+                    .ToList());
+        }
+
+        private static List<AtlasCandidate> ApplyMissingTextureDecision(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates)
+        {
+            var result = new List<AtlasCandidate>(candidates.Count);
+
+            foreach (var candidate in candidates)
+            {
+                if (candidate.MissingTextures.Count == 0)
+                {
+                    result.Add(candidate);
+                    continue;
+                }
+
+                if (state.AtlasMeshesWithMissingTextures)
+                {
+                    foreach (var missing in candidate.MissingTextures)
+                        state.AllowedMissingTexturePaths.Add(missing.TexturePath);
+                    result.Add(candidate);
+                    continue;
+                }
+
+                var firstMissing = candidate.MissingTextures[0];
+                RecordSkip(
+                    state,
+                    candidate.RootVmdPath,
+                    candidate.Key,
+                    candidate.Usages[0].WsModelPath,
+                    $"{firstMissing.Slot} texture could not be resolved: {firstMissing.TexturePath}");
+            }
+
+            return result;
+        }
+
+        private void ProcessVmd(
+            BatchState state,
+            string rootVmdPath,
+            List<AtlasCandidate> candidates,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            candidates = candidates
+                .Where(x => !state.ProcessedMeshes.Contains(x.Key))
+                .ToList();
 
             var batches = CreateBatches(
                 state,
@@ -673,31 +747,13 @@ namespace Editors.KitbasherEditor.Services
 
         private void ProcessPackWideAtlases(
             BatchState state,
-            IReadOnlyList<string> vmdRoots,
+            List<AtlasCandidate> candidates,
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
-            var stopwatch = Stopwatch.StartNew();
-            var candidates = new List<AtlasCandidate>();
-            var inspectedKeys = new HashSet<MeshKey>();
-
-            for (var vmdIndex = 0; vmdIndex < vmdRoots.Count; vmdIndex++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                candidates.AddRange(CollectVmdCandidates(
-                    state,
-                    vmdRoots[vmdIndex],
-                    vmdIndex + 1,
-                    vmdRoots.Count,
-                    cancellationToken,
-                    progress,
-                    inspectedKeys));
-            }
-
             state.PackWideCandidateCount = candidates.Count;
-            AddPhaseDuration(state, "Discover atlas candidates", stopwatch.Elapsed);
 
-            stopwatch.Restart();
+            var stopwatch = Stopwatch.StartNew();
             var batches = CreateBatches(
                 state,
                 candidates,
@@ -753,7 +809,8 @@ namespace Editors.KitbasherEditor.Services
             int vmdCount,
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress,
-            HashSet<MeshKey>? inspectedKeys = null)
+            HashSet<MeshKey>? inspectedKeys = null,
+            List<MissingTextureDependency>? missingTextureDependencies = null)
         {
             ReportProgress(progress, "Discovering atlas candidates", vmdIndex, vmdCount, rootVmdPath);
             var wsModels = GetReachableWsModels(state, rootVmdPath, cancellationToken);
@@ -830,6 +887,7 @@ namespace Editors.KitbasherEditor.Services
                         key,
                         rmv.ModelList[lodIndex][partIndex],
                         usages,
+                        missingTextureDependencies,
                         out var skipReason);
                     if (candidate == null)
                     {
@@ -850,6 +908,7 @@ namespace Editors.KitbasherEditor.Services
             MeshKey key,
             RmvModel model,
             List<WsUsage> usages,
+            List<MissingTextureDependency>? missingTextureDependencies,
             out string skipReason)
         {
             skipReason = string.Empty;
@@ -894,6 +953,7 @@ namespace Editors.KitbasherEditor.Services
                 return null;
             }
 
+            var candidateMissingTextures = new List<MissingTextureDependency>();
             var resolvedChannels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var constantChannels = new Dictionary<string, TextureAtlasConstantColor>(
                 StringComparer.OrdinalIgnoreCase);
@@ -929,14 +989,13 @@ namespace Editors.KitbasherEditor.Services
                         return null;
                     }
 
-                    if (state.AtlasMeshesWithMissingTextures)
-                    {
-                        state.AllowedMissingTexturePaths.Add(path);
-                        continue;
-                    }
-
-                    skipReason = $"{channel.Slot} texture could not be resolved: {path}";
-                    return null;
+                    var missing = new MissingTextureDependency(
+                        key,
+                        channel.Slot,
+                        path);
+                    candidateMissingTextures.Add(missing);
+                    missingTextureDependencies?.Add(missing);
+                    continue;
                 }
 
                 try
@@ -1003,7 +1062,8 @@ namespace Editors.KitbasherEditor.Services
                 bounds,
                 resolvedChannels,
                 constantChannels,
-                channelDimensions);
+                channelDimensions,
+                candidateMissingTextures);
         }
 
         private static TextureInspection GetTextureInspection(
@@ -4259,7 +4319,12 @@ namespace Editors.KitbasherEditor.Services
             UvBounds Bounds,
             HashSet<string> ResolvedChannels,
             Dictionary<string, TextureAtlasConstantColor> ConstantChannels,
-            Dictionary<string, (int Width, int Height)> ChannelDimensions);
+            Dictionary<string, (int Width, int Height)> ChannelDimensions,
+            List<MissingTextureDependency> MissingTextures);
+
+        private sealed record CandidateDiscoveryResult(
+            List<AtlasCandidate> Candidates,
+            List<MissingTextureDependency> MissingTextures);
 
         private sealed record AtlasBatchSplitProposal(
             List<AtlasCandidate> Left,
