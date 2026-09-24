@@ -1708,8 +1708,7 @@ namespace Editors.KitbasherEditor.Services
                     return;
 
                 var signature = string.Join(
-                    "
-",
+                    "\n",
                     left.Select(x => x.Key.ToString())
                         .OrderBy(x => x, StringComparer.Ordinal));
                 if (!seen.Add(signature))
@@ -5096,24 +5095,24 @@ namespace Editors.KitbasherEditor.Services
 
                 sb.AppendLine();
                 sb.AppendLine("Merge-aware atlas repartitions");
-            sb.AppendLine("------------------------------");
-            if (state.MergeAwareRepartitionEntries.Count == 0)
-            {
-                sb.AppendLine("(none)");
-            }
-            else
-            {
-                foreach (var entry in state.MergeAwareRepartitionEntries)
+                sb.AppendLine("------------------------------");
+                if (state.MergeAwareRepartitionEntries.Count == 0)
                 {
-                    sb.AppendLine(
-                        $"Batches {entry.FirstBatchIndex} + {entry.SecondBatchIndex}: " +
-                        $"pixels {entry.BaselinePixels:N0} -> {entry.ResultPixels:N0}, " +
-                        $"merge affinity {entry.BaselineAffinity} -> {entry.ResultAffinity}");
+                    sb.AppendLine("(none)");
                 }
-            }
-            sb.AppendLine();
+                else
+                {
+                    foreach (var entry in state.MergeAwareRepartitionEntries)
+                    {
+                        sb.AppendLine(
+                            $"Batches {entry.FirstBatchIndex} + {entry.SecondBatchIndex}: " +
+                            $"pixels {entry.BaselinePixels:N0} -> {entry.ResultPixels:N0}, " +
+                            $"merge affinity {entry.BaselineAffinity} -> {entry.ResultAffinity}");
+                    }
+                }
+                sb.AppendLine();
 
-            sb.AppendLine("Mesh merge blocker diagnostics");
+                sb.AppendLine("Mesh merge blocker diagnostics");
                 sb.AppendLine("------------------------------");
                 sb.AppendLine("Counts below are near-miss part pairs/groups; unrelated parts are intentionally omitted.");
                 if (state.MeshMergeBlockerCounts.Count == 0)
