@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Xml;
 using Editors.ImportExport.Importing.Importers.PngToDds;
+using Editors.ImportExport.Importing.Importers.PngToDds.Helpers;
 using Editors.ImportExport.TextureAtlas;
 using Shared.Core.ErrorHandling;
 using Shared.Core.PackFiles;
@@ -1696,15 +1697,30 @@ namespace Editors.KitbasherEditor.Services
                     mipConsumer: (mipLevel, mipWidth, mipHeight, pixels) =>
                         mipWriter.WriteMip(mipLevel, pixels),
                     retainMipPixels: false);
-                AddPhaseDuration(state, "Rasterize atlas pixels", rasterStopwatch.Elapsed);
+                rasterStopwatch.Stop();
+                var rasterElapsed = rasterStopwatch.Elapsed;
+                AddPhaseDuration(state, "Rasterize atlas pixels", rasterElapsed);
 
-                if (mipWriter.UsesLargeBcSplitCompression)
+                var usesLargeBcSplitCompression = mipWriter.UsesLargeBcSplitCompression;
+                if (usesLargeBcSplitCompression)
                     state.LargeBcSplitCompressionChannels++;
 
                 var compressionStopwatch = Stopwatch.StartNew();
                 var atlasPackFile = mipWriter.Complete(fileName);
-                AddPhaseDuration(state, "Compress atlas DDS", compressionStopwatch.Elapsed);
+                compressionStopwatch.Stop();
+                var compressionElapsed = compressionStopwatch.Elapsed;
+                AddPhaseDuration(state, "Compress atlas DDS", compressionElapsed);
                 var atlasPath = Normalize($@"{AtlasDirectory}\{fileName}");
+
+                state.GeneratedTextureTimings.Add(new GeneratedTextureTimingEntry(
+                    atlasPath,
+                    outputDimensions.Width,
+                    outputDimensions.Height,
+                    channel.Type,
+                    DDSFormatHelper.GetDDSFormat(GameTypeEnum.Warhammer3, channel.Type),
+                    rasterElapsed,
+                    compressionElapsed,
+                    usesLargeBcSplitCompression));
 
                 WriteFile(state.Output, atlasPath, atlasPackFile.DataSource.ReadData());
                 generatedPaths[channel.Slot] = atlasPath;
@@ -3503,6 +3519,30 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Total wall time: {state.TotalElapsed.TotalMilliseconds:N0} ms");
             sb.AppendLine();
 
+            sb.AppendLine("Generated atlas texture timings");
+            sb.AppendLine("-------------------------------");
+            if (state.GeneratedTextureTimings.Count == 0)
+            {
+                sb.AppendLine("(none)");
+            }
+            else
+            {
+                foreach (var timing in state.GeneratedTextureTimings
+                             .OrderByDescending(x => x.TotalElapsed)
+                             .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
+                {
+                    var rasterMs = (long)Math.Round(timing.RasterElapsed.TotalMilliseconds);
+                    var compressionMs = (long)Math.Round(timing.CompressionElapsed.TotalMilliseconds);
+                    var totalMs = (long)Math.Round(timing.TotalElapsed.TotalMilliseconds);
+                    sb.AppendLine(
+                        $"{timing.Path} | {timing.Width}x{timing.Height} | " +
+                        $"{timing.TextureType} | {timing.Format} | " +
+                        $"raster={rasterMs}ms | compress={compressionMs}ms | total={totalMs}ms | " +
+                        $"split={(timing.UsedLargeBcSplitCompression ? "YES" : "NO")}");
+                }
+            }
+            sb.AppendLine();
+
             sb.AppendLine("VMD roots");
             sb.AppendLine("---------");
             foreach (var vmdPath in vmdRoots.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
@@ -3986,6 +4026,19 @@ namespace Editors.KitbasherEditor.Services
             int SkippedMeshCount,
             string ReportPath);
 
+        private sealed record GeneratedTextureTimingEntry(
+            string Path,
+            int Width,
+            int Height,
+            TextureType TextureType,
+            DirectXTexNet.DXGI_FORMAT Format,
+            TimeSpan RasterElapsed,
+            TimeSpan CompressionElapsed,
+            bool UsedLargeBcSplitCompression)
+        {
+            public TimeSpan TotalElapsed => RasterElapsed + CompressionElapsed;
+        }
+
         private sealed class BatchState
         {
             public IPackFileContainer Source { get; }
@@ -4009,6 +4062,7 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, (int Width, int Height)> GeneratedTextureDimensions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public List<GeneratedTextureTimingEntry> GeneratedTextureTimings { get; } = [];
             public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, GeneratedMaterialEntry> GeneratedMaterialByContentHash { get; } = new(StringComparer.Ordinal);
             public int GeneratedMaterialReuses { get; set; }
