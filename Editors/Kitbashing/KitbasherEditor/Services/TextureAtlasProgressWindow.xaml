@@ -21,6 +21,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
@@ -59,16 +61,31 @@
             TextWrapping="Wrap"
             Opacity="0.7" />
 
+        <CheckBox
+            x:Name="OptimizeGeometryCheckBox"
+            Grid.Row="5"
+            Margin="0,12,0,0"
+            Content="Optimize geometry (experimental)"
+            IsChecked="False" />
+
+        <TextBlock
+            Grid.Row="6"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="When enabled, atlased rigid meshes remove unused vertices and degenerate triangles, deduplicate identical vertices, optimize triangle order for the GPU vertex cache, and reorder the vertex buffer for locality."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
         <TextBlock
             x:Name="PhaseText"
-            Grid.Row="5"
+            Grid.Row="7"
             Margin="0,16,0,0"
             FontWeight="SemiBold"
             Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="6"
+            Grid.Row="8"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -78,7 +95,7 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="7"
+            Grid.Row="9"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
@@ -86,7 +103,7 @@
             IsIndeterminate="False"
             Value="0" />
 
-        <Grid Grid.Row="8" Margin="0,8,0,0">
+        <Grid Grid.Row="10" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
