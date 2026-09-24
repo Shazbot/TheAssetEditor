@@ -429,13 +429,17 @@ namespace Editors.ImportExport.TextureAtlas
                             continue;
                         }
 
+                        long constantCoreSkippedPixels = 0;
                         for (var y = bounds.Top; y < bounds.Bottom; y++)
                         {
                             for (var x = bounds.Left; x < bounds.Right; x++)
                             {
                                 var index = y * mipWidth + x;
                                 if (coreOccupancy[index])
+                                {
+                                    constantCoreSkippedPixels++;
                                     continue;
+                                }
 
                                 WriteConstantPixel(
                                     atlasPixels,
@@ -445,9 +449,15 @@ namespace Editors.ImportExport.TextureAtlas
                                     constantColor,
                                     forceOpaqueAlpha);
                                 coreOccupancy[index] = true;
-                                if (statistics != null)
-                                    statistics.ConstantCorePixels++;
                             }
+                        }
+
+                        if (statistics != null)
+                        {
+                            statistics.ConstantCorePixels +=
+                                (long)(bounds.Right - bounds.Left) *
+                                (bounds.Bottom - bounds.Top) -
+                                constantCoreSkippedPixels;
                         }
                     }
 
@@ -818,7 +828,7 @@ namespace Editors.ImportExport.TextureAtlas
             if (width <= 0 || bounds.Bottom <= bounds.Top)
                 return 0;
 
-            long writtenPixels = 0;
+            long skippedPixels = 0;
 
             // X mapping is identical for every destination row. Precompute it once instead of
             // repeating floating-point transform/floor/modulo work for every pixel.
@@ -854,7 +864,10 @@ namespace Editors.ImportExport.TextureAtlas
                 {
                     var occupancyIndex = destinationPixelOffset + localX;
                     if (coreOccupancy[occupancyIndex])
+                    {
+                        skippedPixels++;
                         continue;
+                    }
 
                     var sourceOffset = sourceRowOffset + sourceXOffsets[localX];
                     var pixelOffset = destinationOffset + localX * 4;
@@ -865,11 +878,10 @@ namespace Editors.ImportExport.TextureAtlas
                         ? byte.MaxValue
                         : source.Data[sourceOffset + 3];
                     coreOccupancy[occupancyIndex] = true;
-                    writtenPixels++;
                 }
             }
 
-            return writtenPixels;
+            return (long)width * (bounds.Bottom - bounds.Top) - skippedPixels;
         }
 
         private static long CopyPaddingRectangle(
@@ -892,7 +904,8 @@ namespace Editors.ImportExport.TextureAtlas
             if (left >= right || top >= bottom)
                 return 0;
 
-            long writtenPixels = 0;
+            long skippedPixels = 0;
+            var totalPixels = (long)(right - left) * (bottom - top);
 
             if (isConstant)
             {
@@ -902,7 +915,10 @@ namespace Editors.ImportExport.TextureAtlas
                     for (var x = left; x < right; x++, occupancyIndex++)
                     {
                         if (coreOccupancy[occupancyIndex])
+                        {
+                            skippedPixels++;
                             continue;
+                        }
 
                         WriteConstantPixel(
                             atlasPixels,
@@ -911,11 +927,10 @@ namespace Editors.ImportExport.TextureAtlas
                             y,
                             constantColor,
                             forceOpaqueAlpha);
-                        writtenPixels++;
                     }
                 }
 
-                return writtenPixels;
+                return totalPixels - skippedPixels;
             }
 
             if (source == null || sourceMip == null)
@@ -963,7 +978,10 @@ namespace Editors.ImportExport.TextureAtlas
                 {
                     var occupancyIndex = destinationPixelOffset + localX;
                     if (coreOccupancy[occupancyIndex])
+                    {
+                        skippedPixels++;
                         continue;
+                    }
 
                     var sourceOffset = sourceRowOffset + sourceXOffsets[localX];
                     var pixelOffset = destinationOffset + localX * 4;
@@ -973,11 +991,10 @@ namespace Editors.ImportExport.TextureAtlas
                     atlasPixels[pixelOffset + 3] = forceOpaqueAlpha
                         ? byte.MaxValue
                         : source.Data[sourceOffset + 3];
-                    writtenPixels++;
                 }
             }
 
-            return writtenPixels;
+            return totalPixels - skippedPixels;
         }
 
         public static (int Width, int Height) GetDimensions(byte[] ddsBytes)
