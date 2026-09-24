@@ -1500,35 +1500,28 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var channel in AtlasChannels)
                 {
                     var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
-                    var hasChannel = false;
 
                     foreach (var source in sharedPlan.Batch.Sources)
                     {
                         var representative = source.Representative;
-                        if (representative.ResolvedChannels.Contains(channel.Slot))
+                        if (representative.ResolvedChannels.Contains(channel.Slot) &&
+                            representative.ChannelDimensions.TryGetValue(
+                                channel.Slot,
+                                out var dimensions))
                         {
-                            hasChannel = true;
-                            if (representative.ChannelDimensions.TryGetValue(
-                                    channel.Slot,
-                                    out var dimensions))
-                            {
-                                sourceDimensions[source.Id] = dimensions;
-                            }
-                        }
-                        else if (representative.ConstantChannels.ContainsKey(channel.Slot))
-                        {
-                            hasChannel = true;
+                            sourceDimensions[source.Id] = dimensions;
                         }
                     }
 
-                    if (!hasChannel)
+                    // ProcessBatch deliberately emits no texture when every present source
+                    // for a channel is uniform/constant, so the planning cost must match that
+                    // behavior rather than charging a full atlas for a skipped channel.
+                    if (sourceDimensions.Count == 0)
                         continue;
 
-                    var outputDimensions = sourceDimensions.Count > 0
-                        ? TextureAtlasBuilder.CalculateOutputDimensions(
-                            sharedPlan.Plan,
-                            sourceDimensions)
-                        : (sharedPlan.Plan.Width, sharedPlan.Plan.Height);
+                    var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
+                        sharedPlan.Plan,
+                        sourceDimensions);
 
                     pixelCost = checked(
                         pixelCost +
@@ -1671,7 +1664,6 @@ namespace Editors.KitbasherEditor.Services
             foreach (var candidate in candidates)
             {
                 state.AtlasBatchByMesh[candidate.Key] = atlasBatchId;
-                state.AtlasCandidateByKey[candidate.Key] = candidate;
             }
 
             state.AtlasBatchCount++;
@@ -5051,7 +5043,6 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, MaterialMergeDiagnosticSnapshot?> MeshMergeMaterialDiagnostics { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<MeshKey, int> AtlasBatchByMesh { get; } = [];
-            public Dictionary<MeshKey, AtlasCandidate> AtlasCandidateByKey { get; } = [];
             public Dictionary<int, AtlasBatchDiagnosticSnapshot> AtlasBatchDiagnostics { get; } = [];
             public Dictionary<AtlasBatchPair, AtlasBatchCombinationDiagnostic> AtlasBatchCombinationDiagnostics { get; } = [];
             public Dictionary<TextureMergeOpportunityKey, TextureMergeOpportunityAccumulator> TextureMergeOpportunities { get; } = [];
