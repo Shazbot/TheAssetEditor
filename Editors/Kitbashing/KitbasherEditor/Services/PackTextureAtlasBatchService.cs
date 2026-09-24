@@ -2605,7 +2605,7 @@ namespace Editors.KitbasherEditor.Services
                 .ToArray();
             var rigidReplacements = new NewPackFileEntry[rigidPaths.Length];
             var serializedRigidCount = 0;
-            var rigidSerializationWorkers = Math.Min(2, Math.Max(1, Environment.ProcessorCount));
+            var rigidSerializationWorkers = Math.Min(4, Math.Max(1, Environment.ProcessorCount));
 
             ReportProgress(
                 progress,
