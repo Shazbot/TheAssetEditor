@@ -1694,6 +1694,9 @@ namespace Editors.KitbasherEditor.Services
                     retainMipPixels: false);
                 AddPhaseDuration(state, "Rasterize atlas pixels", rasterStopwatch.Elapsed);
 
+                if (mipWriter.UsesLargeBcSplitCompression)
+                    state.LargeBcSplitCompressionChannels++;
+
                 var compressionStopwatch = Stopwatch.StartNew();
                 var atlasPackFile = mipWriter.Complete(fileName);
                 AddPhaseDuration(state, "Compress atlas DDS", compressionStopwatch.Elapsed);
@@ -3450,6 +3453,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
+            sb.AppendLine($"Large BC split-compression channels: {state.LargeBcSplitCompressionChannels}");
             sb.AppendLine($"Atlas materials generated: {state.GeneratedMaterialPaths.Count}");
             sb.AppendLine($"Atlas material assignments reused: {state.GeneratedMaterialReuses}");
             sb.AppendLine($"Atlas placements generated: {state.AtlasPlacementsGenerated}");
@@ -4002,6 +4006,7 @@ namespace Editors.KitbasherEditor.Services
             public bool ShareAtlasesAcrossVmdsEnabled { get; }
             public int PackWideCandidateCount { get; set; }
             public int AtlasBatchCount { get; set; }
+            public int LargeBcSplitCompressionChannels { get; set; }
             public int AtlasPixelAreaOptimizedSplits { get; set; }
             public int AtlasPixelAreaSplitEvaluations { get; set; }
             public int AtlasNonContiguousOptimizedSplits { get; set; }
