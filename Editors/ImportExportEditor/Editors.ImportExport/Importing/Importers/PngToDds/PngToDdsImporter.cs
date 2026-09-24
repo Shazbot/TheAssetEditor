@@ -408,7 +408,12 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                     mipLevelCount);
             });
 
-            const int maxDegreeOfParallelism = 2;
+            var maxDegreeOfParallelism =
+                Environment.ProcessorCount >= 3 &&
+                width == 8192 &&
+                height == 8192
+                    ? 3
+                    : 2;
             var parallelStopwatch = Stopwatch.StartNew();
             Parallel.Invoke(
                 new ParallelOptions { MaxDegreeOfParallelism = maxDegreeOfParallelism },
