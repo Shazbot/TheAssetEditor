@@ -3325,9 +3325,15 @@ namespace Editors.KitbasherEditor.Services
                         hasRightValue ? FormatDiagnosticValue(rightValue!) : "<missing>"
                     }.OrderBy(x => x, StringComparer.Ordinal).ToArray();
 
+                    var fieldLabel = field.StartsWith("param:", StringComparison.Ordinal)
+                        ? field["param:".Length..]
+                        : field.StartsWith("param-type:", StringComparison.Ordinal)
+                            ? $"{field["param-type:".Length..]} (type)"
+                            : field;
+
                     IncrementDiagnosticCount(
                         state.MaterialParameterFieldBlockerCounts,
-                        $"{field}: {values[0]} <> {values[1]}");
+                        $"{fieldLabel}: {values[0]} <> {values[1]}");
                 }
             }
         }
@@ -3371,6 +3377,31 @@ namespace Editors.KitbasherEditor.Services
 
             void Visit(XmlNode node, string path)
             {
+                if (node.Name.Equals("param", StringComparison.Ordinal) &&
+                    node.ParentNode?.Name.Equals("params", StringComparison.Ordinal) == true)
+                {
+                    var parameterName = node.SelectSingleNode("name")?.InnerText.Trim();
+                    var parameterType = node.SelectSingleNode("type")?.InnerText.Trim();
+                    var values = node.SelectNodes("value")?.Cast<XmlNode>().ToList() ?? [];
+
+                    if (!string.IsNullOrWhiteSpace(parameterName))
+                    {
+                        if (!string.IsNullOrWhiteSpace(parameterType))
+                            result[$"param-type:{parameterName}"] = parameterType;
+
+                        for (var valueIndex = 0; valueIndex < values.Count; valueIndex++)
+                        {
+                            var key = values.Count == 1
+                                ? $"param:{parameterName}"
+                                : $"param:{parameterName}[{valueIndex}]";
+                            result[key] = values[valueIndex].InnerText.Trim();
+                        }
+
+                        if (values.Count != 0)
+                            return;
+                    }
+                }
+
                 if (node.Attributes != null)
                 {
                     foreach (XmlAttribute attribute in node.Attributes
