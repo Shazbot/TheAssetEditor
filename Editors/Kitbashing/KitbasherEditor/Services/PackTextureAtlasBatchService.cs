@@ -2607,37 +2607,79 @@ namespace Editors.KitbasherEditor.Services
             var serializedRigidCount = 0;
             var rigidSerializationWorkers = Math.Min(2, Math.Max(1, Environment.ProcessorCount));
 
-            Parallel.For(
-                0,
-                rigidPaths.Length,
-                new ParallelOptions
-                {
-                    CancellationToken = cancellationToken,
-                    MaxDegreeOfParallelism = rigidSerializationWorkers
-                },
-                rigidIndex =>
-                {
-                    var rigidPath = rigidPaths[rigidIndex];
-                    var rmv = state.RigidModels[rigidPath];
-                    rmv.RecalculateOffsets();
+            ReportProgress(
+                progress,
+                "Serializing modified rigids",
+                current,
+                total,
+                $"{rigidPaths.Length:N0} rigid(s) — {rigidSerializationWorkers} worker(s)");
 
-                    // ValidateOutput reloads every rewritten rigid after all replacements are
-                    // committed, so doing ModelFactory.Save's immediate round-trip load here would
-                    // validate the same bytes twice.
-                    var data = ModelFactory.Create().Save(
-                        rmv,
-                        validateByReloading: false,
-                        logProgress: false);
-                    rigidReplacements[rigidIndex] = CreateReplacementEntry(rigidPath, data);
+            // Run the bounded parallel work away from the UI thread, but keep progress reporting
+            // on the caller thread. TextureAtlasProgressWindow's progress implementation pumps
+            // the WPF dispatcher and must never be called from Parallel.For worker threads.
+            var rigidSerializationTask = Task.Run(
+                () => Parallel.For(
+                    0,
+                    rigidPaths.Length,
+                    new ParallelOptions
+                    {
+                        CancellationToken = cancellationToken,
+                        MaxDegreeOfParallelism = rigidSerializationWorkers
+                    },
+                    rigidIndex =>
+                    {
+                        var rigidPath = rigidPaths[rigidIndex];
+                        var rmv = state.RigidModels[rigidPath];
+                        rmv.RecalculateOffsets();
 
-                    var completed = Interlocked.Increment(ref serializedRigidCount);
+                        // ValidateOutput reloads every rewritten rigid after all replacements are
+                        // committed, so doing ModelFactory.Save's immediate round-trip load here would
+                        // validate the same bytes twice.
+                        var data = ModelFactory.Create().Save(
+                            rmv,
+                            validateByReloading: false,
+                            logProgress: false);
+                        rigidReplacements[rigidIndex] = CreateReplacementEntry(rigidPath, data);
+                        Interlocked.Increment(ref serializedRigidCount);
+                    }),
+                CancellationToken.None);
+
+            try
+            {
+                while (!rigidSerializationTask.IsCompleted)
+                {
+                    Thread.Sleep(25);
                     ReportProgress(
                         progress,
                         "Serializing modified rigids",
-                        completed,
+                        current + Volatile.Read(ref serializedRigidCount),
                         total,
-                        rigidPath);
-                });
+                        $"{rigidPaths.Length:N0} rigid(s) — {rigidSerializationWorkers} worker(s)");
+                }
+
+                rigidSerializationTask.GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Ensure the serialization workers have observed cancellation before the output
+                // pack and its in-memory rigid state are torn down.
+                try
+                {
+                    rigidSerializationTask.GetAwaiter().GetResult();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                }
+
+                throw;
+            }
+
+            ReportProgress(
+                progress,
+                "Serializing modified rigids",
+                current + rigidPaths.Length,
+                total,
+                $"{rigidPaths.Length:N0} rigid(s) serialized");
 
             replacements.AddRange(rigidReplacements);
             current += rigidPaths.Length;
