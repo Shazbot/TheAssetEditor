@@ -921,58 +921,6 @@ namespace Editors.ImportExport.TextureAtlas
             }
         }
 
-        private static void CopySourceMipPixel(
-            byte[] atlasPixels,
-            int atlasRowWidth,
-            int atlasX,
-            int atlasY,
-            IImage source,
-            MipLevelInfo sourceMip,
-            TextureAtlasPlan plan,
-            TextureAtlasPlacement placement,
-            int mipWidth,
-            int mipHeight,
-            bool clampToCrop,
-            bool forceOpaqueAlpha)
-        {
-            // Map the destination mip pixel center back through the exact base-level atlas UV
-            // transform. The source mip level then supplies the authored texel for the same LOD.
-            var atlasBaseX = (atlasX + 0.5) * plan.Width / mipWidth;
-            var atlasBaseY = (atlasY + 0.5) * plan.Height / mipHeight;
-
-            if (clampToCrop)
-            {
-                atlasBaseX = Math.Clamp(
-                    atlasBaseX,
-                    placement.DestinationX + 0.5,
-                    placement.DestinationX + placement.CropWidth - 0.5);
-                atlasBaseY = Math.Clamp(
-                    atlasBaseY,
-                    placement.DestinationY + 0.5,
-                    placement.DestinationY + placement.CropHeight - 0.5);
-            }
-
-            var sourceBaseX = placement.CropX + (atlasBaseX - placement.DestinationX);
-            var sourceBaseY = placement.CropY + (atlasBaseY - placement.DestinationY);
-
-            var sourceX = PositiveModulo(
-                (int)Math.Floor(sourceBaseX * sourceMip.Width / placement.SourceWidth),
-                sourceMip.Width);
-            var sourceY = PositiveModulo(
-                (int)Math.Floor(sourceBaseY * sourceMip.Height / placement.SourceHeight),
-                sourceMip.Height);
-
-            var sourceOffset = sourceMip.DataOffset + sourceY * sourceMip.Stride + sourceX * 4;
-            var destinationOffset = (atlasY * atlasRowWidth + atlasX) * 4;
-
-            atlasPixels[destinationOffset] = source.Data[sourceOffset];
-            atlasPixels[destinationOffset + 1] = source.Data[sourceOffset + 1];
-            atlasPixels[destinationOffset + 2] = source.Data[sourceOffset + 2];
-            atlasPixels[destinationOffset + 3] = forceOpaqueAlpha
-                ? byte.MaxValue
-                : source.Data[sourceOffset + 3];
-        }
-
         public static (int Width, int Height) GetDimensions(byte[] ddsBytes)
         {
             // DDS dimensions live in the fixed header. Reading them directly avoids decoding
