@@ -5336,26 +5336,39 @@ namespace Editors.KitbasherEditor.Services
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                     .ToList();
+                var reusedModels = models
+                    .Where(model =>
+                        rootsByWsModel.TryGetValue(model, out var roots) &&
+                        roots.Count > 1)
+                    .ToList();
+                var seenPairsInRoot = new HashSet<(string Left, string Right)>();
 
-                for (var leftIndex = 0; leftIndex < models.Count; leftIndex++)
+                // One-off <> one-off combinations cannot demonstrate lost reuse, so do not
+                // spend quadratic work on them. Pair every reusable component with the other
+                // atlased components reachable from the same root.
+                foreach (var reusable in reusedModels)
                 {
-                    var left = models[leftIndex];
-                    if (!geometryByWsModel.TryGetValue(left, out var leftGeometry))
+                    if (!geometryByWsModel.TryGetValue(reusable, out var reusableGeometry))
                         continue;
 
-                    for (var rightIndex = leftIndex + 1; rightIndex < models.Count; rightIndex++)
+                    foreach (var other in models)
                     {
-                        var right = models[rightIndex];
-                        if (!geometryByWsModel.TryGetValue(right, out var rightGeometry) ||
-                            leftGeometry.Equals(rightGeometry, StringComparison.OrdinalIgnoreCase))
+                        if (reusable.Equals(other, StringComparison.OrdinalIgnoreCase) ||
+                            !geometryByWsModel.TryGetValue(other, out var otherGeometry) ||
+                            reusableGeometry.Equals(otherGeometry, StringComparison.OrdinalIgnoreCase))
                         {
                             continue;
                         }
 
-                        if (batchesByWsModel[left].SetEquals(batchesByWsModel[right]))
+                        if (batchesByWsModel[reusable].SetEquals(batchesByWsModel[other]))
                             continue;
 
-                        var key = (left, right);
+                        var key = StringComparer.OrdinalIgnoreCase.Compare(reusable, other) <= 0
+                            ? (reusable, other)
+                            : (other, reusable);
+                        if (!seenPairsInRoot.Add(key))
+                            continue;
+
                         sharedRootCounts[key] = sharedRootCounts.GetValueOrDefault(key) + 1;
                     }
                 }
