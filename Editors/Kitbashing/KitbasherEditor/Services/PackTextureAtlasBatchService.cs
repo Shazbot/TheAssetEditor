@@ -1376,7 +1376,7 @@ namespace Editors.KitbasherEditor.Services
                         group.Key,
                         candidates,
                         candidates[0],
-                        GetEffectiveCrop(candidates[0]));
+                        GetCanonicalCrop(candidates[0]).Crop);
                 })
                 .ToList();
 
@@ -1546,7 +1546,7 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static AtlasPlanningSourceIdentity GetAtlasPlanningSourceIdentity(AtlasCandidate candidate)
-            => new(BuildAtlasTextureSetIdentity(candidate), GetEffectiveCrop(candidate));
+            => new(BuildAtlasTextureSetIdentity(candidate), GetCanonicalCrop(candidate).Crop);
 
         private static string BuildAtlasPlanningOrderKey(AtlasCandidate candidate)
         {
@@ -1562,7 +1562,7 @@ namespace Editors.KitbasherEditor.Services
 
             try
             {
-                var crop = GetEffectiveCrop(candidate);
+                var crop = GetCanonicalCrop(candidate).Crop;
                 return string.Join(
                     "\u001f",
                     prefix,
@@ -1653,6 +1653,8 @@ namespace Editors.KitbasherEditor.Services
             var plan = sharedPlan.Plan;
             state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
             state.AtlasPlacementsReused += candidates.Count - sharedBatch.Sources.Count;
+            state.WrappedUvPlacementsCanonicalized += sharedBatch.MappingByMesh.Values.Count(
+                x => x.TileOffsetU != 0 || x.TileOffsetV != 0);
 
             var atlasBatchId = state.BatchIndex;
             if (!TryGetGeneratedAtlasPixelCost(candidates, out var atlasBatchPixelCost, out _))
@@ -1673,7 +1675,7 @@ namespace Editors.KitbasherEditor.Services
                 state.CrossVmdSharedAtlasBatches++;
             }
 
-            foreach (var sourceGroup in candidates.GroupBy(x => sharedBatch.SourceIdByMesh[x.Key]))
+            foreach (var sourceGroup in candidates.GroupBy(x => sharedBatch.MappingByMesh[x.Key].SourceId))
             {
                 if (sourceGroup
                     .Select(x => x.RootVmdPath)
@@ -1851,8 +1853,8 @@ namespace Editors.KitbasherEditor.Services
                     candidateIndex + 1,
                     candidates.Count,
                     candidate.Key.ToString());
-                var sourceId = sharedBatch.SourceIdByMesh[candidate.Key];
-                var placement = plan.Placements.Single(x => x.Id == sourceId);
+                var mapping = sharedBatch.MappingByMesh[candidate.Key];
+                var placement = plan.Placements.Single(x => x.Id == mapping.SourceId);
 
                 foreach (var vertexIndex in candidate.Model.Mesh.IndexList.Distinct())
                 {
@@ -1861,7 +1863,11 @@ namespace Editors.KitbasherEditor.Services
                             $"Mesh {candidate.Key} contains invalid vertex index {vertexIndex}.");
 
                     var uv = candidate.Model.Mesh.VertexList[vertexIndex].Uv;
-                    var remapped = placement.TransformUv(uv.X, uv.Y, plan.Width, plan.Height);
+                    var remapped = placement.TransformUv(
+                        uv.X - mapping.TileOffsetU,
+                        uv.Y - mapping.TileOffsetV,
+                        plan.Width,
+                        plan.Height);
                     candidate.Model.Mesh.VertexList[vertexIndex].Uv = new Microsoft.Xna.Framework.Vector2(remapped.U, remapped.V);
                 }
 
@@ -4248,6 +4254,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas material assignments reused: {state.GeneratedMaterialReuses}");
             sb.AppendLine($"Atlas placements generated: {state.AtlasPlacementsGenerated}");
             sb.AppendLine($"Atlas placements reused: {state.AtlasPlacementsReused}");
+            sb.AppendLine($"Wrapped-UV placements canonicalized: {state.WrappedUvPlacementsCanonicalized}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
             sb.AppendLine($"Atlas pixel-area optimized splits: {state.AtlasPixelAreaOptimizedSplits}");
@@ -4661,12 +4668,15 @@ namespace Editors.KitbasherEditor.Services
             bool mergeCompatibleCrops)
         {
             var sources = new List<SharedAtlasSource>();
-            var sourceIdByMesh = new Dictionary<MeshKey, int>();
+            var mappingByMesh = new Dictionary<MeshKey, SharedAtlasMeshMapping>();
 
             foreach (var group in candidates.GroupBy(BuildAtlasTextureSetIdentity))
             {
+                var canonicalCrops = group.ToDictionary(
+                    candidate => candidate.Key,
+                    GetCanonicalCrop);
                 var clusters = group
-                    .GroupBy(GetEffectiveCrop)
+                    .GroupBy(candidate => canonicalCrops[candidate.Key].Crop)
                     .Select(cropGroup => new AtlasCropCluster(
                         cropGroup.Key,
                         cropGroup.ToList()))
@@ -4676,6 +4686,10 @@ namespace Editors.KitbasherEditor.Services
                 // different UV extents. Requiring an identical crop duplicates most of the
                 // texture in the atlas. Merge crops whenever their union costs less atlas area
                 // (including padding) than storing them separately.
+                //
+                // Crops that differ only by an integer wrapped-UV tile translation are first
+                // canonicalized into the same source-texture period. For example [0..1] and
+                // [1..2] now share one atlas placement instead of copying the same texels twice.
                 while (mergeCompatibleCrops &&
                        TryFindBestCropMerge(clusters, out var leftIndex, out var rightIndex, out var union))
                 {
@@ -4706,11 +4720,17 @@ namespace Editors.KitbasherEditor.Services
                     sources.Add(source);
 
                     foreach (var candidate in cluster.Members)
-                        sourceIdByMesh[candidate.Key] = source.Id;
+                    {
+                        var canonical = canonicalCrops[candidate.Key];
+                        mappingByMesh[candidate.Key] = new SharedAtlasMeshMapping(
+                            source.Id,
+                            canonical.TileOffsetU,
+                            canonical.TileOffsetV);
+                    }
                 }
             }
 
-            return new SharedAtlasBatch(sources, sourceIdByMesh);
+            return new SharedAtlasBatch(sources, mappingByMesh);
         }
 
         private static AtlasTextureSetIdentity BuildAtlasTextureSetIdentity(AtlasCandidate candidate)
@@ -4811,6 +4831,36 @@ namespace Editors.KitbasherEditor.Services
                 cropHeight = 1;
 
             return new AtlasCrop(cropX, cropY, cropWidth, cropHeight);
+        }
+
+        private static CanonicalAtlasCrop GetCanonicalCrop(AtlasCandidate candidate)
+        {
+            var crop = GetEffectiveCrop(candidate);
+
+            // A crop wider/taller than one source period represents real repeated tiling across
+            // a triangle span. Collapsing it would require splitting geometry at wrap seams, so
+            // keep the existing virtual crop in that case.
+            if (crop.Width > candidate.Width || crop.Height > candidate.Height)
+                return new CanonicalAtlasCrop(crop, 0, 0);
+
+            var canonicalX = PositiveModulo(crop.X, candidate.Width);
+            var canonicalY = PositiveModulo(crop.Y, candidate.Height);
+            var tileOffsetU = checked((crop.X - canonicalX) / candidate.Width);
+            var tileOffsetV = checked((crop.Y - canonicalY) / candidate.Height);
+
+            return new CanonicalAtlasCrop(
+                new AtlasCrop(canonicalX, canonicalY, crop.Width, crop.Height),
+                tileOffsetU,
+                tileOffsetV);
+        }
+
+        private static int PositiveModulo(int value, int modulus)
+        {
+            if (modulus <= 0)
+                throw new ArgumentOutOfRangeException(nameof(modulus));
+
+            var result = value % modulus;
+            return result < 0 ? result + modulus : result;
         }
 
         private static List<TextureAtlasLayoutSource> ToAtlasLayoutSources(
@@ -5033,6 +5083,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossVmdMaterialReuses { get; set; }
             public int AtlasPlacementsGenerated { get; set; }
             public int AtlasPlacementsReused { get; set; }
+            public int WrappedUvPlacementsCanonicalized { get; set; }
             public int MeshPartsBeforeMerging { get; set; }
             public int MeshPartsAfterMerging { get; set; }
             public int MeshPartsEliminated => MeshPartsBeforeMerging - MeshPartsAfterMerging;
@@ -5251,7 +5302,12 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record SharedAtlasBatch(
             List<SharedAtlasSource> Sources,
-            Dictionary<MeshKey, int> SourceIdByMesh);
+            Dictionary<MeshKey, SharedAtlasMeshMapping> MappingByMesh);
+
+        private readonly record struct SharedAtlasMeshMapping(
+            int SourceId,
+            int TileOffsetU,
+            int TileOffsetV);
 
         private sealed record SharedAtlasSource(
             int Id,
@@ -5273,6 +5329,11 @@ namespace Editors.KitbasherEditor.Services
         private readonly record struct AtlasPlanningSourceIdentity(
             AtlasTextureSetIdentity TextureSet,
             AtlasCrop Crop);
+
+        private readonly record struct CanonicalAtlasCrop(
+            AtlasCrop Crop,
+            int TileOffsetU,
+            int TileOffsetV);
 
         private readonly record struct AtlasCrop(
             int X,
