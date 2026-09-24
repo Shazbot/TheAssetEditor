@@ -1540,9 +1540,161 @@ namespace Editors.KitbasherEditor.Services
                     break;
             }
 
+            CoalesceMergeAwareBatchesWithoutPixelIncrease(
+                state,
+                working,
+                affinityGroups);
+
             state.MergeAwareAffinityPotentialAfter +=
                 CalculateMergeAffinityScore(working, affinityGroups);
             return working;
+        }
+
+        private static void CoalesceMergeAwareBatchesWithoutPixelIncrease(
+            BatchState state,
+            List<List<AtlasCandidate>> working,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+        {
+            const int maxCoalesces = 16;
+            const int maxPairEvaluationsPerPass = 64;
+
+            for (var pass = 0; pass < maxCoalesces && working.Count >= 2; pass++)
+            {
+                var batchByMesh = BuildBatchIndexByMesh(working);
+                var candidatePairWeights = new Dictionary<AtlasBatchPair, int>();
+
+                foreach (var group in affinityGroups)
+                {
+                    var occupiedBatches = group.Meshes
+                        .Where(batchByMesh.ContainsKey)
+                        .Select(mesh => batchByMesh[mesh])
+                        .Distinct()
+                        .OrderBy(x => x)
+                        .ToArray();
+
+                    for (var left = 0; left < occupiedBatches.Length; left++)
+                    {
+                        for (var right = left + 1; right < occupiedBatches.Length; right++)
+                        {
+                            var pair = new AtlasBatchPair(
+                                occupiedBatches[left],
+                                occupiedBatches[right]);
+                            candidatePairWeights[pair] =
+                                candidatePairWeights.GetValueOrDefault(pair) + 1;
+                        }
+                    }
+                }
+
+                if (candidatePairWeights.Count == 0)
+                    break;
+
+                var baselineAffinity = CalculateMergeAffinityScore(working, affinityGroups);
+                AtlasBatchPair? bestPair = null;
+                List<AtlasCandidate>? bestCombined = null;
+                var bestAffinity = baselineAffinity;
+                long bestPixelsSaved = long.MinValue;
+                var bestPairWeight = -1;
+
+                foreach (var entry in candidatePairWeights
+                             .OrderByDescending(x => x.Value)
+                             .ThenBy(x => x.Key.FirstBatchId)
+                             .ThenBy(x => x.Key.SecondBatchId)
+                             .Take(maxPairEvaluationsPerPass))
+                {
+                    var pair = entry.Key;
+                    var leftBatch = working[pair.FirstBatchId];
+                    var rightBatch = working[pair.SecondBatchId];
+
+                    if (!TryGetGeneratedAtlasPixelCost(
+                            state,
+                            leftBatch,
+                            out var leftPixels,
+                            out _) ||
+                        !TryGetGeneratedAtlasPixelCost(
+                            state,
+                            rightBatch,
+                            out var rightPixels,
+                            out _))
+                    {
+                        continue;
+                    }
+
+                    var baselinePixels = checked(leftPixels + rightPixels);
+                    var combined = leftBatch.Concat(rightBatch).ToList();
+                    state.MergeAwareBatchCoalesceEvaluations++;
+                    if (!TryGetGeneratedAtlasPixelCost(
+                            state,
+                            combined,
+                            out var combinedPixels,
+                            out _) ||
+                        combinedPixels > baselinePixels)
+                    {
+                        continue;
+                    }
+
+                    var proposedAffinity = CalculateMergeAffinityScoreWithMerge(
+                        working,
+                        pair.FirstBatchId,
+                        pair.SecondBatchId,
+                        affinityGroups);
+                    if (proposedAffinity <= baselineAffinity)
+                        continue;
+
+                    var pixelsSaved = baselinePixels - combinedPixels;
+                    var affinityGain = proposedAffinity - baselineAffinity;
+                    var bestAffinityGain = bestAffinity - baselineAffinity;
+                    if (affinityGain < bestAffinityGain ||
+                        (affinityGain == bestAffinityGain &&
+                         pixelsSaved < bestPixelsSaved) ||
+                        (affinityGain == bestAffinityGain &&
+                         pixelsSaved == bestPixelsSaved &&
+                         entry.Value <= bestPairWeight))
+                    {
+                        continue;
+                    }
+
+                    bestPair = pair;
+                    bestCombined = combined;
+                    bestAffinity = proposedAffinity;
+                    bestPixelsSaved = pixelsSaved;
+                    bestPairWeight = entry.Value;
+                }
+
+                if (bestPair == null || bestCombined == null)
+                    break;
+
+                var selected = bestPair.Value;
+                working[selected.FirstBatchId] = bestCombined;
+                working.RemoveAt(selected.SecondBatchId);
+                state.MergeAwareBatchCoalescesAccepted++;
+                state.MergeAwareBatchCoalescePixelsSaved = checked(
+                    state.MergeAwareBatchCoalescePixelsSaved +
+                    Math.Max(0, bestPixelsSaved));
+                state.MergeAwareAffinityEliminationsGained +=
+                    bestAffinity - baselineAffinity;
+            }
+        }
+
+        private static int CalculateMergeAffinityScoreWithMerge(
+            IReadOnlyList<List<AtlasCandidate>> batches,
+            int leftIndex,
+            int rightIndex,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+        {
+            var batchByMesh = BuildBatchIndexByMesh(batches);
+            foreach (var candidate in batches[rightIndex])
+                batchByMesh[candidate.Key] = leftIndex;
+
+            var score = 0;
+            foreach (var group in affinityGroups)
+            {
+                score += group.Meshes
+                    .Where(batchByMesh.ContainsKey)
+                    .GroupBy(mesh => batchByMesh[mesh])
+                    .Sum(batch => Math.Max(0, batch.Count() - 1));
+            }
+
+            return score;
         }
 
         private static List<MergeAffinityGroup> BuildMergeAffinityGroups(
@@ -5130,6 +5282,9 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Merge-aware repartition evaluations: {state.MergeAwareRepartitionEvaluations}");
             sb.AppendLine($"Merge-aware repartitions accepted: {state.MergeAwareRepartitionsAccepted}");
             sb.AppendLine($"Merge-aware repartition pixels saved: {state.MergeAwareRepartitionPixelsSaved:N0}");
+            sb.AppendLine($"Merge-aware no-extra-pixel coalesce evaluations: {state.MergeAwareBatchCoalesceEvaluations}");
+            sb.AppendLine($"Merge-aware no-extra-pixel coalesces accepted: {state.MergeAwareBatchCoalescesAccepted}");
+            sb.AppendLine($"Merge-aware coalesce pixels saved: {state.MergeAwareBatchCoalescePixelsSaved:N0}");
             sb.AppendLine($"Merge-affinity eliminations before repartition: {state.MergeAwareAffinityPotentialBefore}");
             sb.AppendLine($"Merge-affinity eliminations after repartition: {state.MergeAwareAffinityPotentialAfter}");
             sb.AppendLine($"Merge-affinity eliminations gained: {state.MergeAwareAffinityEliminationsGained}");
@@ -6638,6 +6793,9 @@ namespace Editors.KitbasherEditor.Services
             public int MergeAwareRepartitionEvaluations { get; set; }
             public int MergeAwareRepartitionsAccepted { get; set; }
             public long MergeAwareRepartitionPixelsSaved { get; set; }
+            public int MergeAwareBatchCoalesceEvaluations { get; set; }
+            public int MergeAwareBatchCoalescesAccepted { get; set; }
+            public long MergeAwareBatchCoalescePixelsSaved { get; set; }
             public int MergeAwareAffinityPotentialBefore { get; set; }
             public int MergeAwareAffinityPotentialAfter { get; set; }
             public int MergeAwareAffinityEliminationsGained { get; set; }
