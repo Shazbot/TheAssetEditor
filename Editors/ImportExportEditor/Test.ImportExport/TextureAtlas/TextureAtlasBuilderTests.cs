@@ -176,6 +176,54 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void RecalculateDisconnectedUvIslandNormalization_UsesRequestedSharedCut()
+        {
+            var firstUvs = new (float U, float V)[]
+            {
+                (-0.83f, 0.1f), (-0.20f, 0.1f), (-0.50f, 0.8f),
+                (0.20f, 0.1f), (0.99f, 0.1f), (0.60f, 0.8f)
+            };
+            var secondUvs = new (float U, float V)[]
+            {
+                (-0.45f, 0.1f), (0.05f, 0.1f), (-0.20f, 0.8f),
+                (0.38f, 0.1f), (0.98f, 0.1f), (0.70f, 0.8f)
+            };
+            ushort[] indices = [0, 1, 2, 3, 4, 5];
+
+            var first = TextureAtlasBuilder.CalculateDisconnectedUvIslandNormalization(
+                firstUvs,
+                indices);
+            var second = TextureAtlasBuilder.CalculateDisconnectedUvIslandNormalization(
+                secondUvs,
+                indices);
+            var sharedCut = first.CutU;
+
+            var firstShared = TextureAtlasBuilder.RecalculateDisconnectedUvIslandNormalization(
+                first,
+                sharedCut,
+                first.CutV);
+            var secondShared = TextureAtlasBuilder.RecalculateDisconnectedUvIslandNormalization(
+                second,
+                sharedCut,
+                second.CutV);
+
+            Assert.That(firstShared.CutU, Is.EqualTo(sharedCut));
+            Assert.That(secondShared.CutU, Is.EqualTo(sharedCut));
+
+            var firstBounds = TextureAtlasBuilder.CalculateDisconnectedUvIslandAxisBoundsForCut(
+                first,
+                sharedCut,
+                useU: true);
+            var secondBounds = TextureAtlasBuilder.CalculateDisconnectedUvIslandAxisBoundsForCut(
+                second,
+                sharedCut,
+                useU: true);
+
+            Assert.That(firstShared.NormalizedMinU, Is.EqualTo(firstBounds.Min));
+            Assert.That(secondShared.NormalizedMaxU, Is.EqualTo(secondBounds.Max));
+        }
+
+        [Test]
         public void CreatePlan_PreservesVirtualCropForWrappedUvs()
         {
             var source = new TextureAtlasLayoutSource(3, 8, 4, -0.25f, -0.5f, 1.25f, 0.5f);
