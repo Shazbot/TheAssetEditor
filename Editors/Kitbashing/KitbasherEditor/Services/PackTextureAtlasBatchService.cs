@@ -3374,7 +3374,7 @@ namespace Editors.KitbasherEditor.Services
                 renderingMaterial.LoadXml(material.OuterXml);
                 foreach (var texture in renderingMaterial
                              .SelectNodes("/material/textures/texture")?
-                             .Cast<XmlNode>() ?? [])
+                             .Cast<XmlNode>() ?? Enumerable.Empty<XmlNode>())
                 {
                     var slot = GetTextureSlot(texture);
                     if (string.IsNullOrWhiteSpace(slot) ||
