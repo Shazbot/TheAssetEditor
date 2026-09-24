@@ -1544,6 +1544,14 @@ namespace Editors.KitbasherEditor.Services
                 state,
                 working,
                 affinityGroups);
+            OptimizeBatchesWithThreeWayMergeAffinity(
+                state,
+                working,
+                affinityGroups);
+            CoalesceMergeAwareBatchesWithoutPixelIncrease(
+                state,
+                working,
+                affinityGroups);
 
             state.MergeAwareAffinityPotentialAfter +=
                 CalculateMergeAffinityScore(working, affinityGroups);
@@ -1673,6 +1681,445 @@ namespace Editors.KitbasherEditor.Services
                 state.MergeAwareAffinityEliminationsGained +=
                     bestAffinity - baselineAffinity;
             }
+        }
+
+        private static void OptimizeBatchesWithThreeWayMergeAffinity(
+            BatchState state,
+            List<List<AtlasCandidate>> working,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+        {
+            const int maxAcceptedCoalesces = 8;
+            const int maxBlockedPairsPerPass = 24;
+            const int maxThirdBatchesPerPair = 8;
+
+            for (var pass = 0; pass < maxAcceptedCoalesces && working.Count >= 3; pass++)
+            {
+                var batchByMesh = BuildBatchIndexByMesh(working);
+                var candidatePairWeights = new Dictionary<AtlasBatchPair, int>();
+
+                foreach (var group in affinityGroups)
+                {
+                    var occupiedBatches = group.Meshes
+                        .Where(batchByMesh.ContainsKey)
+                        .Select(mesh => batchByMesh[mesh])
+                        .Distinct()
+                        .OrderBy(x => x)
+                        .ToArray();
+
+                    for (var left = 0; left < occupiedBatches.Length; left++)
+                    {
+                        for (var right = left + 1; right < occupiedBatches.Length; right++)
+                        {
+                            var pair = new AtlasBatchPair(
+                                occupiedBatches[left],
+                                occupiedBatches[right]);
+                            candidatePairWeights[pair] =
+                                candidatePairWeights.GetValueOrDefault(pair) + 1;
+                        }
+                    }
+                }
+
+                if (candidatePairWeights.Count == 0)
+                    break;
+
+                var baselineAffinity = CalculateMergeAffinityScore(working, affinityGroups);
+                AtlasBatchPair? bestPair = null;
+                var bestThirdIndex = -1;
+                AtlasBatchTripleCoalesceProposal? bestProposal = null;
+                var bestAffinity = baselineAffinity;
+                long bestPixelsSaved = long.MinValue;
+                var bestPairWeight = -1;
+                long bestBaselinePixels = 0;
+                long bestResultPixels = 0;
+
+                foreach (var pairEntry in candidatePairWeights
+                             .OrderByDescending(x => x.Value)
+                             .ThenBy(x => x.Key.FirstBatchId)
+                             .ThenBy(x => x.Key.SecondBatchId)
+                             .Take(maxBlockedPairsPerPass))
+                {
+                    var pair = pairEntry.Key;
+                    var leftBatch = working[pair.FirstBatchId];
+                    var rightBatch = working[pair.SecondBatchId];
+
+                    if (!TryGetGeneratedAtlasPixelCost(
+                            state,
+                            leftBatch,
+                            out var leftPixels,
+                            out _) ||
+                        !TryGetGeneratedAtlasPixelCost(
+                            state,
+                            rightBatch,
+                            out var rightPixels,
+                            out _))
+                    {
+                        continue;
+                    }
+
+                    var directCombined = leftBatch.Concat(rightBatch).ToList();
+                    if (TryGetGeneratedAtlasPixelCost(
+                            state,
+                            directCombined,
+                            out var directCombinedPixels,
+                            out _) &&
+                        directCombinedPixels <= checked(leftPixels + rightPixels))
+                    {
+                        // The normal zero-cost coalesce pass handles this case more cheaply.
+                        continue;
+                    }
+
+                    int GetThirdAffinityWeight(int thirdIndex)
+                    {
+                        var weight = 0;
+                        foreach (var group in affinityGroups)
+                        {
+                            var touchesPair = false;
+                            var touchesThird = false;
+                            foreach (var mesh in group.Meshes)
+                            {
+                                if (!batchByMesh.TryGetValue(mesh, out var batchIndex))
+                                    continue;
+
+                                if (batchIndex == pair.FirstBatchId ||
+                                    batchIndex == pair.SecondBatchId)
+                                {
+                                    touchesPair = true;
+                                }
+                                else if (batchIndex == thirdIndex)
+                                {
+                                    touchesThird = true;
+                                }
+                            }
+
+                            if (touchesPair && touchesThird)
+                                weight++;
+                        }
+
+                        return weight;
+                    }
+
+                    var thirdCandidates = Enumerable.Range(0, working.Count)
+                        .Where(index =>
+                            index != pair.FirstBatchId &&
+                            index != pair.SecondBatchId)
+                        .Select(index =>
+                        {
+                            var fits = TryGetGeneratedAtlasPixelCost(
+                                state,
+                                working[index],
+                                out var pixels,
+                                out _);
+                            return new
+                            {
+                                Index = index,
+                                AffinityWeight = GetThirdAffinityWeight(index),
+                                Pixels = fits ? pixels : long.MaxValue
+                            };
+                        })
+                        .Where(x => x.Pixels != long.MaxValue)
+                        .OrderByDescending(x => x.AffinityWeight)
+                        .ThenBy(x => x.Pixels)
+                        .ThenBy(x => x.Index)
+                        .Take(maxThirdBatchesPerPair)
+                        .ToList();
+
+                    foreach (var thirdCandidate in thirdCandidates)
+                    {
+                        var thirdIndex = thirdCandidate.Index;
+                        var thirdBatch = working[thirdIndex];
+                        var baselinePixels = checked(
+                            leftPixels +
+                            rightPixels +
+                            thirdCandidate.Pixels);
+
+                        foreach (var proposal in CreateThreeBatchCoalesceProposals(
+                                     leftBatch,
+                                     rightBatch,
+                                     thirdBatch,
+                                     affinityGroups))
+                        {
+                            state.MergeAwareThreeBatchEvaluations++;
+
+                            if (!TryGetGeneratedAtlasPixelCost(
+                                    state,
+                                    proposal.Merged,
+                                    out var mergedPixels,
+                                    out _) ||
+                                !TryGetGeneratedAtlasPixelCost(
+                                    state,
+                                    proposal.Third,
+                                    out var thirdPixels,
+                                    out _))
+                            {
+                                continue;
+                            }
+
+                            var resultPixels = checked(mergedPixels + thirdPixels);
+                            if (resultPixels > baselinePixels)
+                                continue;
+
+                            var proposedAffinity = CalculateMergeAffinityScoreWithTripleCoalesce(
+                                working,
+                                pair.FirstBatchId,
+                                pair.SecondBatchId,
+                                thirdIndex,
+                                proposal,
+                                affinityGroups);
+                            if (proposedAffinity <= baselineAffinity)
+                                continue;
+
+                            var affinityGain = proposedAffinity - baselineAffinity;
+                            var bestAffinityGain = bestAffinity - baselineAffinity;
+                            var pixelsSaved = baselinePixels - resultPixels;
+                            if (affinityGain < bestAffinityGain ||
+                                (affinityGain == bestAffinityGain &&
+                                 pixelsSaved < bestPixelsSaved) ||
+                                (affinityGain == bestAffinityGain &&
+                                 pixelsSaved == bestPixelsSaved &&
+                                 pairEntry.Value <= bestPairWeight))
+                            {
+                                continue;
+                            }
+
+                            bestPair = pair;
+                            bestThirdIndex = thirdIndex;
+                            bestProposal = proposal;
+                            bestAffinity = proposedAffinity;
+                            bestPixelsSaved = pixelsSaved;
+                            bestPairWeight = pairEntry.Value;
+                            bestBaselinePixels = baselinePixels;
+                            bestResultPixels = resultPixels;
+                        }
+                    }
+                }
+
+                if (bestPair == null ||
+                    bestThirdIndex < 0 ||
+                    bestProposal == null)
+                {
+                    break;
+                }
+
+                var selectedPair = bestPair.Value;
+                var replacement = new List<List<AtlasCandidate>>(working.Count - 1);
+                for (var index = 0; index < working.Count; index++)
+                {
+                    if (index == selectedPair.SecondBatchId)
+                        continue;
+
+                    if (index == selectedPair.FirstBatchId)
+                        replacement.Add(bestProposal.Merged);
+                    else if (index == bestThirdIndex)
+                        replacement.Add(bestProposal.Third);
+                    else
+                        replacement.Add(working[index]);
+                }
+
+                working.Clear();
+                working.AddRange(replacement);
+
+                state.MergeAwareThreeBatchCoalescesAccepted++;
+                state.MergeAwareThreeBatchPixelsSaved = checked(
+                    state.MergeAwareThreeBatchPixelsSaved +
+                    Math.Max(0, bestPixelsSaved));
+                state.MergeAwareAffinityEliminationsGained +=
+                    bestAffinity - baselineAffinity;
+                state.MergeAwareThreeBatchEntries.Add(
+                    new MergeAwareThreeBatchReportEntry(
+                        state.BatchIndex + selectedPair.FirstBatchId,
+                        state.BatchIndex + selectedPair.SecondBatchId,
+                        state.BatchIndex + bestThirdIndex,
+                        bestBaselinePixels,
+                        bestResultPixels,
+                        baselineAffinity,
+                        bestAffinity));
+            }
+        }
+
+        private static IReadOnlyList<AtlasBatchTripleCoalesceProposal> CreateThreeBatchCoalesceProposals(
+            IReadOnlyList<AtlasCandidate> currentLeft,
+            IReadOnlyList<AtlasCandidate> currentRight,
+            IReadOnlyList<AtlasCandidate> currentThird,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+        {
+            List<AtlasPlanningCandidateGroup> BuildGroups(
+                IEnumerable<AtlasCandidate> candidates)
+                => candidates
+                    .GroupBy(GetAtlasPlanningSourceIdentity)
+                    .Select(group =>
+                    {
+                        var groupedCandidates = group
+                            .OrderBy(x => x.RootVmdPath, StringComparer.OrdinalIgnoreCase)
+                            .ThenBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                            .ThenBy(x => x.Key.LodIndex)
+                            .ThenBy(x => x.Key.PartIndex)
+                            .ToList();
+                        return new AtlasPlanningCandidateGroup(
+                            group.Key,
+                            groupedCandidates,
+                            groupedCandidates[0],
+                            GetCanonicalCrop(groupedCandidates[0]).Crop);
+                    })
+                    .ToList();
+
+            var pairGroups = BuildGroups(currentLeft.Concat(currentRight));
+            var thirdGroups = BuildGroups(currentThird);
+            if (pairGroups.Count < 2 || thirdGroups.Count == 0)
+                return [];
+
+            var leftKeys = currentLeft.Select(x => x.Key).ToHashSet();
+            var rightKeys = currentRight.Select(x => x.Key).ToHashSet();
+            var protectedPairIdentities = new HashSet<AtlasPlanningSourceIdentity>();
+
+            foreach (var affinity in affinityGroups)
+            {
+                if (!affinity.Meshes.Any(leftKeys.Contains) ||
+                    !affinity.Meshes.Any(rightKeys.Contains))
+                {
+                    continue;
+                }
+
+                var affinityKeys = affinity.Meshes.ToHashSet();
+                foreach (var group in pairGroups)
+                {
+                    if (group.Candidates.Any(candidate => affinityKeys.Contains(candidate.Key)))
+                        protectedPairIdentities.Add(group.Identity);
+                }
+            }
+
+            double Pressure(AtlasPlanningCandidateGroup group)
+            {
+                var channelPressure = AtlasChannels
+                    .Max(channel => GetChannelScalePressure(
+                        group.Representative,
+                        channel.Slot));
+                var area = GetPaddedCropArea(group.Crop);
+                return channelPressure * 1_000_000_000d + area;
+            }
+
+            var movablePairGroups = pairGroups
+                .Where(group => !protectedPairIdentities.Contains(group.Identity))
+                .OrderByDescending(Pressure)
+                .ThenBy(
+                    group => BuildAtlasPlanningOrderKey(group.Representative),
+                    StringComparer.Ordinal)
+                .ToList();
+
+            if (movablePairGroups.Count == 0)
+                return [];
+
+            var rankedThirdGroups = thirdGroups
+                .OrderByDescending(Pressure)
+                .ThenBy(
+                    group => BuildAtlasPlanningOrderKey(group.Representative),
+                    StringComparer.Ordinal)
+                .ToList();
+
+            var proposals = new List<AtlasBatchTripleCoalesceProposal>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            void AddProposal(
+                IEnumerable<AtlasPlanningCandidateGroup> evictedFromPair,
+                IEnumerable<AtlasPlanningCandidateGroup>? incomingFromThird = null)
+            {
+                var evicted = evictedFromPair.ToList();
+                var incoming = incomingFromThird?.ToList() ?? [];
+                var evictedIds = evicted.Select(x => x.Identity).ToHashSet();
+                var incomingIds = incoming.Select(x => x.Identity).ToHashSet();
+
+                var merged = pairGroups
+                    .Where(group => !evictedIds.Contains(group.Identity))
+                    .Concat(incoming)
+                    .SelectMany(group => group.Candidates)
+                    .GroupBy(candidate => candidate.Key)
+                    .Select(group => group.First())
+                    .ToList();
+
+                var third = thirdGroups
+                    .Where(group => !incomingIds.Contains(group.Identity))
+                    .Concat(evicted)
+                    .SelectMany(group => group.Candidates)
+                    .GroupBy(candidate => candidate.Key)
+                    .Select(group => group.First())
+                    .ToList();
+
+                if (merged.Count < 2 || third.Count < 2)
+                    return;
+
+                var signature = string.Join(
+                    "\n",
+                    merged
+                        .Select(candidate => candidate.Key.ToString())
+                        .OrderBy(x => x, StringComparer.Ordinal));
+                if (!seen.Add(signature))
+                    return;
+
+                proposals.Add(new AtlasBatchTripleCoalesceProposal(merged, third));
+            }
+
+            // First try evicting the highest packing-pressure identities from the blocked
+            // pair into the third batch. Prefixes cover cases where more than one source has
+            // to move before the pair fits, while keeping the search tightly bounded.
+            for (var count = 1; count <= Math.Min(4, movablePairGroups.Count); count++)
+                AddProposal(movablePairGroups.Take(count));
+
+            foreach (var group in movablePairGroups.Take(20))
+                AddProposal([group]);
+
+            var pairEvictionPool = movablePairGroups.Take(10).ToList();
+            var pairEvictionCount = 0;
+            for (var left = 0; left < pairEvictionPool.Count; left++)
+            {
+                for (var right = left + 1; right < pairEvictionPool.Count; right++)
+                {
+                    AddProposal([pairEvictionPool[left], pairEvictionPool[right]]);
+                    pairEvictionCount++;
+                    if (pairEvictionCount >= 24)
+                        break;
+                }
+
+                if (pairEvictionCount >= 24)
+                    break;
+            }
+
+            // A swap can reduce channel-resolution pressure even when simply evicting a source
+            // does not. Keep this bounded to the highest-pressure groups on each side.
+            foreach (var evicted in movablePairGroups.Take(8))
+            {
+                foreach (var incoming in rankedThirdGroups.Take(8))
+                    AddProposal([evicted], [incoming]);
+            }
+
+            const int maxThreeBatchProposals = 112;
+            return proposals.Count <= maxThreeBatchProposals
+                ? proposals
+                : proposals.Take(maxThreeBatchProposals).ToList();
+        }
+
+        private static int CalculateMergeAffinityScoreWithTripleCoalesce(
+            IReadOnlyList<List<AtlasCandidate>> batches,
+            int leftIndex,
+            int rightIndex,
+            int thirdIndex,
+            AtlasBatchTripleCoalesceProposal proposal,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+        {
+            var batchByMesh = BuildBatchIndexByMesh(batches);
+            foreach (var candidate in proposal.Merged)
+                batchByMesh[candidate.Key] = leftIndex;
+            foreach (var candidate in proposal.Third)
+                batchByMesh[candidate.Key] = thirdIndex;
+
+            var score = 0;
+            foreach (var group in affinityGroups)
+            {
+                score += group.Meshes
+                    .Where(batchByMesh.ContainsKey)
+                    .GroupBy(mesh => batchByMesh[mesh])
+                    .Sum(batch => Math.Max(0, batch.Count() - 1));
+            }
+
+            return score;
         }
 
         private static int CalculateMergeAffinityScoreWithMerge(
@@ -5285,6 +5732,9 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Merge-aware no-extra-pixel coalesce evaluations: {state.MergeAwareBatchCoalesceEvaluations}");
             sb.AppendLine($"Merge-aware no-extra-pixel coalesces accepted: {state.MergeAwareBatchCoalescesAccepted}");
             sb.AppendLine($"Merge-aware coalesce pixels saved: {state.MergeAwareBatchCoalescePixelsSaved:N0}");
+            sb.AppendLine($"Merge-aware 3-batch evaluations: {state.MergeAwareThreeBatchEvaluations}");
+            sb.AppendLine($"Merge-aware 3-batch coalesces accepted: {state.MergeAwareThreeBatchCoalescesAccepted}");
+            sb.AppendLine($"Merge-aware 3-batch pixels saved: {state.MergeAwareThreeBatchPixelsSaved:N0}");
             sb.AppendLine($"Merge-affinity eliminations before repartition: {state.MergeAwareAffinityPotentialBefore}");
             sb.AppendLine($"Merge-affinity eliminations after repartition: {state.MergeAwareAffinityPotentialAfter}");
             sb.AppendLine($"Merge-affinity eliminations gained: {state.MergeAwareAffinityEliminationsGained}");
@@ -5535,6 +5985,24 @@ namespace Editors.KitbasherEditor.Services
                     {
                         sb.AppendLine(
                             $"Batches {entry.FirstBatchIndex} + {entry.SecondBatchIndex}: " +
+                            $"pixels {entry.BaselinePixels:N0} -> {entry.ResultPixels:N0}, " +
+                            $"merge affinity {entry.BaselineAffinity} -> {entry.ResultAffinity}");
+                    }
+                }
+                sb.AppendLine();
+
+                sb.AppendLine("Merge-aware 3-batch coalesces");
+                sb.AppendLine("-----------------------------");
+                if (state.MergeAwareThreeBatchEntries.Count == 0)
+                {
+                    sb.AppendLine("(none)");
+                }
+                else
+                {
+                    foreach (var entry in state.MergeAwareThreeBatchEntries)
+                    {
+                        sb.AppendLine(
+                            $"Batches {entry.FirstBatchIndex} + {entry.SecondBatchIndex} via {entry.ThirdBatchIndex}: " +
                             $"pixels {entry.BaselinePixels:N0} -> {entry.ResultPixels:N0}, " +
                             $"merge affinity {entry.BaselineAffinity} -> {entry.ResultAffinity}");
                     }
@@ -6796,6 +7264,10 @@ namespace Editors.KitbasherEditor.Services
             public int MergeAwareBatchCoalesceEvaluations { get; set; }
             public int MergeAwareBatchCoalescesAccepted { get; set; }
             public long MergeAwareBatchCoalescePixelsSaved { get; set; }
+            public int MergeAwareThreeBatchEvaluations { get; set; }
+            public int MergeAwareThreeBatchCoalescesAccepted { get; set; }
+            public long MergeAwareThreeBatchPixelsSaved { get; set; }
+            public List<MergeAwareThreeBatchReportEntry> MergeAwareThreeBatchEntries { get; } = [];
             public int MergeAwareAffinityPotentialBefore { get; set; }
             public int MergeAwareAffinityPotentialAfter { get; set; }
             public int MergeAwareAffinityEliminationsGained { get; set; }
@@ -7046,6 +7518,19 @@ namespace Editors.KitbasherEditor.Services
         private sealed record AtlasBatchSplitProposal(
             List<AtlasCandidate> Left,
             List<AtlasCandidate> Right);
+
+        private sealed record AtlasBatchTripleCoalesceProposal(
+            List<AtlasCandidate> Merged,
+            List<AtlasCandidate> Third);
+
+        private sealed record MergeAwareThreeBatchReportEntry(
+            int FirstBatchIndex,
+            int SecondBatchIndex,
+            int ThirdBatchIndex,
+            long BaselinePixels,
+            long ResultPixels,
+            int BaselineAffinity,
+            int ResultAffinity);
 
         private sealed record AtlasPlanningCandidateGroup(
             AtlasPlanningSourceIdentity Identity,
