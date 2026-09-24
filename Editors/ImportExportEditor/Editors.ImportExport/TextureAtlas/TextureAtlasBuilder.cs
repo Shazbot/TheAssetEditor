@@ -1014,7 +1014,8 @@ namespace Editors.ImportExport.TextureAtlas
                     var occupancyIndex = destinationPixelOffset + localX;
                     if (coreOccupancy[occupancyIndex])
                     {
-                        skippedPixels++;
+                        if (collectStatistics)
+                            skippedPixels++;
                         continue;
                     }
 
