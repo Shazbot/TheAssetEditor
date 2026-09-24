@@ -1870,6 +1870,14 @@ namespace Editors.KitbasherEditor.Services
                 state.GeneratedTextureDimensions[atlasPath] = outputDimensions;
             }
 
+            state.AtlasPlacementDiagnostics.Add(
+                BuildAtlasPlacementDiagnosticSnapshot(
+                    atlasStem,
+                    plan,
+                    sharedBatch,
+                    candidates,
+                    generatedPaths));
+
             var rewriteStopwatch = Stopwatch.StartNew();
             for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
             {
@@ -4623,6 +4631,86 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
+            sb.AppendLine("Atlas placement diagnostics");
+            sb.AppendLine("---------------------------");
+            if (state.AtlasPlacementDiagnostics.Count == 0)
+            {
+                sb.AppendLine("(none)");
+            }
+            else
+            {
+                foreach (var batch in state.AtlasPlacementDiagnostics
+                             .OrderBy(x => x.AtlasStem, StringComparer.OrdinalIgnoreCase))
+                {
+                    sb.AppendLine(
+                        $"{batch.AtlasStem}: layout={batch.PlanWidth}x{batch.PlanHeight}, " +
+                        $"placements={batch.Placements.Count}");
+                    if (batch.GeneratedTexturePaths.Length != 0)
+                    {
+                        sb.AppendLine(
+                            $"  Generated texture(s): {string.Join(", ", batch.GeneratedTexturePaths)}");
+                    }
+
+                    foreach (var placement in batch.Placements.OrderBy(x => x.SourceId))
+                    {
+                        sb.AppendLine(
+                            $"  Placement {placement.SourceId}: " +
+                            $"source={placement.SourceWidth}x{placement.SourceHeight}, " +
+                            $"crop=({placement.Crop.X},{placement.Crop.Y}) " +
+                            $"{placement.Crop.Width}x{placement.Crop.Height}, " +
+                            $"destination=({placement.DestinationX},{placement.DestinationY}) " +
+                            $"{placement.DestinationWidth}x{placement.DestinationHeight}, " +
+                            $"padding={placement.Padding}");
+                        sb.AppendLine($"    Representative mesh: {placement.RepresentativeMesh}");
+                        sb.AppendLine($"    Material: {placement.MaterialPath}");
+                        sb.AppendLine($"    BaseColour: {FormatDiagnosticTexturePath(placement.BaseColourPath)}");
+                        sb.AppendLine($"    MaterialMap: {FormatDiagnosticTexturePath(placement.MaterialMapPath)}");
+                        sb.AppendLine($"    Normal: {FormatDiagnosticTexturePath(placement.NormalPath)}");
+                        sb.AppendLine($"    Mask: {FormatDiagnosticTexturePath(placement.MaskPath)}");
+
+                        AppendPlacementRelation(
+                            sb,
+                            "Same BaseColour sampled region",
+                            placement.SameBaseColourRegionSourceIds);
+                        AppendPlacementRelation(
+                            sb,
+                            "BaseColour crop contains placement(s)",
+                            placement.BaseColourContainsSourceIds);
+                        AppendPlacementRelation(
+                            sb,
+                            "BaseColour crop is contained by placement(s)",
+                            placement.BaseColourContainedBySourceIds);
+                        AppendPlacementRelation(
+                            sb,
+                            "Full texture-set crop contains placement(s)",
+                            placement.FullTextureSetContainsSourceIds);
+                        AppendPlacementRelation(
+                            sb,
+                            "Full texture-set crop is contained by placement(s)",
+                            placement.FullTextureSetContainedBySourceIds);
+
+                        sb.AppendLine($"    Mapped meshes: {placement.MeshMappings.Count}");
+                        foreach (var mapping in placement.MeshMappings)
+                        {
+                            var flags = new List<string>();
+                            if (mapping.WrappedUvCanonicalized)
+                                flags.Add("wrapped-uv");
+                            if (mapping.ContentCanonicalized)
+                                flags.Add("content-dedupe");
+
+                            sb.AppendLine(
+                                $"      {mapping.Mesh} | VMD={mapping.RootVmdPath} | " +
+                                $"uv-offset=({mapping.UvOffsetU:0.######},{mapping.UvOffsetV:0.######})" +
+                                (flags.Count == 0
+                                    ? string.Empty
+                                    : $" | {string.Join(",", flags)}"));
+                        }
+                    }
+
+                    sb.AppendLine();
+                }
+            }
+
             sb.AppendLine("Generated atlas textures");
             sb.AppendLine("------------------------");
             foreach (var path in state.GeneratedTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
@@ -4668,6 +4756,148 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("(not completed)");
 
             File.WriteAllText(state.ReportPath, sb.ToString(), Encoding.UTF8);
+        }
+
+        private static string FormatDiagnosticTexturePath(string path)
+            => string.IsNullOrWhiteSpace(path) ? "<none>" : path;
+
+        private static void AppendPlacementRelation(
+            StringBuilder sb,
+            string label,
+            IReadOnlyList<int> sourceIds)
+        {
+            if (sourceIds.Count != 0)
+                sb.AppendLine($"    {label}: {string.Join(", ", sourceIds)}");
+        }
+
+        private static AtlasPlacementBatchDiagnostic BuildAtlasPlacementDiagnosticSnapshot(
+            string atlasStem,
+            TextureAtlasPlan plan,
+            SharedAtlasBatch sharedBatch,
+            IReadOnlyList<AtlasCandidate> candidates,
+            IReadOnlyDictionary<string, string> generatedPaths)
+        {
+            var placements = new List<AtlasPlacementDiagnostic>(sharedBatch.Sources.Count);
+            var candidatesByKey = candidates.ToDictionary(x => x.Key);
+            var sourceById = sharedBatch.Sources.ToDictionary(x => x.Id);
+
+            foreach (var source in sharedBatch.Sources.OrderBy(x => x.Id))
+            {
+                var representative = source.Representative;
+                var placement = plan.Placements.Single(x => x.Id == source.Id);
+                var fullTextureSet = BuildAtlasTextureSetIdentity(representative);
+                var baseColourPath = Normalize(
+                    GetTexturePath(representative.MaterialDocument, "t_xml_base_colour"));
+                var materialMapPath = Normalize(
+                    GetTexturePath(representative.MaterialDocument, "t_xml_material_map"));
+                var normalPath = Normalize(
+                    GetTexturePath(representative.MaterialDocument, "t_xml_normal"));
+                var maskPath = Normalize(
+                    GetTexturePath(representative.MaterialDocument, "t_xml_mask"));
+
+                var sameBaseColourRegion = new List<int>();
+                var baseColourContains = new List<int>();
+                var baseColourContainedBy = new List<int>();
+                var fullSetContains = new List<int>();
+                var fullSetContainedBy = new List<int>();
+
+                foreach (var other in sharedBatch.Sources)
+                {
+                    if (other.Id == source.Id)
+                        continue;
+
+                    var sameBaseColour =
+                        !string.IsNullOrWhiteSpace(baseColourPath) &&
+                        baseColourPath.Equals(
+                            Normalize(GetTexturePath(
+                                other.Representative.MaterialDocument,
+                                "t_xml_base_colour")),
+                            StringComparison.OrdinalIgnoreCase) &&
+                        representative.Width == other.Representative.Width &&
+                        representative.Height == other.Representative.Height;
+
+                    if (sameBaseColour)
+                    {
+                        if (source.Crop == other.Crop)
+                            sameBaseColourRegion.Add(other.Id);
+                        else if (ContainsCrop(source.Crop, other.Crop))
+                            baseColourContains.Add(other.Id);
+                        else if (ContainsCrop(other.Crop, source.Crop))
+                            baseColourContainedBy.Add(other.Id);
+                    }
+
+                    if (fullTextureSet == BuildAtlasTextureSetIdentity(other.Representative))
+                    {
+                        if (ContainsCrop(source.Crop, other.Crop) && source.Crop != other.Crop)
+                            fullSetContains.Add(other.Id);
+                        else if (ContainsCrop(other.Crop, source.Crop) && source.Crop != other.Crop)
+                            fullSetContainedBy.Add(other.Id);
+                    }
+                }
+
+                var meshMappings = sharedBatch.MappingByMesh
+                    .Where(x => x.Value.SourceId == source.Id)
+                    .OrderBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(x => x.Key.LodIndex)
+                    .ThenBy(x => x.Key.PartIndex)
+                    .Select(x =>
+                    {
+                        var candidate = candidatesByKey[x.Key];
+                        return new AtlasPlacementMeshDiagnostic(
+                            x.Key,
+                            candidate.RootVmdPath,
+                            x.Value.UvOffsetU,
+                            x.Value.UvOffsetV,
+                            x.Value.WrappedUvCanonicalized,
+                            x.Value.ContentCanonicalized);
+                    })
+                    .ToList();
+
+                placements.Add(new AtlasPlacementDiagnostic(
+                    source.Id,
+                    representative.Width,
+                    representative.Height,
+                    source.Crop,
+                    placement.DestinationX,
+                    placement.DestinationY,
+                    placement.CropWidth,
+                    placement.CropHeight,
+                    placement.Padding,
+                    representative.Key,
+                    representative.MaterialPath,
+                    baseColourPath,
+                    materialMapPath,
+                    normalPath,
+                    maskPath,
+                    sameBaseColourRegion,
+                    baseColourContains,
+                    baseColourContainedBy,
+                    fullSetContains,
+                    fullSetContainedBy,
+                    meshMappings));
+            }
+
+            return new AtlasPlacementBatchDiagnostic(
+                atlasStem,
+                plan.Width,
+                plan.Height,
+                generatedPaths.Values
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                placements);
+        }
+
+        private static bool ContainsCrop(AtlasCrop outer, AtlasCrop inner)
+        {
+            var outerRight = checked((long)outer.X + outer.Width);
+            var outerBottom = checked((long)outer.Y + outer.Height);
+            var innerRight = checked((long)inner.X + inner.Width);
+            var innerBottom = checked((long)inner.Y + inner.Height);
+
+            return inner.X >= outer.X &&
+                   inner.Y >= outer.Y &&
+                   innerRight <= outerRight &&
+                   innerBottom <= outerBottom;
         }
 
         private static UvBounds GetUvBounds(RmvModel model)
@@ -5229,6 +5459,44 @@ namespace Editors.KitbasherEditor.Services
             public TimeSpan TotalElapsed => RasterElapsed + CompressionElapsed;
         }
 
+        private sealed record AtlasPlacementBatchDiagnostic(
+            string AtlasStem,
+            int PlanWidth,
+            int PlanHeight,
+            string[] GeneratedTexturePaths,
+            List<AtlasPlacementDiagnostic> Placements);
+
+        private sealed record AtlasPlacementDiagnostic(
+            int SourceId,
+            int SourceWidth,
+            int SourceHeight,
+            AtlasCrop Crop,
+            int DestinationX,
+            int DestinationY,
+            int DestinationWidth,
+            int DestinationHeight,
+            int Padding,
+            MeshKey RepresentativeMesh,
+            string MaterialPath,
+            string BaseColourPath,
+            string MaterialMapPath,
+            string NormalPath,
+            string MaskPath,
+            List<int> SameBaseColourRegionSourceIds,
+            List<int> BaseColourContainsSourceIds,
+            List<int> BaseColourContainedBySourceIds,
+            List<int> FullTextureSetContainsSourceIds,
+            List<int> FullTextureSetContainedBySourceIds,
+            List<AtlasPlacementMeshDiagnostic> MeshMappings);
+
+        private sealed record AtlasPlacementMeshDiagnostic(
+            MeshKey Mesh,
+            string RootVmdPath,
+            float UvOffsetU,
+            float UvOffsetV,
+            bool WrappedUvCanonicalized,
+            bool ContentCanonicalized);
+
         private sealed class BatchState
         {
             public IPackFileContainer Source { get; }
@@ -5254,6 +5522,7 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, (int Width, int Height)> GeneratedTextureDimensions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public List<GeneratedTextureTimingEntry> GeneratedTextureTimings { get; } = [];
+            public List<AtlasPlacementBatchDiagnostic> AtlasPlacementDiagnostics { get; } = [];
             public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, GeneratedMaterialEntry> GeneratedMaterialByContentHash { get; } = new(StringComparer.Ordinal);
             public int GeneratedMaterialReuses { get; set; }
