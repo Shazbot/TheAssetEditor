@@ -3317,12 +3317,12 @@ namespace Editors.KitbasherEditor.Services
                                  return !string.Equals(leftValue, rightValue, StringComparison.Ordinal);
                              }))
                 {
-                    left.NonTextureFields.TryGetValue(field, out var leftValue);
-                    right.NonTextureFields.TryGetValue(field, out var rightValue);
+                    var hasLeftValue = left.NonTextureFields.TryGetValue(field, out var leftValue);
+                    var hasRightValue = right.NonTextureFields.TryGetValue(field, out var rightValue);
                     var values = new[]
                     {
-                        FormatDiagnosticValue(leftValue ?? string.Empty),
-                        FormatDiagnosticValue(rightValue ?? string.Empty)
+                        hasLeftValue ? FormatDiagnosticValue(leftValue!) : "<missing>",
+                        hasRightValue ? FormatDiagnosticValue(rightValue!) : "<missing>"
                     }.OrderBy(x => x, StringComparer.Ordinal).ToArray();
 
                     IncrementDiagnosticCount(
