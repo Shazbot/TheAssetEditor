@@ -3492,7 +3492,15 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine("-------------");
             foreach (var phase in state.PhaseDurations)
                 sb.AppendLine($"{phase.Key}: {phase.Value.TotalMilliseconds:N0} ms");
-            sb.AppendLine($"Total: {state.TotalElapsed.TotalMilliseconds:N0} ms");
+
+            var interactiveWait = state.PhaseDurations
+                .Where(x => x.Key.StartsWith("Wait for ", StringComparison.Ordinal))
+                .Sum(x => x.Value.TotalMilliseconds);
+            sb.AppendLine($"Interactive wait time: {interactiveWait:N0} ms");
+            sb.AppendLine(
+                $"Processing total excluding user waits: " +
+                $"{Math.Max(0, state.TotalElapsed.TotalMilliseconds - interactiveWait):N0} ms");
+            sb.AppendLine($"Total wall time: {state.TotalElapsed.TotalMilliseconds:N0} ms");
             sb.AppendLine();
 
             sb.AppendLine("VMD roots");
