@@ -24,6 +24,9 @@ namespace Editors.KitbasherEditor.Services
     public sealed class PackTextureAtlasBatchService
     {
         private const string AtlasDirectory = @"textures\asset_editor\atlases";
+        private const string AtlasProfilingEnvironmentVariable = "ASSET_EDITOR_ATLAS_PROFILING";
+        private static readonly bool AtlasProfilingEnabled =
+            IsEnabledEnvironmentVariable(AtlasProfilingEnvironmentVariable);
 
         private static readonly (string Slot, TextureType Type, string Suffix)[] AtlasChannels =
         [
@@ -1732,9 +1735,12 @@ namespace Editors.KitbasherEditor.Services
                         outputDimensions.Width,
                         outputDimensions.Height),
                     channel.Type,
-                    GameTypeEnum.Warhammer3);
+                    GameTypeEnum.Warhammer3,
+                    collectCompressionStatistics: AtlasProfilingEnabled);
 
-                var rasterStatistics = new TextureAtlasBuildStatistics();
+                var rasterStatistics = AtlasProfilingEnabled
+                    ? new TextureAtlasBuildStatistics()
+                    : null;
                 var rasterStopwatch = Stopwatch.StartNew();
                 _ = TextureAtlasBuilder.BuildMipPixels(
                     plan,
@@ -1775,17 +1781,20 @@ namespace Editors.KitbasherEditor.Services
                 AddPhaseDuration(state, "Compress atlas DDS", compressionElapsed);
                 var atlasPath = Normalize($@"{AtlasDirectory}\{fileName}");
 
-                state.GeneratedTextureTimings.Add(new GeneratedTextureTimingEntry(
-                    atlasPath,
-                    outputDimensions.Width,
-                    outputDimensions.Height,
-                    channel.Type,
-                    DDSFormatHelper.GetDDSFormat(GameTypeEnum.Warhammer3, channel.Type),
-                    rasterElapsed,
-                    compressionElapsed,
-                    usesLargeBcSplitCompression,
-                    rasterStatistics,
-                    compressionStatistics));
+                if (AtlasProfilingEnabled && rasterStatistics != null)
+                {
+                    state.GeneratedTextureTimings.Add(new GeneratedTextureTimingEntry(
+                        atlasPath,
+                        outputDimensions.Width,
+                        outputDimensions.Height,
+                        channel.Type,
+                        DDSFormatHelper.GetDDSFormat(GameTypeEnum.Warhammer3, channel.Type),
+                        rasterElapsed,
+                        compressionElapsed,
+                        usesLargeBcSplitCompression,
+                        rasterStatistics,
+                        compressionStatistics));
+                }
 
                 WriteFile(state.Output, atlasPath, atlasPackFile.DataSource.ReadData());
                 generatedPaths[channel.Slot] = atlasPath;
@@ -3651,18 +3660,20 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Total wall time: {state.TotalElapsed.TotalMilliseconds:N0} ms");
             sb.AppendLine();
 
-            sb.AppendLine("Generated atlas texture timings");
-            sb.AppendLine("-------------------------------");
-            if (state.GeneratedTextureTimings.Count == 0)
+            if (AtlasProfilingEnabled)
             {
-                sb.AppendLine("(none)");
-            }
-            else
-            {
-                foreach (var timing in state.GeneratedTextureTimings
-                             .OrderByDescending(x => x.TotalElapsed)
-                             .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
+                sb.AppendLine("Generated atlas texture timings");
+                sb.AppendLine("-------------------------------");
+                if (state.GeneratedTextureTimings.Count == 0)
                 {
+                    sb.AppendLine("(none)");
+                }
+                else
+                {
+                    foreach (var timing in state.GeneratedTextureTimings
+                                 .OrderByDescending(x => x.TotalElapsed)
+                                 .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
+                    {
                     var rasterMs = (long)Math.Round(timing.RasterElapsed.TotalMilliseconds);
                     var compressionMs = (long)Math.Round(timing.CompressionElapsed.TotalMilliseconds);
                     var totalMs = (long)Math.Round(timing.TotalElapsed.TotalMilliseconds);
@@ -3704,8 +3715,15 @@ namespace Editors.KitbasherEditor.Services
                             $"stitch={Math.Round(compression.StitchElapsed.TotalMilliseconds)}ms");
                     }
                 }
+                sb.AppendLine();
             }
-            sb.AppendLine();
+            else
+            {
+                sb.AppendLine(
+                    $"Detailed atlas profiling: disabled " +
+                    $"(set {AtlasProfilingEnvironmentVariable}=1 before launch to enable)");
+                sb.AppendLine();
+            }
 
             sb.AppendLine("VMD roots");
             sb.AppendLine("---------");
@@ -4162,6 +4180,16 @@ namespace Editors.KitbasherEditor.Services
             int Current = 0,
             int Total = 0,
             string? Item = null);
+
+        private static bool IsEnabledEnvironmentVariable(string name)
+        {
+            var value = Environment.GetEnvironmentVariable(name);
+            return value != null &&
+                   (value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+                    value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                    value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+                    value.Equals("on", StringComparison.OrdinalIgnoreCase));
+        }
 
         private static void AddPhaseDuration(
             BatchState state,
