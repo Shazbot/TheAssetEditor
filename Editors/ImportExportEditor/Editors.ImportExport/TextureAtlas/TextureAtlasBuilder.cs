@@ -72,7 +72,13 @@ namespace Editors.ImportExport.TextureAtlas
         float NormalizedMinU,
         float NormalizedMinV,
         float NormalizedMaxU,
-        float NormalizedMaxV);
+        float NormalizedMaxV,
+        double CutU,
+        double CutV,
+        float[] ComponentMinU,
+        float[] ComponentMinV,
+        float[] ComponentMaxU,
+        float[] ComponentMaxV);
 
     public sealed class TextureAtlasBuildStatistics
     {
@@ -736,37 +742,133 @@ namespace Editors.ImportExport.TextureAtlas
                 })
                 .ToList();
 
-            var uOffsetsByIsland = CalculateBestIslandTileOffsets(
+            var componentMinU = components.Select(x => x.MinU).ToArray();
+            var componentMinV = components.Select(x => x.MinV).ToArray();
+            var componentMaxU = components.Select(x => x.MaxU).ToArray();
+            var componentMaxV = components.Select(x => x.MaxV).ToArray();
+            var islandIdByVertex = BuildIslandIdByVertex(components, uvs.Count);
+
+            var (uOffsetsByIsland, cutU) = CalculateBestIslandTileOffsets(
                 components.Select(x => (x.MinU, x.MaxU)).ToArray());
-            var vOffsetsByIsland = CalculateBestIslandTileOffsets(
+            var (vOffsetsByIsland, cutV) = CalculateBestIslandTileOffsets(
                 components.Select(x => (x.MinV, x.MaxV)).ToArray());
 
-            var islandIdByVertex = Enumerable.Repeat(-1, uvs.Count).ToArray();
-            var tileOffsetUByVertex = new int[uvs.Count];
-            var tileOffsetVByVertex = new int[uvs.Count];
-            foreach (var component in components)
+            return BuildUvIslandNormalization(
+                islandIdByVertex,
+                componentMinU,
+                componentMinV,
+                componentMaxU,
+                componentMaxV,
+                uOffsetsByIsland,
+                vOffsetsByIsland,
+                cutU,
+                cutV);
+        }
+
+        public static TextureAtlasUvIslandNormalization RecalculateDisconnectedUvIslandNormalization(
+            TextureAtlasUvIslandNormalization analysis,
+            double cutU,
+            double cutV)
+        {
+            var uIntervals = analysis.ComponentMinU
+                .Select((min, index) => (Min: min, Max: analysis.ComponentMaxU[index]))
+                .ToArray();
+            var vIntervals = analysis.ComponentMinV
+                .Select((min, index) => (Min: min, Max: analysis.ComponentMaxV[index]))
+                .ToArray();
+            var uOffsetsByIsland = CalculateIslandTileOffsetsForCut(uIntervals, cutU);
+            var vOffsetsByIsland = CalculateIslandTileOffsetsForCut(vIntervals, cutV);
+
+            return BuildUvIslandNormalization(
+                analysis.IslandIdByVertex,
+                analysis.ComponentMinU,
+                analysis.ComponentMinV,
+                analysis.ComponentMaxU,
+                analysis.ComponentMaxV,
+                uOffsetsByIsland,
+                vOffsetsByIsland,
+                cutU,
+                cutV);
+        }
+
+        public static (float Min, float Max) CalculateDisconnectedUvIslandAxisBoundsForCut(
+            TextureAtlasUvIslandNormalization analysis,
+            double cut,
+            bool useU)
+        {
+            var mins = useU ? analysis.ComponentMinU : analysis.ComponentMinV;
+            var maxs = useU ? analysis.ComponentMaxU : analysis.ComponentMaxV;
+            var intervals = mins
+                .Select((min, index) => (Min: min, Max: maxs[index]))
+                .ToArray();
+            var offsets = CalculateIslandTileOffsetsForCut(intervals, cut);
+
+            var minBound = float.PositiveInfinity;
+            var maxBound = float.NegativeInfinity;
+            for (var index = 0; index < intervals.Length; index++)
             {
-                var uOffset = uOffsetsByIsland[component.Id];
-                var vOffset = vOffsetsByIsland[component.Id];
-                foreach (var vertex in component.Vertices)
-                {
-                    islandIdByVertex[vertex] = component.Id;
-                    tileOffsetUByVertex[vertex] = uOffset;
-                    tileOffsetVByVertex[vertex] = vOffset;
-                }
+                minBound = Math.Min(minBound, intervals[index].Min + offsets[index]);
+                maxBound = Math.Max(maxBound, intervals[index].Max + offsets[index]);
             }
 
-            var originalMinU = components.Min(x => x.MinU);
-            var originalMinV = components.Min(x => x.MinV);
-            var originalMaxU = components.Max(x => x.MaxU);
-            var originalMaxV = components.Max(x => x.MaxV);
-            var normalizedMinU = components.Min(x => x.MinU + uOffsetsByIsland[x.Id]);
-            var normalizedMinV = components.Min(x => x.MinV + vOffsetsByIsland[x.Id]);
-            var normalizedMaxU = components.Max(x => x.MaxU + uOffsetsByIsland[x.Id]);
-            var normalizedMaxV = components.Max(x => x.MaxV + vOffsetsByIsland[x.Id]);
+            return (minBound, maxBound);
+        }
+
+        private static int[] BuildIslandIdByVertex(
+            IReadOnlyList<UvIslandComponent> components,
+            int vertexCount)
+        {
+            var islandIdByVertex = Enumerable.Repeat(-1, vertexCount).ToArray();
+            foreach (var component in components)
+            {
+                foreach (var vertex in component.Vertices)
+                    islandIdByVertex[vertex] = component.Id;
+            }
+            return islandIdByVertex;
+        }
+
+        private static TextureAtlasUvIslandNormalization BuildUvIslandNormalization(
+            int[] islandIdByVertex,
+            float[] componentMinU,
+            float[] componentMinV,
+            float[] componentMaxU,
+            float[] componentMaxV,
+            int[] uOffsetsByIsland,
+            int[] vOffsetsByIsland,
+            double cutU,
+            double cutV)
+        {
+            var tileOffsetUByVertex = new int[islandIdByVertex.Length];
+            var tileOffsetVByVertex = new int[islandIdByVertex.Length];
+            for (var vertex = 0; vertex < islandIdByVertex.Length; vertex++)
+            {
+                var islandId = islandIdByVertex[vertex];
+                if (islandId < 0)
+                    continue;
+
+                tileOffsetUByVertex[vertex] = uOffsetsByIsland[islandId];
+                tileOffsetVByVertex[vertex] = vOffsetsByIsland[islandId];
+            }
+
+            var originalMinU = componentMinU.Min();
+            var originalMinV = componentMinV.Min();
+            var originalMaxU = componentMaxU.Max();
+            var originalMaxV = componentMaxV.Max();
+            var normalizedMinU = componentMinU
+                .Select((value, index) => value + uOffsetsByIsland[index])
+                .Min();
+            var normalizedMinV = componentMinV
+                .Select((value, index) => value + vOffsetsByIsland[index])
+                .Min();
+            var normalizedMaxU = componentMaxU
+                .Select((value, index) => value + uOffsetsByIsland[index])
+                .Max();
+            var normalizedMaxV = componentMaxV
+                .Select((value, index) => value + vOffsetsByIsland[index])
+                .Max();
 
             return new TextureAtlasUvIslandNormalization(
-                components.Count,
+                componentMinU.Length,
                 islandIdByVertex,
                 tileOffsetUByVertex,
                 tileOffsetVByVertex,
@@ -777,26 +879,36 @@ namespace Editors.ImportExport.TextureAtlas
                 normalizedMinU,
                 normalizedMinV,
                 normalizedMaxU,
-                normalizedMaxV);
+                normalizedMaxV,
+                cutU,
+                cutV,
+                componentMinU,
+                componentMinV,
+                componentMaxU,
+                componentMaxV);
         }
 
-        private static int[] CalculateBestIslandTileOffsets(
+        private static (int[] Offsets, double Cut) CalculateBestIslandTileOffsets(
             IReadOnlyList<(float Min, float Max)> intervals)
         {
             if (intervals.Count == 0)
-                return [];
+                return ([], 0);
 
             var fractionalStarts = new double[intervals.Count];
-            var baseTiles = new int[intervals.Count];
             for (var index = 0; index < intervals.Count; index++)
             {
                 var floor = Math.Floor(intervals[index].Min);
-                baseTiles[index] = checked((int)floor);
                 fractionalStarts[index] = intervals[index].Min - floor;
             }
 
-            var candidateCuts = fractionalStarts.Append(0).Distinct().OrderBy(x => x).ToArray();
+            var candidateCuts = fractionalStarts
+                .Append(0)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToArray();
+
             int[]? bestOffsets = null;
+            var bestCut = 0.0;
             double bestSpan = double.PositiveInfinity;
             var bestShiftedCount = int.MaxValue;
             long bestAbsoluteShift = long.MaxValue;
@@ -804,28 +916,12 @@ namespace Editors.ImportExport.TextureAtlas
 
             foreach (var cut in candidateCuts)
             {
-                var offsets = new int[intervals.Count];
-                for (var index = 0; index < intervals.Count; index++)
-                {
-                    offsets[index] = checked(
-                        -baseTiles[index] +
-                        (fractionalStarts[index] + epsilon < cut ? 1 : 0));
-                }
-
-                var commonOffset = offsets
-                    .GroupBy(x => x)
-                    .OrderByDescending(x => x.Count())
-                    .ThenBy(x => Math.Abs((long)x.Key))
-                    .ThenBy(x => x.Key)
-                    .First()
-                    .Key;
-                for (var index = 0; index < offsets.Length; index++)
-                    offsets[index] = checked(offsets[index] - commonOffset);
-
+                var offsets = CalculateIslandTileOffsetsForCut(intervals, cut);
                 var min = double.PositiveInfinity;
                 var max = double.NegativeInfinity;
                 var shiftedCount = 0;
                 long absoluteShift = 0;
+
                 for (var index = 0; index < intervals.Count; index++)
                 {
                     min = Math.Min(min, intervals[index].Min + offsets[index]);
@@ -839,16 +935,49 @@ namespace Editors.ImportExport.TextureAtlas
                 if (span < bestSpan - epsilon ||
                     (Math.Abs(span - bestSpan) <= epsilon &&
                      (shiftedCount < bestShiftedCount ||
-                      (shiftedCount == bestShiftedCount && absoluteShift < bestAbsoluteShift))))
+                      (shiftedCount == bestShiftedCount &&
+                       absoluteShift < bestAbsoluteShift))))
                 {
                     bestSpan = span;
                     bestShiftedCount = shiftedCount;
                     bestAbsoluteShift = absoluteShift;
                     bestOffsets = offsets;
+                    bestCut = cut;
                 }
             }
 
-            return bestOffsets ?? new int[intervals.Count];
+            return (bestOffsets ?? new int[intervals.Count], bestCut);
+        }
+
+        private static int[] CalculateIslandTileOffsetsForCut(
+            IReadOnlyList<(float Min, float Max)> intervals,
+            double cut)
+        {
+            if (intervals.Count == 0)
+                return [];
+
+            var offsets = new int[intervals.Count];
+            const double epsilon = 1e-7;
+            for (var index = 0; index < intervals.Count; index++)
+            {
+                var floor = Math.Floor(intervals[index].Min);
+                var fractionalStart = intervals[index].Min - floor;
+                offsets[index] = checked(
+                    -(int)floor +
+                    (fractionalStart + epsilon < cut ? 1 : 0));
+            }
+
+            var commonOffset = offsets
+                .GroupBy(x => x)
+                .OrderByDescending(x => x.Count())
+                .ThenBy(x => Math.Abs((long)x.Key))
+                .ThenBy(x => x.Key)
+                .First()
+                .Key;
+            for (var index = 0; index < offsets.Length; index++)
+                offsets[index] = checked(offsets[index] - commonOffset);
+
+            return offsets;
         }
 
         public static int CalculateMipLevelCount(int width, int height)
