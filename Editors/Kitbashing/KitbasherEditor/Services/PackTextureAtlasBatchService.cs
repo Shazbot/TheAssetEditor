@@ -744,6 +744,7 @@ namespace Editors.KitbasherEditor.Services
             candidates = candidates
                 .Where(x => !state.ProcessedMeshes.Contains(x.Key))
                 .ToList();
+            candidates = AlignSharedUvIslandCuts(state, candidates);
 
             var batches = CreateBatches(
                 state,
@@ -768,6 +769,7 @@ namespace Editors.KitbasherEditor.Services
             IProgress<TextureAtlasPackProgress>? progress)
         {
             state.PackWideCandidateCount = candidates.Count;
+            candidates = AlignSharedUvIslandCuts(state, candidates);
 
             var stopwatch = Stopwatch.StartNew();
             var batches = CreateBatches(
@@ -1056,11 +1058,23 @@ namespace Editors.KitbasherEditor.Services
                 ?? throw new InvalidOperationException("Base-colour dimensions were not resolved.");
 
             UvBounds bounds;
+            TextureAtlasUvIslandNormalization uvIslandAnalysis;
             UvIslandNormalization? uvIslandNormalization;
             try
             {
                 var originalBounds = GetUvBounds(model);
-                uvIslandNormalization = BuildUvIslandNormalization(model, width, height, originalBounds);
+                var uvs = model.Mesh.VertexList
+                    .Select(vertex => (U: vertex.Uv.X, V: vertex.Uv.Y))
+                    .ToArray();
+                uvIslandAnalysis = TextureAtlasBuilder.CalculateDisconnectedUvIslandNormalization(
+                    uvs,
+                    model.Mesh.IndexList);
+                uvIslandNormalization = BuildUvIslandNormalization(
+                    width,
+                    height,
+                    originalBounds,
+                    uvIslandAnalysis,
+                    allowEqualCrop: false);
                 bounds = uvIslandNormalization?.NormalizedBounds ?? originalBounds;
             }
             catch (Exception ex)
@@ -1083,6 +1097,7 @@ namespace Editors.KitbasherEditor.Services
                 constantChannels,
                 channelDimensions,
                 candidateMissingTextures,
+                uvIslandAnalysis,
                 uvIslandNormalization);
         }
 
@@ -4321,6 +4336,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"UV-island normalized meshes: {state.UvIslandNormalizedMeshes}");
             sb.AppendLine($"UV islands shifted by integer tiles: {state.UvIslandsShifted}");
             sb.AppendLine($"UV-island source crop pixels saved: {state.UvIslandCropPixelsSaved:N0}");
+            sb.AppendLine($"Shared UV-island seam groups aligned: {state.SharedUvIslandCutGroups}");
             sb.AppendLine($"Content-deduplicated atlas placements: {state.ContentDeduplicatedAtlasPlacements}");
             sb.AppendLine($"Mesh references remapped by content dedupe: {state.ContentCanonicalizedMeshReferences}");
             sb.AppendLine($"Cropped-content hashes computed: {state.AtlasRegionContentHashes.Count}");
@@ -4815,19 +4831,140 @@ namespace Editors.KitbasherEditor.Services
             File.WriteAllText(state.ReportPath, sb.ToString(), Encoding.UTF8);
         }
 
+        private static List<AtlasCandidate> AlignSharedUvIslandCuts(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates)
+        {
+            var replacements = new Dictionary<MeshKey, AtlasCandidate>();
+
+            foreach (var group in candidates.GroupBy(BuildAtlasTextureSetIdentity))
+            {
+                var members = group.ToList();
+                if (members.Count < 2)
+                    continue;
+
+                var sharedCutU = ChooseSharedUvIslandCut(members, useU: true);
+                var sharedCutV = ChooseSharedUvIslandCut(members, useU: false);
+                var groupChanged = false;
+
+                foreach (var candidate in members)
+                {
+                    var proposal = TextureAtlasBuilder.RecalculateDisconnectedUvIslandNormalization(
+                        candidate.UvIslandAnalysis,
+                        sharedCutU,
+                        sharedCutV);
+                    var originalBounds = new UvBounds(
+                        proposal.OriginalMinU,
+                        proposal.OriginalMinV,
+                        proposal.OriginalMaxU,
+                        proposal.OriginalMaxV);
+                    var normalization = BuildUvIslandNormalization(
+                        candidate.Width,
+                        candidate.Height,
+                        originalBounds,
+                        proposal,
+                        allowEqualCrop: true);
+
+                    if (normalization == null)
+                        continue;
+
+                    if (candidate.UvIslandNormalization != null &&
+                        normalization.NormalizedCrop == candidate.UvIslandNormalization.NormalizedCrop &&
+                        proposal.CutU == candidate.UvIslandAnalysis.CutU &&
+                        proposal.CutV == candidate.UvIslandAnalysis.CutV)
+                    {
+                        continue;
+                    }
+
+                    replacements[candidate.Key] = candidate with
+                    {
+                        Bounds = normalization.NormalizedBounds,
+                        UvIslandAnalysis = proposal,
+                        UvIslandNormalization = normalization
+                    };
+                    groupChanged = true;
+                }
+
+                if (groupChanged)
+                    state.SharedUvIslandCutGroups++;
+            }
+
+            return candidates
+                .Select(candidate => replacements.TryGetValue(candidate.Key, out var replacement)
+                    ? replacement
+                    : candidate)
+                .ToList();
+        }
+
+        private static double ChooseSharedUvIslandCut(
+            IReadOnlyList<AtlasCandidate> candidates,
+            bool useU)
+        {
+            var candidateCuts = candidates
+                .Select(candidate => useU
+                    ? candidate.UvIslandAnalysis.CutU
+                    : candidate.UvIslandAnalysis.CutV)
+                .Append(0)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToArray();
+
+            var sourceSize = useU ? candidates[0].Width : candidates[0].Height;
+            var bestCut = candidateCuts[0];
+            long bestUnionPixels = long.MaxValue;
+            long bestTotalPixels = long.MaxValue;
+
+            foreach (var cut in candidateCuts)
+            {
+                var unionMin = double.PositiveInfinity;
+                var unionMax = double.NegativeInfinity;
+                long totalPixels = 0;
+
+                foreach (var candidate in candidates)
+                {
+                    var bounds = TextureAtlasBuilder.CalculateDisconnectedUvIslandAxisBoundsForCut(
+                        candidate.UvIslandAnalysis,
+                        cut,
+                        useU);
+
+                    // Express each candidate in the same unwrapped period for this seam.
+                    // Whole-mesh integer translations are sampling-equivalent and later become
+                    // the existing wrapped-UV mapping offset.
+                    var wholeTile = Math.Floor(bounds.Min - cut);
+                    var min = bounds.Min - wholeTile;
+                    var max = bounds.Max - wholeTile;
+
+                    unionMin = Math.Min(unionMin, min);
+                    unionMax = Math.Max(unionMax, max);
+
+                    var pixelMin = checked((int)Math.Floor(min * sourceSize));
+                    var pixelMax = checked((int)Math.Ceiling(max * sourceSize));
+                    totalPixels = checked(totalPixels + Math.Max(1, pixelMax - pixelMin));
+                }
+
+                var unionPixelMin = checked((int)Math.Floor(unionMin * sourceSize));
+                var unionPixelMax = checked((int)Math.Ceiling(unionMax * sourceSize));
+                var unionPixels = Math.Max(1L, (long)unionPixelMax - unionPixelMin);
+
+                if (unionPixels < bestUnionPixels ||
+                    (unionPixels == bestUnionPixels && totalPixels < bestTotalPixels))
+                {
+                    bestUnionPixels = unionPixels;
+                    bestTotalPixels = totalPixels;
+                    bestCut = cut;
+                }
+            }
+
+            return bestCut;
+        }
+
         private static UvIslandNormalization? BuildUvIslandNormalization(
-            RmvModel model,
             int sourceWidth,
             int sourceHeight,
-            UvBounds originalBounds)
+            UvBounds originalBounds,
+            TextureAtlasUvIslandNormalization proposal,
+            bool allowEqualCrop)
         {
-            var uvs = model.Mesh.VertexList
-                .Select(vertex => (U: vertex.Uv.X, V: vertex.Uv.Y))
-                .ToArray();
-            var proposal = TextureAtlasBuilder.CalculateDisconnectedUvIslandNormalization(
-                uvs,
-                model.Mesh.IndexList);
-
             var proposedBounds = new UvBounds(
                 proposal.NormalizedMinU,
                 proposal.NormalizedMinV,
@@ -4836,8 +4973,14 @@ namespace Editors.KitbasherEditor.Services
             var originalCrop = GetEffectiveCrop(originalBounds, sourceWidth, sourceHeight);
             var proposedCrop = GetEffectiveCrop(proposedBounds, sourceWidth, sourceHeight);
 
-            var useU = proposedCrop.Width < originalCrop.Width;
-            var useV = proposedCrop.Height < originalCrop.Height;
+            var hasUShift = proposal.TileOffsetUByVertex.Any(x => x != 0);
+            var hasVShift = proposal.TileOffsetVByVertex.Any(x => x != 0);
+            var useU =
+                proposedCrop.Width < originalCrop.Width ||
+                (allowEqualCrop && hasUShift && proposedCrop.Width == originalCrop.Width);
+            var useV =
+                proposedCrop.Height < originalCrop.Height ||
+                (allowEqualCrop && hasVShift && proposedCrop.Height == originalCrop.Height);
             if (!useU && !useV)
                 return null;
 
@@ -4856,7 +4999,7 @@ namespace Editors.KitbasherEditor.Services
             var normalizedCrop = GetEffectiveCrop(normalizedBounds, sourceWidth, sourceHeight);
 
             var shiftedIslandIds = new HashSet<int>();
-            foreach (var vertexIndex in model.Mesh.IndexList.Distinct())
+            for (var vertexIndex = 0; vertexIndex < proposal.IslandIdByVertex.Length; vertexIndex++)
             {
                 if (tileOffsetUByVertex[vertexIndex] == 0 &&
                     tileOffsetVByVertex[vertexIndex] == 0)
@@ -5677,6 +5820,7 @@ namespace Editors.KitbasherEditor.Services
             public int UvIslandNormalizedMeshes { get; set; }
             public int UvIslandsShifted { get; set; }
             public long UvIslandCropPixelsSaved { get; set; }
+            public int SharedUvIslandCutGroups { get; set; }
             public List<UvIslandNormalizationReportEntry> UvIslandNormalizationEntries { get; } = [];
             public int ContentDeduplicatedAtlasPlacements { get; set; }
             public int ContentCanonicalizedMeshReferences { get; set; }
@@ -5881,6 +6025,7 @@ namespace Editors.KitbasherEditor.Services
             Dictionary<string, TextureAtlasConstantColor> ConstantChannels,
             Dictionary<string, (int Width, int Height)> ChannelDimensions,
             List<MissingTextureDependency> MissingTextures,
+            TextureAtlasUvIslandNormalization UvIslandAnalysis,
             UvIslandNormalization? UvIslandNormalization);
 
         private sealed record CandidateDiscoveryResult(
