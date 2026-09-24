@@ -81,6 +81,7 @@ namespace Editors.KitbasherEditor.Services
             var progressWindow = new TextureAtlasProgressWindow((
                 mergeCompatibleMeshes,
                 shareAtlasesAcrossVmds,
+                optimizeGeometry,
                 cancellationToken,
                 progress) =>
             {
@@ -91,7 +92,8 @@ namespace Editors.KitbasherEditor.Services
                     cancellationToken: cancellationToken,
                     progress: progress,
                     mergeCompatibleMeshes: mergeCompatibleMeshes,
-                    shareAtlasesAcrossVmds: shareAtlasesAcrossVmds);
+                    shareAtlasesAcrossVmds: shareAtlasesAcrossVmds,
+                    optimizeGeometry: optimizeGeometry);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -129,7 +131,8 @@ namespace Editors.KitbasherEditor.Services
             CancellationToken cancellationToken = default,
             IProgress<TextureAtlasPackProgress>? progress = null,
             bool mergeCompatibleMeshes = false,
-            bool shareAtlasesAcrossVmds = true)
+            bool shareAtlasesAcrossVmds = true,
+            bool optimizeGeometry = false)
         {
             var reportPath = BuildReportPath(outputPath);
             var totalStopwatch = Stopwatch.StartNew();
@@ -165,7 +168,8 @@ namespace Editors.KitbasherEditor.Services
                     reportPath,
                     atlasMeshesWithMissingTextures ?? false,
                     mergeCompatibleMeshes,
-                    shareAtlasesAcrossVmds);
+                    shareAtlasesAcrossVmds,
+                    optimizeGeometry);
 
                 var allVmdPaths = sourcePaths
                     .Where(x => Path.GetExtension(x).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
@@ -320,6 +324,13 @@ namespace Editors.KitbasherEditor.Services
                     phaseStopwatch.Restart();
                     MergeCompatibleMeshes(state, cancellationToken, progress);
                     state.PhaseDurations["Merge compatible meshes"] = phaseStopwatch.Elapsed;
+                }
+
+                if (optimizeGeometry)
+                {
+                    phaseStopwatch.Restart();
+                    OptimizeGeometry(state, cancellationToken, progress);
+                    state.PhaseDurations["Optimize geometry"] = phaseStopwatch.Elapsed;
                 }
 
                 phaseStopwatch.Restart();
@@ -2075,6 +2086,46 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+        private static void OptimizeGeometry(
+            BatchState state,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            var rigidPaths = state.ModifiedRigids
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            for (var rigidIndex = 0; rigidIndex < rigidPaths.Count; rigidIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rigidPath = rigidPaths[rigidIndex];
+                ReportProgress(
+                    progress,
+                    "Optimizing geometry",
+                    rigidIndex + 1,
+                    rigidPaths.Count,
+                    rigidPath);
+
+                if (!state.RigidModels.TryGetValue(rigidPath, out var rmv))
+                    continue;
+
+                foreach (var lod in rmv.ModelList)
+                {
+                    foreach (var model in lod)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var statistics = RigidGeometryOptimizer.Optimize(model);
+                        state.GeometryMeshesOptimized++;
+                        state.GeometryVerticesBefore += statistics.VerticesBefore;
+                        state.GeometryVerticesAfter += statistics.VerticesAfter;
+                        state.GeometryUnreferencedVerticesRemoved += statistics.UnreferencedVerticesRemoved;
+                        state.GeometryDuplicateVerticesRemoved += statistics.DuplicateVerticesRemoved;
+                        state.GeometryDegenerateTrianglesRemoved += statistics.DegenerateTrianglesRemoved;
+                    }
+                }
+            }
+        }
+
         private static List<MeshMergeGroup> BuildMeshMergeGroups(
             IReadOnlyList<RmvModel> models,
             int lodIndex,
@@ -3643,6 +3694,17 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Mesh parts after merging: {state.MeshPartsAfterMerging}");
                 sb.AppendLine($"Mesh parts eliminated: {state.MeshPartsEliminated}");
             }
+            sb.AppendLine($"Optimize geometry: {(state.OptimizeGeometryEnabled ? "YES" : "NO")}");
+            if (state.OptimizeGeometryEnabled)
+            {
+                sb.AppendLine($"Geometry meshes optimized: {state.GeometryMeshesOptimized}");
+                sb.AppendLine($"Geometry vertices before: {state.GeometryVerticesBefore:N0}");
+                sb.AppendLine($"Geometry vertices after: {state.GeometryVerticesAfter:N0}");
+                sb.AppendLine($"Geometry vertices removed: {state.GeometryVerticesRemoved:N0}");
+                sb.AppendLine($"Unreferenced vertices removed: {state.GeometryUnreferencedVerticesRemoved:N0}");
+                sb.AppendLine($"Duplicate vertices removed: {state.GeometryDuplicateVerticesRemoved:N0}");
+                sb.AppendLine($"Degenerate triangles removed: {state.GeometryDegenerateTrianglesRemoved:N0}");
+            }
             sb.AppendLine();
 
             sb.AppendLine("Phase timings");
@@ -4265,6 +4327,7 @@ namespace Editors.KitbasherEditor.Services
             public bool AtlasMeshesWithMissingTextures { get; set; }
             public bool MergeCompatibleMeshesEnabled { get; }
             public bool ShareAtlasesAcrossVmdsEnabled { get; }
+            public bool OptimizeGeometryEnabled { get; }
             public int PackWideCandidateCount { get; set; }
             public int AtlasBatchCount { get; set; }
             public int LargeBcSplitCompressionChannels { get; set; }
@@ -4287,6 +4350,13 @@ namespace Editors.KitbasherEditor.Services
             public int MeshMergeInvariantGroupCount { get; set; }
             public int MeshMergeInvariantLodCount { get; set; }
             public int MeshMergeInvariantWsModelCount { get; set; }
+            public int GeometryMeshesOptimized { get; set; }
+            public long GeometryVerticesBefore { get; set; }
+            public long GeometryVerticesAfter { get; set; }
+            public long GeometryVerticesRemoved => GeometryVerticesBefore - GeometryVerticesAfter;
+            public long GeometryUnreferencedVerticesRemoved { get; set; }
+            public long GeometryDuplicateVerticesRemoved { get; set; }
+            public long GeometryDegenerateTrianglesRemoved { get; set; }
             public List<string> RemovedFiles { get; } = [];
             public List<string> ValidationMessages { get; } = [];
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
@@ -4304,7 +4374,8 @@ namespace Editors.KitbasherEditor.Services
                 string reportPath,
                 bool atlasMeshesWithMissingTextures,
                 bool mergeCompatibleMeshesEnabled,
-                bool shareAtlasesAcrossVmdsEnabled)
+                bool shareAtlasesAcrossVmdsEnabled,
+                bool optimizeGeometryEnabled)
             {
                 Source = source;
                 Output = output;
@@ -4315,6 +4386,7 @@ namespace Editors.KitbasherEditor.Services
                 AtlasMeshesWithMissingTextures = atlasMeshesWithMissingTextures;
                 MergeCompatibleMeshesEnabled = mergeCompatibleMeshesEnabled;
                 ShareAtlasesAcrossVmdsEnabled = shareAtlasesAcrossVmdsEnabled;
+                OptimizeGeometryEnabled = optimizeGeometryEnabled;
             }
         }
 
