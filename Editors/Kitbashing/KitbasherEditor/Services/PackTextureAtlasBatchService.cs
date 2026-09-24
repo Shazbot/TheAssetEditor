@@ -2014,6 +2014,14 @@ namespace Editors.KitbasherEditor.Services
 
                     var lodInvariant = CaptureLodGeometryInvariant(originalModels, rigidPath, lodIndex);
 
+                    AnalyzeMeshMergeBlockers(
+                        state,
+                        rigidPath,
+                        lodIndex,
+                        originalModels,
+                        wsModels.Select(x => x.Key).ToList(),
+                        assignmentsByWsModel);
+
                     var groups = BuildMeshMergeGroups(
                         originalModels,
                         lodIndex,
@@ -2147,6 +2155,331 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
         }
+
+        private static void AnalyzeMeshMergeBlockers(
+            BatchState state,
+            string rigidPath,
+            int lodIndex,
+            IReadOnlyList<RmvModel> models,
+            IReadOnlyList<string> wsModelPaths,
+            IReadOnlyDictionary<string, string[][]> assignmentsByWsModel)
+        {
+            var rmvComponents = models
+                .Select(GetRmvMergeDiagnosticComponents)
+                .ToArray();
+
+            var exactBuckets = Enumerable.Range(0, models.Count)
+                .GroupBy(partIndex => string.Join(
+                    "\u001e",
+                    GetRmvMergeIdentity(models[partIndex]),
+                    string.Join(
+                        "\u001f",
+                        wsModelPaths.Select(
+                            wsPath => Normalize(assignmentsByWsModel[wsPath][lodIndex][partIndex])))))
+                .Where(group => group.Count() > 1);
+
+            foreach (var bucket in exactBuckets)
+            {
+                var partIndices = bucket.OrderBy(x => x).ToList();
+                var totalVertices = partIndices.Sum(x => models[x].Mesh.VertexList.Length);
+                if (totalVertices <= ushort.MaxValue)
+                    continue;
+
+                var chunkCount = 1;
+                var chunkVertices = 0;
+                foreach (var partIndex in partIndices)
+                {
+                    var vertexCount = models[partIndex].Mesh.VertexList.Length;
+                    if (chunkVertices != 0 &&
+                        chunkVertices + vertexCount > ushort.MaxValue)
+                    {
+                        chunkCount++;
+                        chunkVertices = 0;
+                    }
+
+                    chunkVertices += vertexCount;
+                }
+
+                RecordMeshMergeBlocker(
+                    state,
+                    "16-bit vertex limit",
+                    $"{rigidPath} [lod {lodIndex}] parts [{string.Join(", ", partIndices)}]: " +
+                    $"{totalVertices:N0} vertices require {chunkCount} merge groups.",
+                    Math.Max(1, chunkCount - 1));
+            }
+
+            for (var leftIndex = 0; leftIndex < models.Count; leftIndex++)
+            {
+                for (var rightIndex = leftIndex + 1; rightIndex < models.Count; rightIndex++)
+                {
+                    var materialComparison = CompareWsMaterialAssignmentsForDiagnostics(
+                        state,
+                        lodIndex,
+                        leftIndex,
+                        rightIndex,
+                        wsModelPaths,
+                        assignmentsByWsModel);
+
+                    var rmvDifferences = GetRmvMergeDiagnosticDifferences(
+                        rmvComponents[leftIndex],
+                        rmvComponents[rightIndex]);
+
+                    if (rmvDifferences.Count == 0)
+                    {
+                        if (materialComparison.PathsEqual)
+                            continue;
+
+                        var reason = materialComparison.SemanticallyEquivalent
+                            ? "WSModel material paths differ but rendering identity is identical"
+                            : materialComparison.Reason;
+
+                        RecordMeshMergeBlocker(
+                            state,
+                            reason,
+                            BuildMeshMergeBlockerExample(
+                                rigidPath,
+                                lodIndex,
+                                leftIndex,
+                                rightIndex,
+                                materialComparison.Detail));
+                        continue;
+                    }
+
+                    // If the WSModel materials are already equivalent, the RMV side is the only
+                    // thing preventing a merge. Report one- or two-field RMV near misses and
+                    // intentionally ignore pairs that are different in many unrelated ways.
+                    if (!materialComparison.SemanticallyEquivalent || rmvDifferences.Count > 2)
+                        continue;
+
+                    var rmvReason = rmvDifferences.Count == 1
+                        ? rmvDifferences[0]
+                        : "Multiple RMV compatibility fields differ";
+
+                    RecordMeshMergeBlocker(
+                        state,
+                        rmvReason,
+                        BuildMeshMergeBlockerExample(
+                            rigidPath,
+                            lodIndex,
+                            leftIndex,
+                            rightIndex,
+                            string.Join("; ", rmvDifferences)));
+                }
+            }
+        }
+
+        private static MaterialMergeDiagnosticComparison CompareWsMaterialAssignmentsForDiagnostics(
+            BatchState state,
+            int lodIndex,
+            int leftPartIndex,
+            int rightPartIndex,
+            IReadOnlyList<string> wsModelPaths,
+            IReadOnlyDictionary<string, string[][]> assignmentsByWsModel)
+        {
+            var pathsEqual = true;
+            var semanticallyEquivalent = true;
+            var reasons = new HashSet<string>(StringComparer.Ordinal);
+            string? firstDetail = null;
+
+            foreach (var wsPath in wsModelPaths)
+            {
+                var leftPath = Normalize(assignmentsByWsModel[wsPath][lodIndex][leftPartIndex]);
+                var rightPath = Normalize(assignmentsByWsModel[wsPath][lodIndex][rightPartIndex]);
+                if (leftPath.Equals(rightPath, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                pathsEqual = false;
+                firstDetail ??= $"{Path.GetFileName(wsPath)}: {leftPath} <> {rightPath}";
+
+                var left = GetMaterialMergeDiagnosticSnapshot(state, leftPath);
+                var right = GetMaterialMergeDiagnosticSnapshot(state, rightPath);
+                if (left == null || right == null)
+                {
+                    semanticallyEquivalent = false;
+                    reasons.Add("WSModel material could not be inspected");
+                    continue;
+                }
+
+                if (left.RenderingIdentity.Equals(right.RenderingIdentity, StringComparison.Ordinal))
+                    continue;
+
+                semanticallyEquivalent = false;
+                if (!left.Shader.Equals(right.Shader, StringComparison.OrdinalIgnoreCase))
+                {
+                    reasons.Add("WSModel material shader differs");
+                }
+                else if (!left.TextureIdentity.Equals(right.TextureIdentity, StringComparison.Ordinal) &&
+                         left.NonTextureIdentity.Equals(right.NonTextureIdentity, StringComparison.Ordinal))
+                {
+                    reasons.Add("WSModel texture assignments differ");
+                }
+                else if (!left.NonTextureIdentity.Equals(right.NonTextureIdentity, StringComparison.Ordinal))
+                {
+                    reasons.Add("WSModel material parameters differ");
+                }
+                else
+                {
+                    reasons.Add("WSModel material rendering state differs");
+                }
+            }
+
+            if (pathsEqual)
+            {
+                return new MaterialMergeDiagnosticComparison(
+                    true,
+                    true,
+                    string.Empty,
+                    "Material assignments are identical.");
+            }
+
+            if (semanticallyEquivalent)
+            {
+                return new MaterialMergeDiagnosticComparison(
+                    false,
+                    true,
+                    "WSModel material paths differ but rendering identity is identical",
+                    firstDetail ?? "Material paths differ.");
+            }
+
+            var reason = reasons.Count == 1
+                ? reasons.Single()
+                : "Multiple WSModel material differences";
+            return new MaterialMergeDiagnosticComparison(
+                false,
+                false,
+                reason,
+                firstDetail ?? reason);
+        }
+
+        private static MaterialMergeDiagnosticSnapshot? GetMaterialMergeDiagnosticSnapshot(
+            BatchState state,
+            string materialPath)
+        {
+            materialPath = Normalize(materialPath);
+            if (state.MeshMergeMaterialDiagnostics.TryGetValue(materialPath, out var cached))
+                return cached;
+
+            try
+            {
+                var file = FindForReadStatic(state, materialPath);
+                if (file == null)
+                {
+                    state.MeshMergeMaterialDiagnostics[materialPath] = null;
+                    return null;
+                }
+
+                var material = GetMaterialDocument(state, materialPath, file);
+                var shader = Normalize(material.SelectSingleNode("/material/shader")?.InnerText);
+
+                var textures = material.SelectNodes("/material/textures/texture")?
+                    .Cast<XmlNode>()
+                    .Select(node =>
+                    {
+                        var slot = GetTextureSlot(node);
+                        var source = Normalize(
+                            node.SelectSingleNode("source")?.InnerText ?? node.InnerText);
+                        return $"{slot}={source}";
+                    })
+                    .OrderBy(x => x, StringComparer.Ordinal)
+                    .ToArray() ?? [];
+                var textureIdentity = string.Join("\u001f", textures);
+
+                var nonTexture = new XmlDocument();
+                nonTexture.LoadXml(material.OuterXml);
+                var nameNode = nonTexture.SelectSingleNode("/material/name");
+                nameNode?.ParentNode?.RemoveChild(nameNode);
+                var texturesNode = nonTexture.SelectSingleNode("/material/textures");
+                texturesNode?.ParentNode?.RemoveChild(texturesNode);
+
+                var snapshot = new MaterialMergeDiagnosticSnapshot(
+                    GetMaterialRenderingIdentity(material),
+                    shader,
+                    textureIdentity,
+                    nonTexture.OuterXml);
+                state.MeshMergeMaterialDiagnostics[materialPath] = snapshot;
+                return snapshot;
+            }
+            catch
+            {
+                state.MeshMergeMaterialDiagnostics[materialPath] = null;
+                return null;
+            }
+        }
+
+        private static RmvMergeDiagnosticComponents GetRmvMergeDiagnosticComponents(RmvModel model)
+        {
+            var material = model.Material.Clone();
+            if (material is WeightedMaterial weighted)
+            {
+                weighted.ModelName = string.Empty;
+                weighted.TextureDirectory = string.Empty;
+                weighted.TexturesParams = [];
+            }
+
+            var materialBytes = MaterialFactory.Create().Save(
+                model.CommonHeader.ModelTypeFlag,
+                material);
+
+            return new RmvMergeDiagnosticComponents(
+                model.CommonHeader.ModelTypeFlag.ToString(),
+                model.CommonHeader.RenderFlag.ToString(),
+                model.Material.BinaryVertexFormat.ToString(),
+                model.CommonHeader.ShaderParams.ShaderName ?? string.Empty,
+                ContentHash(Convert.ToHexString(materialBytes)));
+        }
+
+        private static List<string> GetRmvMergeDiagnosticDifferences(
+            RmvMergeDiagnosticComponents left,
+            RmvMergeDiagnosticComponents right)
+        {
+            var differences = new List<string>(5);
+
+            if (!left.ModelTypeFlag.Equals(right.ModelTypeFlag, StringComparison.Ordinal))
+                differences.Add("RMV model type differs");
+            if (!left.RenderFlag.Equals(right.RenderFlag, StringComparison.Ordinal))
+                differences.Add("RMV render flag differs");
+            if (!left.VertexFormat.Equals(right.VertexFormat, StringComparison.Ordinal))
+                differences.Add("RMV vertex format differs");
+            if (!left.ShaderName.Equals(right.ShaderName, StringComparison.Ordinal))
+                differences.Add("RMV shader name differs");
+            if (!left.MaterialPayloadHash.Equals(right.MaterialPayloadHash, StringComparison.Ordinal))
+                differences.Add("RMV embedded material payload differs");
+
+            return differences;
+        }
+
+        private static void RecordMeshMergeBlocker(
+            BatchState state,
+            string reason,
+            string example,
+            int occurrences = 1)
+        {
+            if (state.MeshMergeBlockerCounts.TryGetValue(reason, out var existing))
+                state.MeshMergeBlockerCounts[reason] = existing + occurrences;
+            else
+                state.MeshMergeBlockerCounts[reason] = occurrences;
+
+            if (!state.MeshMergeBlockerExamples.TryGetValue(reason, out var examples))
+            {
+                examples = [];
+                state.MeshMergeBlockerExamples[reason] = examples;
+            }
+
+            const int maxExamplesPerReason = 8;
+            if (examples.Count < maxExamplesPerReason &&
+                !examples.Contains(example, StringComparer.Ordinal))
+            {
+                examples.Add(example);
+            }
+        }
+
+        private static string BuildMeshMergeBlockerExample(
+            string rigidPath,
+            int lodIndex,
+            int leftPartIndex,
+            int rightPartIndex,
+            string detail)
+            => $"{rigidPath} [lod {lodIndex}, parts {leftPartIndex}/{rightPartIndex}]: {detail}";
 
         private static List<MeshMergeGroup> BuildMeshMergeGroups(
             IReadOnlyList<RmvModel> models,
@@ -3717,6 +4050,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Mesh parts before merging: {state.MeshPartsBeforeMerging}");
                 sb.AppendLine($"Mesh parts after merging: {state.MeshPartsAfterMerging}");
                 sb.AppendLine($"Mesh parts eliminated: {state.MeshPartsEliminated}");
+                sb.AppendLine($"Mesh merge near-miss blocker occurrences: {state.MeshMergeBlockerCounts.Values.Sum()}");
             }
             sb.AppendLine($"Optimize geometry: {(state.OptimizeGeometryEnabled ? "YES" : "NO")}");
             if (state.OptimizeGeometryEnabled)
@@ -3923,6 +4257,29 @@ namespace Editors.KitbasherEditor.Services
                         sb.AppendLine($"  New part: {entry.NewPartIndex}");
                         sb.AppendLine($"  Vertices: {entry.VertexCount}");
                         sb.AppendLine($"  Material: {entry.MaterialPath}");
+                    }
+                }
+
+                sb.AppendLine();
+                sb.AppendLine("Mesh merge blocker diagnostics");
+                sb.AppendLine("------------------------------");
+                sb.AppendLine("Counts below are near-miss part pairs/groups; unrelated parts are intentionally omitted.");
+                if (state.MeshMergeBlockerCounts.Count == 0)
+                {
+                    sb.AppendLine("(none)");
+                }
+                else
+                {
+                    foreach (var blocker in state.MeshMergeBlockerCounts
+                                 .OrderByDescending(x => x.Value)
+                                 .ThenBy(x => x.Key, StringComparer.Ordinal))
+                    {
+                        sb.AppendLine($"{blocker.Key}: {blocker.Value}");
+                        if (state.MeshMergeBlockerExamples.TryGetValue(blocker.Key, out var examples))
+                        {
+                            foreach (var example in examples)
+                                sb.AppendLine($"  Example: {example}");
+                        }
                     }
                 }
 
@@ -4400,6 +4757,10 @@ namespace Editors.KitbasherEditor.Services
             public int MeshPartsEliminated => MeshPartsBeforeMerging - MeshPartsAfterMerging;
             public List<MeshMergeReportEntry> MeshMergeEntries { get; } = [];
             public List<string> MeshMergeSkipMessages { get; } = [];
+            public Dictionary<string, int> MeshMergeBlockerCounts { get; } = new(StringComparer.Ordinal);
+            public Dictionary<string, List<string>> MeshMergeBlockerExamples { get; } = new(StringComparer.Ordinal);
+            public Dictionary<string, MaterialMergeDiagnosticSnapshot?> MeshMergeMaterialDiagnostics { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public int MeshMergeInvariantGroupCount { get; set; }
             public int MeshMergeInvariantLodCount { get; set; }
             public int MeshMergeInvariantWsModelCount { get; set; }
@@ -4442,6 +4803,25 @@ namespace Editors.KitbasherEditor.Services
                 OptimizeGeometryEnabled = optimizeGeometryEnabled;
             }
         }
+
+        private sealed record MaterialMergeDiagnosticSnapshot(
+            string RenderingIdentity,
+            string Shader,
+            string TextureIdentity,
+            string NonTextureIdentity);
+
+        private sealed record MaterialMergeDiagnosticComparison(
+            bool PathsEqual,
+            bool SemanticallyEquivalent,
+            string Reason,
+            string Detail);
+
+        private sealed record RmvMergeDiagnosticComponents(
+            string ModelTypeFlag,
+            string RenderFlag,
+            string VertexFormat,
+            string ShaderName,
+            string MaterialPayloadHash);
 
         private sealed record MeshMergeReportEntry(
             string RigidPath,
