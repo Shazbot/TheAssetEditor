@@ -1401,7 +1401,7 @@ namespace Editors.KitbasherEditor.Services
             {
                 var changed = false;
                 var batchByMesh = BuildBatchIndexByMesh(working);
-                var candidatePairs = new HashSet<AtlasBatchPair>();
+                var candidatePairWeights = new Dictionary<AtlasBatchPair, int>();
 
                 foreach (var group in affinityGroups)
                 {
@@ -1416,16 +1416,30 @@ namespace Editors.KitbasherEditor.Services
                     {
                         for (var right = left + 1; right < occupiedBatches.Length; right++)
                         {
-                            candidatePairs.Add(new AtlasBatchPair(
+                            var pair = new AtlasBatchPair(
                                 occupiedBatches[left],
-                                occupiedBatches[right]));
+                                occupiedBatches[right]);
+                            candidatePairWeights[pair] =
+                                candidatePairWeights.GetValueOrDefault(pair) + 1;
                         }
                     }
                 }
 
-                foreach (var pair in candidatePairs
-                             .OrderBy(x => x.FirstBatchId)
-                             .ThenBy(x => x.SecondBatchId))
+                // Replanning a pair invokes the real atlas packer repeatedly. Bound the search
+                // for pathological packs while prioritizing pairs that can reunite the largest
+                // number of otherwise-mergeable groups.
+                const int maxMergeAwareBatchPairsPerPass = 64;
+                var candidatePairs = candidatePairWeights
+                    .OrderByDescending(x => x.Value)
+                    .ThenBy(x => x.Key.FirstBatchId)
+                    .ThenBy(x => x.Key.SecondBatchId)
+                    .Take(maxMergeAwareBatchPairsPerPass)
+                    .Select(x => x.Key)
+                    .ToList();
+
+                state.MergeAwareBatchPairsConsidered += candidatePairs.Count;
+
+                foreach (var pair in candidatePairs)
                 {
                     var leftIndex = pair.FirstBatchId;
                     var rightIndex = pair.SecondBatchId;
@@ -4854,6 +4868,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas non-contiguous split evaluations: {state.AtlasNonContiguousSplitEvaluations}");
             sb.AppendLine($"Atlas pixels saved by split optimization: {state.AtlasPixelAreaSavedByOptimizedSplits:N0}");
             sb.AppendLine($"Atlas pixels saved by non-contiguous splits: {state.AtlasPixelAreaSavedByNonContiguousSplits:N0}");
+            sb.AppendLine($"Merge-aware batch pairs considered: {state.MergeAwareBatchPairsConsidered}");
             sb.AppendLine($"Merge-aware repartition evaluations: {state.MergeAwareRepartitionEvaluations}");
             sb.AppendLine($"Merge-aware repartitions accepted: {state.MergeAwareRepartitionsAccepted}");
             sb.AppendLine($"Merge-aware repartition pixels saved: {state.MergeAwareRepartitionPixelsSaved:N0}");
@@ -6341,6 +6356,7 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasNonContiguousSplitEvaluations { get; set; }
             public long AtlasPixelAreaSavedByOptimizedSplits { get; set; }
             public long AtlasPixelAreaSavedByNonContiguousSplits { get; set; }
+            public int MergeAwareBatchPairsConsidered { get; set; }
             public int MergeAwareRepartitionEvaluations { get; set; }
             public int MergeAwareRepartitionsAccepted { get; set; }
             public long MergeAwareRepartitionPixelsSaved { get; set; }
