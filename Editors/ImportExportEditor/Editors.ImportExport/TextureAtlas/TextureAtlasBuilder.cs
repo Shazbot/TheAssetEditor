@@ -58,6 +58,19 @@ namespace Editors.ImportExport.TextureAtlas
         byte R,
         byte A);
 
+    public sealed class TextureAtlasBuildStatistics
+    {
+        public int DecodedSourceCount { get; internal set; }
+        public int MipLevelsBuilt { get; internal set; }
+        public int RowCopyAttempts { get; internal set; }
+        public int RowCopyPlacements { get; internal set; }
+        public int RowCopyFallbacks { get; internal set; }
+        public long RowCopyPixels { get; internal set; }
+        public long MappedCorePixels { get; internal set; }
+        public long ConstantCorePixels { get; internal set; }
+        public long PaddingPixels { get; internal set; }
+    }
+
     public static class TextureAtlasBuilder
     {
         public const int DefaultPadding = 8;
@@ -285,7 +298,8 @@ namespace Editors.ImportExport.TextureAtlas
             int? outputWidth = null,
             int? outputHeight = null,
             Action<int, int, int, byte[]>? mipConsumer = null,
-            bool retainMipPixels = true)
+            bool retainMipPixels = true,
+            TextureAtlasBuildStatistics? statistics = null)
         {
             var atlasWidth = outputWidth ?? plan.Width;
             var atlasHeight = outputHeight ?? plan.Height;
@@ -317,6 +331,9 @@ namespace Editors.ImportExport.TextureAtlas
                     decodedSources[id] = image;
                 }
 
+                if (statistics != null)
+                    statistics.DecodedSourceCount = decodedSources.Count;
+
                 var mipPixels = new List<byte[]>();
                 var mipWidth = atlasWidth;
                 var mipHeight = atlasHeight;
@@ -325,6 +342,9 @@ namespace Editors.ImportExport.TextureAtlas
                 while (true)
                 {
                     Pulse();
+                    if (statistics != null)
+                        statistics.MipLevelsBuilt++;
+
                     var atlasPixels = new byte[checked(mipWidth * mipHeight * 4)];
                     var coreOccupancy = new bool[checked(mipWidth * mipHeight)];
 
@@ -356,28 +376,44 @@ namespace Editors.ImportExport.TextureAtlas
 
                         var bounds = GetMipPlacementBounds(plan, placement, mipWidth, mipHeight);
 
-                        if (!isConstant &&
-                            TryCopyCorePlacementRows(
-                                atlasPixels,
-                                coreOccupancy,
-                                source!,
-                                sourceMip!,
-                                plan,
-                                placement,
-                                bounds,
-                                mipWidth,
-                                mipHeight,
-                                forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true,
-                                requireUnoccupiedCheck: mipLevel != 0))
+                        if (!isConstant)
                         {
-                            continue;
+                            if (statistics != null)
+                                statistics.RowCopyAttempts++;
+
+                            if (TryCopyCorePlacementRows(
+                                    atlasPixels,
+                                    coreOccupancy,
+                                    source!,
+                                    sourceMip!,
+                                    plan,
+                                    placement,
+                                    bounds,
+                                    mipWidth,
+                                    mipHeight,
+                                    forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true,
+                                    requireUnoccupiedCheck: mipLevel != 0))
+                            {
+                                if (statistics != null)
+                                {
+                                    statistics.RowCopyPlacements++;
+                                    statistics.RowCopyPixels +=
+                                        (long)(bounds.Right - bounds.Left) *
+                                        (bounds.Bottom - bounds.Top);
+                                }
+
+                                continue;
+                            }
+
+                            if (statistics != null)
+                                statistics.RowCopyFallbacks++;
                         }
 
                         var forceOpaqueAlpha =
                             forceOpaqueAlphaSourceIds?.Contains(placement.Id) == true;
                         if (!isConstant)
                         {
-                            CopyMappedCorePlacement(
+                            var mappedPixels = CopyMappedCorePlacement(
                                 atlasPixels,
                                 coreOccupancy,
                                 source!,
@@ -388,6 +424,8 @@ namespace Editors.ImportExport.TextureAtlas
                                 mipWidth,
                                 mipHeight,
                                 forceOpaqueAlpha);
+                            if (statistics != null)
+                                statistics.MappedCorePixels += mappedPixels;
                             continue;
                         }
 
@@ -407,6 +445,8 @@ namespace Editors.ImportExport.TextureAtlas
                                     constantColor,
                                     forceOpaqueAlpha);
                                 coreOccupancy[index] = true;
+                                if (statistics != null)
+                                    statistics.ConstantCorePixels++;
                             }
                         }
                     }
@@ -455,7 +495,7 @@ namespace Editors.ImportExport.TextureAtlas
                         // padded rectangle, including every core texel, merely to discover that
                         // coreOccupancy was already true. On large atlases that effectively
                         // traversed most of the atlas twice.
-                        CopyPaddingRectangle(
+                        var paddingPixels = CopyPaddingRectangle(
                             atlasPixels,
                             coreOccupancy,
                             source,
@@ -471,7 +511,9 @@ namespace Editors.ImportExport.TextureAtlas
                             right,
                             bounds.Top,
                             forceOpaqueAlpha);
-                        CopyPaddingRectangle(
+                        if (statistics != null)
+                            statistics.PaddingPixels += paddingPixels;
+                        var paddingPixels = CopyPaddingRectangle(
                             atlasPixels,
                             coreOccupancy,
                             source,
@@ -487,7 +529,9 @@ namespace Editors.ImportExport.TextureAtlas
                             right,
                             bottom,
                             forceOpaqueAlpha);
-                        CopyPaddingRectangle(
+                        if (statistics != null)
+                            statistics.PaddingPixels += paddingPixels;
+                        var paddingPixels = CopyPaddingRectangle(
                             atlasPixels,
                             coreOccupancy,
                             source,
@@ -503,7 +547,9 @@ namespace Editors.ImportExport.TextureAtlas
                             bounds.Left,
                             bounds.Bottom,
                             forceOpaqueAlpha);
-                        CopyPaddingRectangle(
+                        if (statistics != null)
+                            statistics.PaddingPixels += paddingPixels;
+                        var paddingPixels = CopyPaddingRectangle(
                             atlasPixels,
                             coreOccupancy,
                             source,
@@ -519,6 +565,8 @@ namespace Editors.ImportExport.TextureAtlas
                             right,
                             bounds.Bottom,
                             forceOpaqueAlpha);
+                        if (statistics != null)
+                            statistics.PaddingPixels += paddingPixels;
                     }
 
                     mipConsumer?.Invoke(mipLevel, mipWidth, mipHeight, atlasPixels);
@@ -754,7 +802,7 @@ namespace Editors.ImportExport.TextureAtlas
             return true;
         }
 
-        private static void CopyMappedCorePlacement(
+        private static long CopyMappedCorePlacement(
             byte[] atlasPixels,
             bool[] coreOccupancy,
             IImage source,
@@ -768,7 +816,9 @@ namespace Editors.ImportExport.TextureAtlas
         {
             var width = bounds.Right - bounds.Left;
             if (width <= 0 || bounds.Bottom <= bounds.Top)
-                return;
+                return 0;
+
+            long writtenPixels = 0;
 
             // X mapping is identical for every destination row. Precompute it once instead of
             // repeating floating-point transform/floor/modulo work for every pixel.
@@ -815,11 +865,14 @@ namespace Editors.ImportExport.TextureAtlas
                         ? byte.MaxValue
                         : source.Data[sourceOffset + 3];
                     coreOccupancy[occupancyIndex] = true;
+                    writtenPixels++;
                 }
             }
+
+            return writtenPixels;
         }
 
-        private static void CopyPaddingRectangle(
+        private static long CopyPaddingRectangle(
             byte[] atlasPixels,
             bool[] coreOccupancy,
             IImage? source,
@@ -837,7 +890,9 @@ namespace Editors.ImportExport.TextureAtlas
             bool forceOpaqueAlpha)
         {
             if (left >= right || top >= bottom)
-                return;
+                return 0;
+
+            long writtenPixels = 0;
 
             if (isConstant)
             {
@@ -856,10 +911,11 @@ namespace Editors.ImportExport.TextureAtlas
                             y,
                             constantColor,
                             forceOpaqueAlpha);
+                        writtenPixels++;
                     }
                 }
 
-                return;
+                return writtenPixels;
             }
 
             if (source == null || sourceMip == null)
@@ -917,8 +973,11 @@ namespace Editors.ImportExport.TextureAtlas
                     atlasPixels[pixelOffset + 3] = forceOpaqueAlpha
                         ? byte.MaxValue
                         : source.Data[sourceOffset + 3];
+                    writtenPixels++;
                 }
             }
+
+            return writtenPixels;
         }
 
         public static (int Width, int Height) GetDimensions(byte[] ddsBytes)
