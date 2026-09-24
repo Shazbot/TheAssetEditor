@@ -1255,7 +1255,10 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var pixelOptimized = OptimizeMaxSizeBatchesForPixelArea(state, batches);
-            return OptimizeBatchesForMergeAffinity(state, pixelOptimized);
+            var localityOptimized = packWide
+                ? OptimizeBatchesForVmdLocality(state, pixelOptimized)
+                : pixelOptimized;
+            return OptimizeBatchesForMergeAffinity(state, localityOptimized);
         }
 
         private static List<List<AtlasCandidate>> OptimizeMaxSizeBatchesForPixelArea(
@@ -1379,6 +1382,363 @@ namespace Editors.KitbasherEditor.Services
 
             OptimizeMaxSizeBatchForPixelArea(state, bestLeft, output);
             OptimizeMaxSizeBatchForPixelArea(state, bestRight, output);
+        }
+
+        private static List<List<AtlasCandidate>> OptimizeBatchesForVmdLocality(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            var working = batches.Select(batch => batch.ToList()).ToList();
+            if (!state.ShareAtlasesAcrossVmdsEnabled || working.Count == 0)
+                return working;
+
+            var allCandidates = working.SelectMany(batch => batch).ToList();
+            var rootsByMesh = BuildCandidateRootVmdPaths(state, allCandidates);
+            var affinityGroups = BuildMergeAffinityGroups(allCandidates);
+            var optimized = new List<List<AtlasCandidate>>();
+
+            foreach (var batch in working)
+            {
+                OptimizeBatchForVmdLocality(
+                    state,
+                    batch,
+                    rootsByMesh,
+                    affinityGroups,
+                    optimized);
+            }
+
+            return optimized;
+        }
+
+        private static Dictionary<MeshKey, HashSet<string>> BuildCandidateRootVmdPaths(
+            BatchState state,
+            IEnumerable<AtlasCandidate> candidates)
+        {
+            var rootsByWsModel = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (rootVmdPath, reachableWsModels) in state.ReachableWsModelsByRoot)
+            {
+                var normalizedRoot = Normalize(rootVmdPath);
+                foreach (var reachableWsModel in reachableWsModels)
+                {
+                    var wsModelPath = Normalize(reachableWsModel);
+                    if (!rootsByWsModel.TryGetValue(wsModelPath, out var roots))
+                    {
+                        roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        rootsByWsModel[wsModelPath] = roots;
+                    }
+
+                    roots.Add(normalizedRoot);
+                }
+            }
+
+            var result = new Dictionary<MeshKey, HashSet<string>>();
+            foreach (var candidate in candidates)
+            {
+                var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var usage in candidate.Usages)
+                {
+                    if (rootsByWsModel.TryGetValue(
+                            Normalize(usage.WsModelPath),
+                            out var usageRoots))
+                    {
+                        roots.UnionWith(usageRoots);
+                    }
+                }
+
+                if (roots.Count == 0)
+                    roots.Add(Normalize(candidate.RootVmdPath));
+
+                result[candidate.Key] = roots;
+            }
+
+            return result;
+        }
+
+        private static int GetBatchRootCount(
+            IReadOnlyList<AtlasCandidate> candidates,
+            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
+        {
+            var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var candidate in candidates)
+            {
+                if (rootsByMesh.TryGetValue(candidate.Key, out var candidateRoots))
+                    roots.UnionWith(candidateRoots);
+                else
+                    roots.Add(Normalize(candidate.RootVmdPath));
+            }
+
+            return Math.Max(1, roots.Count);
+        }
+
+        private static long GetAtlasResidencyProxy(
+            long atlasPixels,
+            int rootCount)
+            => checked(atlasPixels * Math.Max(1, rootCount));
+
+        private static void OptimizeBatchForVmdLocality(
+            BatchState state,
+            List<AtlasCandidate> batch,
+            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups,
+            List<List<AtlasCandidate>> output)
+        {
+            const int maxAcceptedLocalitySplits = 64;
+            const int maxGlobalPixelIncreasePercent = 25;
+            const int minimumResidentPixelSavingPercent = 10;
+
+            if (batch.Count < 4 ||
+                state.VmdLocalitySplitsAccepted >= maxAcceptedLocalitySplits ||
+                !TryGetGeneratedAtlasPixelCost(
+                    state,
+                    batch,
+                    out var baselinePixels,
+                    out _))
+            {
+                output.Add(batch);
+                return;
+            }
+
+            var baselineRootCount = GetBatchRootCount(batch, rootsByMesh);
+            if (baselineRootCount <= 1)
+            {
+                output.Add(batch);
+                return;
+            }
+
+            var baselineResidentPixels = GetAtlasResidencyProxy(
+                baselinePixels,
+                baselineRootCount);
+            var baselineAffinity = CalculateMergeAffinityScore(
+                [batch],
+                affinityGroups);
+
+            AtlasBatchSplitProposal? bestProposal = null;
+            var bestResidentPixels = baselineResidentPixels;
+            var bestGlobalPixels = baselinePixels;
+            var bestAffinity = baselineAffinity;
+
+            foreach (var proposal in CreateVmdLocalitySplitProposals(
+                         batch,
+                         rootsByMesh))
+            {
+                state.VmdLocalitySplitEvaluations++;
+
+                if (!TryGetGeneratedAtlasPixelCost(
+                        state,
+                        proposal.Left,
+                        out var leftPixels,
+                        out _) ||
+                    !TryGetGeneratedAtlasPixelCost(
+                        state,
+                        proposal.Right,
+                        out var rightPixels,
+                        out _))
+                {
+                    continue;
+                }
+
+                var combinedPixels = checked(leftPixels + rightPixels);
+                if (combinedPixels * 100 >
+                    baselinePixels * (100L + maxGlobalPixelIncreasePercent))
+                {
+                    continue;
+                }
+
+                var leftRootCount = GetBatchRootCount(proposal.Left, rootsByMesh);
+                var rightRootCount = GetBatchRootCount(proposal.Right, rootsByMesh);
+                var combinedResidentPixels = checked(
+                    GetAtlasResidencyProxy(leftPixels, leftRootCount) +
+                    GetAtlasResidencyProxy(rightPixels, rightRootCount));
+
+                if (combinedResidentPixels * 100 >
+                    baselineResidentPixels * (100L - minimumResidentPixelSavingPercent))
+                {
+                    continue;
+                }
+
+                var proposedAffinity = CalculateMergeAffinityScore(
+                    [proposal.Left, proposal.Right],
+                    affinityGroups);
+                if (proposedAffinity < baselineAffinity)
+                    continue;
+
+                if (combinedResidentPixels < bestResidentPixels ||
+                    (combinedResidentPixels == bestResidentPixels &&
+                     combinedPixels < bestGlobalPixels) ||
+                    (combinedResidentPixels == bestResidentPixels &&
+                     combinedPixels == bestGlobalPixels &&
+                     proposedAffinity > bestAffinity))
+                {
+                    bestProposal = proposal;
+                    bestResidentPixels = combinedResidentPixels;
+                    bestGlobalPixels = combinedPixels;
+                    bestAffinity = proposedAffinity;
+                }
+            }
+
+            if (bestProposal == null)
+            {
+                output.Add(batch);
+                return;
+            }
+
+            state.VmdLocalitySplitsAccepted++;
+            state.VmdLocalityResidentPixelsSaved = checked(
+                state.VmdLocalityResidentPixelsSaved +
+                baselineResidentPixels -
+                bestResidentPixels);
+            state.VmdLocalityGlobalPixelsAdded = checked(
+                state.VmdLocalityGlobalPixelsAdded +
+                Math.Max(0, bestGlobalPixels - baselinePixels));
+
+            OptimizeBatchForVmdLocality(
+                state,
+                bestProposal.Left,
+                rootsByMesh,
+                affinityGroups,
+                output);
+            OptimizeBatchForVmdLocality(
+                state,
+                bestProposal.Right,
+                rootsByMesh,
+                affinityGroups,
+                output);
+        }
+
+        private static IReadOnlyList<AtlasBatchSplitProposal> CreateVmdLocalitySplitProposals(
+            IReadOnlyList<AtlasCandidate> batch,
+            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
+        {
+            var groups = batch
+                .GroupBy(GetAtlasPlanningSourceIdentity)
+                .Select(group =>
+                {
+                    var candidates = group
+                        .OrderBy(x => x.RootVmdPath, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(x => x.Key.LodIndex)
+                        .ThenBy(x => x.Key.PartIndex)
+                        .ToList();
+                    return new AtlasPlanningCandidateGroup(
+                        group.Key,
+                        candidates,
+                        candidates[0],
+                        GetCanonicalCrop(candidates[0]).Crop);
+                })
+                .ToList();
+
+            if (groups.Count < 2)
+                return [];
+
+            var rootsByGroup = groups.ToDictionary(
+                group => group.Identity,
+                group =>
+                {
+                    var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var candidate in group.Candidates)
+                    {
+                        if (rootsByMesh.TryGetValue(candidate.Key, out var candidateRoots))
+                            roots.UnionWith(candidateRoots);
+                        else
+                            roots.Add(Normalize(candidate.RootVmdPath));
+                    }
+
+                    return roots;
+                });
+
+            var distinctRoots = rootsByGroup.Values
+                .SelectMany(roots => roots)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (distinctRoots.Count <= 1)
+                return [];
+
+            var proposals = new List<AtlasBatchSplitProposal>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            void AddProposal(IEnumerable<AtlasPlanningCandidateGroup> leftGroups)
+            {
+                var leftGroupList = leftGroups.ToList();
+                if (leftGroupList.Count == 0 || leftGroupList.Count == groups.Count)
+                    return;
+
+                var leftIdentities = leftGroupList
+                    .Select(group => group.Identity)
+                    .ToHashSet();
+                var rightGroupList = groups
+                    .Where(group => !leftIdentities.Contains(group.Identity))
+                    .ToList();
+                var left = leftGroupList.SelectMany(group => group.Candidates).ToList();
+                var right = rightGroupList.SelectMany(group => group.Candidates).ToList();
+                if (left.Count < 2 || right.Count < 2)
+                    return;
+
+                var signature = string.Join(
+                    "\n",
+                    left
+                        .Select(candidate => candidate.Key.ToString())
+                        .OrderBy(value => value, StringComparer.Ordinal));
+                if (!seen.Add(signature))
+                    return;
+
+                proposals.Add(new AtlasBatchSplitProposal(left, right));
+            }
+
+            // First try isolating the assets reachable from each root. Shared source/crop
+            // identities stay indivisible, so genuinely reused placements remain shared.
+            foreach (var root in distinctRoots
+                         .OrderByDescending(root =>
+                             groups.Count(group => rootsByGroup[group.Identity].Contains(root)))
+                         .ThenBy(root => root, StringComparer.OrdinalIgnoreCase)
+                         .Take(24))
+            {
+                AddProposal(groups.Where(group =>
+                    rootsByGroup[group.Identity].Contains(root)));
+            }
+
+            // Then cluster equal/similar root signatures. This catches unrelated VMD families
+            // that happened to pack efficiently together under the old texture-first ordering.
+            string RootSignature(AtlasPlanningCandidateGroup group)
+                => string.Join(
+                    "\u001f",
+                    rootsByGroup[group.Identity]
+                        .OrderBy(root => root, StringComparer.OrdinalIgnoreCase));
+
+            var ordered = groups
+                .OrderBy(RootSignature, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(group => BuildAtlasPlanningOrderKey(group.Representative), StringComparer.Ordinal)
+                .ToList();
+            var boundaries = new List<int>();
+            for (var index = 1; index < ordered.Count; index++)
+            {
+                if (!RootSignature(ordered[index - 1]).Equals(
+                        RootSignature(ordered[index]),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    boundaries.Add(index);
+                }
+            }
+
+            const int maxOrderedLocalitySplitEvaluations = 24;
+            IEnumerable<int> selectedBoundaries = boundaries;
+            if (boundaries.Count > maxOrderedLocalitySplitEvaluations)
+            {
+                selectedBoundaries = Enumerable.Range(0, maxOrderedLocalitySplitEvaluations)
+                    .Select(index => boundaries[
+                        index * (boundaries.Count - 1) /
+                        (maxOrderedLocalitySplitEvaluations - 1)])
+                    .Distinct();
+            }
+
+            foreach (var boundary in selectedBoundaries)
+                AddProposal(ordered.Take(boundary));
+
+            const int maxLocalitySplitProposals = 48;
+            return proposals.Count <= maxLocalitySplitProposals
+                ? proposals
+                : proposals.Take(maxLocalitySplitProposals).ToList();
         }
 
         private static List<List<AtlasCandidate>> OptimizeBatchesForMergeAffinity(
