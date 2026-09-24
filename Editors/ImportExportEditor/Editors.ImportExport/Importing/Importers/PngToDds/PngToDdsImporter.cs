@@ -409,10 +409,10 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             });
 
             var maxDegreeOfParallelism =
-                Environment.ProcessorCount >= 3 &&
+                Environment.ProcessorCount >= 4 &&
                 width == 8192 &&
                 height == 8192
-                    ? 3
+                    ? 4
                     : 2;
             var parallelStopwatch = Stopwatch.StartNew();
             Parallel.Invoke(
