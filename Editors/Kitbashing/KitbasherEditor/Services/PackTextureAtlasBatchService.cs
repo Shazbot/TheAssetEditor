@@ -25,6 +25,7 @@ namespace Editors.KitbasherEditor.Services
     {
         private const string AtlasDirectory = @"textures\asset_editor\atlases";
         private const string AtlasProfilingEnvironmentVariable = "ASSET_EDITOR_ATLAS_PROFILING";
+        private const int PackAtlasMaxSize = 4096;
         private static readonly bool AtlasProfilingEnabled =
             IsEnabledEnvironmentVariable(AtlasProfilingEnvironmentVariable);
 
@@ -2133,8 +2134,8 @@ namespace Editors.KitbasherEditor.Services
                     [1, 2, Math.Max(1, groupCount / 2), Math.Max(1, groupCount - 2)]);
             }
 
-            // Wide and tall crops frequently combine into a square 8K atlas. Separating them can
-            // turn one 8192x8192 batch into two substantially cheaper rectangular atlases.
+            // Wide and tall crops frequently combine into a max-size square atlas. Separating them can
+            // turn one expensive 4096x4096 batch into two substantially cheaper rectangular atlases.
             AddProposals(
                 groups
                     .OrderBy(x => GetCropAspectScore(x.Crop))
@@ -2224,8 +2225,8 @@ namespace Editors.KitbasherEditor.Services
                         pixelCost +
                         (long)outputDimensions.Width * outputDimensions.Height);
 
-                    if (outputDimensions.Width == TextureAtlasBuilder.DefaultMaxAtlasSize ||
-                        outputDimensions.Height == TextureAtlasBuilder.DefaultMaxAtlasSize)
+                    if (outputDimensions.Width == PackAtlasMaxSize ||
+                        outputDimensions.Height == PackAtlasMaxSize)
                     {
                         touchesMaxSize = true;
                     }
@@ -2307,7 +2308,10 @@ namespace Editors.KitbasherEditor.Services
                 deduplicateByContent);
             try
             {
-                var mergedPlan = TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(mergedBatch.Sources));
+                var mergedPlan = TextureAtlasBuilder.CreatePlan(
+                    ToAtlasLayoutSources(mergedBatch.Sources),
+                    TextureAtlasBuilder.DefaultPadding,
+                    PackAtlasMaxSize);
                 ValidateChannelAtlasDimensions(mergedBatch, mergedPlan);
                 return (mergedBatch, mergedPlan);
             }
@@ -2319,7 +2323,10 @@ namespace Editors.KitbasherEditor.Services
                     candidates,
                     mergeCompatibleCrops: false,
                     deduplicateByContent);
-                var exactPlan = TextureAtlasBuilder.CreatePlan(ToAtlasLayoutSources(exactBatch.Sources));
+                var exactPlan = TextureAtlasBuilder.CreatePlan(
+                    ToAtlasLayoutSources(exactBatch.Sources),
+                    TextureAtlasBuilder.DefaultPadding,
+                    PackAtlasMaxSize);
                 ValidateChannelAtlasDimensions(exactBatch, exactPlan);
                 return (exactBatch, exactPlan);
             }
@@ -2343,7 +2350,10 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 if (sourceDimensions.Count > 0)
-                    _ = TextureAtlasBuilder.CalculateOutputDimensions(plan, sourceDimensions);
+                    _ = TextureAtlasBuilder.CalculateOutputDimensions(
+                        plan,
+                        sourceDimensions,
+                        PackAtlasMaxSize);
             }
         }
 
@@ -2503,7 +2513,10 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var outputDimensions = sourceDimensions.Count > 0
-                    ? TextureAtlasBuilder.CalculateOutputDimensions(plan, sourceDimensions)
+                    ? TextureAtlasBuilder.CalculateOutputDimensions(
+                        plan,
+                        sourceDimensions,
+                        PackAtlasMaxSize)
                     : (plan.Width, plan.Height);
 
                 var fileName = $"{atlasStem}_{channel.Suffix}.dds";
