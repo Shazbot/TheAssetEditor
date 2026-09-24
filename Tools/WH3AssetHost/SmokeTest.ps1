@@ -76,6 +76,7 @@ $richOutputPath = Join-Path $OutputRoot 'smoke-vmd-skeleton-material-animation.g
 $pipeName = 'wh3asset-smoke-' + $PID + '-' + [Guid]::NewGuid().ToString('N')
 
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
+$maxFrameBytes = 8MB
 $pipe = $null
 $hostProcess = $null
 $shutdownSent = $false
@@ -108,7 +109,7 @@ function Write-JsonFrame {
 
     $json = $Value | ConvertTo-Json -Compress -Depth 20
     $payload = $utf8.GetBytes($json)
-    if ($payload.Length -eq 0 -or $payload.Length -gt 1MB) {
+    if ($payload.Length -eq 0 -or $payload.Length -gt $maxFrameBytes) {
         throw "The request frame has an invalid payload length: $($payload.Length)."
     }
 
@@ -123,7 +124,7 @@ function Read-JsonFrame {
 
     $header = Read-ExactBytes -Stream $Stream -Count 4
     $payloadLength = [BitConverter]::ToUInt32($header, 0)
-    if ($payloadLength -eq 0 -or $payloadLength -gt 1MB) {
+    if ($payloadLength -eq 0 -or $payloadLength -gt $maxFrameBytes) {
         throw "The host returned an invalid frame length: $payloadLength."
     }
 

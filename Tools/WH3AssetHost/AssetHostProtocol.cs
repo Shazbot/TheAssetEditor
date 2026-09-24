@@ -186,7 +186,10 @@ public sealed record AssetHostResponse(
 public static class AssetHostProtocol
 {
     public const int ProtocolVersion = 1;
-    public const int MaxFramePayloadBytes = 1024 * 1024;
+    // Animation catalogs can contain thousands of references plus fragment and
+    // metadata identities. Keep the frame bounded, but large enough for the
+    // catalog returned by large WH3 skeletons.
+    public const int MaxFramePayloadBytes = 8 * 1024 * 1024;
     public static string HostVersion { get; } =
         typeof(AssetHostProtocol).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion

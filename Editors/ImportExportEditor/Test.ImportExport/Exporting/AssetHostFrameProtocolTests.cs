@@ -32,7 +32,7 @@ public sealed class AssetHostFrameProtocolTests
     }
 
     [Test]
-    public void ReadFrameAsync_RejectsPayloadOverOneMiB()
+    public void ReadFrameAsync_RejectsPayloadOverConfiguredLimit()
     {
         var header = new byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(
