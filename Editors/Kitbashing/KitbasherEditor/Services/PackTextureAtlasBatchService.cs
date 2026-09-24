@@ -2540,22 +2540,47 @@ namespace Editors.KitbasherEditor.Services
             var replacements = new List<NewPackFileEntry>(total);
 
             var serializeStopwatch = Stopwatch.StartNew();
-            foreach (var rigidPath in state.ModifiedRigids)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                ReportProgress(progress, "Serializing modified rigids", ++current, total, rigidPath);
+            var rigidPaths = state.ModifiedRigids
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var rigidReplacements = new NewPackFileEntry[rigidPaths.Length];
+            var serializedRigidCount = 0;
+            var rigidSerializationWorkers = Math.Min(2, Math.Max(1, Environment.ProcessorCount));
 
-                var rmv = state.RigidModels[rigidPath];
-                rmv.RecalculateOffsets();
-                // ValidateOutput reloads every rewritten rigid after all replacements are
-                // committed, so doing ModelFactory.Save's immediate round-trip load here would
-                // validate the same bytes twice.
-                var data = ModelFactory.Create().Save(
-                    rmv,
-                    validateByReloading: false,
-                    logProgress: false);
-                replacements.Add(CreateReplacementEntry(rigidPath, data));
-            }
+            Parallel.For(
+                0,
+                rigidPaths.Length,
+                new ParallelOptions
+                {
+                    CancellationToken = cancellationToken,
+                    MaxDegreeOfParallelism = rigidSerializationWorkers
+                },
+                rigidIndex =>
+                {
+                    var rigidPath = rigidPaths[rigidIndex];
+                    var rmv = state.RigidModels[rigidPath];
+                    rmv.RecalculateOffsets();
+
+                    // ValidateOutput reloads every rewritten rigid after all replacements are
+                    // committed, so doing ModelFactory.Save's immediate round-trip load here would
+                    // validate the same bytes twice.
+                    var data = ModelFactory.Create().Save(
+                        rmv,
+                        validateByReloading: false,
+                        logProgress: false);
+                    rigidReplacements[rigidIndex] = CreateReplacementEntry(rigidPath, data);
+
+                    var completed = Interlocked.Increment(ref serializedRigidCount);
+                    ReportProgress(
+                        progress,
+                        "Serializing modified rigids",
+                        completed,
+                        total,
+                        rigidPath);
+                });
+
+            replacements.AddRange(rigidReplacements);
+            current += rigidPaths.Length;
             AddPhaseDuration(state, "Serialize modified rigids", serializeStopwatch.Elapsed);
 
             serializeStopwatch.Restart();
