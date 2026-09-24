@@ -2631,6 +2631,7 @@ namespace Editors.KitbasherEditor.Services
                         assignmentsByWsModel);
 
                     var groups = BuildMeshMergeGroups(
+                        state,
                         originalModels,
                         lodIndex,
                         wsModels.Select(x => x.Key).ToList(),
@@ -3307,6 +3308,7 @@ namespace Editors.KitbasherEditor.Services
             => $"{rigidPath} [lod {lodIndex}, parts {leftPartIndex}/{rightPartIndex}]: {detail}";
 
         private static List<MeshMergeGroup> BuildMeshMergeGroups(
+            BatchState state,
             IReadOnlyList<RmvModel> models,
             int lodIndex,
             IReadOnlyList<string> wsModelPaths,
@@ -3320,10 +3322,14 @@ namespace Editors.KitbasherEditor.Services
                     .Select(wsPath => assignmentsByWsModel[wsPath][lodIndex][partIndex])
                     .ToArray();
 
+                var materialIdentities = materialPaths
+                    .Select(path => GetMeshMergeMaterialIdentity(state, path))
+                    .ToArray();
+
                 var identity = string.Join(
                     "\u001e",
                     GetRmvMergeIdentity(models[partIndex]),
-                    string.Join("\u001f", materialPaths.Select(Normalize)));
+                    string.Join("\u001f", materialIdentities));
 
                 if (!buckets.TryGetValue(identity, out var parts))
                 {
@@ -3390,9 +3396,33 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            foreach (var group in groups.Where(x => x.PartIndices.Count > 1))
+            {
+                var mergedAcrossEquivalentPaths = wsModelPaths.Any(wsPath =>
+                    group.PartIndices
+                        .Select(partIndex => Normalize(assignmentsByWsModel[wsPath][lodIndex][partIndex]))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Skip(1)
+                        .Any());
+
+                if (mergedAcrossEquivalentPaths)
+                    state.SemanticMaterialPathMergeParts += group.PartIndices.Count - 1;
+            }
+
             return groups
                 .OrderBy(x => x.PartIndices.Min())
                 .ToList();
+        }
+
+        private static string GetMeshMergeMaterialIdentity(
+            BatchState state,
+            string materialPath)
+        {
+            var normalizedPath = Normalize(materialPath);
+            var snapshot = GetMaterialMergeDiagnosticSnapshot(state, normalizedPath);
+            return snapshot == null
+                ? $"path:{normalizedPath}"
+                : $"render:{snapshot.RenderingIdentity}";
         }
 
         private static MeshMergeGroup CreateMeshMergeGroup(
