@@ -1674,6 +1674,7 @@ namespace Editors.KitbasherEditor.Services
                     channel.Type,
                     GameTypeEnum.Warhammer3);
 
+                var rasterStatistics = new TextureAtlasBuildStatistics();
                 var rasterStopwatch = Stopwatch.StartNew();
                 _ = TextureAtlasBuilder.BuildMipPixels(
                     plan,
@@ -1696,7 +1697,8 @@ namespace Editors.KitbasherEditor.Services
                     outputHeight: outputDimensions.Height,
                     mipConsumer: (mipLevel, mipWidth, mipHeight, pixels) =>
                         mipWriter.WriteMip(mipLevel, pixels),
-                    retainMipPixels: false);
+                    retainMipPixels: false,
+                    statistics: rasterStatistics);
                 rasterStopwatch.Stop();
                 var rasterElapsed = rasterStopwatch.Elapsed;
                 AddPhaseDuration(state, "Rasterize atlas pixels", rasterElapsed);
@@ -1709,6 +1711,7 @@ namespace Editors.KitbasherEditor.Services
                 var atlasPackFile = mipWriter.Complete(fileName);
                 compressionStopwatch.Stop();
                 var compressionElapsed = compressionStopwatch.Elapsed;
+                var compressionStatistics = mipWriter.LastCompressionStatistics;
                 AddPhaseDuration(state, "Compress atlas DDS", compressionElapsed);
                 var atlasPath = Normalize($@"{AtlasDirectory}\{fileName}");
 
@@ -1720,7 +1723,9 @@ namespace Editors.KitbasherEditor.Services
                     DDSFormatHelper.GetDDSFormat(GameTypeEnum.Warhammer3, channel.Type),
                     rasterElapsed,
                     compressionElapsed,
-                    usesLargeBcSplitCompression));
+                    usesLargeBcSplitCompression,
+                    rasterStatistics,
+                    compressionStatistics));
 
                 WriteFile(state.Output, atlasPath, atlasPackFile.DataSource.ReadData());
                 generatedPaths[channel.Slot] = atlasPath;
@@ -3539,6 +3544,35 @@ namespace Editors.KitbasherEditor.Services
                         $"{timing.TextureType} | {timing.Format} | " +
                         $"raster={rasterMs}ms | compress={compressionMs}ms | total={totalMs}ms | " +
                         $"split={(timing.UsedLargeBcSplitCompression ? "YES" : "NO")}");
+
+                    var raster = timing.RasterStatistics;
+                    sb.AppendLine(
+                        $"  raster paths: decoded={raster.DecodedSourceCount} | " +
+                        $"mips={raster.MipLevelsBuilt} | " +
+                        $"row-copy-attempts={raster.RowCopyAttempts} | " +
+                        $"row-copy-placements={raster.RowCopyPlacements} | " +
+                        $"row-copy-fallbacks={raster.RowCopyFallbacks} | " +
+                        $"row-copy-pixels={raster.RowCopyPixels} | " +
+                        $"mapped-core-pixels={raster.MappedCorePixels} | " +
+                        $"constant-core-pixels={raster.ConstantCorePixels} | " +
+                        $"padding-pixels={raster.PaddingPixels}");
+
+                    var compression = timing.CompressionStatistics;
+                    if (compression != null)
+                    {
+                        var stripeTimes = compression.Mip0StripeElapsed.Count == 0
+                            ? "-"
+                            : string.Join(
+                                ",",
+                                compression.Mip0StripeElapsed.Select(
+                                    x => ((long)Math.Round(x.TotalMilliseconds)).ToString()));
+                        sb.AppendLine(
+                            $"  compression jobs: workers={compression.MaxDegreeOfParallelism} | " +
+                            $"parallel-wall={Math.Round(compression.ParallelWallElapsed.TotalMilliseconds)}ms | " +
+                            $"mip0-stripes=[{stripeTimes}]ms | " +
+                            $"mip-tail={Math.Round(compression.MipTailElapsed.TotalMilliseconds)}ms | " +
+                            $"stitch={Math.Round(compression.StitchElapsed.TotalMilliseconds)}ms");
+                    }
                 }
             }
             sb.AppendLine();
@@ -4034,7 +4068,9 @@ namespace Editors.KitbasherEditor.Services
             DirectXTexNet.DXGI_FORMAT Format,
             TimeSpan RasterElapsed,
             TimeSpan CompressionElapsed,
-            bool UsedLargeBcSplitCompression)
+            bool UsedLargeBcSplitCompression,
+            TextureAtlasBuildStatistics RasterStatistics,
+            RawBgraMipChainCompressionStatistics? CompressionStatistics)
         {
             public TimeSpan TotalElapsed => RasterElapsed + CompressionElapsed;
         }
