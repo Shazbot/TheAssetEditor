@@ -103,6 +103,19 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                 _mipLevelCount = mipLevelCount;
             }
 
+            public bool UsesLargeBcSplitCompression
+            {
+                get
+                {
+                    var ddsFormat = DDSFormatHelper.GetDDSFormat(_gameType, _textureType);
+                    return ShouldUseLargeBcSplitCompression(
+                        ddsFormat,
+                        _width,
+                        _height,
+                        _mipLevelCount);
+                }
+            }
+
             public void WriteMip(int mipLevel, byte[] bgraPixels)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
