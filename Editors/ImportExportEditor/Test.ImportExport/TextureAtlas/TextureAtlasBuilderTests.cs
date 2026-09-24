@@ -369,6 +369,44 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void BuildMipPixels_DecodesSharedDdsBytesOnlyOnce()
+        {
+            using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.Clear(Color.CornflowerBlue);
+
+            using var pngStream = new MemoryStream();
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
+
+            var ddsPack = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "shared-source.dds");
+            var sharedBytes = ddsPack.DataSource.ReadData();
+
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [
+                    new TextureAtlasLayoutSource(0, 4, 4, 0, 0, 1, 1),
+                    new TextureAtlasLayoutSource(1, 4, 4, 0, 0, 1, 1)
+                ],
+                padding: 0);
+            var statistics = new TextureAtlasBuildStatistics();
+
+            _ = TextureAtlasBuilder.BuildMipPixels(
+                plan,
+                new Dictionary<int, byte[]>
+                {
+                    [0] = sharedBytes,
+                    [1] = sharedBytes
+                },
+                statistics: statistics);
+
+            Assert.That(statistics.DecodedSourceCount, Is.EqualTo(2));
+            Assert.That(statistics.UniqueDecodedDdsCount, Is.EqualTo(1));
+        }
+
+        [Test]
         public void BuildPng_CanOmitMissingSecondaryAtlasSources()
         {
             using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
