@@ -505,7 +505,8 @@ namespace Editors.ImportExport.TextureAtlas
                         // padded rectangle, including every core texel, merely to discover that
                         // coreOccupancy was already true. On large atlases that effectively
                         // traversed most of the atlas twice.
-                        var paddingPixels = CopyPaddingRectangle(
+                        long paddingPixels = 0;
+                        paddingPixels += CopyPaddingRectangle(
                             atlasPixels,
                             coreOccupancy,
                             source,
@@ -521,9 +522,8 @@ namespace Editors.ImportExport.TextureAtlas
                             right,
                             bounds.Top,
                             forceOpaqueAlpha);
-                        if (statistics != null)
-                            statistics.PaddingPixels += paddingPixels;
-                        var paddingPixels = CopyPaddingRectangle(
+
+                        paddingPixels += CopyPaddingRectangle(
                             atlasPixels,
                             coreOccupancy,
                             source,
@@ -539,9 +539,8 @@ namespace Editors.ImportExport.TextureAtlas
                             right,
                             bottom,
                             forceOpaqueAlpha);
-                        if (statistics != null)
-                            statistics.PaddingPixels += paddingPixels;
-                        var paddingPixels = CopyPaddingRectangle(
+
+                        paddingPixels += CopyPaddingRectangle(
                             atlasPixels,
                             coreOccupancy,
                             source,
@@ -557,9 +556,8 @@ namespace Editors.ImportExport.TextureAtlas
                             bounds.Left,
                             bounds.Bottom,
                             forceOpaqueAlpha);
-                        if (statistics != null)
-                            statistics.PaddingPixels += paddingPixels;
-                        var paddingPixels = CopyPaddingRectangle(
+
+                        paddingPixels += CopyPaddingRectangle(
                             atlasPixels,
                             coreOccupancy,
                             source,
