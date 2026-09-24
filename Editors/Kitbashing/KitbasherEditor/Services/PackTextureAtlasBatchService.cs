@@ -1754,6 +1754,10 @@ namespace Editors.KitbasherEditor.Services
             if (affinityGroups.Count == 0)
                 return working;
 
+            var rootsByMesh = BuildCandidateRootVmdPaths(
+                state,
+                working.SelectMany(batch => batch));
+
             state.MergeAwareAffinityPotentialBefore +=
                 CalculateMergeAffinityScore(working, affinityGroups);
 
@@ -1822,6 +1826,13 @@ namespace Editors.KitbasherEditor.Services
                     }
 
                     var baselinePixels = checked(leftBaselinePixels + rightBaselinePixels);
+                    var baselineResidentPixels = checked(
+                        GetAtlasResidencyProxy(
+                            leftBaselinePixels,
+                            GetBatchRootCount(currentLeft, rootsByMesh)) +
+                        GetAtlasResidencyProxy(
+                            rightBaselinePixels,
+                            GetBatchRootCount(currentRight, rootsByMesh)));
                     var baselineAffinity = CalculateMergeAffinityScore(working, affinityGroups);
                     AtlasBatchSplitProposal? bestProposal = null;
                     var bestPixels = baselinePixels;
@@ -1851,6 +1862,19 @@ namespace Editors.KitbasherEditor.Services
                         var combinedPixels = checked(leftPixels + rightPixels);
                         if (combinedPixels > baselinePixels)
                             continue;
+
+                        var proposedResidentPixels = checked(
+                            GetAtlasResidencyProxy(
+                                leftPixels,
+                                GetBatchRootCount(proposal.Left, rootsByMesh)) +
+                            GetAtlasResidencyProxy(
+                                rightPixels,
+                                GetBatchRootCount(proposal.Right, rootsByMesh)));
+                        if (proposedResidentPixels > baselineResidentPixels)
+                        {
+                            state.MergeAwareLocalityRegressionsRejected++;
+                            continue;
+                        }
 
                         var proposedAffinity = CalculateMergeAffinityScoreWithReplacement(
                             working,
@@ -1904,7 +1928,8 @@ namespace Editors.KitbasherEditor.Services
             CoalesceMergeAwareBatchesWithoutPixelIncrease(
                 state,
                 working,
-                affinityGroups);
+                affinityGroups,
+                rootsByMesh);
 
             state.MergeAwareAffinityPotentialAfter +=
                 CalculateMergeAffinityScore(working, affinityGroups);
@@ -1914,7 +1939,8 @@ namespace Editors.KitbasherEditor.Services
         private static void CoalesceMergeAwareBatchesWithoutPixelIncrease(
             BatchState state,
             List<List<AtlasCandidate>> working,
-            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+            IReadOnlyList<MergeAffinityGroup> affinityGroups,
+            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
         {
             const int maxCoalesces = 16;
             const int maxPairEvaluationsPerPass = 64;
@@ -1981,6 +2007,13 @@ namespace Editors.KitbasherEditor.Services
                     }
 
                     var baselinePixels = checked(leftPixels + rightPixels);
+                    var baselineResidentPixels = checked(
+                        GetAtlasResidencyProxy(
+                            leftPixels,
+                            GetBatchRootCount(leftBatch, rootsByMesh)) +
+                        GetAtlasResidencyProxy(
+                            rightPixels,
+                            GetBatchRootCount(rightBatch, rootsByMesh)));
                     var combined = leftBatch.Concat(rightBatch).ToList();
                     state.MergeAwareBatchCoalesceEvaluations++;
                     if (!TryGetGeneratedAtlasPixelCost(
@@ -1990,6 +2023,15 @@ namespace Editors.KitbasherEditor.Services
                             out _) ||
                         combinedPixels > baselinePixels)
                     {
+                        continue;
+                    }
+
+                    var combinedResidentPixels = GetAtlasResidencyProxy(
+                        combinedPixels,
+                        GetBatchRootCount(combined, rootsByMesh));
+                    if (combinedResidentPixels > baselineResidentPixels)
+                    {
+                        state.MergeAwareLocalityRegressionsRejected++;
                         continue;
                     }
 
@@ -5836,8 +5878,14 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas pixel-area split evaluations: {state.AtlasPixelAreaSplitEvaluations}");
             sb.AppendLine($"Atlas non-contiguous optimized splits: {state.AtlasNonContiguousOptimizedSplits}");
             sb.AppendLine($"Atlas non-contiguous split evaluations: {state.AtlasNonContiguousSplitEvaluations}");
+            sb.AppendLine($"Pack atlas maximum dimension: {PackAtlasMaxSize}");
             sb.AppendLine($"Atlas pixels saved by split optimization: {state.AtlasPixelAreaSavedByOptimizedSplits:N0}");
             sb.AppendLine($"Atlas pixels saved by non-contiguous splits: {state.AtlasPixelAreaSavedByNonContiguousSplits:N0}");
+            sb.AppendLine($"VMD-locality split evaluations: {state.VmdLocalitySplitEvaluations}");
+            sb.AppendLine($"VMD-locality splits accepted: {state.VmdLocalitySplitsAccepted}");
+            sb.AppendLine($"Estimated VMD-resident atlas pixels saved by locality splits: {state.VmdLocalityResidentPixelsSaved:N0}");
+            sb.AppendLine($"Global atlas pixels added by locality splits: {state.VmdLocalityGlobalPixelsAdded:N0}");
+            sb.AppendLine($"Merge-aware locality regressions rejected: {state.MergeAwareLocalityRegressionsRejected}");
             sb.AppendLine($"Merge-aware batch pairs considered: {state.MergeAwareBatchPairsConsidered}");
             sb.AppendLine($"Merge-aware repartition evaluations: {state.MergeAwareRepartitionEvaluations}");
             sb.AppendLine($"Merge-aware repartitions accepted: {state.MergeAwareRepartitionsAccepted}");
@@ -7459,6 +7507,11 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasNonContiguousSplitEvaluations { get; set; }
             public long AtlasPixelAreaSavedByOptimizedSplits { get; set; }
             public long AtlasPixelAreaSavedByNonContiguousSplits { get; set; }
+            public int VmdLocalitySplitEvaluations { get; set; }
+            public int VmdLocalitySplitsAccepted { get; set; }
+            public long VmdLocalityResidentPixelsSaved { get; set; }
+            public long VmdLocalityGlobalPixelsAdded { get; set; }
+            public int MergeAwareLocalityRegressionsRejected { get; set; }
             public int MergeAwareBatchPairsConsidered { get; set; }
             public int MergeAwareRepartitionEvaluations { get; set; }
             public int MergeAwareRepartitionsAccepted { get; set; }
