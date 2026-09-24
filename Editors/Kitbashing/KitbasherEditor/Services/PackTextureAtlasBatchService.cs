@@ -5231,12 +5231,186 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"    ... {counts.Count - maxEntries} more");
         }
 
+        private static AtlasComponentReuseAnalysis BuildAtlasComponentReuseAnalysis(
+            BatchState state)
+        {
+            var batchesByWsModel = new Dictionary<string, HashSet<int>>(
+                StringComparer.OrdinalIgnoreCase);
+            var geometryByWsModel = new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (batchId, batch) in state.AtlasBatchDiagnostics)
+            {
+                foreach (var candidate in batch.Candidates)
+                {
+                    foreach (var usage in candidate.Usages)
+                    {
+                        var wsModelPath = Normalize(usage.WsModelPath);
+                        if (string.IsNullOrWhiteSpace(wsModelPath))
+                            continue;
+
+                        if (!batchesByWsModel.TryGetValue(wsModelPath, out var batchIds))
+                        {
+                            batchIds = [];
+                            batchesByWsModel[wsModelPath] = batchIds;
+                        }
+
+                        batchIds.Add(batchId);
+                        geometryByWsModel.TryAdd(wsModelPath, candidate.Key.GeometryPath);
+                    }
+                }
+            }
+
+            if (batchesByWsModel.Count == 0)
+            {
+                return new AtlasComponentReuseAnalysis(
+                    [],
+                    [],
+                    0,
+                    0);
+            }
+
+            var rootsByWsModel = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var (rootVmdPath, reachableWsModels) in state.ReachableWsModelsByRoot)
+            {
+                var root = Normalize(rootVmdPath);
+                foreach (var reachableWsModel in reachableWsModels)
+                {
+                    var wsModelPath = Normalize(reachableWsModel);
+                    if (!batchesByWsModel.ContainsKey(wsModelPath))
+                        continue;
+
+                    if (!rootsByWsModel.TryGetValue(wsModelPath, out var roots))
+                    {
+                        roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        rootsByWsModel[wsModelPath] = roots;
+                    }
+
+                    roots.Add(root);
+                }
+            }
+
+            var rootsByGeometry = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var (wsModelPath, roots) in rootsByWsModel)
+            {
+                if (!geometryByWsModel.TryGetValue(wsModelPath, out var geometryPath))
+                    continue;
+
+                if (!rootsByGeometry.TryGetValue(geometryPath, out var geometryRoots))
+                {
+                    geometryRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    rootsByGeometry[geometryPath] = geometryRoots;
+                }
+
+                geometryRoots.UnionWith(roots);
+            }
+
+            var components = batchesByWsModel.Keys
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .Select(wsModelPath =>
+                {
+                    rootsByWsModel.TryGetValue(wsModelPath, out var roots);
+                    geometryByWsModel.TryGetValue(wsModelPath, out var geometryPath);
+                    return new AtlasComponentReuseEntry(
+                        wsModelPath,
+                        geometryPath ?? string.Empty,
+                        roots?.Count ?? 0,
+                        batchesByWsModel[wsModelPath]
+                            .OrderBy(x => x)
+                            .ToArray());
+                })
+                .ToList();
+
+            // Count root overlap only for atlased components on different geometry assets and
+            // with different atlas-batch membership. This focuses the report on relationships
+            // relevant to a future cross-component/pair-specific rebake instead of same-rigid
+            // parts that inherently travel together.
+            var sharedRootCounts = new Dictionary<(string Left, string Right), int>();
+            foreach (var (_, reachableWsModels) in state.ReachableWsModelsByRoot)
+            {
+                var models = reachableWsModels
+                    .Select(Normalize)
+                    .Where(batchesByWsModel.ContainsKey)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                for (var leftIndex = 0; leftIndex < models.Count; leftIndex++)
+                {
+                    var left = models[leftIndex];
+                    if (!geometryByWsModel.TryGetValue(left, out var leftGeometry))
+                        continue;
+
+                    for (var rightIndex = leftIndex + 1; rightIndex < models.Count; rightIndex++)
+                    {
+                        var right = models[rightIndex];
+                        if (!geometryByWsModel.TryGetValue(right, out var rightGeometry) ||
+                            leftGeometry.Equals(rightGeometry, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (batchesByWsModel[left].SetEquals(batchesByWsModel[right]))
+                            continue;
+
+                        var key = (left, right);
+                        sharedRootCounts[key] = sharedRootCounts.GetValueOrDefault(key) + 1;
+                    }
+                }
+            }
+
+            var pairs = new List<AtlasComponentReusePairEntry>();
+            foreach (var (key, sharedRootCount) in sharedRootCounts)
+            {
+                if (!rootsByWsModel.TryGetValue(key.Left, out var leftRoots) ||
+                    !rootsByWsModel.TryGetValue(key.Right, out var rightRoots) ||
+                    leftRoots.Count == 0 ||
+                    rightRoots.Count == 0)
+                {
+                    continue;
+                }
+
+                var leftCoverage = sharedRootCount / (double)leftRoots.Count;
+                var rightCoverage = sharedRootCount / (double)rightRoots.Count;
+                var stronglyAsymmetric =
+                    (leftCoverage >= 0.8 && rightCoverage <= 0.5) ||
+                    (rightCoverage >= 0.8 && leftCoverage <= 0.5);
+                var highBidirectionalOverlap =
+                    leftCoverage >= 0.8 &&
+                    rightCoverage >= 0.8;
+
+                pairs.Add(new AtlasComponentReusePairEntry(
+                    key.Left,
+                    key.Right,
+                    geometryByWsModel[key.Left],
+                    geometryByWsModel[key.Right],
+                    leftRoots.Count,
+                    rightRoots.Count,
+                    sharedRootCount,
+                    leftCoverage,
+                    rightCoverage,
+                    batchesByWsModel[key.Left].OrderBy(x => x).ToArray(),
+                    batchesByWsModel[key.Right].OrderBy(x => x).ToArray(),
+                    stronglyAsymmetric,
+                    highBidirectionalOverlap));
+            }
+
+            return new AtlasComponentReuseAnalysis(
+                components,
+                pairs,
+                rootsByGeometry.Count,
+                rootsByGeometry.Values.Count(roots => roots.Count > 1));
+        }
+
         private static void WriteReport(
             BatchState state,
             IReadOnlyList<string> vmdRoots,
             bool succeeded,
             Exception? failure)
         {
+            var componentReuse = BuildAtlasComponentReuseAnalysis(state);
             var sb = new StringBuilder();
             sb.AppendLine("Texture Atlas Pack Report");
             sb.AppendLine("=========================");
@@ -5295,6 +5469,18 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Cross-VMD shared placements: {state.CrossVmdSharedAtlasPlacements}");
                 sb.AppendLine($"Cross-VMD material reuses: {state.CrossVmdMaterialReuses}");
             }
+            sb.AppendLine(
+                $"Atlased WSModels reused by multiple VMD roots: " +
+                $"{componentReuse.Components.Count(x => x.VmdRootCount > 1)} / {componentReuse.Components.Count}");
+            sb.AppendLine(
+                $"Atlased geometry paths reused by multiple VMD roots: " +
+                $"{componentReuse.ReusedGeometryCount} / {componentReuse.GeometryCount}");
+            sb.AppendLine(
+                $"Cross-geometry/cross-batch component pairs with asymmetric VMD-root reuse: " +
+                $"{componentReuse.Pairs.Count(x => x.StronglyAsymmetric)}");
+            sb.AppendLine(
+                $"Cross-geometry/cross-batch component pairs with high bidirectional VMD-root overlap: " +
+                $"{componentReuse.Pairs.Count(x => x.HighBidirectionalOverlap)}");
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
             sb.AppendLine($"Atlas meshes with missing textures: {(state.AtlasMeshesWithMissingTextures ? "YES" : "NO")}");
             sb.AppendLine($"Merge compatible mesh parts: {(state.MergeCompatibleMeshesEnabled ? "YES" : "NO")}");
@@ -5407,6 +5593,104 @@ namespace Editors.KitbasherEditor.Services
                     $"(set {AtlasProfilingEnvironmentVariable}=1 before launch to enable)");
                 sb.AppendLine();
             }
+
+            sb.AppendLine("Atlas component reuse topology");
+            sb.AppendLine("------------------------------");
+            sb.AppendLine(
+                "This is conservative VMD-root reachability, not guaranteed simultaneous rendering: " +
+                "alternatives in the same VMD/slot can share a root without coexisting in one rendered variant.");
+            sb.AppendLine(
+                $"Atlased WSModels: {componentReuse.Components.Count}; " +
+                $"reused by >1 root: {componentReuse.Components.Count(x => x.VmdRootCount > 1)}; " +
+                $"reused by >=5 roots: {componentReuse.Components.Count(x => x.VmdRootCount >= 5)}.");
+            sb.AppendLine(
+                $"Atlased geometry paths: {componentReuse.GeometryCount}; " +
+                $"reused by >1 root: {componentReuse.ReusedGeometryCount}.");
+            sb.AppendLine();
+
+            sb.AppendLine("Most reused atlased components");
+            sb.AppendLine("  WSModel | VMD roots | atlas batches | geometry");
+            foreach (var component in componentReuse.Components
+                         .Where(x => x.VmdRootCount > 1)
+                         .OrderByDescending(x => x.VmdRootCount)
+                         .ThenBy(x => x.WsModelPath, StringComparer.OrdinalIgnoreCase)
+                         .Take(24))
+            {
+                sb.AppendLine(
+                    $"  {component.WsModelPath} | roots={component.VmdRootCount} | " +
+                    $"batches={string.Join(",", component.AtlasBatchIds)} | " +
+                    $"{component.GeometryPath}");
+            }
+            if (!componentReuse.Components.Any(x => x.VmdRootCount > 1))
+                sb.AppendLine("  (none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Strongly asymmetric cross-component root overlap");
+            sb.AppendLine(
+                "  These are the clearest reuse-risk cases for any future pair-specific rebake: " +
+                "one component is broadly reused while the other appears in a much narrower subset.");
+            var asymmetricPairs = componentReuse.Pairs
+                .Where(x => x.StronglyAsymmetric)
+                .OrderByDescending(x => Math.Abs(x.LeftCoverage - x.RightCoverage))
+                .ThenByDescending(x => Math.Max(x.LeftRootCount, x.RightRootCount))
+                .ThenByDescending(x => x.SharedRootCount)
+                .Take(24)
+                .ToList();
+            if (asymmetricPairs.Count == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (var pair in asymmetricPairs)
+                {
+                    sb.AppendLine(
+                        $"  {pair.LeftWsModel} <> {pair.RightWsModel}");
+                    sb.AppendLine(
+                        $"    roots: {pair.LeftRootCount} <> {pair.RightRootCount}; " +
+                        $"shared={pair.SharedRootCount}; " +
+                        $"coverage={pair.LeftCoverage * 100:F1}% / {pair.RightCoverage * 100:F1}%");
+                    sb.AppendLine(
+                        $"    geometry: {pair.LeftGeometryPath} <> {pair.RightGeometryPath}");
+                    sb.AppendLine(
+                        $"    atlas batches: {string.Join(",", pair.LeftAtlasBatchIds)} <> " +
+                        $"{string.Join(",", pair.RightAtlasBatchIds)}");
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("High bidirectional cross-component root overlap");
+            sb.AppendLine(
+                "  High overlap can identify components that usually travel together, but this is diagnostic only; " +
+                "same-root VMD alternatives are not proof that two components render simultaneously.");
+            var coupledPairs = componentReuse.Pairs
+                .Where(x => x.HighBidirectionalOverlap)
+                .OrderByDescending(x => x.SharedRootCount)
+                .ThenByDescending(x => Math.Min(x.LeftRootCount, x.RightRootCount))
+                .Take(24)
+                .ToList();
+            if (coupledPairs.Count == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (var pair in coupledPairs)
+                {
+                    sb.AppendLine(
+                        $"  {pair.LeftWsModel} <> {pair.RightWsModel}");
+                    sb.AppendLine(
+                        $"    roots: {pair.LeftRootCount} <> {pair.RightRootCount}; " +
+                        $"shared={pair.SharedRootCount}; " +
+                        $"coverage={pair.LeftCoverage * 100:F1}% / {pair.RightCoverage * 100:F1}%");
+                    sb.AppendLine(
+                        $"    geometry: {pair.LeftGeometryPath} <> {pair.RightGeometryPath}");
+                    sb.AppendLine(
+                        $"    atlas batches: {string.Join(",", pair.LeftAtlasBatchIds)} <> " +
+                        $"{string.Join(",", pair.RightAtlasBatchIds)}");
+                }
+            }
+            sb.AppendLine();
 
             sb.AppendLine("VMD roots");
             sb.AppendLine("---------");
@@ -6872,6 +7156,33 @@ namespace Editors.KitbasherEditor.Services
                 OptimizeGeometryEnabled = optimizeGeometryEnabled;
             }
         }
+
+        private sealed record AtlasComponentReuseAnalysis(
+            List<AtlasComponentReuseEntry> Components,
+            List<AtlasComponentReusePairEntry> Pairs,
+            int GeometryCount,
+            int ReusedGeometryCount);
+
+        private sealed record AtlasComponentReuseEntry(
+            string WsModelPath,
+            string GeometryPath,
+            int VmdRootCount,
+            int[] AtlasBatchIds);
+
+        private sealed record AtlasComponentReusePairEntry(
+            string LeftWsModel,
+            string RightWsModel,
+            string LeftGeometryPath,
+            string RightGeometryPath,
+            int LeftRootCount,
+            int RightRootCount,
+            int SharedRootCount,
+            double LeftCoverage,
+            double RightCoverage,
+            int[] LeftAtlasBatchIds,
+            int[] RightAtlasBatchIds,
+            bool StronglyAsymmetric,
+            bool HighBidirectionalOverlap);
 
         private sealed record MaterialMergeDiagnosticSnapshot(
             string RenderingIdentity,
