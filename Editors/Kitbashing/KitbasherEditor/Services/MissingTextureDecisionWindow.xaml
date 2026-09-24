@@ -28,7 +28,7 @@
         <TextBlock
             Grid.Row="1"
             Margin="0,8,0,10"
-            Text="Review the missing texture paths below. The list is scrollable; the action buttons remain visible."
+            Text="Some meshes have unresolved secondary texture dependencies. Missing BaseColour textures are always skipped. Review the unresolved paths below."
             TextWrapping="Wrap"
             Opacity="0.75" />
 
@@ -48,7 +48,7 @@
         <TextBlock
             Grid.Row="3"
             Margin="0,10,0,0"
-            Text="Atlas anyway keeps the missing texture paths unchanged. Skip affected meshes is the safer choice."
+            Text="Atlas available textures keeps unresolved secondary texture paths unchanged while atlasing the channels that can be resolved. Skip meshes with missing textures excludes those meshes from atlasing."
             TextWrapping="Wrap"
             Opacity="0.75" />
 
@@ -61,11 +61,11 @@
                 Width="140"
                 Margin="0,0,8,0"
                 Click="AtlasAnywayButton_Click"
-                Content="Atlas anyway" />
+                Content="Atlas available textures" />
             <Button
-                Width="150"
+                Width="210"
                 Click="SkipAffectedButton_Click"
-                Content="Skip affected meshes"
+                Content="Skip meshes with missing textures"
                 IsDefault="True" />
         </StackPanel>
     </Grid>
