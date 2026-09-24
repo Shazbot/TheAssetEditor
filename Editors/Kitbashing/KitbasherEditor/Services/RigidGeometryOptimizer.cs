@@ -1,3 +1,4 @@
+using Microsoft.Xna.Framework;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.Types;
 using Shared.GameFormats.RigidModel.Vertex;
@@ -99,9 +100,7 @@ namespace Editors.KitbasherEditor.Services
                     throw new InvalidOperationException("Mesh contains an invalid vertex index.");
 
                 if (a == b || b == c || a == c ||
-                    SamePosition(vertices[a], vertices[b]) ||
-                    SamePosition(vertices[b], vertices[c]) ||
-                    SamePosition(vertices[a], vertices[c]))
+                    HasZeroArea(vertices[a], vertices[b], vertices[c]))
                 {
                     removedTriangleCount++;
                     continue;
@@ -115,11 +114,15 @@ namespace Editors.KitbasherEditor.Services
             return output.ToArray();
         }
 
-        private static bool SamePosition(CommonVertex left, CommonVertex right)
-            => left.Position.X == right.Position.X &&
-               left.Position.Y == right.Position.Y &&
-               left.Position.Z == right.Position.Z &&
-               left.Position.W == right.Position.W;
+        private static bool HasZeroArea(
+            CommonVertex a,
+            CommonVertex b,
+            CommonVertex c)
+        {
+            var ab = b.GetPosistionAsVec3() - a.GetPosistionAsVec3();
+            var ac = c.GetPosistionAsVec3() - a.GetPosistionAsVec3();
+            return Vector3.Cross(ab, ac).LengthSquared() == 0;
+        }
 
         private static ushort[] OptimizeTriangleOrder(
             IReadOnlyList<ushort> indices,
