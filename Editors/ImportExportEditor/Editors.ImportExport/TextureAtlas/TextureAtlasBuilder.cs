@@ -4,6 +4,7 @@ using System.Drawing.Imaging;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using Pfim;
 using PfimImageFormat = Pfim.ImageFormat;
 
@@ -1049,6 +1050,91 @@ namespace Editors.ImportExport.TextureAtlas
                 throw new InvalidDataException($"DDS has invalid dimensions {width}x{height}.");
 
             return (width, height);
+        }
+
+        public static string ComputeWrappedRegionContentHash(
+            byte[] ddsBytes,
+            int layoutSourceWidth,
+            int layoutSourceHeight,
+            int cropX,
+            int cropY,
+            int cropWidth,
+            int cropHeight)
+        {
+            if (layoutSourceWidth <= 0)
+                throw new ArgumentOutOfRangeException(nameof(layoutSourceWidth));
+            if (layoutSourceHeight <= 0)
+                throw new ArgumentOutOfRangeException(nameof(layoutSourceHeight));
+            if (cropWidth <= 0)
+                throw new ArgumentOutOfRangeException(nameof(cropWidth));
+            if (cropHeight <= 0)
+                throw new ArgumentOutOfRangeException(nameof(cropHeight));
+
+            using var stream = new MemoryStream(ddsBytes);
+            using var image = Pfimage.FromStream(stream);
+            if (image.Format != PfimImageFormat.Rgba32)
+            {
+                throw new NotSupportedException(
+                    $"Unsupported DDS pixel format for texture atlas hashing: {image.Format}. Expected RGBA32.");
+            }
+
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            Span<byte> metadata = stackalloc byte[20];
+
+            BinaryPrimitives.WriteInt32LittleEndian(metadata[..4], layoutSourceWidth);
+            BinaryPrimitives.WriteInt32LittleEndian(metadata.Slice(4, 4), layoutSourceHeight);
+            BinaryPrimitives.WriteInt32LittleEndian(metadata.Slice(8, 4), cropWidth);
+            BinaryPrimitives.WriteInt32LittleEndian(metadata.Slice(12, 4), cropHeight);
+            BinaryPrimitives.WriteInt32LittleEndian(metadata.Slice(16, 4), image.MipMaps.Length + 1);
+            hasher.AppendData(metadata);
+
+            for (var mipLevel = 0; mipLevel <= image.MipMaps.Length; mipLevel++)
+            {
+                var mip = GetMipLevel(image, mipLevel);
+                var cropRight = checked((long)cropX + cropWidth);
+                var cropBottom = checked((long)cropY + cropHeight);
+                var left = checked((int)Math.Floor(
+                    cropX * (double)mip.Width / layoutSourceWidth));
+                var top = checked((int)Math.Floor(
+                    cropY * (double)mip.Height / layoutSourceHeight));
+                var right = checked((int)Math.Ceiling(
+                    cropRight * (double)mip.Width / layoutSourceWidth));
+                var bottom = checked((int)Math.Ceiling(
+                    cropBottom * (double)mip.Height / layoutSourceHeight));
+                var sampledWidth = Math.Max(1, checked(right - left));
+                var sampledHeight = Math.Max(1, checked(bottom - top));
+
+                BinaryPrimitives.WriteInt32LittleEndian(metadata[..4], mip.Width);
+                BinaryPrimitives.WriteInt32LittleEndian(metadata.Slice(4, 4), mip.Height);
+                BinaryPrimitives.WriteInt32LittleEndian(metadata.Slice(8, 4), sampledWidth);
+                BinaryPrimitives.WriteInt32LittleEndian(metadata.Slice(12, 4), sampledHeight);
+                BinaryPrimitives.WriteInt32LittleEndian(metadata.Slice(16, 4), mipLevel);
+                hasher.AppendData(metadata);
+
+                for (var localY = 0; localY < sampledHeight; localY++)
+                {
+                    var sourceY = PositiveModulo(top + localY, mip.Height);
+                    var remaining = sampledWidth;
+                    var sourceX = PositiveModulo(left, mip.Width);
+
+                    while (remaining > 0)
+                    {
+                        var runWidth = Math.Min(remaining, mip.Width - sourceX);
+                        var sourceOffset = checked(
+                            mip.DataOffset +
+                            sourceY * mip.Stride +
+                            sourceX * 4);
+                        hasher.AppendData(image.Data.AsSpan(
+                            sourceOffset,
+                            checked(runWidth * 4)));
+
+                        remaining -= runWidth;
+                        sourceX = 0;
+                    }
+                }
+            }
+
+            return Convert.ToHexString(hasher.GetHashAndReset());
         }
 
         public static bool TryGetUniformColor(

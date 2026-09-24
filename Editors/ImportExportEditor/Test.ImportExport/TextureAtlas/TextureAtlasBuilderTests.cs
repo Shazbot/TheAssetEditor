@@ -662,6 +662,134 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void ComputeWrappedRegionContentHash_MatchesRepeatedRegionsAtDifferentOffsets()
+        {
+            using var bitmap = new Bitmap(8, 4, PixelFormat.Format32bppArgb);
+            for (var y = 0; y < bitmap.Height; y++)
+            {
+                for (var x = 0; x < bitmap.Width; x++)
+                {
+                    var localX = x % 4;
+                    bitmap.SetPixel(
+                        x,
+                        y,
+                        (localX + y) % 2 == 0 ? Color.Black : Color.White);
+                }
+            }
+
+            using var pngStream = new MemoryStream();
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
+            var dds = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "repeated-region.dds");
+            var bytes = dds.DataSource.ReadData();
+
+            var leftHash = TextureAtlasBuilder.ComputeWrappedRegionContentHash(
+                bytes,
+                8,
+                4,
+                0,
+                0,
+                4,
+                4);
+            var rightHash = TextureAtlasBuilder.ComputeWrappedRegionContentHash(
+                bytes,
+                8,
+                4,
+                4,
+                0,
+                4,
+                4);
+
+            Assert.That(rightHash, Is.EqualTo(leftHash));
+        }
+
+        [Test]
+        public void ComputeWrappedRegionContentHash_DistinguishesDifferentRegions()
+        {
+            using var bitmap = new Bitmap(8, 4, PixelFormat.Format32bppArgb);
+            for (var y = 0; y < bitmap.Height; y++)
+            {
+                for (var x = 0; x < bitmap.Width; x++)
+                    bitmap.SetPixel(x, y, x < 4 ? Color.Black : Color.White);
+            }
+
+            using var pngStream = new MemoryStream();
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
+            var dds = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "different-regions.dds");
+            var bytes = dds.DataSource.ReadData();
+
+            var leftHash = TextureAtlasBuilder.ComputeWrappedRegionContentHash(
+                bytes,
+                8,
+                4,
+                0,
+                0,
+                4,
+                4);
+            var rightHash = TextureAtlasBuilder.ComputeWrappedRegionContentHash(
+                bytes,
+                8,
+                4,
+                4,
+                0,
+                4,
+                4);
+
+            Assert.That(rightHash, Is.Not.EqualTo(leftHash));
+        }
+
+        [Test]
+        public void ComputeWrappedRegionContentHash_IncludesAuthoredMipContent()
+        {
+            var first = PngToDdsImporter.ImportRawMipChain(
+                [
+                    CreateSolidPng(8, Color.White),
+                    CreateSolidPng(4, Color.Red),
+                    CreateSolidPng(2, Color.Gray),
+                    CreateSolidPng(1, Color.Black)
+                ],
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "hash-mips-a.dds");
+            var second = PngToDdsImporter.ImportRawMipChain(
+                [
+                    CreateSolidPng(8, Color.White),
+                    CreateSolidPng(4, Color.Blue),
+                    CreateSolidPng(2, Color.Gray),
+                    CreateSolidPng(1, Color.Black)
+                ],
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "hash-mips-b.dds");
+
+            var firstHash = TextureAtlasBuilder.ComputeWrappedRegionContentHash(
+                first.DataSource.ReadData(),
+                8,
+                8,
+                0,
+                0,
+                8,
+                8);
+            var secondHash = TextureAtlasBuilder.ComputeWrappedRegionContentHash(
+                second.DataSource.ReadData(),
+                8,
+                8,
+                0,
+                0,
+                8,
+                8);
+
+            Assert.That(secondHash, Is.Not.EqualTo(firstHash));
+        }
+
+        [Test]
         public void TryGetUniformColor_RejectsNonUniformDds()
         {
             using var solid = new Bitmap(8, 8, PixelFormat.Format32bppArgb);
