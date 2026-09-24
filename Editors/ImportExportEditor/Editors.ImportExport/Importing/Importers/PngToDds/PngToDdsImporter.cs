@@ -66,6 +66,9 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             private readonly ScratchImage _imageWithMips;
             private readonly TextureType _textureType;
             private readonly GameTypeEnum _gameType;
+            private readonly int _width;
+            private readonly int _height;
+            private readonly int _mipLevelCount;
             private bool _disposed;
 
             internal RawBgraMipChainWriter(
@@ -95,6 +98,9 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                     CP_FLAGS.NONE);
                 _textureType = textureType;
                 _gameType = gameType;
+                _width = width;
+                _height = height;
+                _mipLevelCount = mipLevelCount;
             }
 
             public void WriteMip(int mipLevel, byte[] bgraPixels)
@@ -135,7 +141,11 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                     _imageWithMips,
                     _textureType,
                     _gameType,
-                    outFileName);
+                    outFileName,
+                    allowLargeBcSplitCompression: true,
+                    width: _width,
+                    height: _height,
+                    mipLevelCount: _mipLevelCount);
             }
 
             public void Dispose()
@@ -236,16 +246,292 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             ScratchImage imageWithMips,
             TextureType textureType,
             GameTypeEnum gameType,
-            string outFileName)
+            string outFileName,
+            bool allowLargeBcSplitCompression = false,
+            int width = 0,
+            int height = 0,
+            int mipLevelCount = 0)
         {
             var ddsFormat = DDSFormatHelper.GetDDSFormat(gameType, textureType);
-            using var ddsImage = imageWithMips.Compress(ddsFormat, TEX_COMPRESS_FLAGS.DEFAULT, 0.5f);
+            using var ddsImage =
+                allowLargeBcSplitCompression &&
+                ShouldUseLargeBcSplitCompression(ddsFormat, width, height, mipLevelCount)
+                    ? CompressLargeBcMipChain(
+                        imageWithMips,
+                        ddsFormat,
+                        width,
+                        height,
+                        mipLevelCount)
+                    : imageWithMips.Compress(
+                        ddsFormat,
+                        TEX_COMPRESS_FLAGS.DEFAULT,
+                        0.5f);
             using var ddsMemStream = ddsImage.SaveToDDSMemory(DDS_FLAGS.NONE);
 
             var ddsBytes = new byte[ddsMemStream.Length];
             ddsMemStream.Read(ddsBytes, 0, ddsBytes.Length);
             return new PackFile(outFileName, new MemorySource(ddsBytes));
         }
+
+        private static bool ShouldUseLargeBcSplitCompression(
+            DXGI_FORMAT format,
+            int width,
+            int height,
+            int mipLevelCount)
+        {
+            if (Environment.ProcessorCount < 2 || mipLevelCount < 2)
+                return false;
+
+            var isBc1OrBc3 = format is
+                DXGI_FORMAT.BC1_UNORM or
+                DXGI_FORMAT.BC1_UNORM_SRGB or
+                DXGI_FORMAT.BC3_UNORM or
+                DXGI_FORMAT.BC3_UNORM_SRGB;
+            if (!isBc1OrBc3)
+                return false;
+
+            const long minimumPixels = 4096L * 4096;
+            return width >= 4 &&
+                   height >= 12 &&
+                   (long)width * height >= minimumPixels;
+        }
+
+        private static ScratchImage CompressLargeBcMipChain(
+            ScratchImage sourceMipChain,
+            DXGI_FORMAT ddsFormat,
+            int width,
+            int height,
+            int mipLevelCount)
+        {
+            var sourceBase = sourceMipChain.GetImage(0, 0, 0);
+            var sourceFormat = sourceBase.Format;
+            var stripeBlockRows = SplitBlockRows(height / 4, 3);
+            var stripes = new CompressedBcStripe?[stripeBlockRows.Length];
+            CompressedBcMipTail? tail = null;
+
+            var actions = new List<Action>(stripeBlockRows.Length + 1);
+            var startBlockRow = 0;
+            for (var stripeIndex = 0; stripeIndex < stripeBlockRows.Length; stripeIndex++)
+            {
+                var capturedIndex = stripeIndex;
+                var capturedStartBlockRow = startBlockRow;
+                var capturedBlockRows = stripeBlockRows[stripeIndex];
+                actions.Add(() =>
+                {
+                    stripes[capturedIndex] = CompressBcStripe(
+                        sourceBase,
+                        sourceFormat,
+                        ddsFormat,
+                        width,
+                        capturedStartBlockRow,
+                        capturedBlockRows);
+                });
+                startBlockRow += capturedBlockRows;
+            }
+
+            actions.Add(() =>
+            {
+                tail = CompressBcMipTail(
+                    sourceMipChain,
+                    sourceFormat,
+                    ddsFormat,
+                    width,
+                    height,
+                    mipLevelCount);
+            });
+
+            Parallel.Invoke(
+                new ParallelOptions { MaxDegreeOfParallelism = 2 },
+                [.. actions]);
+
+            var result = TexHelper.Instance.Initialize2D(
+                ddsFormat,
+                width,
+                height,
+                1,
+                mipLevelCount,
+                CP_FLAGS.NONE);
+
+            try
+            {
+                var destinationBase = result.GetImage(0, 0, 0);
+                var destinationStride = checked((int)destinationBase.RowPitch);
+
+                foreach (var stripe in stripes)
+                {
+                    if (stripe == null)
+                        throw new InvalidOperationException("BC atlas stripe compression did not complete.");
+                    if (stripe.RowPitch != destinationStride)
+                    {
+                        throw new InvalidOperationException(
+                            $"Compressed atlas stripe row pitch {stripe.RowPitch} does not match " +
+                            $"destination row pitch {destinationStride}.");
+                    }
+
+                    var destinationOffset = checked(
+                        stripe.StartBlockRow * destinationStride);
+                    Marshal.Copy(
+                        stripe.Bytes,
+                        0,
+                        IntPtr.Add(destinationBase.Pixels, destinationOffset),
+                        stripe.Bytes.Length);
+                }
+
+                if (tail == null)
+                    throw new InvalidOperationException("BC atlas mip-tail compression did not complete.");
+
+                for (var tailMip = 0; tailMip < tail.Mips.Count; tailMip++)
+                {
+                    var destination = result.GetImage(tailMip + 1, 0, 0);
+                    var compressedMip = tail.Mips[tailMip];
+                    if (checked((int)destination.RowPitch) != compressedMip.RowPitch ||
+                        checked((int)destination.SlicePitch) != compressedMip.Bytes.Length)
+                    {
+                        throw new InvalidOperationException(
+                            $"Compressed atlas mip {tailMip + 1} layout does not match destination.");
+                    }
+
+                    Marshal.Copy(
+                        compressedMip.Bytes,
+                        0,
+                        destination.Pixels,
+                        compressedMip.Bytes.Length);
+                }
+
+                return result;
+            }
+            catch
+            {
+                result.Dispose();
+                throw;
+            }
+        }
+
+        private static CompressedBcStripe CompressBcStripe(
+            DirectXTexNet.Image sourceBase,
+            DXGI_FORMAT sourceFormat,
+            DXGI_FORMAT ddsFormat,
+            int width,
+            int startBlockRow,
+            int blockRows)
+        {
+            var stripeHeight = checked(blockRows * 4);
+            using var stripe = TexHelper.Instance.Initialize2D(
+                sourceFormat,
+                width,
+                stripeHeight,
+                1,
+                1,
+                CP_FLAGS.NONE);
+            var stripeImage = stripe.GetImage(0, 0, 0);
+
+            TexHelper.Instance.CopyRectangle(
+                sourceBase,
+                0,
+                checked(startBlockRow * 4),
+                width,
+                stripeHeight,
+                stripeImage,
+                TEX_FILTER_FLAGS.DEFAULT,
+                0,
+                0);
+
+            using var compressed = stripe.Compress(
+                ddsFormat,
+                TEX_COMPRESS_FLAGS.DEFAULT,
+                0.5f);
+            var compressedImage = compressed.GetImage(0, 0, 0);
+            var bytes = new byte[checked((int)compressedImage.SlicePitch)];
+            Marshal.Copy(compressedImage.Pixels, bytes, 0, bytes.Length);
+
+            return new CompressedBcStripe(
+                startBlockRow,
+                checked((int)compressedImage.RowPitch),
+                bytes);
+        }
+
+        private static CompressedBcMipTail CompressBcMipTail(
+            ScratchImage sourceMipChain,
+            DXGI_FORMAT sourceFormat,
+            DXGI_FORMAT ddsFormat,
+            int width,
+            int height,
+            int mipLevelCount)
+        {
+            var tailMipCount = mipLevelCount - 1;
+            using var tail = TexHelper.Instance.Initialize2D(
+                sourceFormat,
+                Math.Max(1, width / 2),
+                Math.Max(1, height / 2),
+                1,
+                tailMipCount,
+                CP_FLAGS.NONE);
+
+            for (var tailMip = 0; tailMip < tailMipCount; tailMip++)
+            {
+                var source = sourceMipChain.GetImage(tailMip + 1, 0, 0);
+                var destination = tail.GetImage(tailMip, 0, 0);
+                if (source.Width != destination.Width || source.Height != destination.Height)
+                {
+                    throw new InvalidOperationException(
+                        $"Atlas mip-tail source {tailMip + 1} is {source.Width}x{source.Height}, " +
+                        $"expected {destination.Width}x{destination.Height}.");
+                }
+
+                TexHelper.Instance.CopyRectangle(
+                    source,
+                    0,
+                    0,
+                    source.Width,
+                    source.Height,
+                    destination,
+                    TEX_FILTER_FLAGS.DEFAULT,
+                    0,
+                    0);
+            }
+
+            using var compressed = tail.Compress(
+                ddsFormat,
+                TEX_COMPRESS_FLAGS.DEFAULT,
+                0.5f);
+            var mips = new List<CompressedBcMip>(tailMipCount);
+            for (var tailMip = 0; tailMip < tailMipCount; tailMip++)
+            {
+                var image = compressed.GetImage(tailMip, 0, 0);
+                var bytes = new byte[checked((int)image.SlicePitch)];
+                Marshal.Copy(image.Pixels, bytes, 0, bytes.Length);
+                mips.Add(new CompressedBcMip(
+                    checked((int)image.RowPitch),
+                    bytes));
+            }
+
+            return new CompressedBcMipTail(mips);
+        }
+
+        private static int[] SplitBlockRows(int totalBlockRows, int parts)
+        {
+            if (totalBlockRows < parts)
+                throw new ArgumentOutOfRangeException(nameof(totalBlockRows));
+
+            var rows = new int[parts];
+            var baseRows = totalBlockRows / parts;
+            var remainder = totalBlockRows % parts;
+            for (var i = 0; i < parts; i++)
+                rows[i] = baseRows + (i < remainder ? 1 : 0);
+            return rows;
+        }
+
+        private sealed record CompressedBcStripe(
+            int StartBlockRow,
+            int RowPitch,
+            byte[] Bytes);
+
+        private sealed record CompressedBcMip(
+            int RowPitch,
+            byte[] Bytes);
+
+        private sealed record CompressedBcMipTail(
+            List<CompressedBcMip> Mips);
 
         private static bool IsLinearTexture(TextureType textureType)
             => textureType is TextureType.Normal or TextureType.Mask or TextureType.Gloss;
