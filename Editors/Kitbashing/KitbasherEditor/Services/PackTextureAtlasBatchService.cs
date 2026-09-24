@@ -1253,7 +1253,8 @@ namespace Editors.KitbasherEditor.Services
                         : "No second compatible mesh was available in this VMD dependency set.");
             }
 
-            return OptimizeMaxSizeBatchesForPixelArea(state, batches);
+            var pixelOptimized = OptimizeMaxSizeBatchesForPixelArea(state, batches);
+            return OptimizeBatchesForMergeAffinity(state, pixelOptimized);
         }
 
         private static List<List<AtlasCandidate>> OptimizeMaxSizeBatchesForPixelArea(
@@ -1377,6 +1378,512 @@ namespace Editors.KitbasherEditor.Services
 
             OptimizeMaxSizeBatchForPixelArea(state, bestLeft, output);
             OptimizeMaxSizeBatchForPixelArea(state, bestRight, output);
+        }
+
+        private static List<List<AtlasCandidate>> OptimizeBatchesForMergeAffinity(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            var working = batches.Select(batch => batch.ToList()).ToList();
+            if (!state.MergeCompatibleMeshesEnabled || working.Count < 2)
+                return working;
+
+            var affinityGroups = BuildMergeAffinityGroups(
+                working.SelectMany(batch => batch));
+            if (affinityGroups.Count == 0)
+                return working;
+
+            state.MergeAwareAffinityPotentialBefore =
+                CalculateMergeAffinityScore(working, affinityGroups);
+
+            const int maxPasses = 2;
+            for (var pass = 0; pass < maxPasses; pass++)
+            {
+                var changed = false;
+                var batchByMesh = BuildBatchIndexByMesh(working);
+                var candidatePairs = new HashSet<AtlasBatchPair>();
+
+                foreach (var group in affinityGroups)
+                {
+                    var occupiedBatches = group.Meshes
+                        .Where(batchByMesh.ContainsKey)
+                        .Select(mesh => batchByMesh[mesh])
+                        .Distinct()
+                        .OrderBy(x => x)
+                        .ToArray();
+
+                    for (var left = 0; left < occupiedBatches.Length; left++)
+                    {
+                        for (var right = left + 1; right < occupiedBatches.Length; right++)
+                        {
+                            candidatePairs.Add(new AtlasBatchPair(
+                                occupiedBatches[left],
+                                occupiedBatches[right]));
+                        }
+                    }
+                }
+
+                foreach (var pair in candidatePairs
+                             .OrderBy(x => x.FirstBatchId)
+                             .ThenBy(x => x.SecondBatchId))
+                {
+                    var leftIndex = pair.FirstBatchId;
+                    var rightIndex = pair.SecondBatchId;
+                    var currentLeft = working[leftIndex];
+                    var currentRight = working[rightIndex];
+
+                    if (!TryGetGeneratedAtlasPixelCost(
+                            state,
+                            currentLeft,
+                            out var leftBaselinePixels,
+                            out _) ||
+                        !TryGetGeneratedAtlasPixelCost(
+                            state,
+                            currentRight,
+                            out var rightBaselinePixels,
+                            out _))
+                    {
+                        continue;
+                    }
+
+                    var baselinePixels = checked(leftBaselinePixels + rightBaselinePixels);
+                    var baselineAffinity = CalculateMergeAffinityScore(working, affinityGroups);
+                    AtlasBatchSplitProposal? bestProposal = null;
+                    var bestPixels = baselinePixels;
+                    var bestAffinity = baselineAffinity;
+
+                    foreach (var proposal in CreateMergeAwareRepartitionProposals(
+                                 currentLeft,
+                                 currentRight,
+                                 affinityGroups))
+                    {
+                        state.MergeAwareRepartitionEvaluations++;
+
+                        if (!TryGetGeneratedAtlasPixelCost(
+                                state,
+                                proposal.Left,
+                                out var leftPixels,
+                                out _) ||
+                            !TryGetGeneratedAtlasPixelCost(
+                                state,
+                                proposal.Right,
+                                out var rightPixels,
+                                out _))
+                        {
+                            continue;
+                        }
+
+                        var combinedPixels = checked(leftPixels + rightPixels);
+                        if (combinedPixels > baselinePixels)
+                            continue;
+
+                        var proposedAffinity = CalculateMergeAffinityScoreWithReplacement(
+                            working,
+                            leftIndex,
+                            rightIndex,
+                            proposal,
+                            affinityGroups);
+
+                        // This pass is allowed to save pixels, but it must never destroy an
+                        // already-achievable draw-call merge to do so.
+                        if (proposedAffinity < baselineAffinity)
+                            continue;
+
+                        if (combinedPixels < bestPixels ||
+                            (combinedPixels == bestPixels &&
+                             proposedAffinity > bestAffinity))
+                        {
+                            bestProposal = proposal;
+                            bestPixels = combinedPixels;
+                            bestAffinity = proposedAffinity;
+                        }
+                    }
+
+                    if (bestProposal == null)
+                        continue;
+
+                    working[leftIndex] = bestProposal.Left;
+                    working[rightIndex] = bestProposal.Right;
+                    state.MergeAwareRepartitionsAccepted++;
+                    state.MergeAwareRepartitionPixelsSaved = checked(
+                        state.MergeAwareRepartitionPixelsSaved +
+                        baselinePixels -
+                        bestPixels);
+                    state.MergeAwareAffinityEliminationsGained +=
+                        bestAffinity - baselineAffinity;
+                    state.MergeAwareRepartitionEntries.Add(
+                        new MergeAwareRepartitionReportEntry(
+                            leftIndex,
+                            rightIndex,
+                            baselinePixels,
+                            bestPixels,
+                            baselineAffinity,
+                            bestAffinity));
+                    changed = true;
+                }
+
+                if (!changed)
+                    break;
+            }
+
+            state.MergeAwareAffinityPotentialAfter =
+                CalculateMergeAffinityScore(working, affinityGroups);
+            return working;
+        }
+
+        private static List<MergeAffinityGroup> BuildMergeAffinityGroups(
+            IEnumerable<AtlasCandidate> candidates)
+        {
+            var result = new List<MergeAffinityGroup>();
+
+            var buckets = candidates
+                .GroupBy(candidate => new MergeAffinityIdentity(
+                    candidate.Key.GeometryPath,
+                    candidate.Key.LodIndex,
+                    GetRmvMergeIdentity(candidate.Model),
+                    BuildMergeAffinityMaterialIdentity(candidate)));
+
+            foreach (var bucket in buckets)
+            {
+                var current = new List<AtlasCandidate>();
+                var currentVertexCount = 0;
+
+                foreach (var candidate in bucket
+                             .OrderBy(x => x.Key.PartIndex)
+                             .ThenBy(x => x.RootVmdPath, StringComparer.OrdinalIgnoreCase))
+                {
+                    var vertexCount = candidate.Model.Mesh.VertexList.Length;
+                    if (vertexCount > ushort.MaxValue)
+                        continue;
+
+                    if (current.Count != 0 &&
+                        currentVertexCount + vertexCount > ushort.MaxValue)
+                    {
+                        if (current.Count > 1)
+                        {
+                            result.Add(new MergeAffinityGroup(
+                                current.Select(x => x.Key).ToArray()));
+                        }
+
+                        current = [];
+                        currentVertexCount = 0;
+                    }
+
+                    current.Add(candidate);
+                    currentVertexCount += vertexCount;
+                }
+
+                if (current.Count > 1)
+                {
+                    result.Add(new MergeAffinityGroup(
+                        current.Select(x => x.Key).ToArray()));
+                }
+            }
+
+            return result;
+        }
+
+        private static string BuildMergeAffinityMaterialIdentity(AtlasCandidate candidate)
+        {
+            var material = new XmlDocument();
+            material.LoadXml(candidate.MaterialDocument.OuterXml);
+
+            foreach (var channel in AtlasChannels)
+            {
+                // Only non-constant resolved channels are guaranteed to be rewritten to the
+                // same generated atlas path when two candidates share a batch. Preserved,
+                // missing, and constant-only sources remain part of the strict identity.
+                if (candidate.ResolvedChannels.Contains(channel.Slot))
+                {
+                    SetTexturePath(
+                        material,
+                        channel.Slot,
+                        $"__asset_editor_shared_atlas_{channel.Slot}__");
+                }
+            }
+
+            return GetMaterialRenderingIdentity(material);
+        }
+
+        private static Dictionary<MeshKey, int> BuildBatchIndexByMesh(
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            var result = new Dictionary<MeshKey, int>();
+            for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                foreach (var candidate in batches[batchIndex])
+                    result[candidate.Key] = batchIndex;
+            }
+            return result;
+        }
+
+        private static int CalculateMergeAffinityScore(
+            IReadOnlyList<List<AtlasCandidate>> batches,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+        {
+            var batchByMesh = BuildBatchIndexByMesh(batches);
+            var score = 0;
+
+            foreach (var group in affinityGroups)
+            {
+                score += group.Meshes
+                    .Where(batchByMesh.ContainsKey)
+                    .GroupBy(mesh => batchByMesh[mesh])
+                    .Sum(batch => Math.Max(0, batch.Count() - 1));
+            }
+
+            return score;
+        }
+
+        private static int CalculateMergeAffinityScoreWithReplacement(
+            IReadOnlyList<List<AtlasCandidate>> batches,
+            int leftIndex,
+            int rightIndex,
+            AtlasBatchSplitProposal proposal,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+        {
+            var batchByMesh = BuildBatchIndexByMesh(batches);
+            foreach (var candidate in proposal.Left)
+                batchByMesh[candidate.Key] = leftIndex;
+            foreach (var candidate in proposal.Right)
+                batchByMesh[candidate.Key] = rightIndex;
+
+            var score = 0;
+            foreach (var group in affinityGroups)
+            {
+                score += group.Meshes
+                    .Where(batchByMesh.ContainsKey)
+                    .GroupBy(mesh => batchByMesh[mesh])
+                    .Sum(batch => Math.Max(0, batch.Count() - 1));
+            }
+
+            return score;
+        }
+
+        private static IReadOnlyList<AtlasBatchSplitProposal> CreateMergeAwareRepartitionProposals(
+            IReadOnlyList<AtlasCandidate> currentLeft,
+            IReadOnlyList<AtlasCandidate> currentRight,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+        {
+            var combined = currentLeft
+                .Concat(currentRight)
+                .GroupBy(x => x.Key)
+                .Select(group => group.First())
+                .ToList();
+
+            var planningGroups = combined
+                .GroupBy(GetAtlasPlanningSourceIdentity)
+                .Select(group =>
+                {
+                    var candidates = group
+                        .OrderBy(x => x.RootVmdPath, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(x => x.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(x => x.Key.LodIndex)
+                        .ThenBy(x => x.Key.PartIndex)
+                        .ToList();
+                    return new AtlasPlanningCandidateGroup(
+                        group.Key,
+                        candidates,
+                        candidates[0],
+                        GetCanonicalCrop(candidates[0]).Crop);
+                })
+                .ToList();
+
+            if (planningGroups.Count < 2)
+                return [];
+
+            var proposals = new List<AtlasBatchSplitProposal>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            void AddProposal(
+                IEnumerable<AtlasPlanningCandidateGroup> leftGroups,
+                IEnumerable<AtlasPlanningCandidateGroup> rightGroups)
+            {
+                var leftGroupList = leftGroups.ToList();
+                var rightGroupList = rightGroups.ToList();
+                var left = leftGroupList.SelectMany(x => x.Candidates).ToList();
+                var right = rightGroupList.SelectMany(x => x.Candidates).ToList();
+
+                if (left.Count < 2 || right.Count < 2)
+                    return;
+
+                var signature = string.Join(
+                    "
+",
+                    left.Select(x => x.Key.ToString())
+                        .OrderBy(x => x, StringComparer.Ordinal));
+                if (!seen.Add(signature))
+                    return;
+
+                proposals.Add(new AtlasBatchSplitProposal(left, right));
+            }
+
+            var planningGroupByMesh = new Dictionary<MeshKey, int>();
+            for (var groupIndex = 0; groupIndex < planningGroups.Count; groupIndex++)
+            {
+                foreach (var candidate in planningGroups[groupIndex].Candidates)
+                    planningGroupByMesh[candidate.Key] = groupIndex;
+            }
+
+            var parent = Enumerable.Range(0, planningGroups.Count).ToArray();
+
+            int Find(int index)
+            {
+                while (parent[index] != index)
+                {
+                    parent[index] = parent[parent[index]];
+                    index = parent[index];
+                }
+                return index;
+            }
+
+            void Union(int left, int right)
+            {
+                var leftRoot = Find(left);
+                var rightRoot = Find(right);
+                if (leftRoot != rightRoot)
+                    parent[rightRoot] = leftRoot;
+            }
+
+            foreach (var affinity in affinityGroups)
+            {
+                var groupIndices = affinity.Meshes
+                    .Where(planningGroupByMesh.ContainsKey)
+                    .Select(mesh => planningGroupByMesh[mesh])
+                    .Distinct()
+                    .ToArray();
+
+                for (var index = 1; index < groupIndices.Length; index++)
+                    Union(groupIndices[0], groupIndices[index]);
+            }
+
+            var components = Enumerable.Range(0, planningGroups.Count)
+                .GroupBy(Find)
+                .Select(component => component
+                    .Select(index => planningGroups[index])
+                    .ToList())
+                .ToList();
+
+            long ComponentArea(IReadOnlyList<AtlasPlanningCandidateGroup> component)
+                => component.Sum(group => GetPaddedCropArea(group.Crop));
+
+            int ComponentAffinity(IReadOnlyList<AtlasPlanningCandidateGroup> component)
+            {
+                var meshes = component
+                    .SelectMany(group => group.Candidates)
+                    .Select(candidate => candidate.Key)
+                    .ToHashSet();
+                return affinityGroups.Sum(group =>
+                {
+                    var count = group.Meshes.Count(meshes.Contains);
+                    return Math.Max(0, count - 1);
+                });
+            }
+
+            void AddBalancedComponentProposal(
+                IEnumerable<List<AtlasPlanningCandidateGroup>> orderedComponents)
+            {
+                var leftComponents = new List<List<AtlasPlanningCandidateGroup>>();
+                var rightComponents = new List<List<AtlasPlanningCandidateGroup>>();
+                long leftArea = 0;
+                long rightArea = 0;
+
+                foreach (var component in orderedComponents)
+                {
+                    var area = ComponentArea(component);
+                    if (leftComponents.Count == 0)
+                    {
+                        leftComponents.Add(component);
+                        leftArea += area;
+                    }
+                    else if (rightComponents.Count == 0)
+                    {
+                        rightComponents.Add(component);
+                        rightArea += area;
+                    }
+                    else if (leftArea <= rightArea)
+                    {
+                        leftComponents.Add(component);
+                        leftArea += area;
+                    }
+                    else
+                    {
+                        rightComponents.Add(component);
+                        rightArea += area;
+                    }
+                }
+
+                AddProposal(
+                    leftComponents.SelectMany(x => x),
+                    rightComponents.SelectMany(x => x));
+            }
+
+            AddBalancedComponentProposal(
+                components
+                    .OrderByDescending(ComponentAffinity)
+                    .ThenByDescending(ComponentArea));
+            AddBalancedComponentProposal(
+                components
+                    .OrderByDescending(ComponentArea)
+                    .ThenByDescending(ComponentAffinity));
+
+            // Also try moving each currently split affinity group wholesale to either side.
+            // Move whole planning identities, never individual duplicate source/crop users.
+            var currentLeftKeys = currentLeft.Select(x => x.Key).ToHashSet();
+            var currentRightKeys = currentRight.Select(x => x.Key).ToHashSet();
+            var currentLeftGroupIds = planningGroups
+                .Select((group, index) => (group, index))
+                .Where(x => x.group.Candidates.Any(candidate => currentLeftKeys.Contains(candidate.Key)))
+                .Select(x => x.index)
+                .ToHashSet();
+
+            foreach (var affinity in affinityGroups)
+            {
+                var affinityGroupIds = affinity.Meshes
+                    .Where(planningGroupByMesh.ContainsKey)
+                    .Select(mesh => planningGroupByMesh[mesh])
+                    .Distinct()
+                    .ToHashSet();
+
+                if (affinityGroupIds.Count < 2 ||
+                    !affinity.Meshes.Any(currentLeftKeys.Contains) ||
+                    !affinity.Meshes.Any(currentRightKeys.Contains))
+                {
+                    continue;
+                }
+
+                var moveToLeft = currentLeftGroupIds
+                    .Union(affinityGroupIds)
+                    .ToHashSet();
+                AddProposal(
+                    planningGroups.Where((_, index) => moveToLeft.Contains(index)),
+                    planningGroups.Where((_, index) => !moveToLeft.Contains(index)));
+
+                var moveToRight = currentLeftGroupIds
+                    .Except(affinityGroupIds)
+                    .ToHashSet();
+                AddProposal(
+                    planningGroups.Where((_, index) => moveToRight.Contains(index)),
+                    planningGroups.Where((_, index) => !moveToRight.Contains(index)));
+            }
+
+            // Reuse the existing physical-layout heuristics as additional candidates. The
+            // acceptance rule below rejects any proposal that loses merge affinity.
+            foreach (var proposal in CreateNonContiguousSplitProposals(combined))
+                AddProposal(
+                    proposal.Left
+                        .GroupBy(GetAtlasPlanningSourceIdentity)
+                        .Select(group => planningGroups.First(
+                            planning => planning.Identity == group.Key)),
+                    proposal.Right
+                        .GroupBy(GetAtlasPlanningSourceIdentity)
+                        .Select(group => planningGroups.First(
+                            planning => planning.Identity == group.Key)));
+
+            const int maxMergeAwareProposals = 48;
+            return proposals.Count <= maxMergeAwareProposals
+                ? proposals
+                : proposals.Take(maxMergeAwareProposals).ToList();
         }
 
         private static IReadOnlyList<AtlasBatchSplitProposal> CreateNonContiguousSplitProposals(
@@ -4348,6 +4855,12 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas non-contiguous split evaluations: {state.AtlasNonContiguousSplitEvaluations}");
             sb.AppendLine($"Atlas pixels saved by split optimization: {state.AtlasPixelAreaSavedByOptimizedSplits:N0}");
             sb.AppendLine($"Atlas pixels saved by non-contiguous splits: {state.AtlasPixelAreaSavedByNonContiguousSplits:N0}");
+            sb.AppendLine($"Merge-aware repartition evaluations: {state.MergeAwareRepartitionEvaluations}");
+            sb.AppendLine($"Merge-aware repartitions accepted: {state.MergeAwareRepartitionsAccepted}");
+            sb.AppendLine($"Merge-aware repartition pixels saved: {state.MergeAwareRepartitionPixelsSaved:N0}");
+            sb.AppendLine($"Merge-affinity eliminations before repartition: {state.MergeAwareAffinityPotentialBefore}");
+            sb.AppendLine($"Merge-affinity eliminations after repartition: {state.MergeAwareAffinityPotentialAfter}");
+            sb.AppendLine($"Merge-affinity eliminations gained: {state.MergeAwareAffinityEliminationsGained}");
             if (state.ShareAtlasesAcrossVmdsEnabled)
             {
                 sb.AppendLine($"Pack-wide atlas candidates: {state.PackWideCandidateCount}");
@@ -4582,7 +5095,25 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 sb.AppendLine();
-                sb.AppendLine("Mesh merge blocker diagnostics");
+                sb.AppendLine("Merge-aware atlas repartitions");
+            sb.AppendLine("------------------------------");
+            if (state.MergeAwareRepartitionEntries.Count == 0)
+            {
+                sb.AppendLine("(none)");
+            }
+            else
+            {
+                foreach (var entry in state.MergeAwareRepartitionEntries)
+                {
+                    sb.AppendLine(
+                        $"Batches {entry.FirstBatchIndex} + {entry.SecondBatchIndex}: " +
+                        $"pixels {entry.BaselinePixels:N0} -> {entry.ResultPixels:N0}, " +
+                        $"merge affinity {entry.BaselineAffinity} -> {entry.ResultAffinity}");
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Mesh merge blocker diagnostics");
                 sb.AppendLine("------------------------------");
                 sb.AppendLine("Counts below are near-miss part pairs/groups; unrelated parts are intentionally omitted.");
                 if (state.MeshMergeBlockerCounts.Count == 0)
@@ -5811,6 +6342,13 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasNonContiguousSplitEvaluations { get; set; }
             public long AtlasPixelAreaSavedByOptimizedSplits { get; set; }
             public long AtlasPixelAreaSavedByNonContiguousSplits { get; set; }
+            public int MergeAwareRepartitionEvaluations { get; set; }
+            public int MergeAwareRepartitionsAccepted { get; set; }
+            public long MergeAwareRepartitionPixelsSaved { get; set; }
+            public int MergeAwareAffinityPotentialBefore { get; set; }
+            public int MergeAwareAffinityPotentialAfter { get; set; }
+            public int MergeAwareAffinityEliminationsGained { get; set; }
+            public List<MergeAwareRepartitionReportEntry> MergeAwareRepartitionEntries { get; } = [];
             public int CrossVmdSharedAtlasBatches { get; set; }
             public int CrossVmdSharedAtlasPlacements { get; set; }
             public int CrossVmdMaterialReuses { get; set; }
@@ -6031,6 +6569,23 @@ namespace Editors.KitbasherEditor.Services
         private sealed record CandidateDiscoveryResult(
             List<AtlasCandidate> Candidates,
             List<MissingTextureDependency> MissingTextures);
+
+        private readonly record struct MergeAffinityIdentity(
+            string GeometryPath,
+            int LodIndex,
+            string RmvIdentity,
+            string MaterialIdentity);
+
+        private sealed record MergeAffinityGroup(
+            MeshKey[] Meshes);
+
+        private sealed record MergeAwareRepartitionReportEntry(
+            int FirstBatchIndex,
+            int SecondBatchIndex,
+            long BaselinePixels,
+            long ResultPixels,
+            int BaselineAffinity,
+            int ResultAffinity);
 
         private sealed record AtlasBatchSplitProposal(
             List<AtlasCandidate> Left,
