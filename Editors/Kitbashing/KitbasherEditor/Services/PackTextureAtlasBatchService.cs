@@ -257,10 +257,13 @@ namespace Editors.KitbasherEditor.Services
                         vmdRoots,
                         cancellationToken,
                         progress);
+                    state.PhaseDurations["Check missing textures"] = phaseStopwatch.Elapsed;
+
                     if (missingTextures.Count != 0)
                     {
                         ReportProgress(progress, "Waiting for missing-texture choice");
 
+                        var dialogStopwatch = Stopwatch.StartNew();
                         var dialog = new MissingTextureDecisionWindow(
                             BuildMissingTextureDetails(missingTextures));
                         var activeOwner = System.Windows.Application.Current?.Windows
@@ -270,8 +273,9 @@ namespace Editors.KitbasherEditor.Services
                             dialog.Owner = activeOwner;
 
                         state.AtlasMeshesWithMissingTextures = dialog.ShowDialog() == true;
+                        state.PhaseDurations["Wait for missing-texture choice"] =
+                            dialogStopwatch.Elapsed;
                     }
-                    state.PhaseDurations["Check missing textures"] = phaseStopwatch.Elapsed;
                 }
 
                 phaseStopwatch.Restart();
