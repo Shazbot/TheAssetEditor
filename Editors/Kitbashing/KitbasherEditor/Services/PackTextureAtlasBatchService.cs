@@ -2842,6 +2842,10 @@ namespace Editors.KitbasherEditor.Services
                             ? "WSModel material paths differ but rendering identity is identical"
                             : materialComparison.Reason;
 
+                        RecordMaterialMergeBlockerBreakdown(
+                            state,
+                            materialComparison);
+
                         RecordMeshMergeBlocker(
                             state,
                             reason,
@@ -3221,7 +3225,8 @@ namespace Editors.KitbasherEditor.Services
                     shader,
                     textureIdentity,
                     nonTexture.OuterXml,
-                    textureAssignments);
+                    textureAssignments,
+                    BuildMaterialLeafFieldMap(nonTexture));
                 state.MeshMergeMaterialDiagnostics[materialPath] = snapshot;
                 return snapshot;
             }
@@ -3230,6 +3235,148 @@ namespace Editors.KitbasherEditor.Services
                 state.MeshMergeMaterialDiagnostics[materialPath] = null;
                 return null;
             }
+        }
+
+        private static void RecordMaterialMergeBlockerBreakdown(
+            BatchState state,
+            MaterialMergeDiagnosticComparison comparison)
+        {
+            var left = GetMaterialMergeDiagnosticSnapshot(state, comparison.LeftMaterialPath);
+            var right = GetMaterialMergeDiagnosticSnapshot(state, comparison.RightMaterialPath);
+            if (left == null || right == null)
+                return;
+
+            if (!left.Shader.Equals(right.Shader, StringComparison.OrdinalIgnoreCase))
+            {
+                var shaders = new[] { left.Shader, right.Shader }
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                IncrementDiagnosticCount(
+                    state.MaterialShaderPairBlockerCounts,
+                    $"{FormatDiagnosticValue(shaders[0])} <> {FormatDiagnosticValue(shaders[1])}");
+                return;
+            }
+
+            if (!left.TextureIdentity.Equals(right.TextureIdentity, StringComparison.Ordinal) &&
+                left.NonTextureIdentity.Equals(right.NonTextureIdentity, StringComparison.Ordinal))
+            {
+                var differingSlots = left.TextureAssignments.Keys
+                    .Union(right.TextureAssignments.Keys, StringComparer.OrdinalIgnoreCase)
+                    .Where(slot =>
+                    {
+                        left.TextureAssignments.TryGetValue(slot, out var leftPath);
+                        right.TextureAssignments.TryGetValue(slot, out var rightPath);
+                        return !Normalize(leftPath).Equals(
+                            Normalize(rightPath),
+                            StringComparison.OrdinalIgnoreCase);
+                    });
+
+                foreach (var slot in differingSlots)
+                {
+                    left.TextureAssignments.TryGetValue(slot, out var leftPath);
+                    right.TextureAssignments.TryGetValue(slot, out var rightPath);
+                    var classes = new[]
+                    {
+                        ClassifyMaterialTexturePath(state, leftPath),
+                        ClassifyMaterialTexturePath(state, rightPath)
+                    }.OrderBy(x => x, StringComparer.Ordinal).ToArray();
+
+                    IncrementDiagnosticCount(
+                        state.MaterialTextureSlotBlockerCounts,
+                        $"{slot} [{classes[0]} <> {classes[1]}]");
+                }
+
+                return;
+            }
+
+            if (!left.NonTextureIdentity.Equals(right.NonTextureIdentity, StringComparison.Ordinal))
+            {
+                foreach (var field in left.NonTextureFields.Keys
+                             .Union(right.NonTextureFields.Keys, StringComparer.Ordinal)
+                             .Where(field =>
+                             {
+                                 left.NonTextureFields.TryGetValue(field, out var leftValue);
+                                 right.NonTextureFields.TryGetValue(field, out var rightValue);
+                                 return !string.Equals(leftValue, rightValue, StringComparison.Ordinal);
+                             }))
+                {
+                    IncrementDiagnosticCount(
+                        state.MaterialParameterFieldBlockerCounts,
+                        field);
+                }
+            }
+        }
+
+        private static string ClassifyMaterialTexturePath(
+            BatchState state,
+            string? texturePath)
+        {
+            var normalized = Normalize(texturePath);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return "missing";
+            if (state.GeneratedTexturePaths.Contains(normalized))
+                return "generated-atlas";
+            if (state.UniformConstantTexturePaths.Contains(normalized) ||
+                IsKnownConstantTexturePath(normalized))
+            {
+                return "uniform-constant";
+            }
+            if (IsTexturePlaceholder(normalized))
+                return "placeholder";
+            return "preserved";
+        }
+
+        private static string FormatDiagnosticValue(string value)
+            => string.IsNullOrWhiteSpace(value) ? "<none>" : value;
+
+        private static void IncrementDiagnosticCount(
+            Dictionary<string, int> counts,
+            string key)
+        {
+            counts[key] = counts.GetValueOrDefault(key) + 1;
+        }
+
+        private static IReadOnlyDictionary<string, string> BuildMaterialLeafFieldMap(
+            XmlDocument material)
+        {
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            var root = material.DocumentElement;
+            if (root == null)
+                return result;
+
+            void Visit(XmlNode node, string path)
+            {
+                if (node.Attributes != null)
+                {
+                    foreach (XmlAttribute attribute in node.Attributes
+                                 .Cast<XmlAttribute>()
+                                 .OrderBy(x => x.Name, StringComparer.Ordinal))
+                    {
+                        result[$"{path}/@{attribute.Name}"] = attribute.Value;
+                    }
+                }
+
+                var elementChildren = node.ChildNodes
+                    .Cast<XmlNode>()
+                    .Where(x => x.NodeType == XmlNodeType.Element)
+                    .ToList();
+                if (elementChildren.Count == 0)
+                {
+                    result[path] = node.InnerText.Trim();
+                    return;
+                }
+
+                var siblingCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+                foreach (var child in elementChildren)
+                {
+                    var childIndex = siblingCounts.GetValueOrDefault(child.Name);
+                    siblingCounts[child.Name] = childIndex + 1;
+                    Visit(child, $"{path}/{child.Name}[{childIndex}]");
+                }
+            }
+
+            Visit(root, $"/{root.Name}");
+            return result;
         }
 
         private static RmvMergeDiagnosticComponents GetRmvMergeDiagnosticComponents(RmvModel model)
@@ -4851,6 +4998,31 @@ namespace Editors.KitbasherEditor.Services
         private static int GetEffectiveSkippedMeshCount(BatchState state)
             => state.SkipDetails.Keys.Count(x => !state.ProcessedMeshes.Contains(x));
 
+        private static void AppendDiagnosticCounts(
+            StringBuilder sb,
+            string title,
+            IReadOnlyDictionary<string, int> counts,
+            int maxEntries)
+        {
+            sb.AppendLine($"  {title}:");
+            if (counts.Count == 0)
+            {
+                sb.AppendLine("    (none)");
+                return;
+            }
+
+            foreach (var entry in counts
+                         .OrderByDescending(x => x.Value)
+                         .ThenBy(x => x.Key, StringComparer.Ordinal)
+                         .Take(maxEntries))
+            {
+                sb.AppendLine($"    {entry.Key}: {entry.Value}");
+            }
+
+            if (counts.Count > maxEntries)
+                sb.AppendLine($"    ... {counts.Count - maxEntries} more");
+        }
+
         private static void WriteReport(
             BatchState state,
             IReadOnlyList<string> vmdRoots,
@@ -4920,6 +5092,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Mesh parts before merging: {state.MeshPartsBeforeMerging}");
                 sb.AppendLine($"Mesh parts after merging: {state.MeshPartsAfterMerging}");
                 sb.AppendLine($"Mesh parts eliminated: {state.MeshPartsEliminated}");
+                sb.AppendLine($"Mesh parts merged across semantically identical material paths: {state.SemanticMaterialPathMergeParts}");
                 sb.AppendLine($"Mesh merge near-miss blocker occurrences: {state.MeshMergeBlockerCounts.Values.Sum()}");
                 var mergeOpportunities = state.TextureMergeOpportunities.Values.ToList();
                 sb.AppendLine($"Texture-blocked merge opportunities: {mergeOpportunities.Count}");
@@ -5178,6 +5351,25 @@ namespace Editors.KitbasherEditor.Services
                         }
                     }
                 }
+
+                sb.AppendLine();
+                sb.AppendLine("Material blocker breakdown");
+                sb.AppendLine("--------------------------");
+                AppendDiagnosticCounts(
+                    sb,
+                    "Shader pairs",
+                    state.MaterialShaderPairBlockerCounts,
+                    maxEntries: 24);
+                AppendDiagnosticCounts(
+                    sb,
+                    "Texture slots",
+                    state.MaterialTextureSlotBlockerCounts,
+                    maxEntries: 32);
+                AppendDiagnosticCounts(
+                    sb,
+                    "Material parameter fields",
+                    state.MaterialParameterFieldBlockerCounts,
+                    maxEntries: 32);
 
                 sb.AppendLine();
                 sb.AppendLine("Texture-blocked merge opportunities");
@@ -6414,6 +6606,10 @@ namespace Editors.KitbasherEditor.Services
             public List<string> MeshMergeSkipMessages { get; } = [];
             public Dictionary<string, int> MeshMergeBlockerCounts { get; } = new(StringComparer.Ordinal);
             public Dictionary<string, List<string>> MeshMergeBlockerExamples { get; } = new(StringComparer.Ordinal);
+            public int SemanticMaterialPathMergeParts { get; set; }
+            public Dictionary<string, int> MaterialShaderPairBlockerCounts { get; } = new(StringComparer.Ordinal);
+            public Dictionary<string, int> MaterialTextureSlotBlockerCounts { get; } = new(StringComparer.Ordinal);
+            public Dictionary<string, int> MaterialParameterFieldBlockerCounts { get; } = new(StringComparer.Ordinal);
             public Dictionary<string, MaterialMergeDiagnosticSnapshot?> MeshMergeMaterialDiagnostics { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<MeshKey, int> AtlasBatchByMesh { get; } = [];
@@ -6468,7 +6664,8 @@ namespace Editors.KitbasherEditor.Services
             string Shader,
             string TextureIdentity,
             string NonTextureIdentity,
-            IReadOnlyDictionary<string, string> TextureAssignments);
+            IReadOnlyDictionary<string, string> TextureAssignments,
+            IReadOnlyDictionary<string, string> NonTextureFields);
 
         private sealed record MaterialMergeDiagnosticComparison(
             bool PathsEqual,
