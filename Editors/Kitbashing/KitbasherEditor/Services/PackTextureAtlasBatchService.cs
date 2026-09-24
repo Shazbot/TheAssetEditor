@@ -1688,8 +1688,8 @@ namespace Editors.KitbasherEditor.Services
             List<List<AtlasCandidate>> working,
             IReadOnlyList<MergeAffinityGroup> affinityGroups)
         {
-            const int maxAcceptedCoalesces = 8;
-            const int maxBlockedPairsPerPass = 24;
+            const int maxAcceptedCoalesces = 4;
+            const int maxBlockedPairsPerPass = 8;
             const int maxThirdBatchesPerPair = 8;
 
             for (var pass = 0; pass < maxAcceptedCoalesces && working.Count >= 3; pass++)
@@ -2063,10 +2063,10 @@ namespace Editors.KitbasherEditor.Services
             for (var count = 1; count <= Math.Min(4, movablePairGroups.Count); count++)
                 AddProposal(movablePairGroups.Take(count));
 
-            foreach (var group in movablePairGroups.Take(20))
+            foreach (var group in movablePairGroups.Take(8))
                 AddProposal([group]);
 
-            var pairEvictionPool = movablePairGroups.Take(10).ToList();
+            var pairEvictionPool = movablePairGroups.Take(6).ToList();
             var pairEvictionCount = 0;
             for (var left = 0; left < pairEvictionPool.Count; left++)
             {
@@ -2074,23 +2074,26 @@ namespace Editors.KitbasherEditor.Services
                 {
                     AddProposal([pairEvictionPool[left], pairEvictionPool[right]]);
                     pairEvictionCount++;
-                    if (pairEvictionCount >= 24)
+                    if (pairEvictionCount >= 8)
                         break;
                 }
 
-                if (pairEvictionCount >= 24)
+                if (pairEvictionCount >= 8)
                     break;
             }
 
             // A swap can reduce channel-resolution pressure even when simply evicting a source
             // does not. Keep this bounded to the highest-pressure groups on each side.
-            foreach (var evicted in movablePairGroups.Take(8))
+            foreach (var evicted in movablePairGroups.Take(4))
             {
-                foreach (var incoming in rankedThirdGroups.Take(8))
+                foreach (var incoming in rankedThirdGroups.Take(3))
                     AddProposal([evicted], [incoming]);
             }
 
-            const int maxThreeBatchProposals = 112;
+            // With eight blocked pairs and eight possible third batches this caps one pass at
+            // roughly 1,280 real packer evaluations instead of allowing the triple search to
+            // grow combinatorially on large mods.
+            const int maxThreeBatchProposals = 20;
             return proposals.Count <= maxThreeBatchProposals
                 ? proposals
                 : proposals.Take(maxThreeBatchProposals).ToList();
