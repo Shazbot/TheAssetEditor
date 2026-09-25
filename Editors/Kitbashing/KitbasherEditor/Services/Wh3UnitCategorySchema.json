@@ -1,0 +1,2454 @@
+{
+  "definitions": {
+    "main_units_tables": [
+      {
+        "version": 36,
+        "fields": [
+          {
+            "name": "additional_building_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "campaign_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "caste",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "create_time",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_naval",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "land_unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "num_men",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "naval_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_ships",
+            "field_type": "I32"
+          },
+          {
+            "name": "min_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "max_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "prestige",
+            "field_type": "I32"
+          },
+          {
+            "name": "recruitment_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "recruitment_movie",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "religion_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "upkeep_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "weight",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "resource_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "world_leader_only",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "can_trade",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "special_edition_mask",
+            "field_type": "I32"
+          },
+          {
+            "name": "unique_index",
+            "field_type": "I64"
+          },
+          {
+            "name": "in_encyclopedia",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "region_unit_resource_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_unit_group_land",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_unit_group_naval",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "tier",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_high_threat",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_camera",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "use_hitpoints_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit_scaling",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_composite_scene",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "melee_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "missile_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "can_siege",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture_override",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "restrict_xp_gain_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_actor_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "food_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "has_spoken_vo",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "is_monstrous",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "multiplayer_qb_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "vo_is_dragon",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "vo_is_dinosaur",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "optional_ui_element",
+            "field_type": "OptionalStringU8"
+          }
+        ]
+      },
+      {
+        "version": 35,
+        "fields": [
+          {
+            "name": "additional_building_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "campaign_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "caste",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "create_time",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_naval",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "land_unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "num_men",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "naval_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_ships",
+            "field_type": "I32"
+          },
+          {
+            "name": "min_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "max_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "prestige",
+            "field_type": "I32"
+          },
+          {
+            "name": "recruitment_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "recruitment_movie",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "religion_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "upkeep_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "weight",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "resource_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "world_leader_only",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "can_trade",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "special_edition_mask",
+            "field_type": "I32"
+          },
+          {
+            "name": "unique_index",
+            "field_type": "I64"
+          },
+          {
+            "name": "in_encyclopedia",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "region_unit_resource_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_unit_group_land",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_unit_group_naval",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "tier",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_high_threat",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_camera",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "use_hitpoints_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit_scaling",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_composite_scene",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "melee_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "missile_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "can_siege",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture_override",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "restrict_xp_gain_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_actor_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "food_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "has_spoken_vo",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "is_monstrous",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "multiplayer_qb_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "vo_is_dragon",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "vo_is_dinosaur",
+            "field_type": "Boolean"
+          }
+        ]
+      },
+      {
+        "version": 33,
+        "fields": [
+          {
+            "name": "additional_building_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "campaign_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "caste",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "create_time",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_naval",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "land_unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "num_men",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "naval_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_ships",
+            "field_type": "I32"
+          },
+          {
+            "name": "min_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "max_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "prestige",
+            "field_type": "I32"
+          },
+          {
+            "name": "recruitment_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "recruitment_movie",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "religion_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "upkeep_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "weight",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "resource_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "world_leader_only",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "can_trade",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "special_edition_mask",
+            "field_type": "I32"
+          },
+          {
+            "name": "unique_index",
+            "field_type": "I64"
+          },
+          {
+            "name": "in_encyclopedia",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "region_unit_resource_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_unit_group_land",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_unit_group_naval",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "tier",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_high_threat",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_camera",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "use_hitpoints_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit_scaling",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_composite_scene",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "melee_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "missile_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "can_siege",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture_override",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "restrict_xp_gain_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_actor_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "food_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "has_spoken_vo",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "is_monstrous",
+            "field_type": "Boolean"
+          }
+        ]
+      },
+      {
+        "version": 7,
+        "fields": [
+          {
+            "name": "additional_building_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "campaign_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "caste",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "create_time",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_naval",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "land_unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "num_men",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "naval_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_ships",
+            "field_type": "I32"
+          },
+          {
+            "name": "min_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "max_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "recruitment_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "upkeep_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "weight",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "resource_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "special_edition_mask",
+            "field_type": "I32"
+          },
+          {
+            "name": "in_encyclopedia",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_unit_group_land",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "tier",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_high_threat",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_camera",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "use_hitpoints_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_composite_scene",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "melee_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "missile_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "can_siege",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture_override",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "restrict_xp_gain_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_actor_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "food_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "has_spoken_vo",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "is_monstrous",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "multiplayer_qb_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "vo_is_dragon",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "vo_is_dinosaur",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "optional_ui_element",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "barrier_health",
+            "field_type": "F32"
+          },
+          {
+            "name": "can_be_bribed",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "point_allowance_weight",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_renown",
+            "field_type": "Boolean"
+          }
+        ]
+      },
+      {
+        "version": 6,
+        "fields": [
+          {
+            "name": "additional_building_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "campaign_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "caste",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "create_time",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_naval",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "land_unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "num_men",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "naval_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_ships",
+            "field_type": "I32"
+          },
+          {
+            "name": "min_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "max_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "recruitment_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "upkeep_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "weight",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "resource_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "special_edition_mask",
+            "field_type": "I32"
+          },
+          {
+            "name": "unique_index",
+            "field_type": "I64"
+          },
+          {
+            "name": "in_encyclopedia",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_unit_group_land",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "tier",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_high_threat",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_camera",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "use_hitpoints_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_composite_scene",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "melee_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "missile_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "can_siege",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture_override",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "restrict_xp_gain_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_actor_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "food_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "has_spoken_vo",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "is_monstrous",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "multiplayer_qb_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "vo_is_dragon",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "vo_is_dinosaur",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "optional_ui_element",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "barrier_health",
+            "field_type": "F32"
+          },
+          {
+            "name": "can_be_bribed",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "point_allowance_weight",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_renown",
+            "field_type": "Boolean"
+          }
+        ]
+      },
+      {
+        "version": 4,
+        "fields": [
+          {
+            "name": "additional_building_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "campaign_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "caste",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "create_time",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_naval",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "land_unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "num_men",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "multiplayer_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "naval_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_ships",
+            "field_type": "I32"
+          },
+          {
+            "name": "min_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "max_men_per_ship",
+            "field_type": "I32"
+          },
+          {
+            "name": "recruitment_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "upkeep_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "weight",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "resource_requirement",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "special_edition_mask",
+            "field_type": "I32"
+          },
+          {
+            "name": "unique_index",
+            "field_type": "I64"
+          },
+          {
+            "name": "in_encyclopedia",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_unit_group_land",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "tier",
+            "field_type": "I32"
+          },
+          {
+            "name": "is_high_threat",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_camera",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "use_hitpoints_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "porthole_composite_scene",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "melee_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "missile_cp",
+            "field_type": "F32"
+          },
+          {
+            "name": "can_siege",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture_override",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "restrict_xp_gain_in_campaign",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_actor_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "food_cost",
+            "field_type": "I32"
+          },
+          {
+            "name": "has_spoken_vo",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "is_monstrous",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "multiplayer_qb_cap",
+            "field_type": "I32"
+          },
+          {
+            "name": "vo_is_dragon",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "vo_is_dinosaur",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "optional_ui_element",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "barrier_health",
+            "field_type": "F32"
+          },
+          {
+            "name": "can_be_bribed",
+            "field_type": "Boolean"
+          }
+        ]
+      }
+    ],
+    "land_units_tables": [
+      {
+        "version": 54,
+        "fields": [
+          {
+            "name": "accuracy",
+            "field_type": "I32"
+          },
+          {
+            "name": "armour",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "campaign_action_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "charge_bonus",
+            "field_type": "I32"
+          },
+          {
+            "name": "class",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "historical_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "man_animation",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "man_entity",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "melee_attack",
+            "field_type": "I32"
+          },
+          {
+            "name": "melee_defence",
+            "field_type": "I32"
+          },
+          {
+            "name": "morale",
+            "field_type": "I32"
+          },
+          {
+            "name": "bonus_hit_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_mounts",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_melee_weapon",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "primary_missile_weapon",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "rank_depth",
+            "field_type": "I32"
+          },
+          {
+            "name": "shield",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "short_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "spacing",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "training_level",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "articulated_record",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "engine",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_male",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "visibility_spotting_range_min",
+            "field_type": "F32"
+          },
+          {
+            "name": "visibility_spotting_range_max",
+            "field_type": "F32"
+          },
+          {
+            "name": "attribute_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "spot_dist_tree",
+            "field_type": "I32"
+          },
+          {
+            "name": "spot_dist_scrub",
+            "field_type": "I32"
+          },
+          {
+            "name": "reload",
+            "field_type": "I32"
+          },
+          {
+            "name": "selection_vo",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_secondary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_tertiary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "hiding_scalar",
+            "field_type": "F32"
+          },
+          {
+            "name": "ground_stat_effect_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "secondary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_flame",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_magic",
+            "field_type": "I32"
+          },
+          {
+            "name": "num_engines",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_physical",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_missile",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_all",
+            "field_type": "I32"
+          },
+          {
+            "name": "ai_usage_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "can_skirmish",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "can_brace",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mounted_draughts",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "sync_locomotion",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "capture_tier",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key_building_capture_tier",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "score_capture_tier",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "harmony_amplification_type",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "first_person",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "ar_unit_category",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "healing_power",
+            "field_type": "F32"
+          },
+          {
+            "name": "spell_mastery",
+            "field_type": "F32"
+          },
+          {
+            "name": "infinite_secondary_ammo",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "default_guard_mode",
+            "field_type": "Boolean"
+          }
+        ]
+      },
+      {
+        "version": 53,
+        "fields": [
+          {
+            "name": "accuracy",
+            "field_type": "I32"
+          },
+          {
+            "name": "armour",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "campaign_action_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "charge_bonus",
+            "field_type": "I32"
+          },
+          {
+            "name": "class",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "historical_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "man_animation",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "man_entity",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "melee_attack",
+            "field_type": "I32"
+          },
+          {
+            "name": "melee_defence",
+            "field_type": "I32"
+          },
+          {
+            "name": "morale",
+            "field_type": "I32"
+          },
+          {
+            "name": "bonus_hit_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_mounts",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_melee_weapon",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "primary_missile_weapon",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "rank_depth",
+            "field_type": "I32"
+          },
+          {
+            "name": "shield",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "short_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "spacing",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "training_level",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "articulated_record",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "engine",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_male",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "visibility_spotting_range_min",
+            "field_type": "F32"
+          },
+          {
+            "name": "visibility_spotting_range_max",
+            "field_type": "F32"
+          },
+          {
+            "name": "attribute_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "spot_dist_tree",
+            "field_type": "I32"
+          },
+          {
+            "name": "spot_dist_scrub",
+            "field_type": "I32"
+          },
+          {
+            "name": "reload",
+            "field_type": "I32"
+          },
+          {
+            "name": "selection_vo",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_secondary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_tertiary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "hiding_scalar",
+            "field_type": "F32"
+          },
+          {
+            "name": "ground_stat_effect_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "secondary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_flame",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_magic",
+            "field_type": "I32"
+          },
+          {
+            "name": "num_engines",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_physical",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_missile",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_all",
+            "field_type": "I32"
+          },
+          {
+            "name": "ai_usage_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "can_skirmish",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "can_brace",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mounted_draughts",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "sync_locomotion",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "capture_tier",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key_building_capture_tier",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "score_capture_tier",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "harmony_amplification_type",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "first_person",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "ar_unit_category",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "healing_power",
+            "field_type": "F32"
+          },
+          {
+            "name": "spell_mastery",
+            "field_type": "F32"
+          },
+          {
+            "name": "infinite_secondary_ammo",
+            "field_type": "Boolean"
+          }
+        ]
+      },
+      {
+        "version": 50,
+        "fields": [
+          {
+            "name": "accuracy",
+            "field_type": "I32"
+          },
+          {
+            "name": "armour",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "campaign_action_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "charge_bonus",
+            "field_type": "I32"
+          },
+          {
+            "name": "class",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "historical_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "man_animation",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "man_entity",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "melee_attack",
+            "field_type": "I32"
+          },
+          {
+            "name": "melee_defence",
+            "field_type": "I32"
+          },
+          {
+            "name": "morale",
+            "field_type": "I32"
+          },
+          {
+            "name": "bonus_hit_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_mounts",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_melee_weapon",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "primary_missile_weapon",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "rank_depth",
+            "field_type": "I32"
+          },
+          {
+            "name": "shield",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "short_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "spacing",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "training_level",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "articulated_record",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "engine",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_male",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "visibility_spotting_range_min",
+            "field_type": "F32"
+          },
+          {
+            "name": "visibility_spotting_range_max",
+            "field_type": "F32"
+          },
+          {
+            "name": "attribute_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "spot_dist_tree",
+            "field_type": "I32"
+          },
+          {
+            "name": "spot_dist_scrub",
+            "field_type": "I32"
+          },
+          {
+            "name": "reload",
+            "field_type": "I32"
+          },
+          {
+            "name": "selection_vo",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_secondary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_tertiary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "hiding_scalar",
+            "field_type": "F32"
+          },
+          {
+            "name": "ground_stat_effect_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "secondary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_flame",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_magic",
+            "field_type": "I32"
+          },
+          {
+            "name": "num_engines",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_physical",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_missile",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_all",
+            "field_type": "I32"
+          },
+          {
+            "name": "ai_usage_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "can_skirmish",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "can_brace",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mounted_draughts",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "sync_locomotion",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "capture_tier",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key_building_capture_tier",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "score_capture_tier",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "harmony_amplification_type",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "first_person",
+            "field_type": "OptionalStringU8"
+          }
+        ]
+      },
+      {
+        "version": 44,
+        "fields": [
+          {
+            "name": "accuracy",
+            "field_type": "I32"
+          },
+          {
+            "name": "armour",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "campaign_action_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "charge_bonus",
+            "field_type": "I32"
+          },
+          {
+            "name": "class",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "dismounted_charge_bonus",
+            "field_type": "I32"
+          },
+          {
+            "name": "dismounted_melee_attack",
+            "field_type": "I32"
+          },
+          {
+            "name": "historical_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "man_animation",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "man_entity",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "melee_attack",
+            "field_type": "I32"
+          },
+          {
+            "name": "melee_defence",
+            "field_type": "I32"
+          },
+          {
+            "name": "morale",
+            "field_type": "I32"
+          },
+          {
+            "name": "bonus_hit_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "animal",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_animals",
+            "field_type": "I32"
+          },
+          {
+            "name": "num_mounts",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_melee_weapon",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "primary_missile_weapon",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "rank_depth",
+            "field_type": "I32"
+          },
+          {
+            "name": "shield",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "short_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "spacing",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "strengths_&_weaknesses_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "supports_first_person",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "training_level",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "officers",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "articulated_record",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "engine",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_male",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "visibility_spotting_range_min",
+            "field_type": "F32"
+          },
+          {
+            "name": "visibility_spotting_range_max",
+            "field_type": "F32"
+          },
+          {
+            "name": "ability_global_recharge",
+            "field_type": "F32"
+          },
+          {
+            "name": "attribute_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "spot_dist_tree",
+            "field_type": "I32"
+          },
+          {
+            "name": "spot_dist_scrub",
+            "field_type": "I32"
+          },
+          {
+            "name": "reload",
+            "field_type": "I32"
+          },
+          {
+            "name": "loose_spacing",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "selection_vo",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_secondary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_tertiary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "hiding_scalar",
+            "field_type": "F32"
+          },
+          {
+            "name": "capture_power",
+            "field_type": "F32"
+          },
+          {
+            "name": "ground_stat_effect_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "secondary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_flame",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_magic",
+            "field_type": "I32"
+          },
+          {
+            "name": "num_engines",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_physical",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_missile",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_all",
+            "field_type": "I32"
+          },
+          {
+            "name": "ai_usage_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "can_skirmish",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mounted_draughts",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "sync_locomotion",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "can_brace",
+            "field_type": "Boolean"
+          }
+        ]
+      },
+      {
+        "version": 43,
+        "fields": [
+          {
+            "name": "accuracy",
+            "field_type": "I32"
+          },
+          {
+            "name": "armour",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "campaign_action_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "charge_bonus",
+            "field_type": "I32"
+          },
+          {
+            "name": "class",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "dismounted_charge_bonus",
+            "field_type": "I32"
+          },
+          {
+            "name": "dismounted_melee_attack",
+            "field_type": "I32"
+          },
+          {
+            "name": "historical_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "man_animation",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "man_entity",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "melee_attack",
+            "field_type": "I32"
+          },
+          {
+            "name": "melee_defence",
+            "field_type": "I32"
+          },
+          {
+            "name": "morale",
+            "field_type": "I32"
+          },
+          {
+            "name": "bonus_hit_points",
+            "field_type": "I32"
+          },
+          {
+            "name": "mount",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "animal",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "num_animals",
+            "field_type": "I32"
+          },
+          {
+            "name": "num_mounts",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_melee_weapon",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "primary_missile_weapon",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "rank_depth",
+            "field_type": "I32"
+          },
+          {
+            "name": "shield",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "short_description_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "spacing",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "strengths_&_weaknesses_text",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "supports_first_person",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "training_level",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "officers",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "articulated_record",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "engine",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_male",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "visibility_spotting_range_min",
+            "field_type": "F32"
+          },
+          {
+            "name": "visibility_spotting_range_max",
+            "field_type": "F32"
+          },
+          {
+            "name": "ability_global_recharge",
+            "field_type": "F32"
+          },
+          {
+            "name": "attribute_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "spot_dist_tree",
+            "field_type": "I32"
+          },
+          {
+            "name": "spot_dist_scrub",
+            "field_type": "I32"
+          },
+          {
+            "name": "reload",
+            "field_type": "I32"
+          },
+          {
+            "name": "loose_spacing",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "selection_vo",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_secondary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "selected_vo_tertiary",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "hiding_scalar",
+            "field_type": "F32"
+          },
+          {
+            "name": "capture_power",
+            "field_type": "F32"
+          },
+          {
+            "name": "ground_stat_effect_group",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "secondary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "primary_ammo",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_flame",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_magic",
+            "field_type": "I32"
+          },
+          {
+            "name": "num_engines",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_physical",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_missile",
+            "field_type": "I32"
+          },
+          {
+            "name": "damage_mod_all",
+            "field_type": "I32"
+          },
+          {
+            "name": "ai_usage_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "can_skirmish",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mounted_draughts",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "sync_locomotion",
+            "field_type": "Boolean"
+          }
+        ]
+      }
+    ],
+    "unit_variants_tables": [
+      {
+        "version": 5,
+        "fields": [
+          {
+            "name": "faction",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "name",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "variant",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "unit_card",
+            "field_type": "StringU8"
+          }
+        ]
+      }
+    ],
+    "variants_tables": [
+      {
+        "version": 6,
+        "fields": [
+          {
+            "name": "variant_name",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "tech_folder",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "variant_filename",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "low_poly_filename",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "mount_scale",
+            "field_type": "F32"
+          },
+          {
+            "name": "scale",
+            "field_type": "F32"
+          },
+          {
+            "name": "scale_variation",
+            "field_type": "F32"
+          },
+          {
+            "name": "super_low_poly_filename",
+            "field_type": "OptionalStringU8"
+          }
+        ]
+      },
+      {
+        "version": 5,
+        "fields": [
+          {
+            "name": "variant_name",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "tech_folder",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "variant_filename",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "low_poly_filename",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "mount_scale",
+            "field_type": "F32"
+          },
+          {
+            "name": "scale",
+            "field_type": "F32"
+          },
+          {
+            "name": "scale_variation",
+            "field_type": "F32"
+          }
+        ]
+      }
+    ]
+  }
+}
