@@ -1,0 +1,134 @@
+<windowhandling:AssetEditorWindow
+    x:Class="Editors.KitbasherEditor.Services.TextureAtlasProgressWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:windowhandling="clr-namespace:WindowHandling;assembly=Shared.Ui"
+    Title="Texture Atlas Pack"
+    Width="680"
+    SizeToContent="Height"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterOwner"
+    Closing="Window_OnClosing"
+    Style="{StaticResource CustomWindowStyle}">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock
+            Grid.Row="0"
+            FontSize="15"
+            FontWeight="SemiBold"
+            Text="Create Texture Atlas Pack" />
+
+        <CheckBox
+            x:Name="MergeMeshesCheckBox"
+            Grid.Row="1"
+            Margin="0,12,0,0"
+            Content="Merge compatible mesh parts (experimental, improves draw calls)"
+            IsChecked="True" />
+
+        <TextBlock
+            Grid.Row="2"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="When enabled, compatible parts within the same rigid and LOD may be combined. This changes mesh part indices; WSModel material indices are rewritten automatically."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
+        <CheckBox
+            x:Name="ShareAcrossVmdsCheckBox"
+            Grid.Row="3"
+            Margin="0,12,0,0"
+            Content="Share atlases and generated materials across VMDs"
+            IsChecked="True" />
+
+        <TextBlock
+            Grid.Row="4"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="When enabled, compatible mesh parts from all VMD roots in the pack are planned together so they can share atlas placements, atlas textures, and generated materials."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
+        <CheckBox
+            x:Name="OptimizeGeometryCheckBox"
+            Grid.Row="5"
+            Margin="0,12,0,0"
+            Content="Optimize geometry (experimental)"
+            IsChecked="True" />
+
+        <TextBlock
+            Grid.Row="6"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="When enabled, atlased rigid meshes remove unused vertices and degenerate triangles, deduplicate identical vertices, optimize triangle order for the GPU vertex cache, and reorder the vertex buffer for locality."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
+        <TextBlock
+            x:Name="PhaseText"
+            Grid.Row="7"
+            Margin="0,16,0,0"
+            FontWeight="SemiBold"
+            Text="Ready" />
+
+        <TextBlock
+            x:Name="ItemText"
+            Grid.Row="8"
+            Margin="0,8,0,0"
+            MinHeight="36"
+            MaxWidth="640"
+            TextWrapping="Wrap"
+            TextTrimming="CharacterEllipsis"
+            Opacity="0.8" />
+
+        <ProgressBar
+            x:Name="ProgressBar"
+            Grid.Row="9"
+            Height="20"
+            Margin="0,12,0,0"
+            Minimum="0"
+            Maximum="100"
+            IsIndeterminate="False"
+            Value="0" />
+
+        <Grid Grid.Row="10" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock
+                x:Name="CountText"
+                Grid.Column="0"
+                VerticalAlignment="Center"
+                Opacity="0.75" />
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button
+                    x:Name="StartButton"
+                    Width="100"
+                    Margin="0,6,8,0"
+                    Click="StartButton_Click"
+                    Content="Start" />
+                <Button
+                    x:Name="CancelButton"
+                    Width="100"
+                    Margin="0,6,0,0"
+                    Click="CancelButton_Click"
+                    Content="Cancel" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</windowhandling:AssetEditorWindow>

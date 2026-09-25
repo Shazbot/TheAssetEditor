@@ -54,7 +54,7 @@ namespace GameWorld.Core.Rendering.Geometry
 
 
 
-        public MeshObject Clone(bool includeMesh = true)
+        public MeshObject Clone(bool includeMesh = true, bool createGraphicsResources = true)
         {
             var mesh = new MeshObject(_context, SkeletonName)
             {
@@ -73,8 +73,11 @@ namespace GameWorld.Core.Rendering.Geometry
                 mesh.VertexArray = new VertexPositionNormalTextureCustom[VertexArray.Length];
                 VertexArray.CopyTo(mesh.VertexArray, 0);
 
-                mesh._context.RebuildIndexBuffer(mesh.IndexArray);
-                mesh._context.RebuildVertexBuffer(mesh.VertexArray, VertexPositionNormalTextureCustom.VertexDeclaration);
+                if (createGraphicsResources)
+                {
+                    mesh._context.RebuildIndexBuffer(mesh.IndexArray);
+                    mesh._context.RebuildVertexBuffer(mesh.VertexArray, VertexPositionNormalTextureCustom.VertexDeclaration);
+                }
             }
 
             return mesh;

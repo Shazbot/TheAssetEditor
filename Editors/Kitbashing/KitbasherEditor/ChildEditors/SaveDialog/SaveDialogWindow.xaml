@@ -50,6 +50,7 @@
                          ItemsSource="{Binding WsStrategies}" 
                           DisplayMemberPath="DisplayName" 
                           SelectedItem="{Binding SelectedWsModelStrategy}"
+                          IsEnabled="{Binding IsWsModelStrategyEnabled}"
                           ToolTip="{Binding Path=SelectedItem.Description, RelativeSource={RelativeSource Self}}"/>
 
                 <Label Grid.Row="3" Grid.Column="0" Content="{loc:Loc KitbashTool.SaveDialog.LodStrategy}"/>
