@@ -2690,7 +2690,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh,
             IReadOnlyDictionary<
                 MeshKey,
-                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> expectedArmyEntitiesByMesh,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>> expectedArmyEntitiesByMesh,
             ref double currentExpectedArmyDrawCallsEliminated)
         {
             const int maxCoalesces = 16;
