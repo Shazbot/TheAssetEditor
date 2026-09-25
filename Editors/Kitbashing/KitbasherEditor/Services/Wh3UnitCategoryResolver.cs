@@ -87,8 +87,13 @@ namespace Editors.KitbasherEditor.Services
                 _ => new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
 
+            // Resolve against the game's CA database plus the selected source pack only.
+            // Other editable/mod packs that happen to be open in Asset Editor must not change
+            // classification of the pack being processed.
             var containers = packFileService.GetAllPackfileContainers()
-                .Where(container => !IsSameContainer(container, source))
+                .Where(container =>
+                    container.IsCaPackFile &&
+                    !IsSameContainer(container, source))
                 .ToList();
             containers.Add(source);
 
