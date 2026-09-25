@@ -25,6 +25,7 @@
   
         Dictionary<string, PackFile> GetAllFiles();
         SortedDictionary<string, List<string>> GetAllFilesByFolder();
+        List<(string Path, PackFile File)> GetDirectoryContent(string directoryPath);
 
         List<(string Path, PackFile File)> SearchFiles(string? textFilter, IReadOnlyList<string>? extensions);
     }
