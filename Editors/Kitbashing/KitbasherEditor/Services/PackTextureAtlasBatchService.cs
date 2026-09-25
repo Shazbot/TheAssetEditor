@@ -2145,9 +2145,20 @@ namespace Editors.KitbasherEditor.Services
             var rootsByMesh = BuildCandidateRootVmdPaths(
                 state,
                 working.SelectMany(batch => batch));
+            var armyUnitsByMesh = BuildArmyUnitsByMesh(
+                state.ArmyResidencyModel,
+                rootsByMesh);
+            var currentExpectedArmyDrawCallsEliminated =
+                CalculateExpectedArmyDrawCallsEliminated(
+                    state.ArmyResidencyModel,
+                    BuildBatchIndexByMesh(working),
+                    affinityGroups,
+                    armyUnitsByMesh);
 
             state.MergeAwareAffinityPotentialBefore +=
                 CalculateMergeAffinityScore(working, affinityGroups);
+            state.ExpectedArmyDrawCallsEliminatedBeforeMergeAware +=
+                currentExpectedArmyDrawCallsEliminated;
 
             const int maxPasses = 2;
             for (var pass = 0; pass < maxPasses; pass++)
@@ -2233,8 +2244,14 @@ namespace Editors.KitbasherEditor.Services
                             currentRight,
                             rootsByMesh);
                     var baselineAffinity = CalculateMergeAffinityScore(working, affinityGroups);
+                    var baselineExpectedArmyDrawCallsEliminated =
+                        currentExpectedArmyDrawCallsEliminated;
                     AtlasBatchSplitProposal? bestProposal = null;
                     var bestPixels = baselinePixels;
+                    var bestResidentPixels = baselineResidentPixels;
+                    var bestArmyResidentPixels = baselineArmyResidentPixels;
+                    var bestExpectedArmyDrawCallsEliminated =
+                        baselineExpectedArmyDrawCallsEliminated;
                     var bestAffinity = baselineAffinity;
 
                     foreach (var proposal in CreateMergeAwareRepartitionProposals(
@@ -2295,17 +2312,71 @@ namespace Editors.KitbasherEditor.Services
                             proposal,
                             affinityGroups);
 
-                        // This pass is allowed to save pixels, but it must never destroy an
-                        // already-achievable draw-call merge to do so.
+                        // Keep the old unweighted merge count as a hard safety guard. The
+                        // army-weighted score decides which non-regressing merge opportunity is
+                        // actually more valuable in a representative battle.
                         if (proposedAffinity < baselineAffinity)
                             continue;
 
-                        if (combinedPixels < bestPixels ||
-                            (combinedPixels == bestPixels &&
-                             proposedAffinity > bestAffinity))
+                        var proposedBatchByMesh = BuildBatchIndexByMesh(working);
+                        foreach (var candidate in proposal.Left)
+                            proposedBatchByMesh[candidate.Key] = leftIndex;
+                        foreach (var candidate in proposal.Right)
+                            proposedBatchByMesh[candidate.Key] = rightIndex;
+                        var proposedExpectedArmyDrawCallsEliminated =
+                            CalculateExpectedArmyDrawCallsEliminated(
+                                state.ArmyResidencyModel,
+                                proposedBatchByMesh,
+                                affinityGroups,
+                                armyUnitsByMesh);
+
+                        const double expectedDrawComparisonEpsilon = 0.000001;
+                        const double expectedResidencyComparisonEpsilon = 0.5;
+                        var isBetter =
+                            proposedArmyResidentPixels <
+                                bestArmyResidentPixels - expectedResidencyComparisonEpsilon ||
+                            (Math.Abs(
+                                 proposedArmyResidentPixels -
+                                 bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                             proposedExpectedArmyDrawCallsEliminated >
+                                 bestExpectedArmyDrawCallsEliminated +
+                                 expectedDrawComparisonEpsilon) ||
+                            (Math.Abs(
+                                 proposedArmyResidentPixels -
+                                 bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                             Math.Abs(
+                                 proposedExpectedArmyDrawCallsEliminated -
+                                 bestExpectedArmyDrawCallsEliminated) <=
+                                 expectedDrawComparisonEpsilon &&
+                             combinedPixels < bestPixels) ||
+                            (Math.Abs(
+                                 proposedArmyResidentPixels -
+                                 bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                             Math.Abs(
+                                 proposedExpectedArmyDrawCallsEliminated -
+                                 bestExpectedArmyDrawCallsEliminated) <=
+                                 expectedDrawComparisonEpsilon &&
+                             combinedPixels == bestPixels &&
+                             proposedResidentPixels < bestResidentPixels) ||
+                            (Math.Abs(
+                                 proposedArmyResidentPixels -
+                                 bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                             Math.Abs(
+                                 proposedExpectedArmyDrawCallsEliminated -
+                                 bestExpectedArmyDrawCallsEliminated) <=
+                                 expectedDrawComparisonEpsilon &&
+                             combinedPixels == bestPixels &&
+                             proposedResidentPixels == bestResidentPixels &&
+                             proposedAffinity > bestAffinity);
+
+                        if (isBetter)
                         {
                             bestProposal = proposal;
                             bestPixels = combinedPixels;
+                            bestResidentPixels = proposedResidentPixels;
+                            bestArmyResidentPixels = proposedArmyResidentPixels;
+                            bestExpectedArmyDrawCallsEliminated =
+                                proposedExpectedArmyDrawCallsEliminated;
                             bestAffinity = proposedAffinity;
                         }
                     }
@@ -2322,6 +2393,8 @@ namespace Editors.KitbasherEditor.Services
                         bestPixels);
                     state.MergeAwareAffinityEliminationsGained +=
                         bestAffinity - baselineAffinity;
+                    currentExpectedArmyDrawCallsEliminated =
+                        bestExpectedArmyDrawCallsEliminated;
                     state.MergeAwareRepartitionEntries.Add(
                         new MergeAwareRepartitionReportEntry(
                             state.BatchIndex + leftIndex,
@@ -2329,7 +2402,9 @@ namespace Editors.KitbasherEditor.Services
                             baselinePixels,
                             bestPixels,
                             baselineAffinity,
-                            bestAffinity));
+                            bestAffinity,
+                            baselineExpectedArmyDrawCallsEliminated,
+                            bestExpectedArmyDrawCallsEliminated));
                     changed = true;
                 }
 
@@ -2341,10 +2416,14 @@ namespace Editors.KitbasherEditor.Services
                 state,
                 working,
                 affinityGroups,
-                rootsByMesh);
+                rootsByMesh,
+                armyUnitsByMesh,
+                ref currentExpectedArmyDrawCallsEliminated);
 
             state.MergeAwareAffinityPotentialAfter +=
                 CalculateMergeAffinityScore(working, affinityGroups);
+            state.ExpectedArmyDrawCallsEliminatedAfterMergeAware +=
+                currentExpectedArmyDrawCallsEliminated;
             return working;
         }
 
@@ -2352,7 +2431,11 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             List<List<AtlasCandidate>> working,
             IReadOnlyList<MergeAffinityGroup> affinityGroups,
-            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
+            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> armyUnitsByMesh,
+            ref double currentExpectedArmyDrawCallsEliminated)
         {
             const int maxCoalesces = 16;
             const int maxPairEvaluationsPerPass = 64;
@@ -2391,6 +2474,9 @@ namespace Editors.KitbasherEditor.Services
                 AtlasBatchPair? bestPair = null;
                 List<AtlasCandidate>? bestCombined = null;
                 var bestAffinity = baselineAffinity;
+                var bestArmyResidentPixels = double.PositiveInfinity;
+                var bestExpectedArmyDrawCallsEliminated =
+                    currentExpectedArmyDrawCallsEliminated;
                 long bestPixelsSaved = long.MinValue;
                 var bestPairWeight = -1;
 
@@ -2473,22 +2559,64 @@ namespace Editors.KitbasherEditor.Services
                     if (proposedAffinity <= baselineAffinity)
                         continue;
 
+                    var proposedBatchByMesh = BuildBatchIndexByMesh(working);
+                    foreach (var candidate in rightBatch)
+                        proposedBatchByMesh[candidate.Key] = pair.FirstBatchId;
+                    var proposedExpectedArmyDrawCallsEliminated =
+                        CalculateExpectedArmyDrawCallsEliminated(
+                            state.ArmyResidencyModel,
+                            proposedBatchByMesh,
+                            affinityGroups,
+                            armyUnitsByMesh);
+
                     var pixelsSaved = baselinePixels - combinedPixels;
-                    var affinityGain = proposedAffinity - baselineAffinity;
-                    var bestAffinityGain = bestAffinity - baselineAffinity;
-                    if (affinityGain < bestAffinityGain ||
-                        (affinityGain == bestAffinityGain &&
-                         pixelsSaved < bestPixelsSaved) ||
-                        (affinityGain == bestAffinityGain &&
+                    const double expectedDrawComparisonEpsilon = 0.000001;
+                    const double expectedResidencyComparisonEpsilon = 0.5;
+                    var isBetter =
+                        combinedArmyResidentPixels <
+                            bestArmyResidentPixels - expectedResidencyComparisonEpsilon ||
+                        (Math.Abs(
+                             combinedArmyResidentPixels -
+                             bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                         proposedExpectedArmyDrawCallsEliminated >
+                             bestExpectedArmyDrawCallsEliminated +
+                             expectedDrawComparisonEpsilon) ||
+                        (Math.Abs(
+                             combinedArmyResidentPixels -
+                             bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                         Math.Abs(
+                             proposedExpectedArmyDrawCallsEliminated -
+                             bestExpectedArmyDrawCallsEliminated) <=
+                             expectedDrawComparisonEpsilon &&
+                         pixelsSaved > bestPixelsSaved) ||
+                        (Math.Abs(
+                             combinedArmyResidentPixels -
+                             bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                         Math.Abs(
+                             proposedExpectedArmyDrawCallsEliminated -
+                             bestExpectedArmyDrawCallsEliminated) <=
+                             expectedDrawComparisonEpsilon &&
                          pixelsSaved == bestPixelsSaved &&
-                         entry.Value <= bestPairWeight))
-                    {
+                         proposedAffinity > bestAffinity) ||
+                        (Math.Abs(
+                             combinedArmyResidentPixels -
+                             bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                         Math.Abs(
+                             proposedExpectedArmyDrawCallsEliminated -
+                             bestExpectedArmyDrawCallsEliminated) <=
+                             expectedDrawComparisonEpsilon &&
+                         pixelsSaved == bestPixelsSaved &&
+                         proposedAffinity == bestAffinity &&
+                         entry.Value > bestPairWeight);
+                    if (!isBetter)
                         continue;
-                    }
 
                     bestPair = pair;
                     bestCombined = combined;
                     bestAffinity = proposedAffinity;
+                    bestArmyResidentPixels = combinedArmyResidentPixels;
+                    bestExpectedArmyDrawCallsEliminated =
+                        proposedExpectedArmyDrawCallsEliminated;
                     bestPixelsSaved = pixelsSaved;
                     bestPairWeight = entry.Value;
                 }
@@ -2505,6 +2633,8 @@ namespace Editors.KitbasherEditor.Services
                     Math.Max(0, bestPixelsSaved));
                 state.MergeAwareAffinityEliminationsGained +=
                     bestAffinity - baselineAffinity;
+                currentExpectedArmyDrawCallsEliminated =
+                    bestExpectedArmyDrawCallsEliminated;
             }
         }
 
@@ -2632,6 +2762,111 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return score;
+        }
+
+        private static Dictionary<
+            MeshKey,
+            Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> BuildArmyUnitsByMesh(
+            ArmyResidencyModel? model,
+            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
+        {
+            var result = new Dictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>>();
+            if (model == null)
+                return result;
+
+            foreach (var (mesh, roots) in rootsByMesh)
+            {
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>? byCategory = null;
+                foreach (var root in roots)
+                {
+                    if (!model.UnitsByVmd.TryGetValue(root, out var unitsForVmd))
+                        continue;
+
+                    byCategory ??= new Dictionary<Wh3ArmyUnitCategory, HashSet<string>>();
+                    foreach (var (category, unitIds) in unitsForVmd)
+                    {
+                        if (!ExpectedArmySlots.ContainsKey(category))
+                            continue;
+
+                        if (!byCategory.TryGetValue(category, out var covered))
+                        {
+                            covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            byCategory[category] = covered;
+                        }
+
+                        covered.UnionWith(unitIds);
+                    }
+                }
+
+                if (byCategory != null)
+                    result[mesh] = byCategory;
+            }
+
+            return result;
+        }
+
+        private static double CalculateExpectedArmyDrawCallsEliminated(
+            ArmyResidencyModel? model,
+            IReadOnlyDictionary<MeshKey, int> batchByMesh,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> unitsByMesh)
+        {
+            if (model == null)
+                return 0;
+
+            double total = 0;
+            foreach (var group in affinityGroups)
+            {
+                foreach (var colocatedMeshes in group.Meshes
+                             .Where(batchByMesh.ContainsKey)
+                             .GroupBy(mesh => batchByMesh[mesh]))
+                {
+                    var meshes = colocatedMeshes.ToArray();
+                    if (meshes.Length < 2)
+                        continue;
+
+                    foreach (var (category, slotCount) in ExpectedArmySlots)
+                    {
+                        var population = model.UnitsByCategory[category].Count;
+                        if (population == 0)
+                            continue;
+
+                        var mergeablePartsByUnit =
+                            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var mesh in meshes)
+                        {
+                            if (!unitsByMesh.TryGetValue(mesh, out var meshUnits) ||
+                                !meshUnits.TryGetValue(category, out var unitIds))
+                            {
+                                continue;
+                            }
+
+                            foreach (var unitId in unitIds)
+                            {
+                                mergeablePartsByUnit[unitId] =
+                                    mergeablePartsByUnit.GetValueOrDefault(unitId) + 1;
+                            }
+                        }
+
+                        var eliminatedDrawsAcrossResolvedUnits = mergeablePartsByUnit.Values
+                            .Sum(partCount => Math.Max(0, partCount - 1));
+                        if (eliminatedDrawsAcrossResolvedUnits == 0)
+                            continue;
+
+                        // Draw calls are paid per rendered unit instance, unlike texture residency,
+                        // which is shared once per army. Linearity of expectation therefore makes
+                        // this slots * average eliminated draws per resolved unit.
+                        total += slotCount *
+                            ((double)eliminatedDrawsAcrossResolvedUnits / population);
+                    }
+                }
+            }
+
+            return total;
         }
 
         private static int CalculateMergeAffinityScoreWithReplacement(
@@ -6473,6 +6708,18 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Merge-affinity eliminations before repartition: {state.MergeAwareAffinityPotentialBefore}");
             sb.AppendLine($"Merge-affinity eliminations after repartition: {state.MergeAwareAffinityPotentialAfter}");
             sb.AppendLine($"Merge-affinity eliminations gained: {state.MergeAwareAffinityEliminationsGained}");
+            if (state.ArmyResidencyModel != null)
+            {
+                sb.AppendLine(
+                    $"Expected army draw calls eliminated before merge-aware optimization: " +
+                    $"{state.ExpectedArmyDrawCallsEliminatedBeforeMergeAware:N3}");
+                sb.AppendLine(
+                    $"Expected army draw calls eliminated after merge-aware optimization: " +
+                    $"{state.ExpectedArmyDrawCallsEliminatedAfterMergeAware:N3}");
+                sb.AppendLine(
+                    $"Expected army draw-call eliminations gained: " +
+                    $"{state.ExpectedArmyDrawCallsEliminatedAfterMergeAware - state.ExpectedArmyDrawCallsEliminatedBeforeMergeAware:+0.000;-0.000;0.000}");
+            }
             if (state.ShareAtlasesAcrossVmdsEnabled)
             {
                 sb.AppendLine($"Pack-wide atlas candidates: {state.PackWideCandidateCount}");
@@ -6629,7 +6876,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Batch residency probability uses 1 - product((1 - coveredUnits/categoryUnits)^categorySlots).");
                 sb.AppendLine(
-                    "The old aggregate VMD-residency metric remains a non-regression guard and tie-breaker.");
+                    "Expected draw-call eliminations use categorySlots * average(per-unit eliminated draws).");
+                sb.AppendLine(
+                    "The old aggregate VMD-residency and unweighted merge-affinity metrics remain non-regression guards.");
                 sb.AppendLine();
 
                 if (state.ArmyLocalitySplitEvaluations.Count != 0)
@@ -6963,7 +7212,10 @@ namespace Editors.KitbasherEditor.Services
                         sb.AppendLine(
                             $"Batches {entry.FirstBatchIndex} + {entry.SecondBatchIndex}: " +
                             $"pixels {entry.BaselinePixels:N0} -> {entry.ResultPixels:N0}, " +
-                            $"merge affinity {entry.BaselineAffinity} -> {entry.ResultAffinity}");
+                            $"merge affinity {entry.BaselineAffinity} -> {entry.ResultAffinity}, " +
+                            $"expected army draw eliminations " +
+                            $"{entry.BaselineExpectedArmyDrawCallsEliminated:N3} -> " +
+                            $"{entry.ResultExpectedArmyDrawCallsEliminated:N3}");
                     }
                 }
                 sb.AppendLine();
@@ -8254,6 +8506,8 @@ namespace Editors.KitbasherEditor.Services
             public int MergeAwareAffinityPotentialBefore { get; set; }
             public int MergeAwareAffinityPotentialAfter { get; set; }
             public int MergeAwareAffinityEliminationsGained { get; set; }
+            public double ExpectedArmyDrawCallsEliminatedBeforeMergeAware { get; set; }
+            public double ExpectedArmyDrawCallsEliminatedAfterMergeAware { get; set; }
             public List<MergeAwareRepartitionReportEntry> MergeAwareRepartitionEntries { get; } = [];
             public int CrossVmdSharedAtlasBatches { get; set; }
             public int CrossVmdSharedAtlasPlacements { get; set; }
@@ -8531,7 +8785,9 @@ namespace Editors.KitbasherEditor.Services
             long BaselinePixels,
             long ResultPixels,
             int BaselineAffinity,
-            int ResultAffinity);
+            int ResultAffinity,
+            double BaselineExpectedArmyDrawCallsEliminated,
+            double ResultExpectedArmyDrawCallsEliminated);
 
         private sealed record AtlasBatchSplitProposal(
             List<AtlasCandidate> Left,
