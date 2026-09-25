@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Globalization;
+using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -293,8 +294,7 @@ namespace Editors.KitbasherEditor.Services
             int? packedVersion = null;
             while (position + 4 <= data.Length)
             {
-                var marker = data.AsSpan(position, 4);
-                if (marker.SequenceEqual([0xfd, 0xfe, 0xfc, 0xff]))
+                if (HasMarker(data, position, 0xfd, 0xfe, 0xfc, 0xff))
                 {
                     position += 4;
                     var length = ReadInt16(data, ref position);
@@ -304,7 +304,7 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                if (marker.SequenceEqual([0xfc, 0xfd, 0xfe, 0xff]))
+                if (HasMarker(data, position, 0xfc, 0xfd, 0xfe, 0xff))
                 {
                     position += 4;
                     packedVersion = ReadInt32(data, ref position);
@@ -343,6 +343,20 @@ namespace Editors.KitbasherEditor.Services
 
             return rows;
         }
+
+        private static bool HasMarker(
+            byte[] data,
+            int position,
+            byte first,
+            byte second,
+            byte third,
+            byte fourth)
+            => position >= 0 &&
+               position <= data.Length - 4 &&
+               data[position] == first &&
+               data[position + 1] == second &&
+               data[position + 2] == third &&
+               data[position + 3] == fourth;
 
         private static string ReadField(byte[] data, ref int position, string type)
         {
