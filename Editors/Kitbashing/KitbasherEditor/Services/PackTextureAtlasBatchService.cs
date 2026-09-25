@@ -204,6 +204,18 @@ namespace Editors.KitbasherEditor.Services
 
                 ReportProgress(
                     progress,
+                    "Resolving unit categories",
+                    item: $"{vmdRoots.Count} VMD root(s)");
+                phaseStopwatch.Restart();
+                state.UnitCategoryResolution = Wh3UnitCategoryResolver.Resolve(
+                    _packFileService,
+                    source,
+                    vmdRoots,
+                    cancellationToken);
+                state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
+
+                ReportProgress(
+                    progress,
                     "Scanning source dependencies",
                     item: malformedVmdRoots.Count == 0
                         ? $"{vmdRoots.Count} VMD root(s)"
@@ -5958,6 +5970,15 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine("Summary");
             sb.AppendLine("-------");
             sb.AppendLine($"VMD roots: {vmdRoots.Count}");
+            if (state.UnitCategoryResolution != null)
+            {
+                sb.AppendLine(
+                    $"VMD roots resolved to unit categories: " +
+                    $"{state.UnitCategoryResolution.UsagesByVmd.Count} / {vmdRoots.Count}");
+                sb.AppendLine(
+                    $"Unit-category DB table files read: " +
+                    $"{state.UnitCategoryResolution.TableFilesRead}");
+            }
             sb.AppendLine($"Malformed VMD files ignored: {state.MalformedVmdRoots.Count}");
             sb.AppendLine($"Malformed unrelated WSModels ignored: {state.MalformedWsModelsIgnored.Count}");
             sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
@@ -6062,6 +6083,69 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Degenerate triangles removed: {state.GeometryDegenerateTrianglesRemoved:N0}");
             }
             sb.AppendLine();
+
+            if (state.UnitCategoryResolution != null)
+            {
+                var unitResolution = state.UnitCategoryResolution;
+                var unitUsages = unitResolution.UsagesByVmd.Values
+                    .SelectMany(usages => usages)
+                    .ToList();
+
+                sb.AppendLine("Unit category DB resolution");
+                sb.AppendLine("---------------------------");
+                foreach (var table in unitResolution.ParsedRowsByTable
+                             .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    sb.AppendLine($"Parsed {table}: {table.Value:N0} row(s)");
+                }
+
+                sb.AppendLine($"Relevant DB table files read: {unitResolution.TableFilesRead:N0}");
+                sb.AppendLine($"Resolved VMD roots: {unitResolution.UsagesByVmd.Count:N0}");
+                sb.AppendLine($"Unresolved VMD roots: {unitResolution.UnresolvedVmdRoots.Count:N0}");
+                sb.AppendLine($"Resolved VMD-to-unit links: {unitUsages.Count:N0}");
+
+                foreach (var category in Enum.GetValues<Wh3ArmyUnitCategory>())
+                {
+                    var categoryUsages = unitUsages
+                        .Where(usage => usage.Category == category)
+                        .ToList();
+                    if (categoryUsages.Count == 0)
+                        continue;
+
+                    sb.AppendLine(
+                        $"{category}: roots=" +
+                        $"{categoryUsages.Select(usage => usage.VmdPath).Distinct(StringComparer.OrdinalIgnoreCase).Count():N0}, " +
+                        $"unit-links={categoryUsages.Count:N0}, " +
+                        $"median-entities=" +
+                        $"{categoryUsages.Select(usage => usage.NumMen).OrderBy(value => value).ElementAt(categoryUsages.Count / 2):N0}");
+                }
+
+                if (unitResolution.UnresolvedVmdRoots.Count != 0)
+                {
+                    sb.AppendLine("Unresolved VMD roots:");
+                    foreach (var root in unitResolution.UnresolvedVmdRoots.Take(50))
+                        sb.AppendLine($"  {root}");
+                    if (unitResolution.UnresolvedVmdRoots.Count > 50)
+                    {
+                        sb.AppendLine(
+                            $"  ... {unitResolution.UnresolvedVmdRoots.Count - 50:N0} more");
+                    }
+                }
+
+                if (unitResolution.Diagnostics.Count != 0)
+                {
+                    sb.AppendLine("Resolver diagnostics:");
+                    foreach (var diagnostic in unitResolution.Diagnostics.Take(50))
+                        sb.AppendLine($"  {diagnostic}");
+                    if (unitResolution.Diagnostics.Count > 50)
+                    {
+                        sb.AppendLine(
+                            $"  ... {unitResolution.Diagnostics.Count - 50:N0} more");
+                    }
+                }
+
+                sb.AppendLine();
+            }
 
             sb.AppendLine("Phase timings");
             sb.AppendLine("-------------");
@@ -7590,6 +7674,7 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Wh3UnitCategoryResolution? UnitCategoryResolution { get; set; }
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedWsModelsIgnored { get; } = [];
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
