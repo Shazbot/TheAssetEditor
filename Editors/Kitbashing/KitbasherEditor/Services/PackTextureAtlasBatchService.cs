@@ -39,6 +39,19 @@ namespace Editors.KitbasherEditor.Services
 
         private const long MaxAutomaticCommonTextureConstantProbePixels = 4096;
 
+        // Representative 20-ish stack used by the pack-atlas residency heuristic.
+        // These are relative slot weights, not hard caps.
+        private static readonly IReadOnlyDictionary<Wh3ArmyUnitCategory, int> ExpectedArmySlots =
+            new Dictionary<Wh3ArmyUnitCategory, int>
+            {
+                [Wh3ArmyUnitCategory.Lord] = 1,
+                [Wh3ArmyUnitCategory.Hero] = 2,
+                [Wh3ArmyUnitCategory.InfantryMissile] = 9,
+                [Wh3ArmyUnitCategory.CavalryChariot] = 4,
+                [Wh3ArmyUnitCategory.MonsterBeast] = 3,
+                [Wh3ArmyUnitCategory.ArtilleryWarMachine] = 2,
+            };
+
         private static readonly HashSet<string> KnownConstantTexturePaths =
         [
             @"commontextures\default_black.dds",
@@ -218,6 +231,7 @@ namespace Editors.KitbasherEditor.Services
                     vmdRoots,
                     childVmdsByVmd,
                     cancellationToken);
+                state.ArmyResidencyModel = BuildArmyResidencyModel(state.UnitCategoryResolution);
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
 
                 ReportProgress(
@@ -1303,10 +1317,30 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var pixelOptimized = OptimizeMaxSizeBatchesForPixelArea(state, batches);
+            if (packWide)
+            {
+                state.ExpectedArmyResidentPixelsBeforeLocality =
+                    CalculateExpectedArmyResidentPixels(state, pixelOptimized);
+            }
+
             var localityOptimized = packWide
                 ? OptimizeBatchesForVmdLocality(state, pixelOptimized)
                 : pixelOptimized;
-            return OptimizeBatchesForMergeAffinity(state, localityOptimized);
+
+            if (packWide)
+            {
+                state.ExpectedArmyResidentPixelsAfterLocality =
+                    CalculateExpectedArmyResidentPixels(state, localityOptimized);
+            }
+
+            var mergeOptimized = OptimizeBatchesForMergeAffinity(state, localityOptimized);
+            if (packWide)
+            {
+                state.ExpectedArmyResidentPixelsAfterMergeAware =
+                    CalculateExpectedArmyResidentPixels(state, mergeOptimized);
+            }
+
+            return mergeOptimized;
         }
 
         private static List<List<AtlasCandidate>> OptimizeMaxSizeBatchesForPixelArea(
@@ -1525,6 +1559,185 @@ namespace Editors.KitbasherEditor.Services
             int rootCount)
             => checked(atlasPixels * Math.Max(1, rootCount));
 
+        private static ArmyResidencyModel? BuildArmyResidencyModel(
+            Wh3UnitCategoryResolution? resolution)
+        {
+            if (resolution == null)
+                return null;
+
+            var unitsByCategory = ExpectedArmySlots.Keys.ToDictionary(
+                category => category,
+                _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            var unitsByVmd = new Dictionary<
+                string,
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (vmdPathValue, usages) in resolution.UsagesByVmd)
+            {
+                var vmdPath = Normalize(vmdPathValue);
+                foreach (var usage in usages)
+                {
+                    if (!ExpectedArmySlots.ContainsKey(usage.Category))
+                        continue;
+
+                    var identity = GetArmyUnitIdentity(usage);
+                    if (identity.Length == 0)
+                        continue;
+
+                    unitsByCategory[usage.Category].Add(identity);
+
+                    if (!unitsByVmd.TryGetValue(vmdPath, out var byCategory))
+                    {
+                        byCategory = new Dictionary<Wh3ArmyUnitCategory, HashSet<string>>();
+                        unitsByVmd[vmdPath] = byCategory;
+                    }
+
+                    if (!byCategory.TryGetValue(usage.Category, out var unitIds))
+                    {
+                        unitIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        byCategory[usage.Category] = unitIds;
+                    }
+
+                    unitIds.Add(identity);
+                }
+            }
+
+            return unitsByCategory.Values.Any(units => units.Count != 0)
+                ? new ArmyResidencyModel(unitsByCategory, unitsByVmd)
+                : null;
+        }
+
+        private static string GetArmyUnitIdentity(Wh3UnitCategoryUsage usage)
+        {
+            if (!string.IsNullOrWhiteSpace(usage.MainUnitKey))
+                return $"main:{usage.MainUnitKey.Trim().ToLowerInvariant()}";
+            if (!string.IsNullOrWhiteSpace(usage.LandUnitKey))
+                return $"land:{usage.LandUnitKey.Trim().ToLowerInvariant()}";
+            return string.Empty;
+        }
+
+        private static HashSet<string> GetBatchRoots(
+            IReadOnlyList<AtlasCandidate> candidates,
+            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
+        {
+            var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var candidate in candidates)
+            {
+                if (rootsByMesh.TryGetValue(candidate.Key, out var candidateRoots))
+                    roots.UnionWith(candidateRoots);
+                else
+                    roots.Add(Normalize(candidate.RootVmdPath));
+            }
+
+            return roots;
+        }
+
+        private static double GetExpectedArmyResidentPixels(
+            BatchState state,
+            long atlasPixels,
+            IReadOnlyList<AtlasCandidate> candidates,
+            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
+        {
+            var model = state.ArmyResidencyModel;
+            if (model == null || atlasPixels <= 0)
+                return 0;
+
+            var coveredByCategory = ExpectedArmySlots.Keys.ToDictionary(
+                category => category,
+                _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+            foreach (var root in GetBatchRoots(candidates, rootsByMesh))
+            {
+                if (!model.UnitsByVmd.TryGetValue(root, out var unitsForVmd))
+                    continue;
+
+                foreach (var (category, unitIds) in unitsForVmd)
+                {
+                    if (coveredByCategory.TryGetValue(category, out var covered))
+                        covered.UnionWith(unitIds);
+                }
+            }
+
+            var notResidentProbability = 1.0;
+            foreach (var (category, slotCount) in ExpectedArmySlots)
+            {
+                var population = model.UnitsByCategory[category].Count;
+                if (population == 0)
+                    continue;
+
+                var covered = coveredByCategory[category].Count;
+                if (covered == 0)
+                    continue;
+
+                var perSlotProbability = Math.Clamp(
+                    (double)covered / population,
+                    0.0,
+                    1.0);
+                notResidentProbability *= Math.Pow(
+                    1.0 - perSlotProbability,
+                    slotCount);
+            }
+
+            var residentProbability = Math.Clamp(
+                1.0 - notResidentProbability,
+                0.0,
+                1.0);
+            return atlasPixels * residentProbability;
+        }
+
+        private static double CalculateExpectedArmyResidentPixels(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            if (state.ArmyResidencyModel == null || batches.Count == 0)
+                return 0;
+
+            var rootsByMesh = BuildCandidateRootVmdPaths(
+                state,
+                batches.SelectMany(batch => batch));
+            double total = 0;
+            foreach (var batch in batches)
+            {
+                if (!TryGetGeneratedAtlasPixelCost(
+                        state,
+                        batch,
+                        out var pixels,
+                        out _))
+                {
+                    continue;
+                }
+
+                total += GetExpectedArmyResidentPixels(
+                    state,
+                    pixels,
+                    batch,
+                    rootsByMesh);
+            }
+
+            return total;
+        }
+
+        private static HashSet<Wh3ArmyUnitCategory> GetArmyCategoriesForRoots(
+            ArmyResidencyModel? model,
+            IEnumerable<string> roots)
+        {
+            var result = new HashSet<Wh3ArmyUnitCategory>();
+            if (model == null)
+                return result;
+
+            foreach (var root in roots)
+            {
+                if (!model.UnitsByVmd.TryGetValue(root, out var byCategory))
+                    continue;
+
+                foreach (var category in byCategory.Keys)
+                    result.Add(category);
+            }
+
+            return result;
+        }
+
         private static void OptimizeBatchForVmdLocality(
             BatchState state,
             List<AtlasCandidate> batch,
@@ -1535,6 +1748,7 @@ namespace Editors.KitbasherEditor.Services
             const int maxAcceptedLocalitySplits = 32;
             const int maxGlobalPixelIncreasePercent = 25;
             const int minimumResidentPixelSavingPercent = 10;
+            const double comparisonEpsilon = 0.5;
 
             if (batch.Count < 4 ||
                 state.VmdLocalitySplitsAccepted >= maxAcceptedLocalitySplits ||
@@ -1555,21 +1769,31 @@ namespace Editors.KitbasherEditor.Services
                 return;
             }
 
-            var baselineResidentPixels = GetAtlasResidencyProxy(
+            var baselineVmdResidentPixels = GetAtlasResidencyProxy(
                 baselinePixels,
                 baselineRootCount);
+            var baselineArmyResidentPixels = GetExpectedArmyResidentPixels(
+                state,
+                baselinePixels,
+                batch,
+                rootsByMesh);
+            var useArmyMetric =
+                state.ArmyResidencyModel != null &&
+                baselineArmyResidentPixels > comparisonEpsilon;
             var baselineAffinity = CalculateMergeAffinityScore(
                 [batch],
                 affinityGroups);
 
             AtlasBatchSplitProposal? bestProposal = null;
-            var bestResidentPixels = baselineResidentPixels;
+            var bestVmdResidentPixels = baselineVmdResidentPixels;
+            var bestArmyResidentPixels = baselineArmyResidentPixels;
             var bestGlobalPixels = baselinePixels;
             var bestAffinity = baselineAffinity;
 
             foreach (var proposal in CreateVmdLocalitySplitProposals(
                          batch,
-                         rootsByMesh))
+                         rootsByMesh,
+                         state.ArmyResidencyModel))
             {
                 state.VmdLocalitySplitEvaluations++;
 
@@ -1596,12 +1820,39 @@ namespace Editors.KitbasherEditor.Services
 
                 var leftRootCount = GetBatchRootCount(proposal.Left, rootsByMesh);
                 var rightRootCount = GetBatchRootCount(proposal.Right, rootsByMesh);
-                var combinedResidentPixels = checked(
+                var combinedVmdResidentPixels = checked(
                     GetAtlasResidencyProxy(leftPixels, leftRootCount) +
                     GetAtlasResidencyProxy(rightPixels, rightRootCount));
 
-                if (combinedResidentPixels * 100 >
-                    baselineResidentPixels * (100L - minimumResidentPixelSavingPercent))
+                var combinedArmyResidentPixels =
+                    GetExpectedArmyResidentPixels(
+                        state,
+                        leftPixels,
+                        proposal.Left,
+                        rootsByMesh) +
+                    GetExpectedArmyResidentPixels(
+                        state,
+                        rightPixels,
+                        proposal.Right,
+                        rootsByMesh);
+
+                if (useArmyMetric)
+                {
+                    // Expected battle residency is primary, while the old VMD aggregate remains
+                    // a safety constraint so unresolved/non-roster roots cannot regress badly.
+                    if (combinedArmyResidentPixels * 100.0 >
+                        baselineArmyResidentPixels *
+                        (100.0 - minimumResidentPixelSavingPercent))
+                    {
+                        continue;
+                    }
+
+                    if (combinedVmdResidentPixels > baselineVmdResidentPixels)
+                        continue;
+                }
+                else if (combinedVmdResidentPixels * 100 >
+                         baselineVmdResidentPixels *
+                         (100L - minimumResidentPixelSavingPercent))
                 {
                     continue;
                 }
@@ -1612,18 +1863,32 @@ namespace Editors.KitbasherEditor.Services
                 if (proposedAffinity < baselineAffinity)
                     continue;
 
-                if (combinedResidentPixels < bestResidentPixels ||
-                    (combinedResidentPixels == bestResidentPixels &&
-                     combinedPixels < bestGlobalPixels) ||
-                    (combinedResidentPixels == bestResidentPixels &&
-                     combinedPixels == bestGlobalPixels &&
-                     proposedAffinity > bestAffinity))
-                {
-                    bestProposal = proposal;
-                    bestResidentPixels = combinedResidentPixels;
-                    bestGlobalPixels = combinedPixels;
-                    bestAffinity = proposedAffinity;
-                }
+                var better = useArmyMetric
+                    ? combinedArmyResidentPixels < bestArmyResidentPixels - comparisonEpsilon ||
+                      (Math.Abs(combinedArmyResidentPixels - bestArmyResidentPixels) <= comparisonEpsilon &&
+                       combinedVmdResidentPixels < bestVmdResidentPixels) ||
+                      (Math.Abs(combinedArmyResidentPixels - bestArmyResidentPixels) <= comparisonEpsilon &&
+                       combinedVmdResidentPixels == bestVmdResidentPixels &&
+                       combinedPixels < bestGlobalPixels) ||
+                      (Math.Abs(combinedArmyResidentPixels - bestArmyResidentPixels) <= comparisonEpsilon &&
+                       combinedVmdResidentPixels == bestVmdResidentPixels &&
+                       combinedPixels == bestGlobalPixels &&
+                       proposedAffinity > bestAffinity)
+                    : combinedVmdResidentPixels < bestVmdResidentPixels ||
+                      (combinedVmdResidentPixels == bestVmdResidentPixels &&
+                       combinedPixels < bestGlobalPixels) ||
+                      (combinedVmdResidentPixels == bestVmdResidentPixels &&
+                       combinedPixels == bestGlobalPixels &&
+                       proposedAffinity > bestAffinity);
+
+                if (!better)
+                    continue;
+
+                bestProposal = proposal;
+                bestVmdResidentPixels = combinedVmdResidentPixels;
+                bestArmyResidentPixels = combinedArmyResidentPixels;
+                bestGlobalPixels = combinedPixels;
+                bestAffinity = proposedAffinity;
             }
 
             if (bestProposal == null)
@@ -1635,11 +1900,22 @@ namespace Editors.KitbasherEditor.Services
             state.VmdLocalitySplitsAccepted++;
             state.VmdLocalityResidentPixelsSaved = checked(
                 state.VmdLocalityResidentPixelsSaved +
-                baselineResidentPixels -
-                bestResidentPixels);
+                baselineVmdResidentPixels -
+                bestVmdResidentPixels);
+            state.ExpectedArmyResidentPixelsSavedByLocality += Math.Max(
+                0,
+                baselineArmyResidentPixels - bestArmyResidentPixels);
             state.VmdLocalityGlobalPixelsAdded = checked(
                 state.VmdLocalityGlobalPixelsAdded +
                 Math.Max(0, bestGlobalPixels - baselinePixels));
+            state.ArmyLocalitySplitEntries.Add(
+                new ArmyLocalitySplitReportEntry(
+                    baselinePixels,
+                    bestGlobalPixels,
+                    baselineVmdResidentPixels,
+                    bestVmdResidentPixels,
+                    baselineArmyResidentPixels,
+                    bestArmyResidentPixels));
 
             OptimizeBatchForVmdLocality(
                 state,
@@ -1657,7 +1933,8 @@ namespace Editors.KitbasherEditor.Services
 
         private static IReadOnlyList<AtlasBatchSplitProposal> CreateVmdLocalitySplitProposals(
             IReadOnlyList<AtlasCandidate> batch,
-            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
+            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh,
+            ArmyResidencyModel? armyModel)
         {
             var groups = batch
                 .GroupBy(GetAtlasPlanningSourceIdentity)
@@ -1734,7 +2011,21 @@ namespace Editors.KitbasherEditor.Services
                 proposals.Add(new AtlasBatchSplitProposal(left, right));
             }
 
-            // First try isolating the assets reachable from each root. Shared source/crop
+            // Army-category boundaries are cheap, high-value proposals for the expected
+            // battle-residency objective. Shared source/crop identities remain indivisible.
+            if (armyModel != null)
+            {
+                foreach (var category in ExpectedArmySlots.Keys)
+                {
+                    AddProposal(groups.Where(group =>
+                        GetArmyCategoriesForRoots(
+                            armyModel,
+                            rootsByGroup[group.Identity])
+                        .Contains(category)));
+                }
+            }
+
+            // Then try isolating the assets reachable from each root. Shared source/crop
             // identities stay indivisible, so genuinely reused placements remain shared.
             foreach (var root in distinctRoots
                          .OrderByDescending(root =>
@@ -7730,6 +8021,20 @@ namespace Editors.KitbasherEditor.Services
             bool WrappedUvCanonicalized,
             bool ContentCanonicalized);
 
+        private sealed record ArmyResidencyModel(
+            IReadOnlyDictionary<Wh3ArmyUnitCategory, HashSet<string>> UnitsByCategory,
+            IReadOnlyDictionary<
+                string,
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByVmd);
+
+        private sealed record ArmyLocalitySplitReportEntry(
+            long BaselineGlobalPixels,
+            long ProposedGlobalPixels,
+            long BaselineVmdResidentPixels,
+            long ProposedVmdResidentPixels,
+            double BaselineExpectedArmyResidentPixels,
+            double ProposedExpectedArmyResidentPixels);
+
         private sealed class BatchState
         {
             public IPackFileContainer Source { get; }
@@ -7779,6 +8084,12 @@ namespace Editors.KitbasherEditor.Services
             public int VmdLocalitySplitEvaluations { get; set; }
             public int VmdLocalitySplitsAccepted { get; set; }
             public long VmdLocalityResidentPixelsSaved { get; set; }
+            public double ExpectedArmyResidentPixelsBeforeLocality { get; set; }
+            public double ExpectedArmyResidentPixelsAfterLocality { get; set; }
+            public double ExpectedArmyResidentPixelsAfterMergeAware { get; set; }
+            public double ExpectedArmyResidentPixelsSavedByLocality { get; set; }
+            public ArmyResidencyModel? ArmyResidencyModel { get; set; }
+            public List<ArmyLocalitySplitReportEntry> ArmyLocalitySplitEntries { get; } = [];
             public long VmdLocalityGlobalPixelsAdded { get; set; }
             public int MergeAwareLocalityRegressionsRejected { get; set; }
             public int MergeAwareBatchPairsConsidered { get; set; }
