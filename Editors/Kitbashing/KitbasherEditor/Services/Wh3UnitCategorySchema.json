@@ -2449,6 +2449,48 @@
           }
         ]
       }
+    ],
+    "ui_unit_groupings_tables": [
+      {
+        "version": 1,
+        "fields": [
+          {
+            "name": "icon",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "parent_group",
+            "field_type": "StringU8"
+          }
+        ]
+      }
+    ],
+    "ui_unit_group_parents_tables": [
+      {
+        "version": 1,
+        "fields": [
+          {
+            "name": "icon",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "order",
+            "field_type": "I32"
+          },
+          {
+            "name": "mp_cap",
+            "field_type": "I32"
+          }
+        ]
+      }
     ]
   }
 }
