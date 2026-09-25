@@ -207,10 +207,16 @@ namespace Editors.KitbasherEditor.Services
                     "Resolving unit categories",
                     item: $"{vmdRoots.Count} VMD root(s)");
                 phaseStopwatch.Restart();
+                var childVmdsByVmd = BuildChildVmdDependencyMap(
+                    state,
+                    source,
+                    vmdRoots,
+                    cancellationToken);
                 state.UnitCategoryResolution = Wh3UnitCategoryResolver.Resolve(
                     _packFileService,
                     source,
                     vmdRoots,
+                    childVmdsByVmd,
                     cancellationToken);
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
 
@@ -5104,6 +5110,40 @@ namespace Editors.KitbasherEditor.Services
             return reachable;
         }
 
+        private static IReadOnlyDictionary<string, IReadOnlyCollection<string>> BuildChildVmdDependencyMap(
+            BatchState state,
+            IPackFileContainer container,
+            IReadOnlyCollection<string> vmdPaths,
+            CancellationToken cancellationToken)
+        {
+            var result = new Dictionary<string, IReadOnlyCollection<string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pathValue in vmdPaths)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var path = Normalize(pathValue);
+                var file = container.FindFile(path);
+                if (file == null)
+                    continue;
+
+                var vmd = GetVmd(state, container, path, file);
+                var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var children = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                CollectVmdReferences(vmd, models, children, textures);
+
+                result[path] = children
+                    .Where(container.ContainsFile)
+                    .Select(Normalize)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(child => child, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+
+            return result;
+        }
+
         private static VariantMesh GetVmd(
             BatchState state,
             IPackFileContainer container,
@@ -6096,10 +6136,12 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var table in unitResolution.ParsedRowsByTable
                              .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase))
                 {
-                    sb.AppendLine($"Parsed {table}: {table.Value:N0} row(s)");
+                    sb.AppendLine($"Parsed {table.Key}: {table.Value:N0} row(s)");
                 }
 
                 sb.AppendLine($"Relevant DB table files read: {unitResolution.TableFilesRead:N0}");
+                sb.AppendLine($"Directly DB-resolved VMD roots: {unitResolution.DirectlyResolvedVmdCount:N0}");
+                sb.AppendLine($"VMD roots resolved through child propagation: {unitResolution.PropagatedVmdCount:N0}");
                 sb.AppendLine($"Resolved VMD roots: {unitResolution.UsagesByVmd.Count:N0}");
                 sb.AppendLine($"Unresolved VMD roots: {unitResolution.UnresolvedVmdRoots.Count:N0}");
                 sb.AppendLine($"Resolved VMD-to-unit links: {unitUsages.Count:N0}");
