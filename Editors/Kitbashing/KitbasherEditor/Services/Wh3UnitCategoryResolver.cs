@@ -33,6 +33,7 @@ namespace Editors.KitbasherEditor.Services
 
     internal sealed record Wh3UnitCategoryResolution(
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> UsagesByVmd,
+        IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> DirectUsagesByVmd,
         IReadOnlyList<string> UnresolvedVmdRoots,
         IReadOnlyDictionary<string, int> ParsedRowsByTable,
         int TableFilesRead,
@@ -241,6 +242,16 @@ namespace Editors.KitbasherEditor.Services
             var directSourceVmds = normalizedRoots
                 .Where(root => usagesByVmd.ContainsKey(root))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var directUsagesByVmd = directSourceVmds
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    path => path,
+                    path => (IReadOnlyList<Wh3UnitCategoryUsage>)usagesByVmd[path].Values
+                        .OrderBy(usage => usage.Category)
+                        .ThenBy(usage => usage.MainUnitKey, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(usage => usage.LandUnitKey, StringComparer.OrdinalIgnoreCase)
+                        .ToList(),
+                    StringComparer.OrdinalIgnoreCase);
 
             PropagateUsagesToChildVmds(
                 usagesByVmd,
@@ -268,6 +279,7 @@ namespace Editors.KitbasherEditor.Services
 
             return new Wh3UnitCategoryResolution(
                 filtered,
+                directUsagesByVmd,
                 unresolved,
                 parsedRowsByTable,
                 tableFilesRead,
