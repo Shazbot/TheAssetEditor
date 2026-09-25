@@ -4,7 +4,7 @@ namespace Test.KitbashEditor.Services
 {
     public class Wh3UnitCategoryResolverTests
     {
-        private static string Classify(string caste, string landCategory)
+        private static string Classify(string caste, string landCategory, string uiGroupKey = "")
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
             var resolverType = assembly.GetType(
@@ -15,7 +15,7 @@ namespace Test.KitbashEditor.Services
                 BindingFlags.NonPublic | BindingFlags.Static)
                 ?? throw new InvalidOperationException("Wh3UnitCategoryResolver.Classify was not found.");
 
-            return method.Invoke(null, [caste, landCategory])?.ToString()
+            return method.Invoke(null, [caste, landCategory, uiGroupKey])?.ToString()
                 ?? throw new InvalidOperationException("Wh3UnitCategoryResolver.Classify returned null.");
         }
 
@@ -33,6 +33,18 @@ namespace Test.KitbashEditor.Services
             string expected)
         {
             Assert.That(Classify(caste, landCategory), Is.EqualTo(expected));
+        }
+
+        [TestCase("missile_infantry", "inf_ranged", "monster_beasts", "MonsterBeast")]
+        [TestCase("melee_infantry", "inf_melee", "cavalry_chariots", "CavalryChariot")]
+        [TestCase("monster", "inf_melee", "artillery_war_machines", "ArtilleryWarMachine")]
+        public void UnitViewerUiGroupTakesPrecedence(
+            string caste,
+            string landCategory,
+            string uiGroupKey,
+            string expected)
+        {
+            Assert.That(Classify(caste, landCategory, uiGroupKey), Is.EqualTo(expected));
         }
 
         [TestCase("lord", "war_machine", "Lord")]
