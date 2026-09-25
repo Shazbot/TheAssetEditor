@@ -6120,6 +6120,31 @@ namespace Editors.KitbasherEditor.Services
                         $"{categoryUsages.Select(usage => usage.NumMen).OrderBy(value => value).ElementAt(categoryUsages.Count / 2):N0}");
                 }
 
+                if (unitResolution.UsagesByVmd.Count != 0)
+                {
+                    sb.AppendLine("Resolved VMD category mappings:");
+                    foreach (var (vmdPath, usages) in unitResolution.UsagesByVmd
+                                 .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase))
+                    {
+                        var categories = usages
+                            .Select(usage => usage.Category)
+                            .Distinct()
+                            .OrderBy(category => category)
+                            .ToArray();
+                        sb.AppendLine(
+                            $"  {vmdPath} | categories={string.Join(",", categories)} | " +
+                            $"unit-links={usages.Count}");
+
+                        foreach (var usage in usages)
+                        {
+                            sb.AppendLine(
+                                $"    main={usage.MainUnitKey} | land={usage.LandUnitKey} | " +
+                                $"caste={usage.Caste} | land-category={usage.LandCategory} | " +
+                                $"category={usage.Category} | entities={usage.NumMen}");
+                        }
+                    }
+                }
+
                 if (unitResolution.UnresolvedVmdRoots.Count != 0)
                 {
                     sb.AppendLine("Unresolved VMD roots:");
