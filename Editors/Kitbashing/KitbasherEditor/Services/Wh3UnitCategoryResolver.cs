@@ -119,24 +119,24 @@ namespace Editors.KitbasherEditor.Services
                                 file.DataSource.ReadData(),
                                 path,
                                 diagnostics);
-                        tableFilesRead++;
-                        parsedRowsByTable[tableName] += rows.Count;
+                            tableFilesRead++;
+                            parsedRowsByTable[tableName] += rows.Count;
 
-                        foreach (var row in rows)
-                        {
-                            var key = BuildEffectiveRowKey(tableName, row);
-                            if (string.IsNullOrWhiteSpace(key))
-                                continue;
+                            foreach (var row in rows)
+                            {
+                                var key = BuildEffectiveRowKey(tableName, row);
+                                if (string.IsNullOrWhiteSpace(key))
+                                    continue;
 
-                            effectiveRows[tableName][key] = row;
+                                effectiveRows[tableName][key] = row;
+                            }
                         }
-                    }
-                    catch (Exception ex) when (
-                        ex is InvalidDataException or
-                        EndOfStreamException or
-                        ArgumentException or
-                        OverflowException)
-                    {
+                        catch (Exception ex) when (
+                            ex is InvalidDataException or
+                            EndOfStreamException or
+                            ArgumentException or
+                            OverflowException)
+                        {
                             diagnostics.Add(
                                 $"Failed to decode {path} from {DescribeContainer(container)}: " +
                                 ex.Message.Replace("\r", " ").Replace("\n", " "));
