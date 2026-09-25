@@ -102,29 +102,15 @@ namespace Editors.KitbasherEditor.Services
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var filesByFolder = container.GetAllFilesByFolder();
                 foreach (var tableName in RequiredTables)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
                     var folder = $"db\\{tableName}";
-                    if (!filesByFolder.TryGetValue(folder, out var fileNames))
-                        continue;
-
-                    foreach (var fileName in fileNames
-                                 .OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
+                    var tableFiles = container.GetDirectoryContent(folder);
+                    foreach (var (path, file) in tableFiles)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-
-                        var path = $"{folder}\\{fileName}";
-                        var file = container.FindFile(path);
-                        if (file == null)
-                        {
-                            diagnostics.Add(
-                                $"DB folder index contained {path}, but the file could not be opened " +
-                                $"from {DescribeContainer(container)}.");
-                            continue;
-                        }
 
                         try
                         {
