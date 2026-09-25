@@ -1789,6 +1789,9 @@ namespace Editors.KitbasherEditor.Services
             var bestArmyResidentPixels = baselineArmyResidentPixels;
             var bestGlobalPixels = baselinePixels;
             var bestAffinity = baselineAffinity;
+            var evaluations = new List<(
+                AtlasBatchSplitProposal Proposal,
+                ArmyLocalitySplitEvaluationReportEntry Entry)>();
 
             foreach (var proposal in CreateVmdLocalitySplitProposals(
                          batch,
@@ -1812,18 +1815,11 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var combinedPixels = checked(leftPixels + rightPixels);
-                if (combinedPixels * 100 >
-                    baselinePixels * (100L + maxGlobalPixelIncreasePercent))
-                {
-                    continue;
-                }
-
                 var leftRootCount = GetBatchRootCount(proposal.Left, rootsByMesh);
                 var rightRootCount = GetBatchRootCount(proposal.Right, rootsByMesh);
                 var combinedVmdResidentPixels = checked(
                     GetAtlasResidencyProxy(leftPixels, leftRootCount) +
                     GetAtlasResidencyProxy(rightPixels, rightRootCount));
-
                 var combinedArmyResidentPixels =
                     GetExpectedArmyResidentPixels(
                         state,
@@ -1836,24 +1832,45 @@ namespace Editors.KitbasherEditor.Services
                         proposal.Right,
                         rootsByMesh);
 
-                if (useArmyMetric)
+                string? rejectionReason = null;
+                if (combinedPixels * 100 >
+                    baselinePixels * (100L + maxGlobalPixelIncreasePercent))
                 {
-                    // Expected battle residency is primary, while the old VMD aggregate remains
-                    // a safety constraint so unresolved/non-roster roots cannot regress badly.
-                    if (combinedArmyResidentPixels * 100.0 >
-                        baselineArmyResidentPixels *
-                        (100.0 - minimumResidentPixelSavingPercent))
-                    {
-                        continue;
-                    }
-
-                    if (combinedVmdResidentPixels > baselineVmdResidentPixels)
-                        continue;
+                    rejectionReason = "global-pixel-cap";
                 }
-                else if (combinedVmdResidentPixels * 100 >
+                else if (useArmyMetric &&
+                         combinedArmyResidentPixels * 100.0 >
+                         baselineArmyResidentPixels *
+                         (100.0 - minimumResidentPixelSavingPercent))
+                {
+                    rejectionReason = "insufficient-expected-army-saving";
+                }
+                else if (useArmyMetric &&
+                         combinedVmdResidentPixels > baselineVmdResidentPixels)
+                {
+                    rejectionReason = "VMD-residency-regression";
+                }
+                else if (!useArmyMetric &&
+                         combinedVmdResidentPixels * 100 >
                          baselineVmdResidentPixels *
                          (100L - minimumResidentPixelSavingPercent))
                 {
+                    rejectionReason = "insufficient-VMD-residency-saving";
+                }
+
+                if (rejectionReason != null)
+                {
+                    evaluations.Add((
+                        proposal,
+                        new ArmyLocalitySplitEvaluationReportEntry(
+                            false,
+                            rejectionReason,
+                            baselinePixels,
+                            combinedPixels,
+                            baselineVmdResidentPixels,
+                            combinedVmdResidentPixels,
+                            baselineArmyResidentPixels,
+                            combinedArmyResidentPixels)));
                     continue;
                 }
 
@@ -1861,7 +1878,32 @@ namespace Editors.KitbasherEditor.Services
                     [proposal.Left, proposal.Right],
                     affinityGroups);
                 if (proposedAffinity < baselineAffinity)
+                {
+                    evaluations.Add((
+                        proposal,
+                        new ArmyLocalitySplitEvaluationReportEntry(
+                            false,
+                            "merge-affinity-regression",
+                            baselinePixels,
+                            combinedPixels,
+                            baselineVmdResidentPixels,
+                            combinedVmdResidentPixels,
+                            baselineArmyResidentPixels,
+                            combinedArmyResidentPixels)));
                     continue;
+                }
+
+                evaluations.Add((
+                    proposal,
+                    new ArmyLocalitySplitEvaluationReportEntry(
+                        false,
+                        string.Empty,
+                        baselinePixels,
+                        combinedPixels,
+                        baselineVmdResidentPixels,
+                        combinedVmdResidentPixels,
+                        baselineArmyResidentPixels,
+                        combinedArmyResidentPixels)));
 
                 var better = useArmyMetric
                     ? combinedArmyResidentPixels < bestArmyResidentPixels - comparisonEpsilon ||
@@ -1891,6 +1933,21 @@ namespace Editors.KitbasherEditor.Services
                 bestAffinity = proposedAffinity;
             }
 
+            foreach (var (proposal, entry) in evaluations)
+            {
+                var accepted = bestProposal != null && ReferenceEquals(proposal, bestProposal);
+                state.ArmyLocalitySplitEvaluations.Add(
+                    entry with
+                    {
+                        Accepted = accepted,
+                        Decision = accepted
+                            ? "accepted"
+                            : string.IsNullOrEmpty(entry.Decision)
+                                ? "eligible-not-selected"
+                                : entry.Decision,
+                    });
+            }
+
             if (bestProposal == null)
             {
                 output.Add(batch);
@@ -1908,14 +1965,6 @@ namespace Editors.KitbasherEditor.Services
             state.VmdLocalityGlobalPixelsAdded = checked(
                 state.VmdLocalityGlobalPixelsAdded +
                 Math.Max(0, bestGlobalPixels - baselinePixels));
-            state.ArmyLocalitySplitEntries.Add(
-                new ArmyLocalitySplitReportEntry(
-                    baselinePixels,
-                    bestGlobalPixels,
-                    baselineVmdResidentPixels,
-                    bestVmdResidentPixels,
-                    baselineArmyResidentPixels,
-                    bestArmyResidentPixels));
 
             OptimizeBatchForVmdLocality(
                 state,
@@ -6381,8 +6430,8 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Pack atlas maximum dimension: {PackAtlasMaxSize}");
             sb.AppendLine($"Atlas pixels saved by split optimization: {state.AtlasPixelAreaSavedByOptimizedSplits:N0}");
             sb.AppendLine($"Atlas pixels saved by non-contiguous splits: {state.AtlasPixelAreaSavedByNonContiguousSplits:N0}");
-            sb.AppendLine($"VMD-locality split evaluations: {state.VmdLocalitySplitEvaluations}");
-            sb.AppendLine($"VMD-locality splits accepted: {state.VmdLocalitySplitsAccepted}");
+            sb.AppendLine($"Army-aware locality split evaluations: {state.VmdLocalitySplitEvaluations}");
+            sb.AppendLine($"Army-aware locality splits accepted: {state.VmdLocalitySplitsAccepted}");
             sb.AppendLine($"Estimated VMD-resident atlas pixels saved by locality splits: {state.VmdLocalityResidentPixelsSaved:N0}");
             if (state.ArmyResidencyModel != null)
             {
@@ -6583,21 +6632,24 @@ namespace Editors.KitbasherEditor.Services
                     "The old aggregate VMD-residency metric remains a non-regression guard and tie-breaker.");
                 sb.AppendLine();
 
-                if (state.ArmyLocalitySplitEntries.Count != 0)
+                if (state.ArmyLocalitySplitEvaluations.Count != 0)
                 {
-                    sb.AppendLine("Accepted army-aware locality splits");
-                    foreach (var (entry, index) in state.ArmyLocalitySplitEntries
+                    sb.AppendLine("Army-aware locality split evaluations");
+                    foreach (var (entry, index) in state.ArmyLocalitySplitEvaluations
                                  .Select((entry, index) => (entry, index + 1)))
                     {
                         sb.AppendLine(
-                            $"  #{index}: expected-army " +
+                            $"  #{index}: {(entry.Accepted ? "ACCEPTED" : "rejected")} " +
+                            $"[{entry.Decision}] | expected-army " +
                             $"{entry.BaselineExpectedArmyResidentPixels:N0} -> " +
                             $"{entry.ProposedExpectedArmyResidentPixels:N0} " +
                             $"({entry.ProposedExpectedArmyResidentPixels - entry.BaselineExpectedArmyResidentPixels:+0;-0;0}); " +
                             $"VMD-resident {entry.BaselineVmdResidentPixels:N0} -> " +
-                            $"{entry.ProposedVmdResidentPixels:N0}; " +
+                            $"{entry.ProposedVmdResidentPixels:N0} " +
+                            $"({entry.ProposedVmdResidentPixels - entry.BaselineVmdResidentPixels:+0;-0;0}); " +
                             $"global {entry.BaselineGlobalPixels:N0} -> " +
-                            $"{entry.ProposedGlobalPixels:N0}");
+                            $"{entry.ProposedGlobalPixels:N0} " +
+                            $"({entry.ProposedGlobalPixels - entry.BaselineGlobalPixels:+0;-0;0})");
                     }
 
                     sb.AppendLine();
@@ -8125,7 +8177,9 @@ namespace Editors.KitbasherEditor.Services
                 string,
                 Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByVmd);
 
-        private sealed record ArmyLocalitySplitReportEntry(
+        private sealed record ArmyLocalitySplitEvaluationReportEntry(
+            bool Accepted,
+            string Decision,
             long BaselineGlobalPixels,
             long ProposedGlobalPixels,
             long BaselineVmdResidentPixels,
@@ -8187,7 +8241,7 @@ namespace Editors.KitbasherEditor.Services
             public double ExpectedArmyResidentPixelsAfterMergeAware { get; set; }
             public double ExpectedArmyResidentPixelsSavedByLocality { get; set; }
             public ArmyResidencyModel? ArmyResidencyModel { get; set; }
-            public List<ArmyLocalitySplitReportEntry> ArmyLocalitySplitEntries { get; } = [];
+            public List<ArmyLocalitySplitEvaluationReportEntry> ArmyLocalitySplitEvaluations { get; } = [];
             public long VmdLocalityGlobalPixelsAdded { get; set; }
             public int MergeAwareLocalityRegressionsRejected { get; set; }
             public int MergeAwareBatchPairsConsidered { get; set; }
