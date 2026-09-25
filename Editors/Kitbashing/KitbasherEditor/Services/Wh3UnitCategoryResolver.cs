@@ -102,24 +102,37 @@ namespace Editors.KitbasherEditor.Services
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var relevantFiles = container.GetAllFiles()
-                    .Where(entry => TryGetRequiredTable(entry.Key, out _))
-                    .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                foreach (var (path, file) in relevantFiles)
+                var filesByFolder = container.GetAllFilesByFolder();
+                foreach (var tableName in RequiredTables)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (!TryGetRequiredTable(path, out var tableName))
+
+                    var folder = $"db\\{tableName}";
+                    if (!filesByFolder.TryGetValue(folder, out var fileNames))
                         continue;
 
-                    try
+                    foreach (var fileName in fileNames
+                                 .OrderBy(name => name, StringComparer.OrdinalIgnoreCase))
                     {
-                        var rows = DecodeTable(
-                            tableName,
-                            file.DataSource.ReadData(),
-                            path,
-                            diagnostics);
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        var path = $"{folder}\\{fileName}";
+                        var file = container.FindFile(path);
+                        if (file == null)
+                        {
+                            diagnostics.Add(
+                                $"DB folder index contained {path}, but the file could not be opened " +
+                                $"from {DescribeContainer(container)}.");
+                            continue;
+                        }
+
+                        try
+                        {
+                            var rows = DecodeTable(
+                                tableName,
+                                file.DataSource.ReadData(),
+                                path,
+                                diagnostics);
                         tableFilesRead++;
                         parsedRowsByTable[tableName] += rows.Count;
 
@@ -138,9 +151,10 @@ namespace Editors.KitbasherEditor.Services
                         ArgumentException or
                         OverflowException)
                     {
-                        diagnostics.Add(
-                            $"Failed to decode {path} from {DescribeContainer(container)}: " +
-                            ex.Message.Replace("\r", " ").Replace("\n", " "));
+                            diagnostics.Add(
+                                $"Failed to decode {path} from {DescribeContainer(container)}: " +
+                                ex.Message.Replace("\r", " ").Replace("\n", " "));
+                        }
                     }
                 }
             }
