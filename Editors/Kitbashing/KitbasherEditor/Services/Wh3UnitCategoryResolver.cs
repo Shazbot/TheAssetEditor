@@ -35,6 +35,8 @@ namespace Editors.KitbasherEditor.Services
         IReadOnlyList<string> UnresolvedVmdRoots,
         IReadOnlyDictionary<string, int> ParsedRowsByTable,
         int TableFilesRead,
+        int DirectlyResolvedVmdCount,
+        int PropagatedVmdCount,
         IReadOnlyList<string> Diagnostics)
     {
         public IReadOnlyList<Wh3UnitCategoryUsage> GetUsages(string vmdPath)
@@ -75,6 +77,7 @@ namespace Editors.KitbasherEditor.Services
             IPackFileService packFileService,
             IPackFileContainer source,
             IReadOnlyCollection<string> rootVmdPaths,
+            IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd,
             CancellationToken cancellationToken)
         {
             var diagnostics = new List<string>();
@@ -221,6 +224,16 @@ namespace Editors.KitbasherEditor.Services
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
+            var directSourceVmds = normalizedRoots
+                .Where(root => usagesByVmd.ContainsKey(root))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            PropagateUsagesToChildVmds(
+                usagesByVmd,
+                directSourceVmds,
+                childVmdsByVmd,
+                cancellationToken);
+
             var filtered = new Dictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>>(
                 StringComparer.OrdinalIgnoreCase);
             var unresolved = new List<string>();
@@ -244,6 +257,8 @@ namespace Editors.KitbasherEditor.Services
                 unresolved,
                 parsedRowsByTable,
                 tableFilesRead,
+                directSourceVmds.Count,
+                Math.Max(0, filtered.Count - directSourceVmds.Count),
                 diagnostics);
         }
 
@@ -266,14 +281,83 @@ namespace Editors.KitbasherEditor.Services
             usages[identity] = usage with { VmdPath = vmdPath };
         }
 
+        private static void PropagateUsagesToChildVmds(
+            Dictionary<string, Dictionary<string, Wh3UnitCategoryUsage>> usagesByVmd,
+            IReadOnlyCollection<string> directSourceVmds,
+            IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd,
+            CancellationToken cancellationToken)
+        {
+            foreach (var directVmd in directSourceVmds)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!usagesByVmd.TryGetValue(directVmd, out var sourceUsages) ||
+                    sourceUsages.Count == 0)
+                {
+                    continue;
+                }
+
+                var queue = new Queue<string>();
+                var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    directVmd,
+                };
+                queue.Enqueue(directVmd);
+
+                while (queue.Count != 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var parent = queue.Dequeue();
+                    if (!childVmdsByVmd.TryGetValue(parent, out var children))
+                        continue;
+
+                    foreach (var childValue in children)
+                    {
+                        var child = NormalizePath(childValue);
+                        if (child.Length == 0 || !visited.Add(child))
+                            continue;
+
+                        foreach (var usage in sourceUsages.Values)
+                            AddUsage(usagesByVmd, usage with { VmdPath = child });
+
+                        queue.Enqueue(child);
+                    }
+                }
+            }
+        }
+
         private static Wh3ArmyUnitCategory Classify(string caste, string landCategory)
         {
+            // main_units.caste describes the battlefield role more reliably than
+            // land_units.category for several WH3 unit types. For example, cavalry can use
+            // inf_melee/inf_ranged or war_beast land categories, while chariots can use
+            // war_machine. Prefer caste and use land category only as a fallback.
             switch (caste.Trim().ToLowerInvariant())
             {
                 case "lord":
                     return Wh3ArmyUnitCategory.Lord;
                 case "hero":
                     return Wh3ArmyUnitCategory.Hero;
+
+                case "melee_infantry":
+                case "missile_infantry":
+                case "infantry":
+                    return Wh3ArmyUnitCategory.InfantryMissile;
+
+                case "melee_cavalry":
+                case "missile_cavalry":
+                case "cavalry":
+                case "chariot":
+                    return Wh3ArmyUnitCategory.CavalryChariot;
+
+                case "monster":
+                case "monstrous_infantry":
+                case "war_beast":
+                    return Wh3ArmyUnitCategory.MonsterBeast;
+
+                case "warmachine":
+                case "war_machine":
+                case "artillery":
+                    return Wh3ArmyUnitCategory.ArtilleryWarMachine;
             }
 
             return landCategory.Trim().ToLowerInvariant() switch
