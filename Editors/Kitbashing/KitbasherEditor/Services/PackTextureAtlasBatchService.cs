@@ -2172,6 +2172,17 @@ namespace Editors.KitbasherEditor.Services
                         GetAtlasResidencyProxy(
                             rightBaselinePixels,
                             GetBatchRootCount(currentRight, rootsByMesh)));
+                    var baselineArmyResidentPixels =
+                        GetExpectedArmyResidentPixels(
+                            state,
+                            leftBaselinePixels,
+                            currentLeft,
+                            rootsByMesh) +
+                        GetExpectedArmyResidentPixels(
+                            state,
+                            rightBaselinePixels,
+                            currentRight,
+                            rootsByMesh);
                     var baselineAffinity = CalculateMergeAffinityScore(working, affinityGroups);
                     AtlasBatchSplitProposal? bestProposal = null;
                     var bestPixels = baselinePixels;
@@ -2209,7 +2220,20 @@ namespace Editors.KitbasherEditor.Services
                             GetAtlasResidencyProxy(
                                 rightPixels,
                                 GetBatchRootCount(proposal.Right, rootsByMesh)));
-                        if (proposedResidentPixels > baselineResidentPixels)
+                        var proposedArmyResidentPixels =
+                            GetExpectedArmyResidentPixels(
+                                state,
+                                leftPixels,
+                                proposal.Left,
+                                rootsByMesh) +
+                            GetExpectedArmyResidentPixels(
+                                state,
+                                rightPixels,
+                                proposal.Right,
+                                rootsByMesh);
+                        if ((state.ArmyResidencyModel != null &&
+                             proposedArmyResidentPixels > baselineArmyResidentPixels + 0.5) ||
+                            proposedResidentPixels > baselineResidentPixels)
                         {
                             state.MergeAwareLocalityRegressionsRejected++;
                             continue;
@@ -2353,6 +2377,17 @@ namespace Editors.KitbasherEditor.Services
                         GetAtlasResidencyProxy(
                             rightPixels,
                             GetBatchRootCount(rightBatch, rootsByMesh)));
+                    var baselineArmyResidentPixels =
+                        GetExpectedArmyResidentPixels(
+                            state,
+                            leftPixels,
+                            leftBatch,
+                            rootsByMesh) +
+                        GetExpectedArmyResidentPixels(
+                            state,
+                            rightPixels,
+                            rightBatch,
+                            rootsByMesh);
                     var combined = leftBatch.Concat(rightBatch).ToList();
                     state.MergeAwareBatchCoalesceEvaluations++;
                     if (!TryGetGeneratedAtlasPixelCost(
@@ -2368,7 +2403,14 @@ namespace Editors.KitbasherEditor.Services
                     var combinedResidentPixels = GetAtlasResidencyProxy(
                         combinedPixels,
                         GetBatchRootCount(combined, rootsByMesh));
-                    if (combinedResidentPixels > baselineResidentPixels)
+                    var combinedArmyResidentPixels = GetExpectedArmyResidentPixels(
+                        state,
+                        combinedPixels,
+                        combined,
+                        rootsByMesh);
+                    if ((state.ArmyResidencyModel != null &&
+                         combinedArmyResidentPixels > baselineArmyResidentPixels + 0.5) ||
+                        combinedResidentPixels > baselineResidentPixels)
                     {
                         state.MergeAwareLocalityRegressionsRejected++;
                         continue;
@@ -6342,6 +6384,24 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"VMD-locality split evaluations: {state.VmdLocalitySplitEvaluations}");
             sb.AppendLine($"VMD-locality splits accepted: {state.VmdLocalitySplitsAccepted}");
             sb.AppendLine($"Estimated VMD-resident atlas pixels saved by locality splits: {state.VmdLocalityResidentPixelsSaved:N0}");
+            if (state.ArmyResidencyModel != null)
+            {
+                sb.AppendLine(
+                    $"Expected army slot model: lord=1, heroes=2, infantry/missile=9, " +
+                    $"cavalry/chariots=4, monsters/beasts=3, artillery/war machines=2");
+                sb.AppendLine(
+                    $"Expected army-resident atlas pixels before locality optimization: " +
+                    $"{state.ExpectedArmyResidentPixelsBeforeLocality:N0}");
+                sb.AppendLine(
+                    $"Expected army-resident atlas pixels after locality optimization: " +
+                    $"{state.ExpectedArmyResidentPixelsAfterLocality:N0}");
+                sb.AppendLine(
+                    $"Expected army-resident atlas pixels saved by locality optimization: " +
+                    $"{Math.Max(0, state.ExpectedArmyResidentPixelsBeforeLocality - state.ExpectedArmyResidentPixelsAfterLocality):N0}");
+                sb.AppendLine(
+                    $"Expected army-resident atlas pixels after merge-aware optimization: " +
+                    $"{state.ExpectedArmyResidentPixelsAfterMergeAware:N0}");
+            }
             sb.AppendLine($"Global atlas pixels added by locality splits: {state.VmdLocalityGlobalPixelsAdded:N0}");
             sb.AppendLine($"Merge-aware locality regressions rejected: {state.MergeAwareLocalityRegressionsRejected}");
             sb.AppendLine($"Final global atlas pixel cost: {residency.GlobalPixels:N0}");
@@ -6504,6 +6564,44 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 sb.AppendLine();
+            }
+
+            if (state.ArmyResidencyModel != null)
+            {
+                sb.AppendLine("Expected army residency model");
+                sb.AppendLine("-----------------------------");
+                foreach (var category in ExpectedArmySlots.Keys)
+                {
+                    sb.AppendLine(
+                        $"{category}: slots={ExpectedArmySlots[category]}, " +
+                        $"resolved-units={state.ArmyResidencyModel.UnitsByCategory[category].Count:N0}");
+                }
+
+                sb.AppendLine(
+                    "Batch residency probability uses 1 - product((1 - coveredUnits/categoryUnits)^categorySlots).");
+                sb.AppendLine(
+                    "The old aggregate VMD-residency metric remains a non-regression guard and tie-breaker.");
+                sb.AppendLine();
+
+                if (state.ArmyLocalitySplitEntries.Count != 0)
+                {
+                    sb.AppendLine("Accepted army-aware locality splits");
+                    foreach (var (entry, index) in state.ArmyLocalitySplitEntries
+                                 .Select((entry, index) => (entry, index + 1)))
+                    {
+                        sb.AppendLine(
+                            $"  #{index}: expected-army " +
+                            $"{entry.BaselineExpectedArmyResidentPixels:N0} -> " +
+                            $"{entry.ProposedExpectedArmyResidentPixels:N0} " +
+                            $"({entry.ProposedExpectedArmyResidentPixels - entry.BaselineExpectedArmyResidentPixels:+0;-0;0}); " +
+                            $"VMD-resident {entry.BaselineVmdResidentPixels:N0} -> " +
+                            $"{entry.ProposedVmdResidentPixels:N0}; " +
+                            $"global {entry.BaselineGlobalPixels:N0} -> " +
+                            $"{entry.ProposedGlobalPixels:N0}");
+                    }
+
+                    sb.AppendLine();
+                }
             }
 
             sb.AppendLine("Phase timings");
