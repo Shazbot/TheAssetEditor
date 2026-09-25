@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -231,7 +232,7 @@ namespace Editors.KitbasherEditor.Services
                     vmdRoots,
                     childVmdsByVmd,
                     cancellationToken);
-                state.ArmyResidencyModel = BuildArmyResidencyModel(state.UnitCategoryResolution);
+                state.ArmyResidencyModel = BuildArmyResidencyModel(state, state.UnitCategoryResolution);
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
 
                 ReportProgress(
@@ -1560,6 +1561,7 @@ namespace Editors.KitbasherEditor.Services
             => checked(atlasPixels * Math.Max(1, rootCount));
 
         private static ArmyResidencyModel? BuildArmyResidencyModel(
+            BatchState state,
             Wh3UnitCategoryResolution? resolution)
         {
             if (resolution == null)
@@ -1571,6 +1573,9 @@ namespace Editors.KitbasherEditor.Services
             var unitsByVmd = new Dictionary<
                 string,
                 Dictionary<Wh3ArmyUnitCategory, HashSet<string>>>(
+                StringComparer.OrdinalIgnoreCase);
+            var entityCountByUnit = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var categoryByUnit = new Dictionary<string, Wh3ArmyUnitCategory>(
                 StringComparer.OrdinalIgnoreCase);
 
             foreach (var (vmdPathValue, usages) in resolution.UsagesByVmd)
@@ -1586,6 +1591,10 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     unitsByCategory[usage.Category].Add(identity);
+                    entityCountByUnit[identity] = Math.Max(
+                        entityCountByUnit.GetValueOrDefault(identity, 1),
+                        Math.Max(1, usage.NumMen));
+                    categoryByUnit[identity] = usage.Category;
 
                     if (!unitsByVmd.TryGetValue(vmdPath, out var byCategory))
                     {
@@ -1603,9 +1612,214 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            return unitsByCategory.Values.Any(units => units.Count != 0)
-                ? new ArmyResidencyModel(unitsByCategory, unitsByVmd)
-                : null;
+            if (!unitsByCategory.Values.Any(units => units.Count != 0))
+                return null;
+
+            // Resolve visual probabilities from the DB-referenced VMDs only. Propagated child
+            // mappings are useful for atlas reachability but would make a nested VMD look like
+            // an independent 100%-probability unit visual.
+            var directVmdsByUnit = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var (vmdPathValue, usages) in resolution.DirectUsagesByVmd)
+            {
+                var vmdPath = Normalize(vmdPathValue);
+                foreach (var usage in usages)
+                {
+                    if (!ExpectedArmySlots.ContainsKey(usage.Category))
+                        continue;
+
+                    var identity = GetArmyUnitIdentity(usage);
+                    if (identity.Length == 0)
+                        continue;
+
+                    if (!directVmdsByUnit.TryGetValue(identity, out var directVmds))
+                    {
+                        directVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        directVmdsByUnit[identity] = directVmds;
+                    }
+
+                    directVmds.Add(vmdPath);
+                }
+            }
+
+            var occurrenceCache = new Dictionary<string, IReadOnlyDictionary<string, double>>(
+                StringComparer.OrdinalIgnoreCase);
+            var expectedWsModelOccurrencesByUnit =
+                new Dictionary<string, IReadOnlyDictionary<string, double>>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (unitId, directVmds) in directVmdsByUnit)
+            {
+                if (directVmds.Count == 0)
+                    continue;
+
+                var accumulated = new Dictionary<string, double>(
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var vmdPath in directVmds)
+                {
+                    var occurrences = GetExpectedWsModelOccurrencesForVmd(
+                        state,
+                        vmdPath,
+                        occurrenceCache,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                    foreach (var (wsModelPath, expectedOccurrences) in occurrences)
+                    {
+                        accumulated[wsModelPath] =
+                            accumulated.GetValueOrDefault(wsModelPath) + expectedOccurrences;
+                    }
+                }
+
+                if (accumulated.Count == 0)
+                    continue;
+
+                // A main unit can have faction-specific direct VMDs. Without a faction context,
+                // treat those visual definitions as equally likely alternatives.
+                var directVariantCount = directVmds.Count;
+                expectedWsModelOccurrencesByUnit[unitId] = accumulated.ToDictionary(
+                    entry => entry.Key,
+                    entry => entry.Value / directVariantCount,
+                    StringComparer.OrdinalIgnoreCase);
+            }
+
+            return new ArmyResidencyModel(
+                unitsByCategory,
+                unitsByVmd,
+                entityCountByUnit,
+                categoryByUnit,
+                expectedWsModelOccurrencesByUnit);
+        }
+
+        private static IReadOnlyDictionary<string, double> GetExpectedWsModelOccurrencesForVmd(
+            BatchState state,
+            string vmdPathValue,
+            Dictionary<string, IReadOnlyDictionary<string, double>> cache,
+            HashSet<string> visiting)
+        {
+            var vmdPath = Normalize(vmdPathValue);
+            if (cache.TryGetValue(vmdPath, out var cached))
+                return cached;
+            if (!visiting.Add(vmdPath))
+                return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                var file = state.Source.FindFile(vmdPath);
+                if (file == null)
+                {
+                    var empty = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                    cache[vmdPath] = empty;
+                    return empty;
+                }
+
+                var vmd = GetVmd(state, state.Source, vmdPath, file);
+                var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                AccumulateExpectedWsModelOccurrences(
+                    state,
+                    vmd,
+                    1.0,
+                    result,
+                    cache,
+                    visiting);
+                cache[vmdPath] = result;
+                return result;
+            }
+            finally
+            {
+                visiting.Remove(vmdPath);
+            }
+        }
+
+        private static void AccumulateExpectedWsModelOccurrences(
+            BatchState state,
+            VariantMesh mesh,
+            double parentProbability,
+            Dictionary<string, double> result,
+            Dictionary<string, IReadOnlyDictionary<string, double>> cache,
+            HashSet<string> visiting)
+        {
+            if (parentProbability <= 0)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(mesh.ModelReference))
+            {
+                var modelPath = Normalize(mesh.ModelReference);
+                if (Path.GetExtension(modelPath)
+                        .Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) &&
+                    state.Source.ContainsFile(modelPath))
+                {
+                    result[modelPath] =
+                        result.GetValueOrDefault(modelPath) + parentProbability;
+                }
+            }
+
+            foreach (var slot in mesh.ChildSlots ?? [])
+            {
+                var slotProbability = ParseVmdSlotProbability(slot.Probability);
+                if (slotProbability <= 0)
+                    continue;
+
+                var childMeshCount = slot.ChildMeshes?.Count ?? 0;
+                var childReferenceCount = slot.ChildReferences?.Count ?? 0;
+                var alternativeCount = childMeshCount + childReferenceCount;
+                if (alternativeCount == 0)
+                    continue;
+
+                // VMD does not expose a per-child weight. Treat the entries in an active slot as
+                // equally likely alternatives, while the slot probability controls whether the
+                // slot is populated at all.
+                var alternativeProbability =
+                    parentProbability * slotProbability / alternativeCount;
+
+                foreach (var child in slot.ChildMeshes ?? [])
+                {
+                    AccumulateExpectedWsModelOccurrences(
+                        state,
+                        child,
+                        alternativeProbability,
+                        result,
+                        cache,
+                        visiting);
+                }
+
+                foreach (var reference in slot.ChildReferences ?? [])
+                {
+                    if (string.IsNullOrWhiteSpace(reference.Reference))
+                        continue;
+
+                    var childOccurrences = GetExpectedWsModelOccurrencesForVmd(
+                        state,
+                        reference.Reference,
+                        cache,
+                        visiting);
+                    foreach (var (wsModelPath, expectedOccurrences) in childOccurrences)
+                    {
+                        result[wsModelPath] =
+                            result.GetValueOrDefault(wsModelPath) +
+                            alternativeProbability * expectedOccurrences;
+                    }
+                }
+            }
+        }
+
+        private static double ParseVmdSlotProbability(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return 1.0;
+
+            if (!double.TryParse(
+                    value.Trim(),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var probability))
+            {
+                return 1.0;
+            }
+
+            // Most VMDs use 0..1. Be tolerant of hand-authored percentage-style values.
+            if (probability > 1.0 && probability <= 100.0)
+                probability /= 100.0;
+
+            return Math.Clamp(probability, 0.0, 1.0);
         }
 
         private static string GetArmyUnitIdentity(Wh3UnitCategoryUsage usage)
@@ -1643,10 +1857,16 @@ namespace Editors.KitbasherEditor.Services
             if (model == null || atlasPixels <= 0)
                 return 0;
 
-            var coveredByCategory = ExpectedArmySlots.Keys.ToDictionary(
+            var targetWsModels = candidates
+                .SelectMany(candidate => candidate.Usages)
+                .Select(usage => Normalize(usage.WsModelPath))
+                .Where(path => path.Length != 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            var fallbackCoveredByCategory = ExpectedArmySlots.Keys.ToDictionary(
                 category => category,
                 _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-
             foreach (var root in GetBatchRoots(candidates, rootsByMesh))
             {
                 if (!model.UnitsByVmd.TryGetValue(root, out var unitsForVmd))
@@ -1654,7 +1874,7 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var (category, unitIds) in unitsForVmd)
                 {
-                    if (coveredByCategory.TryGetValue(category, out var covered))
+                    if (fallbackCoveredByCategory.TryGetValue(category, out var covered))
                         covered.UnionWith(unitIds);
                 }
             }
@@ -1666,16 +1886,51 @@ namespace Editors.KitbasherEditor.Services
                 if (population == 0)
                     continue;
 
-                var covered = coveredByCategory[category].Count;
-                if (covered == 0)
-                    continue;
+                double perSlotPresenceProbability = 0;
+                foreach (var unitId in model.UnitsByCategory[category])
+                {
+                    double entityPresenceProbability = 0;
+                    if (model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
+                            unitId,
+                            out var occurrences))
+                    {
+                        foreach (var wsModelPath in targetWsModels)
+                        {
+                            entityPresenceProbability +=
+                                occurrences.GetValueOrDefault(wsModelPath);
+                        }
 
-                var perSlotProbability = Math.Clamp(
-                    (double)covered / population,
+                        // Expected occurrences are exact for mutually-exclusive choices and
+                        // additive for independent slots. Capping at one gives a conservative
+                        // presence approximation when a batch spans several independent slots.
+                        entityPresenceProbability = Math.Clamp(
+                            entityPresenceProbability,
+                            0.0,
+                            1.0);
+                    }
+                    else if (fallbackCoveredByCategory[category].Contains(unitId))
+                    {
+                        entityPresenceProbability = 1.0;
+                    }
+
+                    if (entityPresenceProbability <= 0)
+                        continue;
+
+                    var entityCount = Math.Max(
+                        1,
+                        model.EntityCountByUnit.GetValueOrDefault(unitId, 1));
+                    var unitCardPresenceProbability =
+                        1.0 - Math.Pow(1.0 - entityPresenceProbability, entityCount);
+                    perSlotPresenceProbability +=
+                        unitCardPresenceProbability / population;
+                }
+
+                perSlotPresenceProbability = Math.Clamp(
+                    perSlotPresenceProbability,
                     0.0,
                     1.0);
                 notResidentProbability *= Math.Pow(
-                    1.0 - perSlotProbability,
+                    1.0 - perSlotPresenceProbability,
                     slotCount);
             }
 
@@ -2145,15 +2400,16 @@ namespace Editors.KitbasherEditor.Services
             var rootsByMesh = BuildCandidateRootVmdPaths(
                 state,
                 working.SelectMany(batch => batch));
-            var armyUnitsByMesh = BuildArmyUnitsByMesh(
+            var expectedArmyEntitiesByMesh = BuildExpectedArmyEntitiesByMesh(
                 state.ArmyResidencyModel,
+                working.SelectMany(batch => batch),
                 rootsByMesh);
             var currentExpectedArmyDrawCallsEliminated =
                 CalculateExpectedArmyDrawCallsEliminated(
                     state.ArmyResidencyModel,
                     BuildBatchIndexByMesh(working),
                     affinityGroups,
-                    armyUnitsByMesh);
+                    expectedArmyEntitiesByMesh);
 
             state.MergeAwareAffinityPotentialBefore +=
                 CalculateMergeAffinityScore(working, affinityGroups);
@@ -2328,7 +2584,7 @@ namespace Editors.KitbasherEditor.Services
                                 state.ArmyResidencyModel,
                                 proposedBatchByMesh,
                                 affinityGroups,
-                                armyUnitsByMesh);
+                                expectedArmyEntitiesByMesh);
 
                         const double expectedDrawComparisonEpsilon = 0.000001;
                         const double expectedResidencyComparisonEpsilon = 0.5;
@@ -2417,7 +2673,7 @@ namespace Editors.KitbasherEditor.Services
                 working,
                 affinityGroups,
                 rootsByMesh,
-                armyUnitsByMesh,
+                expectedArmyEntitiesByMesh,
                 ref currentExpectedArmyDrawCallsEliminated);
 
             state.MergeAwareAffinityPotentialAfter +=
@@ -2434,7 +2690,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh,
             IReadOnlyDictionary<
                 MeshKey,
-                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> armyUnitsByMesh,
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> expectedArmyEntitiesByMesh,
             ref double currentExpectedArmyDrawCallsEliminated)
         {
             const int maxCoalesces = 16;
@@ -2567,7 +2823,7 @@ namespace Editors.KitbasherEditor.Services
                             state.ArmyResidencyModel,
                             proposedBatchByMesh,
                             affinityGroups,
-                            armyUnitsByMesh);
+                            expectedArmyEntitiesByMesh);
 
                     var pixelsSaved = baselinePixels - combinedPixels;
                     var armyResidentPixelsSaved =
@@ -2768,42 +3024,91 @@ namespace Editors.KitbasherEditor.Services
 
         private static Dictionary<
             MeshKey,
-            Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> BuildArmyUnitsByMesh(
-            ArmyResidencyModel? model,
-            IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
+            Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+            BuildExpectedArmyEntitiesByMesh(
+                ArmyResidencyModel? model,
+                IEnumerable<AtlasCandidate> candidates,
+                IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
         {
             var result = new Dictionary<
                 MeshKey,
-                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>>();
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>();
             if (model == null)
                 return result;
 
-            foreach (var (mesh, roots) in rootsByMesh)
+            foreach (var candidate in candidates
+                         .GroupBy(candidate => candidate.Key)
+                         .Select(group => group.First()))
             {
-                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>? byCategory = null;
-                foreach (var root in roots)
+                var wsModels = candidate.Usages
+                    .Select(usage => Normalize(usage.WsModelPath))
+                    .Where(path => path.Length != 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (wsModels.Length == 0)
+                    continue;
+
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>? byCategory = null;
+                foreach (var (category, unitIds) in model.UnitsByCategory)
                 {
-                    if (!model.UnitsByVmd.TryGetValue(root, out var unitsForVmd))
-                        continue;
-
-                    byCategory ??= new Dictionary<Wh3ArmyUnitCategory, HashSet<string>>();
-                    foreach (var (category, unitIds) in unitsForVmd)
+                    foreach (var unitId in unitIds)
                     {
-                        if (!ExpectedArmySlots.ContainsKey(category))
-                            continue;
-
-                        if (!byCategory.TryGetValue(category, out var covered))
+                        double expectedOccurrencesPerEntity = 0;
+                        if (model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
+                                unitId,
+                                out var occurrences))
                         {
-                            covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                            byCategory[category] = covered;
+                            foreach (var wsModelPath in wsModels)
+                            {
+                                expectedOccurrencesPerEntity +=
+                                    occurrences.GetValueOrDefault(wsModelPath);
+                            }
+                        }
+                        else if (rootsByMesh.TryGetValue(candidate.Key, out var roots))
+                        {
+                            // Preserve the old conservative behavior when probability data could
+                            // not be built for a resolved unit.
+                            foreach (var root in roots)
+                            {
+                                if (model.UnitsByVmd.TryGetValue(root, out var unitsForVmd) &&
+                                    unitsForVmd.TryGetValue(category, out var fallbackUnits) &&
+                                    fallbackUnits.Contains(unitId))
+                                {
+                                    expectedOccurrencesPerEntity = 1.0;
+                                    break;
+                                }
+                            }
                         }
 
-                        covered.UnionWith(unitIds);
+                        if (expectedOccurrencesPerEntity <= 0)
+                            continue;
+
+                        var entityCount = Math.Max(
+                            1,
+                            model.EntityCountByUnit.GetValueOrDefault(unitId, 1));
+                        var expectedRenderedEntities =
+                            expectedOccurrencesPerEntity * entityCount;
+                        if (expectedRenderedEntities <= 0)
+                            continue;
+
+                        byCategory ??=
+                            new Dictionary<
+                                Wh3ArmyUnitCategory,
+                                Dictionary<string, double>>();
+                        if (!byCategory.TryGetValue(category, out var expectedByUnit))
+                        {
+                            expectedByUnit =
+                                new Dictionary<string, double>(
+                                    StringComparer.OrdinalIgnoreCase);
+                            byCategory[category] = expectedByUnit;
+                        }
+
+                        expectedByUnit[unitId] = expectedRenderedEntities;
                     }
                 }
 
                 if (byCategory != null)
-                    result[mesh] = byCategory;
+                    result[candidate.Key] = byCategory;
             }
 
             return result;
@@ -2815,7 +3120,8 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<MergeAffinityGroup> affinityGroups,
             IReadOnlyDictionary<
                 MeshKey,
-                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> unitsByMesh)
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh)
         {
             if (model == null)
                 return 0;
@@ -2837,33 +3143,43 @@ namespace Editors.KitbasherEditor.Services
                         if (population == 0)
                             continue;
 
-                        var mergeablePartsByUnit =
-                            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                        foreach (var mesh in meshes)
+                        double eliminatedDrawsAcrossResolvedUnits = 0;
+                        foreach (var unitId in model.UnitsByCategory[category])
                         {
-                            if (!unitsByMesh.TryGetValue(mesh, out var meshUnits) ||
-                                !meshUnits.TryGetValue(category, out var unitIds))
+                            var expectedCounts = new List<double>(meshes.Length);
+                            foreach (var mesh in meshes)
                             {
-                                continue;
+                                if (!expectedEntitiesByMesh.TryGetValue(mesh, out var meshUnits) ||
+                                    !meshUnits.TryGetValue(category, out var expectedByUnit) ||
+                                    !expectedByUnit.TryGetValue(unitId, out var expectedEntities) ||
+                                    expectedEntities <= 0)
+                                {
+                                    continue;
+                                }
+
+                                expectedCounts.Add(expectedEntities);
                             }
 
-                            foreach (var unitId in unitIds)
-                            {
-                                mergeablePartsByUnit[unitId] =
-                                    mergeablePartsByUnit.GetValueOrDefault(unitId) + 1;
-                            }
+                            if (expectedCounts.Count < 2)
+                                continue;
+
+                            // Merge-affinity groups contain parts of the same geometry/LOD.
+                            // They should normally have identical occurrence counts. Taking the
+                            // minimum keeps the estimate conservative if unusual WSModel/VMD
+                            // overrides make their inferred usage differ.
+                            var coRenderedEntities = expectedCounts.Min();
+                            eliminatedDrawsAcrossResolvedUnits +=
+                                coRenderedEntities * (expectedCounts.Count - 1);
                         }
 
-                        var eliminatedDrawsAcrossResolvedUnits = mergeablePartsByUnit.Values
-                            .Sum(partCount => Math.Max(0, partCount - 1));
-                        if (eliminatedDrawsAcrossResolvedUnits == 0)
+                        if (eliminatedDrawsAcrossResolvedUnits <= 0)
                             continue;
 
-                        // Draw calls are paid per rendered unit instance, unlike texture residency,
-                        // which is shared once per army. Linearity of expectation therefore makes
-                        // this slots * average eliminated draws per resolved unit.
+                        // Draw calls scale with rendered entity instances. Average the expected
+                        // per-unit-card saving across the category, then multiply by the number
+                        // of representative army slots in that category.
                         total += slotCount *
-                            ((double)eliminatedDrawsAcrossResolvedUnits / population);
+                            (eliminatedDrawsAcrossResolvedUnits / population);
                     }
                 }
             }
@@ -6878,7 +7194,11 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Batch residency probability uses 1 - product((1 - coveredUnits/categoryUnits)^categorySlots).");
                 sb.AppendLine(
-                    "Expected draw-call eliminations use categorySlots * average(per-unit eliminated draws).");
+                    "VMD visual model: slot probability controls activation; child meshes/references in an active slot are treated as equal alternatives; missing probability means 1.");
+                sb.AppendLine(
+                    "Texture residency converts per-entity visual probability through num_men before applying category slots.");
+                sb.AppendLine(
+                    "Expected draw-call eliminations use categorySlots * average(entity-weighted per-unit eliminated draws), with num_men and VMD selection probability.");
                 sb.AppendLine(
                     "The old aggregate VMD-residency and unweighted merge-affinity metrics remain non-regression guards.");
                 sb.AppendLine();
@@ -8429,7 +8749,11 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<Wh3ArmyUnitCategory, HashSet<string>> UnitsByCategory,
             IReadOnlyDictionary<
                 string,
-                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByVmd);
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByVmd,
+            IReadOnlyDictionary<string, int> EntityCountByUnit,
+            IReadOnlyDictionary<string, Wh3ArmyUnitCategory> CategoryByUnit,
+            IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>>
+                ExpectedWsModelOccurrencesByUnit);
 
         private sealed record ArmyLocalitySplitEvaluationReportEntry(
             bool Accepted,
