@@ -2474,7 +2474,7 @@ namespace Editors.KitbasherEditor.Services
                 AtlasBatchPair? bestPair = null;
                 List<AtlasCandidate>? bestCombined = null;
                 var bestAffinity = baselineAffinity;
-                var bestArmyResidentPixels = double.PositiveInfinity;
+                var bestArmyResidentPixelsSaved = double.NegativeInfinity;
                 var bestExpectedArmyDrawCallsEliminated =
                     currentExpectedArmyDrawCallsEliminated;
                 long bestPixelsSaved = long.MinValue;
@@ -2570,28 +2570,30 @@ namespace Editors.KitbasherEditor.Services
                             armyUnitsByMesh);
 
                     var pixelsSaved = baselinePixels - combinedPixels;
+                    var armyResidentPixelsSaved =
+                        baselineArmyResidentPixels - combinedArmyResidentPixels;
                     const double expectedDrawComparisonEpsilon = 0.000001;
                     const double expectedResidencyComparisonEpsilon = 0.5;
                     var isBetter =
-                        combinedArmyResidentPixels <
-                            bestArmyResidentPixels - expectedResidencyComparisonEpsilon ||
+                        armyResidentPixelsSaved >
+                            bestArmyResidentPixelsSaved + expectedResidencyComparisonEpsilon ||
                         (Math.Abs(
-                             combinedArmyResidentPixels -
-                             bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                             armyResidentPixelsSaved -
+                             bestArmyResidentPixelsSaved) <= expectedResidencyComparisonEpsilon &&
                          proposedExpectedArmyDrawCallsEliminated >
                              bestExpectedArmyDrawCallsEliminated +
                              expectedDrawComparisonEpsilon) ||
                         (Math.Abs(
-                             combinedArmyResidentPixels -
-                             bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                             armyResidentPixelsSaved -
+                             bestArmyResidentPixelsSaved) <= expectedResidencyComparisonEpsilon &&
                          Math.Abs(
                              proposedExpectedArmyDrawCallsEliminated -
                              bestExpectedArmyDrawCallsEliminated) <=
                              expectedDrawComparisonEpsilon &&
                          pixelsSaved > bestPixelsSaved) ||
                         (Math.Abs(
-                             combinedArmyResidentPixels -
-                             bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                             armyResidentPixelsSaved -
+                             bestArmyResidentPixelsSaved) <= expectedResidencyComparisonEpsilon &&
                          Math.Abs(
                              proposedExpectedArmyDrawCallsEliminated -
                              bestExpectedArmyDrawCallsEliminated) <=
@@ -2599,8 +2601,8 @@ namespace Editors.KitbasherEditor.Services
                          pixelsSaved == bestPixelsSaved &&
                          proposedAffinity > bestAffinity) ||
                         (Math.Abs(
-                             combinedArmyResidentPixels -
-                             bestArmyResidentPixels) <= expectedResidencyComparisonEpsilon &&
+                             armyResidentPixelsSaved -
+                             bestArmyResidentPixelsSaved) <= expectedResidencyComparisonEpsilon &&
                          Math.Abs(
                              proposedExpectedArmyDrawCallsEliminated -
                              bestExpectedArmyDrawCallsEliminated) <=
@@ -2614,7 +2616,7 @@ namespace Editors.KitbasherEditor.Services
                     bestPair = pair;
                     bestCombined = combined;
                     bestAffinity = proposedAffinity;
-                    bestArmyResidentPixels = combinedArmyResidentPixels;
+                    bestArmyResidentPixelsSaved = armyResidentPixelsSaved;
                     bestExpectedArmyDrawCallsEliminated =
                         proposedExpectedArmyDrawCallsEliminated;
                     bestPixelsSaved = pixelsSaved;
