@@ -6182,7 +6182,8 @@ namespace Editors.KitbasherEditor.Services
                             sb.AppendLine(
                                 $"    main={usage.MainUnitKey} | land={usage.LandUnitKey} | " +
                                 $"caste={usage.Caste} | land-category={usage.LandCategory} | " +
-                                $"category={usage.Category} | entities={usage.NumMen}");
+                                $"ui-group={usage.UiGroupKey} | category={usage.Category} | " +
+                                $"entities={usage.NumMen}");
                         }
                     }
                 }
