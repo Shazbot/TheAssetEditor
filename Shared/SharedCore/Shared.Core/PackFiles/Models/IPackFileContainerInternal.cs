@@ -16,8 +16,6 @@ namespace Shared.Core.PackFiles.Models
         void SaveToDisk(string path, bool createBackup, GameInformation gameInformation);
 
         List<(string FileName, PackFile Pack)> FindAllWithExtention(string extention);
-        List<(string Path, PackFile File)> GetDirectoryContent(string directoryPath);
 
-    
     }
 }
