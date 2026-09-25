@@ -27,6 +27,7 @@ namespace Editors.KitbasherEditor.Services
         string LandUnitKey,
         string Caste,
         string LandCategory,
+        string UiGroupKey,
         int NumMen,
         Wh3ArmyUnitCategory Category);
 
@@ -62,6 +63,8 @@ namespace Editors.KitbasherEditor.Services
         private const string LandUnitsTable = "land_units_tables";
         private const string UnitVariantsTable = "unit_variants_tables";
         private const string VariantsTable = "variants_tables";
+        private const string UiUnitGroupingsTable = "ui_unit_groupings_tables";
+        private const string UiUnitGroupParentsTable = "ui_unit_group_parents_tables";
 
         private static readonly string[] RequiredTables =
         [
@@ -69,6 +72,8 @@ namespace Editors.KitbasherEditor.Services
             LandUnitsTable,
             UnitVariantsTable,
             VariantsTable,
+            UiUnitGroupingsTable,
+            UiUnitGroupParentsTable,
         ];
 
         private static readonly Lazy<SchemaRoot> Schema = new(LoadSchema);
@@ -152,6 +157,8 @@ namespace Editors.KitbasherEditor.Services
             var landRows = effectiveRows[LandUnitsTable];
             var unitVariantRows = effectiveRows[UnitVariantsTable].Values.ToList();
             var variantRows = effectiveRows[VariantsTable];
+            var uiUnitGroupings = effectiveRows[UiUnitGroupingsTable];
+            var uiUnitGroupParents = effectiveRows[UiUnitGroupParentsTable];
 
             var mainByLandUnit = mainRows
                 .Where(row => Get(row, "land_unit").Length != 0)
@@ -191,8 +198,9 @@ namespace Editors.KitbasherEditor.Services
                             landUnitKey,
                             string.Empty,
                             Get(land, "category"),
+                            string.Empty,
                             1,
-                            Classify(string.Empty, Get(land, "category"))));
+                            Classify(string.Empty, Get(land, "category"), string.Empty)));
                     continue;
                 }
 
@@ -201,6 +209,11 @@ namespace Editors.KitbasherEditor.Services
                     var mainUnitKey = Get(main, "unit");
                     var caste = Get(main, "caste");
                     var landCategory = Get(land, "category");
+                    var uiGroupKey = ResolveUiGroupKey(
+                        main,
+                        caste,
+                        uiUnitGroupings,
+                        uiUnitGroupParents);
                     var numMen = TryParseInt(Get(main, "num_men"), out var parsedNumMen)
                         ? Math.Max(1, parsedNumMen)
                         : 1;
@@ -213,8 +226,9 @@ namespace Editors.KitbasherEditor.Services
                             landUnitKey,
                             caste,
                             landCategory,
+                            uiGroupKey,
                             numMen,
-                            Classify(caste, landCategory)));
+                            Classify(caste, landCategory, uiGroupKey)));
                 }
             }
 
@@ -325,35 +339,89 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private static Wh3ArmyUnitCategory Classify(string caste, string landCategory)
+        private static string ResolveUiGroupKey(
+            IReadOnlyDictionary<string, string> main,
+            string caste,
+            IReadOnlyDictionary<string, Dictionary<string, string>> uiUnitGroupings,
+            IReadOnlyDictionary<string, Dictionary<string, string>> uiUnitGroupParents)
         {
-            // main_units.caste describes the battlefield role more reliably than
-            // land_units.category for several WH3 unit types. For example, cavalry can use
-            // inf_melee/inf_ranged or war_beast land categories, while chariots can use
-            // war_machine. Prefer caste and use land category only as a fallback.
+            var groupingKey = Get(main, "ui_unit_group_land");
+            if (groupingKey.Length == 0 ||
+                !uiUnitGroupings.TryGetValue(groupingKey, out var grouping))
+            {
+                return string.Empty;
+            }
+
+            var parentGroupKey = Get(grouping, "parent_group");
+            if (parentGroupKey.Length == 0)
+                return string.Empty;
+
+            // Match WHMM Unit Viewer's getUiGroupKey: a handful of vanilla lords point at
+            // heroes_agents, but the viewer keeps them in Commander when that parent exists.
+            if (caste.Trim().Equals("lord", StringComparison.OrdinalIgnoreCase) &&
+                parentGroupKey.Equals("heroes_agents", StringComparison.OrdinalIgnoreCase) &&
+                uiUnitGroupParents.ContainsKey("commander"))
+            {
+                return "commander";
+            }
+
+            return uiUnitGroupParents.ContainsKey(parentGroupKey)
+                ? parentGroupKey
+                : string.Empty;
+        }
+
+        private static Wh3ArmyUnitCategory Classify(
+            string caste,
+            string landCategory,
+            string uiGroupKey)
+        {
+            // Use the same roster grouping source as WHMM's Unit Viewer:
+            // main_units.ui_unit_group_land -> ui_unit_groupings.parent_group.
+            // Caste / land category are only fallbacks for units without a usable UI group.
+            switch (uiGroupKey.Trim().ToLowerInvariant())
+            {
+                case "commander":
+                    return Wh3ArmyUnitCategory.Lord;
+                case "heroes_agents":
+                    return Wh3ArmyUnitCategory.Hero;
+
+                case "infantry":
+                case "missile_infantry":
+                    return Wh3ArmyUnitCategory.InfantryMissile;
+
+                case "cavalry_chariots":
+                case "missile_cavalry_chariots":
+                    return Wh3ArmyUnitCategory.CavalryChariot;
+
+                case "monster_beasts":
+                case "missile_monster_beasts":
+                case "constructs":
+                    return Wh3ArmyUnitCategory.MonsterBeast;
+
+                case "flying_war_machine":
+                case "artillery_war_machines":
+                    return Wh3ArmyUnitCategory.ArtilleryWarMachine;
+            }
+
             switch (caste.Trim().ToLowerInvariant())
             {
                 case "lord":
                     return Wh3ArmyUnitCategory.Lord;
                 case "hero":
                     return Wh3ArmyUnitCategory.Hero;
-
                 case "melee_infantry":
                 case "missile_infantry":
                 case "infantry":
                     return Wh3ArmyUnitCategory.InfantryMissile;
-
                 case "melee_cavalry":
                 case "missile_cavalry":
                 case "cavalry":
                 case "chariot":
                     return Wh3ArmyUnitCategory.CavalryChariot;
-
                 case "monster":
                 case "monstrous_infantry":
                 case "war_beast":
                     return Wh3ArmyUnitCategory.MonsterBeast;
-
                 case "warmachine":
                 case "war_machine":
                 case "artillery":
@@ -584,6 +652,8 @@ namespace Editors.KitbasherEditor.Services
                 LandUnitsTable => Get(row, "key"),
                 VariantsTable => Get(row, "variant_name"),
                 UnitVariantsTable => $"{Get(row, "faction")}\u001f{Get(row, "unit")}",
+                UiUnitGroupingsTable => Get(row, "key"),
+                UiUnitGroupParentsTable => Get(row, "key"),
                 _ => string.Empty,
             };
         }
