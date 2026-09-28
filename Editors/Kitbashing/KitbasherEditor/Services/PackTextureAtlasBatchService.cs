@@ -294,6 +294,15 @@ namespace Editors.KitbasherEditor.Services
                 state.PhaseDurations["Index WSModels"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
+                ReportProgress(progress, "Estimating source BCn residency");
+                state.SourceBcnResidency = CalculateBcnTextureResidency(
+                    state,
+                    source,
+                    originalReachable,
+                    cancellationToken);
+                state.PhaseDurations["Estimate source BCn residency"] = phaseStopwatch.Elapsed;
+
+                phaseStopwatch.Restart();
                 var candidateDiscovery = DiscoverAtlasCandidates(
                     state,
                     vmdRoots,
@@ -383,6 +392,15 @@ namespace Editors.KitbasherEditor.Services
                     progress,
                     "Scanning rewritten dependencies");
                 state.PhaseDurations["Scan rewritten dependencies"] = phaseStopwatch.Elapsed;
+
+                phaseStopwatch.Restart();
+                ReportProgress(progress, "Estimating output BCn residency");
+                state.OutputBcnResidency = CalculateBcnTextureResidency(
+                    state,
+                    output,
+                    currentReachable,
+                    cancellationToken);
+                state.PhaseDurations["Estimate output BCn residency"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
                 PruneUnusedAssetFiles(
@@ -1853,8 +1871,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<AtlasCandidate> candidates,
             IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
         {
-            var model = state.ArmyResidencyModel;
-            if (model == null || atlasPixels <= 0)
+            if (atlasPixels <= 0)
                 return 0;
 
             var targetWsModels = candidates
@@ -1863,12 +1880,28 @@ namespace Editors.KitbasherEditor.Services
                 .Where(path => path.Length != 0)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            var roots = GetBatchRoots(candidates, rootsByMesh);
+
+            return atlasPixels * GetExpectedArmyResidentProbability(
+                state.ArmyResidencyModel,
+                targetWsModels,
+                roots);
+        }
+
+        private static double GetExpectedArmyResidentProbability(
+            ArmyResidencyModel? model,
+            IReadOnlyCollection<string> targetWsModels,
+            IEnumerable<string> fallbackRoots)
+        {
+            if (model == null)
+                return 0;
 
             var fallbackCoveredByCategory = ExpectedArmySlots.Keys.ToDictionary(
                 category => category,
                 _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-            foreach (var root in GetBatchRoots(candidates, rootsByMesh))
+            foreach (var rootValue in fallbackRoots)
             {
+                var root = Normalize(rootValue);
                 if (!model.UnitsByVmd.TryGetValue(root, out var unitsForVmd))
                     continue;
 
@@ -1895,14 +1928,8 @@ namespace Editors.KitbasherEditor.Services
                             out var occurrences))
                     {
                         foreach (var wsModelPath in targetWsModels)
-                        {
-                            entityPresenceProbability +=
-                                occurrences.GetValueOrDefault(wsModelPath);
-                        }
+                            entityPresenceProbability += occurrences.GetValueOrDefault(wsModelPath);
 
-                        // Expected occurrences are exact for mutually-exclusive choices and
-                        // additive for independent slots. Capping at one gives a conservative
-                        // presence approximation when a batch spans several independent slots.
                         entityPresenceProbability = Math.Clamp(
                             entityPresenceProbability,
                             0.0,
@@ -1934,11 +1961,7 @@ namespace Editors.KitbasherEditor.Services
                     slotCount);
             }
 
-            var residentProbability = Math.Clamp(
-                1.0 - notResidentProbability,
-                0.0,
-                1.0);
-            return atlasPixels * residentProbability;
+            return Math.Clamp(1.0 - notResidentProbability, 0.0, 1.0);
         }
 
         private static double CalculateExpectedArmyResidentPixels(
@@ -4314,7 +4337,6 @@ namespace Editors.KitbasherEditor.Services
                         state.GeometryVerticesAfter += statistics.VerticesAfter;
                         state.GeometryUnreferencedVerticesRemoved += statistics.UnreferencedVerticesRemoved;
                         state.GeometryDuplicateVerticesRemoved += statistics.DuplicateVerticesRemoved;
-                        state.GeometryDegenerateTrianglesRemoved += statistics.DegenerateTrianglesRemoved;
                     }
                 }
             }
@@ -5951,6 +5973,262 @@ namespace Editors.KitbasherEditor.Services
             return reverse;
         }
 
+        private static BcnTextureResidencySummary CalculateBcnTextureResidency(
+            BatchState state,
+            IPackFileContainer container,
+            IReadOnlyCollection<string> reachablePaths,
+            CancellationToken cancellationToken)
+        {
+            var reachable = new HashSet<string>(
+                reachablePaths.Select(Normalize),
+                StringComparer.OrdinalIgnoreCase);
+            var textureWsModels = BuildTextureWsModelMap(
+                container,
+                reachable,
+                cancellationToken);
+            var rootsByWsModel = BuildArmyRootsByWsModel(
+                state,
+                cancellationToken);
+
+            var formatCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var formatBytes = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            var reachableDdsCount = 0;
+            var bcnTextureCount = 0;
+            var unsupportedDdsCount = 0;
+            var armyUnmappedBcnTextureCount = 0;
+            long bcnBytes = 0;
+            double expectedArmyBcnBytes = 0;
+            long generatedAtlasBcnBytes = 0;
+            double expectedArmyGeneratedAtlasBcnBytes = 0;
+
+            foreach (var texturePath in reachable
+                         .Where(path => Path.GetExtension(path).Equals(
+                             ".dds",
+                             StringComparison.OrdinalIgnoreCase))
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                reachableDdsCount++;
+
+                var file = container.FindFile(texturePath);
+                if (file == null)
+                    continue;
+
+                DdsBcnResidencyEstimate estimate;
+                try
+                {
+                    if (!DdsBcnResidencyEstimator.TryEstimate(
+                            file.DataSource.PeekData(148),
+                            out estimate))
+                    {
+                        unsupportedDdsCount++;
+                        continue;
+                    }
+                }
+                catch
+                {
+                    unsupportedDdsCount++;
+                    continue;
+                }
+
+                bcnTextureCount++;
+                bcnBytes = checked(bcnBytes + estimate.Bytes);
+                formatCounts[estimate.Format] = formatCounts.GetValueOrDefault(estimate.Format) + 1;
+                formatBytes[estimate.Format] = checked(
+                    formatBytes.GetValueOrDefault(estimate.Format) + estimate.Bytes);
+
+                var targetWsModels = textureWsModels.TryGetValue(texturePath, out var wsModels)
+                    ? wsModels
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var fallbackRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var wsModel in targetWsModels)
+                {
+                    if (rootsByWsModel.TryGetValue(wsModel, out var roots))
+                        fallbackRoots.UnionWith(roots);
+                }
+
+                if (targetWsModels.Count == 0 && fallbackRoots.Count == 0)
+                    armyUnmappedBcnTextureCount++;
+
+                var residentProbability = GetExpectedArmyResidentProbability(
+                    state.ArmyResidencyModel,
+                    targetWsModels,
+                    fallbackRoots);
+                var expectedBytes = estimate.Bytes * residentProbability;
+                expectedArmyBcnBytes += expectedBytes;
+
+                if (state.GeneratedTexturePaths.Contains(texturePath))
+                {
+                    generatedAtlasBcnBytes = checked(
+                        generatedAtlasBcnBytes + estimate.Bytes);
+                    expectedArmyGeneratedAtlasBcnBytes += expectedBytes;
+                }
+            }
+
+            return new BcnTextureResidencySummary(
+                reachableDdsCount,
+                bcnTextureCount,
+                unsupportedDdsCount,
+                armyUnmappedBcnTextureCount,
+                bcnBytes,
+                expectedArmyBcnBytes,
+                generatedAtlasBcnBytes,
+                expectedArmyGeneratedAtlasBcnBytes,
+                formatCounts,
+                formatBytes);
+        }
+
+        private static Dictionary<string, HashSet<string>> BuildTextureWsModelMap(
+            IPackFileContainer container,
+            IReadOnlyCollection<string> reachablePaths,
+            CancellationToken cancellationToken)
+        {
+            var result = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            var materialTextures = new Dictionary<string, string[]>(
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var wsModelPath in reachablePaths
+                         .Where(path => Path.GetExtension(path).Equals(
+                             ".wsmodel",
+                             StringComparison.OrdinalIgnoreCase)))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var wsFile = container.FindFile(wsModelPath);
+                if (wsFile == null)
+                    continue;
+
+                XmlDocument wsDocument;
+                try
+                {
+                    wsDocument = LoadXml(wsFile);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                var materialNodes = wsDocument.SelectNodes("/model/materials/material");
+                if (materialNodes == null)
+                    continue;
+
+                foreach (XmlNode materialNode in materialNodes)
+                {
+                    var materialPath = Normalize(materialNode.InnerText);
+                    if (materialPath.Length == 0)
+                        continue;
+
+                    if (!materialTextures.TryGetValue(materialPath, out var texturePaths))
+                    {
+                        var materialFile = container.FindFile(materialPath);
+                        if (materialFile == null)
+                        {
+                            materialTextures[materialPath] = [];
+                            continue;
+                        }
+
+                        try
+                        {
+                            var materialDocument = LoadXml(materialFile);
+                            texturePaths = materialDocument
+                                .SelectNodes("/material/textures/texture")?
+                                .Cast<XmlNode>()
+                                .Select(node => Normalize(
+                                    node.SelectSingleNode("source")?.InnerText ?? node.InnerText))
+                                .Where(path =>
+                                    path.Length != 0 &&
+                                    Path.GetExtension(path).Equals(
+                                        ".dds",
+                                        StringComparison.OrdinalIgnoreCase))
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .ToArray()
+                                ?? [];
+                        }
+                        catch
+                        {
+                            texturePaths = [];
+                        }
+
+                        materialTextures[materialPath] = texturePaths;
+                    }
+
+                    foreach (var texturePath in texturePaths)
+                    {
+                        if (!reachablePaths.Contains(texturePath, StringComparer.OrdinalIgnoreCase))
+                            continue;
+
+                        if (!result.TryGetValue(texturePath, out var wsModels))
+                        {
+                            wsModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            result[texturePath] = wsModels;
+                        }
+
+                        wsModels.Add(Normalize(wsModelPath));
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static Dictionary<string, HashSet<string>> BuildArmyRootsByWsModel(
+            BatchState state,
+            CancellationToken cancellationToken)
+        {
+            var result = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            if (state.ArmyResidencyModel == null)
+                return result;
+
+            foreach (var root in state.ArmyResidencyModel.UnitsByVmd.Keys)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var wsModel in GetReachableWsModels(
+                             state,
+                             root,
+                             cancellationToken))
+                {
+                    if (!result.TryGetValue(wsModel, out var roots))
+                    {
+                        roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        result[wsModel] = roots;
+                    }
+
+                    roots.Add(Normalize(root));
+                }
+            }
+
+            return result;
+        }
+
+        private static string FormatMiB(double bytes)
+            => $"{bytes / (1024.0 * 1024.0):N1} MiB";
+
+        private static string FormatResidencyDelta(double before, double after)
+        {
+            var deltaBytes = after - before;
+            if (before <= 0)
+                return $"{(deltaBytes >= 0 ? "+" : string.Empty)}{FormatMiB(deltaBytes)}";
+
+            var deltaPercent = deltaBytes / before * 100.0;
+            return $"{(deltaBytes >= 0 ? "+" : string.Empty)}{FormatMiB(deltaBytes)} " +
+                   $"({(deltaPercent >= 0 ? "+" : string.Empty)}{deltaPercent:N1}%)";
+        }
+
+        private static string FormatBcnBreakdown(BcnTextureResidencySummary summary)
+        {
+            if (summary.BytesByFormat.Count == 0)
+                return "<none>";
+
+            return string.Join(
+                ", ",
+                summary.BytesByFormat
+                    .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(entry =>
+                        $"{entry.Key}={FormatMiB(entry.Value)} " +
+                        $"({summary.TextureCountByFormat.GetValueOrDefault(entry.Key):N0})"));
+        }
+
         private HashSet<string> CollectReachableAssetFiles(
             BatchState state,
             IPackFileContainer container,
@@ -7076,6 +7354,47 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Atlas combinations >25% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPercent > 25)}");
                 sb.AppendLine($"Atlas combinations that do not fit: {mergeOpportunities.Count(x => !x.Combination.Fits)}");
             }
+            if (state.SourceBcnResidency != null && state.OutputBcnResidency != null)
+            {
+                var sourceBcn = state.SourceBcnResidency;
+                var outputBcn = state.OutputBcnResidency;
+                sb.AppendLine();
+                sb.AppendLine("BCn GPU texture residency estimate");
+                sb.AppendLine("----------------------------------");
+                sb.AppendLine(
+                    $"Source reachable DDS textures: {sourceBcn.ReachableDdsCount:N0}; " +
+                    $"BCn={sourceBcn.BcnTextureCount:N0}; unsupported/non-BCn={sourceBcn.UnsupportedDdsCount:N0}");
+                sb.AppendLine(
+                    $"Output reachable DDS textures: {outputBcn.ReachableDdsCount:N0}; " +
+                    $"BCn={outputBcn.BcnTextureCount:N0}; unsupported/non-BCn={outputBcn.UnsupportedDdsCount:N0}");
+                sb.AppendLine($"Source reachable BCn residency: {FormatMiB(sourceBcn.BcnBytes)}");
+                sb.AppendLine($"Output reachable BCn residency: {FormatMiB(outputBcn.BcnBytes)}");
+                sb.AppendLine(
+                    $"Reachable BCn residency delta: " +
+                    $"{FormatResidencyDelta(sourceBcn.BcnBytes, outputBcn.BcnBytes)}");
+                sb.AppendLine(
+                    $"Expected representative-army BCn residency: " +
+                    $"{FormatMiB(sourceBcn.ExpectedArmyBcnBytes)} -> " +
+                    $"{FormatMiB(outputBcn.ExpectedArmyBcnBytes)} " +
+                    $"({FormatResidencyDelta(sourceBcn.ExpectedArmyBcnBytes, outputBcn.ExpectedArmyBcnBytes)})");
+                sb.AppendLine(
+                    $"Generated atlas BCn residency: {FormatMiB(outputBcn.GeneratedAtlasBcnBytes)}");
+                sb.AppendLine(
+                    $"Expected representative-army generated-atlas BCn residency: " +
+                    $"{FormatMiB(outputBcn.ExpectedArmyGeneratedAtlasBcnBytes)}");
+                sb.AppendLine($"Source BCn formats: {FormatBcnBreakdown(sourceBcn)}");
+                sb.AppendLine($"Output BCn formats: {FormatBcnBreakdown(outputBcn)}");
+                sb.AppendLine(
+                    $"BCn textures without an army WSModel mapping: " +
+                    $"source={sourceBcn.ArmyUnmappedBcnTextureCount:N0}, " +
+                    $"output={outputBcn.ArmyUnmappedBcnTextureCount:N0}");
+                sb.AppendLine(
+                    "Estimate sums 4x4 BCn block payloads for every declared mip level. " +
+                    "It excludes driver allocation/alignment overhead, non-BCn DDS formats, " +
+                    "and textures resolved outside the processed pack.");
+                sb.AppendLine();
+            }
+
             sb.AppendLine($"Optimize geometry: {(state.OptimizeGeometryEnabled ? "YES" : "NO")}");
             if (state.OptimizeGeometryEnabled)
             {
@@ -7085,7 +7404,6 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Geometry vertices removed: {state.GeometryVerticesRemoved:N0}");
                 sb.AppendLine($"Unreferenced vertices removed: {state.GeometryUnreferencedVerticesRemoved:N0}");
                 sb.AppendLine($"Duplicate vertices removed: {state.GeometryDuplicateVerticesRemoved:N0}");
-                sb.AppendLine($"Degenerate triangles removed: {state.GeometryDegenerateTrianglesRemoved:N0}");
             }
             sb.AppendLine();
 
@@ -8745,6 +9063,18 @@ namespace Editors.KitbasherEditor.Services
             bool WrappedUvCanonicalized,
             bool ContentCanonicalized);
 
+        private sealed record BcnTextureResidencySummary(
+            int ReachableDdsCount,
+            int BcnTextureCount,
+            int UnsupportedDdsCount,
+            int ArmyUnmappedBcnTextureCount,
+            long BcnBytes,
+            double ExpectedArmyBcnBytes,
+            long GeneratedAtlasBcnBytes,
+            double ExpectedArmyGeneratedAtlasBcnBytes,
+            IReadOnlyDictionary<string, int> TextureCountByFormat,
+            IReadOnlyDictionary<string, long> BytesByFormat);
+
         private sealed record ArmyResidencyModel(
             IReadOnlyDictionary<Wh3ArmyUnitCategory, HashSet<string>> UnitsByCategory,
             IReadOnlyDictionary<
@@ -8819,6 +9149,8 @@ namespace Editors.KitbasherEditor.Services
             public double ExpectedArmyResidentPixelsAfterMergeAware { get; set; }
             public double ExpectedArmyResidentPixelsSavedByLocality { get; set; }
             public ArmyResidencyModel? ArmyResidencyModel { get; set; }
+            public BcnTextureResidencySummary? SourceBcnResidency { get; set; }
+            public BcnTextureResidencySummary? OutputBcnResidency { get; set; }
             public List<ArmyLocalitySplitEvaluationReportEntry> ArmyLocalitySplitEvaluations { get; } = [];
             public long VmdLocalityGlobalPixelsAdded { get; set; }
             public int MergeAwareLocalityRegressionsRejected { get; set; }
@@ -8874,7 +9206,6 @@ namespace Editors.KitbasherEditor.Services
             public long GeometryVerticesRemoved => GeometryVerticesBefore - GeometryVerticesAfter;
             public long GeometryUnreferencedVerticesRemoved { get; set; }
             public long GeometryDuplicateVerticesRemoved { get; set; }
-            public long GeometryDegenerateTrianglesRemoved { get; set; }
             public List<string> RemovedFiles { get; } = [];
             public List<string> ValidationMessages { get; } = [];
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
