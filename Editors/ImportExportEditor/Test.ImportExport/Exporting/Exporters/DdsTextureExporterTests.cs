@@ -131,6 +131,23 @@ public sealed class DdsTextureExporterTests
     }
 
     [Test]
+    public void NormalKtx2ExportFallsBackToPngForNonMultipleOfFourDds()
+    {
+        const string sourcePath = "textures/normal.dds";
+        var packFileService = CreatePackFileService(sourcePath, CreateSolidDxt5Dds(1024, 513, 11));
+        var capture = new CapturedImage();
+        var exporter = new DdsToNormalPngExporter(packFileService.Object, capture);
+
+        var result = exporter.ExportKtx2WithData(
+            sourcePath,
+            Path.Combine(Path.GetTempPath(), "asset-host-textures", "model.glb"),
+            convertToBlueNormalMap: false);
+
+        Assert.That(result.Path, Does.EndWith("normal_raw.png"));
+        Assert.That(ReadPixel(result.Data).R, Is.GreaterThan(200));
+    }
+
+    [Test]
     public void MaterialKtx2ExportPreservesBlenderChannelConversion()
     {
         var source = new Pixel(17, 34, 201, 77);
@@ -142,6 +159,24 @@ public sealed class DdsTextureExporterTests
         Assert.That(pixel.G, Is.EqualTo(source.G));
         Assert.That(pixel.B, Is.EqualTo(source.R));
         Assert.That(pixel.A, Is.EqualTo(255));
+    }
+
+    [Test]
+    public void MaterialKtx2ExportFallsBackToPngForNonMultipleOfFourDds()
+    {
+        const string sourcePath = "textures/material.dds";
+        var packFileService = CreatePackFileService(sourcePath, CreateSolidDxt5Dds(1024, 513, 11));
+        var capture = new CapturedImage();
+        var exporter = new DdsToMaterialPngExporter(packFileService.Object, capture);
+
+        var result = exporter.ExportKtx2WithData(
+            sourcePath,
+            Path.Combine(Path.GetTempPath(), "asset-host-textures", "model.glb"),
+            convertToBlenderFormat: false,
+            srgb: true);
+
+        Assert.That(result.Path, Does.EndWith("material.png"));
+        Assert.That(ReadPixel(result.Data).R, Is.GreaterThan(200));
     }
 
     private static CapturedImage ExportNormal(Pixel pixel, bool convertToBlueNormalMap)
@@ -282,6 +317,59 @@ public sealed class DdsTextureExporterTests
             writer.Write(pixel.R);
             writer.Write(pixel.A);
         }
+        return stream.ToArray();
+    }
+
+    private static byte[] CreateSolidDxt5Dds(int width, int height, int mipCount)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+
+        writer.Write(Encoding.ASCII.GetBytes("DDS "));
+        writer.Write(124);
+        writer.Write(0x000A1007);
+        writer.Write(height);
+        writer.Write(width);
+        writer.Write(Math.Max(1, (width + 3) / 4) * Math.Max(1, (height + 3) / 4) * 16);
+        writer.Write(0);
+        writer.Write(mipCount);
+
+        for (var i = 0; i < 11; i++)
+            writer.Write(0);
+
+        writer.Write(32);
+        writer.Write(0x00000004);
+        writer.Write(Encoding.ASCII.GetBytes("DXT5"));
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+
+        writer.Write(0x00401008);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+
+        for (var mip = 0; mip < mipCount; mip++)
+        {
+            var mipWidth = Math.Max(1, width >> mip);
+            var mipHeight = Math.Max(1, height >> mip);
+            var blocksWide = Math.Max(1, (mipWidth + 3) / 4);
+            var blocksHigh = Math.Max(1, (mipHeight + 3) / 4);
+
+            for (var block = 0; block < blocksWide * blocksHigh; block++)
+            {
+                writer.Write((byte)255);
+                writer.Write((byte)255);
+                writer.Write(new byte[6]);
+                writer.Write((ushort)0xF800);
+                writer.Write((ushort)0x0000);
+                writer.Write(0u);
+            }
+        }
+
         return stream.ToArray();
     }
 

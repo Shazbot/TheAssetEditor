@@ -20,6 +20,35 @@ public class TextureHelperTests
         Assert.That(pixel.B, Is.LessThan(20));
     }
 
+    [TestCase(4, 4, true)]
+    [TestCase(1024, 512, true)]
+    [TestCase(1024, 513, false)]
+    [TestCase(1, 1, false)]
+    public void RawKtx2CompatibilityGuardMatchesSharpGltfDimensionSupport(
+        int width,
+        int height,
+        bool expected)
+    {
+        var image = new TextureHelper.DecodedDdsImage(width, height, Array.Empty<byte>());
+
+        Assert.That(TextureHelper.CanEncodeKtx2ForSharpGltf(image), Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void DecodeDxt5SupportsNonMultipleOfFourDimensions()
+    {
+        var decoded = TextureHelper.DecodeDdsToBgra(CreateSolidDxt5Dds(1024, 513, 11));
+
+        Assert.That(decoded.Width, Is.EqualTo(1024));
+        Assert.That(decoded.Height, Is.EqualTo(513));
+        Assert.That(decoded.BgraPixels.Length, Is.EqualTo(1024 * 513 * 4));
+
+        var pixel = PngTestHelper.ReadFirstPixelRgba(TextureHelper.EncodeBgraToPng(decoded));
+        Assert.That(pixel.R, Is.GreaterThan(200));
+        Assert.That(pixel.G, Is.LessThan(20));
+        Assert.That(pixel.B, Is.LessThan(20));
+    }
+
     [Test]
     public void DecodeAndEncodeDdsPreservesRgbaChannelsWithoutIntermediatePng()
     {
@@ -132,6 +161,60 @@ public class TextureHelperTests
 
         return stream.ToArray();
     }
+
+    private static byte[] CreateSolidDxt5Dds(int width, int height, int mipCount)
+    {
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+
+        writer.Write(Encoding.ASCII.GetBytes("DDS "));
+        writer.Write(124); // DDS_HEADER.dwSize
+        writer.Write(0x000A1007); // CAPS | HEIGHT | WIDTH | PIXELFORMAT | MIPMAPCOUNT | LINEARSIZE
+        writer.Write(height);
+        writer.Write(width);
+        writer.Write(Math.Max(1, (width + 3) / 4) * Math.Max(1, (height + 3) / 4) * 16);
+        writer.Write(0);
+        writer.Write(mipCount);
+
+        for (var i = 0; i < 11; i++)
+            writer.Write(0);
+
+        writer.Write(32); // DDS_PIXELFORMAT.dwSize
+        writer.Write(0x00000004); // DDPF_FOURCC
+        writer.Write(Encoding.ASCII.GetBytes("DXT5"));
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+
+        writer.Write(0x00401008); // DDSCAPS_TEXTURE | COMPLEX | MIPMAP
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+
+        for (var mip = 0; mip < mipCount; mip++)
+        {
+            var mipWidth = Math.Max(1, width >> mip);
+            var mipHeight = Math.Max(1, height >> mip);
+            var blocksWide = Math.Max(1, (mipWidth + 3) / 4);
+            var blocksHigh = Math.Max(1, (mipHeight + 3) / 4);
+
+            for (var block = 0; block < blocksWide * blocksHigh; block++)
+            {
+                writer.Write((byte)255); // alpha endpoint 0
+                writer.Write((byte)255); // alpha endpoint 1
+                writer.Write(new byte[6]); // alpha selectors, all endpoint 0
+                writer.Write((ushort)0xF800); // RGB565 red
+                writer.Write((ushort)0x0000); // RGB565 black
+                writer.Write(0u); // color selectors, all endpoint 0
+            }
+        }
+
+        return stream.ToArray();
+    }
+
     private static byte[] CreateA8R8G8B8Dds(byte red, byte green, byte blue, byte alpha)
     {
         using var stream = new MemoryStream();

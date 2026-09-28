@@ -56,6 +56,19 @@ namespace MeshImportExport
         public static byte[] EncodeBgraToPng(DecodedDdsImage image)
             => EncodeBgraToPng(image.Width, image.Height, image.BgraPixels);
 
+        /// <summary>
+        /// SharpGLTF 1.0.6 rejects raw RGBA KTX2 images whose dimensions are
+        /// not multiples of four, even though the uncompressed KTX2 payload
+        /// itself can represent those dimensions. Use PNG for that subset so
+        /// the generated image remains lossless and can still be embedded in
+        /// the glTF material.
+        /// </summary>
+        public static bool CanEncodeKtx2ForSharpGltf(DecodedDdsImage image)
+            => image.Width > 0
+                && image.Height > 0
+                && image.Width % 4 == 0
+                && image.Height % 4 == 0;
+
         public static TextureKtx2EncodeResult EncodeBgraToKtx2(
             DecodedDdsImage image,
             bool srgb,
