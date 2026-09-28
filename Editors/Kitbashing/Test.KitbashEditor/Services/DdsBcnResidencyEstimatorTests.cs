@@ -98,6 +98,7 @@ namespace Test.KitbashEditor.Services
             BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(28, 4), mipCount);
             BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(84, 4), 0x30315844);
             BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(128, 4), dxgiFormat);
+            BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(132, 4), 3); // TEXTURE2D
             BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(140, 4), arraySize);
             return header;
         }
