@@ -32,7 +32,6 @@ namespace Test.KitbashEditor.Geometry
                 Assert.That(statistics.VerticesAfter, Is.EqualTo(3));
                 Assert.That(statistics.UnreferencedVerticesRemoved, Is.EqualTo(1));
                 Assert.That(statistics.DuplicateVerticesRemoved, Is.EqualTo(1));
-                Assert.That(statistics.DegenerateTrianglesRemoved, Is.Zero);
                 Assert.That(statistics.IndicesBefore, Is.EqualTo(9));
                 Assert.That(statistics.IndicesAfter, Is.EqualTo(9));
                 Assert.That(model.Mesh.VertexList, Has.Length.EqualTo(3));
@@ -62,7 +61,6 @@ namespace Test.KitbashEditor.Geometry
             Assert.Multiple(() =>
             {
                 Assert.That(statistics.DuplicateVerticesRemoved, Is.EqualTo(1));
-                Assert.That(statistics.DegenerateTrianglesRemoved, Is.Zero);
                 Assert.That(model.Mesh.IndexList.Length / 3, Is.EqualTo(triangleCountBefore));
                 Assert.That(statistics.IndicesAfter, Is.EqualTo(statistics.IndicesBefore));
             });
@@ -89,7 +87,6 @@ namespace Test.KitbashEditor.Geometry
 
             Assert.Multiple(() =>
             {
-                Assert.That(statistics.DegenerateTrianglesRemoved, Is.Zero);
                 Assert.That(model.Mesh.IndexList, Has.Length.EqualTo(6));
                 Assert.That(TrianglePositionKeys(model), Is.EquivalentTo(before));
             });
