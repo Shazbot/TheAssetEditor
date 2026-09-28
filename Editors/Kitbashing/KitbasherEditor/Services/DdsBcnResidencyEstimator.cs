@@ -36,6 +36,14 @@ namespace Editors.KitbasherEditor.Services
                 return false;
 
             var fourCc = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(84, 4));
+            if (fourCc != Dx10FourCc)
+            {
+                var caps2 = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(112, 4));
+                const uint legacyCubeMapOrVolumeMask = 0x00000200 | 0x00200000;
+                if ((caps2 & legacyCubeMapOrVolumeMask) != 0)
+                    return false;
+            }
+
             if (!TryGetBlockFormat(header, fourCc, out var format, out var bytesPerBlock))
                 return false;
 
@@ -77,9 +85,10 @@ namespace Editors.KitbasherEditor.Services
 
                 // Model material textures are expected to be ordinary 2D textures.
                 // Reject arrays/cubemaps instead of understating their residency.
+                var resourceDimension = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(132, 4));
                 var miscFlag = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(136, 4));
                 var arraySize = BinaryPrimitives.ReadUInt32LittleEndian(header.Slice(140, 4));
-                if (arraySize != 1 || (miscFlag & 0x4) != 0)
+                if (resourceDimension != 3 || arraySize != 1 || (miscFlag & 0x4) != 0)
                 {
                     format = string.Empty;
                     bytesPerBlock = 0;
