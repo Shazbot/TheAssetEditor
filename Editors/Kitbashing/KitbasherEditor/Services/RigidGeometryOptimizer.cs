@@ -23,21 +23,25 @@ namespace Editors.KitbasherEditor.Services
             var verticesBefore = model.Mesh.VertexList.Length;
             var indicesBefore = model.Mesh.IndexList.Length;
 
-            var filteredIndices = RemoveDegenerateTriangles(
-                model.Mesh.VertexList,
-                model.Mesh.IndexList,
-                out var degenerateTrianglesRemoved);
+            if (model.Mesh.IndexList.Length % 3 != 0)
+                throw new InvalidOperationException("Mesh index buffer length is not divisible by three.");
 
-            var referencedBeforeDedupe = new HashSet<ushort>(filteredIndices);
+            // Preserve every source triangle, including degenerate/zero-area triangles.
+            // They are part of the source topology and can be significant to downstream
+            // tooling even when they rasterize no pixels. The optimizer may deduplicate
+            // identical vertex payloads and reorder triangles for cache locality, but it
+            // must never change the index/triangle count.
+            var sourceIndices = model.Mesh.IndexList;
+            var referencedBeforeDedupe = new HashSet<ushort>(sourceIndices);
             var unreferencedVerticesRemoved = verticesBefore - referencedBeforeDedupe.Count;
 
             var deduplicatedVertices = new List<CommonVertex>(referencedBeforeDedupe.Count);
             var vertexMap = new Dictionary<CommonVertex, ushort>(new CommonVertexComparer());
-            var remappedIndices = new ushort[filteredIndices.Length];
+            var remappedIndices = new ushort[sourceIndices.Length];
 
-            for (var i = 0; i < filteredIndices.Length; i++)
+            for (var i = 0; i < sourceIndices.Length; i++)
             {
-                var oldIndex = filteredIndices[i];
+                var oldIndex = sourceIndices[i];
                 if (oldIndex >= model.Mesh.VertexList.Length)
                     throw new InvalidOperationException($"Mesh contains invalid vertex index {oldIndex}.");
 
@@ -66,6 +70,12 @@ namespace Editors.KitbasherEditor.Services
                 deduplicatedVertices,
                 cacheOptimizedIndices);
 
+            if (reorderedIndices.Length != indicesBefore)
+            {
+                throw new InvalidOperationException(
+                    $"Geometry optimization changed the index count from {indicesBefore} to {reorderedIndices.Length}.");
+            }
+
             model.Mesh.VertexList = reorderedVertices;
             model.Mesh.IndexList = reorderedIndices;
 
@@ -74,54 +84,9 @@ namespace Editors.KitbasherEditor.Services
                 reorderedVertices.Length,
                 indicesBefore,
                 reorderedIndices.Length,
-                degenerateTrianglesRemoved,
+                0,
                 duplicateVerticesRemoved,
                 unreferencedVerticesRemoved);
-        }
-
-        private static ushort[] RemoveDegenerateTriangles(
-            IReadOnlyList<CommonVertex> vertices,
-            IReadOnlyList<ushort> indices,
-            out int removedTriangleCount)
-        {
-            if (indices.Count % 3 != 0)
-                throw new InvalidOperationException("Mesh index buffer length is not divisible by three.");
-
-            var output = new List<ushort>(indices.Count);
-            removedTriangleCount = 0;
-
-            for (var i = 0; i < indices.Count; i += 3)
-            {
-                var a = indices[i];
-                var b = indices[i + 1];
-                var c = indices[i + 2];
-
-                if (a >= vertices.Count || b >= vertices.Count || c >= vertices.Count)
-                    throw new InvalidOperationException("Mesh contains an invalid vertex index.");
-
-                if (a == b || b == c || a == c ||
-                    HasZeroArea(vertices[a], vertices[b], vertices[c]))
-                {
-                    removedTriangleCount++;
-                    continue;
-                }
-
-                output.Add(a);
-                output.Add(b);
-                output.Add(c);
-            }
-
-            return output.ToArray();
-        }
-
-        private static bool HasZeroArea(
-            CommonVertex a,
-            CommonVertex b,
-            CommonVertex c)
-        {
-            var ab = b.GetPosistionAsVec3() - a.GetPosistionAsVec3();
-            var ac = c.GetPosistionAsVec3() - a.GetPosistionAsVec3();
-            return Vector3.Cross(ab, ac).LengthSquared() == 0;
         }
 
         private static ushort[] OptimizeTriangleOrder(
