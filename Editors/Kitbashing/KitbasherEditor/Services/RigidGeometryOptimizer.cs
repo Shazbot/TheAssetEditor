@@ -10,7 +10,6 @@ namespace Editors.KitbasherEditor.Services
         int VerticesAfter,
         int IndicesBefore,
         int IndicesAfter,
-        int DegenerateTrianglesRemoved,
         int DuplicateVerticesRemoved,
         int UnreferencedVerticesRemoved);
 
@@ -84,7 +83,6 @@ namespace Editors.KitbasherEditor.Services
                 reorderedVertices.Length,
                 indicesBefore,
                 reorderedIndices.Length,
-                0,
                 duplicateVerticesRemoved,
                 unreferencedVerticesRemoved);
         }
