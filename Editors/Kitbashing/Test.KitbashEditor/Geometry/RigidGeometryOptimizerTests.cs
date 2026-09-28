@@ -8,7 +8,7 @@ namespace Test.KitbashEditor.Geometry
     public class RigidGeometryOptimizerTests
     {
         [Test]
-        public void Optimize_RemovesUnusedDegenerateAndDuplicateVertices()
+        public void Optimize_PreservesDegenerateTrianglesWhileRemovingUnusedAndDuplicateVertices()
         {
             var model = CreateModel(
                 [
@@ -32,11 +32,39 @@ namespace Test.KitbashEditor.Geometry
                 Assert.That(statistics.VerticesAfter, Is.EqualTo(3));
                 Assert.That(statistics.UnreferencedVerticesRemoved, Is.EqualTo(1));
                 Assert.That(statistics.DuplicateVerticesRemoved, Is.EqualTo(1));
-                Assert.That(statistics.DegenerateTrianglesRemoved, Is.EqualTo(1));
+                Assert.That(statistics.DegenerateTrianglesRemoved, Is.Zero);
                 Assert.That(statistics.IndicesBefore, Is.EqualTo(9));
-                Assert.That(statistics.IndicesAfter, Is.EqualTo(6));
+                Assert.That(statistics.IndicesAfter, Is.EqualTo(9));
                 Assert.That(model.Mesh.VertexList, Has.Length.EqualTo(3));
-                Assert.That(model.Mesh.IndexList, Has.Length.EqualTo(6));
+                Assert.That(model.Mesh.IndexList, Has.Length.EqualTo(9));
+            });
+        }
+
+        [Test]
+        public void Optimize_PreservesTriangleCountWhenExactVertexDeduplicationMakesTriangleIndexDegenerate()
+        {
+            var model = CreateModel(
+                [
+                    Vertex(0, 0, 0),
+                    Vertex(1, 0, 0),
+                    Vertex(0, 1, 0),
+                    Vertex(0, 1, 0),
+                ],
+                [
+                    0, 1, 2,
+                    0, 2, 3,
+                ]);
+
+            var triangleCountBefore = model.Mesh.IndexList.Length / 3;
+
+            var statistics = RigidGeometryOptimizer.Optimize(model);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(statistics.DuplicateVerticesRemoved, Is.EqualTo(1));
+                Assert.That(statistics.DegenerateTrianglesRemoved, Is.Zero);
+                Assert.That(model.Mesh.IndexList.Length / 3, Is.EqualTo(triangleCountBefore));
+                Assert.That(statistics.IndicesAfter, Is.EqualTo(statistics.IndicesBefore));
             });
         }
 
