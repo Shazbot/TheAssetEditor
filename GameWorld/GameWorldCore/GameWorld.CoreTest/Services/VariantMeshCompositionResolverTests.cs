@@ -44,6 +44,8 @@ public class VariantMeshCompositionResolverTests
         Assert.That(result.HasRenderableContent, Is.True);
         Assert.That(result.Root!.Slots, Has.Count.EqualTo(1));
         Assert.That(result.Root.Slots[0].AttachmentPoint, Is.EqualTo("hand"));
+        Assert.That(result.Root.Slots[0].SlotPath, Is.EqualTo("root/slot[0]"));
+        Assert.That(result.Root.Slots[0].SelectedChoiceIndex, Is.EqualTo(1));
         Assert.That(result.Root.Slots[0].SelectedChild!.ModelAsset!.InputFile, Is.SameAs(second));
         Assert.That(result.Diagnostics.Any(x => x.Contains("broken first candidate", StringComparison.Ordinal)), Is.True);
     }
@@ -117,6 +119,9 @@ public class VariantMeshCompositionResolverTests
         Assert.That(selectedHead, Is.SameAs(models[4]));
         Assert.That(selectedBody, Is.SameAs(models[7]));
         Assert.That(selectedWeapon, Is.SameAs(models[9]));
+        Assert.That(result.Root.Slots[0].SelectedChoiceIndex, Is.EqualTo(4));
+        Assert.That(result.Root.Slots[2].SelectedChoiceIndex, Is.EqualTo(0));
+        Assert.That(result.Root.Slots[2].SelectedChild!.Slots[0].SelectedChoiceIndex, Is.EqualTo(1));
         Assert.That(result.Diagnostics, Is.Empty);
     }
 

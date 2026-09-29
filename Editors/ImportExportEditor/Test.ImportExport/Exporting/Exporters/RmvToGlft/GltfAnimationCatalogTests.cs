@@ -145,6 +145,7 @@ public class GltfAnimationCatalogTests
 
         Assert.That(component.Asset.InputFile, Is.SameAs(modelFile));
         Assert.That(component.AttachmentPoint, Is.EqualTo("be_prop_1"));
+        Assert.That(component.BindingPath, Is.EqualTo("root/slot[0]/choice[0]/slot[0]/choice[0]"));
     }
 
     [Test]

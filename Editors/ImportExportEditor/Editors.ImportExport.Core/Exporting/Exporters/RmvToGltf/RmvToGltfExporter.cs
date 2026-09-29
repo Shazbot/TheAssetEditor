@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Text.Json.Nodes;
 using Editors.ImportExport.Common;
 using Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers;
 using Editors.ImportExport.Misc;
@@ -167,7 +168,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 _logger.Here().Warning(diagnostic);
 
             var outputScene = ModelRoot.CreateModel();
-            var modelPart = new ExportModelPart(resolvedAsset, string.Empty, "model", true, true);
+            var modelPart = new ExportModelPart(resolvedAsset, string.Empty, "model", true, true, "root");
             ProcessedGltfSkeleton? skeleton = null;
             global::Shared.GameFormats.Animation.AnimationFile? skeletonFile = null;
             var skeletonMs = 0L;
@@ -408,7 +409,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                     component.AttachmentPoint,
                     $"vmd_part_{nextIndex++:D3}",
                     false,
-                    true));
+                    true,
+                    component.BindingPath));
             }
             return output;
         }
@@ -495,7 +497,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                     hasWeights,
                     willHaveSkeleton,
                     modelPart.AllowMatrixAttachment,
-                    pivotPoint));
+                    pivotPoint,
+                    modelPart.BindingPath,
+                    i));
             }
 
             return output;
@@ -546,6 +550,11 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 }
 
                 var node = parent?.CreateNode(mesh.Name) ?? scene.CreateNode(mesh.Name);
+                node.Extras = new JsonObject
+                {
+                    ["wh3ComponentBinding"] = exportedMesh.BindingPath,
+                    ["wh3ComponentMeshIndex"] = exportedMesh.ComponentMeshIndex
+                };
                 // Rigid attachment is the renderer's precedence rule: an
                 // attachment resolver plus a valid RMV matrix override means
                 // the mesh follows that bone as a rigid object, so its vertex
@@ -721,7 +730,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             string AttachmentPoint,
             string NamePrefix,
             bool UseSharedSkeleton,
-            bool AllowMatrixAttachment);
+            bool AllowMatrixAttachment,
+            string BindingPath);
 
         internal sealed record GltfSceneTiming(
             long TotalMs,
@@ -735,6 +745,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
             bool HasWeights,
             bool CanUseSkeleton,
             bool AllowMatrixAttachment,
-            System.Numerics.Vector3 PivotPoint);
+            System.Numerics.Vector3 PivotPoint,
+            string BindingPath = "root",
+            int ComponentMeshIndex = 0);
     }
 }

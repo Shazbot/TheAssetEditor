@@ -137,6 +137,8 @@ public class VmdSkeletonExportTests
         Assert.That(saver.ModelRoot, Is.Not.Null);
         var rootNode = saver.ModelRoot!.LogicalNodes.Single(x => x.Name == "vmd_part_000_000_root");
         var childNode = saver.ModelRoot.LogicalNodes.Single(x => x.Name == "vmd_part_001_000_child");
+        Assert.That(rootNode.Extras?["wh3ComponentBinding"]?.GetValue<string>(), Is.EqualTo("root"));
+        Assert.That(childNode.Extras?["wh3ComponentBinding"]?.GetValue<string>(), Is.EqualTo("root/slot[0]/choice[0]"));
         Assert.That(rootNode.Skin, Is.Not.Null);
         Assert.That(childNode.Skin, Is.Null,
             "A component declaring another skeleton must remain unskinned rather than binding to the shared root skeleton.");

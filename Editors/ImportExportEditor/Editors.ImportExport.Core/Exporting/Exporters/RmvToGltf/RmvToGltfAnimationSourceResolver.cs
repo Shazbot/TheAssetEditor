@@ -214,42 +214,29 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
     /// traversal shared avoids the UI selecting animations for a different
     /// VMD root skeleton than the exporter uses.
     /// </summary>
-    internal static IEnumerable<RmvToGltfResolvedComponent> EnumerateComponents(ResolvedVariantMeshNode node)
-    {
-        if (node.ModelAsset != null)
-            yield return new RmvToGltfResolvedComponent(node.ModelAsset, string.Empty);
-
-        if (node.ResolvedModelReference != null)
-        {
-            foreach (var component in EnumerateComponents(node.ResolvedModelReference))
-                yield return component;
-        }
-
-        foreach (var slot in node.Slots)
-        {
-            if (slot.SelectedChild == null)
-                continue;
-
-            foreach (var component in EnumerateComponents(slot.SelectedChild, slot.AttachmentPoint))
-                yield return component;
-        }
-    }
+    public static IEnumerable<RmvToGltfResolvedComponent> EnumerateComponents(ResolvedVariantMeshNode node)
+        => EnumerateComponents(node, "root", string.Empty);
 
     private static IEnumerable<RmvToGltfResolvedComponent> EnumerateComponents(
         ResolvedVariantMeshNode node,
+        string nodePath,
         string attachmentPoint)
     {
         if (node.ModelAsset != null)
-            yield return new RmvToGltfResolvedComponent(node.ModelAsset, attachmentPoint);
+            yield return new RmvToGltfResolvedComponent(node.ModelAsset, attachmentPoint, nodePath);
 
         if (node.ResolvedModelReference != null)
         {
-            foreach (var component in EnumerateComponents(node.ResolvedModelReference, attachmentPoint))
+            foreach (var component in EnumerateComponents(
+                         node.ResolvedModelReference,
+                         $"{nodePath}/model",
+                         attachmentPoint))
                 yield return component;
         }
 
-        foreach (var slot in node.Slots)
+        for (var slotIndex = 0; slotIndex < node.Slots.Count; slotIndex++)
         {
+            var slot = node.Slots[slotIndex];
             if (slot.SelectedChild == null)
                 continue;
 
@@ -259,7 +246,14 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
             var childAttachmentPoint = string.IsNullOrWhiteSpace(slot.AttachmentPoint)
                 ? attachmentPoint
                 : slot.AttachmentPoint;
-            foreach (var component in EnumerateComponents(slot.SelectedChild, childAttachmentPoint))
+            var slotPath = string.IsNullOrWhiteSpace(slot.SlotPath)
+                ? $"{nodePath}/slot[{slotIndex}]"
+                : slot.SlotPath;
+            var choiceIndex = slot.SelectedChoiceIndex ?? 0;
+            foreach (var component in EnumerateComponents(
+                         slot.SelectedChild,
+                         $"{slotPath}/choice[{choiceIndex}]",
+                         childAttachmentPoint))
                 yield return component;
         }
     }
@@ -269,7 +263,7 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
     /// exporter.  Different component skeletons are reported to the caller;
     /// they must not silently change the animation source.
     /// </summary>
-    internal static string? SelectSharedSkeletonName(
+    public static string? SelectSharedSkeletonName(
         IEnumerable<ResolvedModelAsset> assets,
         ICollection<string>? diagnostics = null)
     {
@@ -311,6 +305,7 @@ public sealed class GltfAnimationCatalogResolver : IGltfAnimationCatalogResolver
     }
 }
 
-internal sealed record RmvToGltfResolvedComponent(
+public sealed record RmvToGltfResolvedComponent(
     ResolvedModelAsset Asset,
-    string AttachmentPoint);
+    string AttachmentPoint,
+    string BindingPath = "root");

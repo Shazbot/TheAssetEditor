@@ -468,6 +468,96 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             Convert(defaults.RiderFlying));
     }
 
+    public AssetHostCompositionResult GetVariantMeshComposition(
+        string assetPath,
+        IReadOnlyList<AssetHostVariantMeshSelection>? variantSelections = null)
+    {
+        EnsureAssetSession(assetPath);
+        var inputModel = PackFileService.FindFile(assetPath);
+        if (inputModel == null)
+        {
+            return new AssetHostCompositionResult(
+                false,
+                assetPath,
+                null,
+                [],
+                [$"Asset '{assetPath}' was not found in the supplied packs."]);
+        }
+
+        var diagnostics = new List<string>();
+        IReadOnlyList<RmvToGltfResolvedComponent> components;
+        if (IsVariantMeshDefinition(inputModel))
+        {
+            var selections = (variantSelections ?? [])
+                .Select(selection => new VariantMeshSelection(selection.SlotPath, selection.ChoiceIndex))
+                .ToList();
+            var composition = selections.Count == 0
+                ? _compositionResolver.Resolve(inputModel)
+                : _compositionResolver.Resolve(inputModel, selections);
+            diagnostics.AddRange(composition.Diagnostics);
+
+            if (composition.Root == null || !composition.HasRenderableContent)
+            {
+                diagnostics.Add(
+                    $"VariantMeshDefinition '{assetPath}' has no renderable model components.");
+                return new AssetHostCompositionResult(false, assetPath, null, [], diagnostics);
+            }
+
+            components = GltfAnimationCatalogResolver
+                .EnumerateComponents(composition.Root)
+                .ToList();
+        }
+        else
+        {
+            try
+            {
+                var asset = _modelResolverCache.Resolve(inputModel);
+                diagnostics.AddRange(asset.Diagnostics);
+                components = [new RmvToGltfResolvedComponent(asset, string.Empty, "root")];
+            }
+            catch (Exception exception)
+            {
+                diagnostics.Add(
+                    $"Unable to resolve model '{assetPath}' for composition inspection: {exception.Message}");
+                return new AssetHostCompositionResult(false, assetPath, null, [], diagnostics);
+            }
+        }
+
+        if (components.Count == 0)
+        {
+            diagnostics.Add($"Asset '{assetPath}' contains no renderable model components.");
+            return new AssetHostCompositionResult(false, assetPath, null, [], diagnostics);
+        }
+
+        var sharedSkeletonName = GltfAnimationCatalogResolver.SelectSharedSkeletonName(
+            components.Select(component => component.Asset),
+            diagnostics);
+        var outputComponents = components
+            .Select(component => new AssetHostCompositionComponent(
+                component.BindingPath,
+                NormalizePackPath(component.Asset.InputFile),
+                component.AttachmentPoint,
+                component.Asset.Model.Header.SkeletonName,
+                component.Asset.FirstLod.Count,
+                component.Asset.FirstLod.Any(part =>
+                    part.Model.Mesh.VertexList.Any(vertex => vertex.WeightCount > 0))))
+            .ToList();
+
+        Log.ForContext<HeadlessExportRuntime>().Information(
+            "Asset host composition completed for {AssetPath}: success=true, components={ComponentCount}, diagnostics={DiagnosticCount}, variantSelections={VariantSelectionCount}",
+            assetPath,
+            outputComponents.Count,
+            diagnostics.Count,
+            variantSelections?.Count ?? 0);
+
+        return new AssetHostCompositionResult(
+            true,
+            assetPath,
+            sharedSkeletonName,
+            outputComponents,
+            diagnostics);
+    }
+
     public ExportResult ExportModel(AssetHostExportRequest request)
     {
         EnsureAssetSession(request.AssetPath);
@@ -622,6 +712,15 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             Array.Empty<string>(),
             Array.Empty<ExportWarning>(),
             [new ExportError(code, message)]);
+
+    private static bool IsVariantMeshDefinition(PackFile file)
+        => file.Name.EndsWith(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizePackPath(PackFile file)
+        => (file.VirtualPath ?? file.Name)
+            .Replace('/', '\\')
+            .Trim()
+            .TrimStart('\\');
 
     private static int? GetPackIndex(
         IReadOnlyList<IPackFileContainer> containers,

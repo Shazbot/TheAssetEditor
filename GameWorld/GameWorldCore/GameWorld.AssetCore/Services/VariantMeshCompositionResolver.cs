@@ -279,6 +279,7 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
                 slot.Probability,
                 slot.use_different_attach_point_parts);
             var slotPath = $"{nodePath}/slot[{slotIndex}]";
+            resolvedSlot.SlotPath = slotPath;
             var candidates = new List<(int Index, Func<ResolvedVariantMeshNode?> Resolve)>();
             var candidateIndex = 0;
 
@@ -332,6 +333,7 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
                     if (selected?.HasRenderableContent == true)
                     {
                         resolvedSlot.SelectedChild = selected;
+                        resolvedSlot.SelectedChoiceIndex = requestedCandidate.Index;
                     }
                     else
                     {
@@ -352,6 +354,7 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
                     if (resolved?.HasRenderableContent == true)
                     {
                         resolvedSlot.SelectedChild = resolved;
+                        resolvedSlot.SelectedChoiceIndex = candidate.Index;
                         break;
                     }
                 }
@@ -487,6 +490,18 @@ public sealed class ResolvedVariantMeshSlot
     public string? SourceAttachmentPoint { get; }
     public string? Probability { get; }
     public string? UseDifferentAttachPointParts { get; }
+
+    /// <summary>
+    /// Structural path of this slot in the source VMD.  This is also the
+    /// prefix used by explicit VariantMeshSelection requests.
+    /// </summary>
+    public string SlotPath { get; internal set; } = string.Empty;
+
+    /// <summary>
+    /// Index of the resolved child in the slot's inline-mesh-then-reference
+    /// candidate order.
+    /// </summary>
+    public int? SelectedChoiceIndex { get; internal set; }
 
     public ResolvedVariantMeshNode? SelectedChild { get; set; }
 }

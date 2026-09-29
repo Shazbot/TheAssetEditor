@@ -19,6 +19,26 @@ public sealed record AssetHostExportRequest(
 
 public sealed record AssetHostVariantMeshSelection(string SlotPath, int ChoiceIndex);
 
+/// <summary>
+/// One renderable component in a resolved VariantMeshDefinition.  BindingId
+/// is structural (for example, root/slot[0]/choice[1]) and is shared with the
+/// metadata emitted on the corresponding glTF nodes.
+/// </summary>
+public sealed record AssetHostCompositionComponent(
+    string BindingId,
+    string SourceModelPath,
+    string AttachmentPoint,
+    string? SkeletonName,
+    int MeshCount,
+    bool HasWeights);
+
+public sealed record AssetHostCompositionResult(
+    bool Success,
+    string AssetPath,
+    string? SharedSkeletonName,
+    IReadOnlyList<AssetHostCompositionComponent> Components,
+    IReadOnlyList<string> Diagnostics);
+
 public sealed record AssetHostBatchExportItem(
     string OutputPath,
     IReadOnlyList<AssetHostVariantMeshSelection> VariantSelections);
@@ -123,6 +143,16 @@ public interface IAssetHostRuntime : IDisposable
 
     AssetHostAnimationCatalog GetAnimationCatalog(string assetPath);
 
+    AssetHostCompositionResult GetVariantMeshComposition(
+        string assetPath,
+        IReadOnlyList<AssetHostVariantMeshSelection>? variantSelections = null)
+        => new(
+            false,
+            assetPath,
+            null,
+            [],
+            ["This runtime does not support VariantMeshDefinition composition inspection."]);
+
     AssetHostPaintedVariantResult ExportPaintedVariant(AssetHostPaintedVariantRequest request)
         => new(
             false,
@@ -197,7 +227,7 @@ public static class AssetHostProtocol
         ?? "unknown";
 
     public static readonly IReadOnlyList<string> Capabilities =
-        ["hello", "initialize", "getAnimationCatalog", "exportModel", "exportModelBatch", "exportPaintedVariant", "paintedVariantRgba", "paintedVariantSourceOverride", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
+        ["hello", "initialize", "getAnimationCatalog", "getVariantMeshComposition", "exportModel", "exportModelBatch", "exportPaintedVariant", "paintedVariantRgba", "paintedVariantSourceOverride", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
 }
 
 /// <summary>
@@ -275,6 +305,7 @@ public sealed class AssetHostDispatcher : IDisposable
                 "hello" => HandleHello(requestId),
                 "initialize" => HandleInitialize(request, requestId),
                 "getAnimationCatalog" => HandleGetAnimationCatalog(request, requestId),
+                "getVariantMeshComposition" => HandleGetVariantMeshComposition(request, requestId),
                 "exportModel" => HandleExportModel(request, requestId),
                 "exportModelBatch" => HandleExportModelBatch(request, requestId),
                 "exportPaintedVariant" => HandleExportPaintedVariant(request, requestId),
@@ -291,6 +322,8 @@ public sealed class AssetHostDispatcher : IDisposable
                 ? "InitializationFailed"
                 : string.Equals(command, "getAnimationCatalog", StringComparison.Ordinal)
                     ? "AnimationCatalogFailed"
+                    : string.Equals(command, "getVariantMeshComposition", StringComparison.Ordinal)
+                        ? "CompositionFailed"
                     : string.Equals(command, "exportModel", StringComparison.Ordinal)
                         || string.Equals(command, "exportModelBatch", StringComparison.Ordinal)
                         || string.Equals(command, "exportPaintedVariant", StringComparison.Ordinal)
@@ -416,6 +449,49 @@ public sealed class AssetHostDispatcher : IDisposable
         }
 
         return AssetHostResponse.Ok(requestId, "getAnimationCatalog", _runtime.GetAnimationCatalog(assetPath));
+    }
+
+    private AssetHostResponse HandleGetVariantMeshComposition(JsonElement request, string requestId)
+    {
+        if (_runtime == null || _outputRoot == null)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "getVariantMeshComposition",
+                "NotInitialized",
+                "initialize must succeed before getVariantMeshComposition.");
+        }
+
+        var assetPath = ReadString(request, "assetPath");
+        if (string.IsNullOrWhiteSpace(assetPath))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "getVariantMeshComposition",
+                "MissingAssetPath",
+                "getVariantMeshComposition requires assetPath.");
+        }
+
+        if (!TryReadVariantMeshSelections(request, out var variantSelections, allowMissing: true))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "getVariantMeshComposition",
+                "InvalidVariantMeshSelections",
+                "variantSelections must be an array of slotPath/choiceIndex objects.");
+        }
+
+        var result = _runtime.GetVariantMeshComposition(assetPath, variantSelections);
+        if (result.Success)
+            return AssetHostResponse.Ok(requestId, "getVariantMeshComposition", result);
+
+        var diagnostic = result.Diagnostics.FirstOrDefault();
+        return AssetHostResponse.Fail(
+            requestId,
+            "getVariantMeshComposition",
+            "CompositionFailed",
+            diagnostic ?? "The VariantMeshDefinition composition could not be resolved.",
+            result: result);
     }
 
     private AssetHostResponse HandleExportModel(JsonElement request, string requestId)

@@ -18,6 +18,7 @@ public sealed class AssetHostDispatcherTests
         var resultJson = System.Text.Json.JsonSerializer.Serialize(response.Result);
         Assert.That(resultJson, Does.Contain("exportModel"));
         Assert.That(resultJson, Does.Contain("exportPaintedVariant"));
+        Assert.That(resultJson, Does.Contain("getVariantMeshComposition"));
         Assert.That(resultJson, Does.Contain("paintedVariantRgba"));
         Assert.That(resultJson, Does.Contain("paintedVariantSourceOverride"));
     }
@@ -209,6 +210,38 @@ public sealed class AssetHostDispatcherTests
     }
 
     [Test]
+    public void GetVariantMeshComposition_PassesSelectionsAndReturnsStableBindings()
+    {
+        var factory = new FakeRuntimeFactory();
+        using var dispatcher = new AssetHostDispatcher(factory);
+        var root = Path.Combine(Path.GetTempPath(), "asset-host-root", Guid.NewGuid().ToString("N"));
+        dispatcher.Dispatch(Initialize(root, "base.pack"));
+
+        var response = dispatcher.Dispatch(Request(
+            "getVariantMeshComposition",
+            "composition-1",
+            "assetPath", "unit.variantmeshdefinition",
+            "variantSelections", new[]
+            {
+                new { slotPath = "root/slot[1]", choiceIndex = 2 }
+            }));
+
+        Assert.That(response.Success, Is.True);
+        Assert.That(response.Command, Is.EqualTo("getVariantMeshComposition"));
+        var request = factory.Created.Single().CompositionRequests.Single();
+        Assert.That(request.AssetPath, Is.EqualTo("unit.variantmeshdefinition"));
+        Assert.That(request.VariantSelections, Is.EqualTo(new[]
+        {
+            new AssetHostVariantMeshSelection("root/slot[1]", 2)
+        }));
+        var composition = (AssetHostCompositionResult)response.Result!;
+        Assert.That(composition.Components.Single().BindingId, Is.EqualTo("root/slot[1]/choice[2]"));
+        Assert.That(
+            System.Text.Json.JsonSerializer.Serialize(response),
+            Does.Contain("root/slot[1]/choice[2]"));
+    }
+
+    [Test]
     public void ExportPaintedVariant_PassesValidatedPathsAndSelectionsToRuntime()
     {
         var factory = new FakeRuntimeFactory();
@@ -369,6 +402,7 @@ public sealed class AssetHostDispatcherTests
     {
         public List<FakeRuntime> Created { get; } = [];
         public ExportResult? NextResult { get; set; }
+        public AssetHostCompositionResult? NextCompositionResult { get; set; }
         public bool FailNextCreate { get; set; }
 
         public IAssetHostRuntime Create(
@@ -393,6 +427,7 @@ public sealed class AssetHostDispatcherTests
         public bool Disposed { get; private set; }
         public List<AssetHostExportRequest> Exports { get; } = [];
         public List<AssetHostPaintedVariantRequest> PaintedExports { get; } = [];
+        public List<(string AssetPath, IReadOnlyList<AssetHostVariantMeshSelection> VariantSelections)> CompositionRequests { get; } = [];
 
         public ExportResult ExportModel(AssetHostExportRequest request)
         {
@@ -402,6 +437,26 @@ public sealed class AssetHostDispatcherTests
 
         public AssetHostAnimationCatalog GetAnimationCatalog(string assetPath)
             => new(true, assetPath, null, false, [], []);
+
+        public AssetHostCompositionResult GetVariantMeshComposition(
+            string assetPath,
+            IReadOnlyList<AssetHostVariantMeshSelection>? variantSelections = null)
+        {
+            CompositionRequests.Add((assetPath, variantSelections ?? []));
+            return factory.NextCompositionResult
+                ?? new(
+                    true,
+                    assetPath,
+                    "test_skeleton",
+                    [new AssetHostCompositionComponent(
+                        "root/slot[1]/choice[2]",
+                        "units\\unit.rigid_model_v2",
+                        "",
+                        "test_skeleton",
+                        1,
+                        true)],
+                    []);
+        }
 
         public AssetHostPaintedVariantResult ExportPaintedVariant(AssetHostPaintedVariantRequest request)
         {

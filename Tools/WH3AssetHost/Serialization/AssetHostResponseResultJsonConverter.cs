@@ -37,6 +37,12 @@ internal sealed class AssetHostResponseResultJsonConverter : JsonConverter<objec
             case AssetHostAnimationCatalog catalog:
                 JsonSerializer.Serialize(writer, catalog, AssetHostJsonContext.Default.AssetHostAnimationCatalog);
                 break;
+            case AssetHostCompositionResult composition:
+                JsonSerializer.Serialize(
+                    writer,
+                    composition,
+                    AssetHostJsonContext.Default.AssetHostCompositionResult);
+                break;
             case AssetHostBatchExportResult batch:
                 JsonSerializer.Serialize(writer, batch, AssetHostJsonContext.Default.AssetHostBatchExportResult);
                 break;
