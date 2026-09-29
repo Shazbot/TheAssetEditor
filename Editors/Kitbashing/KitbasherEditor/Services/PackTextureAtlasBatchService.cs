@@ -2137,7 +2137,7 @@ namespace Editors.KitbasherEditor.Services
             if (resolution == null)
                 return null;
 
-            var unitsByCategory = ExpectedArmySlots.Keys.ToDictionary(
+            var unitsByCategory = resolution.Scenario.ArmySlotTemplate.Keys.ToDictionary(
                 category => category,
                 _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             var unitsByVmd = new Dictionary<
@@ -2151,12 +2151,36 @@ namespace Editors.KitbasherEditor.Services
             var categoryByUnit = new Dictionary<string, Wh3ArmyUnitCategory>(
                 StringComparer.OrdinalIgnoreCase);
 
+            // Populate the denominator from the complete DB-derived roster, not from the
+            // subset of VMD roots discovered in this pack.
+            foreach (var unit in resolution.RosterUnits)
+            {
+                if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(unit.Category))
+                    continue;
+
+                var identity = GetArmyUnitIdentity(unit);
+                if (identity.Length == 0)
+                    continue;
+
+                unitsByCategory[unit.Category].Add(identity);
+                categoryByUnit[identity] = unit.Category;
+                var countsByRole = new Dictionary<Wh3UnitVisualRole, int>();
+                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Men, unit.VisualCounts.Riders);
+                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Mount, unit.VisualCounts.Mounts);
+                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Engine, unit.VisualCounts.Engines);
+                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Crew, unit.VisualCounts.Crew);
+                entityCountByUnitAndRole[identity] = countsByRole;
+                entityCountByUnit[identity] = Math.Max(
+                    1,
+                    countsByRole.Values.DefaultIfEmpty(1).Max());
+            }
+
             foreach (var (vmdPathValue, usages) in resolution.UsagesByVmd)
             {
                 var vmdPath = Normalize(vmdPathValue);
                 foreach (var usage in usages)
                 {
-                    if (!ExpectedArmySlots.ContainsKey(usage.Category))
+                    if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(usage.Category))
                         continue;
 
                     var identity = GetArmyUnitIdentity(usage);
@@ -2234,7 +2258,7 @@ namespace Editors.KitbasherEditor.Services
                 var vmdPath = Normalize(vmdPathValue);
                 foreach (var usage in usages)
                 {
-                    if (!ExpectedArmySlots.ContainsKey(usage.Category))
+                    if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(usage.Category))
                         continue;
 
                     var identity = GetArmyUnitIdentity(usage);
@@ -2262,7 +2286,7 @@ namespace Editors.KitbasherEditor.Services
                 var assetPath = Normalize(assetPathValue);
                 foreach (var usage in usages)
                 {
-                    if (!ExpectedArmySlots.ContainsKey(usage.Category))
+                    if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(usage.Category))
                         continue;
 
                     var identity = GetArmyUnitIdentity(usage);
@@ -2328,9 +2352,15 @@ namespace Editors.KitbasherEditor.Services
 
             var occurrenceCache = new Dictionary<string, IReadOnlyDictionary<string, double>>(
                 StringComparer.OrdinalIgnoreCase);
+            var configurationCache = new Dictionary<string, IReadOnlyList<UnitVisualConfiguration>>(
+                StringComparer.OrdinalIgnoreCase);
             var expectedWsModelOccurrencesByUnit =
                 new Dictionary<string, ExpectedWsModelOccurrences>(
                     StringComparer.OrdinalIgnoreCase);
+            var visualConfigurationsByUnitAndRole = new Dictionary<
+                string,
+                Dictionary<Wh3UnitVisualRole, IReadOnlyList<UnitVisualConfiguration>>>(
+                StringComparer.OrdinalIgnoreCase);
 
             foreach (var (unitId, directVmdsByRole) in directVmdsByUnitAndRole)
             {
@@ -2348,6 +2378,7 @@ namespace Editors.KitbasherEditor.Services
 
                     var accumulated = new Dictionary<string, double>(
                         StringComparer.OrdinalIgnoreCase);
+                    var configurations = new List<UnitVisualConfiguration>();
                     foreach (var vmdPath in directVmds)
                     {
                         var occurrences = GetExpectedWsModelOccurrencesForVmd(
@@ -2360,6 +2391,12 @@ namespace Editors.KitbasherEditor.Services
                             accumulated[wsModelPath] =
                                 accumulated.GetValueOrDefault(wsModelPath) + expectedOccurrences;
                         }
+
+                        configurations.AddRange(GetWsModelConfigurationsForVmd(
+                            state,
+                            vmdPath,
+                            configurationCache,
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
                     }
 
                     if (accumulated.Count == 0)
@@ -2369,6 +2406,22 @@ namespace Editors.KitbasherEditor.Services
                     // a faction context, treat those visual definitions as equally likely
                     // alternatives, independently for each visual role.
                     var directVariantCount = directVmds.Count;
+                    if (configurations.Count != 0)
+                    {
+                        if (!visualConfigurationsByUnitAndRole.TryGetValue(unitId, out var byRole))
+                        {
+                            byRole = new Dictionary<Wh3UnitVisualRole, IReadOnlyList<UnitVisualConfiguration>>();
+                            visualConfigurationsByUnitAndRole[unitId] = byRole;
+                        }
+
+                        byRole[role] = configurations
+                            .Select(configuration => configuration with
+                            {
+                                Probability = configuration.Probability / directVariantCount,
+                            })
+                            .Where(configuration => configuration.Probability > 0)
+                            .ToArray();
+                    }
                     foreach (var (wsModelPath, expectedOccurrences) in accumulated)
                     {
                         if (!accumulatedByWsModel.TryGetValue(wsModelPath, out var byRole))
@@ -2452,7 +2505,9 @@ namespace Editors.KitbasherEditor.Services
                 entityCountByUnit,
                 entityCountByUnitAndRole,
                 categoryByUnit,
-                expectedWsModelOccurrencesByUnit);
+                expectedWsModelOccurrencesByUnit,
+                visualConfigurationsByUnitAndRole,
+                resolution.Scenario);
         }
 
         private static IReadOnlyDictionary<string, double> GetExpectedWsModelOccurrencesForVmd(
@@ -2504,6 +2559,177 @@ namespace Editors.KitbasherEditor.Services
             {
                 visiting.Remove(vmdPath);
             }
+        }
+
+        private const int MaxExactVisualConfigurations = 16384;
+
+        private static IReadOnlyList<UnitVisualConfiguration> GetWsModelConfigurationsForVmd(
+            BatchState state,
+            string vmdPathValue,
+            Dictionary<string, IReadOnlyList<UnitVisualConfiguration>> cache,
+            HashSet<string> visiting)
+        {
+            var vmdPath = Normalize(vmdPathValue);
+            if (cache.TryGetValue(vmdPath, out var cached))
+                return cached;
+            if (!visiting.Add(vmdPath))
+                return [];
+
+            try
+            {
+                var file = state.Source.FindFile(vmdPath);
+                if (file == null ||
+                    !TryGetVmdForTraversal(state, state.Source, vmdPath, file, out var vmd))
+                {
+                    cache[vmdPath] = [];
+                    return [];
+                }
+
+                var configurations = ExpandVisualConfigurations(
+                    state,
+                    vmd,
+                    cache,
+                    visiting);
+                cache[vmdPath] = configurations;
+                return configurations;
+            }
+            finally
+            {
+                visiting.Remove(vmdPath);
+            }
+        }
+
+        private static IReadOnlyList<UnitVisualConfiguration> ExpandVisualConfigurations(
+            BatchState state,
+            VariantMesh mesh,
+            Dictionary<string, IReadOnlyList<UnitVisualConfiguration>> cache,
+            HashSet<string> visiting)
+        {
+            var baseModels = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(mesh.ModelReference))
+            {
+                var modelPath = Normalize(mesh.ModelReference);
+                if (Path.GetExtension(modelPath)
+                        .Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) &&
+                    state.Source.ContainsFile(modelPath))
+                {
+                    baseModels[modelPath] = 1;
+                }
+            }
+
+            var current = new List<UnitVisualConfiguration>
+            {
+                new(1.0, baseModels),
+            };
+
+            foreach (var slot in mesh.ChildSlots ?? [])
+            {
+                var slotProbability = ParseVmdSlotProbability(slot.Probability);
+                var childMeshCount = slot.ChildMeshes?.Count ?? 0;
+                var childReferenceCount = slot.ChildReferences?.Count ?? 0;
+                var alternativeCount = childMeshCount + childReferenceCount;
+                if (alternativeCount == 0 || slotProbability <= 0)
+                    continue;
+
+                var alternatives = new List<UnitVisualConfiguration>();
+                if (slotProbability < 1.0)
+                {
+                    alternatives.Add(new UnitVisualConfiguration(
+                        1.0 - slotProbability,
+                        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)));
+                }
+
+                var alternativeWeight = slotProbability / alternativeCount;
+                foreach (var child in slot.ChildMeshes ?? [])
+                {
+                    alternatives.AddRange(ExpandVisualConfigurations(
+                            state,
+                            child,
+                            cache,
+                            visiting)
+                        .Select(configuration => configuration with
+                        {
+                            Probability = configuration.Probability * alternativeWeight,
+                        }));
+                }
+
+                foreach (var reference in slot.ChildReferences ?? [])
+                {
+                    if (string.IsNullOrWhiteSpace(reference.Reference))
+                        continue;
+
+                    alternatives.AddRange(GetWsModelConfigurationsForVmd(
+                            state,
+                            reference.Reference,
+                            cache,
+                            visiting)
+                        .Select(configuration => configuration with
+                        {
+                            Probability = configuration.Probability * alternativeWeight,
+                        }));
+                }
+
+                if (alternatives.Count == 0)
+                    continue;
+
+                var combined = new List<UnitVisualConfiguration>();
+                foreach (var left in current)
+                {
+                    foreach (var right in alternatives)
+                    {
+                        var probability = left.Probability * right.Probability;
+                        if (probability <= 0)
+                            continue;
+
+                        var models = left.WsModelOccurrences.ToDictionary(
+                            entry => entry.Key,
+                            entry => entry.Value,
+                            StringComparer.OrdinalIgnoreCase);
+                        foreach (var (path, count) in right.WsModelOccurrences)
+                            models[path] = models.GetValueOrDefault(path) + count;
+
+                        combined.Add(new UnitVisualConfiguration(probability, models));
+                        if (combined.Count > MaxExactVisualConfigurations)
+                            return [];
+                    }
+                }
+
+                current = MergeEquivalentVisualConfigurations(combined);
+                if (current.Count > MaxExactVisualConfigurations)
+                    return [];
+            }
+
+            return current;
+        }
+
+        private static List<UnitVisualConfiguration> MergeEquivalentVisualConfigurations(
+            IEnumerable<UnitVisualConfiguration> configurations)
+        {
+            var merged = new Dictionary<string, UnitVisualConfiguration>(StringComparer.Ordinal);
+            foreach (var configuration in configurations)
+            {
+                var key = string.Join(
+                    "\u001f",
+                    configuration.WsModelOccurrences
+                        .Where(entry => entry.Value > 0)
+                        .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                        .Select(entry => $"{entry.Key}\u001e{entry.Value}"));
+                if (merged.TryGetValue(key, out var existing))
+                {
+                    merged[key] = existing with
+                    {
+                        Probability = existing.Probability + configuration.Probability,
+                    };
+                }
+                else
+                {
+                    merged[key] = configuration;
+                }
+            }
+
+            return merged.Values
+                .Where(configuration => configuration.Probability > 0)
+                .ToList();
         }
 
         private static void AccumulateExpectedWsModelOccurrences(
@@ -2598,6 +2824,9 @@ namespace Editors.KitbasherEditor.Services
 
             return Math.Clamp(probability, 0.0, 1.0);
         }
+
+        private static string GetArmyUnitIdentity(Wh3ResolvedUnitVisual unit)
+            => unit.Identity.Trim().ToLowerInvariant();
 
         private static string GetArmyUnitIdentity(Wh3UnitCategoryUsage usage)
         {
