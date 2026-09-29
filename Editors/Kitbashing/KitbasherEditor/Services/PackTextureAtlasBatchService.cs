@@ -28,6 +28,12 @@ namespace Editors.KitbasherEditor.Services
         private const string AtlasDirectory = @"textures\asset_editor\atlases";
         private const string AtlasProfilingEnvironmentVariable = "ASSET_EDITOR_ATLAS_PROFILING";
         private const int PackAtlasMaxSize = 4096;
+        private const double TexelDensityReferencePercentile = 0.75;
+        private const double TexelDensityOutlierMultiplier = 1.5;
+        private const double MinAtlasResolutionScale = 0.25;
+        private const int MinAtlasResolutionScaleDimension = 256;
+        private const long MaxGeneratedBcnBytesPerExpectedArmyDraw = 8L * 1024 * 1024;
+        private const long MaxGeneratedBcnBytesPerFallbackDraw = 32L * 1024 * 1024;
         private static readonly bool AtlasProfilingEnabled =
             IsEnabledEnvironmentVariable(AtlasProfilingEnvironmentVariable);
 
@@ -795,6 +801,7 @@ namespace Editors.KitbasherEditor.Services
             candidates = candidates
                 .Where(x => !state.ProcessedMeshes.Contains(x.Key))
                 .ToList();
+            candidates = ApplyTexelDensityScaling(state, candidates);
             candidates = AlignSharedUvIslandCuts(state, candidates);
 
             var batches = CreateBatches(
@@ -820,6 +827,7 @@ namespace Editors.KitbasherEditor.Services
             IProgress<TextureAtlasPackProgress>? progress)
         {
             state.PackWideCandidateCount = candidates.Count;
+            candidates = ApplyTexelDensityScaling(state, candidates);
             candidates = AlignSharedUvIslandCuts(state, candidates);
 
             var stopwatch = Stopwatch.StartNew();
@@ -1157,7 +1165,8 @@ namespace Editors.KitbasherEditor.Services
                 channelDimensions,
                 candidateMissingTextures,
                 uvIslandAnalysis,
-                uvIslandNormalization);
+                uvIslandNormalization,
+                AtlasResolutionScale: 1.0);
         }
 
         private static TextureInspection GetTextureInspection(
@@ -1199,6 +1208,173 @@ namespace Editors.KitbasherEditor.Services
             state.TextureInspections[texturePath] = inspection;
             return inspection;
         }
+
+        private static List<AtlasCandidate> ApplyTexelDensityScaling(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates)
+        {
+            if (candidates.Count == 0)
+                return [];
+
+            var densities = new Dictionary<MeshKey, double>();
+            foreach (var candidate in candidates)
+            {
+                if (TryCalculateTexelDensity(candidate, out var density))
+                    densities[candidate.Key] = density;
+            }
+
+            if (densities.Count < 2)
+                return candidates.ToList();
+
+            var globalReference = Percentile(
+                densities.Values.OrderBy(value => value).ToArray(),
+                TexelDensityReferencePercentile);
+            var densitiesByRoot = candidates
+                .Where(candidate => densities.ContainsKey(candidate.Key))
+                .GroupBy(candidate => Normalize(candidate.RootVmdPath))
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .Select(candidate => densities[candidate.Key])
+                        .OrderBy(value => value)
+                        .ToArray(),
+                    StringComparer.OrdinalIgnoreCase);
+
+            var result = new List<AtlasCandidate>(candidates.Count);
+            foreach (var candidate in candidates)
+            {
+                if (!densities.TryGetValue(candidate.Key, out var density))
+                {
+                    result.Add(candidate);
+                    continue;
+                }
+
+                var rootKey = Normalize(candidate.RootVmdPath);
+                var rootValues = densitiesByRoot.GetValueOrDefault(rootKey);
+                var reference = rootValues is { Length: >= 4 }
+                    ? Percentile(rootValues, TexelDensityReferencePercentile)
+                    : globalReference;
+                var maximumDensity = Math.Max(
+                    double.Epsilon,
+                    reference * TexelDensityOutlierMultiplier);
+                var requestedScale = Math.Min(1.0, maximumDensity / density);
+                var maxDimension = Math.Max(candidate.Width, candidate.Height);
+                var minimumScaleForSize = maxDimension <= 0
+                    ? 1.0
+                    : Math.Min(
+                        1.0,
+                        MinAtlasResolutionScaleDimension / (double)maxDimension);
+                requestedScale = Math.Clamp(
+                    requestedScale,
+                    Math.Max(MinAtlasResolutionScale, minimumScaleForSize),
+                    1.0);
+
+                // Keep physical atlas sizes mip-friendly. A scale bucket also prevents tiny
+                // density differences from producing unstable output dimensions across runs.
+                var scale = requestedScale <= 0.375
+                    ? 0.25
+                    : requestedScale <= 0.75
+                        ? 0.5
+                        : 1.0;
+
+                if (scale >= 1.0)
+                {
+                    result.Add(candidate);
+                    continue;
+                }
+
+                state.TexelDensityScaledMeshes++;
+                state.TexelDensityOriginalPixelArea = checked(
+                    state.TexelDensityOriginalPixelArea +
+                    (long)candidate.Width * candidate.Height);
+                state.TexelDensityScaledPixelArea = checked(
+                    state.TexelDensityScaledPixelArea +
+                    (long)Math.Max(1, (int)Math.Ceiling(candidate.Width * scale)) *
+                    Math.Max(1, (int)Math.Ceiling(candidate.Height * scale)));
+                state.TexelDensityScaleCounts[scale] =
+                    state.TexelDensityScaleCounts.GetValueOrDefault(scale) + 1;
+
+                result.Add(candidate with { AtlasResolutionScale = scale });
+            }
+
+            return result;
+        }
+
+        private static bool TryCalculateTexelDensity(
+            AtlasCandidate candidate,
+            out double density)
+        {
+            density = 0;
+            var vertices = candidate.Model.Mesh.VertexList;
+            var indices = candidate.Model.Mesh.IndexList;
+            if (indices.Length < 3 || indices.Length % 3 != 0)
+                return false;
+
+            double worldArea = 0;
+            double uvPixelArea = 0;
+            for (var index = 0; index < indices.Length; index += 3)
+            {
+                var ia = indices[index];
+                var ib = indices[index + 1];
+                var ic = indices[index + 2];
+                if (ia >= vertices.Length || ib >= vertices.Length || ic >= vertices.Length)
+                    return false;
+
+                var a = vertices[ia];
+                var b = vertices[ib];
+                var c = vertices[ic];
+                var ab = b.GetPosistionAsVec3() - a.GetPosistionAsVec3();
+                var ac = c.GetPosistionAsVec3() - a.GetPosistionAsVec3();
+                var triangleWorldArea =
+                    Microsoft.Xna.Framework.Vector3.Cross(ab, ac).Length() * 0.5;
+                if (triangleWorldArea <= 0)
+                    continue;
+
+                var auv = a.Uv;
+                var buv = b.Uv;
+                var cuv = c.Uv;
+                var triangleUvArea = Math.Abs(
+                    (buv.X - auv.X) * (cuv.Y - auv.Y) -
+                    (buv.Y - auv.Y) * (cuv.X - auv.X)) * 0.5;
+                if (triangleUvArea <= 0)
+                    continue;
+
+                worldArea += triangleWorldArea;
+                uvPixelArea += triangleUvArea * candidate.Width * (double)candidate.Height;
+            }
+
+            if (worldArea <= double.Epsilon || uvPixelArea <= double.Epsilon)
+                return false;
+
+            density = Math.Sqrt(uvPixelArea / worldArea);
+            return double.IsFinite(density) && density > 0;
+        }
+
+        private static double Percentile(
+            IReadOnlyList<double> sortedValues,
+            double percentile)
+        {
+            if (sortedValues.Count == 0)
+                return 0;
+            if (sortedValues.Count == 1)
+                return sortedValues[0];
+
+            var position = Math.Clamp(percentile, 0, 1) * (sortedValues.Count - 1);
+            var lower = (int)Math.Floor(position);
+            var upper = (int)Math.Ceiling(position);
+            if (lower == upper)
+                return sortedValues[lower];
+
+            var fraction = position - lower;
+            return sortedValues[lower] * (1 - fraction) +
+                   sortedValues[upper] * fraction;
+        }
+
+        private static double GetBatchAtlasResolutionScale(
+            IReadOnlyList<SharedAtlasSource> sources)
+            => sources.Count == 0
+                ? 1.0
+                : sources.Max(source => source.Representative.AtlasResolutionScale);
 
         private static List<List<AtlasCandidate>> CreateBatches(
             BatchState state,
@@ -1360,13 +1536,16 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var mergeOptimized = OptimizeBatchesForMergeAffinity(state, localityOptimized);
+            var valueOptimized = state.MergeCompatibleMeshesEnabled
+                ? FilterBatchesForMergeValue(state, mergeOptimized)
+                : mergeOptimized;
             if (packWide)
             {
                 state.ExpectedArmyResidentPixelsAfterMergeAware =
-                    CalculateExpectedArmyResidentPixels(state, mergeOptimized);
+                    CalculateExpectedArmyResidentPixels(state, valueOptimized);
             }
 
-            return mergeOptimized;
+            return valueOptimized;
         }
 
         private static List<List<AtlasCandidate>> OptimizeMaxSizeBatchesForPixelArea(
@@ -3646,7 +3825,8 @@ namespace Editors.KitbasherEditor.Services
                     var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
                         sharedPlan.Plan,
                         sourceDimensions,
-                        PackAtlasMaxSize);
+                        PackAtlasMaxSize,
+                        GetBatchAtlasResolutionScale(sharedPlan.Batch.Sources));
 
                     pixelCost = checked(
                         pixelCost +
@@ -3780,7 +3960,8 @@ namespace Editors.KitbasherEditor.Services
                     _ = TextureAtlasBuilder.CalculateOutputDimensions(
                         plan,
                         sourceDimensions,
-                        PackAtlasMaxSize);
+                        PackAtlasMaxSize,
+                        GetBatchAtlasResolutionScale(batch.Sources));
             }
         }
 
@@ -3943,12 +4124,11 @@ namespace Editors.KitbasherEditor.Services
                     }
                 }
 
-                var outputDimensions = sourceDimensions.Count > 0
-                    ? TextureAtlasBuilder.CalculateOutputDimensions(
-                        plan,
-                        sourceDimensions,
-                        PackAtlasMaxSize)
-                    : (plan.Width, plan.Height);
+                var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
+                    plan,
+                    sourceDimensions,
+                    PackAtlasMaxSize,
+                    GetBatchAtlasResolutionScale(sharedBatch.Sources));
 
                 var fileName = $"{atlasStem}_{channel.Suffix}.dds";
                 using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
@@ -9831,7 +10011,8 @@ namespace Editors.KitbasherEditor.Services
             Dictionary<string, (int Width, int Height)> ChannelDimensions,
             List<MissingTextureDependency> MissingTextures,
             TextureAtlasUvIslandNormalization UvIslandAnalysis,
-            UvIslandNormalization? UvIslandNormalization);
+            UvIslandNormalization? UvIslandNormalization,
+            double AtlasResolutionScale);
 
         private sealed record CandidateDiscoveryResult(
             List<AtlasCandidate> Candidates,
