@@ -1210,6 +1210,15 @@ namespace Editors.KitbasherEditor.Services
             XmlDocument materialDoc;
             if (materialDocumentOverride != null)
             {
+                if (TryGetUnsafeEmbeddedUvTexture(model.Material, out var unsafeTexture))
+                {
+                    skipReason =
+                        $"Embedded rigid material contains UV0-dependent texture type " +
+                        $"{unsafeTexture.TexureType} that is not rewritten by the atlas path: " +
+                        $"{unsafeTexture.Path}";
+                    return null;
+                }
+
                 materialDoc = materialDocumentOverride;
             }
             else
@@ -1386,6 +1395,33 @@ namespace Editors.KitbasherEditor.Services
                 uvIslandAnalysis,
                 uvIslandNormalization,
                 AtlasResolutionScale: 1.0);
+        }
+
+        private static bool IsEmbeddedAtlasTextureTypeSafe(TextureType textureType)
+            => textureType is
+                TextureType.BaseColour or
+                TextureType.Diffuse or
+                TextureType.MaterialMap or
+                TextureType.Normal or
+                TextureType.Mask;
+
+        private static bool TryGetUnsafeEmbeddedUvTexture(
+            IRmvMaterial material,
+            out RmvTexture unsafeTexture)
+        {
+            foreach (var texture in material.GetAllTextures())
+            {
+                if (string.IsNullOrWhiteSpace(texture.Path))
+                    continue;
+                if (IsEmbeddedAtlasTextureTypeSafe(texture.TexureType))
+                    continue;
+
+                unsafeTexture = texture;
+                return true;
+            }
+
+            unsafeTexture = default;
+            return false;
         }
 
         private static XmlDocument BuildEmbeddedMaterialDocument(IRmvMaterial material)
@@ -3678,12 +3714,20 @@ namespace Editors.KitbasherEditor.Services
             return score;
         }
 
+        private static bool CanEarnMergeDrawCredit(string? embeddedRigidPath)
+            => string.IsNullOrWhiteSpace(embeddedRigidPath);
+
+        private static bool CanEarnMergeDrawCredit(AtlasCandidate candidate)
+            => candidate.Usages.All(usage =>
+                CanEarnMergeDrawCredit(usage.EmbeddedRigidPath));
+
         private static List<MergeAffinityGroup> BuildMergeAffinityGroups(
             IEnumerable<AtlasCandidate> candidates)
         {
             var result = new List<MergeAffinityGroup>();
 
             var buckets = candidates
+                .Where(CanEarnMergeDrawCredit)
                 .GroupBy(candidate => new MergeAffinityIdentity(
                     candidate.Key.GeometryPath,
                     candidate.Key.LodIndex,
