@@ -4984,6 +4984,17 @@ namespace Editors.KitbasherEditor.Services
                 var clonedMaterial = new XmlDocument();
                 clonedMaterial.LoadXml(candidate.MaterialDocument.OuterXml);
 
+                var unresolvedMaskPath = GetTexturePath(
+                    clonedMaterial,
+                    "t_xml_mask");
+                if (IsIgnorableUnresolvedAtlasTexture(
+                        "t_xml_mask",
+                        unresolvedMaskPath) &&
+                    FindForRead(state, unresolvedMaskPath) == null)
+                {
+                    RemoveTextureSlot(clonedMaterial, "t_xml_mask");
+                }
+
                 foreach (var channel in AtlasChannels)
                 {
                     if (!candidate.ResolvedChannels.Contains(channel.Slot) &&
@@ -7792,6 +7803,23 @@ namespace Editors.KitbasherEditor.Services
                 else
                     node.InnerText = path;
                 return;
+            }
+        }
+
+        private static void RemoveTextureSlot(XmlDocument material, string slot)
+        {
+            var textureNodes = material.SelectNodes("/material/textures/texture");
+            if (textureNodes == null)
+                return;
+
+            foreach (var node in textureNodes
+                         .Cast<XmlNode>()
+                         .Where(node => GetTextureSlot(node).Equals(
+                             slot,
+                             StringComparison.OrdinalIgnoreCase))
+                         .ToList())
+            {
+                node.ParentNode?.RemoveChild(node);
             }
         }
 
