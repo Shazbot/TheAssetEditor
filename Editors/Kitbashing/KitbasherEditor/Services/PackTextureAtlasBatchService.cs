@@ -3761,15 +3761,21 @@ namespace Editors.KitbasherEditor.Services
                 if (!sourceTexture.References.Any(proposedRewrites.Contains))
                     continue;
 
-                var currentlyRetired =
-                    !sourceTexture.HasDirectVmdReference &&
-                    sourceTexture.References.All(
+                var currentlyRewrittenReferenceCount =
+                    sourceTexture.References.Count(
                         state.AtlasValueGateRewrittenSourceReferences.Contains);
-                var retiredAfterProposal =
-                    !sourceTexture.HasDirectVmdReference &&
-                    sourceTexture.References.All(reference =>
+                var rewrittenReferenceCountAfterProposal =
+                    sourceTexture.References.Count(reference =>
                         state.AtlasValueGateRewrittenSourceReferences.Contains(reference) ||
                         proposedRewrites.Contains(reference));
+                var currentlyRetired = IsAtlasValueGateSourceTextureRetired(
+                    sourceTexture.HasDirectVmdReference,
+                    sourceTexture.References.Count,
+                    currentlyRewrittenReferenceCount);
+                var retiredAfterProposal = IsAtlasValueGateSourceTextureRetired(
+                    sourceTexture.HasDirectVmdReference,
+                    sourceTexture.References.Count,
+                    rewrittenReferenceCountAfterProposal);
                 if (!currentlyRetired && retiredAfterProposal)
                 {
                     retiredSourceBcnBytes = checked(
@@ -3828,6 +3834,14 @@ namespace Editors.KitbasherEditor.Services
                 proposedRewrites);
             return true;
         }
+
+        private static bool IsAtlasValueGateSourceTextureRetired(
+            bool hasDirectVmdReference,
+            int referenceCount,
+            int rewrittenReferenceCount)
+            => !hasDirectVmdReference &&
+               referenceCount > 0 &&
+               rewrittenReferenceCount >= referenceCount;
 
         private static double GetExpectedArmySourceTextureResidency(
             BatchState state,
