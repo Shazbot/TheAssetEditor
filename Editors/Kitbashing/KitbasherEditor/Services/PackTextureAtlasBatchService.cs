@@ -158,6 +158,10 @@ namespace Editors.KitbasherEditor.Services
             bool shareAtlasesAcrossVmds = true,
             bool optimizeGeometry = false)
         {
+            // Kept for API compatibility with existing callers. Atlasing meshes with genuine
+            // unresolved secondary textures is no longer allowed because UV0 is shared.
+            _ = atlasMeshesWithMissingTextures;
+
             var reportPath = BuildReportPath(outputPath);
             var totalStopwatch = Stopwatch.StartNew();
             cancellationToken.ThrowIfCancellationRequested();
@@ -190,7 +194,6 @@ namespace Editors.KitbasherEditor.Services
                     sourcePath,
                     outputPath,
                     reportPath,
-                    atlasMeshesWithMissingTextures ?? false,
                     mergeCompatibleMeshes,
                     shareAtlasesAcrossVmds,
                     optimizeGeometry);
@@ -323,8 +326,6 @@ namespace Editors.KitbasherEditor.Services
                 // texture path would make it sample with atlas UVs and corrupt rendering.
                 // Such meshes are therefore always skipped. The only unresolved sentinel
                 // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
-                state.AtlasMeshesWithMissingTextures = false;
-
                 var discoveredCandidates = ApplyMissingTextureDecision(
                     state,
                     candidateDiscovery.Candidates);
@@ -8015,12 +8016,6 @@ namespace Editors.KitbasherEditor.Services
                     if (string.IsNullOrWhiteSpace(texturePath) || IsTexturePlaceholder(texturePath))
                         continue;
 
-                    if (state.AtlasMeshesWithMissingTextures &&
-                        state.AllowedMissingTexturePaths.Contains(texturePath))
-                    {
-                        continue;
-                    }
-
                     if (!CanResolveAfterRewrite(state, texturePath))
                     {
                         errors.Add(
@@ -8693,7 +8688,7 @@ namespace Editors.KitbasherEditor.Services
                 $"Cross-geometry/cross-batch component pairs with high bidirectional VMD-root overlap: " +
                 $"{componentReuse.Pairs.Count(x => x.HighBidirectionalOverlap)}");
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
-            sb.AppendLine($"Atlas meshes with missing textures: {(state.AtlasMeshesWithMissingTextures ? "YES" : "NO")}");
+            sb.AppendLine("Meshes with genuine unresolved secondary textures are skipped.");
             sb.AppendLine($"Merge compatible mesh parts: {(state.MergeCompatibleMeshesEnabled ? "YES" : "NO")}");
             if (state.MergeCompatibleMeshesEnabled)
             {
@@ -9501,14 +9496,6 @@ namespace Editors.KitbasherEditor.Services
             foreach (var path in state.RemovedFiles.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                 sb.AppendLine(path);
             if (state.RemovedFiles.Count == 0)
-                sb.AppendLine("(none)");
-            sb.AppendLine();
-
-            sb.AppendLine("Allowed unresolved texture paths");
-            sb.AppendLine("--------------------------------");
-            foreach (var path in state.AllowedMissingTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
-                sb.AppendLine(path);
-            if (state.AllowedMissingTexturePaths.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
@@ -10588,8 +10575,6 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, GeneratedMaterialEntry> GeneratedMaterialByContentHash { get; } = new(StringComparer.Ordinal);
             public int GeneratedMaterialReuses { get; set; }
-            public HashSet<string> AllowedMissingTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
-            public bool AtlasMeshesWithMissingTextures { get; set; }
             public bool MergeCompatibleMeshesEnabled { get; }
             public bool ShareAtlasesAcrossVmdsEnabled { get; }
             public bool OptimizeGeometryEnabled { get; }
@@ -10709,7 +10694,6 @@ namespace Editors.KitbasherEditor.Services
                 string sourcePath,
                 string outputPath,
                 string reportPath,
-                bool atlasMeshesWithMissingTextures,
                 bool mergeCompatibleMeshesEnabled,
                 bool shareAtlasesAcrossVmdsEnabled,
                 bool optimizeGeometryEnabled)
@@ -10720,7 +10704,6 @@ namespace Editors.KitbasherEditor.Services
                 SourcePath = sourcePath;
                 OutputPath = outputPath;
                 ReportPath = reportPath;
-                AtlasMeshesWithMissingTextures = atlasMeshesWithMissingTextures;
                 MergeCompatibleMeshesEnabled = mergeCompatibleMeshesEnabled;
                 ShareAtlasesAcrossVmdsEnabled = shareAtlasesAcrossVmdsEnabled;
                 OptimizeGeometryEnabled = optimizeGeometryEnabled;
