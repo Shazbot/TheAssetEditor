@@ -2903,20 +2903,67 @@ namespace Editors.KitbasherEditor.Services
                 if (population == 0)
                     continue;
 
+                var normalizedTargets = targetWsModels
+                    .Select(Normalize)
+                    .Where(path => path.Length != 0)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 double perSlotPresenceProbability = 0;
                 foreach (var unitId in model.UnitsByCategory[category])
                 {
                     double unitCardPresenceProbability = 0;
+                    var notPresentAcrossRoles = 1.0;
+                    var exactRoles = new HashSet<Wh3UnitVisualRole>();
+
+                    // Prefer exact VMD configurations for union probability. Summing marginal
+                    // probabilities is wrong when target assets can overlap in the same state
+                    // (e.g. two independent 50% slots have union 75%, not 100%).
+                    if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
+                            unitId,
+                            out var configurationsByRole))
+                    {
+                        foreach (var (role, configurations) in configurationsByRole)
+                        {
+                            if (configurations.Count == 0)
+                                continue;
+
+                            exactRoles.Add(role);
+                            var perEntityPresenceProbability = configurations
+                                .Where(configuration =>
+                                    configuration.WsModelOccurrences.Any(entry =>
+                                        entry.Value > 0 &&
+                                        normalizedTargets.Contains(entry.Key)))
+                                .Sum(configuration => configuration.Probability);
+                            perEntityPresenceProbability = Math.Clamp(
+                                perEntityPresenceProbability,
+                                0.0,
+                                1.0);
+                            if (perEntityPresenceProbability <= 0)
+                                continue;
+
+                            var entityCount = Math.Max(
+                                1,
+                                model.EntityCountByUnitAndRole
+                                    .GetValueOrDefault(unitId)?
+                                    .GetValueOrDefault(role, 1) ?? 1);
+                            notPresentAcrossRoles *= Math.Pow(
+                                1.0 - perEntityPresenceProbability,
+                                entityCount);
+                        }
+                    }
+
+                    // Direct assets and any VMD too large for exact enumeration retain the
+                    // marginal fallback. Skip roles already evaluated exactly so their target
+                    // union is not counted twice.
                     if (model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
                             unitId,
                             out var expectedOccurrences))
                     {
                         var expectedPresenceByRole =
                             new Dictionary<Wh3UnitVisualRole, double>();
-                        foreach (var wsModelPath in targetWsModels)
+                        foreach (var wsModelPath in normalizedTargets)
                         {
                             if (!expectedOccurrences.ByWsModel.TryGetValue(
-                                    Normalize(wsModelPath),
+                                    wsModelPath,
                                     out var occurrencesByRole))
                             {
                                 continue;
@@ -2924,13 +2971,15 @@ namespace Editors.KitbasherEditor.Services
 
                             foreach (var (role, expectedOccurrencesPerEntity) in occurrencesByRole)
                             {
+                                if (exactRoles.Contains(role))
+                                    continue;
+
                                 expectedPresenceByRole[role] =
                                     expectedPresenceByRole.GetValueOrDefault(role) +
                                     expectedOccurrencesPerEntity;
                             }
                         }
 
-                        var notPresentAcrossRoles = 1.0;
                         foreach (var (role, expectedOccurrencesPerEntity) in expectedPresenceByRole)
                         {
                             if (expectedOccurrencesPerEntity <= 0)
@@ -2946,6 +2995,10 @@ namespace Editors.KitbasherEditor.Services
                                 entityCount);
                         }
 
+                        unitCardPresenceProbability = 1.0 - notPresentAcrossRoles;
+                    }
+                    else if (exactRoles.Count != 0)
+                    {
                         unitCardPresenceProbability = 1.0 - notPresentAcrossRoles;
                     }
                     else if (fallbackCoveredByCategory[category].Contains(unitId))
