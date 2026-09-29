@@ -59,7 +59,8 @@ namespace Editors.KitbasherEditor.Services
         IReadOnlyDictionary<int, double> LodDistribution,
         double DestructionProbability,
         IReadOnlyDictionary<Wh3ArmyUnitCategory, int> ArmySlotTemplate,
-        Wh3RosterScope RosterScope)
+        Wh3RosterScope RosterScope,
+        string? RosterScopeKey)
     {
         public static Wh3ArmyVisualScenario Default { get; } = new(
             0.75,
@@ -76,7 +77,8 @@ namespace Editors.KitbasherEditor.Services
                 [Wh3ArmyUnitCategory.MonsterBeast] = 3,
                 [Wh3ArmyUnitCategory.ArtilleryWarMachine] = 2,
             },
-            Wh3RosterScope.AllGameUnits);
+            Wh3RosterScope.AllGameUnits,
+            null);
     }
 
     internal sealed record Wh3UnitVisualCounts(
@@ -138,7 +140,15 @@ namespace Editors.KitbasherEditor.Services
         string LandUnitKey,
         Wh3ArmyUnitCategory Category,
         Wh3UnitVisualCounts VisualCounts,
-        IReadOnlyList<Wh3ResolvedUnitComponent> Components);
+        IReadOnlyList<Wh3ResolvedUnitComponent> Components)
+    {
+        public IReadOnlySet<string> FactionKeys { get; init; } =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        public IReadOnlySet<string> SubcultureKeys { get; init; } =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        public IReadOnlySet<string> CultureKeys { get; init; } =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    }
 
     internal sealed record Wh3UnitCategoryResolution(
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> UsagesByVmd,
@@ -182,6 +192,9 @@ namespace Editors.KitbasherEditor.Services
         private const string BattlefieldEnginesTable = "battlefield_engines_tables";
         private const string ExtraEnginesTable = "land_units_to_extra_engines_tables";
         private const string WarscapeAnimatedLodTable = "warscape_animated_lod_tables";
+        private const string FactionsTable = "factions_tables";
+        private const string CulturesSubculturesTable = "cultures_subcultures_tables";
+        private const string CustomBattlePermissionsTable = "units_custom_battle_permissions_tables";
 
         // The optimizer models a large-size battle.  WHMM uses the same scalar for the
         // entity count shown by its unit viewer.  Crew is a separate visual population for
@@ -199,6 +212,9 @@ namespace Editors.KitbasherEditor.Services
             BattlefieldEnginesTable,
             ExtraEnginesTable,
             WarscapeAnimatedLodTable,
+            FactionsTable,
+            CulturesSubculturesTable,
+            CustomBattlePermissionsTable,
         ];
 
         private static readonly Lazy<SchemaRoot> Schema = new(LoadSchema);
@@ -284,6 +300,9 @@ namespace Editors.KitbasherEditor.Services
             var uiUnitGroupParents = effectiveRows[UiUnitGroupParentsTable];
             var mountRows = effectiveRows[MountsTable];
             var engineRows = effectiveRows[BattlefieldEnginesTable];
+            var factionRows = effectiveRows[FactionsTable];
+            var cultureRows = effectiveRows[CulturesSubculturesTable];
+            var customBattlePermissionRows = effectiveRows[CustomBattlePermissionsTable].Values.ToList();
             var animatedLodRowsByKey = effectiveRows[WarscapeAnimatedLodTable].Values
                 .Where(row => Get(row, "animated").Length != 0)
                 .GroupBy(row => Get(row, "animated"), StringComparer.OrdinalIgnoreCase)
@@ -309,6 +328,57 @@ namespace Editors.KitbasherEditor.Services
                 .ToDictionary(
                     group => group.Key,
                     group => group.ToList(),
+                    StringComparer.OrdinalIgnoreCase);
+
+            var factionsByMainUnit = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            var factionsByLandUnit = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            static void AddScopedFaction(
+                Dictionary<string, HashSet<string>> target,
+                string unitKey,
+                string factionKey)
+            {
+                if (string.IsNullOrWhiteSpace(unitKey) || string.IsNullOrWhiteSpace(factionKey))
+                    return;
+                if (!target.TryGetValue(unitKey, out var factions))
+                {
+                    factions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    target[unitKey] = factions;
+                }
+                factions.Add(factionKey);
+            }
+
+            foreach (var permission in customBattlePermissionRows)
+                AddScopedFaction(factionsByMainUnit, Get(permission, "unit"), Get(permission, "faction"));
+
+            // unit_variants.faction is visual-specific rather than a complete recruitment
+            // permission, but it is a useful fallback for mod units that omit custom-battle
+            // permission rows.
+            foreach (var unitVariant in unitVariantRows)
+            {
+                var scopedLandUnitKey = Get(unitVariant, "unit");
+                var factionKey = Get(unitVariant, "faction");
+                AddScopedFaction(factionsByLandUnit, scopedLandUnitKey, factionKey);
+                if (mainByLandUnit.TryGetValue(scopedLandUnitKey, out var scopedMains))
+                {
+                    foreach (var scopedMain in scopedMains)
+                        AddScopedFaction(factionsByMainUnit, Get(scopedMain, "unit"), factionKey);
+                }
+            }
+
+            var subcultureByFaction = factionRows.Values
+                .Where(row => Get(row, "key").Length != 0)
+                .ToDictionary(
+                    row => Get(row, "key"),
+                    row => Get(row, "subculture"),
+                    StringComparer.OrdinalIgnoreCase);
+            var cultureBySubculture = cultureRows.Values
+                .Where(row => Get(row, "subculture").Length != 0)
+                .ToDictionary(
+                    row => Get(row, "subculture"),
+                    row => Get(row, "culture"),
                     StringComparer.OrdinalIgnoreCase);
 
             var usagesByVmd = new Dictionary<string, Dictionary<string, Wh3UnitCategoryUsage>>(
@@ -620,13 +690,33 @@ namespace Editors.KitbasherEditor.Services
                     activeScenario);
                 var identity = $"main:{mainUnitKey.Trim().ToLowerInvariant()}";
 
+                var factions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (factionsByMainUnit.TryGetValue(mainUnitKey, out var mainFactions))
+                    factions.UnionWith(mainFactions);
+                if (factionsByLandUnit.TryGetValue(landUnitKey, out var landFactions))
+                    factions.UnionWith(landFactions);
+
+                var subcultures = factions
+                    .Select(faction => subcultureByFaction.GetValueOrDefault(faction))
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var cultures = subcultures
+                    .Select(subculture => cultureBySubculture.GetValueOrDefault(subculture))
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
                 rosterSeeds.Add(new Wh3ResolvedUnitVisual(
                     identity,
                     mainUnitKey,
                     landUnitKey,
                     Classify(caste, landCategory, uiGroupKey),
                     visualCounts,
-                    []));
+                    [])
+                {
+                    FactionKeys = factions,
+                    SubcultureKeys = subcultures,
+                    CultureKeys = cultures,
+                });
             }
 
             // Build the complete DB-derived unit roster before filtering to VMDs discovered in
@@ -642,6 +732,13 @@ namespace Editors.KitbasherEditor.Services
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+
+            rosterUnits = FilterRosterForScenario(
+                rosterUnits,
+                activeScenario,
+                source,
+                normalizedRoots,
+                diagnostics);
 
             var directSourceVmds = normalizedRoots
                 .Where(root => usagesByVmd.ContainsKey(root))
@@ -813,6 +910,50 @@ namespace Editors.KitbasherEditor.Services
                         .ThenBy(component => component.AssetPath, StringComparer.OrdinalIgnoreCase)
                         .ToArray()))
                 .ToArray();
+        }
+
+        private static IReadOnlyList<Wh3ResolvedUnitVisual> FilterRosterForScenario(
+            IReadOnlyList<Wh3ResolvedUnitVisual> roster,
+            Wh3ArmyVisualScenario scenario,
+            IPackFileContainer source,
+            IReadOnlyCollection<string> optimizedRoots,
+            List<string> diagnostics)
+        {
+            var scopeKey = scenario.RosterScopeKey?.Trim() ?? string.Empty;
+            if ((scenario.RosterScope is Wh3RosterScope.SelectedFaction or Wh3RosterScope.SelectedCulture) &&
+                scopeKey.Length == 0)
+            {
+                diagnostics.Add(
+                    $"Roster scope {scenario.RosterScope} requires RosterScopeKey; using all resolved units.");
+                return roster;
+            }
+
+            var optimized = optimizedRoots
+                .Select(NormalizePath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            bool Matches(Wh3ResolvedUnitVisual unit)
+                => scenario.RosterScope switch
+                {
+                    Wh3RosterScope.SelectedFaction =>
+                        unit.FactionKeys.Contains(scopeKey),
+                    Wh3RosterScope.SelectedCulture =>
+                        unit.CultureKeys.Contains(scopeKey) ||
+                        unit.SubcultureKeys.Contains(scopeKey),
+                    Wh3RosterScope.ModAffectedUnits =>
+                        unit.Components.Any(component => source.ContainsFile(component.AssetPath)),
+                    Wh3RosterScope.OptimizedAssetsOnly =>
+                        unit.Components.Any(component =>
+                            optimized.Contains(NormalizePath(component.AssetPath))),
+                    _ => true,
+                };
+
+            var filtered = roster.Where(Matches).ToArray();
+            diagnostics.Add(
+                $"Roster scope {scenario.RosterScope}" +
+                (scopeKey.Length == 0 ? string.Empty : $" ({scopeKey})") +
+                $": {filtered.Length:N0} / {roster.Count:N0} unit(s).");
+            return filtered;
         }
 
         private static void AddUsage(
@@ -1363,6 +1504,10 @@ namespace Editors.KitbasherEditor.Services
                 BattlefieldEnginesTable => Get(row, "key"),
                 WarscapeAnimatedLodTable =>
                     $"{Get(row, "key")}\u001f{Get(row, "animated")}\u001f{Get(row, "filename")}",
+                FactionsTable => Get(row, "key"),
+                CulturesSubculturesTable => Get(row, "subculture"),
+                CustomBattlePermissionsTable =>
+                    $"{Get(row, "faction")}\u001f{Get(row, "general_unit")}\u001f{Get(row, "unit")}",
                 ExtraEnginesTable =>
                     $"{Get(row, "land_unit")}\u001f{Get(row, "attach_articulation")}\u001f" +
                     Get(row, "battle_engine"),
