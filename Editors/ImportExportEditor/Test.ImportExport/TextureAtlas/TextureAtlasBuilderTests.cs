@@ -770,6 +770,50 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void DownscaledAtlasBaseLevel_UsesMatchingAuthoredSourceMip()
+        {
+            var sourceDds = PngToDdsImporter.ImportRawMipChain(
+                [
+                    CreateSolidPng(8, Color.Red),
+                    CreateSolidPng(4, Color.Blue),
+                    CreateSolidPng(2, Color.Lime),
+                    CreateSolidPng(1, Color.Gray)
+                ],
+                TextureType.BaseColour,
+                GameTypeEnum.Warhammer3,
+                "downscaled-density-source.dds");
+            var sourceBytes = sourceDds.DataSource.ReadData();
+
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 8, 8, 0, 0, 1, 1)],
+                padding: 0);
+            var mipPngs = TextureAtlasBuilder.BuildMipPngs(
+                plan,
+                new Dictionary<int, byte[]> { [0] = sourceBytes },
+                outputWidth: 4,
+                outputHeight: 4);
+
+            using var sourceStream = new MemoryStream(sourceBytes);
+            using var sourceImage = Pfimage.FromStream(sourceStream);
+            using var atlasMipStream = new MemoryStream(mipPngs[0]);
+            using var atlasMip = new Bitmap(atlasMipStream);
+
+            var sourceMip = sourceImage.MipMaps[0];
+            var expected = ReadPfimPixel(
+                sourceImage,
+                sourceMip.DataOffset,
+                sourceMip.Stride,
+                sourceMip.Width / 2,
+                sourceMip.Height / 2);
+            var actual = atlasMip.GetPixel(atlasMip.Width / 2, atlasMip.Height / 2);
+
+            Assert.That(actual.R, Is.EqualTo(expected.R).Within(8));
+            Assert.That(actual.G, Is.EqualTo(expected.G).Within(8));
+            Assert.That(actual.B, Is.EqualTo(expected.B).Within(8));
+            Assert.That(actual.B, Is.GreaterThan(actual.R));
+        }
+
+        [Test]
         public void ComputeWrappedRegionContentHash_MatchesRepeatedRegionsAtDifferentOffsets()
         {
             using var bitmap = new Bitmap(8, 4, PixelFormat.Format32bppArgb);
