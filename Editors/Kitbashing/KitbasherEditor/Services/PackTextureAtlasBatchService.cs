@@ -1729,7 +1729,18 @@ namespace Editors.KitbasherEditor.Services
                     return empty;
                 }
 
-                var vmd = GetVmd(state, state.Source, vmdPath, file);
+                if (!TryGetVmdForTraversal(
+                        state,
+                        state.Source,
+                        vmdPath,
+                        file,
+                        out var vmd))
+                {
+                    var empty = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                    cache[vmdPath] = empty;
+                    return empty;
+                }
+
                 var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                 AccumulateExpectedWsModelOccurrences(
                     state,
@@ -6255,7 +6266,16 @@ namespace Editors.KitbasherEditor.Services
                     continue;
 
                 reachable.Add(vmdPath);
-                var vmd = GetVmd(state, container, vmdPath, vmdFile);
+                if (!TryGetVmdForTraversal(
+                        state,
+                        container,
+                        vmdPath,
+                        vmdFile,
+                        out var vmd))
+                {
+                    continue;
+                }
+
                 var modelRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var childVmdRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var directTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -6357,6 +6377,61 @@ namespace Editors.KitbasherEditor.Services
             return result;
         }
 
+        private static bool TryGetVmdForTraversal(
+            BatchState state,
+            IPackFileContainer container,
+            string vmdPathValue,
+            PackFile file,
+            out VariantMesh vmd)
+        {
+            var vmdPath = Normalize(vmdPathValue);
+            try
+            {
+                vmd = GetVmd(state, container, vmdPath, file);
+                return true;
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or
+                XmlException or
+                FormatException or
+                ArgumentException)
+            {
+                RecordMalformedReferencedVmd(state, vmdPath, ex);
+                vmd = null!;
+                return false;
+            }
+        }
+
+        private static void RecordMalformedReferencedVmd(
+            BatchState state,
+            string vmdPath,
+            Exception exception)
+        {
+            vmdPath = Normalize(vmdPath);
+            if (state.MalformedReferencedVmds.Any(
+                    entry => entry.Path.Equals(vmdPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            var messages = new List<string>();
+            for (Exception? current = exception; current != null; current = current.InnerException)
+            {
+                var message = current.Message.Replace("\r", " ").Replace("\n", " ").Trim();
+                if (message.Length != 0 &&
+                    !messages.Contains(message, StringComparer.Ordinal))
+                {
+                    messages.Add(message);
+                }
+            }
+
+            state.MalformedReferencedVmds.Add(new MalformedVmdEntry(
+                vmdPath,
+                messages.Count == 0
+                    ? exception.GetType().Name
+                    : string.Join(" -> ", messages)));
+        }
+
         private static VariantMesh GetVmd(
             BatchState state,
             IPackFileContainer container,
@@ -6415,7 +6490,16 @@ namespace Editors.KitbasherEditor.Services
                 if (file == null)
                     continue;
 
-                var vmd = GetVmd(state, container, vmdPath, file);
+                if (!TryGetVmdForTraversal(
+                        state,
+                        container,
+                        vmdPath,
+                        file,
+                        out var vmd))
+                {
+                    continue;
+                }
+
                 var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var children = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -7232,7 +7316,8 @@ namespace Editors.KitbasherEditor.Services
                     $"Unit-category DB table files read: " +
                     $"{state.UnitCategoryResolution.TableFilesRead}");
             }
-            sb.AppendLine($"Malformed VMD files ignored: {state.MalformedVmdRoots.Count}");
+            sb.AppendLine($"Malformed VMD root files ignored: {state.MalformedVmdRoots.Count}");
+            sb.AppendLine($"Malformed referenced VMD files ignored: {state.MalformedReferencedVmds.Count}");
             sb.AppendLine($"Malformed unrelated WSModels ignored: {state.MalformedWsModelsIgnored.Count}");
             sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
@@ -7732,14 +7817,26 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
-            sb.AppendLine("Malformed VMD files ignored");
-            sb.AppendLine("---------------------------");
+            sb.AppendLine("Malformed VMD root files ignored");
+            sb.AppendLine("--------------------------------");
             foreach (var entry in state.MalformedVmdRoots.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
             {
                 sb.AppendLine(entry.Path);
                 sb.AppendLine($"  Reason: {entry.Reason}");
             }
             if (state.MalformedVmdRoots.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Malformed referenced VMD files ignored");
+            sb.AppendLine("--------------------------------------");
+            foreach (var entry in state.MalformedReferencedVmds
+                         .OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine(entry.Path);
+                sb.AppendLine($"  Reason: {entry.Reason}");
+            }
+            if (state.MalformedReferencedVmds.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
@@ -9109,6 +9206,7 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Wh3UnitCategoryResolution? UnitCategoryResolution { get; set; }
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
+            public List<MalformedVmdEntry> MalformedReferencedVmds { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedWsModelsIgnored { get; } = [];
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, TextureInspection> TextureInspections { get; } = new(StringComparer.OrdinalIgnoreCase);
