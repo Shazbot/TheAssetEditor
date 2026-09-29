@@ -1053,19 +1053,32 @@ namespace Editors.ImportExport.TextureAtlas
             int atlasHeight,
             int atlasMipLevel)
         {
-            if (atlasMipLevel <= 0)
-                return GetMipLevel(source, 0);
-
-            // The shared UV plan is expressed in primary-texture pixels, while each material
-            // channel may have a different physical atlas size. Delay authored source mips only
-            // when this channel's physical rectangle is larger than the source texture itself.
+            // The shared UV plan is expressed in layout pixels, while a physical atlas channel
+            // may allocate either more or fewer texels for a placement. Pick the authored mip
+            // whose native density most closely matches the physical destination rectangle.
+            //
+            // Upscaling delays authored mips (the existing behavior). Downscaling advances into
+            // authored mips even for atlas mip 0, avoiding point-sampling a 4K source directly
+            // into a much smaller texel-density-normalized atlas rectangle.
             var destinationWidth = placement.SourceWidth * (double)atlasWidth / plan.Width;
             var destinationHeight = placement.SourceHeight * (double)atlasHeight / plan.Height;
             var scaleX = destinationWidth / source.Width;
             var scaleY = destinationHeight / source.Height;
-            var layoutScale = Math.Max(1.0, Math.Max(scaleX, scaleY));
-            var delayedMipLevels = (int)Math.Ceiling(Math.Log2(layoutScale));
-            var sourceMipLevel = Math.Max(0, atlasMipLevel - delayedMipLevels);
+            var layoutScale = Math.Max(
+                double.Epsilon,
+                Math.Max(scaleX, scaleY));
+
+            int sourceMipLevel;
+            if (layoutScale >= 1.0)
+            {
+                var delayedMipLevels = (int)Math.Ceiling(Math.Log2(layoutScale));
+                sourceMipLevel = Math.Max(0, atlasMipLevel - delayedMipLevels);
+            }
+            else
+            {
+                var advancedMipLevels = (int)Math.Floor(Math.Log2(1.0 / layoutScale));
+                sourceMipLevel = Math.Max(0, atlasMipLevel + advancedMipLevels);
+            }
 
             return GetMipLevel(source, sourceMipLevel);
         }
