@@ -3625,7 +3625,7 @@ namespace Editors.KitbasherEditor.Services
                             proposedBatchByMesh[candidate.Key] = rightIndex;
                         var proposedExpectedArmyDrawCallsEliminated =
                             CalculateExpectedArmyDrawCallsEliminated(
-                                state.ArmyResidencyModel,
+                                state,
                                 proposedBatchByMesh,
                                 affinityGroups,
                                 expectedArmyEntitiesByMesh);
