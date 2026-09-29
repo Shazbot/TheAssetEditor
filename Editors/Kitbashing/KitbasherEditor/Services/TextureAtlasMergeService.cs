@@ -151,6 +151,15 @@ namespace Editors.KitbasherEditor.Services
 
                 var (width, height) = TextureAtlasBuilder.GetDimensions(primaryBytes);
 
+                // UV0 is shared by every material channel. Remapping this mesh while a used
+                // secondary texture still points at an unresolved original path would make
+                // that channel sample with atlas UVs. Skip the entire mesh instead.
+                if (HasUnsafeMissingSecondaryTexture(mesh.Material, primaryTextureType))
+                {
+                    untouchedMeshes.Add(mesh);
+                    continue;
+                }
+
                 // Use the primary BaseColour/Diffuse resolution as the shared UV-plan density.
                 // Secondary channels keep the same normalized placements but choose their own
                 // physical atlas dimensions below.
@@ -166,6 +175,8 @@ namespace Editors.KitbasherEditor.Services
             var workingMeshes = preparedMeshes
                 .Select(x => CloneForAtlas(x.Mesh))
                 .ToList();
+            foreach (var mesh in workingMeshes)
+                NormalizeIgnorableMissingMasks(mesh.Material);
 
             var uvBounds = workingMeshes.Select(GetUvBounds).ToArray();
             var layoutSources = new List<TextureAtlasLayoutSource>(workingMeshes.Count);
@@ -240,8 +251,8 @@ namespace Editors.KitbasherEditor.Services
 
                 generatedFiles.Add(new GeneratedTextureAtlasFile(AtlasDirectory, fullPath, packFile));
 
-                // Only meshes whose original texture actually resolved are redirected to this
-                // atlas channel. Missing secondary texture paths stay exactly as they were.
+                // Every used secondary texture on a participating mesh was validated before
+                // UV remapping. Unused channels and ignored test-mask sentinels are omitted.
                 foreach (var sourceId in textureBytes.Keys)
                 {
                     var input = GetTextureInput(workingMeshes[sourceId].Material, textureType);
@@ -281,6 +292,56 @@ namespace Editors.KitbasherEditor.Services
 
             bytes = fileBytes;
             return true;
+        }
+
+        private bool HasUnsafeMissingSecondaryTexture(
+            CapabilityMaterial material,
+            TextureType primaryTextureType)
+        {
+            foreach (var input in GetAtlasTextureInputs(material))
+            {
+                if (input.Type == primaryTextureType || !IsTextureUsed(input))
+                    continue;
+
+                if (_packFileService.FindFile(input.TexturePath) != null)
+                    continue;
+
+                if (IsIgnorableUnresolvedMask(input))
+                    continue;
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private void NormalizeIgnorableMissingMasks(CapabilityMaterial material)
+        {
+            foreach (var input in GetAtlasTextureInputs(material))
+            {
+                if (!IsTextureUsed(input) ||
+                    _packFileService.FindFile(input.TexturePath) != null ||
+                    !IsIgnorableUnresolvedMask(input))
+                {
+                    continue;
+                }
+
+                input.UseTexture = false;
+                input.TexturePath = string.Empty;
+            }
+        }
+
+        private static bool IsIgnorableUnresolvedMask(TextureInput input)
+        {
+            if (input.Type != TextureType.Mask)
+                return false;
+
+            var normalized = input.TexturePath
+                .Trim()
+                .Replace('/', '\\')
+                .ToLowerInvariant();
+            return normalized.Equals("test_mask.dds", StringComparison.Ordinal) ||
+                   normalized.EndsWith(@"\test_mask.dds", StringComparison.Ordinal);
         }
 
         private static bool TryGetPrimaryTextureType(CapabilityMaterial material, out TextureType primaryTextureType)
