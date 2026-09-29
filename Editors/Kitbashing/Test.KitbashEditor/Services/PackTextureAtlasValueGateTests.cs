@@ -79,6 +79,24 @@ namespace Test.KitbashEditor.Services
             method.Invoke(null, [material, slot]);
         }
 
+
+        private static double GetMiBPerDraw(double netBytes, double drawsEliminated)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "GetAtlasValueGateMiBPerDraw",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.GetAtlasValueGateMiBPerDraw was not found.");
+
+            return (double)(method.Invoke(null, [netBytes, drawsEliminated])
+                ?? throw new InvalidOperationException(
+                    "GetAtlasValueGateMiBPerDraw returned null."));
+        }
+
         [TestCase(16.0, 0.0, 16.0)]
         [TestCase(16.0, 12.0, 4.0)]
         [TestCase(16.0, 16.0, 0.0)]
@@ -149,6 +167,21 @@ namespace Test.KitbashEditor.Services
                     Is.EqualTo("base.dds"));
             });
         }
+
+        [TestCase(8.0 * 1024 * 1024, 4.0, 2.0)]
+        [TestCase(512.0 * 1024, 2.0, 0.25)]
+        [TestCase(-8.0 * 1024 * 1024, 4.0, 0.0)]
+        [TestCase(8.0 * 1024 * 1024, 0.0, 0.0)]
+        public void MiBPerDraw_UsesPositiveNetResidencyPerEliminatedDraw(
+            double netBytes,
+            double drawsEliminated,
+            double expected)
+        {
+            Assert.That(
+                GetMiBPerDraw(netBytes, drawsEliminated),
+                Is.EqualTo(expected).Within(0.000001));
+        }
+
 
 
     }
