@@ -44,6 +44,24 @@ namespace Test.KitbashEditor.Services
                     "IsAtlasValueGateSourceTextureRetired returned null."));
         }
 
+
+        private static bool IsIgnorableUnresolvedTexture(string slot, string path)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "IsIgnorableUnresolvedAtlasTexture",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.IsIgnorableUnresolvedAtlasTexture was not found.");
+
+            return (bool)(method.Invoke(null, [slot, path])
+                ?? throw new InvalidOperationException(
+                    "IsIgnorableUnresolvedAtlasTexture returned null."));
+        }
+
         [TestCase(16.0, 0.0, 16.0)]
         [TestCase(16.0, 12.0, 4.0)]
         [TestCase(16.0, 16.0, 0.0)]
@@ -74,6 +92,21 @@ namespace Test.KitbashEditor.Services
                     rewrittenReferenceCount),
                 Is.EqualTo(expected));
         }
+
+        [TestCase("t_xml_mask", "test_mask.dds", true)]
+        [TestCase("t_xml_mask", @"variantmeshes\foo\tex\test_mask.dds", true)]
+        [TestCase("T_XML_MASK", @"variantmeshes/foo/tex/TEST_MASK.DDS", true)]
+        [TestCase("t_xml_mask", @"variantmeshes\foo\tex\real_mask.dds", false)]
+        [TestCase("t_xml_material_map", "test_mask.dds", false)]
+        [TestCase("t_xml_base_colour", "test_mask.dds", false)]
+        public void UnresolvedTestMask_IsOnlyIgnoredForMaskSlot(
+            string slot,
+            string path,
+            bool expected)
+        {
+            Assert.That(IsIgnorableUnresolvedTexture(slot, path), Is.EqualTo(expected));
+        }
+
 
     }
 }
