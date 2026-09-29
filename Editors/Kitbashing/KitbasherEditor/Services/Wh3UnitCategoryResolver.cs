@@ -29,6 +29,56 @@ namespace Editors.KitbasherEditor.Services
         Crew,
     }
 
+    internal enum Wh3VisualAssetState
+    {
+        Live,
+        Destroyed,
+        Destruct,
+    }
+
+    internal enum Wh3EntityRoundingPolicy
+    {
+        Ceiling,
+        Round,
+        Floor,
+    }
+
+    internal enum Wh3RosterScope
+    {
+        AllGameUnits,
+        SelectedFaction,
+        SelectedCulture,
+        ModAffectedUnits,
+        OptimizedAssetsOnly,
+    }
+
+    internal sealed record Wh3ArmyVisualScenario(
+        double UnitSizeScale,
+        double CrewScale,
+        Wh3EntityRoundingPolicy EngineRoundingPolicy,
+        IReadOnlyDictionary<int, double> LodDistribution,
+        double DestructionProbability,
+        IReadOnlyDictionary<Wh3ArmyUnitCategory, int> ArmySlotTemplate,
+        Wh3RosterScope RosterScope)
+    {
+        public static Wh3ArmyVisualScenario Default { get; } = new(
+            0.75,
+            0.50,
+            Wh3EntityRoundingPolicy.Ceiling,
+            new Dictionary<int, double> { [0] = 1.0 },
+            0.0,
+            new Dictionary<Wh3ArmyUnitCategory, int>
+            {
+                [Wh3ArmyUnitCategory.Lord] = 1,
+                [Wh3ArmyUnitCategory.Hero] = 2,
+                [Wh3ArmyUnitCategory.InfantryMissile] = 9,
+                [Wh3ArmyUnitCategory.CavalryChariot] = 4,
+                [Wh3ArmyUnitCategory.MonsterBeast] = 3,
+                [Wh3ArmyUnitCategory.ArtilleryWarMachine] = 2,
+            },
+            Wh3RosterScope.AllGameUnits);
+    }
+
     internal sealed record Wh3UnitVisualCounts(
         int Riders,
         int Mounts,
@@ -66,12 +116,36 @@ namespace Editors.KitbasherEditor.Services
         Wh3UnitVisualRole VisualRole,
         int EntityCount,
         Wh3UnitVisualCounts VisualCounts,
-        double ExpectedLiveBattlePresence);
+        Wh3VisualAssetState State,
+        int Lod,
+        double ScenarioPresenceProbability)
+    {
+        public double ExpectedLiveBattlePresence
+            => State == Wh3VisualAssetState.Live ? ScenarioPresenceProbability : 0.0;
+    }
+
+    internal sealed record Wh3ResolvedUnitComponent(
+        Wh3UnitVisualRole Role,
+        string AssetPath,
+        bool IsVariantMeshDefinition,
+        Wh3VisualAssetState State,
+        int Lod,
+        double ScenarioPresenceProbability);
+
+    internal sealed record Wh3ResolvedUnitVisual(
+        string Identity,
+        string MainUnitKey,
+        string LandUnitKey,
+        Wh3ArmyUnitCategory Category,
+        Wh3UnitVisualCounts VisualCounts,
+        IReadOnlyList<Wh3ResolvedUnitComponent> Components);
 
     internal sealed record Wh3UnitCategoryResolution(
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> UsagesByVmd,
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> DirectUsagesByVmd,
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitDirectAssetUsage>> DirectAssetUsagesByPath,
+        IReadOnlyList<Wh3ResolvedUnitVisual> RosterUnits,
+        Wh3ArmyVisualScenario Scenario,
         IReadOnlyList<string> UnresolvedVmdRoots,
         IReadOnlyDictionary<string, int> ParsedRowsByTable,
         int TableFilesRead,
@@ -112,8 +186,6 @@ namespace Editors.KitbasherEditor.Services
         // The optimizer models a large-size battle.  WHMM uses the same scalar for the
         // entity count shown by its unit viewer.  Crew is a separate visual population for
         // crewed engines; it is intentionally derived from num_men, never from ammunition.
-        private const double LargeUnitEntityScale = 0.75;
-        private const double LargeCrewEntityScale = 0.50;
 
         private static readonly string[] RequiredTables =
         [
@@ -136,8 +208,10 @@ namespace Editors.KitbasherEditor.Services
             IPackFileContainer source,
             IReadOnlyCollection<string> rootVmdPaths,
             IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Wh3ArmyVisualScenario? scenario = null)
         {
+            var activeScenario = scenario ?? Wh3ArmyVisualScenario.Default;
             var diagnostics = new List<string>();
             var parsedRowsByTable = RequiredTables.ToDictionary(
                 table => table,
@@ -294,7 +368,9 @@ namespace Editors.KitbasherEditor.Services
                 Wh3ArmyUnitCategory category,
                 Wh3UnitVisualRole visualRole,
                 Wh3UnitVisualCounts visualCounts,
-                double expectedLiveBattlePresence)
+                Wh3VisualAssetState stateValue,
+                int lod,
+                double scenarioPresenceProbability)
             {
                 assetPath = NormalizePath(assetPath);
                 if (assetPath.Length == 0 || !source.ContainsFile(assetPath))
@@ -317,9 +393,9 @@ namespace Editors.KitbasherEditor.Services
                 identity += $"|role:{visualRole}";
                 if (usages.TryGetValue(identity, out var existing))
                 {
-                    expectedLiveBattlePresence = Math.Max(
-                        existing.ExpectedLiveBattlePresence,
-                        expectedLiveBattlePresence);
+                    scenarioPresenceProbability = Math.Max(
+                        existing.ScenarioPresenceProbability,
+                        scenarioPresenceProbability);
                 }
 
                 usages[identity] = new Wh3UnitDirectAssetUsage(
@@ -330,7 +406,9 @@ namespace Editors.KitbasherEditor.Services
                     visualRole,
                     entityCount,
                     visualCounts,
-                    Math.Clamp(expectedLiveBattlePresence, 0.0, 1.0));
+                    stateValue,
+                    Math.Max(0, lod),
+                    Math.Clamp(scenarioPresenceProbability, 0.0, 1.0));
             }
 
             void AddEngineAssetUsages(
@@ -348,12 +426,12 @@ namespace Editors.KitbasherEditor.Services
                              "destruction_animation",
                          })
                 {
-                    var expectedLiveBattlePresence =
-                        GetDirectEngineAssetExpectedLiveBattlePresence(field);
+                    var stateValue = GetDirectEngineAssetState(field);
                     foreach (var assetPath in ResolveEngineAssetPaths(
                                  Get(engine, field),
                                  animatedLodRowsByKey))
                     {
+                        var lod = ResolveAssetLod(assetPath);
                         AddDirectAssetUsage(
                             assetPath,
                             mainUnitKey,
@@ -361,7 +439,9 @@ namespace Editors.KitbasherEditor.Services
                             category,
                             Wh3UnitVisualRole.Engine,
                             visualCounts,
-                            expectedLiveBattlePresence);
+                            stateValue,
+                            lod,
+                            GetScenarioPresenceProbability(activeScenario, stateValue, lod));
                     }
                 }
             }
@@ -415,7 +495,7 @@ namespace Editors.KitbasherEditor.Services
                         : 1;
                     var engineKey = Get(land, "engine");
                     engineRows.TryGetValue(engineKey, out var engine);
-                    var visualCounts = ResolveVisualCounts(main, land, engine);
+                    var visualCounts = ResolveVisualCounts(main, land, engine, activeScenario);
                     var mainVisualRole = visualCounts.Crew > 0
                         ? Wh3UnitVisualRole.Crew
                         : Wh3UnitVisualRole.Men;
@@ -507,6 +587,11 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // Build the complete DB-derived unit roster before filtering to VMDs discovered in
+            // the selected pack. This keeps the army denominator stable when a pack happens to
+            // contain only a subset of the game's visual definitions.
+            var rosterUnits = BuildResolvedRoster(usagesByVmd, directAssetUsagesByPath);
+
             var normalizedRoots = rootVmdPaths
                 .Select(NormalizePath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -562,12 +647,116 @@ namespace Editors.KitbasherEditor.Services
                         .ThenBy(usage => usage.VisualRole)
                         .ToList(),
                     StringComparer.OrdinalIgnoreCase),
+                rosterUnits,
+                activeScenario,
                 unresolved,
                 parsedRowsByTable,
                 tableFilesRead,
                 directSourceVmds.Count,
                 Math.Max(0, filtered.Count - directSourceVmds.Count),
                 diagnostics);
+        }
+
+        private static IReadOnlyList<Wh3ResolvedUnitVisual> BuildResolvedRoster(
+            IReadOnlyDictionary<string, Dictionary<string, Wh3UnitCategoryUsage>> usagesByVmd,
+            IReadOnlyDictionary<string, Dictionary<string, Wh3UnitDirectAssetUsage>> directAssetsByPath)
+        {
+            var builders = new Dictionary<
+                string,
+                (string MainUnitKey, string LandUnitKey, Wh3ArmyUnitCategory Category,
+                    Wh3UnitVisualCounts Counts, List<Wh3ResolvedUnitComponent> Components)>(
+                StringComparer.OrdinalIgnoreCase);
+
+            static string Identity(string mainUnitKey, string landUnitKey)
+                => string.IsNullOrWhiteSpace(mainUnitKey)
+                    ? $"land:{landUnitKey}"
+                    : $"main:{mainUnitKey}";
+
+            foreach (var (vmdPathValue, usages) in usagesByVmd)
+            {
+                var vmdPath = NormalizePath(vmdPathValue);
+                foreach (var usage in usages.Values)
+                {
+                    var identity = Identity(usage.MainUnitKey, usage.LandUnitKey);
+                    if (!builders.TryGetValue(identity, out var builder))
+                    {
+                        builder = (
+                            usage.MainUnitKey,
+                            usage.LandUnitKey,
+                            usage.Category,
+                            usage.VisualCounts,
+                            []);
+                    }
+
+                    if (!builder.Components.Any(component =>
+                            component.IsVariantMeshDefinition &&
+                            component.Role == usage.VisualRole &&
+                            component.AssetPath.Equals(vmdPath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        builder.Components.Add(new Wh3ResolvedUnitComponent(
+                            usage.VisualRole,
+                            vmdPath,
+                            true,
+                            Wh3VisualAssetState.Live,
+                            0,
+                            1.0));
+                    }
+
+                    builders[identity] = builder;
+                }
+            }
+
+            foreach (var (assetPathValue, usages) in directAssetsByPath)
+            {
+                var assetPath = NormalizePath(assetPathValue);
+                foreach (var usage in usages.Values)
+                {
+                    var identity = Identity(usage.MainUnitKey, usage.LandUnitKey);
+                    if (!builders.TryGetValue(identity, out var builder))
+                    {
+                        builder = (
+                            usage.MainUnitKey,
+                            usage.LandUnitKey,
+                            usage.Category,
+                            usage.VisualCounts,
+                            []);
+                    }
+
+                    if (!builder.Components.Any(component =>
+                            !component.IsVariantMeshDefinition &&
+                            component.Role == usage.VisualRole &&
+                            component.State == usage.State &&
+                            component.Lod == usage.Lod &&
+                            component.AssetPath.Equals(assetPath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        builder.Components.Add(new Wh3ResolvedUnitComponent(
+                            usage.VisualRole,
+                            assetPath,
+                            false,
+                            usage.State,
+                            usage.Lod,
+                            usage.ScenarioPresenceProbability));
+                    }
+
+                    builders[identity] = builder;
+                }
+            }
+
+            return builders
+                .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(entry => new Wh3ResolvedUnitVisual(
+                    entry.Key,
+                    entry.Value.MainUnitKey,
+                    entry.Value.LandUnitKey,
+                    entry.Value.Category,
+                    entry.Value.Counts,
+                    entry.Value.Components
+                        .OrderBy(component => component.Role)
+                        .ThenBy(component => component.State)
+                        .ThenBy(component => component.Lod)
+                        .ThenBy(component => component.AssetPath, StringComparer.OrdinalIgnoreCase)
+                        .ToArray()))
+                .ToArray();
         }
 
         private static void AddUsage(
@@ -737,6 +926,13 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<string, string> main,
             IReadOnlyDictionary<string, string> land,
             IReadOnlyDictionary<string, string>? engine)
+            => ResolveVisualCounts(main, land, engine, Wh3ArmyVisualScenario.Default);
+
+        private static Wh3UnitVisualCounts ResolveVisualCounts(
+            IReadOnlyDictionary<string, string> main,
+            IReadOnlyDictionary<string, string> land,
+            IReadOnlyDictionary<string, string>? engine,
+            Wh3ArmyVisualScenario scenario)
         {
             var rawMen = TryParseInt(Get(main, "num_men"), out var parsedMen)
                 ? Math.Max(1, parsedMen)
@@ -759,14 +955,14 @@ namespace Editors.KitbasherEditor.Services
                 rawEngines = 1;
 
             var engines = hasEngine
-                ? ScaleEntityCount(rawEngines, LargeUnitEntityScale)
+                ? ScaleEntityCount(rawEngines, scenario.UnitSizeScale, scenario.EngineRoundingPolicy)
                 : 0;
             var crewedEngine = hasEngine && IsCrewedEngine(Get(engine, "engine_type"));
             var riders = crewedEngine
                 ? 0
-                : ScaleEntityCount(rawMen, LargeUnitEntityScale);
+                : ScaleEntityCount(rawMen, scenario.UnitSizeScale, scenario.EngineRoundingPolicy);
             var crew = crewedEngine
-                ? ScaleEntityCount(rawMen, LargeCrewEntityScale)
+                ? ScaleEntityCount(rawMen, scenario.CrewScale, scenario.EngineRoundingPolicy)
                 : 0;
 
             // For a mounted unit, num_mounts is the number of mounts attached to one
@@ -795,21 +991,79 @@ namespace Editors.KitbasherEditor.Services
                 Engines = Math.Max(1, visualCounts.Engines),
             };
 
-        private static double GetDirectEngineAssetExpectedLiveBattlePresence(string field)
+        private static Wh3VisualAssetState GetDirectEngineAssetState(string field)
             => field.Equals("model", StringComparison.OrdinalIgnoreCase)
-                ? 1.0
-                : 0.0;
+                ? Wh3VisualAssetState.Live
+                : field.Equals("destroyed_model", StringComparison.OrdinalIgnoreCase)
+                    ? Wh3VisualAssetState.Destroyed
+                    : Wh3VisualAssetState.Destruct;
+
+        private static double GetDirectEngineAssetExpectedLiveBattlePresence(string field)
+        {
+            var stateValue = GetDirectEngineAssetState(field);
+            return GetScenarioPresenceProbability(
+                Wh3ArmyVisualScenario.Default,
+                stateValue,
+                0);
+        }
+
+        private static double GetScenarioPresenceProbability(
+            Wh3ArmyVisualScenario scenario,
+            Wh3VisualAssetState stateValue,
+            int lod)
+        {
+            var stateProbability = stateValue switch
+            {
+                Wh3VisualAssetState.Live => 1.0 - scenario.DestructionProbability,
+                Wh3VisualAssetState.Destroyed => scenario.DestructionProbability,
+                Wh3VisualAssetState.Destruct => scenario.DestructionProbability,
+                _ => 0.0,
+            };
+            if (stateProbability <= 0)
+                return 0;
+
+            if (!scenario.LodDistribution.TryGetValue(Math.Max(0, lod), out var lodProbability))
+                return 0;
+
+            return Math.Clamp(stateProbability * lodProbability, 0.0, 1.0);
+        }
+
+        private static int ResolveAssetLod(string assetPath)
+        {
+            var name = Path.GetFileNameWithoutExtension(assetPath);
+            var marker = name.LastIndexOf("_lod", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0)
+                return 0;
+
+            var digits = new string(name
+                .Skip(marker + 4)
+                .TakeWhile(char.IsDigit)
+                .ToArray());
+            return int.TryParse(digits, NumberStyles.Integer, CultureInfo.InvariantCulture, out var lod)
+                ? Math.Max(0, lod)
+                : 0;
+        }
 
         private static bool IsCrewedEngine(string engineType)
             => engineType.Contains("crew", StringComparison.OrdinalIgnoreCase) &&
                !engineType.Contains("no_crew", StringComparison.OrdinalIgnoreCase);
 
-        private static int ScaleEntityCount(int rawCount, double scale)
+        private static int ScaleEntityCount(
+            int rawCount,
+            double scale,
+            Wh3EntityRoundingPolicy roundingPolicy)
         {
             if (rawCount <= 0)
                 return 0;
 
-            return Math.Max(1, (int)Math.Ceiling(rawCount * scale));
+            var scaled = rawCount * scale;
+            var rounded = roundingPolicy switch
+            {
+                Wh3EntityRoundingPolicy.Floor => (int)Math.Floor(scaled),
+                Wh3EntityRoundingPolicy.Round => (int)Math.Round(scaled),
+                _ => (int)Math.Ceiling(scaled),
+            };
+            return Math.Max(1, rounded);
         }
 
         private static List<Dictionary<string, string>> DecodeTable(
