@@ -9894,7 +9894,7 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.AtlasValueGateExpectedDrawsAccepted:N3}");
                 sb.AppendLine();
                 sb.AppendLine("Accepted atlas value-gate batch economics (worst-to-best)");
-                sb.AppendLine("-------------------------------------------------------------------");
+                sb.AppendLine("---------------------------------------------------------");
                 sb.AppendLine(
                     "Sorted descending by the worse of global net MiB/raw draw and " +
                     "scenario-estimated net MiB/scenario-estimated draw.");
@@ -10035,7 +10035,7 @@ namespace Editors.KitbasherEditor.Services
                 var outputBcn = state.OutputBcnResidency;
                 sb.AppendLine();
                 sb.AppendLine("BCn texture resource payload and scenario residency estimate");
-                sb.AppendLine("-------------------------------------------------------------------------------");
+                sb.AppendLine("-----------------------------------------------------------");
                 sb.AppendLine(
                     $"Source reachable DDS textures: {sourceBcn.ReachableDdsCount:N0}; " +
                     $"BCn={sourceBcn.BcnTextureCount:N0}; unsupported/non-BCn={sourceBcn.UnsupportedDdsCount:N0}");
@@ -10329,7 +10329,7 @@ namespace Editors.KitbasherEditor.Services
             if (AtlasProfilingEnabled)
             {
                 sb.AppendLine("Generated atlas texture timings");
-                sb.AppendLine("-----------------------------------------");
+                sb.AppendLine("-------------------------------");
                 if (state.GeneratedTextureTimings.Count == 0)
                 {
                     sb.AppendLine("(none)");
@@ -10393,7 +10393,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             sb.AppendLine("Atlas component reuse topology");
-            sb.AppendLine("----------------------------------------");
+            sb.AppendLine("------------------------------");
             sb.AppendLine(
                 "This is conservative VMD-root reachability, not guaranteed simultaneous rendering: " +
                 "alternatives in the same VMD/slot can share a root without coexisting in one rendered variant.");
@@ -10512,7 +10512,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine();
 
             sb.AppendLine("Malformed VMD root files ignored");
-            sb.AppendLine("------------------------------------------");
+            sb.AppendLine("--------------------------------");
             foreach (var entry in state.MalformedVmdRoots.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
             {
                 sb.AppendLine(entry.Path);
@@ -10523,7 +10523,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine();
 
             sb.AppendLine("Malformed referenced VMD files ignored");
-            sb.AppendLine("------------------------------------------------");
+            sb.AppendLine("--------------------------------------");
             foreach (var entry in state.MalformedReferencedVmds
                          .OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
             {
@@ -10546,7 +10546,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine();
 
             sb.AppendLine("Malformed material XML files ignored");
-            sb.AppendLine("----------------------------------------------");
+            sb.AppendLine("------------------------------------");
             foreach (var entry in state.MalformedMaterialsIgnored
                          .OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
             {
@@ -10654,7 +10654,7 @@ namespace Editors.KitbasherEditor.Services
 
                 sb.AppendLine();
                 sb.AppendLine("Merge-aware atlas repartitions");
-                sb.AppendLine("----------------------------------------");
+                sb.AppendLine("------------------------------");
                 if (state.MergeAwareRepartitionEntries.Count == 0)
                 {
                     sb.AppendLine("(none)");
@@ -10675,7 +10675,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine();
 
                 sb.AppendLine("Mesh merge blocker diagnostics");
-                sb.AppendLine("----------------------------------------");
+                sb.AppendLine("------------------------------");
                 sb.AppendLine("Counts below are near-miss part pairs/groups; unrelated parts are intentionally omitted.");
                 if (state.MeshMergeBlockerCounts.Count == 0)
                 {
@@ -10717,7 +10717,7 @@ namespace Editors.KitbasherEditor.Services
 
                 sb.AppendLine();
                 sb.AppendLine("Texture-blocked merge opportunities");
-                sb.AppendLine("---------------------------------------------");
+                sb.AppendLine("-----------------------------------");
                 sb.AppendLine("Each entry is one additional merge group potentially removable by combining two existing atlas batches.");
                 sb.AppendLine("Pixel cost compares the two current complete batches with one hypothetical combined batch.");
                 var opportunities = state.TextureMergeOpportunities.Values
@@ -10780,7 +10780,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             sb.AppendLine("Uniform constant source textures");
-            sb.AppendLine("------------------------------------------");
+            sb.AppendLine("--------------------------------");
             foreach (var path in state.UniformConstantTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                 sb.AppendLine(path);
             if (state.UniformConstantTexturePaths.Count == 0)
