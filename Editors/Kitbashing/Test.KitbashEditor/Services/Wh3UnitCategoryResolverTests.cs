@@ -87,6 +87,40 @@ namespace Test.KitbashEditor.Services
                 ?? throw new InvalidOperationException(
                     $"Visual count property '{propertyName}' was not found."));
 
+        private static object ResolveExtraEngineVisualCounts(object counts)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "ResolveExtraEngineVisualCounts",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.ResolveExtraEngineVisualCounts was not found.");
+
+            return method.Invoke(null, [counts])
+                ?? throw new InvalidOperationException(
+                    "ResolveExtraEngineVisualCounts returned null.");
+        }
+
+        private static double GetDirectEngineAssetExpectedLiveBattlePresence(string field)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "GetDirectEngineAssetExpectedLiveBattlePresence",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.GetDirectEngineAssetExpectedLiveBattlePresence was not found.");
+
+            return (double)(method.Invoke(null, [field])
+                ?? throw new InvalidOperationException(
+                    "GetDirectEngineAssetExpectedLiveBattlePresence returned null."));
+        }
+
         private static IReadOnlyList<string> ResolveEngineAssetPaths(
             string reference,
             IReadOnlyDictionary<string, List<string>> animatedLodRowsByKey)
@@ -360,6 +394,39 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void ExtraEngineVisualCounts_KeepAnEngineWhenPrimaryEngineIsAbsent()
+        {
+            var baseCounts = ResolveVisualCounts(
+                new Dictionary<string, string>
+                {
+                    ["num_men"] = "1",
+                },
+                new Dictionary<string, string>(),
+                null);
+
+            var extraCounts = ResolveExtraEngineVisualCounts(baseCounts);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetVisualCount(baseCounts, "Engines"), Is.EqualTo(0));
+                Assert.That(GetVisualCount(extraCounts, "Engines"), Is.EqualTo(1));
+            });
+        }
+
+        [TestCase("model", 1.0)]
+        [TestCase("destroyed_model", 0.0)]
+        [TestCase("destruct_model", 0.0)]
+        [TestCase("destruction_animation", 0.0)]
+        public void DirectEngineAssetPresence_OnlyLiveModelCountsAsNormalBattleVisual(
+            string field,
+            double expected)
+        {
+            Assert.That(
+                GetDirectEngineAssetExpectedLiveBattlePresence(field),
+                Is.EqualTo(expected));
+        }
+
+        [Test]
         public void EngineAssetReference_ResolvesAnimatedLodAndExplicitDestroyedModel()
         {
             var animatedLodRows = new Dictionary<string, List<string>>(
@@ -369,10 +436,17 @@ namespace Test.KitbashEditor.Services
                 [
                     @"warmachines\engines\tmb_skull_catapult\tmb_screaming_skull_catapult_01.rigid_model_v2",
                 ],
+                ["tmb_skull_catapult_destruct"] =
+                [
+                    @"warmachines\engines\tmb_skull_catapult\tmb_screaming_skull_catapult_01_destruct.wsmodel",
+                ],
             };
 
             var modelPaths = ResolveEngineAssetPaths(
                 "tmb_skull_catapult",
+                animatedLodRows);
+            var destructionAnimationPaths = ResolveEngineAssetPaths(
+                "tmb_skull_catapult_destruct",
                 animatedLodRows);
             var destroyedPaths = ResolveEngineAssetPaths(
                 @"warmachines\engines\tmb_skull_catapult\tmb_screaming_skull_catapult_01_destroyed.wsmodel",
@@ -385,6 +459,12 @@ namespace Test.KitbashEditor.Services
                     Is.EqualTo(
                     [
                         @"warmachines\engines\tmb_skull_catapult\tmb_screaming_skull_catapult_01.rigid_model_v2",
+                    ]));
+                Assert.That(
+                    destructionAnimationPaths,
+                    Is.EqualTo(
+                    [
+                        @"warmachines\engines\tmb_skull_catapult\tmb_screaming_skull_catapult_01_destruct.wsmodel",
                     ]));
                 Assert.That(
                     destroyedPaths,
