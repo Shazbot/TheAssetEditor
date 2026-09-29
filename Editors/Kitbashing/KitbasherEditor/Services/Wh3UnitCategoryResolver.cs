@@ -495,7 +495,7 @@ namespace Editors.KitbasherEditor.Services
                         : 1;
                     var engineKey = Get(land, "engine");
                     engineRows.TryGetValue(engineKey, out var engine);
-                    var visualCounts = ResolveVisualCounts(main, land, engine, activeScenario);
+                    var visualCounts = ResolveVisualCountsForScenario(main, land, engine, activeScenario);
                     var mainVisualRole = visualCounts.Crew > 0
                         ? Wh3UnitVisualRole.Crew
                         : Wh3UnitVisualRole.Men;
@@ -587,10 +587,55 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // Seed the roster directly from effective main_units + land_units so the
+            // denominator does not depend on a unit having a VMD/asset that happens to be
+            // discoverable in the selected pack. Visual usages are attached afterwards.
+            var rosterSeeds = new List<Wh3ResolvedUnitVisual>();
+            foreach (var main in mainRows)
+            {
+                var landUnitKey = Get(main, "land_unit");
+                if (landUnitKey.Length == 0 ||
+                    !landRows.TryGetValue(landUnitKey, out var land))
+                {
+                    continue;
+                }
+
+                var mainUnitKey = Get(main, "unit");
+                if (mainUnitKey.Length == 0)
+                    mainUnitKey = landUnitKey;
+
+                var caste = Get(main, "caste");
+                var landCategory = Get(land, "category");
+                var uiGroupKey = ResolveUiGroupKey(
+                    main,
+                    caste,
+                    uiUnitGroupings,
+                    uiUnitGroupParents);
+                var engineKey = Get(land, "engine");
+                engineRows.TryGetValue(engineKey, out var engine);
+                var visualCounts = ResolveVisualCountsForScenario(
+                    main,
+                    land,
+                    engine,
+                    activeScenario);
+                var identity = $"main:{mainUnitKey.Trim().ToLowerInvariant()}";
+
+                rosterSeeds.Add(new Wh3ResolvedUnitVisual(
+                    identity,
+                    mainUnitKey,
+                    landUnitKey,
+                    Classify(caste, landCategory, uiGroupKey),
+                    visualCounts,
+                    []));
+            }
+
             // Build the complete DB-derived unit roster before filtering to VMDs discovered in
             // the selected pack. This keeps the army denominator stable when a pack happens to
             // contain only a subset of the game's visual definitions.
-            var rosterUnits = BuildResolvedRoster(usagesByVmd, directAssetUsagesByPath);
+            var rosterUnits = BuildResolvedRoster(
+                usagesByVmd,
+                directAssetUsagesByPath,
+                rosterSeeds);
 
             var normalizedRoots = rootVmdPaths
                 .Select(NormalizePath)
@@ -659,7 +704,8 @@ namespace Editors.KitbasherEditor.Services
 
         private static IReadOnlyList<Wh3ResolvedUnitVisual> BuildResolvedRoster(
             IReadOnlyDictionary<string, Dictionary<string, Wh3UnitCategoryUsage>> usagesByVmd,
-            IReadOnlyDictionary<string, Dictionary<string, Wh3UnitDirectAssetUsage>> directAssetsByPath)
+            IReadOnlyDictionary<string, Dictionary<string, Wh3UnitDirectAssetUsage>> directAssetsByPath,
+            IEnumerable<Wh3ResolvedUnitVisual> seeds)
         {
             var builders = new Dictionary<
                 string,
@@ -669,8 +715,18 @@ namespace Editors.KitbasherEditor.Services
 
             static string Identity(string mainUnitKey, string landUnitKey)
                 => string.IsNullOrWhiteSpace(mainUnitKey)
-                    ? $"land:{landUnitKey}"
-                    : $"main:{mainUnitKey}";
+                    ? $"land:{landUnitKey}".ToLowerInvariant()
+                    : $"main:{mainUnitKey}".ToLowerInvariant();
+
+            foreach (var seed in seeds)
+            {
+                builders[seed.Identity] = (
+                    seed.MainUnitKey,
+                    seed.LandUnitKey,
+                    seed.Category,
+                    seed.VisualCounts,
+                    seed.Components.ToList());
+            }
 
             foreach (var (vmdPathValue, usages) in usagesByVmd)
             {
@@ -926,9 +982,9 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<string, string> main,
             IReadOnlyDictionary<string, string> land,
             IReadOnlyDictionary<string, string>? engine)
-            => ResolveVisualCounts(main, land, engine, Wh3ArmyVisualScenario.Default);
+            => ResolveVisualCountsForScenario(main, land, engine, Wh3ArmyVisualScenario.Default);
 
-        private static Wh3UnitVisualCounts ResolveVisualCounts(
+        private static Wh3UnitVisualCounts ResolveVisualCountsForScenario(
             IReadOnlyDictionary<string, string> main,
             IReadOnlyDictionary<string, string> land,
             IReadOnlyDictionary<string, string>? engine,
