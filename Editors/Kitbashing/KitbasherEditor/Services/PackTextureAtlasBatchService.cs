@@ -32,8 +32,10 @@ namespace Editors.KitbasherEditor.Services
         private const double TexelDensityOutlierMultiplier = 1.5;
         private const double MinAtlasResolutionScale = 0.25;
         private const int MinAtlasResolutionScaleDimension = 256;
-        private const long MaxNetBcnBytesPerExpectedArmyDraw = 8L * 1024 * 1024;
-        private const long MaxNetBcnBytesPerFallbackDraw = 32L * 1024 * 1024;
+        // Calibrated from the !ak_teb3 value curve: preserve almost all expected
+        // battle draw savings while rejecting expensive low-value atlas batches.
+        private const long MaxNetBcnBytesPerExpectedArmyDraw = 256L * 1024; // 0.25 MiB
+        private const long MaxNetBcnBytesPerFallbackDraw = 8L * 1024 * 1024;
         private static readonly bool AtlasProfilingEnabled =
             IsEnabledEnvironmentVariable(AtlasProfilingEnvironmentVariable);
 
@@ -3690,7 +3692,7 @@ namespace Editors.KitbasherEditor.Services
                     $"{FormatMiB(residency.RetiredSourceBcnBytes)}, net " +
                     $"{FormatMiB(residency.NetBcnBytes)}; net cost is " +
                     $"{FormatMiB(bytesPerDraw)} per fallback draw eliminated, above the " +
-                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw)} budget.";
+                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} budget.";
                 return false;
             }
 
@@ -3711,7 +3713,7 @@ namespace Editors.KitbasherEditor.Services
                         $"{FormatMiB(residency.ExpectedArmyRetiredSourceBcnBytes)}, net " +
                         $"{FormatMiB(residency.ExpectedArmyNetBcnBytes)}; net cost is " +
                         $"{FormatMiB(bytesPerDraw)} per expected-army draw eliminated, above the " +
-                        $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw)} budget.";
+                        $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} budget.";
                     return false;
                 }
             }
@@ -7162,8 +7164,8 @@ namespace Editors.KitbasherEditor.Services
             return result;
         }
 
-        private static string FormatMiB(double bytes)
-            => $"{bytes / (1024.0 * 1024.0):N1} MiB";
+        private static string FormatMiB(double bytes, int decimals = 1)
+            => $"{(bytes / (1024.0 * 1024.0)).ToString($"N{decimals}")} MiB";
 
         private static double GetAtlasValueGateMiBPerDraw(
             double netBytes,
@@ -8629,8 +8631,8 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Atlas value-gate broad batches split: {state.AtlasValueGateBroadBatchesSplit}");
                 sb.AppendLine(
                     $"Atlas value-gate net BCn budgets: " +
-                    $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw)} per expected-army draw, " +
-                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw)} per fallback draw");
+                    $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} per expected-army draw, " +
+                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} per fallback draw");
                 sb.AppendLine($"Atlas value-gate candidates accepted: {state.AtlasValueGateCandidatesAccepted}");
                 sb.AppendLine($"Atlas value-gate candidates rejected: {state.AtlasValueGateCandidatesRejected}");
                 sb.AppendLine(
