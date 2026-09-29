@@ -45,7 +45,9 @@ namespace Test.KitbashEditor.Services
         public void Parse_RepairsMissingClosingTagTerminator()
         {
             const string xml =
-                "<VARIANT_MESH><SLOT></SLOT></VARIANT_MESH";
+                "<VARIANT_MESH>\n" +
+                "  <SLOT></SLOT>\n" +
+                "</VARIANT_MESH";
 
             var document = XmlCompatibilityParser.Parse(
                 xml,
@@ -64,7 +66,9 @@ namespace Test.KitbashEditor.Services
         public void Parse_AppliesTrailingCommentAndClosingTagRepairsTogether()
         {
             const string xml =
-                "<VARIANT_MESH><SLOT></SLOT></VARIANT_MESH\n" +
+                "<VARIANT_MESH>\n" +
+                "  <SLOT></SLOT>\n" +
+                "</VARIANT_MESH\n" +
                 "-- temporary workaround\n";
 
             var document = XmlCompatibilityParser.Parse(
