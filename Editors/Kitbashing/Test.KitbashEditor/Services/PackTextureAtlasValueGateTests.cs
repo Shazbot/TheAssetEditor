@@ -114,6 +114,42 @@ namespace Test.KitbashEditor.Services
                     "GetAtlasValueGateMiBPerDraw returned null."));
         }
 
+        private static bool IsEmbeddedTextureTypeSafe(string textureTypeName)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "IsEmbeddedAtlasTextureTypeSafe",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.IsEmbeddedAtlasTextureTypeSafe was not found.");
+
+            var parameterType = method.GetParameters().Single().ParameterType;
+            var textureType = Enum.Parse(parameterType, textureTypeName);
+            return (bool)(method.Invoke(null, [textureType])
+                ?? throw new InvalidOperationException(
+                    "IsEmbeddedAtlasTextureTypeSafe returned null."));
+        }
+
+        private static bool CanEarnMergeDrawCredit(string? embeddedRigidPath)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "CanEarnMergeDrawCredit" &&
+                    candidate.GetParameters().Length == 1 &&
+                    candidate.GetParameters()[0].ParameterType == typeof(string));
+
+            return (bool)(method.Invoke(null, [embeddedRigidPath])
+                ?? throw new InvalidOperationException(
+                    "CanEarnMergeDrawCredit returned null."));
+        }
+
         [TestCase(16.0, 0.0, 16.0)]
         [TestCase(16.0, 12.0, 4.0)]
         [TestCase(16.0, 16.0, 0.0)]
@@ -183,6 +219,33 @@ namespace Test.KitbashEditor.Services
                         "/material/textures/texture[slot='t_xml_base_colour']/source")?.InnerText,
                     Is.EqualTo("base.dds"));
             });
+        }
+
+        [TestCase("BaseColour", true)]
+        [TestCase("Diffuse", true)]
+        [TestCase("MaterialMap", true)]
+        [TestCase("Normal", true)]
+        [TestCase("Mask", true)]
+        [TestCase("Emissive", false)]
+        [TestCase("EmissiveDistortion", false)]
+        [TestCase("Ambient_occlusion", false)]
+        [TestCase("Specular", false)]
+        [TestCase("Gloss", false)]
+        public void EmbeddedRigidAtlasing_OnlyAcceptsTextureTypesItRewrites(
+            string textureType,
+            bool expected)
+        {
+            Assert.That(IsEmbeddedTextureTypeSafe(textureType), Is.EqualTo(expected));
+        }
+
+        [TestCase(null, true)]
+        [TestCase("", true)]
+        [TestCase(@"warmachines\engine.rigid_model_v2", false)]
+        public void DirectEmbeddedRigid_CannotEarnWsModelMergeDrawCredit(
+            string? embeddedRigidPath,
+            bool expected)
+        {
+            Assert.That(CanEarnMergeDrawCredit(embeddedRigidPath), Is.EqualTo(expected));
         }
 
         [TestCase(8.0 * 1024 * 1024, 4.0, 2.0)]
