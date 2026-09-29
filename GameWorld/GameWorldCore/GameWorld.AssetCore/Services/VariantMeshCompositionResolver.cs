@@ -139,7 +139,9 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         var node = new ResolvedVariantMeshNode(
             definitionKey,
             ownerFile,
-            definition.ModelReference);
+            string.IsNullOrWhiteSpace(definition.ModelReference)
+                ? definition.ModelReference
+                : NormalizePackPath(definition.ModelReference));
 
         if (string.IsNullOrWhiteSpace(definition.ModelReference) == false)
         {
@@ -191,7 +193,9 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         var node = new ResolvedVariantMeshNode(
             $"{GetDefinitionKey(ownerFile)}::{context}",
             ownerFile,
-            definition.ModelReference);
+            string.IsNullOrWhiteSpace(definition.ModelReference)
+                ? definition.ModelReference
+                : NormalizePackPath(definition.ModelReference));
 
         if (string.IsNullOrWhiteSpace(definition.ModelReference) == false)
         {
@@ -245,7 +249,7 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
             var node = new ResolvedVariantMeshNode(
                 GetDefinitionKey(candidateFile),
                 candidateFile,
-                reference)
+                NormalizePackPath(reference))
             {
                 ModelAsset = asset
             };
@@ -413,7 +417,11 @@ public sealed class VariantMeshCompositionResolver : IVariantMeshCompositionReso
         => TryGetPackPath(file) ?? file.Name;
 
     private static string NormalizePackPath(string path)
-        => path.Replace('/', '\\').Trim().TrimStart('\\');
+        => path.Replace('/', '\\')
+            .Replace("\\\\", "\\")
+            .Replace("\\\\", "\\")
+            .Trim()
+            .TrimStart('\\');
 
     private static string NormalizeCyclePath(string path)
         => NormalizePackPath(path).ToLowerInvariant();
