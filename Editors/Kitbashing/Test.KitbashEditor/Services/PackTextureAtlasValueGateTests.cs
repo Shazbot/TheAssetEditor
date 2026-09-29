@@ -178,6 +178,59 @@ namespace Test.KitbashEditor.Services
                        "BuildMergeAffinityIdentity returned null.");
         }
 
+        private static string GetValueGateBudgetDecision(
+            bool scenarioResolved,
+            int rawDrawsEliminated,
+            double expectedArmyDrawsEliminated,
+            double globalCostBytes,
+            double expectedCostBytes,
+            double acceptedNetBcnBytes,
+            double proposedNetBcnBytes,
+            double sourceBcnBytes)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "EvaluateAtlasValueGateBudget",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.EvaluateAtlasValueGateBudget was not found.");
+
+            return method.Invoke(
+                       null,
+                       [
+                           scenarioResolved,
+                           rawDrawsEliminated,
+                           expectedArmyDrawsEliminated,
+                           globalCostBytes,
+                           expectedCostBytes,
+                           acceptedNetBcnBytes,
+                           proposedNetBcnBytes,
+                           sourceBcnBytes,
+                       ])?.ToString()
+                   ?? throw new InvalidOperationException(
+                       "EvaluateAtlasValueGateBudget returned null.");
+        }
+
+        private static double GetDoubleConstant(string name)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var field = serviceType.GetField(
+                name,
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    $"PackTextureAtlasBatchService.{name} was not found.");
+
+            return Convert.ToDouble(
+                field.GetRawConstantValue()
+                ?? throw new InvalidOperationException($"{name} has no constant value."));
+        }
+
         private static bool CanEarnMergeDrawCredit(string? embeddedRigidPath)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
@@ -362,6 +415,102 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void ValueGate_ScenarioResolvedZeroBenefitRejectsPositiveBcnCost()
+        {
+            var decision = GetValueGateBudgetDecision(
+                scenarioResolved: true,
+                rawDrawsEliminated: 4,
+                expectedArmyDrawsEliminated: 0,
+                globalCostBytes: 1 * 1024 * 1024,
+                expectedCostBytes: 0,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 1 * 1024 * 1024,
+                sourceBcnBytes: 400 * 1024 * 1024);
+
+            Assert.That(decision, Is.EqualTo("ScenarioResolvedZeroBenefit"));
+        }
+
+        [Test]
+        public void ValueGate_ScenarioResolvedZeroBenefitAllowsNonPositiveNetCost()
+        {
+            var decision = GetValueGateBudgetDecision(
+                scenarioResolved: true,
+                rawDrawsEliminated: 1,
+                expectedArmyDrawsEliminated: 0,
+                globalCostBytes: 0,
+                expectedCostBytes: 0,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 0,
+                sourceBcnBytes: 400 * 1024 * 1024);
+
+            Assert.That(decision, Is.EqualTo("Accept"));
+        }
+
+        [Test]
+        public void ValueGate_UnresolvedScenarioCanUseRawDrawFallback()
+        {
+            var decision = GetValueGateBudgetDecision(
+                scenarioResolved: false,
+                rawDrawsEliminated: 1,
+                expectedArmyDrawsEliminated: 0,
+                globalCostBytes: 7 * 1024 * 1024,
+                expectedCostBytes: 0,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 7 * 1024 * 1024,
+                sourceBcnBytes: 400 * 1024 * 1024);
+
+            Assert.That(decision, Is.EqualTo("Accept"));
+        }
+
+        [Test]
+        public void ValueGate_UnresolvedScenarioStillHonorsFallbackBudget()
+        {
+            var decision = GetValueGateBudgetDecision(
+                scenarioResolved: false,
+                rawDrawsEliminated: 1,
+                expectedArmyDrawsEliminated: 0,
+                globalCostBytes: 9 * 1024 * 1024,
+                expectedCostBytes: 0,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 9 * 1024 * 1024,
+                sourceBcnBytes: 400 * 1024 * 1024);
+
+            Assert.That(decision, Is.EqualTo("FallbackBudgetExceeded"));
+        }
+
+        [Test]
+        public void ValueGate_ScenarioResolvedBenefitUsesScenarioBudget()
+        {
+            var decision = GetValueGateBudgetDecision(
+                scenarioResolved: true,
+                rawDrawsEliminated: 10,
+                expectedArmyDrawsEliminated: 1,
+                globalCostBytes: 2 * 1024 * 1024,
+                expectedCostBytes: 300 * 1024,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 2 * 1024 * 1024,
+                sourceBcnBytes: 400 * 1024 * 1024);
+
+            Assert.That(decision, Is.EqualTo("ScenarioBudgetExceeded"));
+        }
+
+        [Test]
+        public void ValueGate_RejectsWhenCumulativeBcnGrowthExceedsGlobalCap()
+        {
+            var decision = GetValueGateBudgetDecision(
+                scenarioResolved: false,
+                rawDrawsEliminated: 100,
+                expectedArmyDrawsEliminated: 0,
+                globalCostBytes: 10 * 1024 * 1024,
+                expectedCostBytes: 0,
+                acceptedNetBcnBytes: 195 * 1024 * 1024,
+                proposedNetBcnBytes: 10 * 1024 * 1024,
+                sourceBcnBytes: 400 * 1024 * 1024);
+
+            Assert.That(decision, Is.EqualTo("GlobalGrowthCapExceeded"));
+        }
+
+        [Test]
         public void ValueGateBudgets_MatchCalibratedResidencyCurve()
         {
             Assert.Multiple(() =>
@@ -372,6 +521,9 @@ namespace Test.KitbashEditor.Services
                 Assert.That(
                     GetConstant("MaxNetBcnBytesPerFallbackDraw"),
                     Is.EqualTo(8L * 1024 * 1024));
+                Assert.That(
+                    GetDoubleConstant("MaxReachableBcnGrowthRatio"),
+                    Is.EqualTo(0.50).Within(0.000001));
             });
         }
 

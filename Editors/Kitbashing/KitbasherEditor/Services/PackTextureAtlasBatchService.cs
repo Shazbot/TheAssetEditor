@@ -36,6 +36,8 @@ namespace Editors.KitbasherEditor.Services
         // battle draw savings while rejecting expensive low-value atlas batches.
         private const long MaxNetBcnBytesPerExpectedArmyDraw = 256L * 1024; // 0.25 MiB
         private const long MaxNetBcnBytesPerFallbackDraw = 8L * 1024 * 1024;
+        private const double AtlasValueGateExpectedDrawEpsilon = 0.000001;
+        private const double MaxReachableBcnGrowthRatio = 0.50;
         private static readonly bool AtlasProfilingEnabled =
             IsEnabledEnvironmentVariable(AtlasProfilingEnvironmentVariable);
 
@@ -4621,6 +4623,95 @@ namespace Editors.KitbasherEditor.Services
                 residency.ExpectedArmyNetBcnBytes;
         }
 
+        private enum AtlasValueGateBudgetDecision
+        {
+            Accept,
+            ScenarioResolvedZeroBenefit,
+            FallbackBudgetExceeded,
+            ScenarioBudgetExceeded,
+            GlobalGrowthCapExceeded,
+        }
+
+        private static AtlasValueGateBudgetDecision EvaluateAtlasValueGateBudget(
+            bool scenarioResolved,
+            int rawDrawsEliminated,
+            double expectedArmyDrawsEliminated,
+            double globalCostBytes,
+            double expectedCostBytes,
+            double acceptedNetBcnBytes,
+            double proposedNetBcnBytes,
+            double sourceBcnBytes)
+        {
+            if (scenarioResolved)
+            {
+                if (expectedArmyDrawsEliminated <= AtlasValueGateExpectedDrawEpsilon)
+                {
+                    if (globalCostBytes > 0)
+                        return AtlasValueGateBudgetDecision.ScenarioResolvedZeroBenefit;
+                }
+                else
+                {
+                    var expectedBudget =
+                        expectedArmyDrawsEliminated * MaxNetBcnBytesPerExpectedArmyDraw;
+                    if (expectedCostBytes > expectedBudget)
+                        return AtlasValueGateBudgetDecision.ScenarioBudgetExceeded;
+                }
+            }
+            else
+            {
+                var fallbackBudget =
+                    Math.Max(rawDrawsEliminated, 0) *
+                    (double)MaxNetBcnBytesPerFallbackDraw;
+                if (globalCostBytes > fallbackBudget)
+                    return AtlasValueGateBudgetDecision.FallbackBudgetExceeded;
+            }
+
+            if (sourceBcnBytes > 0)
+            {
+                var projectedNetGrowth = acceptedNetBcnBytes + proposedNetBcnBytes;
+                var globalGrowthCap = sourceBcnBytes * MaxReachableBcnGrowthRatio;
+                if (projectedNetGrowth > globalGrowthCap)
+                    return AtlasValueGateBudgetDecision.GlobalGrowthCapExceeded;
+            }
+
+            return AtlasValueGateBudgetDecision.Accept;
+        }
+
+        private static bool IsAtlasValueBatchScenarioResolved(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> batch)
+        {
+            var resolution = state.UnitCategoryResolution;
+            if (state.ArmyResidencyModel == null || resolution == null)
+                return false;
+
+            return batch.All(candidate =>
+            {
+                var root = Normalize(candidate.RootVmdPath);
+                if (root.Length != 0 &&
+                    resolution.UsagesByVmd.TryGetValue(root, out var usages) &&
+                    usages.Count != 0)
+                {
+                    return true;
+                }
+
+                foreach (var usage in candidate.Usages)
+                {
+                    var assetPath = Normalize(usage.AssetPath);
+                    if (assetPath.Length != 0 &&
+                        resolution.DirectAssetUsagesByPath.TryGetValue(
+                            assetPath,
+                            out var directUsages) &&
+                        directUsages.Count != 0)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            });
+        }
+
         private static bool TryAcceptAtlasValueBatch(
             BatchState state,
             IReadOnlyList<AtlasCandidate> batch,
@@ -4668,48 +4759,75 @@ namespace Editors.KitbasherEditor.Services
                 affinityGroups,
                 expectedEntitiesByMesh);
 
-            // Enforce both views of residency. The scenario-estimated metric prevents spending large
-            // battle-resident texture memory for little expected draw benefit, while the global
-            // metric prevents low-probability assets from quietly bloating the output pack's
-            // total reachable residency.
-            var globalBudget =
-                rawDrawsEliminated * (double)MaxNetBcnBytesPerFallbackDraw;
+            // Scenario-resolved batches must justify their BCn cost using scenario draw
+            // savings. The much looser raw-draw fallback is reserved for assets whose
+            // scenario relevance genuinely could not be resolved. A cumulative growth cap
+            // prevents either path from quietly bloating the pack's total reachable BCn.
+            var scenarioResolved = IsAtlasValueBatchScenarioResolved(state, batch);
             var globalCost = GetChargeableAtlasValueGateBytes(
                 residency.GeneratedBcnBytes,
                 residency.RetiredSourceBcnBytes);
-            if (globalCost > globalBudget)
-            {
-                var bytesPerDraw = globalCost / Math.Max(rawDrawsEliminated, 1);
-                rejectionReason =
-                    $"estimated incremental BCn residency generated " +
-                    $"{FormatMiB(residency.GeneratedBcnBytes)}, retires " +
-                    $"{FormatMiB(residency.RetiredSourceBcnBytes)}, net " +
-                    $"{FormatMiB(residency.NetBcnBytes)}; net cost is " +
-                    $"{FormatMiB(bytesPerDraw)} per fallback draw eliminated, above the " +
-                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} budget.";
-                return false;
-            }
+            var expectedCost = GetChargeableAtlasValueGateBytes(
+                residency.ExpectedArmyGeneratedBcnBytes,
+                residency.ExpectedArmyRetiredSourceBcnBytes);
+            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var budgetDecision = EvaluateAtlasValueGateBudget(
+                scenarioResolved,
+                rawDrawsEliminated,
+                expectedArmyDrawsEliminated,
+                globalCost,
+                expectedCost,
+                state.AtlasValueGateNetBcnBytesAccepted,
+                residency.NetBcnBytes,
+                sourceBcnBytes);
 
-            if (expectedArmyDrawsEliminated > 0.000001)
+            switch (budgetDecision)
             {
-                var expectedBudget =
-                    expectedArmyDrawsEliminated * MaxNetBcnBytesPerExpectedArmyDraw;
-                var expectedCost = GetChargeableAtlasValueGateBytes(
-                    residency.ExpectedArmyGeneratedBcnBytes,
-                    residency.ExpectedArmyRetiredSourceBcnBytes);
-                if (expectedCost > expectedBudget)
-                {
-                    var bytesPerDraw =
-                        expectedCost / Math.Max(expectedArmyDrawsEliminated, 0.000001);
+                case AtlasValueGateBudgetDecision.ScenarioResolvedZeroBenefit:
+                    rejectionReason =
+                        $"scenario-resolved batch has no modeled draw benefit but adds " +
+                        $"{FormatMiB(globalCost)} chargeable BCn; the raw-draw fallback is " +
+                        $"reserved for scenario-unresolved assets.";
+                    return false;
+
+                case AtlasValueGateBudgetDecision.FallbackBudgetExceeded:
+                    var fallbackBytesPerDraw =
+                        globalCost / Math.Max(rawDrawsEliminated, 1);
+                    rejectionReason =
+                        $"scenario relevance is unresolved; estimated incremental BCn generated " +
+                        $"{FormatMiB(residency.GeneratedBcnBytes)}, retires " +
+                        $"{FormatMiB(residency.RetiredSourceBcnBytes)}, net " +
+                        $"{FormatMiB(residency.NetBcnBytes)}; net cost is " +
+                        $"{FormatMiB(fallbackBytesPerDraw)} per raw draw eliminated, above the " +
+                        $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} fallback budget.";
+                    return false;
+
+                case AtlasValueGateBudgetDecision.ScenarioBudgetExceeded:
+                    var scenarioBytesPerDraw =
+                        expectedCost /
+                        Math.Max(
+                            expectedArmyDrawsEliminated,
+                            AtlasValueGateExpectedDrawEpsilon);
                     rejectionReason =
                         $"scenario-estimated incremental BCn resource payload generated " +
                         $"{FormatMiB(residency.ExpectedArmyGeneratedBcnBytes)}, retires " +
                         $"{FormatMiB(residency.ExpectedArmyRetiredSourceBcnBytes)}, net " +
                         $"{FormatMiB(residency.ExpectedArmyNetBcnBytes)}; net cost is " +
-                        $"{FormatMiB(bytesPerDraw)} per scenario-estimated draw eliminated, above the " +
+                        $"{FormatMiB(scenarioBytesPerDraw)} per scenario-estimated draw eliminated, above the " +
                         $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} budget.";
                     return false;
-                }
+
+                case AtlasValueGateBudgetDecision.GlobalGrowthCapExceeded:
+                    var projectedNetGrowth =
+                        state.AtlasValueGateNetBcnBytesAccepted +
+                        (double)residency.NetBcnBytes;
+                    var globalGrowthCap =
+                        sourceBcnBytes * MaxReachableBcnGrowthRatio;
+                    rejectionReason =
+                        $"projected accepted net BCn growth {FormatMiB(projectedNetGrowth)} " +
+                        $"would exceed the {MaxReachableBcnGrowthRatio:P0} source-payload cap " +
+                        $"({FormatMiB(globalGrowthCap)}).";
+                    return false;
             }
 
             return true;
@@ -9855,8 +9973,11 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Atlas value-gate broad batches split: {state.AtlasValueGateBroadBatchesSplit}");
                 sb.AppendLine(
                     $"Atlas value-gate net BCn budgets: " +
-                    $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} per scenario-estimated draw, " +
-                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} per fallback draw");
+                    $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} per scenario-estimated draw; " +
+                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} per raw draw only when scenario relevance is unresolved");
+                sb.AppendLine(
+                    $"Atlas value-gate cumulative reachable BCn growth cap: " +
+                    $"{MaxReachableBcnGrowthRatio:P0} of source reachable BCn payload");
                 sb.AppendLine($"Atlas value-gate candidates accepted: {state.AtlasValueGateCandidatesAccepted}");
                 sb.AppendLine($"Atlas value-gate candidates rejected: {state.AtlasValueGateCandidatesRejected}");
                 sb.AppendLine(
