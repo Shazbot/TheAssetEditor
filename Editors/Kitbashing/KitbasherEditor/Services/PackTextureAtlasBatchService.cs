@@ -1370,11 +1370,27 @@ namespace Editors.KitbasherEditor.Services
                    sortedValues[upper] * fraction;
         }
 
-        private static double GetBatchAtlasResolutionScale(
-            IReadOnlyList<SharedAtlasSource> sources)
-            => sources.Count == 0
-                ? 1.0
-                : sources.Max(source => source.Representative.AtlasResolutionScale);
+        private static (int Width, int Height) GetScaledAtlasDimensions(
+            AtlasCandidate candidate,
+            int width,
+            int height)
+        {
+            if (width <= 0)
+                throw new ArgumentOutOfRangeException(nameof(width));
+            if (height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(height));
+
+            var scale = candidate.AtlasResolutionScale;
+            if (!double.IsFinite(scale) || scale <= 0 || scale > 1.0)
+            {
+                throw new InvalidOperationException(
+                    $"Invalid atlas resolution scale {scale} for {candidate.Key}.");
+            }
+
+            return (
+                Math.Max(1, checked((int)Math.Ceiling(width * scale))),
+                Math.Max(1, checked((int)Math.Ceiling(height * scale))));
+        }
 
         private static List<List<AtlasCandidate>> CreateBatches(
             BatchState state,
@@ -3648,8 +3664,6 @@ namespace Editors.KitbasherEditor.Services
                     state,
                     candidates,
                     deduplicateByContent: false);
-                var resolutionScale = GetBatchAtlasResolutionScale(sharedPlan.Batch.Sources);
-
                 foreach (var channel in AtlasChannels)
                 {
                     var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
@@ -3661,7 +3675,10 @@ namespace Editors.KitbasherEditor.Services
                                 channel.Slot,
                                 out var dimensions))
                         {
-                            sourceDimensions[source.Id] = dimensions;
+                            sourceDimensions[source.Id] = GetScaledAtlasDimensions(
+                                source.Representative,
+                                dimensions.Width,
+                                dimensions.Height);
                         }
                     }
 
@@ -3671,8 +3688,7 @@ namespace Editors.KitbasherEditor.Services
                     var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
                         sharedPlan.Plan,
                         sourceDimensions,
-                        PackAtlasMaxSize,
-                        resolutionScale);
+                        PackAtlasMaxSize);
                     var bytesPerBlock = channel.Type is TextureType.BaseColour or TextureType.MaterialMap
                         ? 8
                         : 16;
@@ -4122,7 +4138,10 @@ namespace Editors.KitbasherEditor.Services
                                 channel.Slot,
                                 out var dimensions))
                         {
-                            sourceDimensions[source.Id] = dimensions;
+                            sourceDimensions[source.Id] = GetScaledAtlasDimensions(
+                                source.Representative,
+                                dimensions.Width,
+                                dimensions.Height);
                         }
                     }
 
@@ -4135,8 +4154,7 @@ namespace Editors.KitbasherEditor.Services
                     var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
                         sharedPlan.Plan,
                         sourceDimensions,
-                        PackAtlasMaxSize,
-                        GetBatchAtlasResolutionScale(sharedPlan.Batch.Sources));
+                        PackAtlasMaxSize);
 
                     pixelCost = checked(
                         pixelCost +
@@ -4161,7 +4179,10 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static AtlasPlanningSourceIdentity GetAtlasPlanningSourceIdentity(AtlasCandidate candidate)
-            => new(BuildAtlasTextureSetIdentity(candidate), GetCanonicalCrop(candidate).Crop);
+            => new(
+                BuildAtlasTextureSetIdentity(candidate),
+                GetCanonicalCrop(candidate).Crop,
+                candidate.AtlasResolutionScale);
 
         private static string BuildAtlasPlanningOrderKey(AtlasCandidate candidate)
         {
@@ -4184,7 +4205,8 @@ namespace Editors.KitbasherEditor.Services
                     crop.X,
                     crop.Y,
                     crop.Width,
-                    crop.Height);
+                    crop.Height,
+                    candidate.AtlasResolutionScale);
             }
             catch (OverflowException)
             {
@@ -4262,7 +4284,10 @@ namespace Editors.KitbasherEditor.Services
                             channel.Slot,
                             out var dimensions))
                     {
-                        sourceDimensions[source.Id] = dimensions;
+                        sourceDimensions[source.Id] = GetScaledAtlasDimensions(
+                            source.Representative,
+                            dimensions.Width,
+                            dimensions.Height);
                     }
                 }
 
@@ -4270,8 +4295,7 @@ namespace Editors.KitbasherEditor.Services
                     _ = TextureAtlasBuilder.CalculateOutputDimensions(
                         plan,
                         sourceDimensions,
-                        PackAtlasMaxSize,
-                        GetBatchAtlasResolutionScale(batch.Sources));
+                        PackAtlasMaxSize);
             }
         }
 
@@ -4430,15 +4454,17 @@ namespace Editors.KitbasherEditor.Services
                             channel.Slot,
                             out var dimensions))
                     {
-                        sourceDimensions[source.Id] = dimensions;
+                        sourceDimensions[source.Id] = GetScaledAtlasDimensions(
+                            source.Representative,
+                            dimensions.Width,
+                            dimensions.Height);
                     }
                 }
 
                 var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
                     plan,
                     sourceDimensions,
-                    PackAtlasMaxSize,
-                    GetBatchAtlasResolutionScale(sharedBatch.Sources));
+                    PackAtlasMaxSize);
 
                 var fileName = $"{atlasStem}_{channel.Suffix}.dds";
                 using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
@@ -9469,9 +9495,15 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var cluster in clusters)
                 {
+                    var representative = cluster.Members
+                        .OrderByDescending(member => member.AtlasResolutionScale)
+                        .ThenBy(member => member.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(member => member.Key.LodIndex)
+                        .ThenBy(member => member.Key.PartIndex)
+                        .First();
                     var source = new SharedAtlasSource(
                         sources.Count,
-                        cluster.Members[0],
+                        representative,
                         cluster.Crop);
                     sources.Add(source);
 
@@ -9523,8 +9555,11 @@ namespace Editors.KitbasherEditor.Services
                     if (identicalSources.Count < 2)
                         continue;
 
-                    var canonical = identicalSources[0];
-                    foreach (var duplicate in identicalSources.Skip(1))
+                    var canonical = identicalSources
+                        .OrderByDescending(source => source.Representative.AtlasResolutionScale)
+                        .ThenBy(source => source.Id)
+                        .First();
+                    foreach (var duplicate in identicalSources.Where(source => source.Id != canonical.Id))
                     {
                         removedSourceIds.Add(duplicate.Id);
 
@@ -9673,11 +9708,16 @@ namespace Editors.KitbasherEditor.Services
             {
                 for (var j = i + 1; j < clusters.Count; j++)
                 {
+                    var leftScale = clusters[i].Members.Max(member => member.AtlasResolutionScale);
+                    var rightScale = clusters[j].Members.Max(member => member.AtlasResolutionScale);
+                    if (Math.Abs(leftScale - rightScale) > 0.000001)
+                        continue;
+
                     var candidateUnion = Union(clusters[i].Crop, clusters[j].Crop);
                     var separateArea =
-                        GetPaddedCropArea(clusters[i].Crop) +
-                        GetPaddedCropArea(clusters[j].Crop);
-                    var mergedArea = GetPaddedCropArea(candidateUnion);
+                        GetPaddedCropArea(clusters[i].Crop, leftScale) +
+                        GetPaddedCropArea(clusters[j].Crop, rightScale);
+                    var mergedArea = GetPaddedCropArea(candidateUnion, leftScale);
                     var savings = separateArea - mergedArea;
 
                     if (savings <= bestSavings)
@@ -9711,10 +9751,25 @@ namespace Editors.KitbasherEditor.Services
                 checked(bottomEdge - y));
         }
 
-        private static long GetPaddedCropArea(AtlasCrop crop)
+        private static long GetPaddedCropArea(
+            AtlasCrop crop,
+            double resolutionScale = 1.0)
         {
-            var width = checked(crop.Width + TextureAtlasBuilder.DefaultPadding * 2L);
-            var height = checked(crop.Height + TextureAtlasBuilder.DefaultPadding * 2L);
+            if (!double.IsFinite(resolutionScale) ||
+                resolutionScale <= 0 ||
+                resolutionScale > 1.0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(resolutionScale));
+            }
+
+            var scaledWidth = Math.Max(
+                1L,
+                checked((long)Math.Ceiling(crop.Width * resolutionScale)));
+            var scaledHeight = Math.Max(
+                1L,
+                checked((long)Math.Ceiling(crop.Height * resolutionScale)));
+            var width = checked(scaledWidth + TextureAtlasBuilder.DefaultPadding * 2L);
+            var height = checked(scaledHeight + TextureAtlasBuilder.DefaultPadding * 2L);
             return checked(width * height);
         }
 
@@ -9788,10 +9843,14 @@ namespace Editors.KitbasherEditor.Services
             foreach (var source in sharedSources)
             {
                 var candidate = source.Representative;
+                var layoutDimensions = GetScaledAtlasDimensions(
+                    candidate,
+                    candidate.Width,
+                    candidate.Height);
                 sources.Add(new TextureAtlasLayoutSource(
                     source.Id,
-                    candidate.Width,
-                    candidate.Height,
+                    layoutDimensions.Width,
+                    layoutDimensions.Height,
                     source.Crop.X / (float)candidate.Width,
                     source.Crop.Y / (float)candidate.Height,
                     checked(source.Crop.X + source.Crop.Width) / (float)candidate.Width,
@@ -10433,7 +10492,8 @@ namespace Editors.KitbasherEditor.Services
 
         private readonly record struct AtlasPlanningSourceIdentity(
             AtlasTextureSetIdentity TextureSet,
-            AtlasCrop Crop);
+            AtlasCrop Crop,
+            double ResolutionScale);
 
         private readonly record struct AtlasContentCompatibilityKey(
             int SourceWidth,
