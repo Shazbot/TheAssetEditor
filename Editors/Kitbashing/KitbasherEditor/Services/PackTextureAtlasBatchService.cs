@@ -32,8 +32,8 @@ namespace Editors.KitbasherEditor.Services
         private const double TexelDensityOutlierMultiplier = 1.5;
         private const double MinAtlasResolutionScale = 0.25;
         private const int MinAtlasResolutionScaleDimension = 256;
-        private const long MaxGeneratedBcnBytesPerExpectedArmyDraw = 8L * 1024 * 1024;
-        private const long MaxGeneratedBcnBytesPerFallbackDraw = 32L * 1024 * 1024;
+        private const long MaxNetBcnBytesPerExpectedArmyDraw = 8L * 1024 * 1024;
+        private const long MaxNetBcnBytesPerFallbackDraw = 32L * 1024 * 1024;
         private static readonly bool AtlasProfilingEnabled =
             IsEnabledEnvironmentVariable(AtlasProfilingEnvironmentVariable);
 
@@ -3430,6 +3430,9 @@ namespace Editors.KitbasherEditor.Services
             if (batches.Count == 0)
                 return [];
 
+            state.AtlasValueGateSourceTextureIndex ??=
+                BuildAtlasValueGateSourceTextureIndex(state);
+
             var allCandidates = batches
                 .SelectMany(batch => batch)
                 .GroupBy(candidate => candidate.Key)
@@ -3494,16 +3497,16 @@ namespace Editors.KitbasherEditor.Services
                         trimmed,
                         contributingGroups,
                         expectedEntitiesByMesh,
-                        out var acceptedCost,
+                        out var acceptedResidency,
                         out var acceptedExpectedDraws,
                         out var rejectionReason))
                 {
                     result.Add(trimmed);
-                    state.AtlasValueGateBatchesAccepted++;
-                    state.AtlasValueGateCandidatesAccepted += trimmed.Count;
-                    state.AtlasValueGateGeneratedBcnBytesAccepted = checked(
-                        state.AtlasValueGateGeneratedBcnBytesAccepted + acceptedCost);
-                    state.AtlasValueGateExpectedDrawsAccepted += acceptedExpectedDraws;
+                    RecordAtlasValueGateAccepted(
+                        state,
+                        trimmed.Count,
+                        acceptedResidency,
+                        acceptedExpectedDraws);
                     continue;
                 }
 
@@ -3527,28 +3530,22 @@ namespace Editors.KitbasherEditor.Services
                             groupCandidates,
                             [group],
                             expectedEntitiesByMesh,
-                            out var groupCost,
+                            out var groupResidency,
                             out var groupExpectedDraws,
                             out var groupRejectionReason))
                     {
                         result.Add(groupCandidates);
-                        state.AtlasValueGateBatchesAccepted++;
-                        state.AtlasValueGateCandidatesAccepted += groupCandidates.Count;
-                        state.AtlasValueGateGeneratedBcnBytesAccepted = checked(
-                            state.AtlasValueGateGeneratedBcnBytesAccepted + groupCost);
-                        state.AtlasValueGateExpectedDrawsAccepted += groupExpectedDraws;
+                        RecordAtlasValueGateAccepted(
+                            state,
+                            groupCandidates.Count,
+                            groupResidency,
+                            groupExpectedDraws);
                     }
                     else
                     {
                         state.AtlasValueGateBatchesRejected++;
-                        if (TryGetGeneratedAtlasBcnCost(
-                                state,
-                                groupCandidates,
-                                out var rejectedCost))
-                        {
-                            state.AtlasValueGateGeneratedBcnBytesRejected = checked(
-                                state.AtlasValueGateGeneratedBcnBytesRejected + rejectedCost);
-                        }
+                        state.AtlasValueGateCandidatesRejected += groupCandidates.Count;
+                        RecordAtlasValueGateRejected(state, groupResidency);
 
                         foreach (var candidate in groupCandidates)
                         {
@@ -3558,30 +3555,55 @@ namespace Editors.KitbasherEditor.Services
                                 candidate.Key,
                                 candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
                                 $"Atlas value gate: {groupRejectionReason}");
-                            state.AtlasValueGateCandidatesRejected++;
                         }
-                    }
-                }
-
-                if (contributingGroups.Count == 0)
-                {
-                    state.AtlasValueGateBatchesRejected++;
-                    state.AtlasValueGateGeneratedBcnBytesRejected = checked(
-                        state.AtlasValueGateGeneratedBcnBytesRejected + acceptedCost);
-                    foreach (var candidate in trimmed)
-                    {
-                        RecordSkip(
-                            state,
-                            candidate.RootVmdPath,
-                            candidate.Key,
-                            candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
-                            $"Atlas value gate: {rejectionReason}");
-                        state.AtlasValueGateCandidatesRejected++;
                     }
                 }
             }
 
             return result;
+        }
+
+        private static void RecordAtlasValueGateAccepted(
+            BatchState state,
+            int candidateCount,
+            AtlasValueGateResidencyEstimate residency,
+            double expectedArmyDrawsEliminated)
+        {
+            state.AtlasValueGateBatchesAccepted++;
+            state.AtlasValueGateCandidatesAccepted += candidateCount;
+            state.AtlasValueGateGeneratedBcnBytesAccepted = checked(
+                state.AtlasValueGateGeneratedBcnBytesAccepted + residency.GeneratedBcnBytes);
+            state.AtlasValueGateRetiredBcnBytesAccepted = checked(
+                state.AtlasValueGateRetiredBcnBytesAccepted + residency.RetiredSourceBcnBytes);
+            state.AtlasValueGateNetBcnBytesAccepted = checked(
+                state.AtlasValueGateNetBcnBytesAccepted + residency.NetBcnBytes);
+            state.AtlasValueGateExpectedArmyGeneratedBcnBytesAccepted +=
+                residency.ExpectedArmyGeneratedBcnBytes;
+            state.AtlasValueGateExpectedArmyRetiredBcnBytesAccepted +=
+                residency.ExpectedArmyRetiredSourceBcnBytes;
+            state.AtlasValueGateExpectedArmyNetBcnBytesAccepted +=
+                residency.ExpectedArmyNetBcnBytes;
+            state.AtlasValueGateExpectedDrawsAccepted += expectedArmyDrawsEliminated;
+            state.AtlasValueGateRewrittenSourceReferences.UnionWith(
+                residency.RewrittenReferences);
+        }
+
+        private static void RecordAtlasValueGateRejected(
+            BatchState state,
+            AtlasValueGateResidencyEstimate residency)
+        {
+            state.AtlasValueGateGeneratedBcnBytesRejected = checked(
+                state.AtlasValueGateGeneratedBcnBytesRejected + residency.GeneratedBcnBytes);
+            state.AtlasValueGateRetiredBcnBytesRejected = checked(
+                state.AtlasValueGateRetiredBcnBytesRejected + residency.RetiredSourceBcnBytes);
+            state.AtlasValueGateNetBcnBytesRejected = checked(
+                state.AtlasValueGateNetBcnBytesRejected + residency.NetBcnBytes);
+            state.AtlasValueGateExpectedArmyGeneratedBcnBytesRejected +=
+                residency.ExpectedArmyGeneratedBcnBytes;
+            state.AtlasValueGateExpectedArmyRetiredBcnBytesRejected +=
+                residency.ExpectedArmyRetiredSourceBcnBytes;
+            state.AtlasValueGateExpectedArmyNetBcnBytesRejected +=
+                residency.ExpectedArmyNetBcnBytes;
         }
 
         private static bool TryAcceptAtlasValueBatch(
@@ -3592,17 +3614,20 @@ namespace Editors.KitbasherEditor.Services
                 MeshKey,
                 Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
                 expectedEntitiesByMesh,
-            out long generatedBcnBytes,
+            out AtlasValueGateResidencyEstimate residency,
             out double expectedArmyDrawsEliminated,
             out string rejectionReason)
         {
-            generatedBcnBytes = 0;
+            residency = AtlasValueGateResidencyEstimate.Empty;
             expectedArmyDrawsEliminated = 0;
             rejectionReason = string.Empty;
 
-            if (!TryGetGeneratedAtlasBcnCost(state, batch, out generatedBcnBytes))
+            if (!TryEstimateIncrementalAtlasResidency(
+                    state,
+                    batch,
+                    out residency))
             {
-                rejectionReason = "generated BCn residency could not be estimated safely.";
+                rejectionReason = "incremental BCn residency could not be estimated safely.";
                 return false;
             }
 
@@ -3626,35 +3651,334 @@ namespace Editors.KitbasherEditor.Services
                 affinityGroups,
                 expectedEntitiesByMesh);
 
-            var budget = expectedArmyDrawsEliminated > 0.000001
-                ? expectedArmyDrawsEliminated * MaxGeneratedBcnBytesPerExpectedArmyDraw
-                : rawDrawsEliminated * (double)MaxGeneratedBcnBytesPerFallbackDraw;
-            if (generatedBcnBytes <= budget)
-                return true;
+            // Enforce both views of residency. The expected-army metric prevents spending large
+            // battle-resident texture memory for little expected draw benefit, while the global
+            // metric prevents low-probability assets from quietly bloating the output pack's
+            // total reachable residency.
+            var globalBudget =
+                rawDrawsEliminated * (double)MaxNetBcnBytesPerFallbackDraw;
+            var globalCost = Math.Max(0L, residency.NetBcnBytes);
+            if (globalCost > globalBudget)
+            {
+                var bytesPerDraw = globalCost / Math.Max(rawDrawsEliminated, 1);
+                rejectionReason =
+                    $"estimated incremental BCn residency generated " +
+                    $"{FormatMiB(residency.GeneratedBcnBytes)}, retires " +
+                    $"{FormatMiB(residency.RetiredSourceBcnBytes)}, net " +
+                    $"{FormatMiB(residency.NetBcnBytes)}; net cost is " +
+                    $"{FormatMiB(bytesPerDraw)} per fallback draw eliminated, above the " +
+                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw)} budget.";
+                return false;
+            }
 
-            var bytesPerDraw = generatedBcnBytes /
-                Math.Max(
-                    expectedArmyDrawsEliminated > 0.000001
-                        ? expectedArmyDrawsEliminated
-                        : rawDrawsEliminated,
-                    0.000001);
-            rejectionReason =
-                $"estimated generated BCn residency {FormatMiB(generatedBcnBytes)} costs " +
-                $"{FormatMiB(bytesPerDraw)} per " +
-                $"{(expectedArmyDrawsEliminated > 0.000001 ? "expected-army" : "fallback")} " +
-                $"draw eliminated, above the " +
-                $"{FormatMiB(expectedArmyDrawsEliminated > 0.000001
-                    ? MaxGeneratedBcnBytesPerExpectedArmyDraw
-                    : MaxGeneratedBcnBytesPerFallbackDraw)} budget.";
-            return false;
+            if (expectedArmyDrawsEliminated > 0.000001)
+            {
+                var expectedBudget =
+                    expectedArmyDrawsEliminated * MaxNetBcnBytesPerExpectedArmyDraw;
+                var expectedCost = Math.Max(0.0, residency.ExpectedArmyNetBcnBytes);
+                if (expectedCost > expectedBudget)
+                {
+                    var bytesPerDraw =
+                        expectedCost / Math.Max(expectedArmyDrawsEliminated, 0.000001);
+                    rejectionReason =
+                        $"estimated expected-army incremental BCn residency generated " +
+                        $"{FormatMiB(residency.ExpectedArmyGeneratedBcnBytes)}, retires " +
+                        $"{FormatMiB(residency.ExpectedArmyRetiredSourceBcnBytes)}, net " +
+                        $"{FormatMiB(residency.ExpectedArmyNetBcnBytes)}; net cost is " +
+                        $"{FormatMiB(bytesPerDraw)} per expected-army draw eliminated, above the " +
+                        $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw)} budget.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryEstimateIncrementalAtlasResidency(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates,
+            out AtlasValueGateResidencyEstimate estimate)
+        {
+            estimate = AtlasValueGateResidencyEstimate.Empty;
+            if (!TryGetGeneratedAtlasBcnCost(
+                    state,
+                    candidates,
+                    out var generatedBcnBytes,
+                    out var generatedBcnBytesBySlot))
+            {
+                return false;
+            }
+
+            var sourceIndex = state.AtlasValueGateSourceTextureIndex ??
+                BuildAtlasValueGateSourceTextureIndex(state);
+            state.AtlasValueGateSourceTextureIndex = sourceIndex;
+
+            var proposedRewrites = new HashSet<AtlasValueGateSourceReference>();
+            foreach (var candidate in candidates)
+            {
+                foreach (var slot in generatedBcnBytesBySlot.Keys)
+                {
+                    if (!candidate.ResolvedChannels.Contains(slot) &&
+                        !candidate.ConstantChannels.ContainsKey(slot))
+                    {
+                        continue;
+                    }
+
+                    var sourcePath = GetTexturePath(candidate.MaterialDocument, slot);
+                    if (string.IsNullOrWhiteSpace(sourcePath))
+                        continue;
+
+                    sourcePath = Normalize(sourcePath);
+                    if (!sourceIndex.TryGetValue(sourcePath, out var sourceTexture))
+                        continue;
+
+                    foreach (var usage in candidate.Usages)
+                    {
+                        var reference = new AtlasValueGateSourceReference(
+                            candidate.Key,
+                            Normalize(usage.WsModelPath).ToLowerInvariant(),
+                            slot.ToLowerInvariant());
+                        if (sourceTexture.References.Contains(reference))
+                            proposedRewrites.Add(reference);
+                    }
+                }
+            }
+
+            long retiredSourceBcnBytes = 0;
+            double expectedArmyRetiredSourceBcnBytes = 0;
+            foreach (var sourceTexture in sourceIndex.Values)
+            {
+                if (!sourceTexture.References.Any(proposedRewrites.Contains))
+                    continue;
+
+                var currentlyRetired =
+                    !sourceTexture.HasDirectVmdReference &&
+                    sourceTexture.References.All(
+                        state.AtlasValueGateRewrittenSourceReferences.Contains);
+                var retiredAfterProposal =
+                    !sourceTexture.HasDirectVmdReference &&
+                    sourceTexture.References.All(reference =>
+                        state.AtlasValueGateRewrittenSourceReferences.Contains(reference) ||
+                        proposedRewrites.Contains(reference));
+                if (!currentlyRetired && retiredAfterProposal)
+                {
+                    retiredSourceBcnBytes = checked(
+                        retiredSourceBcnBytes + sourceTexture.BcnBytes);
+                }
+
+                var currentExpectedResidency = GetExpectedArmySourceTextureResidency(
+                    state,
+                    sourceTexture,
+                    state.AtlasValueGateRewrittenSourceReferences,
+                    proposedRewrites: null);
+                var proposedExpectedResidency = GetExpectedArmySourceTextureResidency(
+                    state,
+                    sourceTexture,
+                    state.AtlasValueGateRewrittenSourceReferences,
+                    proposedRewrites);
+                expectedArmyRetiredSourceBcnBytes += Math.Max(
+                    0.0,
+                    currentExpectedResidency - proposedExpectedResidency);
+            }
+
+            double expectedArmyGeneratedBcnBytes = 0;
+            var rootsByMesh = BuildCandidateRootVmdPaths(state, candidates);
+            foreach (var (slot, channelBytes) in generatedBcnBytesBySlot)
+            {
+                var channelCandidates = candidates
+                    .Where(candidate =>
+                        candidate.ResolvedChannels.Contains(slot) ||
+                        candidate.ConstantChannels.ContainsKey(slot))
+                    .ToList();
+                if (channelCandidates.Count == 0)
+                    continue;
+
+                var targetWsModels = channelCandidates
+                    .SelectMany(candidate => candidate.Usages)
+                    .Select(usage => Normalize(usage.WsModelPath))
+                    .Where(path => path.Length != 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var roots = GetBatchRoots(channelCandidates, rootsByMesh);
+                var residentProbability = GetExpectedArmyResidentProbability(
+                    state.ArmyResidencyModel,
+                    targetWsModels,
+                    roots);
+                expectedArmyGeneratedBcnBytes +=
+                    channelBytes * residentProbability;
+            }
+
+            estimate = new AtlasValueGateResidencyEstimate(
+                generatedBcnBytes,
+                retiredSourceBcnBytes,
+                checked(generatedBcnBytes - retiredSourceBcnBytes),
+                expectedArmyGeneratedBcnBytes,
+                expectedArmyRetiredSourceBcnBytes,
+                expectedArmyGeneratedBcnBytes - expectedArmyRetiredSourceBcnBytes,
+                proposedRewrites);
+            return true;
+        }
+
+        private static double GetExpectedArmySourceTextureResidency(
+            BatchState state,
+            AtlasValueGateSourceTexture sourceTexture,
+            IReadOnlySet<AtlasValueGateSourceReference> existingRewrites,
+            IReadOnlySet<AtlasValueGateSourceReference>? proposedRewrites)
+        {
+            if (state.ArmyResidencyModel == null || sourceTexture.BcnBytes <= 0)
+                return 0;
+
+            var remainingWsModels = sourceTexture.References
+                .Where(reference =>
+                    !existingRewrites.Contains(reference) &&
+                    (proposedRewrites == null || !proposedRewrites.Contains(reference)))
+                .Select(reference => reference.WsModelPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (remainingWsModels.Length == 0)
+                return 0;
+
+            var fallbackRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var rootsByWsModel = state.AtlasValueGateRootsByWsModel;
+            if (rootsByWsModel != null)
+            {
+                foreach (var wsModel in remainingWsModels)
+                {
+                    if (rootsByWsModel.TryGetValue(wsModel, out var roots))
+                        fallbackRoots.UnionWith(roots);
+                }
+            }
+
+            var residentProbability = GetExpectedArmyResidentProbability(
+                state.ArmyResidencyModel,
+                remainingWsModels,
+                fallbackRoots);
+            return sourceTexture.BcnBytes * residentProbability;
+        }
+
+        private static Dictionary<string, AtlasValueGateSourceTexture>
+            BuildAtlasValueGateSourceTextureIndex(BatchState state)
+        {
+            var reachableWsModels = state.ReachableWsModelsByRoot.Values
+                .SelectMany(paths => paths)
+                .Select(Normalize)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var referencesByTexture =
+                new Dictionary<string, HashSet<AtlasValueGateSourceReference>>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (mesh, usages) in state.Usages)
+            {
+                foreach (var usage in usages)
+                {
+                    var wsModelPath = Normalize(usage.WsModelPath);
+                    if (!reachableWsModels.Contains(wsModelPath))
+                        continue;
+
+                    XmlDocument material;
+                    try
+                    {
+                        material = GetMaterialDocument(state, usage.MaterialPath);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    foreach (var channel in AtlasChannels)
+                    {
+                        var texturePath = GetTexturePath(material, channel.Slot);
+                        if (string.IsNullOrWhiteSpace(texturePath) ||
+                            IsTexturePlaceholder(texturePath))
+                        {
+                            continue;
+                        }
+
+                        texturePath = Normalize(texturePath);
+                        if (state.Source.FindFile(texturePath) == null)
+                            continue;
+
+                        if (!referencesByTexture.TryGetValue(
+                                texturePath,
+                                out var references))
+                        {
+                            references = [];
+                            referencesByTexture[texturePath] = references;
+                        }
+
+                        references.Add(new AtlasValueGateSourceReference(
+                            mesh,
+                            wsModelPath.ToLowerInvariant(),
+                            channel.Slot.ToLowerInvariant()));
+                    }
+                }
+            }
+
+            var directVmdTextures = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var vmd in state.VmdDocuments.Values)
+            {
+                var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var childVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                CollectVmdReferences(vmd, models, childVmds, textures);
+                directVmdTextures.UnionWith(textures.Select(Normalize));
+            }
+
+            state.AtlasValueGateRootsByWsModel ??=
+                BuildArmyRootsByWsModel(state, CancellationToken.None);
+
+            var result = new Dictionary<string, AtlasValueGateSourceTexture>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var (texturePath, references) in referencesByTexture)
+            {
+                var file = state.Source.FindFile(texturePath);
+                if (file == null)
+                    continue;
+
+                DdsBcnResidencyEstimate bcn;
+                try
+                {
+                    if (!DdsBcnResidencyEstimator.TryEstimate(
+                            file.DataSource.PeekData(148),
+                            out bcn))
+                    {
+                        continue;
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
+
+                result[texturePath] = new AtlasValueGateSourceTexture(
+                    bcn.Bytes,
+                    directVmdTextures.Contains(texturePath),
+                    references);
+            }
+
+            return result;
         }
 
         private static bool TryGetGeneratedAtlasBcnCost(
             BatchState state,
             IReadOnlyList<AtlasCandidate> candidates,
             out long bytes)
+            => TryGetGeneratedAtlasBcnCost(
+                state,
+                candidates,
+                out bytes,
+                out _);
+
+        private static bool TryGetGeneratedAtlasBcnCost(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates,
+            out long bytes,
+            out Dictionary<string, long> bytesBySlot)
         {
             bytes = 0;
+            bytesBySlot = new Dictionary<string, long>(
+                StringComparer.OrdinalIgnoreCase);
             try
             {
                 // The value gate only needs a conservative residency estimate. Avoid
@@ -3692,12 +4016,12 @@ namespace Editors.KitbasherEditor.Services
                     var bytesPerBlock = channel.Type is TextureType.BaseColour or TextureType.MaterialMap
                         ? 8
                         : 16;
-                    bytes = checked(
-                        bytes +
-                        CalculateBcnMipChainBytes(
-                            outputDimensions.Width,
-                            outputDimensions.Height,
-                            bytesPerBlock));
+                    var channelBytes = CalculateBcnMipChainBytes(
+                        outputDimensions.Width,
+                        outputDimensions.Height,
+                        bytesPerBlock);
+                    bytesBySlot[channel.Slot] = channelBytes;
+                    bytes = checked(bytes + channelBytes);
                 }
 
                 return true;
@@ -3706,6 +4030,7 @@ namespace Editors.KitbasherEditor.Services
                 ex is InvalidOperationException or ArgumentException or OverflowException)
             {
                 bytes = 0;
+                bytesBySlot.Clear();
                 return false;
             }
         }
@@ -8157,17 +8482,41 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Atlas value-gate batches rejected: {state.AtlasValueGateBatchesRejected}");
                 sb.AppendLine($"Atlas value-gate broad batches split: {state.AtlasValueGateBroadBatchesSplit}");
                 sb.AppendLine(
-                    $"Atlas value-gate BCn budgets: " +
-                    $"{FormatMiB(MaxGeneratedBcnBytesPerExpectedArmyDraw)} per expected-army draw, " +
-                    $"{FormatMiB(MaxGeneratedBcnBytesPerFallbackDraw)} per fallback draw");
+                    $"Atlas value-gate net BCn budgets: " +
+                    $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw)} per expected-army draw, " +
+                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw)} per fallback draw");
                 sb.AppendLine($"Atlas value-gate candidates accepted: {state.AtlasValueGateCandidatesAccepted}");
                 sb.AppendLine($"Atlas value-gate candidates rejected: {state.AtlasValueGateCandidatesRejected}");
                 sb.AppendLine(
                     $"Atlas value-gate generated BCn accepted: " +
                     $"{FormatMiB(state.AtlasValueGateGeneratedBcnBytesAccepted)}");
                 sb.AppendLine(
+                    $"Atlas value-gate source BCn retired by accepted batches: " +
+                    $"{FormatMiB(state.AtlasValueGateRetiredBcnBytesAccepted)}");
+                sb.AppendLine(
+                    $"Atlas value-gate net BCn accepted: " +
+                    $"{FormatMiB(state.AtlasValueGateNetBcnBytesAccepted)}");
+                sb.AppendLine(
+                    $"Atlas value-gate expected-army generated BCn accepted: " +
+                    $"{FormatMiB(state.AtlasValueGateExpectedArmyGeneratedBcnBytesAccepted)}");
+                sb.AppendLine(
+                    $"Atlas value-gate expected-army source BCn retired by accepted batches: " +
+                    $"{FormatMiB(state.AtlasValueGateExpectedArmyRetiredBcnBytesAccepted)}");
+                sb.AppendLine(
+                    $"Atlas value-gate expected-army net BCn accepted: " +
+                    $"{FormatMiB(state.AtlasValueGateExpectedArmyNetBcnBytesAccepted)}");
+                sb.AppendLine(
                     $"Atlas value-gate generated BCn rejected: " +
                     $"{FormatMiB(state.AtlasValueGateGeneratedBcnBytesRejected)}");
+                sb.AppendLine(
+                    $"Atlas value-gate source BCn retirement rejected: " +
+                    $"{FormatMiB(state.AtlasValueGateRetiredBcnBytesRejected)}");
+                sb.AppendLine(
+                    $"Atlas value-gate net BCn rejected: " +
+                    $"{FormatMiB(state.AtlasValueGateNetBcnBytesRejected)}");
+                sb.AppendLine(
+                    $"Atlas value-gate expected-army net BCn rejected: " +
+                    $"{FormatMiB(state.AtlasValueGateExpectedArmyNetBcnBytesRejected)}");
                 sb.AppendLine(
                     $"Atlas value-gate expected army draw eliminations accepted: " +
                     $"{state.AtlasValueGateExpectedDrawsAccepted:N3}");
@@ -10135,7 +10484,20 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasValueGateCandidatesRejected { get; set; }
             public long AtlasValueGateGeneratedBcnBytesAccepted { get; set; }
             public long AtlasValueGateGeneratedBcnBytesRejected { get; set; }
+            public long AtlasValueGateRetiredBcnBytesAccepted { get; set; }
+            public long AtlasValueGateRetiredBcnBytesRejected { get; set; }
+            public long AtlasValueGateNetBcnBytesAccepted { get; set; }
+            public long AtlasValueGateNetBcnBytesRejected { get; set; }
+            public double AtlasValueGateExpectedArmyGeneratedBcnBytesAccepted { get; set; }
+            public double AtlasValueGateExpectedArmyGeneratedBcnBytesRejected { get; set; }
+            public double AtlasValueGateExpectedArmyRetiredBcnBytesAccepted { get; set; }
+            public double AtlasValueGateExpectedArmyRetiredBcnBytesRejected { get; set; }
+            public double AtlasValueGateExpectedArmyNetBcnBytesAccepted { get; set; }
+            public double AtlasValueGateExpectedArmyNetBcnBytesRejected { get; set; }
             public double AtlasValueGateExpectedDrawsAccepted { get; set; }
+            public Dictionary<string, AtlasValueGateSourceTexture>? AtlasValueGateSourceTextureIndex { get; set; }
+            public Dictionary<string, HashSet<string>>? AtlasValueGateRootsByWsModel { get; set; }
+            public HashSet<AtlasValueGateSourceReference> AtlasValueGateRewrittenSourceReferences { get; } = [];
             public int ConstantOnlyAtlasChannelsSkipped { get; set; }
             public HashSet<string> UniformConstantTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public int LargeBcSplitCompressionChannels { get; set; }
@@ -10409,6 +10771,35 @@ namespace Editors.KitbasherEditor.Services
             XmlDocument Document,
             XmlNode MaterialNode,
             string MaterialPath);
+
+        private readonly record struct AtlasValueGateSourceReference(
+            MeshKey Mesh,
+            string WsModelPath,
+            string Slot);
+
+        private sealed record AtlasValueGateSourceTexture(
+            long BcnBytes,
+            bool HasDirectVmdReference,
+            HashSet<AtlasValueGateSourceReference> References);
+
+        private sealed record AtlasValueGateResidencyEstimate(
+            long GeneratedBcnBytes,
+            long RetiredSourceBcnBytes,
+            long NetBcnBytes,
+            double ExpectedArmyGeneratedBcnBytes,
+            double ExpectedArmyRetiredSourceBcnBytes,
+            double ExpectedArmyNetBcnBytes,
+            HashSet<AtlasValueGateSourceReference> RewrittenReferences)
+        {
+            public static AtlasValueGateResidencyEstimate Empty { get; } = new(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                []);
+        }
 
         private sealed record AtlasCandidate(
             string RootVmdPath,
