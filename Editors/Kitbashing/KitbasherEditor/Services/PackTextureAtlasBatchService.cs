@@ -2328,9 +2328,11 @@ namespace Editors.KitbasherEditor.Services
                         directAssetsByRole[usage.VisualRole] = directAssets;
                     }
 
-                    directAssets[assetPath] = Math.Max(
-                        directAssets.GetValueOrDefault(assetPath),
-                        usage.ExpectedLiveBattlePresence);
+                    directAssets[assetPath] = Math.Clamp(
+                        directAssets.GetValueOrDefault(assetPath) +
+                        usage.ScenarioPresenceProbability,
+                        0.0,
+                        1.0);
                 }
             }
 
@@ -2454,19 +2456,12 @@ namespace Editors.KitbasherEditor.Services
                     if (directAssets.Count == 0)
                         continue;
 
-                    // Active engine models contribute to normal live-army residency.
-                    // Destroyed/destruct lifecycle models remain reachable/atlasable, but
-                    // intentionally contribute zero here so they do not earn live-battle
-                    // draw-call credit or inflate representative-army residency.
-                    var livePresenceTotal = directAssets.Values
-                        .Where(value => value > 0)
-                        .Sum();
-                    if (livePresenceTotal <= 0)
-                        continue;
-
-                    foreach (var (assetPath, livePresence) in directAssets)
+                    // Preserve scenario state/LOD probabilities exactly. Do not
+                    // renormalize them: doing so would turn e.g. a 25% destroyed state back
+                    // into 100% presence and defeat scenario-driven lifecycle modelling.
+                    foreach (var (assetPath, scenarioPresence) in directAssets)
                     {
-                        if (livePresence <= 0)
+                        if (scenarioPresence <= 0)
                             continue;
 
                         if (!mergedOccurrences.TryGetValue(assetPath, out var byRole))
@@ -2475,7 +2470,10 @@ namespace Editors.KitbasherEditor.Services
                             mergedOccurrences[assetPath] = byRole;
                         }
 
-                        byRole[role] = livePresence / livePresenceTotal;
+                        byRole[role] = Math.Clamp(
+                            byRole.GetValueOrDefault(role) + scenarioPresence,
+                            0.0,
+                            1.0);
                     }
                 }
 
@@ -4252,6 +4250,12 @@ namespace Editors.KitbasherEditor.Services
                     if (meshes.Length < 2)
                         continue;
 
+                    var lodIndex = meshes[0].LodIndex;
+                    var lodProbability = model.Scenario.LodDistribution
+                        .GetValueOrDefault(lodIndex);
+                    if (lodProbability <= 0)
+                        continue;
+
                     foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
                     {
                         var population = model.UnitsByCategory[category].Count;
@@ -4346,7 +4350,8 @@ namespace Editors.KitbasherEditor.Services
                         // Draw calls scale with rendered entity instances. Average the expected
                         // per-unit-card saving across the category, then multiply by the number
                         // of representative army slots in that category.
-                        total += slotCount *
+                        total += lodProbability *
+                            slotCount *
                             (eliminatedDrawsAcrossResolvedUnits / population);
                     }
                 }
@@ -10063,7 +10068,8 @@ namespace Editors.KitbasherEditor.Services
                     $"crew={unitResolution.Scenario.CrewScale:0.###}, " +
                     $"rounding={unitResolution.Scenario.EngineRoundingPolicy}");
                 sb.AppendLine(
-                    $"Scenario lifecycle: destruction={unitResolution.Scenario.DestructionProbability:0.###}; " +
+                    $"Scenario lifecycle: destroyed={unitResolution.Scenario.DestructionProbability:0.###}, " +
+                    $"destruct-transition={unitResolution.Scenario.DestructTransitionProbability:0.###}; " +
                     $"LOD distribution={string.Join(", ", unitResolution.Scenario.LodDistribution.OrderBy(x => x.Key).Select(x => $"lod{x.Key}={x.Value:0.###}"))}");
 
                 var rosterComponents = unitResolution.RosterUnits
@@ -10213,7 +10219,8 @@ namespace Editors.KitbasherEditor.Services
                     $"Scenario: unit-scale={state.ArmyResidencyModel.Scenario.UnitSizeScale:0.###}, " +
                     $"crew-scale={state.ArmyResidencyModel.Scenario.CrewScale:0.###}, " +
                     $"engine-rounding={state.ArmyResidencyModel.Scenario.EngineRoundingPolicy}, " +
-                    $"destruction={state.ArmyResidencyModel.Scenario.DestructionProbability:0.###}, " +
+                    $"destroyed={state.ArmyResidencyModel.Scenario.DestructionProbability:0.###}, " +
+                    $"destruct-transition={state.ArmyResidencyModel.Scenario.DestructTransitionProbability:0.###}, " +
                     $"scope={state.ArmyResidencyModel.Scenario.RosterScope}" +
                     (string.IsNullOrWhiteSpace(state.ArmyResidencyModel.Scenario.RosterScopeKey)
                         ? "."
