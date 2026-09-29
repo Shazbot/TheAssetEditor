@@ -557,9 +557,7 @@ namespace Editors.KitbasherEditor.Services
                     FormatException or
                     ArgumentException)
                 {
-                    state.MalformedWsModelsIgnored.Add(new MalformedXmlAssetEntry(
-                        Normalize(wsPath),
-                        ex.Message.Replace("\r", " ").Replace("\n", " ")));
+                    RecordMalformedWsModel(state, wsPath, ex);
                     continue;
                 }
 
@@ -6303,9 +6301,16 @@ namespace Editors.KitbasherEditor.Services
                     if (!Path.GetExtension(modelPath).Equals(".wsmodel", StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    var wsDoc = ReferenceEquals(container, state.Source)
-                        ? GetWsDocument(state, modelPath) ?? LoadXml(modelFile)
-                        : LoadXml(modelFile);
+                    if (!TryGetWsDocumentForTraversal(
+                            state,
+                            container,
+                            modelPath,
+                            modelFile,
+                            out var wsDoc))
+                    {
+                        continue;
+                    }
+
                     var geometryPath = Normalize(wsDoc.SelectSingleNode("/model/geometry")?.InnerText);
                     if (!string.IsNullOrWhiteSpace(geometryPath) && container.FindFile(geometryPath) != null)
                         reachable.Add(geometryPath);
@@ -6574,6 +6579,63 @@ namespace Editors.KitbasherEditor.Services
             return state.Output.FindFile(path)
                    ?? state.Source.FindFile(path)
                    ?? state.PackFileService.FindFile(path);
+        }
+
+        private bool TryGetWsDocumentForTraversal(
+            BatchState state,
+            IPackFileContainer container,
+            string wsPathValue,
+            PackFile file,
+            out XmlDocument document)
+        {
+            var wsPath = Normalize(wsPathValue);
+            try
+            {
+                document = ReferenceEquals(container, state.Source)
+                    ? GetWsDocument(state, wsPath) ?? LoadXml(file)
+                    : LoadXml(file);
+                return true;
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or
+                XmlException or
+                FormatException or
+                ArgumentException)
+            {
+                RecordMalformedWsModel(state, wsPath, ex);
+                document = null!;
+                return false;
+            }
+        }
+
+        private static void RecordMalformedWsModel(
+            BatchState state,
+            string wsPath,
+            Exception exception)
+        {
+            wsPath = Normalize(wsPath);
+            if (state.MalformedWsModelsIgnored.Any(
+                    entry => entry.Path.Equals(wsPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            var messages = new List<string>();
+            for (Exception? current = exception; current != null; current = current.InnerException)
+            {
+                var message = current.Message.Replace("\r", " ").Replace("\n", " ").Trim();
+                if (message.Length != 0 &&
+                    !messages.Contains(message, StringComparer.Ordinal))
+                {
+                    messages.Add(message);
+                }
+            }
+
+            state.MalformedWsModelsIgnored.Add(new MalformedXmlAssetEntry(
+                wsPath,
+                messages.Count == 0
+                    ? exception.GetType().Name
+                    : string.Join(" -> ", messages)));
         }
 
         private XmlDocument? GetWsDocument(BatchState state, string wsPath)
@@ -7318,7 +7380,7 @@ namespace Editors.KitbasherEditor.Services
             }
             sb.AppendLine($"Malformed VMD root files ignored: {state.MalformedVmdRoots.Count}");
             sb.AppendLine($"Malformed referenced VMD files ignored: {state.MalformedReferencedVmds.Count}");
-            sb.AppendLine($"Malformed unrelated WSModels ignored: {state.MalformedWsModelsIgnored.Count}");
+            sb.AppendLine($"Malformed WSModels ignored: {state.MalformedWsModelsIgnored.Count}");
             sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
@@ -7840,8 +7902,8 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
-            sb.AppendLine("Malformed unrelated WSModels ignored");
-            sb.AppendLine("------------------------------------");
+            sb.AppendLine("Malformed WSModels ignored");
+            sb.AppendLine("--------------------------");
             foreach (var entry in state.MalformedWsModelsIgnored.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
             {
                 sb.AppendLine(entry.Path);
