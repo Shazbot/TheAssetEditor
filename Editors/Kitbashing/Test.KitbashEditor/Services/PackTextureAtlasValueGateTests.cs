@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Xml;
 
 namespace Test.KitbashEditor.Services
 {
@@ -62,6 +63,22 @@ namespace Test.KitbashEditor.Services
                     "IsIgnorableUnresolvedAtlasTexture returned null."));
         }
 
+
+        private static void RemoveTextureSlot(XmlDocument material, string slot)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "RemoveTextureSlot",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.RemoveTextureSlot was not found.");
+
+            method.Invoke(null, [material, slot]);
+        }
+
         [TestCase(16.0, 0.0, 16.0)]
         [TestCase(16.0, 12.0, 4.0)]
         [TestCase(16.0, 16.0, 0.0)]
@@ -105,6 +122,32 @@ namespace Test.KitbashEditor.Services
             bool expected)
         {
             Assert.That(IsIgnorableUnresolvedTexture(slot, path), Is.EqualTo(expected));
+        }
+
+
+        [Test]
+        public void RemoveTextureSlot_RemovesMaskWithoutTouchingOtherTextures()
+        {
+            var material = new XmlDocument();
+            material.LoadXml(
+                "<material><textures>" +
+                "<texture><slot>t_xml_base_colour</slot><source>base.dds</source></texture>" +
+                "<texture><slot>t_xml_mask</slot><source>test_mask.dds</source></texture>" +
+                "</textures></material>");
+
+            RemoveTextureSlot(material, "t_xml_mask");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    material.SelectSingleNode(
+                        "/material/textures/texture[slot='t_xml_mask']"),
+                    Is.Null);
+                Assert.That(
+                    material.SelectSingleNode(
+                        "/material/textures/texture[slot='t_xml_base_colour']/source")?.InnerText,
+                    Is.EqualTo("base.dds"));
+            });
         }
 
 
