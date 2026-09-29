@@ -133,6 +133,51 @@ namespace Test.KitbashEditor.Services
                     "IsEmbeddedAtlasTextureTypeSafe returned null."));
         }
 
+        private static double GetExpectedConfigurationMergeDrawSavings(
+            double[] probabilities,
+            int[][] coRenderedCountsByConfiguration,
+            int entityCount)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "CalculateExpectedConfigurationMergeDrawSavings",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.CalculateExpectedConfigurationMergeDrawSavings was not found.");
+
+            return (double)(method.Invoke(
+                null,
+                [probabilities, coRenderedCountsByConfiguration, entityCount])
+                ?? throw new InvalidOperationException(
+                    "CalculateExpectedConfigurationMergeDrawSavings returned null."));
+        }
+
+        private static object GetMergeAffinityIdentity(
+            string geometryPath,
+            int lodIndex,
+            string rmvIdentity,
+            string materialIdentity)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "BuildMergeAffinityIdentity" &&
+                    candidate.GetParameters().Length == 4 &&
+                    candidate.GetParameters()[0].ParameterType == typeof(string));
+
+            return method.Invoke(
+                       null,
+                       [geometryPath, lodIndex, rmvIdentity, materialIdentity])
+                   ?? throw new InvalidOperationException(
+                       "BuildMergeAffinityIdentity returned null.");
+        }
+
         private static bool CanEarnMergeDrawCredit(string? embeddedRigidPath)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
@@ -262,6 +307,59 @@ namespace Test.KitbashEditor.Services
                 Is.EqualTo(expected).Within(0.000001));
         }
 
+
+        [Test]
+        public void CoOccurrence_MutuallyExclusiveAlternativesEarnNoMergeDrawSavings()
+        {
+            var savings = GetExpectedConfigurationMergeDrawSavings(
+                [0.5, 0.5],
+                [
+                    [1, 0],
+                    [0, 1],
+                ],
+                120);
+
+            Assert.That(savings, Is.EqualTo(0.0));
+        }
+
+        [Test]
+        public void CoOccurrence_RequiredMeshesScaleSavingsPerEntity()
+        {
+            var savings = GetExpectedConfigurationMergeDrawSavings(
+                [1.0],
+                [
+                    [1, 1],
+                ],
+                120);
+
+            Assert.That(savings, Is.EqualTo(120.0));
+        }
+
+        [Test]
+        public void MergeAffinity_DifferentLodsRemainSeparateDrawScopes()
+        {
+            var lod0 = GetMergeAffinityIdentity(
+                @"variantmeshes\test.rigid_model_v2",
+                0,
+                "rmv",
+                "material");
+            var lod0Again = GetMergeAffinityIdentity(
+                @"variantmeshes\test.rigid_model_v2",
+                0,
+                "rmv",
+                "material");
+            var lod1 = GetMergeAffinityIdentity(
+                @"variantmeshes\test.rigid_model_v2",
+                1,
+                "rmv",
+                "material");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(lod0, Is.EqualTo(lod0Again));
+                Assert.That(lod0, Is.Not.EqualTo(lod1));
+            });
+        }
 
         [Test]
         public void ValueGateBudgets_MatchCalibratedResidencyCurve()

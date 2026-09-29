@@ -310,6 +310,44 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void EffectiveRows_UnitVariantsKeepFactionSpecificVisualsSeparate()
+        {
+            var effective = new Dictionary<string, Dictionary<string, string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            ApplyEffectiveRows(
+                "unit_variants_tables",
+                effective,
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["faction"] = "faction_a",
+                        ["unit"] = "shared_unit",
+                        ["name"] = "body",
+                        ["variant"] = "variant_a",
+                    },
+                    new Dictionary<string, string>
+                    {
+                        ["faction"] = "faction_b",
+                        ["unit"] = "shared_unit",
+                        ["name"] = "body",
+                        ["variant"] = "variant_b",
+                    },
+                ]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(effective, Has.Count.EqualTo(2));
+                Assert.That(
+                    effective.Values.Single(row => row["faction"] == "faction_a")["variant"],
+                    Is.EqualTo("variant_a"));
+                Assert.That(
+                    effective.Values.Single(row => row["faction"] == "faction_b")["variant"],
+                    Is.EqualTo("variant_b"));
+            });
+        }
+
+        [Test]
         public void EffectiveRows_AnimatedLodKeepsAllFilesForAnAnimatedKey()
         {
             var effective = new Dictionary<string, Dictionary<string, string>>(

@@ -4013,6 +4013,25 @@ namespace Editors.KitbasherEditor.Services
             => candidate.Usages.All(usage =>
                 CanEarnMergeDrawCredit(usage.EmbeddedRigidPath));
 
+        private static MergeAffinityIdentity BuildMergeAffinityIdentity(
+            string geometryPath,
+            int lodIndex,
+            string rmvIdentity,
+            string materialIdentity)
+            => new(
+                geometryPath,
+                lodIndex,
+                rmvIdentity,
+                materialIdentity);
+
+        private static MergeAffinityIdentity BuildMergeAffinityIdentity(
+            AtlasCandidate candidate)
+            => BuildMergeAffinityIdentity(
+                candidate.Key.GeometryPath,
+                candidate.Key.LodIndex,
+                GetRmvMergeIdentity(candidate.Model),
+                BuildMergeAffinityMaterialIdentity(candidate));
+
         private static List<MergeAffinityGroup> BuildMergeAffinityGroups(
             IEnumerable<AtlasCandidate> candidates)
         {
@@ -4020,11 +4039,7 @@ namespace Editors.KitbasherEditor.Services
 
             var buckets = candidates
                 .Where(CanEarnMergeDrawCredit)
-                .GroupBy(candidate => new MergeAffinityIdentity(
-                    candidate.Key.GeometryPath,
-                    candidate.Key.LodIndex,
-                    GetRmvMergeIdentity(candidate.Model),
-                    BuildMergeAffinityMaterialIdentity(candidate)));
+                .GroupBy(BuildMergeAffinityIdentity);
 
             foreach (var bucket in buckets)
             {
@@ -4226,6 +4241,43 @@ namespace Editors.KitbasherEditor.Services
             return result;
         }
 
+        private static double CalculateExpectedConfigurationMergeDrawSavings(
+            double[] probabilities,
+            int[][] coRenderedCountsByConfiguration,
+            int entityCount)
+        {
+            if (entityCount <= 0 ||
+                probabilities.Length == 0 ||
+                coRenderedCountsByConfiguration.Length == 0)
+            {
+                return 0;
+            }
+
+            var configurationCount = Math.Min(
+                probabilities.Length,
+                coRenderedCountsByConfiguration.Length);
+            double total = 0;
+            for (var index = 0; index < configurationCount; index++)
+            {
+                var probability = probabilities[index];
+                if (probability <= 0)
+                    continue;
+
+                var positiveCounts = coRenderedCountsByConfiguration[index]
+                    .Where(count => count > 0)
+                    .ToArray();
+                if (positiveCounts.Length < 2)
+                    continue;
+
+                total += probability *
+                    entityCount *
+                    positiveCounts.Min() *
+                    (positiveCounts.Length - 1);
+            }
+
+            return total;
+        }
+
         private static double CalculateExpectedArmyDrawCallsEliminated(
             BatchState state,
             IReadOnlyDictionary<MeshKey, int> batchByMesh,
@@ -4280,40 +4332,40 @@ namespace Editors.KitbasherEditor.Services
                                             .GetValueOrDefault(unitId)?
                                             .GetValueOrDefault(role, 1) ?? 1);
 
+                                    var configurationProbabilities = new List<double>();
+                                    var coRenderedCountsByConfiguration = new List<int[]>();
                                     foreach (var configuration in configurations)
                                     {
                                         if (configuration.Probability <= 0)
                                             continue;
 
-                                        var coRenderedCounts = new List<int>(meshes.Length);
-                                        foreach (var mesh in meshes)
+                                        var coRenderedCounts = new int[meshes.Length];
+                                        for (var meshIndex = 0; meshIndex < meshes.Length; meshIndex++)
                                         {
+                                            var mesh = meshes[meshIndex];
                                             if (!state.Usages.TryGetValue(mesh, out var usages))
                                                 continue;
 
-                                            var occurrenceCount = usages
+                                            coRenderedCounts[meshIndex] = usages
                                                 .Select(usage => Normalize(usage.AssetPath))
                                                 .Where(path => path.Length != 0)
                                                 .Distinct(StringComparer.OrdinalIgnoreCase)
                                                 .Sum(path => configuration.WsModelOccurrences
                                                     .GetValueOrDefault(path));
-                                            if (occurrenceCount > 0)
-                                                coRenderedCounts.Add(occurrenceCount);
                                         }
 
-                                        if (coRenderedCounts.Count < 2)
-                                            continue;
-
-                                        // Evaluate the concrete visual state, not marginal
-                                        // averages. Mutually-exclusive mesh alternatives can
-                                        // therefore never earn draw-call credit together.
-                                        var coRenderedOccurrences = coRenderedCounts.Min();
-                                        eliminatedDrawsAcrossResolvedUnits +=
-                                            configuration.Probability *
-                                            entityCount *
-                                            coRenderedOccurrences *
-                                            (coRenderedCounts.Count - 1);
+                                        configurationProbabilities.Add(configuration.Probability);
+                                        coRenderedCountsByConfiguration.Add(coRenderedCounts);
                                     }
+
+                                    // Evaluate concrete visual states, not marginal averages.
+                                    // Mutually-exclusive mesh alternatives can therefore never
+                                    // earn draw-call credit together.
+                                    eliminatedDrawsAcrossResolvedUnits +=
+                                        CalculateExpectedConfigurationMergeDrawSavings(
+                                            configurationProbabilities.ToArray(),
+                                            coRenderedCountsByConfiguration.ToArray(),
+                                            entityCount);
                                 }
                             }
 
