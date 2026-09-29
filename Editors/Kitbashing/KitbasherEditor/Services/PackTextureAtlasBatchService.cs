@@ -10048,7 +10048,10 @@ namespace Editors.KitbasherEditor.Services
                     $"asset(s), {directAssetUsages.Count:N0} usage(s)");
                 sb.AppendLine(
                     $"Complete DB-derived visual roster: {unitResolution.RosterUnits.Count:N0} unit(s); " +
-                    $"scope={unitResolution.Scenario.RosterScope}");
+                    $"scope={unitResolution.Scenario.RosterScope}" +
+                    (string.IsNullOrWhiteSpace(unitResolution.Scenario.RosterScopeKey)
+                        ? string.Empty
+                        : $" ({unitResolution.Scenario.RosterScopeKey})"));
                 sb.AppendLine(
                     $"Scenario entity scaling: unit={unitResolution.Scenario.UnitSizeScale:0.###}, " +
                     $"crew={unitResolution.Scenario.CrewScale:0.###}, " +
@@ -10188,7 +10191,10 @@ namespace Editors.KitbasherEditor.Services
                     $"crew-scale={state.ArmyResidencyModel.Scenario.CrewScale:0.###}, " +
                     $"engine-rounding={state.ArmyResidencyModel.Scenario.EngineRoundingPolicy}, " +
                     $"destruction={state.ArmyResidencyModel.Scenario.DestructionProbability:0.###}, " +
-                    $"scope={state.ArmyResidencyModel.Scenario.RosterScope}.");
+                    $"scope={state.ArmyResidencyModel.Scenario.RosterScope}" +
+                    (string.IsNullOrWhiteSpace(state.ArmyResidencyModel.Scenario.RosterScopeKey)
+                        ? "."
+                        : $" ({state.ArmyResidencyModel.Scenario.RosterScopeKey})."));
                 sb.AppendLine(
                     "The old aggregate VMD-residency and unweighted merge-affinity metrics remain non-regression guards.");
                 sb.AppendLine();
