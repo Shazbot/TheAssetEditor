@@ -3877,18 +3877,39 @@ namespace Editors.KitbasherEditor.Services
                 new Dictionary<string, HashSet<AtlasValueGateSourceReference>>(
                     StringComparer.OrdinalIgnoreCase);
 
-            foreach (var (mesh, usages) in state.Usages)
+            // Walk every reachable WSModel material entry, not just the mesh-usage index.
+            // Entries with missing/invalid lod_index or part_index are deliberately retained
+            // with Mesh=null so they can block source-texture retirement credit.
+            foreach (var (wsModelPathValue, wsDocument) in state.WsDocuments)
             {
-                foreach (var usage in usages)
+                var wsModelPath = Normalize(wsModelPathValue);
+                if (!reachableWsModels.Contains(wsModelPath))
+                    continue;
+
+                var geometryPath = Normalize(
+                    wsDocument.SelectSingleNode("/model/geometry")?.InnerText);
+                var materialNodes = wsDocument.SelectNodes("/model/materials/material");
+                if (materialNodes == null)
+                    continue;
+
+                foreach (XmlNode materialNode in materialNodes)
                 {
-                    var wsModelPath = Normalize(usage.WsModelPath);
-                    if (!reachableWsModels.Contains(wsModelPath))
+                    MeshKey? mesh = null;
+                    if (!string.IsNullOrWhiteSpace(geometryPath) &&
+                        TryParseIndex(materialNode, "lod_index", out var lodIndex) &&
+                        TryParseIndex(materialNode, "part_index", out var partIndex))
+                    {
+                        mesh = new MeshKey(geometryPath, lodIndex, partIndex);
+                    }
+
+                    var materialPath = Normalize(materialNode.InnerText);
+                    if (string.IsNullOrWhiteSpace(materialPath))
                         continue;
 
                     XmlDocument material;
                     try
                     {
-                        material = GetMaterialDocument(state, usage.MaterialPath);
+                        material = GetMaterialDocument(state, materialPath);
                     }
                     catch
                     {
@@ -3930,7 +3951,8 @@ namespace Editors.KitbasherEditor.Services
 
                         // Index every material texture reference, not only channels we atlas.
                         // A source DDS cannot be credited as retired while an emissive/custom
-                        // slot (or a duplicate slot occurrence) still points at it.
+                        // slot, duplicate slot occurrence, or unindexed material entry still
+                        // points at it.
                         references.Add(new AtlasValueGateSourceReference(
                             mesh,
                             wsModelPath.ToLowerInvariant(),
@@ -10799,7 +10821,7 @@ namespace Editors.KitbasherEditor.Services
             string MaterialPath);
 
         private readonly record struct AtlasValueGateSourceReference(
-            MeshKey Mesh,
+            MeshKey? Mesh,
             string WsModelPath,
             string Slot,
             int SlotOccurrence);
