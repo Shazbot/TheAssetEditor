@@ -3737,7 +3737,8 @@ namespace Editors.KitbasherEditor.Services
                         var reference = new AtlasValueGateSourceReference(
                             candidate.Key,
                             Normalize(usage.WsModelPath).ToLowerInvariant(),
-                            slot.ToLowerInvariant());
+                            slot.ToLowerInvariant(),
+                            0);
                         if (sourceTexture.References.Contains(reference))
                             proposedRewrites.Add(reference);
                     }
@@ -3885,18 +3886,30 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    foreach (var channel in AtlasChannels)
+                    var textureNodes = material.SelectNodes("/material/textures/texture");
+                    if (textureNodes == null)
+                        continue;
+
+                    var occurrenceBySlot = new Dictionary<string, int>(
+                        StringComparer.OrdinalIgnoreCase);
+                    foreach (XmlNode textureNode in textureNodes)
                     {
-                        var texturePath = GetTexturePath(material, channel.Slot);
+                        var slot = GetTextureSlot(textureNode);
+                        var normalizedSlot = string.IsNullOrWhiteSpace(slot)
+                            ? "__unslotted__"
+                            : slot.ToLowerInvariant();
+                        var slotOccurrence = occurrenceBySlot.GetValueOrDefault(normalizedSlot);
+                        occurrenceBySlot[normalizedSlot] = slotOccurrence + 1;
+
+                        var texturePath = Normalize(
+                            textureNode.SelectSingleNode("source")?.InnerText ??
+                            textureNode.InnerText);
                         if (string.IsNullOrWhiteSpace(texturePath) ||
-                            IsTexturePlaceholder(texturePath))
+                            IsTexturePlaceholder(texturePath) ||
+                            state.Source.FindFile(texturePath) == null)
                         {
                             continue;
                         }
-
-                        texturePath = Normalize(texturePath);
-                        if (state.Source.FindFile(texturePath) == null)
-                            continue;
 
                         if (!referencesByTexture.TryGetValue(
                                 texturePath,
@@ -3906,10 +3919,14 @@ namespace Editors.KitbasherEditor.Services
                             referencesByTexture[texturePath] = references;
                         }
 
+                        // Index every material texture reference, not only channels we atlas.
+                        // A source DDS cannot be credited as retired while an emissive/custom
+                        // slot (or a duplicate slot occurrence) still points at it.
                         references.Add(new AtlasValueGateSourceReference(
                             mesh,
                             wsModelPath.ToLowerInvariant(),
-                            channel.Slot.ToLowerInvariant()));
+                            normalizedSlot,
+                            slotOccurrence));
                     }
                 }
             }
@@ -10775,7 +10792,8 @@ namespace Editors.KitbasherEditor.Services
         private readonly record struct AtlasValueGateSourceReference(
             MeshKey Mesh,
             string WsModelPath,
-            string Slot);
+            string Slot,
+            int SlotOccurrence);
 
         private sealed record AtlasValueGateSourceTexture(
             long BcnBytes,
