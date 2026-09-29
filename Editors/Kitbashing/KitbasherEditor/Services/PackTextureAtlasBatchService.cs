@@ -2629,35 +2629,41 @@ namespace Editors.KitbasherEditor.Services
                 var alternativeWeight = slotProbability / alternativeCount;
                 foreach (var child in slot.ChildMeshes ?? [])
                 {
-                    alternatives.AddRange(ExpandVisualConfigurations(
-                            state,
-                            child,
-                            cache,
-                            visiting)
-                        .Select(configuration => configuration with
-                        {
-                            Probability = configuration.Probability * alternativeWeight,
-                        }));
+                    var childConfigurations = ExpandVisualConfigurations(
+                        state,
+                        child,
+                        cache,
+                        visiting);
+                    if (childConfigurations.Count == 0)
+                        return [];
+
+                    alternatives.AddRange(childConfigurations.Select(configuration => configuration with
+                    {
+                        Probability = configuration.Probability * alternativeWeight,
+                    }));
                 }
 
                 foreach (var reference in slot.ChildReferences ?? [])
                 {
                     if (string.IsNullOrWhiteSpace(reference.Reference))
-                        continue;
+                        return [];
 
-                    alternatives.AddRange(GetWsModelConfigurationsForVmd(
-                            state,
-                            reference.Reference,
-                            cache,
-                            visiting)
-                        .Select(configuration => configuration with
-                        {
-                            Probability = configuration.Probability * alternativeWeight,
-                        }));
+                    var childConfigurations = GetWsModelConfigurationsForVmd(
+                        state,
+                        reference.Reference,
+                        cache,
+                        visiting);
+                    if (childConfigurations.Count == 0)
+                        return [];
+
+                    alternatives.AddRange(childConfigurations.Select(configuration => configuration with
+                    {
+                        Probability = configuration.Probability * alternativeWeight,
+                    }));
                 }
 
                 if (alternatives.Count == 0)
-                    continue;
+                    return [];
 
                 var combined = new List<UnitVisualConfiguration>();
                 foreach (var left in current)
