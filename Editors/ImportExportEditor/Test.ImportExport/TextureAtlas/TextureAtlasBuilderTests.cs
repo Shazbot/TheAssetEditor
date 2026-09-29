@@ -770,6 +770,35 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void CalculateOutputDimensions_AppliesResolutionScaleBeforePowerOfTwoSizing()
+        {
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 1024, 1024, 0, 0, 1, 1)],
+                padding: 0,
+                maxAtlasSize: 4096);
+            var sourceDimensions = new Dictionary<int, (int Width, int Height)>
+            {
+                [0] = (4096, 4096)
+            };
+
+            var full = TextureAtlasBuilder.CalculateOutputDimensions(
+                plan,
+                sourceDimensions,
+                maxAtlasSize: 4096);
+            var half = TextureAtlasBuilder.CalculateOutputDimensions(
+                plan,
+                sourceDimensions,
+                maxAtlasSize: 4096,
+                resolutionScale: 0.5);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(full, Is.EqualTo((4096, 4096)));
+                Assert.That(half, Is.EqualTo((2048, 2048)));
+            });
+        }
+
+        [Test]
         public void DownscaledAtlasBaseLevel_UsesMatchingAuthoredSourceMip()
         {
             var sourceDds = PngToDdsImporter.ImportRawMipChain(
