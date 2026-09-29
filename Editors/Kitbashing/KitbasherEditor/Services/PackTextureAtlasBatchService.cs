@@ -3407,6 +3407,313 @@ namespace Editors.KitbasherEditor.Services
             return total;
         }
 
+        private static List<List<AtlasCandidate>> FilterBatchesForMergeValue(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            if (batches.Count == 0)
+                return [];
+
+            var allCandidates = batches
+                .SelectMany(batch => batch)
+                .GroupBy(candidate => candidate.Key)
+                .Select(group => group.First())
+                .ToList();
+            var candidateByKey = allCandidates.ToDictionary(candidate => candidate.Key);
+            var affinityGroups = BuildMergeAffinityGroups(allCandidates);
+            if (affinityGroups.Count == 0)
+            {
+                foreach (var candidate in allCandidates)
+                {
+                    RecordSkip(
+                        state,
+                        candidate.RootVmdPath,
+                        candidate.Key,
+                        candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                        "Atlas value gate: no compatible mesh merge would be enabled.");
+                    state.AtlasValueGateCandidatesRejected++;
+                }
+
+                return [];
+            }
+
+            var rootsByMesh = BuildCandidateRootVmdPaths(state, allCandidates);
+            var expectedEntitiesByMesh = BuildExpectedArmyEntitiesByMesh(
+                state.ArmyResidencyModel,
+                allCandidates,
+                rootsByMesh);
+            var result = new List<List<AtlasCandidate>>();
+
+            foreach (var batch in batches)
+            {
+                var batchKeys = batch.Select(candidate => candidate.Key).ToHashSet();
+                var contributingGroups = affinityGroups
+                    .Select(group => new MergeAffinityGroup(
+                        group.Meshes.Where(batchKeys.Contains).ToArray()))
+                    .Where(group => group.Meshes.Length >= 2)
+                    .ToList();
+                var contributingKeys = contributingGroups
+                    .SelectMany(group => group.Meshes)
+                    .ToHashSet();
+
+                foreach (var candidate in batch.Where(candidate => !contributingKeys.Contains(candidate.Key)))
+                {
+                    RecordSkip(
+                        state,
+                        candidate.RootVmdPath,
+                        candidate.Key,
+                        candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                        "Atlas value gate: this mesh does not contribute to a compatible mesh merge in its planned atlas batch.");
+                    state.AtlasValueGateCandidatesRejected++;
+                }
+
+                var trimmed = batch
+                    .Where(candidate => contributingKeys.Contains(candidate.Key))
+                    .ToList();
+                if (trimmed.Count < 2)
+                    continue;
+
+                if (TryAcceptAtlasValueBatch(
+                        state,
+                        trimmed,
+                        contributingGroups,
+                        expectedEntitiesByMesh,
+                        out var acceptedCost,
+                        out var acceptedExpectedDraws,
+                        out var rejectionReason))
+                {
+                    result.Add(trimmed);
+                    state.AtlasValueGateBatchesAccepted++;
+                    state.AtlasValueGateCandidatesAccepted += trimmed.Count;
+                    state.AtlasValueGateGeneratedBcnBytesAccepted = checked(
+                        state.AtlasValueGateGeneratedBcnBytesAccepted + acceptedCost);
+                    state.AtlasValueGateExpectedDrawsAccepted += acceptedExpectedDraws;
+                    continue;
+                }
+
+                // A broad shared batch can be too expensive even when individual merge groups
+                // are worthwhile. Fall back to one atlas per independent merge-affinity group
+                // before rejecting the opportunity completely.
+                state.AtlasValueGateBroadBatchesSplit++;
+                foreach (var group in contributingGroups)
+                {
+                    var groupCandidates = group.Meshes
+                        .Where(candidateByKey.ContainsKey)
+                        .Select(mesh => candidateByKey[mesh])
+                        .Where(candidate => batchKeys.Contains(candidate.Key))
+                        .DistinctBy(candidate => candidate.Key)
+                        .ToList();
+                    if (groupCandidates.Count < 2)
+                        continue;
+
+                    if (TryAcceptAtlasValueBatch(
+                            state,
+                            groupCandidates,
+                            [group],
+                            expectedEntitiesByMesh,
+                            out var groupCost,
+                            out var groupExpectedDraws,
+                            out var groupRejectionReason))
+                    {
+                        result.Add(groupCandidates);
+                        state.AtlasValueGateBatchesAccepted++;
+                        state.AtlasValueGateCandidatesAccepted += groupCandidates.Count;
+                        state.AtlasValueGateGeneratedBcnBytesAccepted = checked(
+                            state.AtlasValueGateGeneratedBcnBytesAccepted + groupCost);
+                        state.AtlasValueGateExpectedDrawsAccepted += groupExpectedDraws;
+                    }
+                    else
+                    {
+                        state.AtlasValueGateBatchesRejected++;
+                        if (TryGetGeneratedAtlasBcnCost(
+                                state,
+                                groupCandidates,
+                                out var rejectedCost))
+                        {
+                            state.AtlasValueGateGeneratedBcnBytesRejected = checked(
+                                state.AtlasValueGateGeneratedBcnBytesRejected + rejectedCost);
+                        }
+
+                        foreach (var candidate in groupCandidates)
+                        {
+                            RecordSkip(
+                                state,
+                                candidate.RootVmdPath,
+                                candidate.Key,
+                                candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                                $"Atlas value gate: {groupRejectionReason}");
+                            state.AtlasValueGateCandidatesRejected++;
+                        }
+                    }
+                }
+
+                if (contributingGroups.Count == 0)
+                {
+                    state.AtlasValueGateBatchesRejected++;
+                    state.AtlasValueGateGeneratedBcnBytesRejected = checked(
+                        state.AtlasValueGateGeneratedBcnBytesRejected + acceptedCost);
+                    foreach (var candidate in trimmed)
+                    {
+                        RecordSkip(
+                            state,
+                            candidate.RootVmdPath,
+                            candidate.Key,
+                            candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                            $"Atlas value gate: {rejectionReason}");
+                        state.AtlasValueGateCandidatesRejected++;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static bool TryAcceptAtlasValueBatch(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> batch,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh,
+            out long generatedBcnBytes,
+            out double expectedArmyDrawsEliminated,
+            out string rejectionReason)
+        {
+            generatedBcnBytes = 0;
+            expectedArmyDrawsEliminated = 0;
+            rejectionReason = string.Empty;
+
+            if (!TryGetGeneratedAtlasBcnCost(state, batch, out generatedBcnBytes))
+            {
+                rejectionReason = "generated BCn residency could not be estimated safely.";
+                return false;
+            }
+
+            var singletonBatches = new List<List<AtlasCandidate>>
+            {
+                batch.ToList()
+            };
+            var batchByMesh = BuildBatchIndexByMesh(singletonBatches);
+            var rawDrawsEliminated = CalculateMergeAffinityScore(
+                singletonBatches,
+                affinityGroups);
+            if (rawDrawsEliminated <= 0)
+            {
+                rejectionReason = "no compatible mesh draw would be eliminated.";
+                return false;
+            }
+
+            expectedArmyDrawsEliminated = CalculateExpectedArmyDrawCallsEliminated(
+                state.ArmyResidencyModel,
+                batchByMesh,
+                affinityGroups,
+                expectedEntitiesByMesh);
+
+            var budget = expectedArmyDrawsEliminated > 0.000001
+                ? expectedArmyDrawsEliminated * MaxGeneratedBcnBytesPerExpectedArmyDraw
+                : rawDrawsEliminated * (double)MaxGeneratedBcnBytesPerFallbackDraw;
+            if (generatedBcnBytes <= budget)
+                return true;
+
+            var bytesPerDraw = generatedBcnBytes /
+                Math.Max(
+                    expectedArmyDrawsEliminated > 0.000001
+                        ? expectedArmyDrawsEliminated
+                        : rawDrawsEliminated,
+                    0.000001);
+            rejectionReason =
+                $"estimated generated BCn residency {FormatMiB(generatedBcnBytes)} costs " +
+                $"{FormatMiB(bytesPerDraw)} per " +
+                $"{(expectedArmyDrawsEliminated > 0.000001 ? "expected-army" : "fallback")} " +
+                $"draw eliminated, above the " +
+                $"{FormatMiB(expectedArmyDrawsEliminated > 0.000001
+                    ? MaxGeneratedBcnBytesPerExpectedArmyDraw
+                    : MaxGeneratedBcnBytesPerFallbackDraw)} budget.";
+            return false;
+        }
+
+        private static bool TryGetGeneratedAtlasBcnCost(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates,
+            out long bytes)
+        {
+            bytes = 0;
+            try
+            {
+                var sharedPlan = CreateSharedAtlasPlan(
+                    state,
+                    candidates,
+                    deduplicateByContent: true);
+                var resolutionScale = GetBatchAtlasResolutionScale(sharedPlan.Batch.Sources);
+
+                foreach (var channel in AtlasChannels)
+                {
+                    var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
+                    foreach (var source in sharedPlan.Batch.Sources)
+                    {
+                        var representative = source.Representative;
+                        if (representative.ResolvedChannels.Contains(channel.Slot) &&
+                            representative.ChannelDimensions.TryGetValue(
+                                channel.Slot,
+                                out var dimensions))
+                        {
+                            sourceDimensions[source.Id] = dimensions;
+                        }
+                    }
+
+                    if (sourceDimensions.Count == 0)
+                        continue;
+
+                    var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
+                        sharedPlan.Plan,
+                        sourceDimensions,
+                        PackAtlasMaxSize,
+                        resolutionScale);
+                    var bytesPerBlock = channel.Type is TextureType.BaseColour or TextureType.MaterialMap
+                        ? 8
+                        : 16;
+                    bytes = checked(
+                        bytes +
+                        CalculateBcnMipChainBytes(
+                            outputDimensions.Width,
+                            outputDimensions.Height,
+                            bytesPerBlock));
+                }
+
+                return true;
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or ArgumentException or OverflowException)
+            {
+                bytes = 0;
+                return false;
+            }
+        }
+
+        private static long CalculateBcnMipChainBytes(
+            int width,
+            int height,
+            int bytesPerBlock)
+        {
+            long total = 0;
+            var mipWidth = Math.Max(1, width);
+            var mipHeight = Math.Max(1, height);
+            while (true)
+            {
+                var blocksWide = Math.Max(1L, (mipWidth + 3L) / 4L);
+                var blocksHigh = Math.Max(1L, (mipHeight + 3L) / 4L);
+                total = checked(total + checked(blocksWide * blocksHigh * bytesPerBlock));
+
+                if (mipWidth == 1 && mipHeight == 1)
+                    break;
+                mipWidth = Math.Max(1, mipWidth / 2);
+                mipHeight = Math.Max(1, mipHeight / 2);
+            }
+
+            return total;
+        }
+
         private static int CalculateMergeAffinityScoreWithReplacement(
             IReadOnlyList<List<AtlasCandidate>> batches,
             int leftIndex,
