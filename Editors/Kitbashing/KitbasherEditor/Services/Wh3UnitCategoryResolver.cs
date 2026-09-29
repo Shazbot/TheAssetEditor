@@ -58,6 +58,7 @@ namespace Editors.KitbasherEditor.Services
         Wh3EntityRoundingPolicy EngineRoundingPolicy,
         IReadOnlyDictionary<int, double> LodDistribution,
         double DestructionProbability,
+        double DestructTransitionProbability,
         IReadOnlyDictionary<Wh3ArmyUnitCategory, int> ArmySlotTemplate,
         Wh3RosterScope RosterScope,
         string? RosterScopeKey)
@@ -67,6 +68,7 @@ namespace Editors.KitbasherEditor.Services
             0.50,
             Wh3EntityRoundingPolicy.Ceiling,
             new Dictionary<int, double> { [0] = 1.0 },
+            0.0,
             0.0,
             new Dictionary<Wh3ArmyUnitCategory, int>
             {
@@ -1209,11 +1211,20 @@ namespace Editors.KitbasherEditor.Services
             Wh3VisualAssetState stateValue,
             int lod)
         {
+            var destroyedProbability = Math.Clamp(
+                scenario.DestructionProbability,
+                0.0,
+                1.0);
+            var destructProbability = Math.Clamp(
+                scenario.DestructTransitionProbability,
+                0.0,
+                1.0 - destroyedProbability);
             var stateProbability = stateValue switch
             {
-                Wh3VisualAssetState.Live => 1.0 - scenario.DestructionProbability,
-                Wh3VisualAssetState.Destroyed => scenario.DestructionProbability,
-                Wh3VisualAssetState.Destruct => scenario.DestructionProbability,
+                Wh3VisualAssetState.Live =>
+                    1.0 - destroyedProbability - destructProbability,
+                Wh3VisualAssetState.Destroyed => destroyedProbability,
+                Wh3VisualAssetState.Destruct => destructProbability,
                 _ => 0.0,
             };
             if (stateProbability <= 0)
