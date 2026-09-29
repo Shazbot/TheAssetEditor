@@ -4668,7 +4668,7 @@ namespace Editors.KitbasherEditor.Services
                 affinityGroups,
                 expectedEntitiesByMesh);
 
-            // Enforce both views of residency. The expected-army metric prevents spending large
+            // Enforce both views of residency. The scenario-estimated metric prevents spending large
             // battle-resident texture memory for little expected draw benefit, while the global
             // metric prevents low-probability assets from quietly bloating the output pack's
             // total reachable residency.
@@ -4702,11 +4702,11 @@ namespace Editors.KitbasherEditor.Services
                     var bytesPerDraw =
                         expectedCost / Math.Max(expectedArmyDrawsEliminated, 0.000001);
                     rejectionReason =
-                        $"estimated expected-army incremental BCn residency generated " +
+                        $"scenario-estimated incremental BCn resource payload generated " +
                         $"{FormatMiB(residency.ExpectedArmyGeneratedBcnBytes)}, retires " +
                         $"{FormatMiB(residency.ExpectedArmyRetiredSourceBcnBytes)}, net " +
                         $"{FormatMiB(residency.ExpectedArmyNetBcnBytes)}; net cost is " +
-                        $"{FormatMiB(bytesPerDraw)} per expected-army draw eliminated, above the " +
+                        $"{FormatMiB(bytesPerDraw)} per scenario-estimated draw eliminated, above the " +
                         $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} budget.";
                     return false;
                 }
@@ -4873,7 +4873,7 @@ namespace Editors.KitbasherEditor.Services
             // rewritten by material atlasing. We do not currently model their exact army
             // probability separately, so conservatively keep the full source texture
             // resident in both the current and proposed estimates. This guarantees that
-            // such a reference can never create false expected-army retirement credit.
+            // such a reference can never create false scenario-estimated retirement credit.
             if (sourceTexture.HasDirectVmdReference)
                 return sourceTexture.BcnBytes;
 
@@ -8081,9 +8081,9 @@ namespace Editors.KitbasherEditor.Services
             var unsupportedDdsCount = 0;
             var armyUnmappedBcnTextureCount = 0;
             long bcnBytes = 0;
-            double expectedArmyBcnBytes = 0;
+            double estimatedScenarioResidentBcnBytes = 0;
             long generatedAtlasBcnBytes = 0;
-            double expectedArmyGeneratedAtlasBcnBytes = 0;
+            double estimatedScenarioResidentGeneratedAtlasBcnBytes = 0;
 
             foreach (var texturePath in reachable
                          .Where(path => Path.GetExtension(path).Equals(
@@ -8139,13 +8139,13 @@ namespace Editors.KitbasherEditor.Services
                     targetWsModels,
                     fallbackRoots);
                 var expectedBytes = estimate.Bytes * residentProbability;
-                expectedArmyBcnBytes += expectedBytes;
+                estimatedScenarioResidentBcnBytes += expectedBytes;
 
                 if (state.GeneratedTexturePaths.Contains(texturePath))
                 {
                     generatedAtlasBcnBytes = checked(
                         generatedAtlasBcnBytes + estimate.Bytes);
-                    expectedArmyGeneratedAtlasBcnBytes += expectedBytes;
+                    estimatedScenarioResidentGeneratedAtlasBcnBytes += expectedBytes;
                 }
             }
 
@@ -8155,9 +8155,9 @@ namespace Editors.KitbasherEditor.Services
                 unsupportedDdsCount,
                 armyUnmappedBcnTextureCount,
                 bcnBytes,
-                expectedArmyBcnBytes,
+                estimatedScenarioResidentBcnBytes,
                 generatedAtlasBcnBytes,
-                expectedArmyGeneratedAtlasBcnBytes,
+                estimatedScenarioResidentGeneratedAtlasBcnBytes,
                 formatCounts,
                 formatBytes);
         }
@@ -9855,7 +9855,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Atlas value-gate broad batches split: {state.AtlasValueGateBroadBatchesSplit}");
                 sb.AppendLine(
                     $"Atlas value-gate net BCn budgets: " +
-                    $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} per expected-army draw, " +
+                    $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} per scenario-estimated draw, " +
                     $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} per fallback draw");
                 sb.AppendLine($"Atlas value-gate candidates accepted: {state.AtlasValueGateCandidatesAccepted}");
                 sb.AppendLine($"Atlas value-gate candidates rejected: {state.AtlasValueGateCandidatesRejected}");
@@ -9869,13 +9869,13 @@ namespace Editors.KitbasherEditor.Services
                     $"Atlas value-gate net BCn accepted: " +
                     $"{FormatMiB(state.AtlasValueGateNetBcnBytesAccepted)}");
                 sb.AppendLine(
-                    $"Atlas value-gate expected-army generated BCn accepted: " +
+                    $"Atlas value-gate scenario-estimated generated BCn accepted: " +
                     $"{FormatMiB(state.AtlasValueGateExpectedArmyGeneratedBcnBytesAccepted)}");
                 sb.AppendLine(
-                    $"Atlas value-gate expected-army source BCn retired by accepted batches: " +
+                    $"Atlas value-gate scenario-estimated source BCn retired by accepted batches: " +
                     $"{FormatMiB(state.AtlasValueGateExpectedArmyRetiredBcnBytesAccepted)}");
                 sb.AppendLine(
-                    $"Atlas value-gate expected-army net BCn accepted: " +
+                    $"Atlas value-gate scenario-estimated net BCn accepted: " +
                     $"{FormatMiB(state.AtlasValueGateExpectedArmyNetBcnBytesAccepted)}");
                 sb.AppendLine(
                     $"Atlas value-gate generated BCn rejected: " +
@@ -9887,17 +9887,17 @@ namespace Editors.KitbasherEditor.Services
                     $"Atlas value-gate net BCn rejected: " +
                     $"{FormatMiB(state.AtlasValueGateNetBcnBytesRejected)}");
                 sb.AppendLine(
-                    $"Atlas value-gate expected-army net BCn rejected: " +
+                    $"Atlas value-gate scenario-estimated net BCn rejected: " +
                     $"{FormatMiB(state.AtlasValueGateExpectedArmyNetBcnBytesRejected)}");
                 sb.AppendLine(
-                    $"Atlas value-gate expected army draw eliminations accepted: " +
+                    $"Atlas value-gate scenario-estimated draw eliminations accepted: " +
                     $"{state.AtlasValueGateExpectedDrawsAccepted:N3}");
                 sb.AppendLine();
                 sb.AppendLine("Accepted atlas value-gate batch economics (worst-to-best)");
-                sb.AppendLine("---------------------------------------------------------");
+                sb.AppendLine("-------------------------------------------------------------------");
                 sb.AppendLine(
                     "Sorted descending by the worse of global net MiB/raw draw and " +
-                    "expected-army net MiB/expected draw.");
+                    "scenario-estimated net MiB/scenario-estimated draw.");
                 var valueGateRank = 0;
                 foreach (var entry in state.AtlasValueGateAcceptedBatchEconomics
                              .OrderByDescending(GetAtlasValueGateWorstMiBPerDraw)
@@ -9912,14 +9912,14 @@ namespace Editors.KitbasherEditor.Services
                         $"candidates={entry.CandidateCount}, roots={entry.RootVmdPaths.Length}");
                     sb.AppendLine(
                         $"    draws: raw={entry.RawDrawsEliminated:N0}, " +
-                        $"expected-army={entry.ExpectedArmyDrawsEliminated:N3}");
+                        $"scenario-estimated={entry.ExpectedArmyDrawsEliminated:N3}");
                     sb.AppendLine(
                         $"    global BCn: generated={FormatMiB(entry.GeneratedBcnBytes)}, " +
                         $"retired={FormatMiB(entry.RetiredSourceBcnBytes)}, " +
                         $"net={FormatMiB(entry.NetBcnBytes)}, " +
                         $"net/draw={FormatAtlasValueGateMiBPerDraw(entry.NetBcnBytes, entry.RawDrawsEliminated)}");
                     sb.AppendLine(
-                        $"    expected-army BCn: generated={FormatMiB(entry.ExpectedArmyGeneratedBcnBytes)}, " +
+                        $"    scenario-estimated BCn: generated={FormatMiB(entry.ExpectedArmyGeneratedBcnBytes)}, " +
                         $"retired={FormatMiB(entry.ExpectedArmyRetiredSourceBcnBytes)}, " +
                         $"net={FormatMiB(entry.ExpectedArmyNetBcnBytes)}, " +
                         $"net/draw={FormatAtlasValueGateMiBPerDraw(entry.ExpectedArmyNetBcnBytes, entry.ExpectedArmyDrawsEliminated)}");
@@ -9942,19 +9942,19 @@ namespace Editors.KitbasherEditor.Services
             if (state.ArmyResidencyModel != null)
             {
                 sb.AppendLine(
-                    $"Expected army slot model: lord=1, heroes=2, infantry/missile=9, " +
+                    $"Scenario army slot model: lord=1, heroes=2, infantry/missile=9, " +
                     $"cavalry/chariots=4, monsters/beasts=3, artillery/war machines=2");
                 sb.AppendLine(
-                    $"Expected army-resident atlas pixels before locality optimization: " +
+                    $"Scenario-estimated resident atlas pixels before locality optimization: " +
                     $"{state.ExpectedArmyResidentPixelsBeforeLocality:N0}");
                 sb.AppendLine(
-                    $"Expected army-resident atlas pixels after locality optimization: " +
+                    $"Scenario-estimated resident atlas pixels after locality optimization: " +
                     $"{state.ExpectedArmyResidentPixelsAfterLocality:N0}");
                 sb.AppendLine(
-                    $"Expected army-resident atlas pixels saved by locality optimization: " +
+                    $"Scenario-estimated resident atlas pixels saved by locality optimization: " +
                     $"{Math.Max(0, state.ExpectedArmyResidentPixelsBeforeLocality - state.ExpectedArmyResidentPixelsAfterLocality):N0}");
                 sb.AppendLine(
-                    $"Expected army-resident atlas pixels after merge-aware optimization: " +
+                    $"Scenario-estimated resident atlas pixels after merge-aware optimization: " +
                     $"{state.ExpectedArmyResidentPixelsAfterMergeAware:N0}");
             }
             sb.AppendLine($"Global atlas pixels added by locality splits: {state.VmdLocalityGlobalPixelsAdded:N0}");
@@ -9982,13 +9982,13 @@ namespace Editors.KitbasherEditor.Services
             if (state.ArmyResidencyModel != null)
             {
                 sb.AppendLine(
-                    $"Expected army draw calls eliminated before merge-aware optimization: " +
+                    $"Scenario-estimated draw calls eliminated before merge-aware optimization: " +
                     $"{state.ExpectedArmyDrawCallsEliminatedBeforeMergeAware:N3}");
                 sb.AppendLine(
-                    $"Expected army draw calls eliminated after merge-aware optimization: " +
+                    $"Scenario-estimated draw calls eliminated after merge-aware optimization: " +
                     $"{state.ExpectedArmyDrawCallsEliminatedAfterMergeAware:N3}");
                 sb.AppendLine(
-                    $"Expected army draw-call eliminations gained: " +
+                    $"Scenario-estimated draw-call eliminations gained: " +
                     $"{state.ExpectedArmyDrawCallsEliminatedAfterMergeAware - state.ExpectedArmyDrawCallsEliminatedBeforeMergeAware:+0.000;-0.000;0.000}");
             }
             if (state.ShareAtlasesAcrossVmdsEnabled)
@@ -10034,29 +10034,29 @@ namespace Editors.KitbasherEditor.Services
                 var sourceBcn = state.SourceBcnResidency;
                 var outputBcn = state.OutputBcnResidency;
                 sb.AppendLine();
-                sb.AppendLine("BCn GPU texture residency estimate");
-                sb.AppendLine("----------------------------------");
+                sb.AppendLine("BCn texture resource payload and scenario residency estimate");
+                sb.AppendLine("-------------------------------------------------------------------------------");
                 sb.AppendLine(
                     $"Source reachable DDS textures: {sourceBcn.ReachableDdsCount:N0}; " +
                     $"BCn={sourceBcn.BcnTextureCount:N0}; unsupported/non-BCn={sourceBcn.UnsupportedDdsCount:N0}");
                 sb.AppendLine(
                     $"Output reachable DDS textures: {outputBcn.ReachableDdsCount:N0}; " +
                     $"BCn={outputBcn.BcnTextureCount:N0}; unsupported/non-BCn={outputBcn.UnsupportedDdsCount:N0}");
-                sb.AppendLine($"Source reachable BCn residency: {FormatMiB(sourceBcn.BcnBytes)}");
-                sb.AppendLine($"Output reachable BCn residency: {FormatMiB(outputBcn.BcnBytes)}");
+                sb.AppendLine($"Source reachable BCn resource payload: {FormatMiB(sourceBcn.BcnBytes)}");
+                sb.AppendLine($"Output reachable BCn resource payload: {FormatMiB(outputBcn.BcnBytes)}");
                 sb.AppendLine(
-                    $"Reachable BCn residency delta: " +
+                    $"Reachable BCn resource-payload delta: " +
                     $"{FormatResidencyDelta(sourceBcn.BcnBytes, outputBcn.BcnBytes)}");
                 sb.AppendLine(
-                    $"Expected representative-army BCn residency: " +
-                    $"{FormatMiB(sourceBcn.ExpectedArmyBcnBytes)} -> " +
-                    $"{FormatMiB(outputBcn.ExpectedArmyBcnBytes)} " +
-                    $"({FormatResidencyDelta(sourceBcn.ExpectedArmyBcnBytes, outputBcn.ExpectedArmyBcnBytes)})");
+                    $"Scenario-estimated resident BCn payload: " +
+                    $"{FormatMiB(sourceBcn.EstimatedScenarioResidentBcnBytes)} -> " +
+                    $"{FormatMiB(outputBcn.EstimatedScenarioResidentBcnBytes)} " +
+                    $"({FormatResidencyDelta(sourceBcn.EstimatedScenarioResidentBcnBytes, outputBcn.EstimatedScenarioResidentBcnBytes)})");
                 sb.AppendLine(
-                    $"Generated atlas BCn residency: {FormatMiB(outputBcn.GeneratedAtlasBcnBytes)}");
+                    $"Generated atlas BCn resource payload: {FormatMiB(outputBcn.GeneratedAtlasBcnBytes)}");
                 sb.AppendLine(
-                    $"Expected representative-army generated-atlas BCn residency: " +
-                    $"{FormatMiB(outputBcn.ExpectedArmyGeneratedAtlasBcnBytes)}");
+                    $"Scenario-estimated resident generated-atlas BCn payload: " +
+                    $"{FormatMiB(outputBcn.EstimatedScenarioResidentGeneratedAtlasBcnBytes)}");
                 sb.AppendLine($"Source BCn formats: {FormatBcnBreakdown(sourceBcn)}");
                 sb.AppendLine($"Output BCn formats: {FormatBcnBreakdown(outputBcn)}");
                 sb.AppendLine(
@@ -10064,8 +10064,14 @@ namespace Editors.KitbasherEditor.Services
                     $"source={sourceBcn.ArmyUnmappedBcnTextureCount:N0}, " +
                     $"output={outputBcn.ArmyUnmappedBcnTextureCount:N0}");
                 sb.AppendLine(
-                    "Estimate sums 4x4 BCn block payloads for every declared mip level. " +
-                    "It excludes driver allocation/alignment overhead, non-BCn DDS formats, " +
+                    "Reachable resource payload is the compressed 4x4 BCn block payload for every declared mip " +
+                    "of every reachable BCn DDS; it is not scenario weighted.");
+                sb.AppendLine(
+                    "Scenario-estimated resident payload weights each texture by the modeled probability that " +
+                    "at least one resolved visual in the configured army scenario requires it. This is a " +
+                    "model-derived residency proxy, not measured GPU residency and not a visible-texel byte count.");
+                sb.AppendLine(
+                    "Both figures exclude driver allocation/alignment overhead, non-BCn DDS formats, " +
                     "and textures resolved outside the processed pack.");
                 sb.AppendLine();
             }
@@ -10250,8 +10256,8 @@ namespace Editors.KitbasherEditor.Services
 
             if (state.ArmyResidencyModel != null)
             {
-                sb.AppendLine("Expected army residency model");
-                sb.AppendLine("-----------------------------");
+                sb.AppendLine("Scenario visibility and residency model");
+                sb.AppendLine("---------------------------------------");
                 foreach (var category in state.ArmyResidencyModel.Scenario.ArmySlotTemplate.Keys)
                 {
                     sb.AppendLine(
@@ -10289,7 +10295,7 @@ namespace Editors.KitbasherEditor.Services
                     {
                         sb.AppendLine(
                             $"  #{index}: {(entry.Accepted ? "ACCEPTED" : "rejected")} " +
-                            $"[{entry.Decision}] | expected-army " +
+                            $"[{entry.Decision}] | scenario-estimated " +
                             $"{entry.BaselineExpectedArmyResidentPixels:N0} -> " +
                             $"{entry.ProposedExpectedArmyResidentPixels:N0} " +
                             $"({entry.ProposedExpectedArmyResidentPixels - entry.BaselineExpectedArmyResidentPixels:+0;-0;0}); " +
@@ -10323,7 +10329,7 @@ namespace Editors.KitbasherEditor.Services
             if (AtlasProfilingEnabled)
             {
                 sb.AppendLine("Generated atlas texture timings");
-                sb.AppendLine("-------------------------------");
+                sb.AppendLine("-----------------------------------------");
                 if (state.GeneratedTextureTimings.Count == 0)
                 {
                     sb.AppendLine("(none)");
@@ -10387,7 +10393,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             sb.AppendLine("Atlas component reuse topology");
-            sb.AppendLine("------------------------------");
+            sb.AppendLine("----------------------------------------");
             sb.AppendLine(
                 "This is conservative VMD-root reachability, not guaranteed simultaneous rendering: " +
                 "alternatives in the same VMD/slot can share a root without coexisting in one rendered variant.");
@@ -10506,7 +10512,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine();
 
             sb.AppendLine("Malformed VMD root files ignored");
-            sb.AppendLine("--------------------------------");
+            sb.AppendLine("------------------------------------------");
             foreach (var entry in state.MalformedVmdRoots.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
             {
                 sb.AppendLine(entry.Path);
@@ -10517,7 +10523,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine();
 
             sb.AppendLine("Malformed referenced VMD files ignored");
-            sb.AppendLine("--------------------------------------");
+            sb.AppendLine("------------------------------------------------");
             foreach (var entry in state.MalformedReferencedVmds
                          .OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
             {
@@ -10540,7 +10546,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine();
 
             sb.AppendLine("Malformed material XML files ignored");
-            sb.AppendLine("------------------------------------");
+            sb.AppendLine("----------------------------------------------");
             foreach (var entry in state.MalformedMaterialsIgnored
                          .OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
             {
@@ -10648,7 +10654,7 @@ namespace Editors.KitbasherEditor.Services
 
                 sb.AppendLine();
                 sb.AppendLine("Merge-aware atlas repartitions");
-                sb.AppendLine("------------------------------");
+                sb.AppendLine("----------------------------------------");
                 if (state.MergeAwareRepartitionEntries.Count == 0)
                 {
                     sb.AppendLine("(none)");
@@ -10661,7 +10667,7 @@ namespace Editors.KitbasherEditor.Services
                             $"Batches {entry.FirstBatchIndex} + {entry.SecondBatchIndex}: " +
                             $"pixels {entry.BaselinePixels:N0} -> {entry.ResultPixels:N0}, " +
                             $"merge affinity {entry.BaselineAffinity} -> {entry.ResultAffinity}, " +
-                            $"expected army draw eliminations " +
+                            $"scenario-estimated draw eliminations " +
                             $"{entry.BaselineExpectedArmyDrawCallsEliminated:N3} -> " +
                             $"{entry.ResultExpectedArmyDrawCallsEliminated:N3}");
                     }
@@ -10669,7 +10675,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine();
 
                 sb.AppendLine("Mesh merge blocker diagnostics");
-                sb.AppendLine("------------------------------");
+                sb.AppendLine("----------------------------------------");
                 sb.AppendLine("Counts below are near-miss part pairs/groups; unrelated parts are intentionally omitted.");
                 if (state.MeshMergeBlockerCounts.Count == 0)
                 {
@@ -10711,7 +10717,7 @@ namespace Editors.KitbasherEditor.Services
 
                 sb.AppendLine();
                 sb.AppendLine("Texture-blocked merge opportunities");
-                sb.AppendLine("-----------------------------------");
+                sb.AppendLine("---------------------------------------------");
                 sb.AppendLine("Each entry is one additional merge group potentially removable by combining two existing atlas batches.");
                 sb.AppendLine("Pixel cost compares the two current complete batches with one hypothetical combined batch.");
                 var opportunities = state.TextureMergeOpportunities.Values
@@ -10774,7 +10780,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             sb.AppendLine("Uniform constant source textures");
-            sb.AppendLine("--------------------------------");
+            sb.AppendLine("------------------------------------------");
             foreach (var path in state.UniformConstantTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                 sb.AppendLine(path);
             if (state.UniformConstantTexturePaths.Count == 0)
@@ -11934,9 +11940,9 @@ namespace Editors.KitbasherEditor.Services
             int UnsupportedDdsCount,
             int ArmyUnmappedBcnTextureCount,
             long BcnBytes,
-            double ExpectedArmyBcnBytes,
+            double EstimatedScenarioResidentBcnBytes,
             long GeneratedAtlasBcnBytes,
-            double ExpectedArmyGeneratedAtlasBcnBytes,
+            double EstimatedScenarioResidentGeneratedAtlasBcnBytes,
             IReadOnlyDictionary<string, int> TextureCountByFormat,
             IReadOnlyDictionary<string, long> BytesByFormat);
 
