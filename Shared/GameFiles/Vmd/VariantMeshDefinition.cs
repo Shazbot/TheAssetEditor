@@ -11,12 +11,38 @@ namespace Shared.GameFormats.Vmd
     {
 
         public static VariantMesh Load(string fileContent, bool strict = false)
+            => Load(fileContent, out _, strict);
+
+        public static VariantMesh Load(
+            string fileContent,
+            out IReadOnlyList<string> compatibilityRepairs,
+            bool strict = false)
+        {
+            return XmlCompatibilityParser.Parse(
+                fileContent,
+                content => Deserialize(content, strict),
+                out compatibilityRepairs);
+        }
+
+        public static VariantMesh Load(PackFile pf, bool strict = false)
+            => Load(pf, out _, strict);
+
+        public static VariantMesh Load(
+            PackFile pf,
+            out IReadOnlyList<string> compatibilityRepairs,
+            bool strict = false)
+        {
+            var vmdContent = Encoding.UTF8.GetString(pf.DataSource.ReadData());
+            return Load(vmdContent, out compatibilityRepairs, strict);
+        }
+
+        private static VariantMesh Deserialize(string fileContent, bool strict)
         {
             var xRoot = new XmlRootAttribute("VARIANT_MESH");
 
             var xmlserializer = new XmlSerializer(typeof(VariantMesh), xRoot);
             using var stringReader = new StringReader(fileContent);
-            var reader = XmlReader.Create(stringReader);
+            using var reader = XmlReader.Create(stringReader);
 
             object result = null;
             if (strict)
@@ -27,12 +53,6 @@ namespace Shared.GameFormats.Vmd
             var typedObject = result as VariantMesh;
             typedObject.FixStrings();
             return typedObject;
-        }
-
-        public static VariantMesh Load(PackFile pf, bool strict = false)
-        {
-            var vmdContent = Encoding.UTF8.GetString(pf.DataSource.ReadData());
-            return Load(vmdContent, strict);
         }
     }
 
