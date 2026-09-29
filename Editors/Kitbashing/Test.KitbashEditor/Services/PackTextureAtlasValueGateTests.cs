@@ -80,6 +80,23 @@ namespace Test.KitbashEditor.Services
         }
 
 
+
+        private static long GetConstant(string name)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var field = serviceType.GetField(
+                name,
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    $"PackTextureAtlasBatchService.{name} was not found.");
+
+            return (long)(field.GetRawConstantValue()
+                ?? throw new InvalidOperationException($"{name} has no constant value."));
+        }
+
         private static double GetMiBPerDraw(double netBytes, double drawsEliminated)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
@@ -180,6 +197,21 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 GetMiBPerDraw(netBytes, drawsEliminated),
                 Is.EqualTo(expected).Within(0.000001));
+        }
+
+
+        [Test]
+        public void ValueGateBudgets_MatchCalibratedResidencyCurve()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetConstant("MaxNetBcnBytesPerExpectedArmyDraw"),
+                    Is.EqualTo(256L * 1024));
+                Assert.That(
+                    GetConstant("MaxNetBcnBytesPerFallbackDraw"),
+                    Is.EqualTo(8L * 1024 * 1024));
+            });
         }
 
 
