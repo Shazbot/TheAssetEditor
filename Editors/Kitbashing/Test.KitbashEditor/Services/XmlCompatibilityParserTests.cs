@@ -21,12 +21,14 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void Parse_IgnoresTrailingDashPseudoComments()
+        public void Parse_IgnoresTrailingDashAnnotations()
         {
             const string xml =
                 "<model><geometry>foo</geometry></model>\r\n" +
-                "-- replace with wsmodels when CBA or CA fixes generic FCM materials\r\n" +
-                "-- second note\r\n";
+                "--11 is moustache+plume\r\n" +
+                "--12 is beard stubble\r\n" +
+                "--14 is goatee+band\r\n" +
+                "--15 is alpha beard\r\n";
 
             var document = XmlCompatibilityParser.Parse(
                 xml,
@@ -37,7 +39,52 @@ namespace Test.KitbashEditor.Services
             {
                 Assert.That(document.DocumentElement?.Name, Is.EqualTo("model"));
                 Assert.That(repairs, Has.Count.EqualTo(1));
-                Assert.That(repairs[0], Does.Contain("2 trailing"));
+                Assert.That(repairs[0], Does.Contain("trailing non-XML text"));
+                Assert.That(repairs[0], Does.Contain("4 non-empty lines"));
+            });
+        }
+
+        [Test]
+        public void Parse_IgnoresTrailingEqualsAnnotation()
+        {
+            const string xml =
+                "<model><geometry>foo</geometry></model>\n" +
+                "===this goes well with demigryph knight and greatsword chests, except 01\n";
+
+            var document = XmlCompatibilityParser.Parse(
+                xml,
+                ParseDocument,
+                out var repairs);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(document.DocumentElement?.Name, Is.EqualTo("model"));
+                Assert.That(repairs, Has.Count.EqualTo(1));
+                Assert.That(repairs[0], Does.Contain("1 non-empty line"));
+            });
+        }
+
+        [Test]
+        public void Parse_IgnoresTrailingFreeformMultilineNotes()
+        {
+            const string xml =
+                "<model><geometry>foo</geometry></model>\n" +
+                "01 & 02 masked (half split)\n" +
+                "\n" +
+                "03 brown cloth\n" +
+                "\n" +
+                "no hood and no filthy peasant either\n";
+
+            var document = XmlCompatibilityParser.Parse(
+                xml,
+                ParseDocument,
+                out var repairs);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(document.DocumentElement?.Name, Is.EqualTo("model"));
+                Assert.That(repairs, Has.Count.EqualTo(1));
+                Assert.That(repairs[0], Does.Contain("3 non-empty lines"));
             });
         }
 
@@ -63,13 +110,13 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void Parse_AppliesTrailingCommentAndClosingTagRepairsTogether()
+        public void Parse_AppliesClosingTagAndTrailingTextRepairsTogether()
         {
             const string xml =
                 "<VARIANT_MESH>\n" +
                 "  <SLOT></SLOT>\n" +
                 "</VARIANT_MESH\n" +
-                "-- temporary workaround\n";
+                "01 & 02 masked (half split)\n";
 
             var document = XmlCompatibilityParser.Parse(
                 xml,
@@ -80,9 +127,24 @@ namespace Test.KitbashEditor.Services
             {
                 Assert.That(document.DocumentElement?.Name, Is.EqualTo("VARIANT_MESH"));
                 Assert.That(repairs, Has.Count.EqualTo(2));
-                Assert.That(repairs[0], Does.Contain("pseudo-comment"));
-                Assert.That(repairs[1], Does.Contain("</VARIANT_MESH>"));
+                Assert.That(repairs[0], Does.Contain("</VARIANT_MESH>"));
+                Assert.That(repairs[1], Does.Contain("trailing non-XML text"));
             });
+        }
+
+        [Test]
+        public void Parse_DoesNotIgnoreTextInsideTheRootElement()
+        {
+            const string xml =
+                "<model>\n" +
+                "  <broken\n" +
+                "</model>";
+
+            Assert.Throws<XmlException>(() =>
+                XmlCompatibilityParser.Parse(
+                    xml,
+                    ParseDocument,
+                    out _));
         }
 
         [Test]
