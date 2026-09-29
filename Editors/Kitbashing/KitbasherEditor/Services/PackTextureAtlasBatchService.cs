@@ -318,24 +318,12 @@ namespace Editors.KitbasherEditor.Services
                     progress);
                 state.PhaseDurations["Discover atlas candidates"] = phaseStopwatch.Elapsed;
 
-                if (!atlasMeshesWithMissingTextures.HasValue &&
-                    candidateDiscovery.MissingTextures.Count != 0)
-                {
-                    ReportProgress(progress, "Waiting for missing-texture choice");
-
-                    var dialogStopwatch = Stopwatch.StartNew();
-                    var dialog = new MissingTextureDecisionWindow(
-                        BuildMissingTextureDetails(candidateDiscovery.MissingTextures));
-                    var activeOwner = System.Windows.Application.Current?.Windows
-                        .OfType<System.Windows.Window>()
-                        .FirstOrDefault(x => x.IsActive);
-                    if (activeOwner != null)
-                        dialog.Owner = activeOwner;
-
-                    state.AtlasMeshesWithMissingTextures = dialog.ShowDialog() == true;
-                    state.PhaseDurations["Wait for missing-texture choice"] =
-                        dialogStopwatch.Elapsed;
-                }
+                // UV0 is shared by every material texture channel. If any real
+                // secondary texture is unresolved, remapping UV0 while preserving that old
+                // texture path would make it sample with atlas UVs and corrupt rendering.
+                // Such meshes are therefore always skipped. The only unresolved sentinel
+                // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
+                state.AtlasMeshesWithMissingTextures = false;
 
                 var discoveredCandidates = ApplyMissingTextureDecision(
                     state,
@@ -774,21 +762,13 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                if (state.AtlasMeshesWithMissingTextures)
-                {
-                    foreach (var missing in candidate.MissingTextures)
-                        state.AllowedMissingTexturePaths.Add(missing.TexturePath);
-                    result.Add(candidate);
-                    continue;
-                }
-
                 var firstMissing = candidate.MissingTextures[0];
                 RecordSkip(
                     state,
                     candidate.RootVmdPath,
                     candidate.Key,
                     candidate.Usages[0].WsModelPath,
-                    $"{firstMissing.Slot} texture could not be resolved: {firstMissing.TexturePath}");
+                    $"{firstMissing.Slot} texture could not be resolved; mesh cannot be safely atlased because UV0 is shared across channels: {firstMissing.TexturePath}");
             }
 
             return result;
@@ -6866,7 +6846,7 @@ namespace Editors.KitbasherEditor.Services
 
                 try
                 {
-                    if (extension.Equals(".xml.material", StringComparison.OrdinalIgnoreCase))
+                    if (path.EndsWith(".xml.material", StringComparison.OrdinalIgnoreCase))
                     {
                         var materialDoc = LoadXml(file);
                         var textureNodes = materialDoc.SelectNodes("/material/textures/texture");
