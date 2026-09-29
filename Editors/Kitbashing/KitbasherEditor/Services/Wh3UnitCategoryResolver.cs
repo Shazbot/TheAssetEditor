@@ -65,7 +65,8 @@ namespace Editors.KitbasherEditor.Services
         Wh3ArmyUnitCategory Category,
         Wh3UnitVisualRole VisualRole,
         int EntityCount,
-        Wh3UnitVisualCounts VisualCounts);
+        Wh3UnitVisualCounts VisualCounts,
+        double ExpectedLiveBattlePresence);
 
     internal sealed record Wh3UnitCategoryResolution(
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> UsagesByVmd,
@@ -292,7 +293,8 @@ namespace Editors.KitbasherEditor.Services
                 string landUnitKey,
                 Wh3ArmyUnitCategory category,
                 Wh3UnitVisualRole visualRole,
-                Wh3UnitVisualCounts visualCounts)
+                Wh3UnitVisualCounts visualCounts,
+                double expectedLiveBattlePresence)
             {
                 assetPath = NormalizePath(assetPath);
                 if (assetPath.Length == 0 || !source.ContainsFile(assetPath))
@@ -313,6 +315,13 @@ namespace Editors.KitbasherEditor.Services
                     ? $"land:{landUnitKey}"
                     : $"main:{mainUnitKey}";
                 identity += $"|role:{visualRole}";
+                if (usages.TryGetValue(identity, out var existing))
+                {
+                    expectedLiveBattlePresence = Math.Max(
+                        existing.ExpectedLiveBattlePresence,
+                        expectedLiveBattlePresence);
+                }
+
                 usages[identity] = new Wh3UnitDirectAssetUsage(
                     assetPath,
                     mainUnitKey,
@@ -320,7 +329,8 @@ namespace Editors.KitbasherEditor.Services
                     category,
                     visualRole,
                     entityCount,
-                    visualCounts);
+                    visualCounts,
+                    Math.Clamp(expectedLiveBattlePresence, 0.0, 1.0));
             }
 
             void AddEngineAssetUsages(
@@ -330,8 +340,16 @@ namespace Editors.KitbasherEditor.Services
                 Wh3ArmyUnitCategory category,
                 Wh3UnitVisualCounts visualCounts)
             {
-                foreach (var field in new[] { "model", "destroyed_model", "destruct_model" })
+                foreach (var field in new[]
+                         {
+                             "model",
+                             "destroyed_model",
+                             "destruct_model",
+                             "destruction_animation",
+                         })
                 {
+                    var expectedLiveBattlePresence =
+                        GetDirectEngineAssetExpectedLiveBattlePresence(field);
                     foreach (var assetPath in ResolveEngineAssetPaths(
                                  Get(engine, field),
                                  animatedLodRowsByKey))
@@ -342,7 +360,8 @@ namespace Editors.KitbasherEditor.Services
                             landUnitKey,
                             category,
                             Wh3UnitVisualRole.Engine,
-                            visualCounts);
+                            visualCounts,
+                            expectedLiveBattlePresence);
                     }
                 }
             }
@@ -463,6 +482,8 @@ namespace Editors.KitbasherEditor.Services
                                 continue;
                             }
 
+                            var extraEngineVisualCounts =
+                                ResolveExtraEngineVisualCounts(visualCounts);
                             AddVariantUsage(
                                 Get(extraEngine, "variant"),
                                 mainUnitKey,
@@ -473,14 +494,14 @@ namespace Editors.KitbasherEditor.Services
                                 Classify(caste, landCategory, uiGroupKey),
                                 Wh3UnitVisualRole.Engine,
                                 numMen,
-                                visualCounts);
+                                extraEngineVisualCounts);
 
                             AddEngineAssetUsages(
                                 extraEngine,
                                 mainUnitKey,
                                 landUnitKey,
                                 Classify(caste, landCategory, uiGroupKey),
-                                visualCounts);
+                                extraEngineVisualCounts);
                         }
                     }
                 }
@@ -763,6 +784,21 @@ namespace Editors.KitbasherEditor.Services
             // to ceil(44 * .5) = 22 crew.  primary_ammo is not consulted.
             return new Wh3UnitVisualCounts(riders, mounts, engines, crew);
         }
+
+        private static Wh3UnitVisualCounts ResolveExtraEngineVisualCounts(
+            Wh3UnitVisualCounts visualCounts)
+            => visualCounts with
+            {
+                // An extra-engine mapping represents an engine component even when
+                // land_units.engine is empty. Reuse the primary carrier count when present;
+                // otherwise keep one attached engine instead of dropping the component.
+                Engines = Math.Max(1, visualCounts.Engines),
+            };
+
+        private static double GetDirectEngineAssetExpectedLiveBattlePresence(string field)
+            => field.Equals("model", StringComparison.OrdinalIgnoreCase)
+                ? 1.0
+                : 0.0;
 
         private static bool IsCrewedEngine(string engineType)
             => engineType.Contains("crew", StringComparison.OrdinalIgnoreCase) &&
