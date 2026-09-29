@@ -8110,7 +8110,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Cropped-content hashes computed: {state.AtlasRegionContentHashes.Count}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
-            sb.AppendLine($"Texel-density scaled meshes: {state.TexelDensityScaledMeshes}");
+            sb.AppendLine($"Texel-density downscale candidates: {state.TexelDensityScaledMeshes}");
             if (state.TexelDensityScaledMeshes != 0)
             {
                 sb.AppendLine(
@@ -8127,6 +8127,10 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Atlas value-gate batches accepted: {state.AtlasValueGateBatchesAccepted}");
                 sb.AppendLine($"Atlas value-gate batches rejected: {state.AtlasValueGateBatchesRejected}");
                 sb.AppendLine($"Atlas value-gate broad batches split: {state.AtlasValueGateBroadBatchesSplit}");
+                sb.AppendLine(
+                    $"Atlas value-gate BCn budgets: " +
+                    $"{FormatMiB(MaxGeneratedBcnBytesPerExpectedArmyDraw)} per expected-army draw, " +
+                    $"{FormatMiB(MaxGeneratedBcnBytesPerFallbackDraw)} per fallback draw");
                 sb.AppendLine($"Atlas value-gate candidates accepted: {state.AtlasValueGateCandidatesAccepted}");
                 sb.AppendLine($"Atlas value-gate candidates rejected: {state.AtlasValueGateCandidatesRejected}");
                 sb.AppendLine(
