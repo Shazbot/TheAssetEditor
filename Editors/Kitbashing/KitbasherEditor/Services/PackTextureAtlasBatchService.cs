@@ -3852,6 +3852,14 @@ namespace Editors.KitbasherEditor.Services
             if (state.ArmyResidencyModel == null || sourceTexture.BcnBytes <= 0)
                 return 0;
 
+            // Direct VMD texture references (for example decal diffuse/normal) are not
+            // rewritten by material atlasing. We do not currently model their exact army
+            // probability separately, so conservatively keep the full source texture
+            // resident in both the current and proposed estimates. This guarantees that
+            // such a reference can never create false expected-army retirement credit.
+            if (sourceTexture.HasDirectVmdReference)
+                return sourceTexture.BcnBytes;
+
             var remainingWsModels = sourceTexture.References
                 .Where(reference =>
                     !existingRewrites.Contains(reference) &&
