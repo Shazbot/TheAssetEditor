@@ -131,14 +131,10 @@ namespace Editors.KitbasherEditor.Services
                             tableFilesRead++;
                             parsedRowsByTable[tableName] += rows.Count;
 
-                            foreach (var row in rows)
-                            {
-                                var key = BuildEffectiveRowKey(tableName, row);
-                                if (string.IsNullOrWhiteSpace(key))
-                                    continue;
-
-                                effectiveRows[tableName][key] = row;
-                            }
+                            ApplyEffectiveRows(
+                                tableName,
+                                effectiveRows[tableName],
+                                rows);
                         }
                         catch (Exception ex) when (
                             ex is InvalidDataException or
@@ -652,6 +648,24 @@ namespace Editors.KitbasherEditor.Services
 
             tableName = string.Empty;
             return false;
+        }
+
+        private static void ApplyEffectiveRows(
+            string tableName,
+            Dictionary<string, Dictionary<string, string>> effectiveRows,
+            IEnumerable<Dictionary<string, string>> rows)
+        {
+            // Containers are processed CA-first and source-pack-last. Assignment by key is
+            // intentional: later rows override earlier rows exactly like the game's/mod's
+            // effective DB view.
+            foreach (var row in rows)
+            {
+                var key = BuildEffectiveRowKey(tableName, row);
+                if (string.IsNullOrWhiteSpace(key))
+                    continue;
+
+                effectiveRows[key] = row;
+            }
         }
 
         private static string BuildEffectiveRowKey(
