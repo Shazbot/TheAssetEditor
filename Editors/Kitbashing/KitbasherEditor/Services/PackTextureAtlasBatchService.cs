@@ -2893,7 +2893,7 @@ namespace Editors.KitbasherEditor.Services
             if (model == null)
                 return 0;
 
-            var fallbackCoveredByCategory = ExpectedArmySlots.Keys.ToDictionary(
+            var fallbackCoveredByCategory = model.Scenario.ArmySlotTemplate.Keys.ToDictionary(
                 category => category,
                 _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
             foreach (var rootValue in fallbackRoots)
@@ -2910,7 +2910,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var notResidentProbability = 1.0;
-            foreach (var (category, slotCount) in ExpectedArmySlots)
+            foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
             {
                 var population = model.UnitsByCategory[category].Count;
                 if (population == 0)
@@ -3363,7 +3363,7 @@ namespace Editors.KitbasherEditor.Services
             // battle-residency objective. Shared source/crop identities remain indivisible.
             if (armyModel != null)
             {
-                foreach (var category in ExpectedArmySlots.Keys)
+                foreach (var category in armyModel.Scenario.ArmySlotTemplate.Keys)
                 {
                     AddProposal(groups.Where(group =>
                         GetArmyCategoriesForRoots(
@@ -3450,7 +3450,7 @@ namespace Editors.KitbasherEditor.Services
                 rootsByMesh);
             var currentExpectedArmyDrawCallsEliminated =
                 CalculateExpectedArmyDrawCallsEliminated(
-                    state.ArmyResidencyModel,
+                    state,
                     BuildBatchIndexByMesh(working),
                     affinityGroups,
                     expectedArmyEntitiesByMesh);
@@ -3864,7 +3864,7 @@ namespace Editors.KitbasherEditor.Services
                         proposedBatchByMesh[candidate.Key] = pair.FirstBatchId;
                     var proposedExpectedArmyDrawCallsEliminated =
                         CalculateExpectedArmyDrawCallsEliminated(
-                            state.ArmyResidencyModel,
+                            state,
                             proposedBatchByMesh,
                             affinityGroups,
                             expectedArmyEntitiesByMesh);
@@ -4183,7 +4183,7 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static double CalculateExpectedArmyDrawCallsEliminated(
-            ArmyResidencyModel? model,
+            BatchState state,
             IReadOnlyDictionary<MeshKey, int> batchByMesh,
             IReadOnlyList<MergeAffinityGroup> affinityGroups,
             IReadOnlyDictionary<
@@ -4191,6 +4191,7 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
                 expectedEntitiesByMesh)
         {
+            var model = state.ArmyResidencyModel;
             if (model == null)
                 return 0;
 
@@ -4205,7 +4206,7 @@ namespace Editors.KitbasherEditor.Services
                     if (meshes.Length < 2)
                         continue;
 
-                    foreach (var (category, slotCount) in ExpectedArmySlots)
+                    foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
                     {
                         var population = model.UnitsByCategory[category].Count;
                         if (population == 0)
@@ -4214,6 +4215,64 @@ namespace Editors.KitbasherEditor.Services
                         double eliminatedDrawsAcrossResolvedUnits = 0;
                         foreach (var unitId in model.UnitsByCategory[category])
                         {
+                            var usedExactConfigurations = false;
+                            if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
+                                    unitId,
+                                    out var configurationsByRole) &&
+                                configurationsByRole.Count != 0)
+                            {
+                                usedExactConfigurations = true;
+                                foreach (var (role, configurations) in configurationsByRole)
+                                {
+                                    var entityCount = Math.Max(
+                                        1,
+                                        model.EntityCountByUnitAndRole
+                                            .GetValueOrDefault(unitId)?
+                                            .GetValueOrDefault(role, 1) ?? 1);
+
+                                    foreach (var configuration in configurations)
+                                    {
+                                        if (configuration.Probability <= 0)
+                                            continue;
+
+                                        var coRenderedCounts = new List<int>(meshes.Length);
+                                        foreach (var mesh in meshes)
+                                        {
+                                            if (!state.Usages.TryGetValue(mesh, out var usages))
+                                                continue;
+
+                                            var occurrenceCount = usages
+                                                .Select(usage => Normalize(usage.AssetPath))
+                                                .Where(path => path.Length != 0)
+                                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                                .Sum(path => configuration.WsModelOccurrences
+                                                    .GetValueOrDefault(path));
+                                            if (occurrenceCount > 0)
+                                                coRenderedCounts.Add(occurrenceCount);
+                                        }
+
+                                        if (coRenderedCounts.Count < 2)
+                                            continue;
+
+                                        // Evaluate the concrete visual state, not marginal
+                                        // averages. Mutually-exclusive mesh alternatives can
+                                        // therefore never earn draw-call credit together.
+                                        var coRenderedOccurrences = coRenderedCounts.Min();
+                                        eliminatedDrawsAcrossResolvedUnits +=
+                                            configuration.Probability *
+                                            entityCount *
+                                            coRenderedOccurrences *
+                                            (coRenderedCounts.Count - 1);
+                                    }
+                                }
+                            }
+
+                            if (usedExactConfigurations)
+                                continue;
+
+                            // Bounded fallback for VMDs whose configuration state space was too
+                            // large to enumerate exactly. This retains the previous conservative
+                            // marginal estimate instead of making the optimizer fail.
                             var expectedCounts = new List<double>(meshes.Length);
                             foreach (var mesh in meshes)
                             {
@@ -4228,16 +4287,11 @@ namespace Editors.KitbasherEditor.Services
                                 expectedCounts.Add(expectedEntities);
                             }
 
-                            if (expectedCounts.Count < 2)
-                                continue;
-
-                            // Merge-affinity groups contain parts of the same geometry/LOD.
-                            // They should normally have identical occurrence counts. Taking the
-                            // minimum keeps the estimate conservative if unusual WSModel/VMD
-                            // overrides make their inferred usage differ.
-                            var coRenderedEntities = expectedCounts.Min();
-                            eliminatedDrawsAcrossResolvedUnits +=
-                                coRenderedEntities * (expectedCounts.Count - 1);
+                            if (expectedCounts.Count >= 2)
+                            {
+                                eliminatedDrawsAcrossResolvedUnits +=
+                                    expectedCounts.Min() * (expectedCounts.Count - 1);
+                            }
                         }
 
                         if (eliminatedDrawsAcrossResolvedUnits <= 0)
@@ -4506,7 +4560,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             expectedArmyDrawsEliminated = CalculateExpectedArmyDrawCallsEliminated(
-                state.ArmyResidencyModel,
+                state,
                 batchByMesh,
                 affinityGroups,
                 expectedEntitiesByMesh);
@@ -10031,10 +10085,10 @@ namespace Editors.KitbasherEditor.Services
             {
                 sb.AppendLine("Expected army residency model");
                 sb.AppendLine("-----------------------------");
-                foreach (var category in ExpectedArmySlots.Keys)
+                foreach (var category in state.ArmyResidencyModel.Scenario.ArmySlotTemplate.Keys)
                 {
                     sb.AppendLine(
-                        $"{category}: slots={ExpectedArmySlots[category]}, " +
+                        $"{category}: slots={state.ArmyResidencyModel.Scenario.ArmySlotTemplate[category]}, " +
                         $"resolved-units={state.ArmyResidencyModel.UnitsByCategory[category].Count:N0}");
                 }
 
@@ -10045,7 +10099,13 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Texture residency converts each visual role's probability through its resolved component count before applying category slots.");
                 sb.AppendLine(
-                    "Expected draw-call eliminations use categorySlots * average(entity-weighted per-unit eliminated draws), with role counts and VMD selection probability.");
+                    "Expected draw-call eliminations enumerate concrete VMD visual configurations and only credit meshes that co-occur in the same state; oversized state spaces fall back to the conservative marginal model.");
+                sb.AppendLine(
+                    $"Scenario: unit-scale={state.ArmyResidencyModel.Scenario.UnitSizeScale:0.###}, " +
+                    $"crew-scale={state.ArmyResidencyModel.Scenario.CrewScale:0.###}, " +
+                    $"engine-rounding={state.ArmyResidencyModel.Scenario.EngineRoundingPolicy}, " +
+                    $"destruction={state.ArmyResidencyModel.Scenario.DestructionProbability:0.###}, " +
+                    $"scope={state.ArmyResidencyModel.Scenario.RosterScope}.");
                 sb.AppendLine(
                     "The old aggregate VMD-residency and unweighted merge-affinity metrics remain non-regression guards.");
                 sb.AppendLine();
@@ -11715,6 +11775,10 @@ namespace Editors.KitbasherEditor.Services
                 IReadOnlyDictionary<Wh3UnitVisualRole, double>>
                 ByWsModel);
 
+        private sealed record UnitVisualConfiguration(
+            double Probability,
+            IReadOnlyDictionary<string, int> WsModelOccurrences);
+
         private sealed record ArmyResidencyModel(
             IReadOnlyDictionary<Wh3ArmyUnitCategory, HashSet<string>> UnitsByCategory,
             IReadOnlyDictionary<
@@ -11726,7 +11790,12 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3UnitVisualRole, int>> EntityCountByUnitAndRole,
             IReadOnlyDictionary<string, Wh3ArmyUnitCategory> CategoryByUnit,
             IReadOnlyDictionary<string, ExpectedWsModelOccurrences>
-                ExpectedWsModelOccurrencesByUnit);
+                ExpectedWsModelOccurrencesByUnit,
+            IReadOnlyDictionary<
+                string,
+                Dictionary<Wh3UnitVisualRole, IReadOnlyList<UnitVisualConfiguration>>>
+                VisualConfigurationsByUnitAndRole,
+            Wh3ArmyVisualScenario Scenario);
 
         private sealed record ArmyLocalitySplitEvaluationReportEntry(
             bool Accepted,
