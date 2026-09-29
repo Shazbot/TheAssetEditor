@@ -3657,7 +3657,9 @@ namespace Editors.KitbasherEditor.Services
             // total reachable residency.
             var globalBudget =
                 rawDrawsEliminated * (double)MaxNetBcnBytesPerFallbackDraw;
-            var globalCost = Math.Max(0L, residency.NetBcnBytes);
+            var globalCost = GetChargeableAtlasValueGateBytes(
+                residency.GeneratedBcnBytes,
+                residency.RetiredSourceBcnBytes);
             if (globalCost > globalBudget)
             {
                 var bytesPerDraw = globalCost / Math.Max(rawDrawsEliminated, 1);
@@ -3675,7 +3677,9 @@ namespace Editors.KitbasherEditor.Services
             {
                 var expectedBudget =
                     expectedArmyDrawsEliminated * MaxNetBcnBytesPerExpectedArmyDraw;
-                var expectedCost = Math.Max(0.0, residency.ExpectedArmyNetBcnBytes);
+                var expectedCost = GetChargeableAtlasValueGateBytes(
+                    residency.ExpectedArmyGeneratedBcnBytes,
+                    residency.ExpectedArmyRetiredSourceBcnBytes);
                 if (expectedCost > expectedBudget)
                 {
                     var bytesPerDraw =
@@ -3693,6 +3697,11 @@ namespace Editors.KitbasherEditor.Services
 
             return true;
         }
+
+        private static double GetChargeableAtlasValueGateBytes(
+            double generatedBytes,
+            double retiredSourceBytes)
+            => Math.Max(0.0, generatedBytes - retiredSourceBytes);
 
         private static bool TryEstimateIncrementalAtlasResidency(
             BatchState state,
