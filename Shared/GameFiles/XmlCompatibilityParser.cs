@@ -5,9 +5,9 @@ namespace Shared.GameFormats
 {
     public static class XmlCompatibilityParser
     {
-        private static readonly Regex TrailingDashCommentBlock = new(
-            @"(?:(?:\r\n|\n|\r)[ \t]*--[^\r\n]*)+[ \t\r\n]*\z",
-            RegexOptions.Compiled);
+        private static readonly Regex RootElementStart = new(
+            @"\A\s*(?:<\?xml\b.*?\?>\s*)?(?:<!--.*?-->\s*)*<(?<name>[A-Za-z_][A-Za-z0-9_.:-]*)(?:\s|>)",
+            RegexOptions.Compiled | RegexOptions.Singleline);
 
         private static readonly Regex IncompleteClosingTagLine = new(
             @"(?m)^(?<tag>[ \t]*</(?<name>[A-Za-z_][A-Za-z0-9_.:-]*)[ \t]*)(?=\r?$)",
@@ -30,26 +30,16 @@ namespace Shared.GameFormats
                 var working = content;
                 var applied = new List<string>();
 
-                if (TryStripTrailingDashComments(
+                if (TryStripTrailingTextAfterClosedRoot(
                         working,
-                        out var withoutTrailingComments,
-                        out var removedCommentLines))
+                        parser,
+                        out var withoutTrailingText,
+                        out var trailingDescription,
+                        out var parsedWithoutTrailingText))
                 {
-                    working = withoutTrailingComments;
-                    applied.Add(
-                        $"Ignored {removedCommentLines} trailing '-- ...' pseudo-comment " +
-                        $"line{(removedCommentLines == 1 ? string.Empty : "s")}.");
-
-                    try
-                    {
-                        var result = parser(working);
-                        repairs = applied;
-                        return result;
-                    }
-                    catch (Exception retry) when (ContainsXmlException(retry))
-                    {
-                        lastFailure = retry;
-                    }
+                    applied.Add(trailingDescription);
+                    repairs = applied;
+                    return parsedWithoutTrailingText;
                 }
 
                 if (TryRepairIncompleteClosingTags(
@@ -76,36 +66,72 @@ namespace Shared.GameFormats
                     {
                         lastFailure = retry;
                     }
+
+                    if (TryStripTrailingTextAfterClosedRoot(
+                            working,
+                            parser,
+                            out withoutTrailingText,
+                            out trailingDescription,
+                            out parsedWithoutTrailingText))
+                    {
+                        applied.Add(trailingDescription);
+                        repairs = applied;
+                        return parsedWithoutTrailingText;
+                    }
                 }
 
                 throw lastFailure;
             }
         }
 
-        private static bool TryStripTrailingDashComments(
+        private static bool TryStripTrailingTextAfterClosedRoot<T>(
             string content,
+            Func<string, T> parser,
             out string repaired,
-            out int removedLineCount)
+            out string description,
+            out T result)
         {
-            var match = TrailingDashCommentBlock.Match(content);
-            if (!match.Success)
+            repaired = content;
+            description = string.Empty;
+            result = default!;
+
+            var rootMatch = RootElementStart.Match(content);
+            if (!rootMatch.Success)
+                return false;
+
+            var rootName = rootMatch.Groups["name"].Value;
+            var closingTag = new Regex(
+                $@"</{Regex.Escape(rootName)}\s*>",
+                RegexOptions.IgnoreCase);
+            var matches = closingTag.Matches(content);
+            if (matches.Count == 0)
+                return false;
+
+            var lastClose = matches[^1];
+            var documentEnd = lastClose.Index + lastClose.Length;
+            var suffix = content[documentEnd..];
+            if (string.IsNullOrWhiteSpace(suffix))
+                return false;
+
+            var candidate = content[..documentEnd];
+            try
             {
-                repaired = content;
-                removedLineCount = 0;
+                result = parser(candidate);
+            }
+            catch (Exception ex) when (ContainsXmlException(ex))
+            {
                 return false;
             }
 
-            removedLineCount = Regex.Matches(
-                    match.Value,
-                    @"(?m)^[ \t]*--")
+            repaired = candidate;
+            var nonEmptyLines = Regex.Matches(
+                    suffix,
+                    @"(?m)^\s*\S.*$")
                 .Count;
-            if (removedLineCount == 0)
-            {
-                repaired = content;
-                return false;
-            }
-
-            repaired = content[..match.Index].TrimEnd();
+            description =
+                $"Ignored trailing non-XML text after </{rootName}> " +
+                $"({Math.Max(1, nonEmptyLines)} non-empty line" +
+                $"{(Math.Max(1, nonEmptyLines) == 1 ? string.Empty : "s")}).";
             return true;
         }
 
