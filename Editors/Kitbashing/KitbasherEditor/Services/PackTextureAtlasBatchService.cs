@@ -49,19 +49,6 @@ namespace Editors.KitbasherEditor.Services
 
         private const long MaxAutomaticCommonTextureConstantProbePixels = 4096;
 
-        // Representative 20-ish stack used by the pack-atlas residency heuristic.
-        // These are relative slot weights, not hard caps.
-        private static readonly IReadOnlyDictionary<Wh3ArmyUnitCategory, int> ExpectedArmySlots =
-            new Dictionary<Wh3ArmyUnitCategory, int>
-            {
-                [Wh3ArmyUnitCategory.Lord] = 1,
-                [Wh3ArmyUnitCategory.Hero] = 2,
-                [Wh3ArmyUnitCategory.InfantryMissile] = 9,
-                [Wh3ArmyUnitCategory.CavalryChariot] = 4,
-                [Wh3ArmyUnitCategory.MonsterBeast] = 3,
-                [Wh3ArmyUnitCategory.ArtilleryWarMachine] = 2,
-            };
-
         private static readonly HashSet<string> KnownConstantTexturePaths =
         [
             @"commontextures\default_black.dds",
@@ -9896,7 +9883,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Cross-VMD material reuses: {state.CrossVmdMaterialReuses}");
             }
             sb.AppendLine(
-                $"Atlased WSModels reused by multiple VMD roots: " +
+                $"Atlased WSModels reachable from multiple VMD roots (reachability, not DB asset reuse): " +
                 $"{componentReuse.Components.Count(x => x.VmdRootCount > 1)} / {componentReuse.Components.Count}");
             sb.AppendLine(
                 $"Atlased geometry paths reused by multiple VMD roots: " +
@@ -10006,6 +9993,49 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Resolved direct engine assets: {unitResolution.DirectAssetUsagesByPath.Count:N0} " +
                     $"asset(s), {directAssetUsages.Count:N0} usage(s)");
+                sb.AppendLine(
+                    $"Complete DB-derived visual roster: {unitResolution.RosterUnits.Count:N0} unit(s); " +
+                    $"scope={unitResolution.Scenario.RosterScope}");
+                sb.AppendLine(
+                    $"Scenario entity scaling: unit={unitResolution.Scenario.UnitSizeScale:0.###}, " +
+                    $"crew={unitResolution.Scenario.CrewScale:0.###}, " +
+                    $"rounding={unitResolution.Scenario.EngineRoundingPolicy}");
+                sb.AppendLine(
+                    $"Scenario lifecycle: destruction={unitResolution.Scenario.DestructionProbability:0.###}; " +
+                    $"LOD distribution={string.Join(", ", unitResolution.Scenario.LodDistribution.OrderBy(x => x.Key).Select(x => $"lod{x.Key}={x.Value:0.###}"))}");
+
+                var rosterComponents = unitResolution.RosterUnits
+                    .SelectMany(unit => unit.Components.Select(component => (Unit: unit, Component: component)))
+                    .ToList();
+                var trueAssetReuse = rosterComponents
+                    .GroupBy(entry => entry.Component.AssetPath, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => new
+                    {
+                        AssetPath = group.Key,
+                        UnitCount = group.Select(entry => entry.Unit.Identity)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count(),
+                        Roles = group.Select(entry => entry.Component.Role).Distinct().OrderBy(role => role).ToArray(),
+                        States = group.Select(entry => entry.Component.State).Distinct().OrderBy(stateValue => stateValue).ToArray(),
+                        Lods = group.Select(entry => entry.Component.Lod).Distinct().OrderBy(lod => lod).ToArray(),
+                    })
+                    .Where(entry => entry.UnitCount > 1)
+                    .OrderByDescending(entry => entry.UnitCount)
+                    .ThenBy(entry => entry.AssetPath, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                sb.AppendLine(
+                    $"True visual-asset reuse: {trueAssetReuse.Count:N0} asset path(s) referenced by multiple resolved units.");
+                sb.AppendLine(
+                    "True reuse above is DB unit-to-asset identity reuse; atlas/mesh compatibility is reported separately and does not imply shared source assets.");
+                foreach (var reuse in trueAssetReuse.Take(20))
+                {
+                    sb.AppendLine(
+                        $"  reuse: {reuse.AssetPath} | units={reuse.UnitCount:N0} | " +
+                        $"roles={string.Join(",", reuse.Roles)} | states={string.Join(",", reuse.States)} | " +
+                        $"lods={string.Join(",", reuse.Lods)}");
+                }
+                if (trueAssetReuse.Count > 20)
+                    sb.AppendLine($"  ... {trueAssetReuse.Count - 20:N0} more reused asset path(s)");
 
                 foreach (var category in Enum.GetValues<Wh3ArmyUnitCategory>())
                 {
