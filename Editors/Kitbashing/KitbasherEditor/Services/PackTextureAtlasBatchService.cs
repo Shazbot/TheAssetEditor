@@ -6327,9 +6327,16 @@ namespace Editors.KitbasherEditor.Services
                             continue;
 
                         reachable.Add(materialPath);
-                        var materialDoc = ReferenceEquals(container, state.Source)
-                            ? GetMaterialDocument(state, materialPath, materialFile)
-                            : LoadXml(materialFile);
+                        if (!TryGetMaterialDocumentForTraversal(
+                                state,
+                                container,
+                                materialPath,
+                                materialFile,
+                                out var materialDoc))
+                        {
+                            continue;
+                        }
+
                         var textureNodes = materialDoc.SelectNodes("/material/textures/texture");
                         if (textureNodes == null)
                             continue;
@@ -6554,6 +6561,63 @@ namespace Editors.KitbasherEditor.Services
                         childVmdRefs.Add(Normalize(reference.Reference));
                 }
             }
+        }
+
+        private static bool TryGetMaterialDocumentForTraversal(
+            BatchState state,
+            IPackFileContainer container,
+            string materialPathValue,
+            PackFile file,
+            out XmlDocument document)
+        {
+            var materialPath = Normalize(materialPathValue);
+            try
+            {
+                document = ReferenceEquals(container, state.Source)
+                    ? GetMaterialDocument(state, materialPath, file)
+                    : LoadXml(file);
+                return true;
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or
+                XmlException or
+                FormatException or
+                ArgumentException)
+            {
+                RecordMalformedMaterial(state, materialPath, ex);
+                document = null!;
+                return false;
+            }
+        }
+
+        private static void RecordMalformedMaterial(
+            BatchState state,
+            string materialPath,
+            Exception exception)
+        {
+            materialPath = Normalize(materialPath);
+            if (state.MalformedMaterialsIgnored.Any(
+                    entry => entry.Path.Equals(materialPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            var messages = new List<string>();
+            for (Exception? current = exception; current != null; current = current.InnerException)
+            {
+                var message = current.Message.Replace("\r", " ").Replace("\n", " ").Trim();
+                if (message.Length != 0 &&
+                    !messages.Contains(message, StringComparer.Ordinal))
+                {
+                    messages.Add(message);
+                }
+            }
+
+            state.MalformedMaterialsIgnored.Add(new MalformedXmlAssetEntry(
+                materialPath,
+                messages.Count == 0
+                    ? exception.GetType().Name
+                    : string.Join(" -> ", messages)));
         }
 
         private static XmlDocument GetMaterialDocument(
@@ -7381,6 +7445,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Malformed VMD root files ignored: {state.MalformedVmdRoots.Count}");
             sb.AppendLine($"Malformed referenced VMD files ignored: {state.MalformedReferencedVmds.Count}");
             sb.AppendLine($"Malformed WSModels ignored: {state.MalformedWsModelsIgnored.Count}");
+            sb.AppendLine($"Malformed material XML files ignored: {state.MalformedMaterialsIgnored.Count}");
             sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
@@ -7910,6 +7975,18 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"  Reason: {entry.Reason}");
             }
             if (state.MalformedWsModelsIgnored.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Malformed material XML files ignored");
+            sb.AppendLine("------------------------------------");
+            foreach (var entry in state.MalformedMaterialsIgnored
+                         .OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine(entry.Path);
+                sb.AppendLine($"  Reason: {entry.Reason}");
+            }
+            if (state.MalformedMaterialsIgnored.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
@@ -9270,6 +9347,7 @@ namespace Editors.KitbasherEditor.Services
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
             public List<MalformedVmdEntry> MalformedReferencedVmds { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedWsModelsIgnored { get; } = [];
+            public List<MalformedXmlAssetEntry> MalformedMaterialsIgnored { get; } = [];
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, TextureInspection> TextureInspections { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<AtlasRegionContentHashKey, string> AtlasRegionContentHashes { get; } = [];
