@@ -10080,6 +10080,21 @@ namespace Editors.KitbasherEditor.Services
                         Roles = group.Select(entry => entry.Component.Role).Distinct().OrderBy(role => role).ToArray(),
                         States = group.Select(entry => entry.Component.State).Distinct().OrderBy(stateValue => stateValue).ToArray(),
                         Lods = group.Select(entry => entry.Component.Lod).Distinct().OrderBy(lod => lod).ToArray(),
+                        ExpectedEntityReferences = group.Sum(entry =>
+                            entry.Unit.VisualCounts.ForRole(entry.Component.Role) *
+                            entry.Component.ScenarioPresenceProbability),
+                        FactionCount = group.SelectMany(entry => entry.Unit.FactionKeys)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count(),
+                        CultureCount = group.SelectMany(entry => entry.Unit.CultureKeys)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count(),
+                        ExampleUnits = group.Select(entry => entry.Unit.MainUnitKey)
+                            .Where(key => !string.IsNullOrWhiteSpace(key))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                            .Take(4)
+                            .ToArray(),
                     })
                     .Where(entry => entry.UnitCount > 1)
                     .OrderByDescending(entry => entry.UnitCount)
@@ -10094,7 +10109,9 @@ namespace Editors.KitbasherEditor.Services
                     sb.AppendLine(
                         $"  reuse: {reuse.AssetPath} | units={reuse.UnitCount:N0} | " +
                         $"roles={string.Join(",", reuse.Roles)} | states={string.Join(",", reuse.States)} | " +
-                        $"lods={string.Join(",", reuse.Lods)}");
+                        $"lods={string.Join(",", reuse.Lods)} | entity-refs={reuse.ExpectedEntityReferences:0.###} | " +
+                        $"factions={reuse.FactionCount:N0} | cultures={reuse.CultureCount:N0} | " +
+                        $"example-units={string.Join(",", reuse.ExampleUnits)}");
                 }
                 if (trueAssetReuse.Count > 20)
                     sb.AppendLine($"  ... {trueAssetReuse.Count - 20:N0} more reused asset path(s)");
