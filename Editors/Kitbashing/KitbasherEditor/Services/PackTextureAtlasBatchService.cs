@@ -13,6 +13,7 @@ using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Utility;
 using Shared.Core.Services;
 using Shared.Core.Settings;
+using Shared.GameFormats;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
 using Shared.GameFormats.RigidModel.Types;
@@ -6465,7 +6466,13 @@ namespace Editors.KitbasherEditor.Services
             file ??= container.FindFile(vmdPath)
                 ?? throw new FileNotFoundException($"VMD file could not be resolved: {vmdPath}");
 
-            var vmd = VariantMeshDefinitionLoader.Load(file);
+            var vmd = VariantMeshDefinitionLoader.Load(
+                file,
+                out var compatibilityRepairs);
+            RecordXmlCompatibilityRepairs(
+                state,
+                vmdPath,
+                compatibilityRepairs);
             state.VmdDocuments[vmdPath] = vmd;
             return vmd;
         }
@@ -6581,9 +6588,19 @@ namespace Editors.KitbasherEditor.Services
             var materialPath = Normalize(materialPathValue);
             try
             {
-                document = ReferenceEquals(container, state.Source)
-                    ? GetMaterialDocument(state, materialPath, file)
-                    : LoadXml(file);
+                if (ReferenceEquals(container, state.Source))
+                {
+                    document = GetMaterialDocument(state, materialPath, file);
+                }
+                else
+                {
+                    document = LoadXml(file, out var compatibilityRepairs);
+                    RecordXmlCompatibilityRepairs(
+                        state,
+                        materialPath,
+                        compatibilityRepairs);
+                }
+
                 return true;
             }
             catch (Exception ex) when (
@@ -6640,7 +6657,13 @@ namespace Editors.KitbasherEditor.Services
             materialFile ??= FindForReadStatic(state, materialPath)
                 ?? throw new FileNotFoundException($"Material file could not be resolved: {materialPath}");
 
-            var doc = LoadXml(materialFile);
+            var doc = LoadXml(
+                materialFile,
+                out var compatibilityRepairs);
+            RecordXmlCompatibilityRepairs(
+                state,
+                materialPath,
+                compatibilityRepairs);
             state.MaterialDocuments[materialPath] = doc;
             return doc;
         }
@@ -6663,9 +6686,19 @@ namespace Editors.KitbasherEditor.Services
             var wsPath = Normalize(wsPathValue);
             try
             {
-                document = ReferenceEquals(container, state.Source)
-                    ? GetWsDocument(state, wsPath) ?? LoadXml(file)
-                    : LoadXml(file);
+                if (ReferenceEquals(container, state.Source))
+                {
+                    document = GetWsDocument(state, wsPath) ?? LoadXml(file);
+                }
+                else
+                {
+                    document = LoadXml(file, out var compatibilityRepairs);
+                    RecordXmlCompatibilityRepairs(
+                        state,
+                        wsPath,
+                        compatibilityRepairs);
+                }
+
                 return true;
             }
             catch (Exception ex) when (
@@ -6720,7 +6753,13 @@ namespace Editors.KitbasherEditor.Services
             if (file == null)
                 return null;
 
-            var doc = LoadXml(file);
+            var doc = LoadXml(
+                file,
+                out var compatibilityRepairs);
+            RecordXmlCompatibilityRepairs(
+                state,
+                wsPath,
+                compatibilityRepairs);
             state.WsDocuments[wsPath] = doc;
             return doc;
         }
@@ -6762,10 +6801,41 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static XmlDocument LoadXml(PackFile file)
+            => LoadXml(file, out _);
+
+        private static XmlDocument LoadXml(
+            PackFile file,
+            out IReadOnlyList<string> compatibilityRepairs)
         {
-            var doc = new XmlDocument();
-            doc.LoadXml(Encoding.UTF8.GetString(file.DataSource.ReadData()));
-            return doc;
+            var content = Encoding.UTF8.GetString(file.DataSource.ReadData());
+            return XmlCompatibilityParser.Parse(
+                content,
+                xml =>
+                {
+                    var document = new XmlDocument();
+                    document.LoadXml(xml);
+                    return document;
+                },
+                out compatibilityRepairs);
+        }
+
+        private static void RecordXmlCompatibilityRepairs(
+            BatchState state,
+            string pathValue,
+            IReadOnlyList<string> repairs)
+        {
+            if (repairs.Count == 0)
+                return;
+
+            var path = Normalize(pathValue);
+            if (!state.XmlCompatibilityRepairs.TryGetValue(path, out var recorded))
+            {
+                recorded = new HashSet<string>(StringComparer.Ordinal);
+                state.XmlCompatibilityRepairs[path] = recorded;
+            }
+
+            foreach (var repair in repairs)
+                recorded.Add(repair);
         }
 
         private static string GetTextureSlot(XmlNode textureNode)
@@ -7450,6 +7520,7 @@ namespace Editors.KitbasherEditor.Services
                     $"Unit-category DB table files read: " +
                     $"{state.UnitCategoryResolution.TableFilesRead}");
             }
+            sb.AppendLine($"XML files repaired for compatibility: {state.XmlCompatibilityRepairs.Count}");
             sb.AppendLine($"Malformed VMD root files ignored: {state.MalformedVmdRoots.Count}");
             sb.AppendLine($"Malformed referenced VMD files ignored: {state.MalformedReferencedVmds.Count}");
             sb.AppendLine($"Malformed WSModels ignored: {state.MalformedWsModelsIgnored.Count}");
@@ -7949,6 +8020,19 @@ namespace Editors.KitbasherEditor.Services
             foreach (var vmdPath in vmdRoots.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                 sb.AppendLine(vmdPath);
             if (vmdRoots.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("XML compatibility repairs");
+            sb.AppendLine("-------------------------");
+            foreach (var entry in state.XmlCompatibilityRepairs
+                         .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine(entry.Key);
+                foreach (var repair in entry.Value.OrderBy(value => value, StringComparer.Ordinal))
+                    sb.AppendLine($"  Repaired: {repair}");
+            }
+            if (state.XmlCompatibilityRepairs.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
@@ -9352,6 +9436,8 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Wh3UnitCategoryResolution? UnitCategoryResolution { get; set; }
+            public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
             public List<MalformedVmdEntry> MalformedReferencedVmds { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedWsModelsIgnored { get; } = [];
