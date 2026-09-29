@@ -888,9 +888,17 @@ namespace Editors.KitbasherEditor.Services
             foreach (var wsPath in wsModels)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var doc = GetWsDocument(state, wsPath);
-                if (doc == null)
+                var wsFile = state.Source.FindFile(wsPath);
+                if (wsFile == null ||
+                    !TryGetWsDocumentForTraversal(
+                        state,
+                        state.Source,
+                        wsPath,
+                        wsFile,
+                        out var doc))
+                {
                     continue;
+                }
 
                 var geometryPath = Normalize(doc.SelectSingleNode("/model/geometry")?.InnerText);
                 if (string.IsNullOrWhiteSpace(geometryPath))
