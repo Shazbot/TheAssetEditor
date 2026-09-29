@@ -87,6 +87,27 @@ namespace Test.KitbashEditor.Services
                 ?? throw new InvalidOperationException(
                     $"Visual count property '{propertyName}' was not found."));
 
+        private static IReadOnlyList<string> ResolveEngineAssetPaths(
+            string reference,
+            IReadOnlyDictionary<string, List<string>> animatedLodRowsByKey)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "ResolveEngineAssetPaths",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.ResolveEngineAssetPaths was not found.");
+
+            return (IReadOnlyList<string>)(method.Invoke(
+                null,
+                [reference, animatedLodRowsByKey])
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.ResolveEngineAssetPaths returned null."));
+        }
+
         private static byte[] BuildUiUnitGroupParentsRow(
             string icon,
             string key,
@@ -255,6 +276,33 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void EffectiveRows_AnimatedLodKeepsAllFilesForAnAnimatedKey()
+        {
+            var effective = new Dictionary<string, Dictionary<string, string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            ApplyEffectiveRows(
+                "warscape_animated_lod_tables",
+                effective,
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["key"] = "tmb_skull_catapult",
+                        ["filename"] = @"warmachines\engines\tmb_skull_catapult\catapult_01.rigid_model_v2",
+                        ["animated"] = "tmb_skull_catapult",
+                    },
+                    new Dictionary<string, string>
+                    {
+                        ["key"] = "tmb_skull_catapult",
+                        ["filename"] = @"warmachines\engines\tmb_skull_catapult\catapult_01_lod2.rigid_model_v2",
+                        ["animated"] = "tmb_skull_catapult",
+                    },
+                ]);
+
+            Assert.That(effective, Has.Count.EqualTo(2));
+        }
+
+        [Test]
         public void VisualCounts_SkeletonChariotUsesCarrierMountAndRiderRoles()
         {
             var counts = ResolveVisualCounts(
@@ -308,6 +356,42 @@ namespace Test.KitbashEditor.Services
                 Assert.That(GetVisualCount(counts, "Mounts"), Is.EqualTo(0));
                 Assert.That(GetVisualCount(counts, "Engines"), Is.EqualTo(3));
                 Assert.That(GetVisualCount(counts, "Crew"), Is.EqualTo(22));
+            });
+        }
+
+        [Test]
+        public void EngineAssetReference_ResolvesAnimatedLodAndExplicitDestroyedModel()
+        {
+            var animatedLodRows = new Dictionary<string, List<string>>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["tmb_skull_catapult"] =
+                [
+                    @"warmachines\engines\tmb_skull_catapult\tmb_screaming_skull_catapult_01.rigid_model_v2",
+                ],
+            };
+
+            var modelPaths = ResolveEngineAssetPaths(
+                "tmb_skull_catapult",
+                animatedLodRows);
+            var destroyedPaths = ResolveEngineAssetPaths(
+                @"warmachines\engines\tmb_skull_catapult\tmb_screaming_skull_catapult_01_destroyed.wsmodel",
+                animatedLodRows);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    modelPaths,
+                    Is.EqualTo(
+                    [
+                        @"warmachines\engines\tmb_skull_catapult\tmb_screaming_skull_catapult_01.rigid_model_v2",
+                    ]));
+                Assert.That(
+                    destroyedPaths,
+                    Is.EqualTo(
+                    [
+                        @"warmachines\engines\tmb_skull_catapult\tmb_screaming_skull_catapult_01_destroyed.wsmodel",
+                    ]));
             });
         }
 

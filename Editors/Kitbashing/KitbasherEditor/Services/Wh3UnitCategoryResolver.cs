@@ -58,9 +58,19 @@ namespace Editors.KitbasherEditor.Services
         int EntityCount,
         Wh3UnitVisualCounts VisualCounts);
 
+    internal sealed record Wh3UnitDirectAssetUsage(
+        string AssetPath,
+        string MainUnitKey,
+        string LandUnitKey,
+        Wh3ArmyUnitCategory Category,
+        Wh3UnitVisualRole VisualRole,
+        int EntityCount,
+        Wh3UnitVisualCounts VisualCounts);
+
     internal sealed record Wh3UnitCategoryResolution(
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> UsagesByVmd,
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> DirectUsagesByVmd,
+        IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitDirectAssetUsage>> DirectAssetUsagesByPath,
         IReadOnlyList<string> UnresolvedVmdRoots,
         IReadOnlyDictionary<string, int> ParsedRowsByTable,
         int TableFilesRead,
@@ -96,6 +106,7 @@ namespace Editors.KitbasherEditor.Services
         private const string MountsTable = "mounts_tables";
         private const string BattlefieldEnginesTable = "battlefield_engines_tables";
         private const string ExtraEnginesTable = "land_units_to_extra_engines_tables";
+        private const string WarscapeAnimatedLodTable = "warscape_animated_lod_tables";
 
         // The optimizer models a large-size battle.  WHMM uses the same scalar for the
         // entity count shown by its unit viewer.  Crew is a separate visual population for
@@ -114,6 +125,7 @@ namespace Editors.KitbasherEditor.Services
             MountsTable,
             BattlefieldEnginesTable,
             ExtraEnginesTable,
+            WarscapeAnimatedLodTable,
         ];
 
         private static readonly Lazy<SchemaRoot> Schema = new(LoadSchema);
@@ -197,6 +209,17 @@ namespace Editors.KitbasherEditor.Services
             var uiUnitGroupParents = effectiveRows[UiUnitGroupParentsTable];
             var mountRows = effectiveRows[MountsTable];
             var engineRows = effectiveRows[BattlefieldEnginesTable];
+            var animatedLodRowsByKey = effectiveRows[WarscapeAnimatedLodTable].Values
+                .Where(row => Get(row, "animated").Length != 0)
+                .GroupBy(row => Get(row, "animated"), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .Select(row => Get(row, "filename"))
+                        .Where(path => path.Length != 0)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList(),
+                    StringComparer.OrdinalIgnoreCase);
             var extraEngineRowsByLandUnit = effectiveRows[ExtraEnginesTable].Values
                 .Where(row => Get(row, "land_unit").Length != 0)
                 .GroupBy(row => Get(row, "land_unit"), StringComparer.OrdinalIgnoreCase)
@@ -214,6 +237,10 @@ namespace Editors.KitbasherEditor.Services
                     StringComparer.OrdinalIgnoreCase);
 
             var usagesByVmd = new Dictionary<string, Dictionary<string, Wh3UnitCategoryUsage>>(
+                StringComparer.OrdinalIgnoreCase);
+            var directAssetUsagesByPath = new Dictionary<
+                string,
+                Dictionary<string, Wh3UnitDirectAssetUsage>>(
                 StringComparer.OrdinalIgnoreCase);
 
             void AddVariantUsage(
@@ -256,7 +283,68 @@ namespace Editors.KitbasherEditor.Services
                         category,
                         visualRole,
                         entityCount,
-                        visualCounts));
+                    visualCounts));
+            }
+
+            void AddDirectAssetUsage(
+                string assetPath,
+                string mainUnitKey,
+                string landUnitKey,
+                Wh3ArmyUnitCategory category,
+                Wh3UnitVisualRole visualRole,
+                Wh3UnitVisualCounts visualCounts)
+            {
+                assetPath = NormalizePath(assetPath);
+                if (assetPath.Length == 0 || !source.ContainsFile(assetPath))
+                    return;
+
+                var entityCount = visualCounts.ForRole(visualRole);
+                if (entityCount <= 0)
+                    return;
+
+                if (!directAssetUsagesByPath.TryGetValue(assetPath, out var usages))
+                {
+                    usages = new Dictionary<string, Wh3UnitDirectAssetUsage>(
+                        StringComparer.OrdinalIgnoreCase);
+                    directAssetUsagesByPath[assetPath] = usages;
+                }
+
+                var identity = string.IsNullOrWhiteSpace(mainUnitKey)
+                    ? $"land:{landUnitKey}"
+                    : $"main:{mainUnitKey}";
+                identity += $"|role:{visualRole}";
+                usages[identity] = new Wh3UnitDirectAssetUsage(
+                    assetPath,
+                    mainUnitKey,
+                    landUnitKey,
+                    category,
+                    visualRole,
+                    entityCount,
+                    visualCounts);
+            }
+
+            void AddEngineAssetUsages(
+                IReadOnlyDictionary<string, string> engine,
+                string mainUnitKey,
+                string landUnitKey,
+                Wh3ArmyUnitCategory category,
+                Wh3UnitVisualCounts visualCounts)
+            {
+                foreach (var field in new[] { "model", "destroyed_model", "destruct_model" })
+                {
+                    foreach (var assetPath in ResolveEngineAssetPaths(
+                                 Get(engine, field),
+                                 animatedLodRowsByKey))
+                    {
+                        AddDirectAssetUsage(
+                            assetPath,
+                            mainUnitKey,
+                            landUnitKey,
+                            category,
+                            Wh3UnitVisualRole.Engine,
+                            visualCounts);
+                    }
+                }
             }
 
             foreach (var unitVariant in unitVariantRows)
@@ -355,6 +443,13 @@ namespace Editors.KitbasherEditor.Services
                             Wh3UnitVisualRole.Engine,
                             numMen,
                             visualCounts);
+
+                        AddEngineAssetUsages(
+                            engine,
+                            mainUnitKey,
+                            landUnitKey,
+                            Classify(caste, landCategory, uiGroupKey),
+                            visualCounts);
                     }
 
                     if (extraEngineRowsByLandUnit.TryGetValue(landUnitKey, out var extraEngines))
@@ -378,6 +473,13 @@ namespace Editors.KitbasherEditor.Services
                                 Classify(caste, landCategory, uiGroupKey),
                                 Wh3UnitVisualRole.Engine,
                                 numMen,
+                                visualCounts);
+
+                            AddEngineAssetUsages(
+                                extraEngine,
+                                mainUnitKey,
+                                landUnitKey,
+                                Classify(caste, landCategory, uiGroupKey),
                                 visualCounts);
                         }
                     }
@@ -431,6 +533,14 @@ namespace Editors.KitbasherEditor.Services
             return new Wh3UnitCategoryResolution(
                 filtered,
                 directUsagesByVmd,
+                directAssetUsagesByPath.ToDictionary(
+                    entry => entry.Key,
+                    entry => (IReadOnlyList<Wh3UnitDirectAssetUsage>)entry.Value.Values
+                        .OrderBy(usage => usage.MainUnitKey, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(usage => usage.LandUnitKey, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(usage => usage.VisualRole)
+                        .ToList(),
+                    StringComparer.OrdinalIgnoreCase),
                 unresolved,
                 parsedRowsByTable,
                 tableFilesRead,
@@ -905,6 +1015,8 @@ namespace Editors.KitbasherEditor.Services
                 UiUnitGroupParentsTable => Get(row, "key"),
                 MountsTable => Get(row, "key"),
                 BattlefieldEnginesTable => Get(row, "key"),
+                WarscapeAnimatedLodTable =>
+                    $"{Get(row, "key")}\u001f{Get(row, "animated")}\u001f{Get(row, "filename")}",
                 ExtraEnginesTable =>
                     $"{Get(row, "land_unit")}\u001f{Get(row, "attach_articulation")}\u001f" +
                     Get(row, "battle_engine"),
@@ -944,6 +1056,22 @@ namespace Editors.KitbasherEditor.Services
 
         private static string NormalizePath(string value)
             => value.Replace('/', '\\').TrimStart('\\').Trim().ToLowerInvariant();
+
+        private static IReadOnlyList<string> ResolveEngineAssetPaths(
+            string reference,
+            IReadOnlyDictionary<string, List<string>> animatedLodRowsByKey)
+        {
+            reference = NormalizePath(reference);
+            if (reference.Length == 0)
+                return [];
+
+            if (Path.GetExtension(reference).Length != 0)
+                return [reference];
+
+            return animatedLodRowsByKey.TryGetValue(reference, out var paths)
+                ? paths.Select(NormalizePath).Where(path => path.Length != 0).ToArray()
+                : [];
+        }
 
         private static bool TryParseInt(string value, out int result)
             => int.TryParse(

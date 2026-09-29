@@ -2642,6 +2642,17 @@
         ]
       }
     ],
+    "warscape_animated_lod_tables": [
+      {
+        "version": 1,
+        "fields": [
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "filename", "field_type": "StringU8" },
+          { "name": "range", "field_type": "F32" },
+          { "name": "animated", "field_type": "StringU8" }
+        ]
+      }
+    ],
     "ui_unit_groupings_tables": [
       {
         "version": 1,

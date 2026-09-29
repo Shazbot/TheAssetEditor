@@ -254,10 +254,16 @@ namespace Editors.KitbasherEditor.Services
                         ? $"{vmdRoots.Count} VMD root(s)"
                         : $"{vmdRoots.Count} valid VMD root(s), {malformedVmdRoots.Count} malformed file(s) ignored");
                 phaseStopwatch.Restart();
+                var assetDependencyRoots = vmdRoots
+                    .Concat(
+                        state.UnitCategoryResolution?.DirectAssetUsagesByPath.Keys ??
+                        Array.Empty<string>())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
                 var originalReachable = CollectReachableAssetFiles(
                     state,
                     source,
-                    vmdRoots,
+                    assetDependencyRoots,
                     cancellationToken,
                     progress,
                     "Scanning source dependencies");
@@ -359,6 +365,14 @@ namespace Editors.KitbasherEditor.Services
                             cancellationToken,
                             progress);
                     }
+
+                    ProcessDirectAssetAtlases(
+                        state,
+                        discoveredCandidates
+                            .Where(IsDirectAssetCandidate)
+                            .ToList(),
+                        cancellationToken,
+                        progress);
                 }
                 state.PhaseDurations["Plan and build atlases"] = phaseStopwatch.Elapsed;
 
@@ -385,7 +399,7 @@ namespace Editors.KitbasherEditor.Services
                 var currentReachable = CollectReachableAssetFiles(
                     state,
                     output,
-                    vmdRoots,
+                    assetDependencyRoots,
                     cancellationToken,
                     progress,
                     "Scanning rewritten dependencies");
@@ -739,6 +753,20 @@ namespace Editors.KitbasherEditor.Services
                     missingTextures));
             }
 
+            var directAssetPaths = state.UnitCategoryResolution?
+                .DirectAssetUsagesByPath.Keys
+                .Where(path => state.Source.ContainsFile(path))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToList()
+                ?? [];
+            candidates.AddRange(CollectDirectAssetCandidates(
+                state,
+                directAssetPaths,
+                cancellationToken,
+                progress,
+                inspectedKeys,
+                missingTextures));
+
             return new CandidateDiscoveryResult(
                 candidates,
                 missingTextures
@@ -770,7 +798,7 @@ namespace Editors.KitbasherEditor.Services
                     state,
                     candidate.RootVmdPath,
                     candidate.Key,
-                    candidate.Usages[0].WsModelPath,
+                    candidate.Usages[0].AssetPath,
                     $"{firstMissing.Slot} texture could not be resolved; mesh cannot be safely atlased because UV0 is shared across channels: {firstMissing.TexturePath}");
             }
 
@@ -805,6 +833,45 @@ namespace Editors.KitbasherEditor.Services
                 cancellationToken,
                 progress);
         }
+
+        private void ProcessDirectAssetAtlases(
+            BatchState state,
+            List<AtlasCandidate> candidates,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            candidates = candidates
+                .Where(candidate => !state.ProcessedMeshes.Contains(candidate.Key))
+                .ToList();
+            if (candidates.Count == 0)
+                return;
+
+            candidates = ApplyTexelDensityScaling(state, candidates);
+            candidates = AlignSharedUvIslandCuts(state, candidates);
+            var batches = CreateBatches(
+                state,
+                candidates,
+                packWide: false,
+                cancellationToken: cancellationToken,
+                progress: progress);
+            ProcessAtlasBatches(
+                state,
+                "direct-engine-assets",
+                "Direct engine assets",
+                batches,
+                cancellationToken,
+                progress);
+        }
+
+        private static bool IsDirectAssetCandidate(AtlasCandidate candidate)
+            => candidate.Usages.Any(usage => !string.IsNullOrWhiteSpace(usage.EmbeddedRigidPath)) ||
+               candidate.Usages.Any(usage =>
+                   !string.IsNullOrWhiteSpace(usage.WsModelPath) &&
+                   Path.GetExtension(usage.WsModelPath)
+                       .Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) &&
+                   usage.WsModelPath.Equals(
+                       candidate.RootVmdPath,
+                       StringComparison.OrdinalIgnoreCase));
 
         private void ProcessPackWideAtlases(
             BatchState state,
@@ -973,6 +1040,161 @@ namespace Editors.KitbasherEditor.Services
             return candidates;
         }
 
+        private List<AtlasCandidate> CollectDirectAssetCandidates(
+            BatchState state,
+            IReadOnlyList<string> assetPaths,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress,
+            HashSet<MeshKey>? inspectedKeys,
+            List<MissingTextureDependency>? missingTextureDependencies)
+        {
+            var candidates = new List<AtlasCandidate>();
+            var localInspectedKeys = inspectedKeys ?? new HashSet<MeshKey>();
+
+            for (var assetIndex = 0; assetIndex < assetPaths.Count; assetIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var assetPath = Normalize(assetPaths[assetIndex]);
+                ReportProgress(
+                    progress,
+                    "Discovering direct engine assets",
+                    assetIndex + 1,
+                    assetPaths.Count,
+                    assetPath);
+
+                var extension = Path.GetExtension(assetPath);
+                if (extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+                {
+                    var file = state.Source.FindFile(assetPath);
+                    if (file == null)
+                        continue;
+
+                    RmvFile rmv;
+                    try
+                    {
+                        rmv = GetRmv(state, assetPath) ??
+                            throw new InvalidDataException("Rigid model could not be loaded.");
+                    }
+                    catch (Exception ex)
+                    {
+                        RecordDirectAssetSkip(
+                            state,
+                            assetPath,
+                            $"Rigid engine asset could not be loaded: {ex.Message}");
+                        continue;
+                    }
+
+                    for (var lodIndex = 0; lodIndex < rmv.ModelList.Length; lodIndex++)
+                    {
+                        for (var partIndex = 0;
+                             partIndex < rmv.ModelList[lodIndex].Length;
+                             partIndex++)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            var key = new MeshKey(assetPath, lodIndex, partIndex);
+                            if (state.ProcessedMeshes.Contains(key) || !localInspectedKeys.Add(key))
+                                continue;
+
+                            var model = rmv.ModelList[lodIndex][partIndex];
+                            var usage = new WsUsage(
+                                string.Empty,
+                                null,
+                                null,
+                                BuildEmbeddedMaterialPath(assetPath, lodIndex, partIndex),
+                                assetPath);
+                            var candidate = TryCreateCandidate(
+                                state,
+                                assetPath,
+                                key,
+                                model,
+                                [usage],
+                                missingTextureDependencies,
+                                out var skipReason,
+                                BuildEmbeddedMaterialDocument(model.Material));
+                            if (candidate == null)
+                            {
+                                RecordSkip(state, assetPath, key, string.Empty, skipReason);
+                                continue;
+                            }
+
+                            candidates.Add(candidate);
+                        }
+                    }
+
+                    continue;
+                }
+
+                if (!extension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                XmlDocument document;
+                try
+                {
+                    document = GetWsDocument(state, assetPath)
+                        ?? throw new InvalidDataException("WSModel could not be loaded.");
+                }
+                catch (Exception ex)
+                {
+                    RecordDirectAssetSkip(
+                        state,
+                        assetPath,
+                        $"WSModel engine asset could not be loaded: {ex.Message}");
+                    continue;
+                }
+
+                var geometryPath = Normalize(
+                    document.SelectSingleNode("/model/geometry")?.InnerText);
+                if (geometryPath.Length == 0)
+                    continue;
+
+                var rmvForWsModel = GetRmv(state, geometryPath);
+                var materialNodes = document.SelectNodes("/model/materials/material");
+                if (rmvForWsModel == null || materialNodes == null)
+                    continue;
+
+                foreach (XmlNode materialNode in materialNodes)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!TryParseIndex(materialNode, "lod_index", out var lodIndex) ||
+                        !TryParseIndex(materialNode, "part_index", out var partIndex) ||
+                        lodIndex < 0 ||
+                        lodIndex >= rmvForWsModel.ModelList.Length ||
+                        partIndex < 0 ||
+                        partIndex >= rmvForWsModel.ModelList[lodIndex].Length)
+                    {
+                        continue;
+                    }
+
+                    var key = new MeshKey(geometryPath, lodIndex, partIndex);
+                    if (state.ProcessedMeshes.Contains(key) || !localInspectedKeys.Add(key))
+                        continue;
+
+                    var materialPath = Normalize(materialNode.InnerText);
+                    if (materialPath.Length == 0)
+                        continue;
+
+                    var usage = new WsUsage(assetPath, document, materialNode, materialPath);
+                    var candidate = TryCreateCandidate(
+                        state,
+                        assetPath,
+                        key,
+                        rmvForWsModel.ModelList[lodIndex][partIndex],
+                        [usage],
+                        missingTextureDependencies,
+                        out var skipReason);
+                    if (candidate == null)
+                    {
+                        RecordSkip(state, assetPath, key, assetPath, skipReason);
+                        continue;
+                    }
+
+                    candidates.Add(candidate);
+                }
+            }
+
+            return candidates;
+        }
+
         private AtlasCandidate? TryCreateCandidate(
             BatchState state,
             string rootVmdPath,
@@ -980,26 +1202,34 @@ namespace Editors.KitbasherEditor.Services
             RmvModel model,
             List<WsUsage> usages,
             List<MissingTextureDependency>? missingTextureDependencies,
-            out string skipReason)
+            out string skipReason,
+            XmlDocument? materialDocumentOverride = null)
         {
             skipReason = string.Empty;
             var materialPath = usages[0].MaterialPath;
-            var materialFile = FindForRead(state, materialPath);
-            if (materialFile == null)
-            {
-                skipReason = $"Material file could not be resolved: {materialPath}";
-                return null;
-            }
-
             XmlDocument materialDoc;
-            try
+            if (materialDocumentOverride != null)
             {
-                materialDoc = GetMaterialDocument(state, materialPath, materialFile);
+                materialDoc = materialDocumentOverride;
             }
-            catch (Exception ex)
+            else
             {
-                skipReason = $"Material XML could not be parsed: {materialPath} ({ex.Message})";
-                return null;
+                var materialFile = FindForRead(state, materialPath);
+                if (materialFile == null)
+                {
+                    skipReason = $"Material file could not be resolved: {materialPath}";
+                    return null;
+                }
+
+                try
+                {
+                    materialDoc = GetMaterialDocument(state, materialPath, materialFile);
+                }
+                catch (Exception ex)
+                {
+                    skipReason = $"Material XML could not be parsed: {materialPath} ({ex.Message})";
+                    return null;
+                }
             }
 
             var shaderPath = materialDoc.SelectSingleNode("/material/shader")?.InnerText ?? string.Empty;
@@ -1156,6 +1386,88 @@ namespace Editors.KitbasherEditor.Services
                 uvIslandAnalysis,
                 uvIslandNormalization,
                 AtlasResolutionScale: 1.0);
+        }
+
+        private static XmlDocument BuildEmbeddedMaterialDocument(IRmvMaterial material)
+        {
+            var document = new XmlDocument();
+            document.LoadXml(
+                $"<material><name>embedded_{material.MaterialId}</name>" +
+                $"<shader>embedded/{material.MaterialId}</shader><textures /></material>");
+            var texturesNode = document.SelectSingleNode("/material/textures")!;
+            var writtenSlots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var texture in material.GetAllTextures())
+            {
+                if (!TryGetEmbeddedAtlasSlot(texture.TexureType, out var slot) ||
+                    string.IsNullOrWhiteSpace(texture.Path) ||
+                    !writtenSlots.Add(slot))
+                {
+                    continue;
+                }
+
+                var textureNode = document.CreateElement("texture");
+                var slotNode = document.CreateElement("slot");
+                slotNode.InnerText = slot;
+                textureNode.AppendChild(slotNode);
+                var sourceNode = document.CreateElement("source");
+                sourceNode.InnerText = texture.Path;
+                textureNode.AppendChild(sourceNode);
+                texturesNode.AppendChild(textureNode);
+            }
+
+            return document;
+        }
+
+        private static bool TryGetEmbeddedAtlasSlot(TextureType textureType, out string slot)
+        {
+            slot = textureType switch
+            {
+                TextureType.BaseColour or TextureType.Diffuse => "t_xml_base_colour",
+                TextureType.MaterialMap => "t_xml_material_map",
+                TextureType.Normal => "t_xml_normal",
+                TextureType.Mask => "t_xml_mask",
+                _ => string.Empty,
+            };
+            return slot.Length != 0;
+        }
+
+        private static void ApplyEmbeddedMaterialTexture(
+            IRmvMaterial material,
+            string slot,
+            string path)
+        {
+            var textureTypes = slot switch
+            {
+                "t_xml_base_colour" => new[] { TextureType.BaseColour, TextureType.Diffuse },
+                "t_xml_material_map" => new[] { TextureType.MaterialMap },
+                "t_xml_normal" => new[] { TextureType.Normal },
+                "t_xml_mask" => new[] { TextureType.Mask },
+                _ => [],
+            };
+
+            foreach (var textureType in textureTypes)
+            {
+                if (material.GetTexture(textureType).HasValue)
+                {
+                    material.SetTexture(textureType, path);
+                    return;
+                }
+            }
+        }
+
+        private static string BuildEmbeddedMaterialPath(
+            string assetPath,
+            int lodIndex,
+            int partIndex)
+            => $"embedded:{assetPath}:lod:{lodIndex}:part:{partIndex}";
+
+        private static void RecordDirectAssetSkip(
+            BatchState state,
+            string assetPath,
+            string reason)
+        {
+            state.DirectAssetSkipMessages.Add($"{assetPath}: {reason}");
         }
 
         private static TextureInspection GetTextureInspection(
@@ -1450,7 +1762,7 @@ namespace Editors.KitbasherEditor.Services
                         state,
                         candidate.RootVmdPath,
                         candidate.Key,
-                        candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
                         $"Atlas planner rejected this mesh: {singleError}");
                     continue;
                 }
@@ -1494,7 +1806,7 @@ namespace Editors.KitbasherEditor.Services
                         state,
                         orphan.RootVmdPath,
                         orphan.Key,
-                        orphan.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                        orphan.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
                         "Could not form a compatible multi-mesh atlas before the atlas size/layout limit was reached.");
                 }
 
@@ -1517,7 +1829,7 @@ namespace Editors.KitbasherEditor.Services
                     state,
                     orphan.RootVmdPath,
                     orphan.Key,
-                    orphan.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                    orphan.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
                     packWide
                         ? "No second compatible mesh was available in the pack-wide atlas candidate set."
                         : "No second compatible mesh was available in this VMD dependency set.");
@@ -1732,7 +2044,7 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var usage in candidate.Usages)
                 {
                     if (rootsByWsModel.TryGetValue(
-                            Normalize(usage.WsModelPath),
+                            Normalize(usage.AssetPath),
                             out var usageRoots))
                     {
                         roots.UnionWith(usageRoots);
@@ -1868,13 +2180,14 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            if (!unitsByCategory.Values.Any(units => units.Count != 0))
-                return null;
-
             // Resolve visual probabilities from the DB-referenced VMDs only. Propagated child
             // mappings are useful for atlas reachability but would make a nested VMD look like
             // an independent 100%-probability unit visual.
             var directVmdsByUnitAndRole = new Dictionary<
+                string,
+                Dictionary<Wh3UnitVisualRole, HashSet<string>>>(
+                StringComparer.OrdinalIgnoreCase);
+            var directAssetsByUnitAndRole = new Dictionary<
                 string,
                 Dictionary<Wh3UnitVisualRole, HashSet<string>>>(
                 StringComparer.OrdinalIgnoreCase);
@@ -1905,6 +2218,70 @@ namespace Editors.KitbasherEditor.Services
                     directVmds.Add(vmdPath);
                 }
             }
+
+            foreach (var (assetPathValue, usages) in resolution.DirectAssetUsagesByPath)
+            {
+                var assetPath = Normalize(assetPathValue);
+                foreach (var usage in usages)
+                {
+                    if (!ExpectedArmySlots.ContainsKey(usage.Category))
+                        continue;
+
+                    var identity = GetArmyUnitIdentity(usage);
+                    if (identity.Length == 0)
+                        continue;
+
+                    unitsByCategory[usage.Category].Add(identity);
+                    var entityCount = Math.Max(1, usage.EntityCount);
+                    entityCountByUnit[identity] = Math.Max(
+                        entityCountByUnit.GetValueOrDefault(identity, 1),
+                        entityCount);
+
+                    if (!entityCountByUnitAndRole.TryGetValue(identity, out var countsByRole))
+                    {
+                        countsByRole = new Dictionary<Wh3UnitVisualRole, int>();
+                        entityCountByUnitAndRole[identity] = countsByRole;
+                    }
+
+                    SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Men, usage.VisualCounts.Riders);
+                    SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Mount, usage.VisualCounts.Mounts);
+                    SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Engine, usage.VisualCounts.Engines);
+                    SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Crew, usage.VisualCounts.Crew);
+                    SetMaximumEntityCount(countsByRole, usage.VisualRole, entityCount);
+                    categoryByUnit[identity] = usage.Category;
+
+                    if (!unitsByVmd.TryGetValue(assetPath, out var byCategory))
+                    {
+                        byCategory = new Dictionary<Wh3ArmyUnitCategory, HashSet<string>>();
+                        unitsByVmd[assetPath] = byCategory;
+                    }
+
+                    if (!byCategory.TryGetValue(usage.Category, out var unitIds))
+                    {
+                        unitIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        byCategory[usage.Category] = unitIds;
+                    }
+
+                    unitIds.Add(identity);
+
+                    if (!directAssetsByUnitAndRole.TryGetValue(identity, out var directAssetsByRole))
+                    {
+                        directAssetsByRole = new Dictionary<Wh3UnitVisualRole, HashSet<string>>();
+                        directAssetsByUnitAndRole[identity] = directAssetsByRole;
+                    }
+
+                    if (!directAssetsByRole.TryGetValue(usage.VisualRole, out var directAssets))
+                    {
+                        directAssets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        directAssetsByRole[usage.VisualRole] = directAssets;
+                    }
+
+                    directAssets.Add(assetPath);
+                }
+            }
+
+            if (!unitsByCategory.Values.Any(units => units.Count != 0))
+                return null;
 
             var occurrenceCache = new Dictionary<string, IReadOnlyDictionary<string, double>>(
                 StringComparer.OrdinalIgnoreCase);
@@ -1969,6 +2346,49 @@ namespace Editors.KitbasherEditor.Services
                             entry => (IReadOnlyDictionary<Wh3UnitVisualRole, double>)entry.Value,
                             StringComparer.OrdinalIgnoreCase));
                 }
+            }
+
+            foreach (var (unitId, directAssetsByRole) in directAssetsByUnitAndRole)
+            {
+                if (!expectedWsModelOccurrencesByUnit.TryGetValue(
+                        unitId,
+                        out var existingOccurrences))
+                {
+                    existingOccurrences = new ExpectedWsModelOccurrences(
+                        new Dictionary<string, IReadOnlyDictionary<Wh3UnitVisualRole, double>>(
+                            StringComparer.OrdinalIgnoreCase));
+                    expectedWsModelOccurrencesByUnit[unitId] = existingOccurrences;
+                }
+
+                var mergedOccurrences = existingOccurrences.ByWsModel.ToDictionary(
+                    entry => entry.Key,
+                    entry => entry.Value.ToDictionary(
+                        roleEntry => roleEntry.Key,
+                        roleEntry => roleEntry.Value),
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var (role, directAssets) in directAssetsByRole)
+                {
+                    if (directAssets.Count == 0)
+                        continue;
+
+                    var directAssetProbability = 1.0 / directAssets.Count;
+                    foreach (var assetPath in directAssets)
+                    {
+                        if (!mergedOccurrences.TryGetValue(assetPath, out var byRole))
+                        {
+                            byRole = new Dictionary<Wh3UnitVisualRole, double>();
+                            mergedOccurrences[assetPath] = byRole;
+                        }
+
+                        byRole[role] = directAssetProbability;
+                    }
+                }
+
+                expectedWsModelOccurrencesByUnit[unitId] = new ExpectedWsModelOccurrences(
+                    mergedOccurrences.ToDictionary(
+                        entry => entry.Key,
+                        entry => (IReadOnlyDictionary<Wh3UnitVisualRole, double>)entry.Value,
+                        StringComparer.OrdinalIgnoreCase));
             }
 
             return new ArmyResidencyModel(
@@ -2133,6 +2553,15 @@ namespace Editors.KitbasherEditor.Services
             return string.Empty;
         }
 
+        private static string GetArmyUnitIdentity(Wh3UnitDirectAssetUsage usage)
+        {
+            if (!string.IsNullOrWhiteSpace(usage.MainUnitKey))
+                return $"main:{usage.MainUnitKey.Trim().ToLowerInvariant()}";
+            if (!string.IsNullOrWhiteSpace(usage.LandUnitKey))
+                return $"land:{usage.LandUnitKey.Trim().ToLowerInvariant()}";
+            return string.Empty;
+        }
+
         private static HashSet<string> GetBatchRoots(
             IReadOnlyList<AtlasCandidate> candidates,
             IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
@@ -2160,7 +2589,7 @@ namespace Editors.KitbasherEditor.Services
 
             var targetWsModels = candidates
                 .SelectMany(candidate => candidate.Usages)
-                .Select(usage => Normalize(usage.WsModelPath))
+                .Select(usage => Normalize(usage.AssetPath))
                 .Where(path => path.Length != 0)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -3378,7 +3807,7 @@ namespace Editors.KitbasherEditor.Services
                          .Select(group => group.First()))
             {
                 var wsModels = candidate.Usages
-                    .Select(usage => Normalize(usage.WsModelPath))
+                    .Select(usage => Normalize(usage.AssetPath))
                     .Where(path => path.Length != 0)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
@@ -3559,7 +3988,7 @@ namespace Editors.KitbasherEditor.Services
                         state,
                         candidate.RootVmdPath,
                         candidate.Key,
-                        candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
                         "Atlas value gate: no compatible mesh merge would be enabled.");
                     state.AtlasValueGateCandidatesRejected++;
                 }
@@ -3592,7 +4021,7 @@ namespace Editors.KitbasherEditor.Services
                         state,
                         candidate.RootVmdPath,
                         candidate.Key,
-                        candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
                         "Atlas value gate: this mesh does not contribute to a compatible mesh merge in its planned atlas batch.");
                     state.AtlasValueGateCandidatesRejected++;
                 }
@@ -3665,10 +4094,10 @@ namespace Editors.KitbasherEditor.Services
                         foreach (var candidate in groupCandidates)
                         {
                             RecordSkip(
-                                state,
-                                candidate.RootVmdPath,
-                                candidate.Key,
-                                candidate.Usages.FirstOrDefault()?.WsModelPath ?? string.Empty,
+                            state,
+                            candidate.RootVmdPath,
+                            candidate.Key,
+                            candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
                                 $"Atlas value gate: {groupRejectionReason}");
                         }
                     }
@@ -3884,7 +4313,7 @@ namespace Editors.KitbasherEditor.Services
                     {
                         var reference = new AtlasValueGateSourceReference(
                             candidate.Key,
-                            Normalize(usage.WsModelPath).ToLowerInvariant(),
+                            Normalize(usage.AssetPath).ToLowerInvariant(),
                             slot.ToLowerInvariant(),
                             0);
                         if (sourceTexture.References.Contains(reference))
@@ -3950,7 +4379,7 @@ namespace Editors.KitbasherEditor.Services
 
                 var targetWsModels = channelCandidates
                     .SelectMany(candidate => candidate.Usages)
-                    .Select(usage => Normalize(usage.WsModelPath))
+                    .Select(usage => Normalize(usage.AssetPath))
                     .Where(path => path.Length != 0)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToArray();
@@ -4034,6 +4463,13 @@ namespace Editors.KitbasherEditor.Services
                 .SelectMany(paths => paths)
                 .Select(Normalize)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            reachableWsModels.UnionWith(
+                state.UnitCategoryResolution?.DirectAssetUsagesByPath.Keys
+                    .Where(path => Path.GetExtension(path).Equals(
+                        ".wsmodel",
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(Normalize)
+                ?? []);
             var referencesByTexture =
                 new Dictionary<string, HashSet<AtlasValueGateSourceReference>>(
                     StringComparer.OrdinalIgnoreCase);
@@ -4120,6 +4556,86 @@ namespace Editors.KitbasherEditor.Services
                             normalizedSlot,
                             slotOccurrence));
                     }
+                }
+            }
+
+            // Engine rows can point directly at a rigid_model_v2 without a WSModel/material
+            // layer. Index its embedded material textures with the same identity used by the
+            // synthetic direct-asset candidates, so the value gate can credit source textures
+            // that become unreachable after the rigid is rewritten.
+            var directRigidPaths = state.UnitCategoryResolution?
+                .DirectAssetUsagesByPath.Keys
+                .Where(path => Path.GetExtension(path).Equals(
+                    ".rigid_model_v2",
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(Normalize)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+                ?? [];
+            foreach (var rigidPath in directRigidPaths)
+            {
+                var rigidFile = state.Source.FindFile(rigidPath);
+                if (rigidFile == null)
+                    continue;
+
+                try
+                {
+                    var rigid = ModelFactory.Create().Load(rigidFile.DataSource.ReadData());
+                    for (var lodIndex = 0; lodIndex < rigid.ModelList.Length; lodIndex++)
+                    {
+                        for (var partIndex = 0;
+                             partIndex < rigid.ModelList[lodIndex].Length;
+                             partIndex++)
+                        {
+                            var mesh = new MeshKey(rigidPath, lodIndex, partIndex);
+                            var material = BuildEmbeddedMaterialDocument(
+                                rigid.ModelList[lodIndex][partIndex].Material);
+                            var textureNodes = material.SelectNodes("/material/textures/texture");
+                            if (textureNodes == null)
+                                continue;
+
+                            var occurrenceBySlot = new Dictionary<string, int>(
+                                StringComparer.OrdinalIgnoreCase);
+                            foreach (XmlNode textureNode in textureNodes)
+                            {
+                                var slot = GetTextureSlot(textureNode);
+                                var normalizedSlot = string.IsNullOrWhiteSpace(slot)
+                                    ? "__unslotted__"
+                                    : slot.ToLowerInvariant();
+                                var slotOccurrence = occurrenceBySlot.GetValueOrDefault(normalizedSlot);
+                                occurrenceBySlot[normalizedSlot] = slotOccurrence + 1;
+
+                                var texturePath = Normalize(
+                                    textureNode.SelectSingleNode("source")?.InnerText ??
+                                    textureNode.InnerText);
+                                if (string.IsNullOrWhiteSpace(texturePath) ||
+                                    IsTexturePlaceholder(texturePath) ||
+                                    state.Source.FindFile(texturePath) == null)
+                                {
+                                    continue;
+                                }
+
+                                if (!referencesByTexture.TryGetValue(
+                                        texturePath,
+                                        out var references))
+                                {
+                                    references = [];
+                                    referencesByTexture[texturePath] = references;
+                                }
+
+                                references.Add(new AtlasValueGateSourceReference(
+                                    mesh,
+                                    rigidPath.ToLowerInvariant(),
+                                    normalizedSlot,
+                                    slotOccurrence));
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // An unparseable direct rigid is reported/skipped during candidate
+                    // discovery; it must not make value-gate indexing fail for other assets.
                 }
             }
 
@@ -5137,66 +5653,91 @@ namespace Editors.KitbasherEditor.Services
                         SetTexturePath(clonedMaterial, channel.Slot, atlasPath);
                 }
 
-                var materialXml = clonedMaterial.OuterXml;
-                var renderingIdentity = GetMaterialRenderingIdentity(clonedMaterial);
-                var materialContentHash = ContentHash(renderingIdentity);
-                if (!state.GeneratedMaterialByContentHash.TryGetValue(
-                        materialContentHash,
-                        out var generatedMaterial))
+                var isEmbeddedMaterial = candidate.Usages.Any(
+                    usage => !string.IsNullOrWhiteSpace(usage.EmbeddedRigidPath));
+                string resolvedMaterialPath;
+                if (isEmbeddedMaterial)
                 {
-                    var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
-                    WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
-                    state.GeneratedMaterialPaths.Add(newMaterialPath);
-                    generatedMaterial = new GeneratedMaterialEntry(
-                        newMaterialPath,
-                        renderingIdentity,
-                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    foreach (var channel in AtlasChannels)
+                    {
+                        if (generatedPaths.TryGetValue(channel.Slot, out var atlasPath))
                         {
-                            candidate.RootVmdPath
-                        });
-                    state.GeneratedMaterialByContentHash.Add(materialContentHash, generatedMaterial);
-                }
-                else if (!generatedMaterial.RenderingIdentity.Equals(renderingIdentity, StringComparison.Ordinal))
-                {
-                    // The hash is only an index. Exact rendering-identity equality remains
-                    // the final guard so even a theoretical SHA-256 collision cannot share materials.
-                    var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
-                    WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
-                    state.GeneratedMaterialPaths.Add(newMaterialPath);
-                    generatedMaterial = new GeneratedMaterialEntry(
-                        newMaterialPath,
-                        renderingIdentity,
-                        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                        {
-                            candidate.RootVmdPath
-                        });
+                            ApplyEmbeddedMaterialTexture(
+                                candidate.Model.Material,
+                                channel.Slot,
+                                atlasPath);
+                        }
+                    }
+
+                    resolvedMaterialPath = "<embedded-rigid-material>";
                 }
                 else
                 {
-                    state.GeneratedMaterialReuses++;
-                    if (!generatedMaterial.RootVmdPaths.Contains(candidate.RootVmdPath) &&
-                        generatedMaterial.RootVmdPaths.Count != 0)
+                    var materialXml = clonedMaterial.OuterXml;
+                    var renderingIdentity = GetMaterialRenderingIdentity(clonedMaterial);
+                    var materialContentHash = ContentHash(renderingIdentity);
+                    if (!state.GeneratedMaterialByContentHash.TryGetValue(
+                            materialContentHash,
+                            out var generatedMaterial))
                     {
-                        state.CrossVmdMaterialReuses++;
+                        var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
+                        WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
+                        state.GeneratedMaterialPaths.Add(newMaterialPath);
+                        generatedMaterial = new GeneratedMaterialEntry(
+                            newMaterialPath,
+                            renderingIdentity,
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                            {
+                                candidate.RootVmdPath
+                            });
+                        state.GeneratedMaterialByContentHash.Add(materialContentHash, generatedMaterial);
+                    }
+                    else if (!generatedMaterial.RenderingIdentity.Equals(renderingIdentity, StringComparison.Ordinal))
+                    {
+                        // The hash is only an index. Exact rendering-identity equality remains
+                        // the final guard so even a theoretical SHA-256 collision cannot share materials.
+                        var newMaterialPath = BuildMaterialPath(candidate.MaterialPath, candidate.Key);
+                        WriteFile(state.Output, newMaterialPath, Encoding.UTF8.GetBytes(materialXml));
+                        state.GeneratedMaterialPaths.Add(newMaterialPath);
+                        generatedMaterial = new GeneratedMaterialEntry(
+                            newMaterialPath,
+                            renderingIdentity,
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                            {
+                                candidate.RootVmdPath
+                            });
+                    }
+                    else
+                    {
+                        state.GeneratedMaterialReuses++;
+                        if (!generatedMaterial.RootVmdPaths.Contains(candidate.RootVmdPath) &&
+                            generatedMaterial.RootVmdPaths.Count != 0)
+                        {
+                            state.CrossVmdMaterialReuses++;
+                        }
+
+                        generatedMaterial.RootVmdPaths.Add(candidate.RootVmdPath);
                     }
 
-                    generatedMaterial.RootVmdPaths.Add(candidate.RootVmdPath);
+                    resolvedMaterialPath = generatedMaterial.Path;
                 }
-
-                var resolvedMaterialPath = generatedMaterial.Path;
 
                 state.AtlasedMeshes.Add(new AtlasedMeshReportEntry(
                     candidate.RootVmdPath,
                     candidate.Key,
-                    candidate.Usages.Select(x => x.WsModelPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                    candidate.Usages.Select(x => x.AssetPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                     candidate.MaterialPath,
                     resolvedMaterialPath,
                     generatedPaths.Values.Distinct(StringComparer.OrdinalIgnoreCase).ToArray()));
 
                 foreach (var usage in candidate.Usages)
                 {
-                    usage.MaterialNode.InnerText = resolvedMaterialPath;
-                    state.ModifiedWsModels.Add(usage.WsModelPath);
+                    if (usage.MaterialNode != null &&
+                        !string.IsNullOrWhiteSpace(usage.WsModelPath))
+                    {
+                        usage.MaterialNode.InnerText = resolvedMaterialPath;
+                        state.ModifiedWsModels.Add(usage.WsModelPath);
+                    }
                 }
 
                 state.ModifiedRigids.Add(candidate.Key.GeometryPath);
@@ -7025,6 +7566,21 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
+                    if (extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var rigid = ModelFactory.Create().Load(file.DataSource.ReadData());
+                        foreach (var lod in rigid.ModelList)
+                        {
+                            foreach (var model in lod)
+                            {
+                                foreach (var texture in model.Material.GetAllTextures())
+                                    AddReference(path, texture.Path);
+                            }
+                        }
+
+                        continue;
+                    }
+
                     if (extension.Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
                     {
                         var vmd = VariantMeshDefinitionLoader.Load(file);
@@ -7167,6 +7723,29 @@ namespace Editors.KitbasherEditor.Services
             var materialTextures = new Dictionary<string, string[]>(
                 StringComparer.OrdinalIgnoreCase);
 
+            void AddTextureReference(string texturePathValue, string assetPathValue)
+            {
+                var texturePath = Normalize(texturePathValue);
+                var assetPath = Normalize(assetPathValue);
+                if (texturePath.Length == 0 ||
+                    assetPath.Length == 0 ||
+                    !Path.GetExtension(texturePath).Equals(
+                        ".dds",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !reachablePaths.Contains(texturePath, StringComparer.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                if (!result.TryGetValue(texturePath, out var assets))
+                {
+                    assets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    result[texturePath] = assets;
+                }
+
+                assets.Add(assetPath);
+            }
+
             foreach (var wsModelPath in reachablePaths
                          .Where(path => Path.GetExtension(path).Equals(
                              ".wsmodel",
@@ -7232,18 +7811,35 @@ namespace Editors.KitbasherEditor.Services
                     }
 
                     foreach (var texturePath in texturePaths)
+                        AddTextureReference(texturePath, wsModelPath);
+                }
+            }
+
+            foreach (var rigidPath in reachablePaths
+                         .Where(path => Path.GetExtension(path).Equals(
+                             ".rigid_model_v2",
+                             StringComparison.OrdinalIgnoreCase)))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rigidFile = container.FindFile(rigidPath);
+                if (rigidFile == null)
+                    continue;
+
+                try
+                {
+                    var rigid = ModelFactory.Create().Load(rigidFile.DataSource.ReadData());
+                    foreach (var lod in rigid.ModelList)
                     {
-                        if (!reachablePaths.Contains(texturePath, StringComparer.OrdinalIgnoreCase))
-                            continue;
-
-                        if (!result.TryGetValue(texturePath, out var wsModels))
+                        foreach (var model in lod)
                         {
-                            wsModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                            result[texturePath] = wsModels;
+                            foreach (var texture in model.Material.GetAllTextures())
+                                AddTextureReference(texture.Path, rigidPath);
                         }
-
-                        wsModels.Add(Normalize(wsModelPath));
                     }
+                }
+                catch
+                {
+                    // Keep residency estimation conservative for malformed unrelated rigids.
                 }
             }
 
@@ -7262,6 +7858,30 @@ namespace Editors.KitbasherEditor.Services
             foreach (var root in state.ArmyResidencyModel.UnitsByVmd.Keys)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                var rootExtension = Path.GetExtension(root);
+                if (!rootExtension.Equals(
+                        ".variantmeshdefinition",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    // Engine assets with no VMD variant (notably battlefield engines whose
+                    // variant column is empty) are themselves the residency key. Treating them
+                    // as VMDs would yield no reachable WSModel and lose their army probability.
+                    if (rootExtension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
+                        rootExtension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!result.TryGetValue(root, out var directRoots))
+                        {
+                            directRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            result[root] = directRoots;
+                        }
+
+                        directRoots.Add(Normalize(root));
+                    }
+
+                    continue;
+                }
+
                 foreach (var wsModel in GetReachableWsModels(
                              state,
                              root,
@@ -7344,114 +7964,153 @@ namespace Editors.KitbasherEditor.Services
         private HashSet<string> CollectReachableAssetFiles(
             BatchState state,
             IPackFileContainer container,
-            IReadOnlyList<string> rootVmdPaths,
+            IReadOnlyList<string> rootAssetPaths,
             CancellationToken cancellationToken = default,
             IProgress<TextureAtlasPackProgress>? progress = null,
             string phase = "Scanning dependencies")
         {
             var reachable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var vmdQueue = new Queue<string>(rootVmdPaths.Select(Normalize));
-            var visitedVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var assetQueue = new Queue<string>(rootAssetPaths.Select(Normalize));
+            var visitedAssets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            var processedVmdCount = 0;
-            while (vmdQueue.Count > 0)
+            var processedAssetCount = 0;
+            void EnqueueExistingAsset(string pathValue)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var vmdPath = vmdQueue.Dequeue();
-                ReportProgress(progress, phase, ++processedVmdCount, 0, vmdPath);
-                if (!visitedVmds.Add(vmdPath))
-                    continue;
+                var path = Normalize(pathValue);
+                if (path.Length == 0 || container.FindFile(path) == null)
+                    return;
 
-                var vmdFile = container.FindFile(vmdPath);
-                if (vmdFile == null)
-                    continue;
+                reachable.Add(path);
+                assetQueue.Enqueue(path);
+            }
 
-                reachable.Add(vmdPath);
-                if (!TryGetVmdForTraversal(
+            void AddMaterialTextures(
+                string materialPath,
+                PackFile materialFile)
+            {
+                if (!TryGetMaterialDocumentForTraversal(
                         state,
                         container,
-                        vmdPath,
-                        vmdFile,
-                        out var vmd))
+                        materialPath,
+                        materialFile,
+                        out var materialDocument))
+                {
+                    return;
+                }
+
+                var textureNodes = materialDocument.SelectNodes("/material/textures/texture");
+                if (textureNodes == null)
+                    return;
+
+                foreach (XmlNode textureNode in textureNodes)
+                {
+                    EnqueueExistingAsset(
+                        textureNode.SelectSingleNode("source")?.InnerText ??
+                        textureNode.InnerText);
+                }
+            }
+
+            void AddRigidTextures(PackFile rigidFile)
+            {
+                try
+                {
+                    var rigid = ModelFactory.Create().Load(rigidFile.DataSource.ReadData());
+                    foreach (var lod in rigid.ModelList)
+                    {
+                        foreach (var model in lod)
+                        {
+                            foreach (var texture in model.Material.GetAllTextures())
+                                EnqueueExistingAsset(texture.Path);
+                        }
+                    }
+                }
+                catch
+                {
+                    // A malformed unrelated rigid should not prevent dependency scanning for
+                    // the rest of the pack. Rewritten rigids are validated separately.
+                }
+            }
+
+            while (assetQueue.Count > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var assetPath = assetQueue.Dequeue();
+                ReportProgress(progress, phase, ++processedAssetCount, 0, assetPath);
+                if (!visitedAssets.Add(assetPath))
+                    continue;
+
+                var assetFile = container.FindFile(assetPath);
+                if (assetFile == null)
+                    continue;
+
+                var extension = Path.GetExtension(assetPath);
+                if (extension.Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!TryGetVmdForTraversal(
+                            state,
+                            container,
+                            assetPath,
+                            assetFile,
+                            out var vmd))
+                    {
+                        continue;
+                    }
+
+                    var modelRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var childVmdRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    var directTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    CollectVmdReferences(vmd, modelRefs, childVmdRefs, directTextures);
+
+                    foreach (var texture in directTextures)
+                        EnqueueExistingAsset(texture);
+                    foreach (var child in childVmdRefs)
+                        EnqueueExistingAsset(child);
+                    foreach (var model in modelRefs)
+                        EnqueueExistingAsset(model);
+
+                    continue;
+                }
+
+                if (extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+                {
+                    AddRigidTextures(assetFile);
+                    continue;
+                }
+
+                if (extension.Equals(".xml.material", StringComparison.OrdinalIgnoreCase))
+                {
+                    AddMaterialTextures(assetPath, assetFile);
+                    continue;
+                }
+
+                if (!extension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!TryGetWsDocumentForTraversal(
+                        state,
+                        container,
+                        assetPath,
+                        assetFile,
+                        out var wsDocument))
                 {
                     continue;
                 }
 
-                var modelRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var childVmdRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var directTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                CollectVmdReferences(vmd, modelRefs, childVmdRefs, directTextures);
+                EnqueueExistingAsset(wsDocument.SelectSingleNode("/model/geometry")?.InnerText ?? string.Empty);
 
-                foreach (var texture in directTextures)
+                var materialNodes = wsDocument.SelectNodes("/model/materials/material");
+                if (materialNodes == null)
+                    continue;
+
+                foreach (XmlNode materialNode in materialNodes)
                 {
-                    if (container.FindFile(texture) != null)
-                        reachable.Add(texture);
-                }
-
-                foreach (var child in childVmdRefs)
-                {
-                    if (container.FindFile(child) != null)
-                        vmdQueue.Enqueue(child);
-                }
-
-                foreach (var modelPath in modelRefs)
-                {
-                    var modelFile = container.FindFile(modelPath);
-                    if (modelFile == null)
+                    var materialPath = Normalize(materialNode.InnerText);
+                    var materialFile = container.FindFile(materialPath);
+                    if (materialFile == null)
                         continue;
 
-                    reachable.Add(modelPath);
-                    if (!Path.GetExtension(modelPath).Equals(".wsmodel", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    if (!TryGetWsDocumentForTraversal(
-                            state,
-                            container,
-                            modelPath,
-                            modelFile,
-                            out var wsDoc))
-                    {
-                        continue;
-                    }
-
-                    var geometryPath = Normalize(wsDoc.SelectSingleNode("/model/geometry")?.InnerText);
-                    if (!string.IsNullOrWhiteSpace(geometryPath) && container.FindFile(geometryPath) != null)
-                        reachable.Add(geometryPath);
-
-                    var materialNodes = wsDoc.SelectNodes("/model/materials/material");
-                    if (materialNodes == null)
-                        continue;
-
-                    foreach (XmlNode materialNode in materialNodes)
-                    {
-                        var materialPath = Normalize(materialNode.InnerText);
-                        var materialFile = container.FindFile(materialPath);
-                        if (materialFile == null)
-                            continue;
-
-                        reachable.Add(materialPath);
-                        if (!TryGetMaterialDocumentForTraversal(
-                                state,
-                                container,
-                                materialPath,
-                                materialFile,
-                                out var materialDoc))
-                        {
-                            continue;
-                        }
-
-                        var textureNodes = materialDoc.SelectNodes("/material/textures/texture");
-                        if (textureNodes == null)
-                            continue;
-
-                        foreach (XmlNode textureNode in textureNodes)
-                        {
-                            var texturePath = Normalize(
-                                textureNode.SelectSingleNode("source")?.InnerText ?? textureNode.InnerText);
-                            if (!string.IsNullOrWhiteSpace(texturePath) && container.FindFile(texturePath) != null)
-                                reachable.Add(texturePath);
-                        }
-                    }
+                    reachable.Add(materialPath);
+                    AddMaterialTextures(materialPath, materialFile);
                 }
             }
 
@@ -8431,7 +9090,7 @@ namespace Editors.KitbasherEditor.Services
                 {
                     foreach (var usage in candidate.Usages)
                     {
-                        var wsModelPath = Normalize(usage.WsModelPath);
+                        var wsModelPath = Normalize(usage.AssetPath);
                         if (string.IsNullOrWhiteSpace(wsModelPath))
                             continue;
 
@@ -8980,6 +9639,9 @@ namespace Editors.KitbasherEditor.Services
                 var unitUsages = unitResolution.UsagesByVmd.Values
                     .SelectMany(usages => usages)
                     .ToList();
+                var directAssetUsages = unitResolution.DirectAssetUsagesByPath.Values
+                    .SelectMany(usages => usages)
+                    .ToList();
 
                 sb.AppendLine("Unit category DB resolution");
                 sb.AppendLine("---------------------------");
@@ -8995,6 +9657,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Resolved VMD roots: {unitResolution.UsagesByVmd.Count:N0}");
                 sb.AppendLine($"Unresolved VMD roots: {unitResolution.UnresolvedVmdRoots.Count:N0}");
                 sb.AppendLine($"Resolved VMD-to-unit links: {unitUsages.Count:N0}");
+                sb.AppendLine(
+                    $"Resolved direct engine assets: {unitResolution.DirectAssetUsagesByPath.Count:N0} " +
+                    $"asset(s), {directAssetUsages.Count:N0} usage(s)");
 
                 foreach (var category in Enum.GetValues<Wh3ArmyUnitCategory>())
                 {
@@ -9360,6 +10025,17 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"  Reason: {entry.Reason}");
             }
             if (state.MalformedMaterialsIgnored.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Direct engine assets skipped");
+            sb.AppendLine("----------------------------");
+            foreach (var message in state.DirectAssetSkipMessages
+                         .OrderBy(message => message, StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine(message);
+            }
+            if (state.DirectAssetSkipMessages.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
@@ -10789,6 +11465,7 @@ namespace Editors.KitbasherEditor.Services
             public List<MalformedVmdEntry> MalformedReferencedVmds { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedWsModelsIgnored { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedMaterialsIgnored { get; } = [];
+            public List<string> DirectAssetSkipMessages { get; } = [];
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, TextureInspection> TextureInspections { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<AtlasRegionContentHashKey, string> AtlasRegionContentHashes { get; } = [];
@@ -11103,9 +11780,15 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record WsUsage(
             string WsModelPath,
-            XmlDocument Document,
-            XmlNode MaterialNode,
-            string MaterialPath);
+            XmlDocument? Document,
+            XmlNode? MaterialNode,
+            string MaterialPath,
+            string? EmbeddedRigidPath = null)
+        {
+            public string AssetPath => string.IsNullOrWhiteSpace(EmbeddedRigidPath)
+                ? WsModelPath
+                : EmbeddedRigidPath;
+        }
 
         private readonly record struct AtlasValueGateSourceReference(
             MeshKey? Mesh,
