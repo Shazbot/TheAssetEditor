@@ -390,7 +390,7 @@ namespace Editors.KitbasherEditor.Services
                 var identity = string.IsNullOrWhiteSpace(mainUnitKey)
                     ? $"land:{landUnitKey}"
                     : $"main:{mainUnitKey}";
-                identity += $"|role:{visualRole}";
+                identity += $"|role:{visualRole}|state:{stateValue}|lod:{Math.Max(0, lod)}";
                 if (usages.TryGetValue(identity, out var existing))
                 {
                     scenarioPresenceProbability = Math.Max(
