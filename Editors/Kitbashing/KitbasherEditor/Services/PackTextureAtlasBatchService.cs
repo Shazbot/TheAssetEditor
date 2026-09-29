@@ -3491,14 +3491,16 @@ namespace Editors.KitbasherEditor.Services
                         contributingGroups,
                         expectedEntitiesByMesh,
                         out var acceptedResidency,
+                        out var acceptedRawDraws,
                         out var acceptedExpectedDraws,
                         out var rejectionReason))
                 {
                     result.Add(trimmed);
                     RecordAtlasValueGateAccepted(
                         state,
-                        trimmed.Count,
+                        trimmed,
                         acceptedResidency,
+                        acceptedRawDraws,
                         acceptedExpectedDraws);
                     continue;
                 }
@@ -3524,14 +3526,16 @@ namespace Editors.KitbasherEditor.Services
                             [group],
                             expectedEntitiesByMesh,
                             out var groupResidency,
+                            out var groupRawDraws,
                             out var groupExpectedDraws,
                             out var groupRejectionReason))
                     {
                         result.Add(groupCandidates);
                         RecordAtlasValueGateAccepted(
                             state,
-                            groupCandidates.Count,
+                            groupCandidates,
                             groupResidency,
+                            groupRawDraws,
                             groupExpectedDraws);
                     }
                     else
@@ -3558,12 +3562,13 @@ namespace Editors.KitbasherEditor.Services
 
         private static void RecordAtlasValueGateAccepted(
             BatchState state,
-            int candidateCount,
+            IReadOnlyList<AtlasCandidate> batch,
             AtlasValueGateResidencyEstimate residency,
+            int rawDrawsEliminated,
             double expectedArmyDrawsEliminated)
         {
             state.AtlasValueGateBatchesAccepted++;
-            state.AtlasValueGateCandidatesAccepted += candidateCount;
+            state.AtlasValueGateCandidatesAccepted += batch.Count;
             state.AtlasValueGateGeneratedBcnBytesAccepted = checked(
                 state.AtlasValueGateGeneratedBcnBytesAccepted + residency.GeneratedBcnBytes);
             state.AtlasValueGateRetiredBcnBytesAccepted = checked(
@@ -3577,6 +3582,27 @@ namespace Editors.KitbasherEditor.Services
             state.AtlasValueGateExpectedArmyNetBcnBytesAccepted +=
                 residency.ExpectedArmyNetBcnBytes;
             state.AtlasValueGateExpectedDrawsAccepted += expectedArmyDrawsEliminated;
+
+            var roots = batch
+                .Select(candidate => Normalize(candidate.RootVmdPath))
+                .Where(path => path.Length != 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            state.AtlasValueGateAcceptedBatchEconomics.Add(
+                new AtlasValueGateBatchEconomics(
+                    state.AtlasValueGateBatchesAccepted,
+                    batch.Count,
+                    roots,
+                    residency.GeneratedBcnBytes,
+                    residency.RetiredSourceBcnBytes,
+                    residency.NetBcnBytes,
+                    residency.ExpectedArmyGeneratedBcnBytes,
+                    residency.ExpectedArmyRetiredSourceBcnBytes,
+                    residency.ExpectedArmyNetBcnBytes,
+                    rawDrawsEliminated,
+                    expectedArmyDrawsEliminated));
+
             state.AtlasValueGateRewrittenSourceReferences.UnionWith(
                 residency.RewrittenReferences);
         }
@@ -3608,10 +3634,12 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
                 expectedEntitiesByMesh,
             out AtlasValueGateResidencyEstimate residency,
+            out int rawDrawsEliminated,
             out double expectedArmyDrawsEliminated,
             out string rejectionReason)
         {
             residency = AtlasValueGateResidencyEstimate.Empty;
+            rawDrawsEliminated = 0;
             expectedArmyDrawsEliminated = 0;
             rejectionReason = string.Empty;
 
@@ -3629,7 +3657,7 @@ namespace Editors.KitbasherEditor.Services
                 batch.ToList()
             };
             var batchByMesh = BuildBatchIndexByMesh(singletonBatches);
-            var rawDrawsEliminated = CalculateMergeAffinityScore(
+            rawDrawsEliminated = CalculateMergeAffinityScore(
                 singletonBatches,
                 affinityGroups);
             if (rawDrawsEliminated <= 0)
@@ -7137,6 +7165,39 @@ namespace Editors.KitbasherEditor.Services
         private static string FormatMiB(double bytes)
             => $"{bytes / (1024.0 * 1024.0):N1} MiB";
 
+        private static double GetAtlasValueGateMiBPerDraw(
+            double netBytes,
+            double drawsEliminated)
+        {
+            if (drawsEliminated <= 0.000001)
+                return 0;
+
+            return Math.Max(0.0, netBytes) /
+                   (1024.0 * 1024.0) /
+                   drawsEliminated;
+        }
+
+        private static double GetAtlasValueGateWorstMiBPerDraw(
+            AtlasValueGateBatchEconomics entry)
+        {
+            var global = GetAtlasValueGateMiBPerDraw(
+                entry.NetBcnBytes,
+                entry.RawDrawsEliminated);
+            var expected = entry.ExpectedArmyDrawsEliminated > 0.000001
+                ? GetAtlasValueGateMiBPerDraw(
+                    entry.ExpectedArmyNetBcnBytes,
+                    entry.ExpectedArmyDrawsEliminated)
+                : 0;
+            return Math.Max(global, expected);
+        }
+
+        private static string FormatAtlasValueGateMiBPerDraw(
+            double netBytes,
+            double drawsEliminated)
+            => drawsEliminated <= 0.000001
+                ? "N/A"
+                : $"{GetAtlasValueGateMiBPerDraw(netBytes, drawsEliminated):N3} MiB/draw";
+
         private static string FormatResidencyDelta(double before, double after)
         {
             var deltaBytes = after - before;
@@ -8605,6 +8666,42 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Atlas value-gate expected army draw eliminations accepted: " +
                     $"{state.AtlasValueGateExpectedDrawsAccepted:N3}");
+                sb.AppendLine();
+                sb.AppendLine("Accepted atlas value-gate batch economics (worst-to-best)");
+                sb.AppendLine("---------------------------------------------------------");
+                sb.AppendLine(
+                    "Sorted descending by the worse of global net MiB/raw draw and " +
+                    "expected-army net MiB/expected draw.");
+                var valueGateRank = 0;
+                foreach (var entry in state.AtlasValueGateAcceptedBatchEconomics
+                             .OrderByDescending(GetAtlasValueGateWorstMiBPerDraw)
+                             .ThenByDescending(entry => GetAtlasValueGateMiBPerDraw(
+                                 entry.NetBcnBytes,
+                                 entry.RawDrawsEliminated))
+                             .ThenBy(entry => entry.AcceptanceSequence))
+                {
+                    valueGateRank++;
+                    sb.AppendLine(
+                        $"  #{valueGateRank}: accepted-seq={entry.AcceptanceSequence}, " +
+                        $"candidates={entry.CandidateCount}, roots={entry.RootVmdPaths.Length}");
+                    sb.AppendLine(
+                        $"    draws: raw={entry.RawDrawsEliminated:N0}, " +
+                        $"expected-army={entry.ExpectedArmyDrawsEliminated:N3}");
+                    sb.AppendLine(
+                        $"    global BCn: generated={FormatMiB(entry.GeneratedBcnBytes)}, " +
+                        $"retired={FormatMiB(entry.RetiredSourceBcnBytes)}, " +
+                        $"net={FormatMiB(entry.NetBcnBytes)}, " +
+                        $"net/draw={FormatAtlasValueGateMiBPerDraw(entry.NetBcnBytes, entry.RawDrawsEliminated)}");
+                    sb.AppendLine(
+                        $"    expected-army BCn: generated={FormatMiB(entry.ExpectedArmyGeneratedBcnBytes)}, " +
+                        $"retired={FormatMiB(entry.ExpectedArmyRetiredSourceBcnBytes)}, " +
+                        $"net={FormatMiB(entry.ExpectedArmyNetBcnBytes)}, " +
+                        $"net/draw={FormatAtlasValueGateMiBPerDraw(entry.ExpectedArmyNetBcnBytes, entry.ExpectedArmyDrawsEliminated)}");
+                    sb.AppendLine(
+                        $"    roots: {(entry.RootVmdPaths.Length == 0 ? "<none>" : string.Join(", ", entry.RootVmdPaths))}");
+                }
+                if (state.AtlasValueGateAcceptedBatchEconomics.Count == 0)
+                    sb.AppendLine("  (none)");
             }
             sb.AppendLine($"Atlas pixel-area optimized splits: {state.AtlasPixelAreaOptimizedSplits}");
             sb.AppendLine($"Atlas pixel-area split evaluations: {state.AtlasPixelAreaSplitEvaluations}");
@@ -10602,6 +10699,7 @@ namespace Editors.KitbasherEditor.Services
             public double AtlasValueGateExpectedArmyNetBcnBytesAccepted { get; set; }
             public double AtlasValueGateExpectedArmyNetBcnBytesRejected { get; set; }
             public double AtlasValueGateExpectedDrawsAccepted { get; set; }
+            public List<AtlasValueGateBatchEconomics> AtlasValueGateAcceptedBatchEconomics { get; } = [];
             public Dictionary<string, AtlasValueGateSourceTexture>? AtlasValueGateSourceTextureIndex { get; set; }
             public Dictionary<string, HashSet<string>>? AtlasValueGateRootsByWsModel { get; set; }
             public HashSet<AtlasValueGateSourceReference> AtlasValueGateRewrittenSourceReferences { get; } = [];
@@ -10887,6 +10985,19 @@ namespace Editors.KitbasherEditor.Services
             long BcnBytes,
             bool HasDirectVmdReference,
             HashSet<AtlasValueGateSourceReference> References);
+
+        private sealed record AtlasValueGateBatchEconomics(
+            int AcceptanceSequence,
+            int CandidateCount,
+            string[] RootVmdPaths,
+            long GeneratedBcnBytes,
+            long RetiredSourceBcnBytes,
+            long NetBcnBytes,
+            double ExpectedArmyGeneratedBcnBytes,
+            double ExpectedArmyRetiredSourceBcnBytes,
+            double ExpectedArmyNetBcnBytes,
+            int RawDrawsEliminated,
+            double ExpectedArmyDrawsEliminated);
 
         private sealed record AtlasValueGateResidencyEstimate(
             long GeneratedBcnBytes,
