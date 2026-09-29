@@ -8110,6 +8110,35 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Cropped-content hashes computed: {state.AtlasRegionContentHashes.Count}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
+            sb.AppendLine($"Texel-density scaled meshes: {state.TexelDensityScaledMeshes}");
+            if (state.TexelDensityScaledMeshes != 0)
+            {
+                sb.AppendLine(
+                    $"Texel-density scaled source pixel area: " +
+                    $"{state.TexelDensityOriginalPixelArea:N0} -> {state.TexelDensityScaledPixelArea:N0}");
+                sb.AppendLine(
+                    $"Texel-density scale buckets: " +
+                    $"{string.Join(", ", state.TexelDensityScaleCounts
+                        .OrderBy(entry => entry.Key)
+                        .Select(entry => $"{entry.Key:0.##}x={entry.Value:N0}"))}");
+            }
+            if (state.MergeCompatibleMeshesEnabled)
+            {
+                sb.AppendLine($"Atlas value-gate batches accepted: {state.AtlasValueGateBatchesAccepted}");
+                sb.AppendLine($"Atlas value-gate batches rejected: {state.AtlasValueGateBatchesRejected}");
+                sb.AppendLine($"Atlas value-gate broad batches split: {state.AtlasValueGateBroadBatchesSplit}");
+                sb.AppendLine($"Atlas value-gate candidates accepted: {state.AtlasValueGateCandidatesAccepted}");
+                sb.AppendLine($"Atlas value-gate candidates rejected: {state.AtlasValueGateCandidatesRejected}");
+                sb.AppendLine(
+                    $"Atlas value-gate generated BCn accepted: " +
+                    $"{FormatMiB(state.AtlasValueGateGeneratedBcnBytesAccepted)}");
+                sb.AppendLine(
+                    $"Atlas value-gate generated BCn rejected: " +
+                    $"{FormatMiB(state.AtlasValueGateGeneratedBcnBytesRejected)}");
+                sb.AppendLine(
+                    $"Atlas value-gate expected army draw eliminations accepted: " +
+                    $"{state.AtlasValueGateExpectedDrawsAccepted:N3}");
+            }
             sb.AppendLine($"Atlas pixel-area optimized splits: {state.AtlasPixelAreaOptimizedSplits}");
             sb.AppendLine($"Atlas pixel-area split evaluations: {state.AtlasPixelAreaSplitEvaluations}");
             sb.AppendLine($"Atlas non-contiguous optimized splits: {state.AtlasNonContiguousOptimizedSplits}");
@@ -10029,6 +10058,18 @@ namespace Editors.KitbasherEditor.Services
             public bool OptimizeGeometryEnabled { get; }
             public int PackWideCandidateCount { get; set; }
             public int AtlasBatchCount { get; set; }
+            public int TexelDensityScaledMeshes { get; set; }
+            public long TexelDensityOriginalPixelArea { get; set; }
+            public long TexelDensityScaledPixelArea { get; set; }
+            public Dictionary<double, int> TexelDensityScaleCounts { get; } = [];
+            public int AtlasValueGateBatchesAccepted { get; set; }
+            public int AtlasValueGateBatchesRejected { get; set; }
+            public int AtlasValueGateBroadBatchesSplit { get; set; }
+            public int AtlasValueGateCandidatesAccepted { get; set; }
+            public int AtlasValueGateCandidatesRejected { get; set; }
+            public long AtlasValueGateGeneratedBcnBytesAccepted { get; set; }
+            public long AtlasValueGateGeneratedBcnBytesRejected { get; set; }
+            public double AtlasValueGateExpectedDrawsAccepted { get; set; }
             public int ConstantOnlyAtlasChannelsSkipped { get; set; }
             public HashSet<string> UniformConstantTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public int LargeBcSplitCompressionChannels { get; set; }
