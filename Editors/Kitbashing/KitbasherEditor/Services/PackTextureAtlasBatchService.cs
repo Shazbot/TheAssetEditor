@@ -3641,10 +3641,13 @@ namespace Editors.KitbasherEditor.Services
             bytes = 0;
             try
             {
+                // The value gate only needs a conservative residency estimate. Avoid
+                // cropped-content hashing here; execution may deduplicate later and therefore
+                // use the same or less BCn memory than this estimate.
                 var sharedPlan = CreateSharedAtlasPlan(
                     state,
                     candidates,
-                    deduplicateByContent: true);
+                    deduplicateByContent: false);
                 var resolutionScale = GetBatchAtlasResolutionScale(sharedPlan.Batch.Sources);
 
                 foreach (var channel in AtlasChannels)
