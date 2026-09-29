@@ -2225,7 +2225,9 @@ namespace Editors.KitbasherEditor.Services
                 StringComparer.OrdinalIgnoreCase);
             var directAssetsByUnitAndRole = new Dictionary<
                 string,
-                Dictionary<Wh3UnitVisualRole, HashSet<string>>>(
+                Dictionary<
+                    Wh3UnitVisualRole,
+                    Dictionary<string, double>>>(
                 StringComparer.OrdinalIgnoreCase);
             foreach (var (vmdPathValue, usages) in resolution.DirectUsagesByVmd)
             {
@@ -2302,17 +2304,22 @@ namespace Editors.KitbasherEditor.Services
 
                     if (!directAssetsByUnitAndRole.TryGetValue(identity, out var directAssetsByRole))
                     {
-                        directAssetsByRole = new Dictionary<Wh3UnitVisualRole, HashSet<string>>();
+                        directAssetsByRole = new Dictionary<
+                            Wh3UnitVisualRole,
+                            Dictionary<string, double>>();
                         directAssetsByUnitAndRole[identity] = directAssetsByRole;
                     }
 
                     if (!directAssetsByRole.TryGetValue(usage.VisualRole, out var directAssets))
                     {
-                        directAssets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        directAssets = new Dictionary<string, double>(
+                            StringComparer.OrdinalIgnoreCase);
                         directAssetsByRole[usage.VisualRole] = directAssets;
                     }
 
-                    directAssets.Add(assetPath);
+                    directAssets[assetPath] = Math.Max(
+                        directAssets.GetValueOrDefault(assetPath),
+                        usage.ExpectedLiveBattlePresence);
                 }
             }
 
@@ -2407,16 +2414,28 @@ namespace Editors.KitbasherEditor.Services
                     if (directAssets.Count == 0)
                         continue;
 
-                    var directAssetProbability = 1.0 / directAssets.Count;
-                    foreach (var assetPath in directAssets)
+                    // Active engine models contribute to normal live-army residency.
+                    // Destroyed/destruct lifecycle models remain reachable/atlasable, but
+                    // intentionally contribute zero here so they do not earn live-battle
+                    // draw-call credit or inflate representative-army residency.
+                    var livePresenceTotal = directAssets.Values
+                        .Where(value => value > 0)
+                        .Sum();
+                    if (livePresenceTotal <= 0)
+                        continue;
+
+                    foreach (var (assetPath, livePresence) in directAssets)
                     {
+                        if (livePresence <= 0)
+                            continue;
+
                         if (!mergedOccurrences.TryGetValue(assetPath, out var byRole))
                         {
                             byRole = new Dictionary<Wh3UnitVisualRole, double>();
                             mergedOccurrences[assetPath] = byRole;
                         }
 
-                        byRole[role] = directAssetProbability;
+                        byRole[role] = livePresence / livePresenceTotal;
                     }
                 }
 
