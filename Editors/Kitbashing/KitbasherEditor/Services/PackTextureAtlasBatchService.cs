@@ -679,6 +679,9 @@ namespace Editors.KitbasherEditor.Services
 
                     if (FindForRead(state, texturePath) == null)
                     {
+                        if (IsIgnorableUnresolvedAtlasTexture(channel.Slot, texturePath))
+                            continue;
+
                         result.Add(new MissingTextureDependency(
                             key,
                             channel.Slot,
@@ -1073,6 +1076,9 @@ namespace Editors.KitbasherEditor.Services
                         skipReason = $"Base-colour texture could not be resolved: {path}";
                         return null;
                     }
+
+                    if (IsIgnorableUnresolvedAtlasTexture(channel.Slot, path))
+                        continue;
 
                     var missing = new MissingTextureDependency(
                         key,
@@ -10345,6 +10351,18 @@ namespace Editors.KitbasherEditor.Services
 
         private static bool IsTexturePlaceholder(string? path)
             => Normalize(path).Equals("mask_path", StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsIgnorableUnresolvedAtlasTexture(
+            string slot,
+            string? path)
+        {
+            if (!slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var normalized = Normalize(path);
+            return normalized.Equals("test_mask.dds", StringComparison.OrdinalIgnoreCase) ||
+                   normalized.EndsWith(@"\test_mask.dds", StringComparison.OrdinalIgnoreCase);
+        }
 
         private static bool IsKnownConstantTexturePath(string? path)
             => KnownConstantTexturePaths.Contains(Normalize(path));
