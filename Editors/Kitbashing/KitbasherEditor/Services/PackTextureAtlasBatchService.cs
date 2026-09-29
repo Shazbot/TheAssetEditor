@@ -6955,7 +6955,21 @@ namespace Editors.KitbasherEditor.Services
                 if (!string.IsNullOrWhiteSpace(geometryPath) &&
                     !CanResolveAfterRewrite(state, geometryPath))
                 {
-                    errors.Add($"WSModel geometry no longer resolves: {wsPath} -> {geometryPath}");
+                    if (IsPreservedSourceUnresolvedWsReference(
+                            state,
+                            wsPath,
+                            geometryPath,
+                            "/model/geometry"))
+                    {
+                        AddValidationWarning(
+                            state,
+                            $"Preserved pre-existing unresolved WSModel geometry: " +
+                            $"{wsPath} -> {geometryPath}");
+                    }
+                    else
+                    {
+                        errors.Add($"WSModel geometry no longer resolves: {wsPath} -> {geometryPath}");
+                    }
                 }
 
                 var materialNodes = wsDoc.SelectNodes("/model/materials/material");
@@ -6968,7 +6982,21 @@ namespace Editors.KitbasherEditor.Services
                     if (!string.IsNullOrWhiteSpace(materialPath) &&
                         !CanResolveAfterRewrite(state, materialPath))
                     {
-                        errors.Add($"WSModel material no longer resolves: {wsPath} -> {materialPath}");
+                        if (IsPreservedSourceUnresolvedWsReference(
+                                state,
+                                wsPath,
+                                materialPath,
+                                "/model/materials/material"))
+                        {
+                            AddValidationWarning(
+                                state,
+                                $"Preserved pre-existing unresolved WSModel material: " +
+                                $"{wsPath} -> {materialPath}");
+                        }
+                        else
+                        {
+                            errors.Add($"WSModel material no longer resolves: {wsPath} -> {materialPath}");
+                        }
                     }
                 }
 
@@ -7108,6 +7136,56 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.MeshMergeInvariantLodCount} LOD(s); " +
                     $"{state.MeshMergeInvariantWsModelCount} WSModel non-material structure check(s) passed.");
             }
+        }
+
+        private bool IsPreservedSourceUnresolvedWsReference(
+            BatchState state,
+            string wsPathValue,
+            string referencePathValue,
+            string xpath)
+        {
+            var wsPath = Normalize(wsPathValue);
+            var referencePath = Normalize(referencePathValue);
+            if (wsPath.Length == 0 || referencePath.Length == 0)
+                return false;
+
+            try
+            {
+                var sourceWsFile = state.Source.FindFile(wsPath);
+                if (sourceWsFile == null)
+                    return false;
+
+                var sourceWsDocument = LoadXml(sourceWsFile);
+                var sourceNodes = sourceWsDocument.SelectNodes(xpath);
+                if (sourceNodes == null ||
+                    !sourceNodes
+                        .Cast<XmlNode>()
+                        .Any(node => Normalize(node.InnerText)
+                            .Equals(referencePath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return false;
+                }
+
+                // The exact same reference was already present in the source WSModel.
+                // Only downgrade it to a warning when it was unresolved before rewriting.
+                if (state.Source.FindFile(referencePath) != null)
+                    return false;
+
+                return _packFileService.FindFile(referencePath) == null;
+            }
+            catch
+            {
+                // If the source baseline cannot be established reliably, retain strict
+                // validation and keep the rewritten-output failure fatal.
+                return false;
+            }
+        }
+
+        private static void AddValidationWarning(BatchState state, string message)
+        {
+            var fullMessage = "WARNING: " + message;
+            if (!state.ValidationMessages.Contains(fullMessage, StringComparer.Ordinal))
+                state.ValidationMessages.Add(fullMessage);
         }
 
         private static bool HasSameSourceWsMaterialMismatch(
