@@ -3219,6 +3219,12 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var channel in AtlasChannels)
             {
+                if (IsCandidateIgnoredTextureSlot(candidate, channel.Slot))
+                {
+                    RemoveTextureSlot(material, channel.Slot);
+                    continue;
+                }
+
                 // Only non-constant resolved channels are guaranteed to be rewritten to the
                 // same generated atlas path when two candidates share a batch. Preserved,
                 // missing, and constant-only sources remain part of the strict identity.
@@ -10229,8 +10235,11 @@ namespace Editors.KitbasherEditor.Services
         private static string GetChannelIdentity(AtlasCandidate candidate, string slot)
         {
             var path = GetTexturePath(candidate.MaterialDocument, slot);
-            if (string.IsNullOrWhiteSpace(path))
+            if (string.IsNullOrWhiteSpace(path) ||
+                IsCandidateIgnoredTextureSlot(candidate, slot))
+            {
                 return "<none>";
+            }
             if (IsTexturePlaceholder(path))
                 return $"<placeholder>:{path}";
             if (candidate.ConstantChannels.ContainsKey(slot))
@@ -10238,6 +10247,23 @@ namespace Editors.KitbasherEditor.Services
             if (candidate.ResolvedChannels.Contains(slot))
                 return $"<resolved>:{path}";
             return $"<unresolved>:{path}";
+        }
+
+        private static bool IsCandidateIgnoredTextureSlot(
+            AtlasCandidate candidate,
+            string slot)
+        {
+            if (candidate.ResolvedChannels.Contains(slot) ||
+                candidate.ConstantChannels.ContainsKey(slot) ||
+                candidate.MissingTextures.Any(missing =>
+                    missing.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase)))
+            {
+                return false;
+            }
+
+            return IsIgnorableUnresolvedAtlasTexture(
+                slot,
+                GetTexturePath(candidate.MaterialDocument, slot));
         }
 
         private static AtlasCrop GetEffectiveCrop(AtlasCandidate candidate)
