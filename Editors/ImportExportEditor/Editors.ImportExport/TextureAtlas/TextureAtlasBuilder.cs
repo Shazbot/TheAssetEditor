@@ -1001,12 +1001,34 @@ namespace Editors.ImportExport.TextureAtlas
         public static (int Width, int Height) CalculateOutputDimensions(
             TextureAtlasPlan plan,
             IReadOnlyDictionary<int, (int Width, int Height)> sourceDimensions,
-            int maxAtlasSize = DefaultMaxAtlasSize)
+            int maxAtlasSize = DefaultMaxAtlasSize,
+            double resolutionScale = 1.0)
         {
             if (maxAtlasSize <= 0)
                 throw new ArgumentOutOfRangeException(nameof(maxAtlasSize));
+            if (!double.IsFinite(resolutionScale) ||
+                resolutionScale <= 0 ||
+                resolutionScale > 1.0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(resolutionScale));
+            }
+
             if (sourceDimensions.Count == 0)
-                return (plan.Width, plan.Height);
+            {
+                var scaledWidth = NextPowerOfTwo(Math.Max(
+                    1,
+                    checked((int)Math.Ceiling(plan.Width * resolutionScale))));
+                var scaledHeight = NextPowerOfTwo(Math.Max(
+                    1,
+                    checked((int)Math.Ceiling(plan.Height * resolutionScale))));
+                if (scaledWidth > maxAtlasSize || scaledHeight > maxAtlasSize)
+                {
+                    throw new InvalidOperationException(
+                        $"Channel atlas requires {scaledWidth}x{scaledHeight}, exceeding the {maxAtlasSize}x{maxAtlasSize} atlas limit.");
+                }
+
+                return (scaledWidth, scaledHeight);
+            }
 
             double requiredScaleX = 0;
             double requiredScaleY = 0;
@@ -1027,14 +1049,17 @@ namespace Editors.ImportExport.TextureAtlas
             }
 
             if (requiredScaleX <= 0 || requiredScaleY <= 0)
-                return (plan.Width, plan.Height);
+            {
+                requiredScaleX = 1;
+                requiredScaleY = 1;
+            }
 
             var width = NextPowerOfTwo(Math.Max(
                 1,
-                checked((int)Math.Ceiling(plan.Width * requiredScaleX))));
+                checked((int)Math.Ceiling(plan.Width * requiredScaleX * resolutionScale))));
             var height = NextPowerOfTwo(Math.Max(
                 1,
-                checked((int)Math.Ceiling(plan.Height * requiredScaleY))));
+                checked((int)Math.Ceiling(plan.Height * requiredScaleY * resolutionScale))));
 
             if (width > maxAtlasSize || height > maxAtlasSize)
             {
