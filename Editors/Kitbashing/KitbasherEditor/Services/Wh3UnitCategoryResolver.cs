@@ -21,6 +21,30 @@ namespace Editors.KitbasherEditor.Services
         ArtilleryWarMachine,
     }
 
+    internal enum Wh3UnitVisualRole
+    {
+        Men,
+        Mount,
+        Engine,
+        Crew,
+    }
+
+    internal sealed record Wh3UnitVisualCounts(
+        int Riders,
+        int Mounts,
+        int Engines,
+        int Crew)
+    {
+        public int ForRole(Wh3UnitVisualRole role)
+            => role switch
+            {
+                Wh3UnitVisualRole.Mount => Mounts,
+                Wh3UnitVisualRole.Engine => Engines,
+                Wh3UnitVisualRole.Crew => Crew,
+                _ => Riders,
+            };
+    }
+
     internal sealed record Wh3UnitCategoryUsage(
         string VmdPath,
         string MainUnitKey,
@@ -29,7 +53,10 @@ namespace Editors.KitbasherEditor.Services
         string LandCategory,
         string UiGroupKey,
         int NumMen,
-        Wh3ArmyUnitCategory Category);
+        Wh3ArmyUnitCategory Category,
+        Wh3UnitVisualRole VisualRole,
+        int EntityCount,
+        Wh3UnitVisualCounts VisualCounts);
 
     internal sealed record Wh3UnitCategoryResolution(
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> UsagesByVmd,
@@ -66,6 +93,15 @@ namespace Editors.KitbasherEditor.Services
         private const string VariantsTable = "variants_tables";
         private const string UiUnitGroupingsTable = "ui_unit_groupings_tables";
         private const string UiUnitGroupParentsTable = "ui_unit_group_parents_tables";
+        private const string MountsTable = "mounts_tables";
+        private const string BattlefieldEnginesTable = "battlefield_engines_tables";
+        private const string ExtraEnginesTable = "land_units_to_extra_engines_tables";
+
+        // The optimizer models a large-size battle.  WHMM uses the same scalar for the
+        // entity count shown by its unit viewer.  Crew is a separate visual population for
+        // crewed engines; it is intentionally derived from num_men, never from ammunition.
+        private const double LargeUnitEntityScale = 0.75;
+        private const double LargeCrewEntityScale = 0.50;
 
         private static readonly string[] RequiredTables =
         [
@@ -75,6 +111,9 @@ namespace Editors.KitbasherEditor.Services
             VariantsTable,
             UiUnitGroupingsTable,
             UiUnitGroupParentsTable,
+            MountsTable,
+            BattlefieldEnginesTable,
+            ExtraEnginesTable,
         ];
 
         private static readonly Lazy<SchemaRoot> Schema = new(LoadSchema);
@@ -156,6 +195,15 @@ namespace Editors.KitbasherEditor.Services
             var variantRows = effectiveRows[VariantsTable];
             var uiUnitGroupings = effectiveRows[UiUnitGroupingsTable];
             var uiUnitGroupParents = effectiveRows[UiUnitGroupParentsTable];
+            var mountRows = effectiveRows[MountsTable];
+            var engineRows = effectiveRows[BattlefieldEnginesTable];
+            var extraEngineRowsByLandUnit = effectiveRows[ExtraEnginesTable].Values
+                .Where(row => Get(row, "land_unit").Length != 0)
+                .GroupBy(row => Get(row, "land_unit"), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.ToList(),
+                    StringComparer.OrdinalIgnoreCase);
 
             var mainByLandUnit = mainRows
                 .Where(row => Get(row, "land_unit").Length != 0)
@@ -167,6 +215,49 @@ namespace Editors.KitbasherEditor.Services
 
             var usagesByVmd = new Dictionary<string, Dictionary<string, Wh3UnitCategoryUsage>>(
                 StringComparer.OrdinalIgnoreCase);
+
+            void AddVariantUsage(
+                string variantName,
+                string mainUnitKey,
+                string landUnitKey,
+                string caste,
+                string landCategory,
+                string uiGroupKey,
+                Wh3ArmyUnitCategory category,
+                Wh3UnitVisualRole visualRole,
+                int numMen,
+                Wh3UnitVisualCounts visualCounts)
+            {
+                if (variantName.Length == 0 ||
+                    !variantRows.TryGetValue(variantName, out var variant))
+                {
+                    return;
+                }
+
+                var componentVmdPath = ToVariantMeshDefinitionPath(
+                    Get(variant, "variant_filename"));
+                if (componentVmdPath.Length == 0)
+                    return;
+
+                var entityCount = visualCounts.ForRole(visualRole);
+                if (entityCount <= 0)
+                    return;
+
+                AddUsage(
+                    usagesByVmd,
+                    new Wh3UnitCategoryUsage(
+                        componentVmdPath,
+                        mainUnitKey,
+                        landUnitKey,
+                        caste,
+                        landCategory,
+                        uiGroupKey,
+                        numMen,
+                        category,
+                        visualRole,
+                        entityCount,
+                        visualCounts));
+            }
 
             foreach (var unitVariant in unitVariantRows)
             {
@@ -187,17 +278,18 @@ namespace Editors.KitbasherEditor.Services
 
                 if (!mainByLandUnit.TryGetValue(landUnitKey, out var mains) || mains.Count == 0)
                 {
-                    AddUsage(
-                        usagesByVmd,
-                        new Wh3UnitCategoryUsage(
-                            vmdPath,
-                            string.Empty,
-                            landUnitKey,
-                            string.Empty,
-                            Get(land, "category"),
-                            string.Empty,
-                            1,
-                            Classify(string.Empty, Get(land, "category"), string.Empty)));
+                    var fallbackCounts = new Wh3UnitVisualCounts(1, 0, 0, 0);
+                    AddVariantUsage(
+                        variantName,
+                        string.Empty,
+                        landUnitKey,
+                        string.Empty,
+                        Get(land, "category"),
+                        string.Empty,
+                        Classify(string.Empty, Get(land, "category"), string.Empty),
+                        Wh3UnitVisualRole.Men,
+                        1,
+                        fallbackCounts);
                     continue;
                 }
 
@@ -214,18 +306,81 @@ namespace Editors.KitbasherEditor.Services
                     var numMen = TryParseInt(Get(main, "num_men"), out var parsedNumMen)
                         ? Math.Max(1, parsedNumMen)
                         : 1;
+                    var engineKey = Get(land, "engine");
+                    engineRows.TryGetValue(engineKey, out var engine);
+                    var visualCounts = ResolveVisualCounts(main, land, engine);
+                    var mainVisualRole = visualCounts.Crew > 0
+                        ? Wh3UnitVisualRole.Crew
+                        : Wh3UnitVisualRole.Men;
 
-                    AddUsage(
-                        usagesByVmd,
-                        new Wh3UnitCategoryUsage(
-                            vmdPath,
+                    AddVariantUsage(
+                        variantName,
+                        mainUnitKey,
+                        landUnitKey,
+                        caste,
+                        landCategory,
+                        uiGroupKey,
+                        Classify(caste, landCategory, uiGroupKey),
+                        mainVisualRole,
+                        numMen,
+                        visualCounts);
+
+                    var mountKey = Get(land, "mount");
+                    if (mountKey.Length != 0 &&
+                        mountRows.TryGetValue(mountKey, out var mount))
+                    {
+                        AddVariantUsage(
+                            Get(mount, "variant"),
                             mainUnitKey,
                             landUnitKey,
                             caste,
                             landCategory,
                             uiGroupKey,
+                            Classify(caste, landCategory, uiGroupKey),
+                            Wh3UnitVisualRole.Mount,
                             numMen,
-                            Classify(caste, landCategory, uiGroupKey)));
+                            visualCounts);
+                    }
+
+                    if (engineKey.Length != 0 && engine != null)
+                    {
+                        AddVariantUsage(
+                            Get(engine, "variant"),
+                            mainUnitKey,
+                            landUnitKey,
+                            caste,
+                            landCategory,
+                            uiGroupKey,
+                            Classify(caste, landCategory, uiGroupKey),
+                            Wh3UnitVisualRole.Engine,
+                            numMen,
+                            visualCounts);
+                    }
+
+                    if (extraEngineRowsByLandUnit.TryGetValue(landUnitKey, out var extraEngines))
+                    {
+                        foreach (var extraEngineRow in extraEngines)
+                        {
+                            var extraEngineKey = Get(extraEngineRow, "battle_engine");
+                            if (extraEngineKey.Length == 0 ||
+                                !engineRows.TryGetValue(extraEngineKey, out var extraEngine))
+                            {
+                                continue;
+                            }
+
+                            AddVariantUsage(
+                                Get(extraEngine, "variant"),
+                                mainUnitKey,
+                                landUnitKey,
+                                caste,
+                                landCategory,
+                                uiGroupKey,
+                                Classify(caste, landCategory, uiGroupKey),
+                                Wh3UnitVisualRole.Engine,
+                                numMen,
+                                visualCounts);
+                        }
+                    }
                 }
             }
 
@@ -300,6 +455,7 @@ namespace Editors.KitbasherEditor.Services
             var identity = string.IsNullOrWhiteSpace(usage.MainUnitKey)
                 ? $"land:{usage.LandUnitKey}"
                 : $"main:{usage.MainUnitKey}";
+            identity += $"|role:{usage.VisualRole}";
             usages[identity] = usage with { VmdPath = vmdPath };
         }
 
@@ -444,6 +600,70 @@ namespace Editors.KitbasherEditor.Services
                 "artillery" or "war_machine" => Wh3ArmyUnitCategory.ArtilleryWarMachine,
                 _ => Wh3ArmyUnitCategory.Unknown,
             };
+        }
+
+        private static Wh3UnitVisualCounts ResolveVisualCounts(
+            IReadOnlyDictionary<string, string> main,
+            IReadOnlyDictionary<string, string> land,
+            IReadOnlyDictionary<string, string>? engine)
+        {
+            var rawMen = TryParseInt(Get(main, "num_men"), out var parsedMen)
+                ? Math.Max(1, parsedMen)
+                : 1;
+
+            var mountKey = Get(land, "mount");
+            var hasMount = mountKey.Length != 0;
+            var mountsPerCarrier = TryParseInt(Get(land, "num_mounts"), out var parsedMounts)
+                ? Math.Max(0, parsedMounts)
+                : 0;
+            if (hasMount && mountsPerCarrier == 0)
+                mountsPerCarrier = 1;
+
+            var engineKey = Get(land, "engine");
+            var hasEngine = engineKey.Length != 0;
+            var rawEngines = TryParseInt(Get(land, "num_engines"), out var parsedEngines)
+                ? Math.Max(0, parsedEngines)
+                : 0;
+            if (hasEngine && rawEngines == 0)
+                rawEngines = 1;
+
+            var engines = hasEngine
+                ? ScaleEntityCount(rawEngines, LargeUnitEntityScale)
+                : 0;
+            var crewedEngine = hasEngine && IsCrewedEngine(Get(engine, "engine_type"));
+            var riders = crewedEngine
+                ? 0
+                : ScaleEntityCount(rawMen, LargeUnitEntityScale);
+            var crew = crewedEngine
+                ? ScaleEntityCount(rawMen, LargeCrewEntityScale)
+                : 0;
+
+            // For a mounted unit, num_mounts is the number of mounts attached to one
+            // battlefield carrier.  A chariot uses num_engines as its carrier count, so
+            // Skeleton Chariots resolve to ceil(12 * .75) = 9 carriers and 9 * 2 = 18
+            // mounts.  Their rider VMD is still driven by the large-size num_men count:
+            // ceil(24 * .75) = 18 riders.
+            var carrierCount = engines > 0 ? engines : Math.Max(1, riders);
+            var mounts = hasMount
+                ? checked(carrierCount * Math.Max(1, mountsPerCarrier))
+                : 0;
+
+            // A Generic_3_Crew engine keeps its crew in the unit's main VMD.  The dump's
+            // Screaming Skull Catapult row has num_men=44, so this intentionally resolves
+            // to ceil(44 * .5) = 22 crew.  primary_ammo is not consulted.
+            return new Wh3UnitVisualCounts(riders, mounts, engines, crew);
+        }
+
+        private static bool IsCrewedEngine(string engineType)
+            => engineType.Contains("crew", StringComparison.OrdinalIgnoreCase) &&
+               !engineType.Contains("no_crew", StringComparison.OrdinalIgnoreCase);
+
+        private static int ScaleEntityCount(int rawCount, double scale)
+        {
+            if (rawCount <= 0)
+                return 0;
+
+            return Math.Max(1, (int)Math.Ceiling(rawCount * scale));
         }
 
         private static List<Dictionary<string, string>> DecodeTable(
@@ -677,17 +897,27 @@ namespace Editors.KitbasherEditor.Services
                 MainUnitsTable => Get(row, "unit"),
                 LandUnitsTable => Get(row, "key"),
                 VariantsTable => Get(row, "variant_name"),
-                UnitVariantsTable => $"{Get(row, "faction")}\u001f{Get(row, "unit")}",
+                // name identifies the visual slot.  Collapsing only by faction+unit loses
+                // separate rider/crew/mount selectors when a unit has more than one row.
+                UnitVariantsTable =>
+                    $"{Get(row, "faction")}\u001f{Get(row, "unit")}\u001f{Get(row, "name")}",
                 UiUnitGroupingsTable => Get(row, "key"),
                 UiUnitGroupParentsTable => Get(row, "key"),
+                MountsTable => Get(row, "key"),
+                BattlefieldEnginesTable => Get(row, "key"),
+                ExtraEnginesTable =>
+                    $"{Get(row, "land_unit")}\u001f{Get(row, "attach_articulation")}\u001f" +
+                    Get(row, "battle_engine"),
                 _ => string.Empty,
             };
         }
 
         private static string Get(
-            IReadOnlyDictionary<string, string> row,
+            IReadOnlyDictionary<string, string>? row,
             string field)
-            => row.TryGetValue(field, out var value) ? value.Trim() : string.Empty;
+            => row != null && row.TryGetValue(field, out var value)
+                ? value.Trim()
+                : string.Empty;
 
         private static string ToVariantMeshDefinitionPath(string value)
         {

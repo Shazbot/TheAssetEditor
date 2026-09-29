@@ -62,6 +62,31 @@ namespace Test.KitbashEditor.Services
             method.Invoke(null, [tableName, target, rows]);
         }
 
+        private static object ResolveVisualCounts(
+            IReadOnlyDictionary<string, string> main,
+            IReadOnlyDictionary<string, string> land,
+            IReadOnlyDictionary<string, string>? engine)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "ResolveVisualCounts",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.ResolveVisualCounts was not found.");
+
+            return method.Invoke(null, [main, land, engine])
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.ResolveVisualCounts returned null.");
+        }
+
+        private static int GetVisualCount(object counts, string propertyName)
+            => (int)(counts.GetType().GetProperty(propertyName)?.GetValue(counts)
+                ?? throw new InvalidOperationException(
+                    $"Visual count property '{propertyName}' was not found."));
+
         private static byte[] BuildUiUnitGroupParentsRow(
             string icon,
             string key,
@@ -176,6 +201,113 @@ namespace Test.KitbashEditor.Services
             {
                 Assert.That(effective, Has.Count.EqualTo(1));
                 Assert.That(effective["commander"]["icon"], Is.EqualTo("mod_icon"));
+            });
+        }
+
+        [Test]
+        public void EffectiveRows_UnitVariantsKeepsDistinctVisualSlots()
+        {
+            var effective = new Dictionary<string, Dictionary<string, string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            ApplyEffectiveRows(
+                "unit_variants_tables",
+                effective,
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["faction"] = "",
+                        ["unit"] = "unit",
+                        ["name"] = "crew",
+                        ["variant"] = "crew_variant",
+                    },
+                    new Dictionary<string, string>
+                    {
+                        ["faction"] = "",
+                        ["unit"] = "unit",
+                        ["name"] = "mount",
+                        ["variant"] = "mount_variant",
+                    },
+                ]);
+            ApplyEffectiveRows(
+                "unit_variants_tables",
+                effective,
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["faction"] = "",
+                        ["unit"] = "unit",
+                        ["name"] = "crew",
+                        ["variant"] = "modded_crew_variant",
+                    },
+                ]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(effective, Has.Count.EqualTo(2));
+                Assert.That(
+                    effective.Values.Single(row => row["name"] == "crew")["variant"],
+                    Is.EqualTo("modded_crew_variant"));
+                Assert.That(
+                    effective.Values.Single(row => row["name"] == "mount")["variant"],
+                    Is.EqualTo("mount_variant"));
+            });
+        }
+
+        [Test]
+        public void VisualCounts_SkeletonChariotUsesCarrierMountAndRiderRoles()
+        {
+            var counts = ResolveVisualCounts(
+                new Dictionary<string, string>
+                {
+                    ["num_men"] = "24",
+                },
+                new Dictionary<string, string>
+                {
+                    ["mount"] = "wh2_dlc09_tmb_mnt_tomb_steed_chariot",
+                    ["num_mounts"] = "2",
+                    ["engine"] = "wh2_dlc09_tmb_chariot",
+                    ["num_engines"] = "12",
+                },
+                new Dictionary<string, string>
+                {
+                    ["engine_type"] = "Generic_No_Crew_Rotate",
+                });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetVisualCount(counts, "Riders"), Is.EqualTo(18));
+                Assert.That(GetVisualCount(counts, "Mounts"), Is.EqualTo(18));
+                Assert.That(GetVisualCount(counts, "Engines"), Is.EqualTo(9));
+                Assert.That(GetVisualCount(counts, "Crew"), Is.EqualTo(0));
+            });
+        }
+
+        [Test]
+        public void VisualCounts_ScreamingSkullUsesCrewCountAndIgnoresAmmo()
+        {
+            var counts = ResolveVisualCounts(
+                new Dictionary<string, string>
+                {
+                    ["num_men"] = "44",
+                    ["primary_ammo"] = "22",
+                },
+                new Dictionary<string, string>
+                {
+                    ["engine"] = "wh2_dlc09_tmb_art_screaming_skull_catapult",
+                    ["num_engines"] = "4",
+                },
+                new Dictionary<string, string>
+                {
+                    ["engine_type"] = "Generic_3_Crew",
+                });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetVisualCount(counts, "Riders"), Is.EqualTo(0));
+                Assert.That(GetVisualCount(counts, "Mounts"), Is.EqualTo(0));
+                Assert.That(GetVisualCount(counts, "Engines"), Is.EqualTo(3));
+                Assert.That(GetVisualCount(counts, "Crew"), Is.EqualTo(22));
             });
         }
 

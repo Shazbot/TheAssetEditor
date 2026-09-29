@@ -2450,6 +2450,198 @@
         ]
       }
     ],
+    "mounts_tables": [
+      {
+        "version": 10,
+        "fields": [
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "animation", "field_type": "StringU8" },
+          { "name": "entity", "field_type": "StringU8" },
+          { "name": "audio_armour_type", "field_type": "OptionalStringU8" },
+          { "name": "variant", "field_type": "StringU8" },
+          { "name": "voiceover", "field_type": "StringU8" }
+        ]
+      },
+      {
+        "version": 9,
+        "fields": [
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "animation", "field_type": "StringU8" },
+          { "name": "entity", "field_type": "StringU8" },
+          { "name": "audio_armour_type", "field_type": "StringU8" },
+          { "name": "variant", "field_type": "StringU8" },
+          { "name": "voiceover", "field_type": "StringU8" }
+        ]
+      }
+    ],
+    "battlefield_engines_tables": [
+      {
+        "version": 24,
+        "fields": [
+          { "name": "destroyed_model", "field_type": "OptionalStringU8" },
+          { "name": "destruction_animation", "field_type": "OptionalStringU8" },
+          { "name": "engine_type", "field_type": "StringU8" },
+          { "name": "gun_animation_table", "field_type": "StringU8" },
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "missile_weapon", "field_type": "OptionalStringU8" },
+          { "name": "model", "field_type": "StringU8" },
+          { "name": "battle_entity", "field_type": "StringU8" },
+          { "name": "asset_folder", "field_type": "OptionalStringU8" },
+          { "name": "variant", "field_type": "OptionalStringU8" },
+          { "name": "draught_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "tech_folder", "field_type": "OptionalStringU8" },
+          { "name": "rider_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "destruct_model", "field_type": "OptionalStringU8" },
+          { "name": "destruct_anim", "field_type": "OptionalStringU8" },
+          { "name": "destruct_meta", "field_type": "OptionalStringU8" },
+          { "name": "audio_armour_type", "field_type": "OptionalStringU8" },
+          { "name": "riders_shoot_behaviour", "field_type": "StringU8" },
+          { "name": "scale", "field_type": "F32" },
+          { "name": "crew_reserve_distance_offset", "field_type": "F32" }
+        ]
+      },
+      {
+        "version": 23,
+        "fields": [
+          { "name": "destroyed_model", "field_type": "OptionalStringU8" },
+          { "name": "destruction_animation", "field_type": "OptionalStringU8" },
+          { "name": "engine_type", "field_type": "StringU8" },
+          { "name": "gun_animation_table", "field_type": "StringU8" },
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "missile_weapon", "field_type": "OptionalStringU8" },
+          { "name": "model", "field_type": "StringU8" },
+          { "name": "battle_entity", "field_type": "StringU8" },
+          { "name": "asset_folder", "field_type": "OptionalStringU8" },
+          { "name": "variant", "field_type": "OptionalStringU8" },
+          { "name": "draught_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "tech_folder", "field_type": "OptionalStringU8" },
+          { "name": "rider_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "destruct_model", "field_type": "OptionalStringU8" },
+          { "name": "destruct_anim", "field_type": "OptionalStringU8" },
+          { "name": "destruct_meta", "field_type": "OptionalStringU8" },
+          { "name": "audio_armour_type", "field_type": "OptionalStringU8" },
+          { "name": "riders_shoot_behaviour", "field_type": "StringU8" },
+          { "name": "scale", "field_type": "F32" }
+        ]
+      },
+      {
+        "version": 22,
+        "fields": [
+          { "name": "destroyed_model", "field_type": "OptionalStringU8" },
+          { "name": "destruction_animation", "field_type": "OptionalStringU8" },
+          { "name": "engine_type", "field_type": "StringU8" },
+          { "name": "gun_animation_table", "field_type": "StringU8" },
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "missile_weapon", "field_type": "OptionalStringU8" },
+          { "name": "model", "field_type": "StringU8" },
+          { "name": "battle_entity", "field_type": "StringU8" },
+          { "name": "asset_folder", "field_type": "OptionalStringU8" },
+          { "name": "variant", "field_type": "OptionalStringU8" },
+          { "name": "draught_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "tech_folder", "field_type": "OptionalStringU8" },
+          { "name": "rider_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "destruct_model", "field_type": "OptionalStringU8" },
+          { "name": "destruct_anim", "field_type": "OptionalStringU8" },
+          { "name": "destruct_meta", "field_type": "OptionalStringU8" },
+          { "name": "audio_armour_type", "field_type": "OptionalStringU8" },
+          { "name": "riders_shoot_behaviour", "field_type": "StringU8" }
+        ]
+      },
+      {
+        "version": 21,
+        "fields": [
+          { "name": "destroyed_model", "field_type": "OptionalStringU8" },
+          { "name": "destruction_animation", "field_type": "OptionalStringU8" },
+          { "name": "engine_type", "field_type": "StringU8" },
+          { "name": "gun_animation_table", "field_type": "StringU8" },
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "missile_weapon", "field_type": "OptionalStringU8" },
+          { "name": "model", "field_type": "StringU8" },
+          { "name": "battle_entity", "field_type": "StringU8" },
+          { "name": "asset_folder", "field_type": "OptionalStringU8" },
+          { "name": "variant", "field_type": "OptionalStringU8" },
+          { "name": "draught_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "tech_folder", "field_type": "OptionalStringU8" },
+          { "name": "rider_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "destruct_model", "field_type": "OptionalStringU8" },
+          { "name": "destruct_anim", "field_type": "OptionalStringU8" },
+          { "name": "destruct_meta", "field_type": "OptionalStringU8" },
+          { "name": "audio_armour_type", "field_type": "OptionalStringU8" }
+        ]
+      },
+      {
+        "version": 19,
+        "fields": [
+          { "name": "destroyed_model", "field_type": "OptionalStringU8" },
+          { "name": "destruction_animation", "field_type": "OptionalStringU8" },
+          { "name": "engine_type", "field_type": "StringU8" },
+          { "name": "gun_animation_table", "field_type": "StringU8" },
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "missile_weapon", "field_type": "OptionalStringU8" },
+          { "name": "model", "field_type": "StringU8" },
+          { "name": "battle_entity", "field_type": "StringU8" },
+          { "name": "asset_folder", "field_type": "OptionalStringU8" },
+          { "name": "variant", "field_type": "OptionalStringU8" },
+          { "name": "draught_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "tech_folder", "field_type": "OptionalStringU8" },
+          { "name": "rider_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "first_person", "field_type": "OptionalStringU8" },
+          { "name": "destruct_model", "field_type": "OptionalStringU8" },
+          { "name": "destruct_anim", "field_type": "OptionalStringU8" },
+          { "name": "destruct_meta", "field_type": "OptionalStringU8" }
+        ]
+      },
+      {
+        "version": 18,
+        "fields": [
+          { "name": "destroyed_model", "field_type": "OptionalStringU8" },
+          { "name": "destruction_animation", "field_type": "OptionalStringU8" },
+          { "name": "engine_type", "field_type": "StringU8" },
+          { "name": "gun_animation_table", "field_type": "StringU8" },
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "missile_weapon", "field_type": "OptionalStringU8" },
+          { "name": "model", "field_type": "StringU8" },
+          { "name": "battle_entity", "field_type": "StringU8" },
+          { "name": "asset_folder", "field_type": "OptionalStringU8" },
+          { "name": "variant", "field_type": "OptionalStringU8" },
+          { "name": "draught_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "tech_folder", "field_type": "OptionalStringU8" },
+          { "name": "rider_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "first_person", "field_type": "OptionalStringU8" },
+          { "name": "destruct_model", "field_type": "OptionalStringU8" },
+          { "name": "destruct_anim", "field_type": "OptionalStringU8" }
+        ]
+      },
+      {
+        "version": 17,
+        "fields": [
+          { "name": "destroyed_model", "field_type": "OptionalStringU8" },
+          { "name": "destruction_animation", "field_type": "OptionalStringU8" },
+          { "name": "engine_type", "field_type": "StringU8" },
+          { "name": "gun_animation_table", "field_type": "StringU8" },
+          { "name": "key", "field_type": "StringU8" },
+          { "name": "missile_weapon", "field_type": "OptionalStringU8" },
+          { "name": "model", "field_type": "StringU8" },
+          { "name": "battle_entity", "field_type": "StringU8" },
+          { "name": "asset_folder", "field_type": "OptionalStringU8" },
+          { "name": "variant", "field_type": "OptionalStringU8" },
+          { "name": "draught_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "tech_folder", "field_type": "OptionalStringU8" },
+          { "name": "rider_attachment_point", "field_type": "OptionalStringU8" },
+          { "name": "first_person", "field_type": "OptionalStringU8" }
+        ]
+      }
+    ],
+    "land_units_to_extra_engines_tables": [
+      {
+        "version": 0,
+        "fields": [
+          { "name": "land_unit", "field_type": "StringU8" },
+          { "name": "attach_articulation", "field_type": "I32" },
+          { "name": "battle_engine", "field_type": "StringU8" }
+        ]
+      }
+    ],
     "ui_unit_groupings_tables": [
       {
         "version": 1,

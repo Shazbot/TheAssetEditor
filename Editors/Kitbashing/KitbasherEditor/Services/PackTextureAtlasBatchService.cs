@@ -1769,6 +1769,19 @@ namespace Editors.KitbasherEditor.Services
             int rootCount)
             => checked(atlasPixels * Math.Max(1, rootCount));
 
+        private static void SetMaximumEntityCount(
+            Dictionary<Wh3UnitVisualRole, int> countsByRole,
+            Wh3UnitVisualRole role,
+            int count)
+        {
+            if (count <= 0)
+                return;
+
+            countsByRole[role] = Math.Max(
+                countsByRole.GetValueOrDefault(role),
+                count);
+        }
+
         private static ArmyResidencyModel? BuildArmyResidencyModel(
             BatchState state,
             Wh3UnitCategoryResolution? resolution)
@@ -1784,6 +1797,9 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3ArmyUnitCategory, HashSet<string>>>(
                 StringComparer.OrdinalIgnoreCase);
             var entityCountByUnit = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var entityCountByUnitAndRole = new Dictionary<
+                string,
+                Dictionary<Wh3UnitVisualRole, int>>(StringComparer.OrdinalIgnoreCase);
             var categoryByUnit = new Dictionary<string, Wh3ArmyUnitCategory>(
                 StringComparer.OrdinalIgnoreCase);
 
@@ -1800,9 +1816,40 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     unitsByCategory[usage.Category].Add(identity);
+                    var entityCount = Math.Max(1, usage.EntityCount);
                     entityCountByUnit[identity] = Math.Max(
                         entityCountByUnit.GetValueOrDefault(identity, 1),
-                        Math.Max(1, usage.NumMen));
+                        entityCount);
+
+                    if (!entityCountByUnitAndRole.TryGetValue(identity, out var countsByRole))
+                    {
+                        countsByRole = new Dictionary<Wh3UnitVisualRole, int>();
+                        entityCountByUnitAndRole[identity] = countsByRole;
+                    }
+
+                    // Every usage carries the full DB-resolved composition.  Record all
+                    // components even when a component has no VMD of its own (classic
+                    // artillery engines often point directly at a rigid model).
+                    SetMaximumEntityCount(
+                        countsByRole,
+                        Wh3UnitVisualRole.Men,
+                        usage.VisualCounts.Riders);
+                    SetMaximumEntityCount(
+                        countsByRole,
+                        Wh3UnitVisualRole.Mount,
+                        usage.VisualCounts.Mounts);
+                    SetMaximumEntityCount(
+                        countsByRole,
+                        Wh3UnitVisualRole.Engine,
+                        usage.VisualCounts.Engines);
+                    SetMaximumEntityCount(
+                        countsByRole,
+                        Wh3UnitVisualRole.Crew,
+                        usage.VisualCounts.Crew);
+
+                    // The usage's role is the component represented by this VMD.  Keep it
+                    // even when a synthetic/legacy usage did not carry a complete count set.
+                    SetMaximumEntityCount(countsByRole, usage.VisualRole, entityCount);
                     categoryByUnit[identity] = usage.Category;
 
                     if (!unitsByVmd.TryGetValue(vmdPath, out var byCategory))
@@ -1827,7 +1874,9 @@ namespace Editors.KitbasherEditor.Services
             // Resolve visual probabilities from the DB-referenced VMDs only. Propagated child
             // mappings are useful for atlas reachability but would make a nested VMD look like
             // an independent 100%-probability unit visual.
-            var directVmdsByUnit = new Dictionary<string, HashSet<string>>(
+            var directVmdsByUnitAndRole = new Dictionary<
+                string,
+                Dictionary<Wh3UnitVisualRole, HashSet<string>>>(
                 StringComparer.OrdinalIgnoreCase);
             foreach (var (vmdPathValue, usages) in resolution.DirectUsagesByVmd)
             {
@@ -1841,10 +1890,16 @@ namespace Editors.KitbasherEditor.Services
                     if (identity.Length == 0)
                         continue;
 
-                    if (!directVmdsByUnit.TryGetValue(identity, out var directVmds))
+                    if (!directVmdsByUnitAndRole.TryGetValue(identity, out var directVmdsByRole))
+                    {
+                        directVmdsByRole = new Dictionary<Wh3UnitVisualRole, HashSet<string>>();
+                        directVmdsByUnitAndRole[identity] = directVmdsByRole;
+                    }
+
+                    if (!directVmdsByRole.TryGetValue(usage.VisualRole, out var directVmds))
                     {
                         directVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        directVmdsByUnit[identity] = directVmds;
+                        directVmdsByRole[usage.VisualRole] = directVmds;
                     }
 
                     directVmds.Add(vmdPath);
@@ -1854,46 +1909,73 @@ namespace Editors.KitbasherEditor.Services
             var occurrenceCache = new Dictionary<string, IReadOnlyDictionary<string, double>>(
                 StringComparer.OrdinalIgnoreCase);
             var expectedWsModelOccurrencesByUnit =
-                new Dictionary<string, IReadOnlyDictionary<string, double>>(
+                new Dictionary<string, ExpectedWsModelOccurrences>(
                     StringComparer.OrdinalIgnoreCase);
 
-            foreach (var (unitId, directVmds) in directVmdsByUnit)
+            foreach (var (unitId, directVmdsByRole) in directVmdsByUnitAndRole)
             {
-                if (directVmds.Count == 0)
+                if (directVmdsByRole.Count == 0)
                     continue;
 
-                var accumulated = new Dictionary<string, double>(
+                var accumulatedByWsModel = new Dictionary<
+                    string,
+                    Dictionary<Wh3UnitVisualRole, double>>(
                     StringComparer.OrdinalIgnoreCase);
-                foreach (var vmdPath in directVmds)
+                foreach (var (role, directVmds) in directVmdsByRole)
                 {
-                    var occurrences = GetExpectedWsModelOccurrencesForVmd(
-                        state,
-                        vmdPath,
-                        occurrenceCache,
-                        new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-                    foreach (var (wsModelPath, expectedOccurrences) in occurrences)
+                    if (directVmds.Count == 0)
+                        continue;
+
+                    var accumulated = new Dictionary<string, double>(
+                        StringComparer.OrdinalIgnoreCase);
+                    foreach (var vmdPath in directVmds)
                     {
-                        accumulated[wsModelPath] =
-                            accumulated.GetValueOrDefault(wsModelPath) + expectedOccurrences;
+                        var occurrences = GetExpectedWsModelOccurrencesForVmd(
+                            state,
+                            vmdPath,
+                            occurrenceCache,
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                        foreach (var (wsModelPath, expectedOccurrences) in occurrences)
+                        {
+                            accumulated[wsModelPath] =
+                                accumulated.GetValueOrDefault(wsModelPath) + expectedOccurrences;
+                        }
+                    }
+
+                    if (accumulated.Count == 0)
+                        continue;
+
+                    // A unit can have faction-specific direct VMDs for one component. Without
+                    // a faction context, treat those visual definitions as equally likely
+                    // alternatives, independently for each visual role.
+                    var directVariantCount = directVmds.Count;
+                    foreach (var (wsModelPath, expectedOccurrences) in accumulated)
+                    {
+                        if (!accumulatedByWsModel.TryGetValue(wsModelPath, out var byRole))
+                        {
+                            byRole = new Dictionary<Wh3UnitVisualRole, double>();
+                            accumulatedByWsModel[wsModelPath] = byRole;
+                        }
+
+                        byRole[role] = expectedOccurrences / directVariantCount;
                     }
                 }
 
-                if (accumulated.Count == 0)
-                    continue;
-
-                // A main unit can have faction-specific direct VMDs. Without a faction context,
-                // treat those visual definitions as equally likely alternatives.
-                var directVariantCount = directVmds.Count;
-                expectedWsModelOccurrencesByUnit[unitId] = accumulated.ToDictionary(
-                    entry => entry.Key,
-                    entry => entry.Value / directVariantCount,
-                    StringComparer.OrdinalIgnoreCase);
+                if (accumulatedByWsModel.Count != 0)
+                {
+                    expectedWsModelOccurrencesByUnit[unitId] = new ExpectedWsModelOccurrences(
+                        accumulatedByWsModel.ToDictionary(
+                            entry => entry.Key,
+                            entry => (IReadOnlyDictionary<Wh3UnitVisualRole, double>)entry.Value,
+                            StringComparer.OrdinalIgnoreCase));
+                }
             }
 
             return new ArmyResidencyModel(
                 unitsByCategory,
                 unitsByVmd,
                 entityCountByUnit,
+                entityCountByUnitAndRole,
                 categoryByUnit,
                 expectedWsModelOccurrencesByUnit);
         }
@@ -2124,32 +2206,56 @@ namespace Editors.KitbasherEditor.Services
                 double perSlotPresenceProbability = 0;
                 foreach (var unitId in model.UnitsByCategory[category])
                 {
-                    double entityPresenceProbability = 0;
+                    double unitCardPresenceProbability = 0;
                     if (model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
                             unitId,
-                            out var occurrences))
+                            out var expectedOccurrences))
                     {
+                        var expectedPresenceByRole =
+                            new Dictionary<Wh3UnitVisualRole, double>();
                         foreach (var wsModelPath in targetWsModels)
-                            entityPresenceProbability += occurrences.GetValueOrDefault(wsModelPath);
+                        {
+                            if (!expectedOccurrences.ByWsModel.TryGetValue(
+                                    Normalize(wsModelPath),
+                                    out var occurrencesByRole))
+                            {
+                                continue;
+                            }
 
-                        entityPresenceProbability = Math.Clamp(
-                            entityPresenceProbability,
-                            0.0,
-                            1.0);
+                            foreach (var (role, expectedOccurrencesPerEntity) in occurrencesByRole)
+                            {
+                                expectedPresenceByRole[role] =
+                                    expectedPresenceByRole.GetValueOrDefault(role) +
+                                    expectedOccurrencesPerEntity;
+                            }
+                        }
+
+                        var notPresentAcrossRoles = 1.0;
+                        foreach (var (role, expectedOccurrencesPerEntity) in expectedPresenceByRole)
+                        {
+                            if (expectedOccurrencesPerEntity <= 0)
+                                continue;
+
+                            var entityCount = Math.Max(
+                                1,
+                                model.EntityCountByUnitAndRole
+                                    .GetValueOrDefault(unitId)?
+                                    .GetValueOrDefault(role, 1) ?? 1);
+                            notPresentAcrossRoles *= Math.Pow(
+                                1.0 - Math.Clamp(expectedOccurrencesPerEntity, 0.0, 1.0),
+                                entityCount);
+                        }
+
+                        unitCardPresenceProbability = 1.0 - notPresentAcrossRoles;
                     }
                     else if (fallbackCoveredByCategory[category].Contains(unitId))
                     {
-                        entityPresenceProbability = 1.0;
+                        unitCardPresenceProbability = 1.0;
                     }
 
-                    if (entityPresenceProbability <= 0)
+                    if (unitCardPresenceProbability <= 0)
                         continue;
 
-                    var entityCount = Math.Max(
-                        1,
-                        model.EntityCountByUnit.GetValueOrDefault(unitId, 1));
-                    var unitCardPresenceProbability =
-                        1.0 - Math.Pow(1.0 - entityPresenceProbability, entityCount);
                     perSlotPresenceProbability +=
                         unitCardPresenceProbability / population;
                 }
@@ -3284,15 +3390,31 @@ namespace Editors.KitbasherEditor.Services
                 {
                     foreach (var unitId in unitIds)
                     {
-                        double expectedOccurrencesPerEntity = 0;
+                        double expectedRenderedEntities = 0;
                         if (model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
                                 unitId,
-                                out var occurrences))
+                                out var expectedOccurrences))
                         {
                             foreach (var wsModelPath in wsModels)
                             {
-                                expectedOccurrencesPerEntity +=
-                                    occurrences.GetValueOrDefault(wsModelPath);
+                                if (!expectedOccurrences.ByWsModel.TryGetValue(
+                                        wsModelPath,
+                                        out var occurrencesByRole))
+                                {
+                                    continue;
+                                }
+
+                                foreach (var (role, expectedOccurrencesPerEntity) in occurrencesByRole)
+                                {
+                                    var entityCount = Math.Max(
+                                        1,
+                                        model.EntityCountByUnitAndRole
+                                            .GetValueOrDefault(unitId)?
+                                            .GetValueOrDefault(role, 1) ?? 1);
+                                    expectedRenderedEntities +=
+                                        Math.Clamp(expectedOccurrencesPerEntity, 0.0, 1.0) *
+                                        entityCount;
+                                }
                             }
                         }
                         else if (rootsByMesh.TryGetValue(candidate.Key, out var roots))
@@ -3305,20 +3427,14 @@ namespace Editors.KitbasherEditor.Services
                                     unitsForVmd.TryGetValue(category, out var fallbackUnits) &&
                                     fallbackUnits.Contains(unitId))
                                 {
-                                    expectedOccurrencesPerEntity = 1.0;
+                                    expectedRenderedEntities = Math.Max(
+                                        1,
+                                        model.EntityCountByUnit.GetValueOrDefault(unitId, 1));
                                     break;
                                 }
                             }
                         }
 
-                        if (expectedOccurrencesPerEntity <= 0)
-                            continue;
-
-                        var entityCount = Math.Max(
-                            1,
-                            model.EntityCountByUnit.GetValueOrDefault(unitId, 1));
-                        var expectedRenderedEntities =
-                            expectedOccurrencesPerEntity * entityCount;
                         if (expectedRenderedEntities <= 0)
                             continue;
 
@@ -8893,7 +9009,7 @@ namespace Editors.KitbasherEditor.Services
                         $"{categoryUsages.Select(usage => usage.VmdPath).Distinct(StringComparer.OrdinalIgnoreCase).Count():N0}, " +
                         $"unit-links={categoryUsages.Count:N0}, " +
                         $"median-entities=" +
-                        $"{categoryUsages.Select(usage => usage.NumMen).OrderBy(value => value).ElementAt(categoryUsages.Count / 2):N0}");
+                        $"{categoryUsages.Select(usage => usage.EntityCount).OrderBy(value => value).ElementAt(categoryUsages.Count / 2):N0}");
                 }
 
                 if (unitResolution.UsagesByVmd.Count != 0)
@@ -8917,7 +9033,12 @@ namespace Editors.KitbasherEditor.Services
                                 $"    main={usage.MainUnitKey} | land={usage.LandUnitKey} | " +
                                 $"caste={usage.Caste} | land-category={usage.LandCategory} | " +
                                 $"ui-group={usage.UiGroupKey} | category={usage.Category} | " +
-                                $"entities={usage.NumMen}");
+                                $"role={usage.VisualRole} | entities={usage.EntityCount} | " +
+                                $"num-men={usage.NumMen} | " +
+                                $"components=riders:{usage.VisualCounts.Riders}," +
+                                $"mounts:{usage.VisualCounts.Mounts}," +
+                                $"engines:{usage.VisualCounts.Engines}," +
+                                $"crew:{usage.VisualCounts.Crew}");
                         }
                     }
                 }
@@ -8965,9 +9086,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "VMD visual model: slot probability controls activation; child meshes/references in an active slot are treated as equal alternatives; missing probability means 1.");
                 sb.AppendLine(
-                    "Texture residency converts per-entity visual probability through num_men before applying category slots.");
+                    "Texture residency converts each visual role's probability through its resolved component count before applying category slots.");
                 sb.AppendLine(
-                    "Expected draw-call eliminations use categorySlots * average(entity-weighted per-unit eliminated draws), with num_men and VMD selection probability.");
+                    "Expected draw-call eliminations use categorySlots * average(entity-weighted per-unit eliminated draws), with role counts and VMD selection probability.");
                 sb.AppendLine(
                     "The old aggregate VMD-residency and unweighted merge-affinity metrics remain non-regression guards.");
                 sb.AppendLine();
@@ -10620,14 +10741,23 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<string, int> TextureCountByFormat,
             IReadOnlyDictionary<string, long> BytesByFormat);
 
+        private sealed record ExpectedWsModelOccurrences(
+            IReadOnlyDictionary<
+                string,
+                IReadOnlyDictionary<Wh3UnitVisualRole, double>>
+                ByWsModel);
+
         private sealed record ArmyResidencyModel(
             IReadOnlyDictionary<Wh3ArmyUnitCategory, HashSet<string>> UnitsByCategory,
             IReadOnlyDictionary<
                 string,
                 Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByVmd,
             IReadOnlyDictionary<string, int> EntityCountByUnit,
+            IReadOnlyDictionary<
+                string,
+                Dictionary<Wh3UnitVisualRole, int>> EntityCountByUnitAndRole,
             IReadOnlyDictionary<string, Wh3ArmyUnitCategory> CategoryByUnit,
-            IReadOnlyDictionary<string, IReadOnlyDictionary<string, double>>
+            IReadOnlyDictionary<string, ExpectedWsModelOccurrences>
                 ExpectedWsModelOccurrencesByUnit);
 
         private sealed record ArmyLocalitySplitEvaluationReportEntry(
