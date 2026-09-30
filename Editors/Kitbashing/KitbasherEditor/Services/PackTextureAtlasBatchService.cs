@@ -662,18 +662,119 @@ namespace Editors.KitbasherEditor.Services
             foreach (var rootValue in resolution.UnresolvedConsumersByVmd.Keys)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var root = Normalize(rootValue);
-                if (root.Length == 0 || !state.Source.ContainsFile(root))
-                    continue;
-
-                foreach (var wsModel in GetReachableWsModels(
+                foreach (var wsModel in CollectReachableGameplayWsModels(
                              state,
-                             root,
+                             rootValue,
                              cancellationToken))
                 {
                     state.TaintedGameplayWsModels.Add(Normalize(wsModel));
                 }
             }
+        }
+
+        private static IPackFileContainer? FindGameplayTraversalContainer(
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> loadedContainers,
+            string pathValue)
+        {
+            var path = Normalize(pathValue);
+            if (path.Length == 0)
+                return null;
+
+            // The selected source pack is the effective override for this batch.
+            if (source.ContainsFile(path))
+                return source;
+
+            // Resolver semantics are CA game data + selected source only. Search CA
+            // containers in reverse load order to preserve normal pack-file override
+            // precedence without allowing unrelated open mods into gameplay resolution.
+            for (var index = loadedContainers.Count - 1; index >= 0; index--)
+            {
+                var container = loadedContainers[index];
+                if (!container.IsCaPackFile || ReferenceEquals(container, source))
+                    continue;
+                if (container.ContainsFile(path))
+                    return container;
+            }
+
+            return null;
+        }
+
+        private static HashSet<string> CollectReachableGameplayWsModels(
+            BatchState state,
+            string rootVmdPath,
+            CancellationToken cancellationToken)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var queue = new Queue<string>();
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var loadedContainers = state.PackFileService.GetAllPackfileContainers();
+            queue.Enqueue(Normalize(rootVmdPath));
+
+            while (queue.Count != 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var vmdPath = queue.Dequeue();
+                if (vmdPath.Length == 0 || !visited.Add(vmdPath))
+                    continue;
+
+                var container = FindGameplayTraversalContainer(
+                    state.Source,
+                    loadedContainers,
+                    vmdPath);
+                var file = container?.FindFile(vmdPath);
+                if (container == null ||
+                    file == null ||
+                    !TryGetVmdForTraversal(
+                        state,
+                        container,
+                        vmdPath,
+                        file,
+                        out var vmd))
+                {
+                    continue;
+                }
+
+                var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var children = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                CollectVmdReferences(vmd, models, children, textures);
+
+                foreach (var modelValue in models)
+                {
+                    var model = Normalize(modelValue);
+                    if (!Path.GetExtension(model).Equals(
+                            ".wsmodel",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (FindGameplayTraversalContainer(
+                            state.Source,
+                            loadedContainers,
+                            model) != null)
+                    {
+                        // Keep the logical path. A source-pack override of this path is the
+                        // exact asset that the atlas rewrite would modify.
+                        result.Add(model);
+                    }
+                }
+
+                foreach (var childValue in children)
+                {
+                    var child = Normalize(childValue);
+                    if (FindGameplayTraversalContainer(
+                            state.Source,
+                            loadedContainers,
+                            child) != null)
+                    {
+                        queue.Enqueue(child);
+                    }
+                }
+            }
+
+            return result;
         }
 
         private static bool IsSharedMeshSafeForGameplay(
