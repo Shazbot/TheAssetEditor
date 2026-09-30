@@ -881,7 +881,7 @@ namespace Editors.KitbasherEditor.Services
                         // atlasing skips it rather than silently rewriting the fallback VMD.
                         handledPrimaryVisuals = true;
                     }
-                    else if (fallbackVariantNames.Count != 0 && mainUnitKey.Length != 0)
+                    else if (fallbackVariantNames.Length != 0 && mainUnitKey.Length != 0)
                     {
                         agentFallbackMainUnits.Add(mainUnitKey);
                     }
