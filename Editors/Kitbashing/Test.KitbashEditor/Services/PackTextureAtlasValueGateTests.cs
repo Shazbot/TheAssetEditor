@@ -214,6 +214,77 @@ namespace Test.KitbashEditor.Services
                        "EvaluateAtlasValueGateBudget returned null.");
         }
 
+        private static bool IsCandidateAllowedForMode(
+            bool atlasAllVmdsEnabled,
+            bool scenarioResolved)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "IsAtlasValueCandidateAllowedForMode",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.IsAtlasValueCandidateAllowedForMode was not found.");
+
+            return (bool)(method.Invoke(
+                null,
+                [atlasAllVmdsEnabled, scenarioResolved])
+                ?? throw new InvalidOperationException(
+                    "IsAtlasValueCandidateAllowedForMode returned null."));
+        }
+
+        private static string GetMarginalValueGateBudgetDecision(
+            bool scenarioResolved,
+            int baseRawDrawsEliminated,
+            int combinedRawDrawsEliminated,
+            double baseExpectedArmyDrawsEliminated,
+            double combinedExpectedArmyDrawsEliminated,
+            double baseGeneratedBcnBytes,
+            double baseRetiredSourceBcnBytes,
+            double combinedGeneratedBcnBytes,
+            double combinedRetiredSourceBcnBytes,
+            double baseExpectedGeneratedBcnBytes,
+            double baseExpectedRetiredSourceBcnBytes,
+            double combinedExpectedGeneratedBcnBytes,
+            double combinedExpectedRetiredSourceBcnBytes,
+            double acceptedNetBcnBytes,
+            double sourceBcnBytes)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "EvaluateMarginalAtlasValueGateBudget",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.EvaluateMarginalAtlasValueGateBudget was not found.");
+
+            return method.Invoke(
+                       null,
+                       [
+                           scenarioResolved,
+                           baseRawDrawsEliminated,
+                           combinedRawDrawsEliminated,
+                           baseExpectedArmyDrawsEliminated,
+                           combinedExpectedArmyDrawsEliminated,
+                           baseGeneratedBcnBytes,
+                           baseRetiredSourceBcnBytes,
+                           combinedGeneratedBcnBytes,
+                           combinedRetiredSourceBcnBytes,
+                           baseExpectedGeneratedBcnBytes,
+                           baseExpectedRetiredSourceBcnBytes,
+                           combinedExpectedGeneratedBcnBytes,
+                           combinedExpectedRetiredSourceBcnBytes,
+                           acceptedNetBcnBytes,
+                           sourceBcnBytes,
+                       ])?.ToString()
+                   ?? throw new InvalidOperationException(
+                       "EvaluateMarginalAtlasValueGateBudget returned null.");
+        }
+
         private static double GetDoubleConstant(string name)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
@@ -446,9 +517,27 @@ namespace Test.KitbashEditor.Services
             Assert.That(decision, Is.EqualTo("Accept"));
         }
 
-        [Test]
-        public void ValueGate_UnresolvedScenarioCanUseRawDrawFallback()
+        [TestCase(false, false, false)]
+        [TestCase(false, true, true)]
+        [TestCase(true, false, true)]
+        [TestCase(true, true, true)]
+        public void ValueGate_GameplayModeRequiresScenarioResolution(
+            bool atlasAllVmdsEnabled,
+            bool scenarioResolved,
+            bool expected)
         {
+            Assert.That(
+                IsCandidateAllowedForMode(
+                    atlasAllVmdsEnabled,
+                    scenarioResolved),
+                Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void ValueGate_PackWideUnresolvedScenarioCanUseRawDrawFallback()
+        {
+            Assert.That(IsCandidateAllowedForMode(true, false), Is.True);
+
             var decision = GetValueGateBudgetDecision(
                 scenarioResolved: false,
                 rawDrawsEliminated: 1,
@@ -463,8 +552,10 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void ValueGate_UnresolvedScenarioStillHonorsFallbackBudget()
+        public void ValueGate_PackWideUnresolvedScenarioStillHonorsFallbackBudget()
         {
+            Assert.That(IsCandidateAllowedForMode(true, false), Is.True);
+
             var decision = GetValueGateBudgetDecision(
                 scenarioResolved: false,
                 rawDrawsEliminated: 1,
@@ -492,6 +583,77 @@ namespace Test.KitbashEditor.Services
                 sourceBcnBytes: 400 * 1024 * 1024);
 
             Assert.That(decision, Is.EqualTo("ScenarioBudgetExceeded"));
+        }
+
+        [Test]
+        public void ValueGate_MixedBatchCannotHideBadMarginalGroup()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            // The broad batch is just under the 0.25 MiB/scenario-draw budget:
+            // 1.0 MiB / 4.2 draws ~= 0.238 MiB/draw.
+            var broadDecision = GetValueGateBudgetDecision(
+                scenarioResolved: true,
+                rawDrawsEliminated: 6,
+                expectedArmyDrawsEliminated: 4.2,
+                globalCostBytes: 1.0 * mib,
+                expectedCostBytes: 1.0 * mib,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 1.0 * mib,
+                sourceBcnBytes: 400 * mib);
+
+            // But the second group contributes 0.5 MiB for only 0.2 additional
+            // expected draws: 2.5 MiB/draw. It must not be subsidized by the
+            // first group's strong economics.
+            var marginalDecision = GetMarginalValueGateBudgetDecision(
+                scenarioResolved: true,
+                baseRawDrawsEliminated: 4,
+                combinedRawDrawsEliminated: 6,
+                baseExpectedArmyDrawsEliminated: 4.0,
+                combinedExpectedArmyDrawsEliminated: 4.2,
+                baseGeneratedBcnBytes: 0.5 * mib,
+                baseRetiredSourceBcnBytes: 0,
+                combinedGeneratedBcnBytes: 1.0 * mib,
+                combinedRetiredSourceBcnBytes: 0,
+                baseExpectedGeneratedBcnBytes: 0.5 * mib,
+                baseExpectedRetiredSourceBcnBytes: 0,
+                combinedExpectedGeneratedBcnBytes: 1.0 * mib,
+                combinedExpectedRetiredSourceBcnBytes: 0,
+                acceptedNetBcnBytes: 0,
+                sourceBcnBytes: 400 * mib);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(broadDecision, Is.EqualTo("Accept"));
+                Assert.That(
+                    marginalDecision,
+                    Is.EqualTo("ScenarioBudgetExceeded"));
+            });
+        }
+
+        [Test]
+        public void ValueGate_ZeroCostMarginalGroupCanShareAcceptedAtlas()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            var decision = GetMarginalValueGateBudgetDecision(
+                scenarioResolved: true,
+                baseRawDrawsEliminated: 4,
+                combinedRawDrawsEliminated: 5,
+                baseExpectedArmyDrawsEliminated: 4.0,
+                combinedExpectedArmyDrawsEliminated: 4.0,
+                baseGeneratedBcnBytes: 0.5 * mib,
+                baseRetiredSourceBcnBytes: 0,
+                combinedGeneratedBcnBytes: 0.5 * mib,
+                combinedRetiredSourceBcnBytes: 0,
+                baseExpectedGeneratedBcnBytes: 0.5 * mib,
+                baseExpectedRetiredSourceBcnBytes: 0,
+                combinedExpectedGeneratedBcnBytes: 0.5 * mib,
+                combinedExpectedRetiredSourceBcnBytes: 0,
+                acceptedNetBcnBytes: 0,
+                sourceBcnBytes: 400 * mib);
+
+            Assert.That(decision, Is.EqualTo("Accept"));
         }
 
         [Test]
