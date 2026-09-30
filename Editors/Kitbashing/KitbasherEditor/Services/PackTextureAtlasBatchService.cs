@@ -4501,8 +4501,35 @@ namespace Editors.KitbasherEditor.Services
                 rootsByMesh);
             var result = new List<List<AtlasCandidate>>();
 
-            foreach (var batch in batches)
+            foreach (var originalBatch in batches)
             {
+                var batch = new List<AtlasCandidate>(originalBatch.Count);
+                foreach (var candidate in originalBatch)
+                {
+                    var scenarioResolved =
+                        IsAtlasValueCandidateScenarioResolved(state, candidate);
+                    if (!IsAtlasValueCandidateAllowedForMode(
+                            state.AtlasAllVmdsEnabled,
+                            scenarioResolved))
+                    {
+                        RecordSkip(
+                            state,
+                            candidate.RootVmdPath,
+                            candidate.Key,
+                            candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                            "Atlas value gate: gameplay/scenario relevance could not be " +
+                            "resolved safely; gameplay-used mode leaves this asset unchanged.");
+                        state.AtlasValueGateCandidatesRejected++;
+                        state.AtlasValueGateUnresolvedCandidatesSkipped++;
+                        continue;
+                    }
+
+                    batch.Add(candidate);
+                }
+
+                if (batch.Count < 2)
+                    continue;
+
                 var batchKeys = batch.Select(candidate => candidate.Key).ToHashSet();
                 var contributingGroups = affinityGroups
                     .Select(group => new MergeAffinityGroup(
@@ -4513,14 +4540,16 @@ namespace Editors.KitbasherEditor.Services
                     .SelectMany(group => group.Meshes)
                     .ToHashSet();
 
-                foreach (var candidate in batch.Where(candidate => !contributingKeys.Contains(candidate.Key)))
+                foreach (var candidate in batch.Where(
+                             candidate => !contributingKeys.Contains(candidate.Key)))
                 {
                     RecordSkip(
                         state,
                         candidate.RootVmdPath,
                         candidate.Key,
                         candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
-                        "Atlas value gate: this mesh does not contribute to a compatible mesh merge in its planned atlas batch.");
+                        "Atlas value gate: this mesh does not contribute to a compatible " +
+                        "mesh merge in its planned atlas batch.");
                     state.AtlasValueGateCandidatesRejected++;
                 }
 
@@ -4530,79 +4559,218 @@ namespace Editors.KitbasherEditor.Services
                 if (trimmed.Count < 2)
                     continue;
 
-                if (TryAcceptAtlasValueBatch(
-                        state,
-                        trimmed,
-                        contributingGroups,
-                        expectedEntitiesByMesh,
-                        out var acceptedResidency,
-                        out var acceptedRawDraws,
-                        out var acceptedExpectedDraws,
-                        out var rejectionReason))
-                {
-                    result.Add(trimmed);
-                    RecordAtlasValueGateAccepted(
-                        state,
-                        trimmed,
-                        acceptedResidency,
-                        acceptedRawDraws,
-                        acceptedExpectedDraws);
+                var groupPlans = contributingGroups
+                    .Select(group => new AtlasValueGateGroupPlan(
+                        group,
+                        group.Meshes
+                            .Where(candidateByKey.ContainsKey)
+                            .Select(mesh => candidateByKey[mesh])
+                            .Where(candidate => batchKeys.Contains(candidate.Key))
+                            .DistinctBy(candidate => candidate.Key)
+                            .ToList()))
+                    .Where(plan => plan.Candidates.Count >= 2)
+                    .ToList();
+                if (groupPlans.Count == 0)
                     continue;
-                }
 
-                // A broad shared batch can be too expensive even when individual merge groups
-                // are worthwhile. Fall back to one atlas per independent merge-affinity group
-                // before rejecting the opportunity completely.
-                state.AtlasValueGateBroadBatchesSplit++;
-                foreach (var group in contributingGroups)
+                var standaloneAccepted = new List<AtlasValueGateAcceptedGroup>();
+                var standaloneRejected = new List<AtlasValueGateRejectedGroup>();
+
+                foreach (var plan in groupPlans)
                 {
-                    var groupCandidates = group.Meshes
-                        .Where(candidateByKey.ContainsKey)
-                        .Select(mesh => candidateByKey[mesh])
-                        .Where(candidate => batchKeys.Contains(candidate.Key))
-                        .DistinctBy(candidate => candidate.Key)
-                        .ToList();
-                    if (groupCandidates.Count < 2)
-                        continue;
-
                     if (TryAcceptAtlasValueBatch(
                             state,
-                            groupCandidates,
-                            [group],
+                            plan.Candidates,
+                            [plan.Group],
                             expectedEntitiesByMesh,
-                            out var groupResidency,
-                            out var groupRawDraws,
-                            out var groupExpectedDraws,
-                            out var groupRejectionReason))
+                            out var residency,
+                            out var rawDraws,
+                            out var expectedDraws,
+                            out var rejectionReason))
                     {
-                        result.Add(groupCandidates);
-                        RecordAtlasValueGateAccepted(
-                            state,
-                            groupCandidates,
-                            groupResidency,
-                            groupRawDraws,
-                            groupExpectedDraws);
+                        standaloneAccepted.Add(
+                            new AtlasValueGateAcceptedGroup(
+                                plan,
+                                residency,
+                                rawDraws,
+                                expectedDraws,
+                                WasMarginalOnly: false));
                     }
                     else
                     {
-                        state.AtlasValueGateBatchesRejected++;
-                        state.AtlasValueGateCandidatesRejected += groupCandidates.Count;
-                        RecordAtlasValueGateRejected(state, groupResidency);
-
-                        foreach (var candidate in groupCandidates)
-                        {
-                            RecordSkip(
-                            state,
-                            candidate.RootVmdPath,
-                            candidate.Key,
-                            candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
-                                $"Atlas value gate: {groupRejectionReason}");
-                        }
+                        standaloneRejected.Add(
+                            new AtlasValueGateRejectedGroup(
+                                plan,
+                                residency,
+                                rejectionReason));
                     }
+                }
+
+                if (standaloneAccepted.Count == 0)
+                {
+                    if (groupPlans.Count > 1)
+                        state.AtlasValueGateBroadBatchesSplit++;
+
+                    foreach (var rejected in standaloneRejected)
+                    {
+                        RejectAtlasValueGateGroup(
+                            state,
+                            rejected.Plan,
+                            rejected.Residency,
+                            rejected.RejectionReason);
+                    }
+
+                    continue;
+                }
+
+                var workingAccepted = new List<AtlasValueGateAcceptedGroup>(
+                    standaloneAccepted);
+                var workingCandidates = standaloneAccepted
+                    .SelectMany(group => group.Plan.Candidates)
+                    .DistinctBy(candidate => candidate.Key)
+                    .ToList();
+                var workingGroups = standaloneAccepted
+                    .Select(group => group.Plan.Group)
+                    .ToList();
+
+                foreach (var rejected in standaloneRejected)
+                {
+                    if (TryAcceptAtlasValueMarginalAddition(
+                            state,
+                            workingCandidates,
+                            rejected.Plan.Candidates,
+                            workingGroups,
+                            rejected.Plan.Group,
+                            expectedEntitiesByMesh,
+                            out var marginalReason))
+                    {
+                        workingAccepted.Add(
+                            new AtlasValueGateAcceptedGroup(
+                                rejected.Plan,
+                                rejected.Residency,
+                                0,
+                                0,
+                                WasMarginalOnly: true));
+                        workingCandidates.AddRange(
+                            rejected.Plan.Candidates.Where(candidate =>
+                                workingCandidates.All(existing =>
+                                    existing.Key != candidate.Key)));
+                        workingGroups.Add(rejected.Plan.Group);
+                        state.AtlasValueGateMarginalGroupsAccepted++;
+                    }
+                    else
+                    {
+                        RejectAtlasValueGateGroup(
+                            state,
+                            rejected.Plan,
+                            rejected.Residency,
+                            $"mixed-batch marginal check: {marginalReason}");
+                        state.AtlasValueGateMixedGroupsRejected++;
+                    }
+                }
+
+                if (workingAccepted.Count == 1)
+                {
+                    var accepted = workingAccepted[0];
+                    result.Add(accepted.Plan.Candidates);
+                    RecordAtlasValueGateAccepted(
+                        state,
+                        accepted.Plan.Candidates,
+                        accepted.Residency,
+                        accepted.RawDrawsEliminated,
+                        accepted.ExpectedArmyDrawsEliminated);
+                    continue;
+                }
+
+                if (TryAcceptAtlasValueBatch(
+                        state,
+                        workingCandidates,
+                        workingGroups,
+                        expectedEntitiesByMesh,
+                        out var combinedResidency,
+                        out var combinedRawDraws,
+                        out var combinedExpectedDraws,
+                        out var combinedRejectionReason))
+                {
+                    result.Add(workingCandidates);
+                    RecordAtlasValueGateAccepted(
+                        state,
+                        workingCandidates,
+                        combinedResidency,
+                        combinedRawDraws,
+                        combinedExpectedDraws);
+                    continue;
+                }
+
+                // Even economically sound groups can make a combined atlas worse because of
+                // packing/layout effects. Fall back to the groups that passed standalone.
+                state.AtlasValueGateBroadBatchesSplit++;
+                foreach (var accepted in standaloneAccepted)
+                {
+                    if (TryAcceptAtlasValueBatch(
+                            state,
+                            accepted.Plan.Candidates,
+                            [accepted.Plan.Group],
+                            expectedEntitiesByMesh,
+                            out var standaloneResidency,
+                            out var standaloneRawDraws,
+                            out var standaloneExpectedDraws,
+                            out var standaloneRejectionReason))
+                    {
+                        result.Add(accepted.Plan.Candidates);
+                        RecordAtlasValueGateAccepted(
+                            state,
+                            accepted.Plan.Candidates,
+                            standaloneResidency,
+                            standaloneRawDraws,
+                            standaloneExpectedDraws);
+                    }
+                    else
+                    {
+                        RejectAtlasValueGateGroup(
+                            state,
+                            accepted.Plan,
+                            standaloneResidency,
+                            $"standalone recheck after broad-batch rejection: " +
+                            standaloneRejectionReason);
+                    }
+                }
+
+                foreach (var marginalOnly in workingAccepted.Where(
+                             group => group.WasMarginalOnly))
+                {
+                    RejectAtlasValueGateGroup(
+                        state,
+                        marginalOnly.Plan,
+                        marginalOnly.Residency,
+                        $"marginal sharing required a broad batch that was rejected: " +
+                        combinedRejectionReason);
+                    state.AtlasValueGateMixedGroupsRejected++;
                 }
             }
 
             return result;
+        }
+
+        private static void RejectAtlasValueGateGroup(
+            BatchState state,
+            AtlasValueGateGroupPlan plan,
+            AtlasValueGateResidencyEstimate residency,
+            string rejectionReason)
+        {
+            state.AtlasValueGateBatchesRejected++;
+            state.AtlasValueGateCandidatesRejected += plan.Candidates.Count;
+            RecordAtlasValueGateRejected(state, residency);
+
+            foreach (var candidate in plan.Candidates)
+            {
+                RecordSkip(
+                    state,
+                    candidate.RootVmdPath,
+                    candidate.Key,
+                    candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                    $"Atlas value gate: {rejectionReason}");
+            }
         }
 
         private static void RecordAtlasValueGateAccepted(
@@ -4724,39 +4892,215 @@ namespace Editors.KitbasherEditor.Services
             return AtlasValueGateBudgetDecision.Accept;
         }
 
-        private static bool IsAtlasValueBatchScenarioResolved(
+        private static bool IsAtlasValueCandidateAllowedForMode(
+            bool atlasAllVmdsEnabled,
+            bool scenarioResolved)
+            => atlasAllVmdsEnabled || scenarioResolved;
+
+        private static bool IsAtlasValueCandidateScenarioResolved(
             BatchState state,
-            IReadOnlyList<AtlasCandidate> batch)
+            AtlasCandidate candidate)
         {
             var resolution = state.UnitCategoryResolution;
             if (state.ArmyResidencyModel == null || resolution == null)
                 return false;
 
-            return batch.All(candidate =>
+            var root = Normalize(candidate.RootVmdPath);
+            if (root.Length != 0 &&
+                resolution.UsagesByVmd.TryGetValue(root, out var usages) &&
+                usages.Count != 0)
             {
-                var root = Normalize(candidate.RootVmdPath);
-                if (root.Length != 0 &&
-                    resolution.UsagesByVmd.TryGetValue(root, out var usages) &&
-                    usages.Count != 0)
+                return true;
+            }
+
+            foreach (var usage in candidate.Usages)
+            {
+                var assetPath = Normalize(usage.AssetPath);
+                if (assetPath.Length != 0 &&
+                    resolution.DirectAssetUsagesByPath.TryGetValue(
+                        assetPath,
+                        out var directUsages) &&
+                    directUsages.Count != 0)
                 {
                     return true;
                 }
+            }
 
-                foreach (var usage in candidate.Usages)
-                {
-                    var assetPath = Normalize(usage.AssetPath);
-                    if (assetPath.Length != 0 &&
-                        resolution.DirectAssetUsagesByPath.TryGetValue(
-                            assetPath,
-                            out var directUsages) &&
-                        directUsages.Count != 0)
-                    {
-                        return true;
-                    }
-                }
+            return false;
+        }
 
+        private static bool IsAtlasValueBatchScenarioResolved(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> batch)
+            => batch.All(candidate =>
+                IsAtlasValueCandidateScenarioResolved(state, candidate));
+
+
+        private static AtlasValueGateBudgetDecision EvaluateMarginalAtlasValueGateBudget(
+            bool scenarioResolved,
+            int baseRawDrawsEliminated,
+            int combinedRawDrawsEliminated,
+            double baseExpectedArmyDrawsEliminated,
+            double combinedExpectedArmyDrawsEliminated,
+            double baseGeneratedBcnBytes,
+            double baseRetiredSourceBcnBytes,
+            double combinedGeneratedBcnBytes,
+            double combinedRetiredSourceBcnBytes,
+            double baseExpectedGeneratedBcnBytes,
+            double baseExpectedRetiredSourceBcnBytes,
+            double combinedExpectedGeneratedBcnBytes,
+            double combinedExpectedRetiredSourceBcnBytes,
+            double acceptedNetBcnBytes,
+            double sourceBcnBytes)
+        {
+            var marginalRawDraws = Math.Max(
+                0,
+                combinedRawDrawsEliminated - baseRawDrawsEliminated);
+            var marginalExpectedDraws = Math.Max(
+                0,
+                combinedExpectedArmyDrawsEliminated -
+                baseExpectedArmyDrawsEliminated);
+            var marginalGenerated = combinedGeneratedBcnBytes - baseGeneratedBcnBytes;
+            var marginalRetired =
+                combinedRetiredSourceBcnBytes - baseRetiredSourceBcnBytes;
+            var marginalExpectedGenerated =
+                combinedExpectedGeneratedBcnBytes - baseExpectedGeneratedBcnBytes;
+            var marginalExpectedRetired =
+                combinedExpectedRetiredSourceBcnBytes -
+                baseExpectedRetiredSourceBcnBytes;
+            var marginalGlobalCost = GetChargeableAtlasValueGateBytes(
+                marginalGenerated,
+                marginalRetired);
+            var marginalExpectedCost = GetChargeableAtlasValueGateBytes(
+                marginalExpectedGenerated,
+                marginalExpectedRetired);
+            var baseNet = baseGeneratedBcnBytes - baseRetiredSourceBcnBytes;
+            var combinedNet =
+                combinedGeneratedBcnBytes - combinedRetiredSourceBcnBytes;
+            var marginalNet = combinedNet - baseNet;
+
+            return EvaluateAtlasValueGateBudget(
+                scenarioResolved,
+                marginalRawDraws,
+                marginalExpectedDraws,
+                marginalGlobalCost,
+                marginalExpectedCost,
+                acceptedNetBcnBytes + baseNet,
+                marginalNet,
+                sourceBcnBytes);
+        }
+
+        private static bool TryAcceptAtlasValueMarginalAddition(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> baseCandidates,
+            IReadOnlyList<AtlasCandidate> addedCandidates,
+            IReadOnlyList<MergeAffinityGroup> baseGroups,
+            MergeAffinityGroup addedGroup,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh,
+            out string rejectionReason)
+        {
+            rejectionReason = string.Empty;
+            if (baseCandidates.Count == 0 || addedCandidates.Count == 0)
+            {
+                rejectionReason = "marginal comparison requires a non-empty base and addition.";
                 return false;
-            });
+            }
+
+            var combinedCandidates = baseCandidates
+                .Concat(addedCandidates)
+                .DistinctBy(candidate => candidate.Key)
+                .ToList();
+            var combinedGroups = baseGroups
+                .Concat([addedGroup])
+                .ToList();
+
+            if (!TryEstimateIncrementalAtlasResidency(
+                    state,
+                    baseCandidates,
+                    out var baseResidency) ||
+                !TryEstimateIncrementalAtlasResidency(
+                    state,
+                    combinedCandidates,
+                    out var combinedResidency))
+            {
+                rejectionReason =
+                    "incremental BCn residency could not be estimated safely.";
+                return false;
+            }
+
+            static (int Raw, double Expected) GetDrawSavings(
+                BatchState state,
+                IReadOnlyList<AtlasCandidate> candidates,
+                IReadOnlyList<MergeAffinityGroup> groups,
+                IReadOnlyDictionary<
+                    MeshKey,
+                    Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                    expectedEntitiesByMesh)
+            {
+                var batches = new List<List<AtlasCandidate>>
+                {
+                    candidates.ToList(),
+                };
+                var batchByMesh = BuildBatchIndexByMesh(batches);
+                return (
+                    CalculateMergeAffinityScore(batches, groups),
+                    CalculateExpectedArmyDrawCallsEliminated(
+                        state,
+                        batchByMesh,
+                        groups,
+                        expectedEntitiesByMesh));
+            }
+
+            var baseSavings = GetDrawSavings(
+                state,
+                baseCandidates,
+                baseGroups,
+                expectedEntitiesByMesh);
+            var combinedSavings = GetDrawSavings(
+                state,
+                combinedCandidates,
+                combinedGroups,
+                expectedEntitiesByMesh);
+            var scenarioResolved =
+                IsAtlasValueBatchScenarioResolved(state, addedCandidates);
+            if (!IsAtlasValueCandidateAllowedForMode(
+                    state.AtlasAllVmdsEnabled,
+                    scenarioResolved))
+            {
+                rejectionReason =
+                    "gameplay/scenario relevance could not be resolved safely.";
+                return false;
+            }
+
+            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var decision = EvaluateMarginalAtlasValueGateBudget(
+                scenarioResolved,
+                baseSavings.Raw,
+                combinedSavings.Raw,
+                baseSavings.Expected,
+                combinedSavings.Expected,
+                baseResidency.GeneratedBcnBytes,
+                baseResidency.RetiredSourceBcnBytes,
+                combinedResidency.GeneratedBcnBytes,
+                combinedResidency.RetiredSourceBcnBytes,
+                baseResidency.ExpectedArmyGeneratedBcnBytes,
+                baseResidency.ExpectedArmyRetiredSourceBcnBytes,
+                combinedResidency.ExpectedArmyGeneratedBcnBytes,
+                combinedResidency.ExpectedArmyRetiredSourceBcnBytes,
+                state.AtlasValueGateNetBcnBytesAccepted,
+                sourceBcnBytes);
+
+            if (decision == AtlasValueGateBudgetDecision.Accept)
+                return true;
+
+            rejectionReason =
+                $"marginal economics rejected the group ({decision}); " +
+                $"draws raw {baseSavings.Raw:N0}->{combinedSavings.Raw:N0}, " +
+                $"scenario {baseSavings.Expected:N3}->{combinedSavings.Expected:N3}.";
+            return false;
         }
 
         private static bool TryAcceptAtlasValueBatch(
@@ -10049,9 +10393,21 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Atlas value-gate batches rejected: {state.AtlasValueGateBatchesRejected}");
                 sb.AppendLine($"Atlas value-gate broad batches split: {state.AtlasValueGateBroadBatchesSplit}");
                 sb.AppendLine(
+                    $"Atlas value-gate unresolved candidates skipped: " +
+                    $"{state.AtlasValueGateUnresolvedCandidatesSkipped}");
+                sb.AppendLine(
+                    $"Atlas value-gate marginal groups accepted: " +
+                    $"{state.AtlasValueGateMarginalGroupsAccepted}");
+                sb.AppendLine(
+                    $"Atlas value-gate mixed groups rejected: " +
+                    $"{state.AtlasValueGateMixedGroupsRejected}");
+                sb.AppendLine(
+                    $"Atlas value-gate unresolved policy: " +
+                    $"{(state.AtlasAllVmdsEnabled ? "PACK-WIDE raw-draw fallback allowed" : "GAMEPLAY-USED unresolved assets are left unchanged")}");
+                sb.AppendLine(
                     $"Atlas value-gate net BCn budgets: " +
                     $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} per scenario-estimated draw; " +
-                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} per raw draw only when scenario relevance is unresolved");
+                    $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} per raw draw only in pack-wide mode when scenario relevance is unresolved");
                 sb.AppendLine(
                     $"Atlas value-gate cumulative reachable BCn growth cap: " +
                     $"{MaxReachableBcnGrowthRatio:P0} of source reachable BCn payload");
@@ -12254,6 +12610,9 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasValueGateBatchesAccepted { get; set; }
             public int AtlasValueGateBatchesRejected { get; set; }
             public int AtlasValueGateBroadBatchesSplit { get; set; }
+            public int AtlasValueGateUnresolvedCandidatesSkipped { get; set; }
+            public int AtlasValueGateMarginalGroupsAccepted { get; set; }
+            public int AtlasValueGateMixedGroupsRejected { get; set; }
             public int AtlasValueGateCandidatesAccepted { get; set; }
             public int AtlasValueGateCandidatesRejected { get; set; }
             public long AtlasValueGateGeneratedBcnBytesAccepted { get; set; }
@@ -12561,6 +12920,22 @@ namespace Editors.KitbasherEditor.Services
             long BcnBytes,
             bool HasDirectVmdReference,
             HashSet<AtlasValueGateSourceReference> References);
+
+        private sealed record AtlasValueGateGroupPlan(
+            MergeAffinityGroup Group,
+            List<AtlasCandidate> Candidates);
+
+        private sealed record AtlasValueGateAcceptedGroup(
+            AtlasValueGateGroupPlan Plan,
+            AtlasValueGateResidencyEstimate Residency,
+            int RawDrawsEliminated,
+            double ExpectedArmyDrawsEliminated,
+            bool WasMarginalOnly);
+
+        private sealed record AtlasValueGateRejectedGroup(
+            AtlasValueGateGroupPlan Plan,
+            AtlasValueGateResidencyEstimate Residency,
+            string RejectionReason);
 
         private sealed record AtlasValueGateBatchEconomics(
             int AcceptanceSequence,
