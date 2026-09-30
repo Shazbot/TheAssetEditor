@@ -3164,6 +3164,174 @@
             "field_type": "Boolean"
           }
         ]
+      },
+      {
+        "version": 10,
+        "fields": [
+          {
+            "name": "faction",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "general_unit",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "siege_unit_attacker",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "siege_unit_defender",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "general_portrait",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "general_uniform",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "set_piece_character",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "campaign_exclusive",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "armory_item_set",
+            "field_type": "OptionalStringU8"
+          }
+        ]
+      },
+      {
+        "version": 9,
+        "fields": [
+          {
+            "name": "faction",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "general_unit",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "siege_unit_attacker",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "siege_unit_defender",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "general_portrait",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "general_uniform",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "set_piece_character",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "campaign_exclusive",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "armory_item_set",
+            "field_type": "OptionalStringU8"
+          }
+        ]
+      },
+      {
+        "version": 8,
+        "fields": [
+          {
+            "name": "faction",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "general_unit",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "siege_unit_attacker",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "siege_unit_defender",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "general_portrait",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "general_uniform",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "set_piece_character",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "campaign_exclusive",
+            "field_type": "Boolean"
+          }
+        ]
+      },
+      {
+        "version": 7,
+        "fields": [
+          {
+            "name": "faction",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "general_unit",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "siege_unit_attacker",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "siege_unit_defender",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "general_portrait",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "general_uniform",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "set_piece_character",
+            "field_type": "OptionalStringU8"
+          }
+        ]
       }
     ],
     "cultures_subcultures_tables": [
@@ -3196,6 +3364,81 @@
           },
           {
             "name": "region_owner_audio_switch",
+            "field_type": "OptionalStringU8"
+          }
+        ]
+      },
+      {
+        "version": 3,
+        "fields": [
+          {
+            "name": "subculture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "index",
+            "field_type": "I32"
+          },
+          {
+            "name": "audio_state_override",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "audio_rtpc_override",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "audio_corruption_state_override",
+            "field_type": "OptionalStringU8"
+          }
+        ]
+      },
+      {
+        "version": 2,
+        "fields": [
+          {
+            "name": "subculture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "index",
+            "field_type": "I32"
+          },
+          {
+            "name": "audio_state_override",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "audio_rtpc_override",
+            "field_type": "OptionalStringU8"
+          }
+        ]
+      },
+      {
+        "version": 1,
+        "fields": [
+          {
+            "name": "subculture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "index",
+            "field_type": "I32"
+          },
+          {
+            "name": "confederation_screen_name",
             "field_type": "OptionalStringU8"
           }
         ]
@@ -3452,6 +3695,1247 @@
           {
             "name": "can_accept_gifts_when_dead",
             "field_type": "Boolean"
+          }
+        ]
+      },
+      {
+        "version": 35,
+        "fields": [
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "index",
+            "field_type": "I64"
+          },
+          {
+            "name": "subculture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "screen_name",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "screen_adjective",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "name_group",
+            "field_type": "I32"
+          },
+          {
+            "name": "skin",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_skin",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_rebel",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mp_available",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mp_available_naval",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "flags_path",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "republican_flag_path",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "same_gov_type_revolution_flag_path",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "military_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "rebel_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "movie_death_event",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "mp_use_republic_early",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mp_use_republic_late",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit_regiment_name_group",
+            "field_type": "I32"
+          },
+          {
+            "name": "ship_name_group",
+            "field_type": "I32"
+          },
+          {
+            "name": "attack_desc",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "defend_desc",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "pre_battle_speech_parameter",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "card_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "senator_total",
+            "field_type": "I32"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mp_force_gen_template",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "faction_swapping_id",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "win_movie",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "has_politics",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "waaagh_faction",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "waaagh_general_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_quest_faction",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "cdir_military_generator_config",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "default_audio_actor_vo_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "feature_forest",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "neutral_reinforcement_factions",
+            "field_type": "StringU8"
+          }
+        ]
+      },
+      {
+        "version": 34,
+        "fields": [
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "index",
+            "field_type": "I64"
+          },
+          {
+            "name": "subculture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "screen_name",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "screen_adjective",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "name_group",
+            "field_type": "I32"
+          },
+          {
+            "name": "skin",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_skin",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_rebel",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mp_available",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mp_available_naval",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "flags_path",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "republican_flag_path",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "same_gov_type_revolution_flag_path",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "military_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "rebel_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "movie_death_event",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "mp_use_republic_early",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mp_use_republic_late",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit_regiment_name_group",
+            "field_type": "I32"
+          },
+          {
+            "name": "ship_name_group",
+            "field_type": "I32"
+          },
+          {
+            "name": "attack_desc",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "defend_desc",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "pre_battle_speech_parameter",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "card_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "senator_total",
+            "field_type": "I32"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mp_force_gen_template",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "faction_swapping_id",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "win_movie",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "has_politics",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "waaagh_faction",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "waaagh_general_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_quest_faction",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "cdir_military_generator_config",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "default_audio_actor_vo_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "feature_forest",
+            "field_type": "StringU8"
+          }
+        ]
+      },
+      {
+        "version": 28,
+        "fields": [
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "index",
+            "field_type": "I64"
+          },
+          {
+            "name": "subculture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "screen_name",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "screen_adjective",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "name_group",
+            "field_type": "I32"
+          },
+          {
+            "name": "skin",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_skin",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_rebel",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mp_available",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mp_available_naval",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "flags_path",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "republican_flag_path",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "same_gov_type_revolution_flag_path",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "military_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "rebel_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "movie_death_event",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "mp_use_republic_early",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "mp_use_republic_late",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "unit_regiment_name_group",
+            "field_type": "I32"
+          },
+          {
+            "name": "ship_name_group",
+            "field_type": "I32"
+          },
+          {
+            "name": "attack_desc",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "defend_desc",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "pre_battle_speech_parameter",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "can_be_regionless",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "card_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "senator_total",
+            "field_type": "I32"
+          },
+          {
+            "name": "can_be_horde",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mp_force_gen_template",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "faction_swapping_id",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "win_movie",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "has_politics",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "waaagh_faction",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "waaagh_general_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_waaagh_faction",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "is_quest_faction",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "cdir_military_generator_config",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "default_audio_actor_vo_group",
+            "field_type": "StringU8"
+          }
+        ]
+      },
+      {
+        "version": 6,
+        "fields": [
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "index",
+            "field_type": "I64"
+          },
+          {
+            "name": "subculture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "name_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "skin",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_skin",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_rebel",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "flags_path",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "military_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "movie_death_event",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "unit_regiment_name_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ship_name_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "pre_battle_speech_parameter",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "card_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mp_force_gen_template",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "faction_swapping_id",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "win_movie",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "waaagh_faction",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "waaagh_general_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_quest_faction",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "cdir_military_generator_config",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "feature_forest",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "default_audio_actor_vo_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "text_replacement_key",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "neutral_reinforcement_factions",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "can_accept_gifts_when_dead",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "uniform_colour_primary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "uniform_colour_secondary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "uniform_colour_tertiary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "banner_colour_primary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "banner_colour_secondary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "banner_colour_tertiary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "primary_colour",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "override_target_unit_vo_culture",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "music_feedback_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_main_theme_skin",
+            "field_type": "StringU8"
+          }
+        ]
+      },
+      {
+        "version": 5,
+        "fields": [
+          {
+            "name": "key",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "index",
+            "field_type": "I64"
+          },
+          {
+            "name": "subculture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "category",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "name_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "skin",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ui_skin",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_rebel",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "flags_path",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_primary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_secondary_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "alt_uniform_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "rebel_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "military_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "movie_death_event",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "unit_regiment_name_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "ship_name_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "pre_battle_speech_parameter",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "card_colour_r",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_g",
+            "field_type": "F32"
+          },
+          {
+            "name": "card_colour_b",
+            "field_type": "F32"
+          },
+          {
+            "name": "audio_voiceover_culture",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "mp_force_gen_template",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "faction_swapping_id",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "win_movie",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "waaagh_faction",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "waaagh_general_unit",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "is_quest_faction",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "cdir_military_generator_config",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "feature_forest",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "default_audio_actor_vo_group",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "text_replacement_key",
+            "field_type": "OptionalStringU8"
+          },
+          {
+            "name": "neutral_reinforcement_factions",
+            "field_type": "StringU8"
+          },
+          {
+            "name": "can_accept_gifts_when_dead",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "uniform_colour_primary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "uniform_colour_secondary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "uniform_colour_tertiary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "banner_colour_primary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "banner_colour_secondary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "banner_colour_tertiary",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "primary_colour",
+            "field_type": "ColourRGB"
+          },
+          {
+            "name": "override_target_unit_vo_culture",
+            "field_type": "Boolean"
+          },
+          {
+            "name": "music_feedback_group",
+            "field_type": "StringU8"
           }
         ]
       }
