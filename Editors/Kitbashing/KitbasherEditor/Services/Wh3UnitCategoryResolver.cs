@@ -29,6 +29,15 @@ namespace Editors.KitbasherEditor.Services
         Crew,
     }
 
+    internal enum Wh3VmdConsumerType
+    {
+        UnitVariant,
+        BattleAgentUniform,
+        Mount,
+        Engine,
+        ExtraEngine,
+    }
+
     internal enum Wh3VisualAssetState
     {
         Live,
@@ -110,7 +119,14 @@ namespace Editors.KitbasherEditor.Services
         Wh3ArmyUnitCategory Category,
         Wh3UnitVisualRole VisualRole,
         int EntityCount,
-        Wh3UnitVisualCounts VisualCounts);
+        Wh3UnitVisualCounts VisualCounts)
+    {
+        public Wh3VmdConsumerType ConsumerType { get; init; } =
+            Wh3VmdConsumerType.UnitVariant;
+        public string RootVmdPath { get; init; } = string.Empty;
+        public string ParentVmdPath { get; init; } = string.Empty;
+        public bool IsTransitiveChild => ParentVmdPath.Length != 0;
+    }
 
     internal sealed record Wh3UnitDirectAssetUsage(
         string AssetPath,
@@ -163,6 +179,8 @@ namespace Editors.KitbasherEditor.Services
         int TableFilesRead,
         int DirectlyResolvedVmdCount,
         int PropagatedVmdCount,
+        bool IsGameplayResolutionHealthy,
+        string GameplayResolutionHealthMessage,
         IReadOnlyList<string> Diagnostics)
     {
         public IReadOnlyList<Wh3UnitCategoryUsage> GetUsages(string vmdPath)
@@ -227,6 +245,16 @@ namespace Editors.KitbasherEditor.Services
             CampaignCharacterArtSetsTable,
             CampaignCharacterArtsTable,
             AgentUniformsTable,
+        ];
+
+        private static readonly string[] GameplayCriticalTables =
+        [
+            MainUnitsTable,
+            LandUnitsTable,
+            UnitVariantsTable,
+            VariantsTable,
+            MountsTable,
+            BattlefieldEnginesTable,
         ];
 
         private static readonly Lazy<SchemaRoot> Schema = new(LoadSchema);
@@ -414,6 +442,7 @@ namespace Editors.KitbasherEditor.Services
                 string uiGroupKey,
                 Wh3ArmyUnitCategory category,
                 Wh3UnitVisualRole visualRole,
+                Wh3VmdConsumerType consumerType,
                 int numMen,
                 Wh3UnitVisualCounts visualCounts)
             {
@@ -445,7 +474,11 @@ namespace Editors.KitbasherEditor.Services
                         category,
                         visualRole,
                         entityCount,
-                    visualCounts));
+                        visualCounts)
+                    {
+                        ConsumerType = consumerType,
+                        RootVmdPath = componentVmdPath,
+                    });
             }
 
             void AddDirectAssetUsage(
@@ -544,10 +577,6 @@ namespace Editors.KitbasherEditor.Services
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToArray(),
                     StringComparer.OrdinalIgnoreCase);
-            var mainLandUnitKeys = mainRows
-                .Select(row => Get(row, "land_unit"))
-                .Where(key => key.Length != 0)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var agentPrimaryMainUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var agentFallbackMainUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -577,6 +606,7 @@ namespace Editors.KitbasherEditor.Services
                     : Wh3UnitVisualRole.Men;
 
                 IReadOnlyList<string> primaryVariantNames = fallbackVariantNames;
+                var primaryConsumerType = Wh3VmdConsumerType.UnitVariant;
                 if (category is Wh3ArmyUnitCategory.Lord or Wh3ArmyUnitCategory.Hero)
                 {
                     var agentVariantNames = ResolveBattleAgentVariantNames(
@@ -589,6 +619,7 @@ namespace Editors.KitbasherEditor.Services
                     if (agentVariantNames.Count != 0)
                     {
                         primaryVariantNames = agentVariantNames;
+                        primaryConsumerType = Wh3VmdConsumerType.BattleAgentUniform;
                         if (mainUnitKey.Length != 0)
                             agentPrimaryMainUnits.Add(mainUnitKey);
                     }
@@ -609,6 +640,7 @@ namespace Editors.KitbasherEditor.Services
                         uiGroupKey,
                         category,
                         mainVisualRole,
+                        primaryConsumerType,
                         numMen,
                         visualCounts);
                 }
@@ -626,6 +658,7 @@ namespace Editors.KitbasherEditor.Services
                         uiGroupKey,
                         category,
                         Wh3UnitVisualRole.Mount,
+                        Wh3VmdConsumerType.Mount,
                         numMen,
                         visualCounts);
                 }
@@ -641,6 +674,7 @@ namespace Editors.KitbasherEditor.Services
                         uiGroupKey,
                         category,
                         Wh3UnitVisualRole.Engine,
+                        Wh3VmdConsumerType.Engine,
                         numMen,
                         visualCounts);
 
@@ -675,6 +709,7 @@ namespace Editors.KitbasherEditor.Services
                         uiGroupKey,
                         category,
                         Wh3UnitVisualRole.Engine,
+                        Wh3VmdConsumerType.ExtraEngine,
                         numMen,
                         extraEngineVisualCounts);
 
@@ -712,34 +747,31 @@ namespace Editors.KitbasherEditor.Services
                     fallbackVariantNames);
             }
 
-            // Preserve the old land-unit fallback for unusual rows that have a unit_variant
-            // but no main_units consumer. These are not allowed to inflate a known main unit.
-            foreach (var unitVariant in unitVariantRows)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var landUnitKey = Get(unitVariant, "unit");
-                var variantName = Get(unitVariant, "variant");
-                if (landUnitKey.Length == 0 ||
-                    variantName.Length == 0 ||
-                    mainLandUnitKeys.Contains(landUnitKey) ||
-                    !landRows.TryGetValue(landUnitKey, out var land))
+            // Orphan unit_variants rows are deliberately not gameplay authority. Keep them
+            // visible for diagnostics, but only pack-wide atlas mode may process their VMDs.
+            var orphanUnitVariantRows = unitVariantRows
+                .Where(row =>
                 {
-                    continue;
-                }
-
-                var fallbackCounts = new Wh3UnitVisualCounts(1, 0, 0, 0);
-                AddVariantUsage(
-                    variantName,
-                    string.Empty,
-                    landUnitKey,
-                    string.Empty,
-                    Get(land, "category"),
-                    string.Empty,
-                    Classify(string.Empty, Get(land, "category"), string.Empty),
-                    Wh3UnitVisualRole.Men,
-                    1,
-                    fallbackCounts);
+                    var landUnitKey = Get(row, "unit");
+                    return landUnitKey.Length != 0 && !mainByLandUnit.ContainsKey(landUnitKey);
+                })
+                .ToList();
+            if (orphanUnitVariantRows.Count != 0)
+            {
+                var orphanVmdCount = orphanUnitVariantRows
+                    .Select(row => Get(row, "variant"))
+                    .Where(variantName => variantName.Length != 0)
+                    .Select(variantName =>
+                        variantRows.TryGetValue(variantName, out var variant)
+                            ? ToVariantMeshDefinitionPath(Get(variant, "variant_filename"))
+                            : string.Empty)
+                    .Where(path => path.Length != 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+                diagnostics.Add(
+                    $"Ignored {orphanUnitVariantRows.Count:N0} orphan unit_variants row(s) " +
+                    $"with no main_units gameplay consumer; {orphanVmdCount:N0} VMD(s) remain " +
+                    $"eligible only in pack-wide atlas mode.");
             }
 
             diagnostics.Add(
@@ -868,6 +900,9 @@ namespace Editors.KitbasherEditor.Services
                     .ToList();
             }
 
+            var gameplayResolutionHealthMessage =
+                GetGameplayResolutionHealthIssue(parsedRowsByTable, diagnostics);
+
             return new Wh3UnitCategoryResolution(
                 filtered,
                 directUsagesByVmd,
@@ -886,6 +921,8 @@ namespace Editors.KitbasherEditor.Services
                 tableFilesRead,
                 directSourceVmds.Count,
                 Math.Max(0, filtered.Count - directSourceVmds.Count),
+                gameplayResolutionHealthMessage.Length == 0,
+                gameplayResolutionHealthMessage,
                 diagnostics);
         }
 
@@ -1072,42 +1109,69 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd,
             CancellationToken cancellationToken)
         {
-            foreach (var directVmd in directSourceVmds)
+            foreach (var directVmdValue in directSourceVmds)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var directVmd = NormalizePath(directVmdValue);
                 if (!usagesByVmd.TryGetValue(directVmd, out var sourceUsages) ||
                     sourceUsages.Count == 0)
                 {
                     continue;
                 }
 
-                var queue = new Queue<string>();
-                var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                foreach (var (child, parent) in GetTransitiveChildVmdParents(
+                             directVmd,
+                             childVmdsByVmd,
+                             cancellationToken))
                 {
-                    directVmd,
-                };
-                queue.Enqueue(directVmd);
-
-                while (queue.Count != 0)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var parent = queue.Dequeue();
-                    if (!childVmdsByVmd.TryGetValue(parent, out var children))
-                        continue;
-
-                    foreach (var childValue in children)
+                    foreach (var usage in sourceUsages.Values)
                     {
-                        var child = NormalizePath(childValue);
-                        if (child.Length == 0 || !visited.Add(child))
-                            continue;
-
-                        foreach (var usage in sourceUsages.Values)
-                            AddUsage(usagesByVmd, usage with { VmdPath = child });
-
-                        queue.Enqueue(child);
+                        AddUsage(
+                            usagesByVmd,
+                            usage with
+                            {
+                                VmdPath = child,
+                                RootVmdPath = directVmd,
+                                ParentVmdPath = parent,
+                            });
                     }
                 }
             }
+        }
+
+        private static IReadOnlyDictionary<string, string> GetTransitiveChildVmdParents(
+            string rootVmdPath,
+            IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd,
+            CancellationToken cancellationToken)
+        {
+            var root = NormalizePath(rootVmdPath);
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (root.Length == 0)
+                return result;
+
+            var queue = new Queue<string>();
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { root };
+            queue.Enqueue(root);
+
+            while (queue.Count != 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var parent = queue.Dequeue();
+                if (!childVmdsByVmd.TryGetValue(parent, out var children))
+                    continue;
+
+                foreach (var childValue in children)
+                {
+                    var child = NormalizePath(childValue);
+                    if (child.Length == 0 || !visited.Add(child))
+                        continue;
+
+                    result[child] = parent;
+                    queue.Enqueue(child);
+                }
+            }
+
+            return result;
         }
 
         private static IReadOnlyList<string> ResolveBattleAgentVariantNames(
@@ -1763,6 +1827,52 @@ namespace Editors.KitbasherEditor.Services
             return animatedLodRowsByKey.TryGetValue(reference, out var paths)
                 ? paths.Select(NormalizePath).Where(path => path.Length != 0).ToArray()
                 : [];
+        }
+
+        private static string GetGameplayResolutionHealthIssue(
+            IReadOnlyDictionary<string, int> parsedRowsByTable,
+            IReadOnlyList<string> diagnostics)
+        {
+            var missingRows = GameplayCriticalTables
+                .Where(table =>
+                    !parsedRowsByTable.TryGetValue(table, out var count) ||
+                    count <= 0)
+                .ToArray();
+
+            var failedCriticalTables = GameplayCriticalTables
+                .Where(table => diagnostics.Any(diagnostic =>
+                {
+                    var normalized = NormalizePath(diagnostic);
+                    return normalized.Contains(
+                               $"db\\{table}\\",
+                               StringComparison.OrdinalIgnoreCase) &&
+                           (normalized.Contains(
+                                "failed to decode",
+                                StringComparison.OrdinalIgnoreCase) ||
+                            normalized.StartsWith(
+                                "skipped ",
+                                StringComparison.OrdinalIgnoreCase));
+                }))
+                .ToArray();
+
+            if (missingRows.Length == 0 && failedCriticalTables.Length == 0)
+                return string.Empty;
+
+            var problems = new List<string>();
+            if (missingRows.Length != 0)
+            {
+                problems.Add(
+                    $"no decoded rows for critical table(s): {string.Join(", ", missingRows)}");
+            }
+
+            if (failedCriticalTables.Length != 0)
+            {
+                problems.Add(
+                    $"decode/schema failures in critical table(s): " +
+                    $"{string.Join(", ", failedCriticalTables)}");
+            }
+
+            return string.Join("; ", problems) + ".";
         }
 
         private static bool TryParseInt(string value, out int result)
