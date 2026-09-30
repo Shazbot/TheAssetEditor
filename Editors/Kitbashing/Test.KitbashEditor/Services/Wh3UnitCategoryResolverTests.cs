@@ -1168,7 +1168,7 @@ namespace Test.KitbashEditor.Services
             [
                 new()
                 {
-                    ["id"] = "scoped_art_1",
+                    ["id"] = "1",
                     ["art_set_id"] = "scoped_art",
                     ["level"] = "1",
                     ["age"] = "0",
@@ -1263,7 +1263,7 @@ namespace Test.KitbashEditor.Services
             [
                 new()
                 {
-                    ["id"] = "unrelated_art_1",
+                    ["id"] = "2",
                     ["art_set_id"] = "unrelated_art",
                     ["level"] = "1",
                     ["age"] = "0",
