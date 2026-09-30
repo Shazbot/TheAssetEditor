@@ -348,6 +348,18 @@ namespace Test.KitbashEditor.Services
         private static object ResolveFromDecodedRows(
             Dictionary<string, List<Dictionary<string, string>>> rowsByTable,
             params string[] rootVmdPaths)
+            => ResolveFromDecodedRowsCore(rowsByTable, null, rootVmdPaths);
+
+        private static object ResolveFromDecodedRowsWithScenario(
+            Dictionary<string, List<Dictionary<string, string>>> rowsByTable,
+            object scenario,
+            params string[] rootVmdPaths)
+            => ResolveFromDecodedRowsCore(rowsByTable, scenario, rootVmdPaths);
+
+        private static object ResolveFromDecodedRowsCore(
+            Dictionary<string, List<Dictionary<string, string>>> rowsByTable,
+            object? scenario,
+            params string[] rootVmdPaths)
         {
             var packedFiles = rowsByTable.ToDictionary(
                 entry => entry.Key,
@@ -405,9 +417,59 @@ namespace Test.KitbashEditor.Services
                     new Dictionary<string, IReadOnlyCollection<string>>(
                         StringComparer.OrdinalIgnoreCase),
                     CancellationToken.None,
-                    null,
+                    scenario,
                 ])
                 ?? throw new InvalidOperationException("Resolve returned null.");
+        }
+
+        private static object CreateRosterScenario(string rosterScope, string scopeKey)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var scenarioType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3ArmyVisualScenario",
+                throwOnError: true)!;
+            var scopeType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3RosterScope",
+                throwOnError: true)!;
+            var defaultScenario = scenarioType.GetProperty(
+                    "Default",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                ?.GetValue(null)
+                ?? throw new InvalidOperationException("Wh3ArmyVisualScenario.Default was not found.");
+            var constructor = scenarioType.GetConstructors(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Single();
+            object Value(string propertyName)
+                => scenarioType.GetProperty(propertyName)?.GetValue(defaultScenario)
+                   ?? throw new InvalidOperationException(
+                       $"Scenario property '{propertyName}' was not found.");
+
+            return constructor.Invoke(
+            [
+                Value("UnitSizeScale"),
+                Value("CrewScale"),
+                Value("EngineRoundingPolicy"),
+                Value("LodDistribution"),
+                Value("DestructionProbability"),
+                Value("DestructTransitionProbability"),
+                Value("ArmySlotTemplate"),
+                Enum.Parse(scopeType, rosterScope),
+                scopeKey,
+            ]);
+        }
+
+        private static bool ResolutionRosterContainsMainUnit(
+            object resolution,
+            string mainUnitKey)
+        {
+            var roster = (IEnumerable)(resolution.GetType()
+                .GetProperty("RosterUnits")?.GetValue(resolution)
+                ?? throw new InvalidOperationException("RosterUnits was not found."));
+            return roster.Cast<object>().Any(candidate =>
+                string.Equals(
+                    candidate.GetType().GetProperty("MainUnitKey")?.GetValue(candidate)?.ToString(),
+                    mainUnitKey,
+                    StringComparison.OrdinalIgnoreCase));
         }
 
         private static bool ResolutionHasVmd(object resolution, string vmdPath)
@@ -1266,6 +1328,14 @@ namespace Test.KitbashEditor.Services
             const string scopedVmd =
                 @"variantmeshes\variantmeshdefinitions\scoped_agent.variantmeshdefinition";
             var resolution = ResolveFromDecodedRows(rows, scopedVmd);
+            var unrelatedFactionResolution = ResolveFromDecodedRowsWithScenario(
+                rows,
+                CreateRosterScenario("SelectedFaction", "faction_b"),
+                scopedVmd);
+            var unrelatedCultureResolution = ResolveFromDecodedRowsWithScenario(
+                rows,
+                CreateRosterScenario("SelectedCulture", "culture_b"),
+                scopedVmd);
 
             Assert.Multiple(() =>
             {
@@ -1280,6 +1350,18 @@ namespace Test.KitbashEditor.Services
                 Assert.That(
                     ResolutionRosterScopeValues(resolution, "main_hero", "CultureKeys"),
                     Does.Contain("culture_a"));
+                Assert.That(
+                    ResolutionRosterContainsMainUnit(
+                        unrelatedFactionResolution,
+                        "main_hero"),
+                    Is.True,
+                    "unknown faction scope must behave as a wildcard for SelectedFaction");
+                Assert.That(
+                    ResolutionRosterContainsMainUnit(
+                        unrelatedCultureResolution,
+                        "main_hero"),
+                    Is.True,
+                    "unknown faction scope must behave as a wildcard for SelectedCulture");
             });
         }
 

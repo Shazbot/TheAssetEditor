@@ -204,6 +204,11 @@ namespace Editors.KitbasherEditor.Services
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public IReadOnlySet<string> CultureKeys { get; init; } =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Empty faction metadata means the resolver could not constrain this unit to a
+        // particular faction. Selected-faction/culture roster filters must therefore
+        // conservatively keep it instead of treating "unknown" as "matches nothing".
+        public bool HasUnknownFactionScope { get; init; }
     }
 
     internal sealed record Wh3UnitCategoryResolution(
@@ -1054,6 +1059,7 @@ namespace Editors.KitbasherEditor.Services
                     FactionKeys = factions,
                     SubcultureKeys = subcultures,
                     CultureKeys = cultures,
+                    HasUnknownFactionScope = factions.Count == 0,
                 });
             }
 
@@ -1196,7 +1202,7 @@ namespace Editors.KitbasherEditor.Services
                 (string MainUnitKey, string LandUnitKey, Wh3ArmyUnitCategory Category,
                     Wh3UnitVisualCounts Counts, List<Wh3ResolvedUnitComponent> Components,
                     HashSet<string> FactionKeys, HashSet<string> SubcultureKeys,
-                    HashSet<string> CultureKeys)>(
+                    HashSet<string> CultureKeys, bool HasUnknownFactionScope)>(
                 StringComparer.OrdinalIgnoreCase);
 
             static string Identity(string mainUnitKey, string landUnitKey)
@@ -1214,7 +1220,8 @@ namespace Editors.KitbasherEditor.Services
                     seed.Components.ToList(),
                     new HashSet<string>(seed.FactionKeys, StringComparer.OrdinalIgnoreCase),
                     new HashSet<string>(seed.SubcultureKeys, StringComparer.OrdinalIgnoreCase),
-                    new HashSet<string>(seed.CultureKeys, StringComparer.OrdinalIgnoreCase));
+                    new HashSet<string>(seed.CultureKeys, StringComparer.OrdinalIgnoreCase),
+                    seed.HasUnknownFactionScope);
             }
 
             foreach (var (vmdPathValue, usages) in usagesByVmd)
@@ -1233,7 +1240,8 @@ namespace Editors.KitbasherEditor.Services
                             [],
                             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
                             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                            true);
                     }
 
                     if (!builder.Components.Any(component =>
@@ -1280,7 +1288,8 @@ namespace Editors.KitbasherEditor.Services
                             [],
                             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
                             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                            true);
                     }
 
                     if (!builder.Components.Any(component =>
@@ -1321,6 +1330,7 @@ namespace Editors.KitbasherEditor.Services
                     FactionKeys = entry.Value.FactionKeys,
                     SubcultureKeys = entry.Value.SubcultureKeys,
                     CultureKeys = entry.Value.CultureKeys,
+                    HasUnknownFactionScope = entry.Value.HasUnknownFactionScope,
                 })
                 .ToArray();
         }
@@ -1349,8 +1359,10 @@ namespace Editors.KitbasherEditor.Services
                 => scenario.RosterScope switch
                 {
                     Wh3RosterScope.SelectedFaction =>
+                        unit.HasUnknownFactionScope ||
                         unit.FactionKeys.Contains(scopeKey),
                     Wh3RosterScope.SelectedCulture =>
+                        unit.HasUnknownFactionScope ||
                         unit.CultureKeys.Contains(scopeKey) ||
                         unit.SubcultureKeys.Contains(scopeKey),
                     Wh3RosterScope.ModAffectedUnits =>
