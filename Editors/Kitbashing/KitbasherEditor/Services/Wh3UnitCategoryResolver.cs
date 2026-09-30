@@ -714,9 +714,12 @@ namespace Editors.KitbasherEditor.Services
                         if (mainUnitKey.Length != 0)
                             agentPrimaryMainUnits.Add(mainUnitKey);
                     }
-                    else if (agentResolution.HasAuthoritativeVisualPath)
+                    else if (agentResolution.HasAgentVisualPathEvidence)
                     {
-                        // Do not hide a broken authoritative agent path behind unit_variants.
+                        // Any agent-specific visual evidence means unit_variants is no longer
+                        // a trustworthy authority for this lord/hero. If that path cannot be
+                        // resolved, leave the primary visual unclassified so gameplay-used
+                        // atlasing skips it rather than silently rewriting the fallback VMD.
                         handledPrimaryVisuals = true;
                     }
                     else if (fallbackVariantNames.Count != 0 && mainUnitKey.Length != 0)
