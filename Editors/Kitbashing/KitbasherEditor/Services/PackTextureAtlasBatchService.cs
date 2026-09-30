@@ -9994,7 +9994,8 @@ namespace Editors.KitbasherEditor.Services
 
                 var directConsumerCounts = state.UnitCategoryResolution.DirectUsagesByVmd.Values
                     .SelectMany(usages => usages)
-                    .GroupBy(usage => usage.ConsumerType)
+                    .SelectMany(usage => usage.Provenance)
+                    .GroupBy(provenance => provenance.ConsumerType)
                     .OrderBy(group => group.Key)
                     .Select(group => $"{group.Key}={group.Count():N0}")
                     .ToArray();
@@ -10423,14 +10424,25 @@ namespace Editors.KitbasherEditor.Services
                                 $"    main={usage.MainUnitKey} | land={usage.LandUnitKey} | " +
                                 $"caste={usage.Caste} | land-category={usage.LandCategory} | " +
                                 $"ui-group={usage.UiGroupKey} | category={usage.Category} | " +
-                                $"role={usage.VisualRole} | consumer={usage.ConsumerType} | " +
-                                $"provenance={(usage.IsTransitiveChild ? "child" : "direct")} | " +
-                                $"root-vmd={usage.RootVmdPath} | parent-vmd={usage.ParentVmdPath} | " +
+                                $"role={usage.VisualRole} | provenance-paths={usage.Provenance.Count:N0} | " +
                                 $"entities={usage.EntityCount} | num-men={usage.NumMen} | " +
                                 $"components=riders:{usage.VisualCounts.Riders}," +
                                 $"mounts:{usage.VisualCounts.Mounts}," +
                                 $"engines:{usage.VisualCounts.Engines}," +
                                 $"crew:{usage.VisualCounts.Crew}");
+                            foreach (var provenance in usage.Provenance)
+                            {
+                                sb.AppendLine(
+                                    $"      via={provenance.ConsumerType} | " +
+                                    $"kind={(provenance.IsTransitiveChild ? "child" : "direct")} | " +
+                                    $"root-vmd={provenance.RootVmdPath} | " +
+                                    $"parent-vmd={provenance.ParentVmdPath} | " +
+                                    $"faction={provenance.FactionKey} | " +
+                                    $"subculture={provenance.SubcultureKey} | " +
+                                    $"culture={provenance.CultureKey} | " +
+                                    $"uniform={provenance.UniformName} | " +
+                                    $"art-set={provenance.ArtSetId}");
+                            }
                         }
                     }
                 }
