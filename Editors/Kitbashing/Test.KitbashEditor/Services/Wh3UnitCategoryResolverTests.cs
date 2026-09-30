@@ -1230,7 +1230,7 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void FullResolver_UnresolvedSubtypeChainFallsBackButIsUnhealthy()
+        public void FullResolver_UnresolvedSubtypeChainSkipsFallbackAndIsUnhealthy()
         {
             var rows = CreateMinimalGameplayRows();
             rows["agent_subtypes_tables"] =
@@ -1302,7 +1302,7 @@ namespace Test.KitbashEditor.Services
 
             Assert.Multiple(() =>
             {
-                Assert.That(ResolutionHasVmd(resolution, fallbackVmd), Is.True);
+                Assert.That(ResolutionHasVmd(resolution, fallbackVmd), Is.False);
                 Assert.That(ResolutionIsHealthy(resolution), Is.False);
                 Assert.That(
                     ResolutionHealthMessage(resolution),
