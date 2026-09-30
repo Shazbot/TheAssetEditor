@@ -438,7 +438,7 @@ namespace Test.KitbashEditor.Services
                 ?? throw new InvalidOperationException("Wh3ArmyVisualScenario.Default was not found.");
             var constructor = scenarioType.GetConstructors(
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                .Single();
+                .Single(candidate => candidate.GetParameters().Length == 9);
             object Value(string propertyName)
                 => scenarioType.GetProperty(propertyName)?.GetValue(defaultScenario)
                    ?? throw new InvalidOperationException(
