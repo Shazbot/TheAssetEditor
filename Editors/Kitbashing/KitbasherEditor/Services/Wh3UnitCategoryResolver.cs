@@ -673,20 +673,11 @@ namespace Editors.KitbasherEditor.Services
                     var factions = factionsByMainUnit.TryGetValue(mainUnitKey, out var mainFactions)
                         ? (IReadOnlyCollection<string>)mainFactions
                         : Array.Empty<string>();
-                    var subcultures = factions
-                        .Select(faction => subcultureByFaction.GetValueOrDefault(faction))
-                        .Where(value => !string.IsNullOrWhiteSpace(value))
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    var cultures = subcultures
-                        .Select(subculture => cultureBySubculture.GetValueOrDefault(subculture))
-                        .Where(value => !string.IsNullOrWhiteSpace(value))
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
                     var agentResolution = ResolveBattleAgentVisuals(
                         mainUnitKey,
                         factions,
-                        subcultures,
-                        cultures,
+                        subcultureByFaction,
+                        cultureBySubculture,
                         customBattlePermissionRows,
                         agentSubtypeRows,
                         agentSubtypeOverrideRows,
@@ -1346,8 +1337,8 @@ namespace Editors.KitbasherEditor.Services
             return ResolveBattleAgentVisuals(
                     mainUnitKey,
                     Array.Empty<string>(),
-                    Array.Empty<string>(),
-                    Array.Empty<string>(),
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                     Array.Empty<Dictionary<string, string>>(),
                     agentSubtypeRows,
                     agentSubtypeOverrideRows,
@@ -1365,8 +1356,8 @@ namespace Editors.KitbasherEditor.Services
         private static Wh3AgentVisualResolution ResolveBattleAgentVisuals(
             string mainUnitKey,
             IReadOnlyCollection<string> factionKeys,
-            IReadOnlyCollection<string> subcultureKeys,
-            IReadOnlyCollection<string> cultureKeys,
+            IReadOnlyDictionary<string, string> subcultureByFaction,
+            IReadOnlyDictionary<string, string> cultureBySubculture,
             IEnumerable<Dictionary<string, string>> customBattlePermissionRows,
             IReadOnlyDictionary<string, Dictionary<string, string>> agentSubtypeRows,
             IReadOnlyDictionary<string, Dictionary<string, string>> agentSubtypeOverrideRows,
@@ -1390,27 +1381,16 @@ namespace Editors.KitbasherEditor.Services
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Select(faction =>
                 {
-                    var subculture = permissions
-                        .Where(row => Get(row, "faction")
-                            .Equals(faction, StringComparison.OrdinalIgnoreCase))
-                        .Select(_ => subcultureKeys.FirstOrDefault(
-                            subculture => !string.IsNullOrWhiteSpace(subculture)))
-                        .FirstOrDefault() ?? string.Empty;
-                    if (subculture.Length == 0 && subcultureKeys.Count == 1)
-                        subculture = subcultureKeys.First();
-                    var culture = cultureKeys.Count == 1
-                        ? cultureKeys.First()
-                        : string.Empty;
+                    var subculture = subcultureByFaction.GetValueOrDefault(faction) ?? string.Empty;
+                    var culture = subculture.Length == 0
+                        ? string.Empty
+                        : cultureBySubculture.GetValueOrDefault(subculture) ?? string.Empty;
                     return (Faction: faction, Subculture: subculture, Culture: culture);
                 })
                 .ToList();
 
             if (contexts.Count == 0)
-            {
-                var subculture = subcultureKeys.Count == 1 ? subcultureKeys.First() : string.Empty;
-                var culture = cultureKeys.Count == 1 ? cultureKeys.First() : string.Empty;
-                contexts.Add((string.Empty, subculture, culture));
-            }
+                contexts.Add((string.Empty, string.Empty, string.Empty));
 
             bool TryResolveUniformVariant(
                 string uniformName,
@@ -1513,8 +1493,7 @@ namespace Editors.KitbasherEditor.Services
                                 }
 
                                 var subculture = Get(row, "subculture");
-                                return context.Subculture.Length == 0 ||
-                                       subculture.Length == 0 ||
+                                return subculture.Length == 0 ||
                                        subculture.Equals(
                                            context.Subculture,
                                            StringComparison.OrdinalIgnoreCase);
@@ -1527,7 +1506,6 @@ namespace Editors.KitbasherEditor.Services
 
                 static bool ScopeMatches(string required, string actual)
                     => required.Length == 0 ||
-                       actual.Length == 0 ||
                        required.Equals(actual, StringComparison.OrdinalIgnoreCase);
 
                 var candidateArtSets = campaignCharacterArtSetRows.Values
