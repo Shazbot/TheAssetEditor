@@ -1,6 +1,11 @@
+using System.Collections;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Text;
+using Moq;
+using Shared.Core.PackFiles;
+using Shared.Core.PackFiles.Models;
 
 namespace Test.KitbashEditor.Services
 {
@@ -171,6 +176,259 @@ namespace Test.KitbashEditor.Services
             writer.Write((ushort)bytes.Length);
             writer.Write(bytes);
         }
+
+        private static byte[] BuildPackedTableRows(
+            string tableName,
+            IReadOnlyList<IReadOnlyDictionary<string, string>> rows)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var schemaField = resolverType.GetField(
+                "Schema",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.Schema was not found.");
+            var lazySchema = schemaField.GetValue(null)
+                ?? throw new InvalidOperationException("Resolver schema was null.");
+            var schemaRoot = lazySchema.GetType().GetProperty("Value")?.GetValue(lazySchema)
+                ?? throw new InvalidOperationException("Resolver schema value was null.");
+            var definitions = (IDictionary)(schemaRoot.GetType()
+                .GetProperty("Definitions")?.GetValue(schemaRoot)
+                ?? throw new InvalidOperationException("Resolver schema definitions were null."));
+            var versions = (IEnumerable)(definitions[tableName]
+                ?? throw new InvalidOperationException($"Schema table '{tableName}' was not found."));
+            var version = versions.Cast<object>().First();
+            var packedVersion = (int)(version.GetType().GetProperty("Version")?.GetValue(version)
+                ?? throw new InvalidOperationException("Schema version was missing."));
+            var fields = ((IEnumerable)(version.GetType().GetProperty("Fields")?.GetValue(version)
+                ?? throw new InvalidOperationException("Schema fields were missing.")))
+                .Cast<object>()
+                .ToArray();
+
+            using var stream = new MemoryStream();
+            using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+            writer.Write(new byte[] { 0xfc, 0xfd, 0xfe, 0xff });
+            writer.Write(packedVersion);
+            writer.Write((byte)0);
+            writer.Write(rows.Count);
+
+            foreach (var row in rows)
+            {
+                foreach (var field in fields)
+                {
+                    var fieldType = field.GetType().GetProperty("FieldType")?.GetValue(field)?.ToString()
+                        ?? throw new InvalidOperationException("Schema field type was missing.");
+                    var fieldName = field.GetType().GetProperty("Name")?.GetValue(field)?.ToString()
+                        ?? throw new InvalidOperationException("Schema field name was missing.");
+                    var value = row.TryGetValue(fieldName, out var supplied)
+                        ? supplied
+                        : string.Empty;
+
+                    switch (fieldType)
+                    {
+                        case "Boolean":
+                            writer.Write((byte)(value.Length != 0 && value != "0" ? 1 : 0));
+                            break;
+                        case "ColourRGB":
+                        case "I32":
+                            writer.Write(value.Length == 0
+                                ? 0
+                                : int.Parse(value, CultureInfo.InvariantCulture));
+                            break;
+                        case "I16":
+                            writer.Write(value.Length == 0
+                                ? (short)0
+                                : short.Parse(value, CultureInfo.InvariantCulture));
+                            break;
+                        case "I64":
+                            writer.Write(value.Length == 0
+                                ? 0L
+                                : long.Parse(value, CultureInfo.InvariantCulture));
+                            break;
+                        case "F32":
+                            writer.Write(value.Length == 0
+                                ? 0f
+                                : float.Parse(value, CultureInfo.InvariantCulture));
+                            break;
+                        case "F64":
+                            writer.Write(value.Length == 0
+                                ? 0d
+                                : double.Parse(value, CultureInfo.InvariantCulture));
+                            break;
+                        case "StringU8":
+                            WriteStringU8(writer, value);
+                            break;
+                        case "StringU16":
+                            writer.Write((short)value.Length);
+                            writer.Write(Encoding.Unicode.GetBytes(value));
+                            break;
+                        case "OptionalStringU8":
+                            if (value.Length == 0)
+                            {
+                                writer.Write((byte)0);
+                            }
+                            else
+                            {
+                                writer.Write((byte)1);
+                                WriteStringU8(writer, value);
+                            }
+                            break;
+                        default:
+                            throw new InvalidOperationException(
+                                $"Unsupported fixture field type '{fieldType}'.");
+                    }
+                }
+            }
+
+            writer.Flush();
+            return stream.ToArray();
+        }
+
+        private static Dictionary<string, List<Dictionary<string, string>>>
+            CreateMinimalGameplayRows(
+                string mainUnitKey = "main_hero",
+                string landUnitKey = "land_hero",
+                string fallbackVariant = "fallback_variant",
+                string fallbackVmd = "fallback")
+            => new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["main_units_tables"] =
+                [
+                    new()
+                    {
+                        ["unit"] = mainUnitKey,
+                        ["land_unit"] = landUnitKey,
+                        ["caste"] = "hero",
+                        ["num_men"] = "1",
+                    },
+                ],
+                ["land_units_tables"] =
+                [
+                    new()
+                    {
+                        ["key"] = landUnitKey,
+                        ["category"] = "inf_melee",
+                    },
+                ],
+                ["unit_variants_tables"] =
+                [
+                    new()
+                    {
+                        ["faction"] = "",
+                        ["unit"] = landUnitKey,
+                        ["name"] = "body",
+                        ["variant"] = fallbackVariant,
+                    },
+                ],
+                ["variants_tables"] =
+                [
+                    new()
+                    {
+                        ["variant_name"] = fallbackVariant,
+                        ["variant_filename"] = fallbackVmd,
+                    },
+                ],
+                ["mounts_tables"] =
+                [
+                    new() { ["key"] = "unused_mount", ["variant"] = fallbackVariant },
+                ],
+                ["battlefield_engines_tables"] =
+                [
+                    new()
+                    {
+                        ["key"] = "unused_engine",
+                        ["engine_type"] = "Generic_No_Crew_Rotate",
+                        ["variant"] = fallbackVariant,
+                    },
+                ],
+            };
+
+        private static object ResolveFromDecodedRows(
+            Dictionary<string, List<Dictionary<string, string>>> rowsByTable,
+            params string[] rootVmdPaths)
+        {
+            var packedFiles = rowsByTable.ToDictionary(
+                entry => entry.Key,
+                entry => PackFile.CreateFromBytes(
+                    $"{entry.Key}.bin",
+                    BuildPackedTableRows(
+                        entry.Key,
+                        entry.Value.Cast<IReadOnlyDictionary<string, string>>().ToArray())),
+                StringComparer.OrdinalIgnoreCase);
+
+            var source = new Mock<IPackFileContainer>();
+            source.SetupGet(container => container.Name).Returns("fixture.pack");
+            source.SetupGet(container => container.SystemFilePath).Returns("fixture.pack");
+            source.SetupGet(container => container.IsCaPackFile).Returns(false);
+            source.Setup(container => container.GetDirectoryContent(It.IsAny<string>()))
+                .Returns((string directoryPath) =>
+                {
+                    var normalized = directoryPath.Replace('/', '\\');
+                    var tableName = normalized.StartsWith(
+                        "db\\",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? normalized[3..]
+                        : normalized;
+                    if (!packedFiles.TryGetValue(tableName, out var file))
+                        return [];
+
+                    return
+                    [
+                        ($"{normalized}\\fixture", file),
+                    ];
+                });
+            source.Setup(container => container.ContainsFile(It.IsAny<string>()))
+                .Returns(false);
+
+            var packFileService = new Mock<IPackFileService>();
+            packFileService.Setup(service => service.GetAllPackfileContainers())
+                .Returns([source.Object]);
+
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "Resolve",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.Resolve was not found.");
+
+            return method.Invoke(
+                null,
+                [
+                    packFileService.Object,
+                    source.Object,
+                    rootVmdPaths,
+                    new Dictionary<string, IReadOnlyCollection<string>>(
+                        StringComparer.OrdinalIgnoreCase),
+                    CancellationToken.None,
+                    null,
+                ])
+                ?? throw new InvalidOperationException("Resolve returned null.");
+        }
+
+        private static bool ResolutionHasVmd(object resolution, string vmdPath)
+        {
+            var usages = (IDictionary)(resolution.GetType()
+                .GetProperty("UsagesByVmd")?.GetValue(resolution)
+                ?? throw new InvalidOperationException("UsagesByVmd was not found."));
+            var normalized = vmdPath.Replace('/', '\\').TrimStart('\\').ToLowerInvariant();
+            return usages.Contains(normalized);
+        }
+
+        private static bool ResolutionIsHealthy(object resolution)
+            => (bool)(resolution.GetType().GetProperty("IsGameplayResolutionHealthy")
+                ?.GetValue(resolution)
+                ?? throw new InvalidOperationException(
+                    "IsGameplayResolutionHealthy was not found."));
+
+        private static string ResolutionHealthMessage(object resolution)
+            => resolution.GetType().GetProperty("GameplayResolutionHealthMessage")
+                ?.GetValue(resolution)?.ToString()
+                ?? string.Empty;
 
         [TestCase("melee_cavalry", "war_beast", "CavalryChariot")]
         [TestCase("missile_cavalry", "inf_ranged", "CavalryChariot")]
@@ -648,7 +906,7 @@ namespace Test.KitbashEditor.Services
             return values;
         }
 
-        private static IReadOnlyDictionary<string, string> GetTransitiveChildVmdParents(
+        private static IReadOnlyList<(string Child, string Parent)> GetTransitiveChildVmdParents(
             string rootVmdPath,
             IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd)
         {
@@ -662,11 +920,23 @@ namespace Test.KitbashEditor.Services
                 ?? throw new InvalidOperationException(
                     "Wh3UnitCategoryResolver.GetTransitiveChildVmdParents was not found.");
 
-            return (IReadOnlyDictionary<string, string>)(method.Invoke(
+            var edges = (IEnumerable)(method.Invoke(
                 null,
                 [rootVmdPath, childVmdsByVmd, CancellationToken.None])
                 ?? throw new InvalidOperationException(
                     "GetTransitiveChildVmdParents returned null."));
+
+            return edges.Cast<object>()
+                .Select(edge =>
+                {
+                    var edgeType = edge.GetType();
+                    return (
+                        Child: edgeType.GetProperty("Key")?.GetValue(edge)?.ToString()
+                            ?? string.Empty,
+                        Parent: edgeType.GetProperty("Value")?.GetValue(edge)?.ToString()
+                            ?? string.Empty);
+                })
+                .ToArray();
         }
 
         private static string GetGameplayResolutionHealthIssue(
@@ -741,9 +1011,38 @@ namespace Test.KitbashEditor.Services
             Assert.Multiple(() =>
             {
                 Assert.That(parents, Has.Count.EqualTo(2));
-                Assert.That(parents[child], Is.EqualTo(root));
-                Assert.That(parents[grandchild], Is.EqualTo(child));
+                Assert.That(
+                    parents.Single(edge => edge.Child == child).Parent,
+                    Is.EqualTo(root));
+                Assert.That(
+                    parents.Single(edge => edge.Child == grandchild).Parent,
+                    Is.EqualTo(child));
             });
+        }
+
+        [Test]
+        public void ChildVmdPropagation_PreservesBothParentsInDiamondGraph()
+        {
+            const string root = @"variantmeshes\variantmeshdefinitions\root.variantmeshdefinition";
+            const string left = @"variantmeshes\variantmeshdefinitions\left.variantmeshdefinition";
+            const string right = @"variantmeshes\variantmeshdefinitions\right.variantmeshdefinition";
+            const string child = @"variantmeshes\variantmeshdefinitions\child.variantmeshdefinition";
+
+            var edges = GetTransitiveChildVmdParents(
+                root,
+                new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [root] = [left, right],
+                    [left] = [child],
+                    [right] = [child],
+                });
+
+            var childParents = edges
+                .Where(edge => edge.Child == child)
+                .Select(edge => edge.Parent)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            Assert.That(childParents, Is.EquivalentTo(new[] { left, right }));
         }
 
         [Test]
@@ -829,6 +1128,189 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void FullResolver_UnknownFactionKeepsScopedCampaignArtReachable()
+        {
+            var rows = CreateMinimalGameplayRows();
+            rows["variants_tables"].Add(
+                new()
+                {
+                    ["variant_name"] = "scoped_variant",
+                    ["variant_filename"] = "scoped_agent",
+                });
+            rows["agent_subtypes_tables"] =
+            [
+                new()
+                {
+                    ["key"] = "hero_subtype",
+                    ["associated_unit_override"] = "main_hero",
+                },
+            ];
+            rows["agent_subtype_subculture_overrides_tables"] =
+            [
+                new()
+                {
+                    ["subculture"] = "unused_sub",
+                    ["subtype"] = "unused_subtype",
+                    ["agent"] = "champion",
+                    ["associated_unit_override"] = "other_unit",
+                },
+            ];
+            rows["campaign_character_art_sets_tables"] =
+            [
+                new()
+                {
+                    ["art_set_id"] = "scoped_art",
+                    ["agent_subtype"] = "hero_subtype",
+                    ["faction"] = "faction_a",
+                },
+            ];
+            rows["campaign_character_arts_tables"] =
+            [
+                new()
+                {
+                    ["id"] = "scoped_art_1",
+                    ["art_set_id"] = "scoped_art",
+                    ["level"] = "1",
+                    ["age"] = "0",
+                    ["season"] = "none",
+                    ["uniform"] = "scoped_uniform",
+                },
+            ];
+            rows["agent_uniforms_tables"] =
+            [
+                new()
+                {
+                    ["uniform_name"] = "scoped_uniform",
+                    ["battle_filename"] = "scoped_variant",
+                },
+            ];
+            rows["units_custom_battle_permissions_tables"] =
+            [
+                new()
+                {
+                    ["faction"] = "unused_faction",
+                    ["unit"] = "other_unit",
+                },
+            ];
+            rows["factions_tables"] =
+            [
+                new() { ["key"] = "faction_a", ["subculture"] = "sub_a" },
+            ];
+            rows["cultures_subcultures_tables"] =
+            [
+                new() { ["subculture"] = "sub_a", ["culture"] = "culture_a" },
+            ];
+
+            const string scopedVmd =
+                @"variantmeshes\variantmeshdefinitions\scoped_agent.variantmeshdefinition";
+            var resolution = ResolveFromDecodedRows(rows, scopedVmd);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(ResolutionHasVmd(resolution, scopedVmd), Is.True);
+                Assert.That(ResolutionIsHealthy(resolution), Is.True);
+            });
+        }
+
+        [Test]
+        public void FullResolver_FallbackOnlyHeroDoesNotRequireOptionalAgentTables()
+        {
+            var rows = CreateMinimalGameplayRows();
+            const string fallbackVmd =
+                @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition";
+
+            var resolution = ResolveFromDecodedRows(rows, fallbackVmd);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(ResolutionHasVmd(resolution, fallbackVmd), Is.True);
+                Assert.That(ResolutionIsHealthy(resolution), Is.True);
+                Assert.That(ResolutionHealthMessage(resolution), Is.Empty);
+            });
+        }
+
+        [Test]
+        public void FullResolver_UnresolvedSubtypeChainFallsBackButIsUnhealthy()
+        {
+            var rows = CreateMinimalGameplayRows();
+            rows["agent_subtypes_tables"] =
+            [
+                new()
+                {
+                    ["key"] = "hero_subtype",
+                    ["associated_unit_override"] = "main_hero",
+                },
+            ];
+            rows["agent_subtype_subculture_overrides_tables"] =
+            [
+                new()
+                {
+                    ["subculture"] = "unused_sub",
+                    ["subtype"] = "unused_subtype",
+                    ["agent"] = "champion",
+                    ["associated_unit_override"] = "other_unit",
+                },
+            ];
+            rows["campaign_character_art_sets_tables"] =
+            [
+                new()
+                {
+                    ["art_set_id"] = "unrelated_art",
+                    ["agent_subtype"] = "other_subtype",
+                },
+            ];
+            rows["campaign_character_arts_tables"] =
+            [
+                new()
+                {
+                    ["id"] = "unrelated_art_1",
+                    ["art_set_id"] = "unrelated_art",
+                    ["level"] = "1",
+                    ["age"] = "0",
+                    ["season"] = "none",
+                    ["uniform"] = "unused_uniform",
+                },
+            ];
+            rows["agent_uniforms_tables"] =
+            [
+                new()
+                {
+                    ["uniform_name"] = "unused_uniform",
+                    ["battle_filename"] = "fallback_variant",
+                },
+            ];
+            rows["units_custom_battle_permissions_tables"] =
+            [
+                new()
+                {
+                    ["faction"] = "unused_faction",
+                    ["unit"] = "other_unit",
+                },
+            ];
+            rows["factions_tables"] =
+            [
+                new() { ["key"] = "unused_faction", ["subculture"] = "unused_sub" },
+            ];
+            rows["cultures_subcultures_tables"] =
+            [
+                new() { ["subculture"] = "unused_sub", ["culture"] = "unused_culture" },
+            ];
+
+            const string fallbackVmd =
+                @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition";
+            var resolution = ResolveFromDecodedRows(rows, fallbackVmd);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(ResolutionHasVmd(resolution, fallbackVmd), Is.True);
+                Assert.That(ResolutionIsHealthy(resolution), Is.False);
+                Assert.That(
+                    ResolutionHealthMessage(resolution),
+                    Does.Contain("agent subtype/override chain matched"));
+            });
+        }
+
+        [Test]
         public void BattleAgentVisual_GeneralUniformOverridesArtSetForFaction()
         {
             var resolved = ResolveBattleAgentVisuals(
@@ -906,6 +1388,88 @@ namespace Test.KitbashEditor.Services
                 Assert.That(resolved[0]["variant"], Is.EqualTo("explicit_variant"));
                 Assert.That(resolved[0]["consumer"], Is.EqualTo("CustomBattleGeneralUniform"));
                 Assert.That(resolved[0]["uniform"], Is.EqualTo("explicit_uniform"));
+            });
+        }
+
+        [Test]
+        public void BattleAgentVisual_UnknownFactionUnionsScopedArtSets()
+        {
+            var resolved = ResolveBattleAgentVisuals(
+                "main_lord",
+                [],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                [],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["lord_subtype"] = new()
+                    {
+                        ["key"] = "lord_subtype",
+                        ["associated_unit_override"] = "main_lord",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["faction_a_art"] = new()
+                    {
+                        ["art_set_id"] = "faction_a_art",
+                        ["agent_subtype"] = "lord_subtype",
+                        ["faction"] = "faction_a",
+                    },
+                    ["faction_b_art"] = new()
+                    {
+                        ["art_set_id"] = "faction_b_art",
+                        ["agent_subtype"] = "lord_subtype",
+                        ["faction"] = "faction_b",
+                    },
+                },
+                [
+                    new()
+                    {
+                        ["art_set_id"] = "faction_a_art",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "uniform_a",
+                    },
+                    new()
+                    {
+                        ["art_set_id"] = "faction_b_art",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "uniform_b",
+                    },
+                ],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["uniform_a"] = new()
+                    {
+                        ["uniform_name"] = "uniform_a",
+                        ["battle_filename"] = "variant_a",
+                    },
+                    ["uniform_b"] = new()
+                    {
+                        ["uniform_name"] = "uniform_b",
+                        ["battle_filename"] = "variant_b",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["variant_a"] = new() { ["variant_name"] = "variant_a" },
+                    ["variant_b"] = new() { ["variant_name"] = "variant_b" },
+                },
+                out var hasAuthority,
+                out var issues);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(hasAuthority, Is.False);
+                Assert.That(issues, Is.Empty);
+                Assert.That(
+                    resolved.Select(value => value["variant"]),
+                    Is.EquivalentTo(new[] { "variant_a", "variant_b" }));
             });
         }
 
