@@ -102,5 +102,22 @@ namespace Test.KitbashEditor.Services
                 Assert.That(scenarioProperties.TryGetProperty("rosterScope", out _), Is.True);
             });
         }
+
+        [Test]
+        public void AtlasScenario_DefaultsToPackAffectedRosterScope()
+        {
+            var scenarioType = AssetEditorAssembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3ArmyVisualScenario",
+                throwOnError: true)!;
+            var scenario = scenarioType.GetProperty(
+                    "PackAffected",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                ?.GetValue(null)
+                ?? throw new InvalidOperationException("Wh3ArmyVisualScenario.PackAffected was not found.");
+
+            Assert.That(
+                scenarioType.GetProperty("RosterScope")?.GetValue(scenario)?.ToString(),
+                Is.EqualTo("ModAffectedUnits"));
+        }
     }
 }

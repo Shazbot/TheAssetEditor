@@ -25,6 +25,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
@@ -79,14 +81,29 @@
             Opacity="0.7" />
 
         <CheckBox
-            x:Name="OptimizeGeometryCheckBox"
+            x:Name="ScoreAllGameUnitsCheckBox"
             Grid.Row="7"
+            Margin="0,12,0,0"
+            Content="Score atlas value against all game units (conservative)"
+            IsChecked="False" />
+
+        <TextBlock
+            Grid.Row="8"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="Off by default: the value gate uses units whose visual components are present in the selected pack. Enable this when the output is intended for broad game-wide reuse rather than this pack's affected visuals."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
+        <CheckBox
+            x:Name="OptimizeGeometryCheckBox"
+            Grid.Row="9"
             Margin="0,12,0,0"
             Content="Optimize geometry (experimental)"
             IsChecked="True" />
 
         <TextBlock
-            Grid.Row="8"
+            Grid.Row="10"
             Margin="22,4,0,0"
             MaxWidth="620"
             Text="When enabled, atlased rigid meshes remove unused vertices and degenerate triangles, deduplicate identical vertices, optimize triangle order for the GPU vertex cache, and reorder the vertex buffer for locality."
@@ -95,14 +112,14 @@
 
         <TextBlock
             x:Name="PhaseText"
-            Grid.Row="9"
+            Grid.Row="11"
             Margin="0,16,0,0"
             FontWeight="SemiBold"
             Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="10"
+            Grid.Row="12"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -112,7 +129,7 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="11"
+            Grid.Row="13"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
@@ -120,7 +137,7 @@
             IsIndeterminate="False"
             Value="0" />
 
-        <Grid Grid.Row="12" Margin="0,8,0,0">
+        <Grid Grid.Row="14" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>

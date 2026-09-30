@@ -98,6 +98,7 @@ namespace Editors.KitbasherEditor.Services
                 shareAtlasesAcrossVmds,
                 optimizeGeometry,
                 atlasAllVmds,
+                scoreAllGameUnits,
                 cancellationToken,
                 progress) =>
             {
@@ -110,7 +111,8 @@ namespace Editors.KitbasherEditor.Services
                     mergeCompatibleMeshes: mergeCompatibleMeshes,
                     shareAtlasesAcrossVmds: shareAtlasesAcrossVmds,
                     optimizeGeometry: optimizeGeometry,
-                    atlasAllVmds: atlasAllVmds);
+                    atlasAllVmds: atlasAllVmds,
+                    scoreAllGameUnits: scoreAllGameUnits);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -150,7 +152,8 @@ namespace Editors.KitbasherEditor.Services
             bool mergeCompatibleMeshes = false,
             bool shareAtlasesAcrossVmds = true,
             bool optimizeGeometry = false,
-            bool atlasAllVmds = false)
+            bool atlasAllVmds = false,
+            bool scoreAllGameUnits = false)
         {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
@@ -235,7 +238,10 @@ namespace Editors.KitbasherEditor.Services
                     source,
                     vmdRoots,
                     childVmdsByVmd,
-                    cancellationToken);
+                    cancellationToken,
+                    scoreAllGameUnits
+                        ? Wh3ArmyVisualScenario.Default
+                        : Wh3ArmyVisualScenario.PackAffected);
                 if (!atlasAllVmds &&
                     !state.UnitCategoryResolution.IsGameplayResolutionHealthy)
                 {
@@ -10569,6 +10575,11 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas VMD roots: {state.AtlasVmdRootCount:N0} / {state.SourceVmdRootCount:N0}");
             if (state.UnitCategoryResolution != null)
             {
+                sb.AppendLine(
+                    $"Atlas value-model roster scope: {state.UnitCategoryResolution.Scenario.RosterScope}" +
+                    (string.IsNullOrWhiteSpace(state.UnitCategoryResolution.Scenario.RosterScopeKey)
+                        ? string.Empty
+                        : $" ({state.UnitCategoryResolution.Scenario.RosterScopeKey})"));
                 var gameplayEligibleVmdCount = state.UnitCategoryResolution.UsagesByVmd.Keys
                     .Count(state.UnitCategoryResolution.IsVmdUsageComplete);
                 sb.AppendLine(
@@ -10613,7 +10624,16 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Malformed referenced VMD files ignored: {state.MalformedReferencedVmds.Count}");
             sb.AppendLine($"Malformed WSModels ignored: {state.MalformedWsModelsIgnored.Count}");
             sb.AppendLine($"Malformed material XML files ignored: {state.MalformedMaterialsIgnored.Count}");
-            sb.AppendLine($"Mesh parts atlased: {state.ProcessedMeshes.Count}");
+            var transformedAtlasRoots = state.AtlasedMeshes
+                .Select(entry => entry.RootVmdPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            sb.AppendLine($"Mesh parts atlased/remapped: {state.ProcessedMeshes.Count}");
+            sb.AppendLine(
+                $"Atlas VMD roots with atlased mesh parts: {transformedAtlasRoots:N0} / " +
+                $"{state.AtlasVmdRootCount:N0}");
+            sb.AppendLine($"Modified rigid meshes: {state.ModifiedRigids.Count:N0}");
+            sb.AppendLine($"Modified WSModels: {state.ModifiedWsModels.Count:N0}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
             sb.AppendLine($"Constant-only atlas channels skipped: {state.ConstantOnlyAtlasChannelsSkipped}");
@@ -10940,7 +10960,7 @@ namespace Editors.KitbasherEditor.Services
                     $"Resolved direct engine assets: {unitResolution.DirectAssetUsagesByPath.Count:N0} " +
                     $"asset(s), {directAssetUsages.Count:N0} usage(s)");
                 sb.AppendLine(
-                    $"Complete DB-derived visual roster: {unitResolution.RosterUnits.Count:N0} unit(s); " +
+                    $"Scenario roster after scope: {unitResolution.RosterUnits.Count:N0} unit(s); " +
                     $"scope={unitResolution.Scenario.RosterScope}" +
                     (string.IsNullOrWhiteSpace(unitResolution.Scenario.RosterScopeKey)
                         ? string.Empty

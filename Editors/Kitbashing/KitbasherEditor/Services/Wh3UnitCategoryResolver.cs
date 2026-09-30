@@ -91,6 +91,12 @@ namespace Editors.KitbasherEditor.Services
             },
             Wh3RosterScope.AllGameUnits,
             null);
+
+        // The resolver default remains all-game for callers that need a stable, game-wide
+        // denominator. Atlas planning is pack-scoped by default because a selected mod pack
+        // should not be charged for units whose visuals cannot be affected by that pack.
+        public static Wh3ArmyVisualScenario PackAffected { get; } =
+            Default with { RosterScope = Wh3RosterScope.ModAffectedUnits };
     }
 
     internal sealed record Wh3UnitVisualCounts(
