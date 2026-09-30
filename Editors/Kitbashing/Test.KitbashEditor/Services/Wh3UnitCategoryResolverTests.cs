@@ -348,6 +348,42 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void EffectiveRows_AgentSubtypeOverridesKeepCompositeKeyRowsSeparate()
+        {
+            var effective = new Dictionary<string, Dictionary<string, string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            ApplyEffectiveRows(
+                "agent_subtype_subculture_overrides_tables",
+                effective,
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["subculture"] = "sub_a",
+                        ["subtype"] = "shared_subtype",
+                        ["agent"] = "general",
+                        ["associated_unit_override"] = "unit_a",
+                    },
+                    new Dictionary<string, string>
+                    {
+                        ["subculture"] = "sub_b",
+                        ["subtype"] = "shared_subtype",
+                        ["agent"] = "general",
+                        ["associated_unit_override"] = "unit_b",
+                    },
+                    new Dictionary<string, string>
+                    {
+                        ["subculture"] = "sub_a",
+                        ["subtype"] = "shared_subtype",
+                        ["agent"] = "champion",
+                        ["associated_unit_override"] = "unit_c",
+                    },
+                ]);
+
+            Assert.That(effective, Has.Count.EqualTo(3));
+        }
+
+        [Test]
         public void EffectiveRows_AnimatedLodKeepsAllFilesForAnAnimatedKey()
         {
             var effective = new Dictionary<string, Dictionary<string, string>>(
@@ -539,6 +575,79 @@ namespace Test.KitbashEditor.Services
                     "ResolveBattleAgentVariantNames returned null."));
         }
 
+        private static IReadOnlyList<Dictionary<string, string>> ResolveBattleAgentVisuals(
+            string mainUnitKey,
+            IReadOnlyCollection<string> factions,
+            IReadOnlyDictionary<string, string> subcultureByFaction,
+            IReadOnlyDictionary<string, string> cultureBySubculture,
+            List<Dictionary<string, string>> permissions,
+            Dictionary<string, Dictionary<string, string>> agentSubtypes,
+            Dictionary<string, Dictionary<string, string>> subtypeOverrides,
+            Dictionary<string, Dictionary<string, string>> artSets,
+            List<Dictionary<string, string>> arts,
+            Dictionary<string, Dictionary<string, string>> uniforms,
+            Dictionary<string, Dictionary<string, string>> variants,
+            out bool hasAuthority,
+            out IReadOnlyList<string> issues)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "ResolveBattleAgentVisuals",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.ResolveBattleAgentVisuals was not found.");
+
+            var resolution = method.Invoke(
+                null,
+                [
+                    mainUnitKey,
+                    factions,
+                    subcultureByFaction,
+                    cultureBySubculture,
+                    permissions,
+                    agentSubtypes,
+                    subtypeOverrides,
+                    artSets,
+                    arts,
+                    uniforms,
+                    variants,
+                ])
+                ?? throw new InvalidOperationException(
+                    "ResolveBattleAgentVisuals returned null.");
+
+            hasAuthority = (bool)(resolution.GetType()
+                .GetProperty("HasAuthoritativeVisualPath")?.GetValue(resolution)
+                ?? false);
+            issues = ((System.Collections.IEnumerable)(resolution.GetType()
+                    .GetProperty("Issues")?.GetValue(resolution)
+                    ?? Array.Empty<string>()))
+                .Cast<object>()
+                .Select(value => value.ToString() ?? string.Empty)
+                .ToArray();
+
+            var values = new List<Dictionary<string, string>>();
+            var resolvedVariants = (System.Collections.IEnumerable)(resolution.GetType()
+                .GetProperty("Variants")?.GetValue(resolution)
+                ?? Array.Empty<object>());
+            foreach (var value in resolvedVariants)
+            {
+                var type = value!.GetType();
+                values.Add(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["variant"] = type.GetProperty("VariantName")?.GetValue(value)?.ToString() ?? string.Empty,
+                    ["consumer"] = type.GetProperty("ConsumerType")?.GetValue(value)?.ToString() ?? string.Empty,
+                    ["faction"] = type.GetProperty("FactionKey")?.GetValue(value)?.ToString() ?? string.Empty,
+                    ["uniform"] = type.GetProperty("UniformName")?.GetValue(value)?.ToString() ?? string.Empty,
+                    ["art_set"] = type.GetProperty("ArtSetId")?.GetValue(value)?.ToString() ?? string.Empty,
+                });
+            }
+
+            return values;
+        }
+
         private static IReadOnlyDictionary<string, string> GetTransitiveChildVmdParents(
             string rootVmdPath,
             IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd)
@@ -576,7 +685,39 @@ namespace Test.KitbashEditor.Services
 
             return (string)(method.Invoke(
                 null,
-                [parsedRowsByTable, diagnostics ?? Array.Empty<string>()])
+                [
+                    parsedRowsByTable,
+                    diagnostics ?? Array.Empty<string>(),
+                    false,
+                    Array.Empty<string>(),
+                ])
+                ?? throw new InvalidOperationException(
+                    "GetGameplayResolutionHealthIssue returned null."));
+        }
+
+        private static string GetGameplayResolutionHealthIssueForAgents(
+            IReadOnlyDictionary<string, int> parsedRowsByTable,
+            IReadOnlyList<string>? diagnostics = null,
+            IReadOnlyList<string>? semanticIssues = null)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "GetGameplayResolutionHealthIssue",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.GetGameplayResolutionHealthIssue was not found.");
+
+            return (string)(method.Invoke(
+                null,
+                [
+                    parsedRowsByTable,
+                    diagnostics ?? Array.Empty<string>(),
+                    true,
+                    semanticIssues ?? Array.Empty<string>(),
+                ])
                 ?? throw new InvalidOperationException(
                     "GetGameplayResolutionHealthIssue returned null."));
         }
@@ -657,6 +798,243 @@ namespace Test.KitbashEditor.Services
             };
 
             Assert.That(GetGameplayResolutionHealthIssue(rows), Is.Empty);
+        }
+
+        [Test]
+        public void GameplayResolutionHealth_AgentSemanticFailureIsFatal()
+        {
+            var rows = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["main_units_tables"] = 100,
+                ["land_units_tables"] = 100,
+                ["unit_variants_tables"] = 100,
+                ["variants_tables"] = 100,
+                ["mounts_tables"] = 10,
+                ["battlefield_engines_tables"] = 10,
+                ["agent_subtypes_tables"] = 10,
+                ["agent_subtype_subculture_overrides_tables"] = 10,
+                ["campaign_character_art_sets_tables"] = 10,
+                ["campaign_character_arts_tables"] = 10,
+                ["agent_uniforms_tables"] = 10,
+                ["units_custom_battle_permissions_tables"] = 10,
+                ["factions_tables"] = 10,
+                ["cultures_subcultures_tables"] = 10,
+            };
+
+            var issue = GetGameplayResolutionHealthIssueForAgents(
+                rows,
+                semanticIssues: ["main_hero: missing explicit uniform"]);
+
+            Assert.That(issue, Does.Contain("agent visual reference coverage failed"));
+        }
+
+        [Test]
+        public void BattleAgentVisual_GeneralUniformOverridesArtSetForFaction()
+        {
+            var resolved = ResolveBattleAgentVisuals(
+                "main_hero",
+                ["faction_a"],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["faction_a"] = "sub_a",
+                },
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["sub_a"] = "culture_a",
+                },
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["unit"] = "main_hero",
+                        ["faction"] = "faction_a",
+                        ["general_uniform"] = "explicit_uniform",
+                    },
+                ],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["hero_subtype"] = new()
+                    {
+                        ["key"] = "hero_subtype",
+                        ["associated_unit_override"] = "main_hero",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["generic_art"] = new()
+                    {
+                        ["art_set_id"] = "generic_art",
+                        ["agent_subtype"] = "hero_subtype",
+                    },
+                },
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["art_set_id"] = "generic_art",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "art_uniform",
+                    },
+                ],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["explicit_uniform"] = new()
+                    {
+                        ["uniform_name"] = "explicit_uniform",
+                        ["battle_filename"] = "explicit_variant",
+                    },
+                    ["art_uniform"] = new()
+                    {
+                        ["uniform_name"] = "art_uniform",
+                        ["battle_filename"] = "art_variant",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["explicit_variant"] = new() { ["variant_name"] = "explicit_variant" },
+                    ["art_variant"] = new() { ["variant_name"] = "art_variant" },
+                },
+                out var hasAuthority,
+                out var issues);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(hasAuthority, Is.True);
+                Assert.That(issues, Is.Empty);
+                Assert.That(resolved, Has.Count.EqualTo(1));
+                Assert.That(resolved[0]["variant"], Is.EqualTo("explicit_variant"));
+                Assert.That(resolved[0]["consumer"], Is.EqualTo("CustomBattleGeneralUniform"));
+                Assert.That(resolved[0]["uniform"], Is.EqualTo("explicit_uniform"));
+            });
+        }
+
+        [Test]
+        public void BattleAgentVisual_UsesMostSpecificApplicableArtSet()
+        {
+            var resolved = ResolveBattleAgentVisuals(
+                "main_lord",
+                ["faction_a"],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["faction_a"] = "sub_a",
+                },
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["sub_a"] = "culture_a",
+                },
+                [],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["lord_subtype"] = new()
+                    {
+                        ["key"] = "lord_subtype",
+                        ["associated_unit_override"] = "main_lord",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["generic"] = new()
+                    {
+                        ["art_set_id"] = "generic",
+                        ["agent_subtype"] = "lord_subtype",
+                    },
+                    ["wrong_faction"] = new()
+                    {
+                        ["art_set_id"] = "wrong_faction",
+                        ["agent_subtype"] = "lord_subtype",
+                        ["faction"] = "faction_b",
+                    },
+                    ["specific"] = new()
+                    {
+                        ["art_set_id"] = "specific",
+                        ["agent_subtype"] = "lord_subtype",
+                        ["faction"] = "faction_a",
+                    },
+                },
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["art_set_id"] = "generic",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "generic_uniform",
+                    },
+                    new Dictionary<string, string>
+                    {
+                        ["art_set_id"] = "specific",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "specific_uniform",
+                    },
+                ],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["generic_uniform"] = new()
+                    {
+                        ["uniform_name"] = "generic_uniform",
+                        ["battle_filename"] = "generic_variant",
+                    },
+                    ["specific_uniform"] = new()
+                    {
+                        ["uniform_name"] = "specific_uniform",
+                        ["battle_filename"] = "specific_variant",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["generic_variant"] = new() { ["variant_name"] = "generic_variant" },
+                    ["specific_variant"] = new() { ["variant_name"] = "specific_variant" },
+                },
+                out var hasAuthority,
+                out var issues);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(hasAuthority, Is.True);
+                Assert.That(issues, Is.Empty);
+                Assert.That(resolved.Select(value => value["variant"]),
+                    Is.EqualTo(new[] { "specific_variant" }));
+                Assert.That(resolved[0]["art_set"], Is.EqualTo("specific"));
+                Assert.That(resolved[0]["consumer"], Is.EqualTo("BattleAgentArtSet"));
+            });
+        }
+
+        [Test]
+        public void BattleAgentVisual_BrokenGeneralUniformIsAuthoritativeAndUnhealthy()
+        {
+            var resolved = ResolveBattleAgentVisuals(
+                "main_hero",
+                ["faction_a"],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["unit"] = "main_hero",
+                        ["faction"] = "faction_a",
+                        ["general_uniform"] = "missing_uniform",
+                    },
+                ],
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase),
+                [],
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase),
+                out var hasAuthority,
+                out var issues);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(hasAuthority, Is.True);
+                Assert.That(resolved, Is.Empty);
+                Assert.That(issues, Has.Count.EqualTo(1));
+                Assert.That(issues[0], Does.Contain("missing_uniform"));
+            });
         }
 
         [Test]
