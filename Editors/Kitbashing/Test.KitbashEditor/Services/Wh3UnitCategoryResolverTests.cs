@@ -1405,7 +1405,7 @@ namespace Test.KitbashEditor.Services
                 mainUnitKey: "main_unit",
                 landUnitKey: "land_unit");
             rows["main_units_tables"][0]["caste"] = "melee_infantry";
-            rows["unit_variants_tables"][0]["faction"] = "";
+            rows["unit_variants_tables"][0]["faction"] = "faction_b";
             rows["units_custom_battle_permissions_tables"] =
             [
                 new()
@@ -1423,7 +1423,7 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 ResolutionRosterContainsMainUnit(resolution, "main_unit"),
                 Is.False,
-                "a generic visual row must not widen an explicit faction permission");
+                "a faction-specific visual row must not widen an explicit faction permission");
         }
 
         [Test]

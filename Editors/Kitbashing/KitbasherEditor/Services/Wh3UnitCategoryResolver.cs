@@ -1308,14 +1308,20 @@ namespace Editors.KitbasherEditor.Services
                             1.0));
                     }
 
-                    foreach (var provenance in usage.Provenance)
+                    // Known roster scope (especially custom-battle permissions) is
+                    // authoritative. Visual provenance may enrich an unknown scope, but must
+                    // not widen a unit that is already constrained to specific factions.
+                    if (builder.HasUnknownFactionScope)
                     {
-                        if (!string.IsNullOrWhiteSpace(provenance.FactionKey))
-                            builder.FactionKeys.Add(provenance.FactionKey);
-                        if (!string.IsNullOrWhiteSpace(provenance.SubcultureKey))
-                            builder.SubcultureKeys.Add(provenance.SubcultureKey);
-                        if (!string.IsNullOrWhiteSpace(provenance.CultureKey))
-                            builder.CultureKeys.Add(provenance.CultureKey);
+                        foreach (var provenance in usage.Provenance)
+                        {
+                            if (!string.IsNullOrWhiteSpace(provenance.FactionKey))
+                                builder.FactionKeys.Add(provenance.FactionKey);
+                            if (!string.IsNullOrWhiteSpace(provenance.SubcultureKey))
+                                builder.SubcultureKeys.Add(provenance.SubcultureKey);
+                            if (!string.IsNullOrWhiteSpace(provenance.CultureKey))
+                                builder.CultureKeys.Add(provenance.CultureKey);
+                        }
                     }
 
                     builders[identity] = builder;

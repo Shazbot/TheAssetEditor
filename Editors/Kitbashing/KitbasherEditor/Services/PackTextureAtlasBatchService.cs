@@ -2270,7 +2270,6 @@ namespace Editors.KitbasherEditor.Services
             // not from the subset of VMD roots discovered in this pack. Later usage loops may
             // enrich these units, but must never reintroduce identities rejected by the
             // selected faction/culture/mod scope.
-            // subset of VMD roots discovered in this pack.
             foreach (var unit in resolution.RosterUnits)
             {
                 if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(unit.Category))
