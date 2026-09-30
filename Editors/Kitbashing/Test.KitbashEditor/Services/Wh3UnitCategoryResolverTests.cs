@@ -1366,6 +1366,67 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void FullResolver_MixedWildcardAndSpecificPermissionMatchesUnrelatedFaction()
+        {
+            var rows = CreateMinimalGameplayRows(
+                mainUnitKey: "main_unit",
+                landUnitKey: "land_unit");
+            rows["main_units_tables"][0]["caste"] = "melee_infantry";
+            rows["unit_variants_tables"][0]["faction"] = "faction_a";
+            rows["units_custom_battle_permissions_tables"] =
+            [
+                new()
+                {
+                    ["unit"] = "main_unit",
+                    ["faction"] = "",
+                },
+                new()
+                {
+                    ["unit"] = "main_unit",
+                    ["faction"] = "faction_a",
+                },
+            ];
+
+            var resolution = ResolveFromDecodedRowsWithScenario(
+                rows,
+                CreateRosterScenario("SelectedFaction", "faction_b"),
+                @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition");
+
+            Assert.That(
+                ResolutionRosterContainsMainUnit(resolution, "main_unit"),
+                Is.True,
+                "a blank permission faction is a wildcard even when specific faction rows also exist");
+        }
+
+        [Test]
+        public void FullResolver_ExplicitPermissionBeatsGenericVariantFactionFallback()
+        {
+            var rows = CreateMinimalGameplayRows(
+                mainUnitKey: "main_unit",
+                landUnitKey: "land_unit");
+            rows["main_units_tables"][0]["caste"] = "melee_infantry";
+            rows["unit_variants_tables"][0]["faction"] = "";
+            rows["units_custom_battle_permissions_tables"] =
+            [
+                new()
+                {
+                    ["unit"] = "main_unit",
+                    ["faction"] = "faction_a",
+                },
+            ];
+
+            var resolution = ResolveFromDecodedRowsWithScenario(
+                rows,
+                CreateRosterScenario("SelectedFaction", "faction_b"),
+                @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition");
+
+            Assert.That(
+                ResolutionRosterContainsMainUnit(resolution, "main_unit"),
+                Is.False,
+                "a generic visual row must not widen an explicit faction permission");
+        }
+
+        [Test]
         public void FullResolver_FallbackOnlyHeroDoesNotRequireOptionalAgentTables()
         {
             var rows = CreateMinimalGameplayRows();

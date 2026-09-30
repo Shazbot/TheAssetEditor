@@ -214,6 +214,28 @@ namespace Test.KitbashEditor.Services
                        "EvaluateAtlasValueGateBudget returned null.");
         }
 
+        private static bool IsSharedMeshSafeForGameplay(
+            bool atlasAllVmdsEnabled,
+            IEnumerable<string> affectedWsModels,
+            IReadOnlySet<string> taintedGameplayWsModels)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "IsSharedMeshSafeForGameplay",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.IsSharedMeshSafeForGameplay was not found.");
+
+            return (bool)(method.Invoke(
+                null,
+                [atlasAllVmdsEnabled, affectedWsModels, taintedGameplayWsModels])
+                ?? throw new InvalidOperationException(
+                    "IsSharedMeshSafeForGameplay returned null."));
+        }
+
         private static bool IsCandidateAllowedForMode(
             bool atlasAllVmdsEnabled,
             bool scenarioResolved)
@@ -483,6 +505,48 @@ namespace Test.KitbashEditor.Services
                 Assert.That(lod0, Is.EqualTo(lod0Again));
                 Assert.That(lod0, Is.Not.EqualTo(lod1));
             });
+        }
+
+        [Test]
+        public void GameplaySharedMesh_TaintedConsumerBlocksCandidate()
+        {
+            Assert.That(
+                IsSharedMeshSafeForGameplay(
+                    atlasAllVmdsEnabled: false,
+                    ["eligible.wsmodel", "shared_tainted.wsmodel"],
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        "shared_tainted.wsmodel",
+                    }),
+                Is.False);
+        }
+
+        [Test]
+        public void GameplaySharedMesh_PackWideModeAllowsTaintedConsumer()
+        {
+            Assert.That(
+                IsSharedMeshSafeForGameplay(
+                    atlasAllVmdsEnabled: true,
+                    ["eligible.wsmodel", "shared_tainted.wsmodel"],
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        "shared_tainted.wsmodel",
+                    }),
+                Is.True);
+        }
+
+        [Test]
+        public void GameplaySharedMesh_UnrelatedTaintDoesNotBlockCandidate()
+        {
+            Assert.That(
+                IsSharedMeshSafeForGameplay(
+                    atlasAllVmdsEnabled: false,
+                    ["eligible.wsmodel"],
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        "other_tainted.wsmodel",
+                    }),
+                Is.True);
         }
 
         [Test]

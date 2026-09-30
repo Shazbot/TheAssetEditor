@@ -246,7 +246,10 @@ namespace Editors.KitbasherEditor.Services
                         "atlas mode if gameplay filtering is not required.");
                 }
 
-                state.ArmyResidencyModel = BuildArmyResidencyModel(state, state.UnitCategoryResolution);
+                state.ArmyResidencyModel =
+                    state.UnitCategoryResolution.IsGameplayResolutionHealthy
+                        ? BuildArmyResidencyModel(state, state.UnitCategoryResolution)
+                        : null;
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
 
                 var gameplayEligibleVmdRoots = state.UnitCategoryResolution.UsagesByVmd.Keys
@@ -329,6 +332,7 @@ namespace Editors.KitbasherEditor.Services
                 state.MalformedVmdRoots.AddRange(malformedVmdRoots);
                 phaseStopwatch.Restart();
                 BuildWsUsageIndex(state, cancellationToken, progress);
+                IndexTaintedGameplayWsModels(state, cancellationToken);
                 state.PhaseDurations["Index WSModels"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
@@ -640,6 +644,67 @@ namespace Editors.KitbasherEditor.Services
                     usages.Add(new WsUsage(wsPath, doc, node, materialPath));
                 }
             }
+        }
+
+        private static void IndexTaintedGameplayWsModels(
+            BatchState state,
+            CancellationToken cancellationToken)
+        {
+            state.TaintedGameplayWsModels.Clear();
+            var resolution = state.UnitCategoryResolution;
+            if (state.AtlasAllVmdsEnabled ||
+                resolution == null ||
+                resolution.UnresolvedConsumersByVmd.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var rootValue in resolution.UnresolvedConsumersByVmd.Keys)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var root = Normalize(rootValue);
+                if (root.Length == 0 || !state.Source.ContainsFile(root))
+                    continue;
+
+                foreach (var wsModel in GetReachableWsModels(
+                             state,
+                             root,
+                             cancellationToken))
+                {
+                    state.TaintedGameplayWsModels.Add(Normalize(wsModel));
+                }
+            }
+        }
+
+        private static bool IsSharedMeshSafeForGameplay(
+            bool atlasAllVmdsEnabled,
+            IEnumerable<string> affectedWsModels,
+            IReadOnlySet<string> taintedGameplayWsModels)
+            => atlasAllVmdsEnabled ||
+               !affectedWsModels
+                   .Select(Normalize)
+                   .Any(taintedGameplayWsModels.Contains);
+
+        private static bool IsCandidateSharedMeshSafeForGameplay(
+            BatchState state,
+            MeshKey key,
+            IReadOnlyCollection<WsUsage> candidateUsages)
+        {
+            if (state.AtlasAllVmdsEnabled ||
+                state.TaintedGameplayWsModels.Count == 0)
+            {
+                return true;
+            }
+
+            var affectedUsages = state.Usages.TryGetValue(key, out var allUsages)
+                ? allUsages
+                : candidateUsages;
+            return IsSharedMeshSafeForGameplay(
+                state.AtlasAllVmdsEnabled,
+                affectedUsages
+                    .Select(usage => usage.WsModelPath)
+                    .Where(path => !string.IsNullOrWhiteSpace(path)),
+                state.TaintedGameplayWsModels);
         }
 
         private List<MissingTextureDependency> FindMissingTextureDependencies(
@@ -1244,6 +1309,14 @@ namespace Editors.KitbasherEditor.Services
             XmlDocument? materialDocumentOverride = null)
         {
             skipReason = string.Empty;
+            if (!IsCandidateSharedMeshSafeForGameplay(state, key, usages))
+            {
+                skipReason =
+                    "Rigid mesh is shared with a WSModel reachable from an unresolved " +
+                    "gameplay consumer; gameplay-used mode leaves the shared asset unchanged.";
+                return null;
+            }
+
             var materialPath = usages[0].MaterialPath;
             XmlDocument materialDoc;
             if (materialDocumentOverride != null)
@@ -2188,8 +2261,15 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3UnitVisualRole, int>>(StringComparer.OrdinalIgnoreCase);
             var categoryByUnit = new Dictionary<string, Wh3ArmyUnitCategory>(
                 StringComparer.OrdinalIgnoreCase);
+            var allowedUnitIds = resolution.RosterUnits
+                .Select(GetArmyUnitIdentity)
+                .Where(identity => identity.Length != 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            // Populate the denominator from the complete DB-derived roster, not from the
+            // Populate the denominator from the already scenario-filtered DB-derived roster,
+            // not from the subset of VMD roots discovered in this pack. Later usage loops may
+            // enrich these units, but must never reintroduce identities rejected by the
+            // selected faction/culture/mod scope.
             // subset of VMD roots discovered in this pack.
             foreach (var unit in resolution.RosterUnits)
             {
@@ -2222,7 +2302,7 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     var identity = GetArmyUnitIdentity(usage);
-                    if (identity.Length == 0)
+                    if (identity.Length == 0 || !allowedUnitIds.Contains(identity))
                         continue;
 
                     unitsByCategory[usage.Category].Add(identity);
@@ -2300,7 +2380,7 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     var identity = GetArmyUnitIdentity(usage);
-                    if (identity.Length == 0)
+                    if (identity.Length == 0 || !allowedUnitIds.Contains(identity))
                         continue;
 
                     if (!directVmdsByUnitAndRole.TryGetValue(identity, out var directVmdsByRole))
@@ -2328,7 +2408,7 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     var identity = GetArmyUnitIdentity(usage);
-                    if (identity.Length == 0)
+                    if (identity.Length == 0 || !allowedUnitIds.Contains(identity))
                         continue;
 
                     unitsByCategory[usage.Category].Add(identity);
@@ -4904,8 +4984,12 @@ namespace Editors.KitbasherEditor.Services
             AtlasCandidate candidate)
         {
             var resolution = state.UnitCategoryResolution;
-            if (state.ArmyResidencyModel == null || resolution == null)
+            if (state.ArmyResidencyModel == null ||
+                resolution == null ||
+                !resolution.IsGameplayResolutionHealthy)
+            {
                 return false;
+            }
 
             var root = Normalize(candidate.RootVmdPath);
             if (root.Length != 0)
@@ -12610,6 +12694,8 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> TaintedGameplayWsModels { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public Wh3UnitCategoryResolution? UnitCategoryResolution { get; set; }
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);

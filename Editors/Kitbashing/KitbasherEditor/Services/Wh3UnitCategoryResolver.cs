@@ -438,14 +438,27 @@ namespace Editors.KitbasherEditor.Services
                 StringComparer.OrdinalIgnoreCase);
             var factionsByLandUnit = new Dictionary<string, HashSet<string>>(
                 StringComparer.OrdinalIgnoreCase);
+            var mainUnitsWithPermissionScope = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+            var unscopedFactionMainUnits = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+            var unscopedFactionLandUnits = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
 
             static void AddScopedFaction(
                 Dictionary<string, HashSet<string>> target,
+                HashSet<string> unscopedUnits,
                 string unitKey,
                 string factionKey)
             {
-                if (string.IsNullOrWhiteSpace(unitKey) || string.IsNullOrWhiteSpace(factionKey))
+                if (string.IsNullOrWhiteSpace(unitKey))
                     return;
+                if (string.IsNullOrWhiteSpace(factionKey))
+                {
+                    unscopedUnits.Add(unitKey);
+                    return;
+                }
+
                 if (!target.TryGetValue(unitKey, out var factions))
                 {
                     factions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -455,20 +468,47 @@ namespace Editors.KitbasherEditor.Services
             }
 
             foreach (var permission in customBattlePermissionRows)
-                AddScopedFaction(factionsByMainUnit, Get(permission, "unit"), Get(permission, "faction"));
+            {
+                var mainUnitKey = Get(permission, "unit");
+                if (mainUnitKey.Length == 0)
+                    continue;
+
+                mainUnitsWithPermissionScope.Add(mainUnitKey);
+                AddScopedFaction(
+                    factionsByMainUnit,
+                    unscopedFactionMainUnits,
+                    mainUnitKey,
+                    Get(permission, "faction"));
+            }
 
             // unit_variants.faction is visual-specific rather than a complete recruitment
-            // permission, but it is a useful fallback for mod units that omit custom-battle
-            // permission rows.
+            // permission. Use it only as a roster-scope fallback when a main unit has no
+            // custom-battle permission rows; otherwise a generic visual row must not widen
+            // an explicitly faction-scoped unit.
             foreach (var unitVariant in unitVariantRows)
             {
                 var scopedLandUnitKey = Get(unitVariant, "unit");
                 var factionKey = Get(unitVariant, "faction");
-                AddScopedFaction(factionsByLandUnit, scopedLandUnitKey, factionKey);
+                AddScopedFaction(
+                    factionsByLandUnit,
+                    unscopedFactionLandUnits,
+                    scopedLandUnitKey,
+                    factionKey);
+
                 if (mainByLandUnit.TryGetValue(scopedLandUnitKey, out var scopedMains))
                 {
                     foreach (var scopedMain in scopedMains)
-                        AddScopedFaction(factionsByMainUnit, Get(scopedMain, "unit"), factionKey);
+                    {
+                        var mainUnitKey = Get(scopedMain, "unit");
+                        if (mainUnitsWithPermissionScope.Contains(mainUnitKey))
+                            continue;
+
+                        AddScopedFaction(
+                            factionsByMainUnit,
+                            unscopedFactionMainUnits,
+                            mainUnitKey,
+                            factionKey);
+                    }
                 }
             }
 
@@ -1034,10 +1074,20 @@ namespace Editors.KitbasherEditor.Services
                 var identity = $"main:{mainUnitKey.Trim().ToLowerInvariant()}";
 
                 var factions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var hasPermissionScope = mainUnitsWithPermissionScope.Contains(mainUnitKey);
                 if (factionsByMainUnit.TryGetValue(mainUnitKey, out var mainFactions))
                     factions.UnionWith(mainFactions);
-                if (factionsByLandUnit.TryGetValue(landUnitKey, out var landFactions))
+                if (!hasPermissionScope &&
+                    factionsByLandUnit.TryGetValue(landUnitKey, out var landFactions))
+                {
                     factions.UnionWith(landFactions);
+                }
+
+                var hasUnknownFactionScope =
+                    unscopedFactionMainUnits.Contains(mainUnitKey) ||
+                    (!hasPermissionScope &&
+                     unscopedFactionLandUnits.Contains(landUnitKey)) ||
+                    factions.Count == 0;
 
                 var subcultures = factions
                     .Select(faction => subcultureByFaction.GetValueOrDefault(faction))
@@ -1059,7 +1109,7 @@ namespace Editors.KitbasherEditor.Services
                     FactionKeys = factions,
                     SubcultureKeys = subcultures,
                     CultureKeys = cultures,
-                    HasUnknownFactionScope = factions.Count == 0,
+                    HasUnknownFactionScope = hasUnknownFactionScope,
                 });
             }
 
