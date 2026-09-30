@@ -539,6 +539,126 @@ namespace Test.KitbashEditor.Services
                     "ResolveBattleAgentVariantNames returned null."));
         }
 
+        private static IReadOnlyDictionary<string, string> GetTransitiveChildVmdParents(
+            string rootVmdPath,
+            IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "GetTransitiveChildVmdParents",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.GetTransitiveChildVmdParents was not found.");
+
+            return (IReadOnlyDictionary<string, string>)(method.Invoke(
+                null,
+                [rootVmdPath, childVmdsByVmd, CancellationToken.None])
+                ?? throw new InvalidOperationException(
+                    "GetTransitiveChildVmdParents returned null."));
+        }
+
+        private static string GetGameplayResolutionHealthIssue(
+            IReadOnlyDictionary<string, int> parsedRowsByTable,
+            IReadOnlyList<string>? diagnostics = null)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "GetGameplayResolutionHealthIssue",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.GetGameplayResolutionHealthIssue was not found.");
+
+            return (string)(method.Invoke(
+                null,
+                [parsedRowsByTable, diagnostics ?? Array.Empty<string>()])
+                ?? throw new InvalidOperationException(
+                    "GetGameplayResolutionHealthIssue returned null."));
+        }
+
+        [Test]
+        public void ChildVmdPropagation_TracksParentAcrossMultipleLevels()
+        {
+            const string root = @"variantmeshes\variantmeshdefinitions\root.variantmeshdefinition";
+            const string child = @"variantmeshes\variantmeshdefinitions\child.variantmeshdefinition";
+            const string grandchild = @"variantmeshes\variantmeshdefinitions\grandchild.variantmeshdefinition";
+
+            var parents = GetTransitiveChildVmdParents(
+                root,
+                new Dictionary<string, IReadOnlyCollection<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [root] = [child],
+                    [child] = [grandchild],
+                    [grandchild] = [root],
+                });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(parents, Has.Count.EqualTo(2));
+                Assert.That(parents[child], Is.EqualTo(root));
+                Assert.That(parents[grandchild], Is.EqualTo(child));
+            });
+        }
+
+        [Test]
+        public void GameplayResolutionHealth_RequiresAllCriticalGameplayTables()
+        {
+            var rows = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["main_units_tables"] = 100,
+                ["land_units_tables"] = 100,
+                ["unit_variants_tables"] = 100,
+                ["variants_tables"] = 0,
+                ["mounts_tables"] = 10,
+                ["battlefield_engines_tables"] = 10,
+            };
+
+            var issue = GetGameplayResolutionHealthIssue(rows);
+
+            Assert.That(issue, Does.Contain("variants_tables"));
+        }
+
+        [Test]
+        public void GameplayResolutionHealth_FailsOnPartialCriticalDecodeFailure()
+        {
+            var rows = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["main_units_tables"] = 100,
+                ["land_units_tables"] = 100,
+                ["unit_variants_tables"] = 100,
+                ["variants_tables"] = 100,
+                ["mounts_tables"] = 10,
+                ["battlefield_engines_tables"] = 10,
+            };
+
+            var issue = GetGameplayResolutionHealthIssue(
+                rows,
+                ["Failed to decode db/unit_variants_tables/mod_rows from test.pack: bad row"]);
+
+            Assert.That(issue, Does.Contain("unit_variants_tables"));
+        }
+
+        [Test]
+        public void GameplayResolutionHealth_IsHealthyWhenCriticalTablesDecode()
+        {
+            var rows = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["main_units_tables"] = 100,
+                ["land_units_tables"] = 100,
+                ["unit_variants_tables"] = 100,
+                ["variants_tables"] = 100,
+                ["mounts_tables"] = 10,
+                ["battlefield_engines_tables"] = 10,
+            };
+
+            Assert.That(GetGameplayResolutionHealthIssue(rows), Is.Empty);
+        }
+
         [Test]
         public void BattleAgentVisual_PrefersBattleUniformVariant()
         {
