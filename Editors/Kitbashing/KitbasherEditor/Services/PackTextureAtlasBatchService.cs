@@ -236,6 +236,16 @@ namespace Editors.KitbasherEditor.Services
                     vmdRoots,
                     childVmdsByVmd,
                     cancellationToken);
+                if (!atlasAllVmds &&
+                    !state.UnitCategoryResolution.IsGameplayResolutionHealthy)
+                {
+                    throw new InvalidOperationException(
+                        "Gameplay-used atlas population could not be resolved safely: " +
+                        state.UnitCategoryResolution.GameplayResolutionHealthMessage +
+                        " Fix the WH3 DB/schema resolution problem, or explicitly use pack-wide " +
+                        "atlas mode if gameplay filtering is not required.");
+                }
+
                 state.ArmyResidencyModel = BuildArmyResidencyModel(state, state.UnitCategoryResolution);
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
 
@@ -9971,6 +9981,29 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Unit-category DB table files read: " +
                     $"{state.UnitCategoryResolution.TableFilesRead}");
+                sb.AppendLine(
+                    $"Gameplay resolver health: " +
+                    $"{(state.UnitCategoryResolution.IsGameplayResolutionHealthy ? "HEALTHY" : "UNHEALTHY")}");
+                if (!string.IsNullOrWhiteSpace(
+                        state.UnitCategoryResolution.GameplayResolutionHealthMessage))
+                {
+                    sb.AppendLine(
+                        $"Gameplay resolver health detail: " +
+                        state.UnitCategoryResolution.GameplayResolutionHealthMessage);
+                }
+
+                var directConsumerCounts = state.UnitCategoryResolution.DirectUsagesByVmd.Values
+                    .SelectMany(usages => usages)
+                    .GroupBy(usage => usage.ConsumerType)
+                    .OrderBy(group => group.Key)
+                    .Select(group => $"{group.Key}={group.Count():N0}")
+                    .ToArray();
+                sb.AppendLine(
+                    $"Direct gameplay VMD consumer links: " +
+                    $"{(directConsumerCounts.Length == 0 ? "(none)" : string.Join(", ", directConsumerCounts))}");
+                sb.AppendLine(
+                    $"Gameplay VMD roots added through child propagation: " +
+                    $"{state.UnitCategoryResolution.PropagatedVmdCount:N0}");
             }
             sb.AppendLine($"XML files repaired for compatibility: {state.XmlCompatibilityRepairs.Count}");
             sb.AppendLine($"Malformed VMD root files ignored: {state.MalformedVmdRoots.Count}");
@@ -10271,6 +10304,15 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 sb.AppendLine($"Relevant DB table files read: {unitResolution.TableFilesRead:N0}");
+                sb.AppendLine(
+                    $"Gameplay resolver health: " +
+                    $"{(unitResolution.IsGameplayResolutionHealthy ? "HEALTHY" : "UNHEALTHY")}");
+                if (!string.IsNullOrWhiteSpace(unitResolution.GameplayResolutionHealthMessage))
+                {
+                    sb.AppendLine(
+                        $"Gameplay resolver health detail: " +
+                        unitResolution.GameplayResolutionHealthMessage);
+                }
                 sb.AppendLine($"Directly DB-resolved VMD roots: {unitResolution.DirectlyResolvedVmdCount:N0}");
                 sb.AppendLine($"VMD roots resolved through child propagation: {unitResolution.PropagatedVmdCount:N0}");
                 sb.AppendLine($"Resolved VMD roots: {unitResolution.UsagesByVmd.Count:N0}");
@@ -10381,8 +10423,10 @@ namespace Editors.KitbasherEditor.Services
                                 $"    main={usage.MainUnitKey} | land={usage.LandUnitKey} | " +
                                 $"caste={usage.Caste} | land-category={usage.LandCategory} | " +
                                 $"ui-group={usage.UiGroupKey} | category={usage.Category} | " +
-                                $"role={usage.VisualRole} | entities={usage.EntityCount} | " +
-                                $"num-men={usage.NumMen} | " +
+                                $"role={usage.VisualRole} | consumer={usage.ConsumerType} | " +
+                                $"provenance={(usage.IsTransitiveChild ? "child" : "direct")} | " +
+                                $"root-vmd={usage.RootVmdPath} | parent-vmd={usage.ParentVmdPath} | " +
+                                $"entities={usage.EntityCount} | num-men={usage.NumMen} | " +
                                 $"components=riders:{usage.VisualCounts.Riders}," +
                                 $"mounts:{usage.VisualCounts.Mounts}," +
                                 $"engines:{usage.VisualCounts.Engines}," +
