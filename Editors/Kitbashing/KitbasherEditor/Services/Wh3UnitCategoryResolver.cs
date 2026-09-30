@@ -1478,10 +1478,10 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                var subtypeKeys = agentSubtypeRows.Values
+                var subtypeContexts = agentSubtypeRows.Values
                     .Where(row => Get(row, "associated_unit_override")
                         .Equals(mainUnitKey, StringComparison.OrdinalIgnoreCase))
-                    .Select(row => Get(row, "key"))
+                    .Select(row => (Subtype: Get(row, "key"), Agent: string.Empty))
                     .Concat(
                         agentSubtypeOverrideRows.Values
                             .Where(row =>
@@ -1498,10 +1498,13 @@ namespace Editors.KitbasherEditor.Services
                                            context.Subculture,
                                            StringComparison.OrdinalIgnoreCase);
                             })
-                            .Select(row => Get(row, "subtype")))
-                    .Where(key => key.Length != 0)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                if (subtypeKeys.Count == 0)
+                            .Select(row => (
+                                Subtype: Get(row, "subtype"),
+                                Agent: Get(row, "agent"))))
+                    .Where(candidate => candidate.Subtype.Length != 0)
+                    .Distinct()
+                    .ToArray();
+                if (subtypeContexts.Length == 0)
                     continue;
 
                 static bool ScopeMatches(string required, string actual)
@@ -1510,10 +1513,21 @@ namespace Editors.KitbasherEditor.Services
 
                 var candidateArtSets = campaignCharacterArtSetRows.Values
                     .Where(row =>
-                        subtypeKeys.Contains(Get(row, "agent_subtype")) &&
-                        ScopeMatches(Get(row, "faction"), context.Faction) &&
-                        ScopeMatches(Get(row, "subculture"), context.Subculture) &&
-                        ScopeMatches(Get(row, "culture"), context.Culture))
+                    {
+                        var subtype = Get(row, "agent_subtype");
+                        var agentType = Get(row, "agent_type");
+                        return subtypeContexts.Any(candidate =>
+                                   candidate.Subtype.Equals(
+                                       subtype,
+                                       StringComparison.OrdinalIgnoreCase) &&
+                                   (candidate.Agent.Length == 0 ||
+                                    candidate.Agent.Equals(
+                                        agentType,
+                                        StringComparison.OrdinalIgnoreCase))) &&
+                               ScopeMatches(Get(row, "faction"), context.Faction) &&
+                               ScopeMatches(Get(row, "subculture"), context.Subculture) &&
+                               ScopeMatches(Get(row, "culture"), context.Culture);
+                    })
                     .Select(row => new
                     {
                         Row = row,
