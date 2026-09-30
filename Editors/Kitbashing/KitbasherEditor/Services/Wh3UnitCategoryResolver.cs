@@ -32,7 +32,8 @@ namespace Editors.KitbasherEditor.Services
     internal enum Wh3VmdConsumerType
     {
         UnitVariant,
-        BattleAgentUniform,
+        CustomBattleGeneralUniform,
+        BattleAgentArtSet,
         Mount,
         Engine,
         ExtraEngine,
@@ -108,6 +109,19 @@ namespace Editors.KitbasherEditor.Services
             };
     }
 
+    internal sealed record Wh3VmdUsageProvenance(
+        Wh3VmdConsumerType ConsumerType,
+        string RootVmdPath,
+        string ParentVmdPath,
+        string FactionKey,
+        string SubcultureKey,
+        string CultureKey,
+        string UniformName,
+        string ArtSetId)
+    {
+        public bool IsTransitiveChild => ParentVmdPath.Length != 0;
+    }
+
     internal sealed record Wh3UnitCategoryUsage(
         string VmdPath,
         string MainUnitKey,
@@ -125,8 +139,23 @@ namespace Editors.KitbasherEditor.Services
             Wh3VmdConsumerType.UnitVariant;
         public string RootVmdPath { get; init; } = string.Empty;
         public string ParentVmdPath { get; init; } = string.Empty;
+        public IReadOnlyList<Wh3VmdUsageProvenance> Provenance { get; init; } = [];
         public bool IsTransitiveChild => ParentVmdPath.Length != 0;
     }
+
+    internal sealed record Wh3ResolvedAgentVariant(
+        string VariantName,
+        Wh3VmdConsumerType ConsumerType,
+        string FactionKey,
+        string SubcultureKey,
+        string CultureKey,
+        string UniformName,
+        string ArtSetId);
+
+    internal sealed record Wh3AgentVisualResolution(
+        IReadOnlyList<Wh3ResolvedAgentVariant> Variants,
+        bool HasAuthoritativeVisualPath,
+        IReadOnlyList<string> Issues);
 
     internal sealed record Wh3UnitDirectAssetUsage(
         string AssetPath,
@@ -255,6 +284,18 @@ namespace Editors.KitbasherEditor.Services
             VariantsTable,
             MountsTable,
             BattlefieldEnginesTable,
+        ];
+
+        private static readonly string[] AgentGameplayCriticalTables =
+        [
+            AgentSubtypesTable,
+            AgentSubtypeSubcultureOverridesTable,
+            CampaignCharacterArtSetsTable,
+            CampaignCharacterArtsTable,
+            AgentUniformsTable,
+            CustomBattlePermissionsTable,
+            FactionsTable,
+            CulturesSubculturesTable,
         ];
 
         private static readonly Lazy<SchemaRoot> Schema = new(LoadSchema);
@@ -444,7 +485,12 @@ namespace Editors.KitbasherEditor.Services
                 Wh3UnitVisualRole visualRole,
                 Wh3VmdConsumerType consumerType,
                 int numMen,
-                Wh3UnitVisualCounts visualCounts)
+                Wh3UnitVisualCounts visualCounts,
+                string factionKey = "",
+                string subcultureKey = "",
+                string cultureKey = "",
+                string uniformName = "",
+                string artSetId = "")
             {
                 if (variantName.Length == 0 ||
                     !variantRows.TryGetValue(variantName, out var variant))
@@ -478,6 +524,18 @@ namespace Editors.KitbasherEditor.Services
                     {
                         ConsumerType = consumerType,
                         RootVmdPath = componentVmdPath,
+                        Provenance =
+                        [
+                            new Wh3VmdUsageProvenance(
+                                consumerType,
+                                componentVmdPath,
+                                string.Empty,
+                                factionKey,
+                                subcultureKey,
+                                cultureKey,
+                                uniformName,
+                                artSetId),
+                        ],
                     });
             }
 
@@ -579,6 +637,8 @@ namespace Editors.KitbasherEditor.Services
                     StringComparer.OrdinalIgnoreCase);
             var agentPrimaryMainUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var agentFallbackMainUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var agentResolutionIssues = new List<string>();
+            var agentResolutionAttempted = false;
 
             void AddMainUnitVisualUsages(
                 IReadOnlyDictionary<string, string> main,
@@ -605,23 +665,68 @@ namespace Editors.KitbasherEditor.Services
                     ? Wh3UnitVisualRole.Crew
                     : Wh3UnitVisualRole.Men;
 
-                IReadOnlyList<string> primaryVariantNames = fallbackVariantNames;
-                var primaryConsumerType = Wh3VmdConsumerType.UnitVariant;
+                var handledPrimaryVisuals = false;
                 if (category is Wh3ArmyUnitCategory.Lord or Wh3ArmyUnitCategory.Hero)
                 {
-                    var agentVariantNames = ResolveBattleAgentVariantNames(
+                    agentResolutionAttempted = true;
+
+                    var factions = factionsByMainUnit.TryGetValue(mainUnitKey, out var mainFactions)
+                        ? (IReadOnlyCollection<string>)mainFactions
+                        : Array.Empty<string>();
+                    var subcultures = factions
+                        .Select(faction => subcultureByFaction.GetValueOrDefault(faction))
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var cultures = subcultures
+                        .Select(subculture => cultureBySubculture.GetValueOrDefault(subculture))
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                    var agentResolution = ResolveBattleAgentVisuals(
                         mainUnitKey,
+                        factions,
+                        subcultures,
+                        cultures,
+                        customBattlePermissionRows,
                         agentSubtypeRows,
                         agentSubtypeOverrideRows,
                         campaignCharacterArtSetRows,
                         campaignCharacterArtRows,
-                        agentUniformRows);
-                    if (agentVariantNames.Count != 0)
+                        agentUniformRows,
+                        variantRows);
+                    agentResolutionIssues.AddRange(agentResolution.Issues);
+
+                    foreach (var agentVariant in agentResolution.Variants)
                     {
-                        primaryVariantNames = agentVariantNames;
-                        primaryConsumerType = Wh3VmdConsumerType.BattleAgentUniform;
+                        AddVariantUsage(
+                            agentVariant.VariantName,
+                            mainUnitKey,
+                            landUnitKey,
+                            caste,
+                            landCategory,
+                            uiGroupKey,
+                            category,
+                            mainVisualRole,
+                            agentVariant.ConsumerType,
+                            numMen,
+                            visualCounts,
+                            agentVariant.FactionKey,
+                            agentVariant.SubcultureKey,
+                            agentVariant.CultureKey,
+                            agentVariant.UniformName,
+                            agentVariant.ArtSetId);
+                    }
+
+                    if (agentResolution.Variants.Count != 0)
+                    {
+                        handledPrimaryVisuals = true;
                         if (mainUnitKey.Length != 0)
                             agentPrimaryMainUnits.Add(mainUnitKey);
+                    }
+                    else if (agentResolution.HasAuthoritativeVisualPath)
+                    {
+                        // Do not hide a broken authoritative agent path behind unit_variants.
+                        handledPrimaryVisuals = true;
                     }
                     else if (fallbackVariantNames.Count != 0 && mainUnitKey.Length != 0)
                     {
@@ -629,20 +734,23 @@ namespace Editors.KitbasherEditor.Services
                     }
                 }
 
-                foreach (var primaryVariantName in primaryVariantNames)
+                if (!handledPrimaryVisuals)
                 {
-                    AddVariantUsage(
-                        primaryVariantName,
-                        mainUnitKey,
-                        landUnitKey,
-                        caste,
-                        landCategory,
-                        uiGroupKey,
-                        category,
-                        mainVisualRole,
-                        primaryConsumerType,
-                        numMen,
-                        visualCounts);
+                    foreach (var primaryVariantName in fallbackVariantNames)
+                    {
+                        AddVariantUsage(
+                            primaryVariantName,
+                            mainUnitKey,
+                            landUnitKey,
+                            caste,
+                            landCategory,
+                            uiGroupKey,
+                            category,
+                            mainVisualRole,
+                            Wh3VmdConsumerType.UnitVariant,
+                            numMen,
+                            visualCounts);
+                    }
                 }
 
                 var mountKey = Get(land, "mount");
@@ -776,8 +884,11 @@ namespace Editors.KitbasherEditor.Services
 
             diagnostics.Add(
                 $"Battle agent visual resolution: {agentPrimaryMainUnits.Count:N0} main unit(s) " +
-                $"resolved through campaign character art/uniform tables; " +
-                $"{agentFallbackMainUnits.Count:N0} used unit_variants fallback.");
+                $"resolved through explicit/scoped agent visuals; " +
+                $"{agentFallbackMainUnits.Count:N0} used unit_variants fallback; " +
+                $"{agentResolutionIssues.Count:N0} semantic issue(s).");
+            foreach (var issue in agentResolutionIssues)
+                diagnostics.Add($"Agent visual resolution issue: {issue}");
 
             // Seed the roster directly from effective main_units + land_units so the
             // denominator does not depend on a unit having a VMD/asset that happens to be
@@ -901,7 +1012,11 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var gameplayResolutionHealthMessage =
-                GetGameplayResolutionHealthIssue(parsedRowsByTable, diagnostics);
+                GetGameplayResolutionHealthIssue(
+                    parsedRowsByTable,
+                    diagnostics,
+                    agentResolutionAttempted,
+                    agentResolutionIssues);
 
             return new Wh3UnitCategoryResolution(
                 filtered,
@@ -1100,7 +1215,25 @@ namespace Editors.KitbasherEditor.Services
                 ? $"land:{usage.LandUnitKey}"
                 : $"main:{usage.MainUnitKey}";
             identity += $"|role:{usage.VisualRole}";
-            usages[identity] = usage with { VmdPath = vmdPath };
+            var normalizedUsage = usage with { VmdPath = vmdPath };
+            if (!usages.TryGetValue(identity, out var existing))
+            {
+                usages[identity] = normalizedUsage;
+                return;
+            }
+
+            var mergedProvenance = existing.Provenance
+                .Concat(normalizedUsage.Provenance)
+                .GroupBy(
+                    provenance =>
+                        $"{provenance.ConsumerType}\u001f{provenance.RootVmdPath}\u001f" +
+                        $"{provenance.ParentVmdPath}\u001f{provenance.FactionKey}\u001f" +
+                        $"{provenance.SubcultureKey}\u001f{provenance.CultureKey}\u001f" +
+                        $"{provenance.UniformName}\u001f{provenance.ArtSetId}",
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToArray();
+            usages[identity] = existing with { Provenance = mergedProvenance };
         }
 
         private static void PropagateUsagesToChildVmds(
@@ -1126,6 +1259,13 @@ namespace Editors.KitbasherEditor.Services
                 {
                     foreach (var usage in sourceUsages.Values)
                     {
+                        var childProvenance = usage.Provenance
+                            .Select(provenance => provenance with
+                            {
+                                RootVmdPath = directVmd,
+                                ParentVmdPath = parent,
+                            })
+                            .ToArray();
                         AddUsage(
                             usagesByVmd,
                             usage with
@@ -1133,6 +1273,7 @@ namespace Editors.KitbasherEditor.Services
                                 VmdPath = child,
                                 RootVmdPath = directVmd,
                                 ParentVmdPath = parent,
+                                Provenance = childProvenance,
                             });
                     }
                 }
@@ -1182,93 +1323,313 @@ namespace Editors.KitbasherEditor.Services
             IEnumerable<Dictionary<string, string>> campaignCharacterArtRows,
             IReadOnlyDictionary<string, Dictionary<string, string>> agentUniformRows)
         {
-            if (string.IsNullOrWhiteSpace(mainUnitKey))
-                return [];
-
-            var subtypeKeys = agentSubtypeRows.Values
-                .Where(row => Get(row, "associated_unit_override")
-                    .Equals(mainUnitKey, StringComparison.OrdinalIgnoreCase))
-                .Select(row => Get(row, "key"))
-                .Concat(
-                    agentSubtypeOverrideRows.Values
-                        .Where(row => Get(row, "associated_unit_override")
-                            .Equals(mainUnitKey, StringComparison.OrdinalIgnoreCase))
-                        .Select(row => Get(row, "subtype")))
-                .Where(key => key.Length != 0)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (subtypeKeys.Count == 0)
-                return [];
-
-            var artSetIds = campaignCharacterArtSetRows.Values
-                .Where(row => subtypeKeys.Contains(Get(row, "agent_subtype")))
-                .Select(row => Get(row, "art_set_id"))
-                .Where(id => id.Length != 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            if (artSetIds.Length == 0)
-                return [];
-
-            var artRows = campaignCharacterArtRows.ToList();
-            var variants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var artSetId in artSetIds)
+            // Compatibility helper for focused tests and callers without faction context.
+            var variants = new Dictionary<string, Dictionary<string, string>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var uniform in agentUniformRows.Values)
             {
-                var rowsForSet = artRows
-                    .Where(row => Get(row, "art_set_id")
-                        .Equals(artSetId, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                if (rowsForSet.Count == 0)
-                    continue;
-
-                static int NumericOrder(
-                    IReadOnlyDictionary<string, string> row,
-                    string field)
-                    => TryParseInt(Get(row, field), out var value)
-                        ? value
-                        : int.MaxValue;
-
-                var minimumLevel = rowsForSet.Min(row => NumericOrder(row, "level"));
-                rowsForSet = rowsForSet
-                    .Where(row => NumericOrder(row, "level") == minimumLevel)
-                    .ToList();
-
-                var minimumAge = rowsForSet.Min(row => NumericOrder(row, "age"));
-                rowsForSet = rowsForSet
-                    .Where(row => NumericOrder(row, "age") == minimumAge)
-                    .ToList();
-
-                var noSeasonRows = rowsForSet
-                    .Where(row =>
-                    {
-                        var season = Get(row, "season");
-                        return season.Length == 0 ||
-                               season.Equals("none", StringComparison.OrdinalIgnoreCase);
-                    })
-                    .ToList();
-                if (noSeasonRows.Count != 0)
-                    rowsForSet = noSeasonRows;
-
-                foreach (var artRow in rowsForSet)
+                foreach (var field in new[] { "battle_filename", "filename" })
                 {
-                    var uniformName = Get(artRow, "uniform");
-                    if (uniformName.Length == 0 ||
-                        !agentUniformRows.TryGetValue(uniformName, out var uniform))
+                    var variant = Get(uniform, field);
+                    if (variant.Length != 0 && variant != "." && !variants.ContainsKey(variant))
                     {
-                        continue;
+                        variants[variant] = new Dictionary<string, string>(
+                            StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["variant_name"] = variant,
+                            ["variant_filename"] = variant,
+                        };
                     }
-
-                    var variantName = Get(uniform, "battle_filename");
-                    if (variantName.Length == 0 || variantName == ".")
-                        variantName = Get(uniform, "filename");
-                    if (variantName.Length == 0 || variantName == ".")
-                        continue;
-
-                    variants.Add(variantName);
                 }
             }
 
-            return variants
+            return ResolveBattleAgentVisuals(
+                    mainUnitKey,
+                    Array.Empty<string>(),
+                    Array.Empty<string>(),
+                    Array.Empty<string>(),
+                    Array.Empty<Dictionary<string, string>>(),
+                    agentSubtypeRows,
+                    agentSubtypeOverrideRows,
+                    campaignCharacterArtSetRows,
+                    campaignCharacterArtRows,
+                    agentUniformRows,
+                    variants)
+                .Variants
+                .Select(variant => variant.VariantName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+        }
+
+        private static Wh3AgentVisualResolution ResolveBattleAgentVisuals(
+            string mainUnitKey,
+            IReadOnlyCollection<string> factionKeys,
+            IReadOnlyCollection<string> subcultureKeys,
+            IReadOnlyCollection<string> cultureKeys,
+            IEnumerable<Dictionary<string, string>> customBattlePermissionRows,
+            IReadOnlyDictionary<string, Dictionary<string, string>> agentSubtypeRows,
+            IReadOnlyDictionary<string, Dictionary<string, string>> agentSubtypeOverrideRows,
+            IReadOnlyDictionary<string, Dictionary<string, string>> campaignCharacterArtSetRows,
+            IEnumerable<Dictionary<string, string>> campaignCharacterArtRows,
+            IReadOnlyDictionary<string, Dictionary<string, string>> agentUniformRows,
+            IReadOnlyDictionary<string, Dictionary<string, string>> variantRows)
+        {
+            if (string.IsNullOrWhiteSpace(mainUnitKey))
+                return new Wh3AgentVisualResolution([], false, []);
+
+            var issues = new List<string>();
+            var results = new List<Wh3ResolvedAgentVariant>();
+            var permissions = customBattlePermissionRows
+                .Where(row => Get(row, "unit")
+                    .Equals(mainUnitKey, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            var contexts = factionKeys
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(faction =>
+                {
+                    var subculture = permissions
+                        .Where(row => Get(row, "faction")
+                            .Equals(faction, StringComparison.OrdinalIgnoreCase))
+                        .Select(_ => subcultureKeys.FirstOrDefault(
+                            subculture => !string.IsNullOrWhiteSpace(subculture)))
+                        .FirstOrDefault() ?? string.Empty;
+                    if (subculture.Length == 0 && subcultureKeys.Count == 1)
+                        subculture = subcultureKeys.First();
+                    var culture = cultureKeys.Count == 1
+                        ? cultureKeys.First()
+                        : string.Empty;
+                    return (Faction: faction, Subculture: subculture, Culture: culture);
+                })
+                .ToList();
+
+            if (contexts.Count == 0)
+            {
+                var subculture = subcultureKeys.Count == 1 ? subcultureKeys.First() : string.Empty;
+                var culture = cultureKeys.Count == 1 ? cultureKeys.First() : string.Empty;
+                contexts.Add((string.Empty, subculture, culture));
+            }
+
+            bool TryResolveUniformVariant(
+                string uniformName,
+                Wh3VmdConsumerType consumerType,
+                string faction,
+                string subculture,
+                string culture,
+                string artSetId)
+            {
+                if (uniformName.Length == 0)
+                    return false;
+                if (!agentUniformRows.TryGetValue(uniformName, out var uniform))
+                {
+                    issues.Add(
+                        $"{mainUnitKey}: uniform '{uniformName}' referenced by {consumerType} " +
+                        "was not found in agent_uniforms_tables.");
+                    return false;
+                }
+
+                var variantName = Get(uniform, "battle_filename");
+                if (variantName.Length == 0 || variantName == ".")
+                    variantName = Get(uniform, "filename");
+                if (variantName.Length == 0 || variantName == ".")
+                {
+                    issues.Add(
+                        $"{mainUnitKey}: uniform '{uniformName}' has neither battle_filename " +
+                        "nor filename.");
+                    return false;
+                }
+
+                if (!variantRows.ContainsKey(variantName))
+                {
+                    issues.Add(
+                        $"{mainUnitKey}: uniform '{uniformName}' resolves to variant " +
+                        $"'{variantName}', which was not found in variants_tables.");
+                    return false;
+                }
+
+                results.Add(new Wh3ResolvedAgentVariant(
+                    variantName,
+                    consumerType,
+                    faction,
+                    subculture,
+                    culture,
+                    uniformName,
+                    artSetId));
+                return true;
+            }
+
+            var hasAuthority = false;
+            var artRows = campaignCharacterArtRows.ToList();
+
+            foreach (var context in contexts)
+            {
+                var contextPermissions = permissions
+                    .Where(row =>
+                    {
+                        var faction = Get(row, "faction");
+                        return context.Faction.Length == 0 ||
+                               faction.Length == 0 ||
+                               faction.Equals(context.Faction, StringComparison.OrdinalIgnoreCase);
+                    })
+                    .ToList();
+                var explicitUniforms = contextPermissions
+                    .Select(row => Get(row, "general_uniform"))
+                    .Where(uniform => uniform.Length != 0 && uniform != ".")
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                if (explicitUniforms.Length != 0)
+                {
+                    hasAuthority = true;
+                    foreach (var uniformName in explicitUniforms)
+                    {
+                        TryResolveUniformVariant(
+                            uniformName,
+                            Wh3VmdConsumerType.CustomBattleGeneralUniform,
+                            context.Faction,
+                            context.Subculture,
+                            context.Culture,
+                            string.Empty);
+                    }
+
+                    // general_uniform is explicit battle authority for this faction context.
+                    continue;
+                }
+
+                var subtypeKeys = agentSubtypeRows.Values
+                    .Where(row => Get(row, "associated_unit_override")
+                        .Equals(mainUnitKey, StringComparison.OrdinalIgnoreCase))
+                    .Select(row => Get(row, "key"))
+                    .Concat(
+                        agentSubtypeOverrideRows.Values
+                            .Where(row =>
+                            {
+                                if (!Get(row, "associated_unit_override")
+                                        .Equals(mainUnitKey, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    return false;
+                                }
+
+                                var subculture = Get(row, "subculture");
+                                return context.Subculture.Length == 0 ||
+                                       subculture.Length == 0 ||
+                                       subculture.Equals(
+                                           context.Subculture,
+                                           StringComparison.OrdinalIgnoreCase);
+                            })
+                            .Select(row => Get(row, "subtype")))
+                    .Where(key => key.Length != 0)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (subtypeKeys.Count == 0)
+                    continue;
+
+                static bool ScopeMatches(string required, string actual)
+                    => required.Length == 0 ||
+                       actual.Length == 0 ||
+                       required.Equals(actual, StringComparison.OrdinalIgnoreCase);
+
+                var candidateArtSets = campaignCharacterArtSetRows.Values
+                    .Where(row =>
+                        subtypeKeys.Contains(Get(row, "agent_subtype")) &&
+                        ScopeMatches(Get(row, "faction"), context.Faction) &&
+                        ScopeMatches(Get(row, "subculture"), context.Subculture) &&
+                        ScopeMatches(Get(row, "culture"), context.Culture))
+                    .Select(row => new
+                    {
+                        Row = row,
+                        Score =
+                            (Get(row, "faction").Length == 0 ? 0 : 4) +
+                            (Get(row, "subculture").Length == 0 ? 0 : 2) +
+                            (Get(row, "culture").Length == 0 ? 0 : 1),
+                    })
+                    .ToList();
+                if (candidateArtSets.Count == 0)
+                    continue;
+
+                hasAuthority = true;
+                var maxSpecificity = candidateArtSets.Max(candidate => candidate.Score);
+                foreach (var artSet in candidateArtSets
+                             .Where(candidate => candidate.Score == maxSpecificity)
+                             .Select(candidate => candidate.Row))
+                {
+                    var artSetId = Get(artSet, "art_set_id");
+                    var rowsForSet = artRows
+                        .Where(row => Get(row, "art_set_id")
+                            .Equals(artSetId, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    if (rowsForSet.Count == 0)
+                    {
+                        issues.Add(
+                            $"{mainUnitKey}: applicable art set '{artSetId}' has no " +
+                            "campaign_character_arts row.");
+                        continue;
+                    }
+
+                    static int NumericOrder(
+                        IReadOnlyDictionary<string, string> row,
+                        string field)
+                        => TryParseInt(Get(row, field), out var value)
+                            ? value
+                            : int.MaxValue;
+
+                    var minimumLevel = rowsForSet.Min(row => NumericOrder(row, "level"));
+                    rowsForSet = rowsForSet
+                        .Where(row => NumericOrder(row, "level") == minimumLevel)
+                        .ToList();
+
+                    var minimumAge = rowsForSet.Min(row => NumericOrder(row, "age"));
+                    rowsForSet = rowsForSet
+                        .Where(row => NumericOrder(row, "age") == minimumAge)
+                        .ToList();
+
+                    var noSeasonRows = rowsForSet
+                        .Where(row =>
+                        {
+                            var season = Get(row, "season");
+                            return season.Length == 0 ||
+                                   season.Equals("none", StringComparison.OrdinalIgnoreCase);
+                        })
+                        .ToList();
+                    if (noSeasonRows.Count != 0)
+                        rowsForSet = noSeasonRows;
+
+                    foreach (var artRow in rowsForSet)
+                    {
+                        var uniformName = Get(artRow, "uniform");
+                        if (uniformName.Length == 0)
+                        {
+                            issues.Add(
+                                $"{mainUnitKey}: art set '{artSetId}' selected an art row " +
+                                "without a uniform.");
+                            continue;
+                        }
+
+                        TryResolveUniformVariant(
+                            uniformName,
+                            Wh3VmdConsumerType.BattleAgentArtSet,
+                            context.Faction,
+                            context.Subculture,
+                            context.Culture,
+                            artSetId);
+                    }
+                }
+            }
+
+            var deduplicated = results
+                .GroupBy(
+                    result =>
+                        $"{result.VariantName}\u001f{result.ConsumerType}\u001f" +
+                        $"{result.FactionKey}\u001f{result.SubcultureKey}\u001f" +
+                        $"{result.CultureKey}\u001f{result.UniformName}\u001f{result.ArtSetId}",
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(result => result.VariantName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(result => result.FactionKey, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            return new Wh3AgentVisualResolution(deduplicated, hasAuthority, issues);
         }
 
         private static string ResolveUiGroupKey(
@@ -1772,7 +2133,8 @@ namespace Editors.KitbasherEditor.Services
                     $"{Get(row, "land_unit")}\u001f{Get(row, "attach_articulation")}\u001f" +
                     Get(row, "battle_engine"),
                 AgentSubtypesTable => Get(row, "key"),
-                AgentSubtypeSubcultureOverridesTable => Get(row, "subtype"),
+                AgentSubtypeSubcultureOverridesTable =>
+                    $"{Get(row, "subculture")}\u001f{Get(row, "subtype")}\u001f{Get(row, "agent")}",
                 CampaignCharacterArtSetsTable => Get(row, "art_set_id"),
                 CampaignCharacterArtsTable => Get(row, "id"),
                 AgentUniformsTable => Get(row, "uniform_name"),
@@ -1831,15 +2193,23 @@ namespace Editors.KitbasherEditor.Services
 
         private static string GetGameplayResolutionHealthIssue(
             IReadOnlyDictionary<string, int> parsedRowsByTable,
-            IReadOnlyList<string> diagnostics)
+            IReadOnlyList<string> diagnostics,
+            bool agentResolutionAttempted = false,
+            IReadOnlyList<string>? semanticIssues = null)
         {
-            var missingRows = GameplayCriticalTables
+            var requiredTables = agentResolutionAttempted
+                ? GameplayCriticalTables.Concat(AgentGameplayCriticalTables)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray()
+                : GameplayCriticalTables;
+
+            var missingRows = requiredTables
                 .Where(table =>
                     !parsedRowsByTable.TryGetValue(table, out var count) ||
                     count <= 0)
                 .ToArray();
 
-            var failedCriticalTables = GameplayCriticalTables
+            var failedCriticalTables = requiredTables
                 .Where(table => diagnostics.Any(diagnostic =>
                 {
                     var normalized = NormalizePath(diagnostic);
@@ -1855,8 +2225,17 @@ namespace Editors.KitbasherEditor.Services
                 }))
                 .ToArray();
 
-            if (missingRows.Length == 0 && failedCriticalTables.Length == 0)
+            var semantic = semanticIssues?
+                .Where(issue => !string.IsNullOrWhiteSpace(issue))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray() ?? [];
+
+            if (missingRows.Length == 0 &&
+                failedCriticalTables.Length == 0 &&
+                semantic.Length == 0)
+            {
                 return string.Empty;
+            }
 
             var problems = new List<string>();
             if (missingRows.Length != 0)
@@ -1870,6 +2249,16 @@ namespace Editors.KitbasherEditor.Services
                 problems.Add(
                     $"decode/schema failures in critical table(s): " +
                     $"{string.Join(", ", failedCriticalTables)}");
+            }
+
+            if (semantic.Length != 0)
+            {
+                problems.Add(
+                    $"agent visual reference coverage failed: " +
+                    $"{string.Join(" | ", semantic.Take(8))}" +
+                    (semantic.Length > 8
+                        ? $" | ... {semantic.Length - 8:N0} more"
+                        : string.Empty));
             }
 
             return string.Join("; ", problems) + ".";
