@@ -1,5 +1,7 @@
 using System.Reflection;
 using System.Xml;
+using Moq;
+using Shared.Core.PackFiles.Models;
 
 namespace Test.KitbashEditor.Services
 {
@@ -212,6 +214,29 @@ namespace Test.KitbashEditor.Services
                        ])?.ToString()
                    ?? throw new InvalidOperationException(
                        "EvaluateAtlasValueGateBudget returned null.");
+        }
+
+        private static IPackFileContainer? FindGameplayTraversalContainer(
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> loadedContainers,
+            string path)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "FindGameplayTraversalContainer",
+                BindingFlags.NonPublic | BindingFlags.Static,
+                null,
+                [typeof(IPackFileContainer), typeof(IReadOnlyList<IPackFileContainer>), typeof(string)],
+                null)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.FindGameplayTraversalContainer was not found.");
+
+            return (IPackFileContainer?)method.Invoke(
+                null,
+                [source, loadedContainers, path]);
         }
 
         private static bool IsSharedMeshSafeForGameplay(
@@ -505,6 +530,77 @@ namespace Test.KitbashEditor.Services
                 Assert.That(lod0, Is.EqualTo(lod0Again));
                 Assert.That(lod0, Is.Not.EqualTo(lod1));
             });
+        }
+
+        [Test]
+        public void GameplayTraversal_UsesCaVmdWhenRootIsNotInSourcePack()
+        {
+            const string path =
+                @"variantmeshes\variantmeshdefinitions\vanilla.variantmeshdefinition";
+            var source = new Mock<IPackFileContainer>();
+            var ca = new Mock<IPackFileContainer>();
+            var unrelatedMod = new Mock<IPackFileContainer>();
+
+            source.Setup(container => container.ContainsFile(path)).Returns(false);
+            source.SetupGet(container => container.IsCaPackFile).Returns(false);
+
+            ca.Setup(container => container.ContainsFile(path)).Returns(true);
+            ca.SetupGet(container => container.IsCaPackFile).Returns(true);
+
+            // Loaded later than CA: this must never win gameplay traversal.
+            unrelatedMod.Setup(container => container.ContainsFile(path)).Returns(true);
+            unrelatedMod.SetupGet(container => container.IsCaPackFile).Returns(false);
+
+            var selected = FindGameplayTraversalContainer(
+                source.Object,
+                [ca.Object, unrelatedMod.Object],
+                path);
+
+            Assert.That(selected, Is.SameAs(ca.Object));
+        }
+
+        [Test]
+        public void GameplayTraversal_SourceOverrideWinsOverCaFile()
+        {
+            const string path =
+                @"variantmeshes\variantmeshdefinitions\shared.variantmeshdefinition";
+            var source = new Mock<IPackFileContainer>();
+            var ca = new Mock<IPackFileContainer>();
+
+            source.Setup(container => container.ContainsFile(path)).Returns(true);
+            source.SetupGet(container => container.IsCaPackFile).Returns(false);
+            ca.Setup(container => container.ContainsFile(path)).Returns(true);
+            ca.SetupGet(container => container.IsCaPackFile).Returns(true);
+
+            var selected = FindGameplayTraversalContainer(
+                source.Object,
+                [ca.Object],
+                path);
+
+            Assert.That(selected, Is.SameAs(source.Object));
+        }
+
+        [Test]
+        public void GameplayTraversal_UsesLastLoadedCaOverride()
+        {
+            const string path =
+                @"variantmeshes\variantmeshdefinitions\nested.variantmeshdefinition";
+            var source = new Mock<IPackFileContainer>();
+            var olderCa = new Mock<IPackFileContainer>();
+            var newerCa = new Mock<IPackFileContainer>();
+
+            source.Setup(container => container.ContainsFile(path)).Returns(false);
+            olderCa.Setup(container => container.ContainsFile(path)).Returns(true);
+            olderCa.SetupGet(container => container.IsCaPackFile).Returns(true);
+            newerCa.Setup(container => container.ContainsFile(path)).Returns(true);
+            newerCa.SetupGet(container => container.IsCaPackFile).Returns(true);
+
+            var selected = FindGameplayTraversalContainer(
+                source.Object,
+                [olderCa.Object, newerCa.Object],
+                path);
+
+            Assert.That(selected, Is.SameAs(newerCa.Object));
         }
 
         [Test]
