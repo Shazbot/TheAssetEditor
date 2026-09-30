@@ -197,6 +197,11 @@ namespace Editors.KitbasherEditor.Services
         private const string FactionsTable = "factions_tables";
         private const string CulturesSubculturesTable = "cultures_subcultures_tables";
         private const string CustomBattlePermissionsTable = "units_custom_battle_permissions_tables";
+        private const string AgentSubtypesTable = "agent_subtypes_tables";
+        private const string AgentSubtypeSubcultureOverridesTable = "agent_subtype_subculture_overrides_tables";
+        private const string CampaignCharacterArtSetsTable = "campaign_character_art_sets_tables";
+        private const string CampaignCharacterArtsTable = "campaign_character_arts_tables";
+        private const string AgentUniformsTable = "agent_uniforms_tables";
 
         // The optimizer models a large-size battle.  WHMM uses the same scalar for the
         // entity count shown by its unit viewer.  Crew is a separate visual population for
@@ -217,6 +222,11 @@ namespace Editors.KitbasherEditor.Services
             FactionsTable,
             CulturesSubculturesTable,
             CustomBattlePermissionsTable,
+            AgentSubtypesTable,
+            AgentSubtypeSubcultureOverridesTable,
+            CampaignCharacterArtSetsTable,
+            CampaignCharacterArtsTable,
+            AgentUniformsTable,
         ];
 
         private static readonly Lazy<SchemaRoot> Schema = new(LoadSchema);
@@ -305,6 +315,11 @@ namespace Editors.KitbasherEditor.Services
             var factionRows = effectiveRows[FactionsTable];
             var cultureRows = effectiveRows[CulturesSubculturesTable];
             var customBattlePermissionRows = effectiveRows[CustomBattlePermissionsTable].Values.ToList();
+            var agentSubtypeRows = effectiveRows[AgentSubtypesTable];
+            var agentSubtypeOverrideRows = effectiveRows[AgentSubtypeSubcultureOverridesTable];
+            var campaignCharacterArtSetRows = effectiveRows[CampaignCharacterArtSetsTable];
+            var campaignCharacterArtRows = effectiveRows[CampaignCharacterArtsTable].Values.ToList();
+            var agentUniformRows = effectiveRows[AgentUniformsTable];
             var animatedLodRowsByKey = effectiveRows[WarscapeAnimatedLodTable].Values
                 .Where(row => Get(row, "animated").Length != 0)
                 .GroupBy(row => Get(row, "animated"), StringComparer.OrdinalIgnoreCase)
@@ -518,146 +533,219 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            var unitVariantsByLandUnit = unitVariantRows
+                .Where(row => Get(row, "unit").Length != 0)
+                .GroupBy(row => Get(row, "unit"), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .Select(row => Get(row, "variant"))
+                        .Where(variant => variant.Length != 0)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray(),
+                    StringComparer.OrdinalIgnoreCase);
+            var mainLandUnitKeys = mainRows
+                .Select(row => Get(row, "land_unit"))
+                .Where(key => key.Length != 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var agentPrimaryMainUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var agentFallbackMainUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddMainUnitVisualUsages(
+                IReadOnlyDictionary<string, string> main,
+                string landUnitKey,
+                IReadOnlyDictionary<string, string> land,
+                IReadOnlyList<string> fallbackVariantNames)
+            {
+                var mainUnitKey = Get(main, "unit");
+                var caste = Get(main, "caste");
+                var landCategory = Get(land, "category");
+                var uiGroupKey = ResolveUiGroupKey(
+                    main,
+                    caste,
+                    uiUnitGroupings,
+                    uiUnitGroupParents);
+                var category = Classify(caste, landCategory, uiGroupKey);
+                var numMen = TryParseInt(Get(main, "num_men"), out var parsedNumMen)
+                    ? Math.Max(1, parsedNumMen)
+                    : 1;
+                var engineKey = Get(land, "engine");
+                engineRows.TryGetValue(engineKey, out var engine);
+                var visualCounts = ResolveVisualCountsForScenario(main, land, engine, activeScenario);
+                var mainVisualRole = visualCounts.Crew > 0
+                    ? Wh3UnitVisualRole.Crew
+                    : Wh3UnitVisualRole.Men;
+
+                IReadOnlyList<string> primaryVariantNames = fallbackVariantNames;
+                if (category is Wh3ArmyUnitCategory.Lord or Wh3ArmyUnitCategory.Hero)
+                {
+                    var agentVariantNames = ResolveBattleAgentVariantNames(
+                        mainUnitKey,
+                        agentSubtypeRows,
+                        agentSubtypeOverrideRows,
+                        campaignCharacterArtSetRows,
+                        campaignCharacterArtRows,
+                        agentUniformRows);
+                    if (agentVariantNames.Count != 0)
+                    {
+                        primaryVariantNames = agentVariantNames;
+                        if (mainUnitKey.Length != 0)
+                            agentPrimaryMainUnits.Add(mainUnitKey);
+                    }
+                    else if (fallbackVariantNames.Count != 0 && mainUnitKey.Length != 0)
+                    {
+                        agentFallbackMainUnits.Add(mainUnitKey);
+                    }
+                }
+
+                foreach (var primaryVariantName in primaryVariantNames)
+                {
+                    AddVariantUsage(
+                        primaryVariantName,
+                        mainUnitKey,
+                        landUnitKey,
+                        caste,
+                        landCategory,
+                        uiGroupKey,
+                        category,
+                        mainVisualRole,
+                        numMen,
+                        visualCounts);
+                }
+
+                var mountKey = Get(land, "mount");
+                if (mountKey.Length != 0 &&
+                    mountRows.TryGetValue(mountKey, out var mount))
+                {
+                    AddVariantUsage(
+                        Get(mount, "variant"),
+                        mainUnitKey,
+                        landUnitKey,
+                        caste,
+                        landCategory,
+                        uiGroupKey,
+                        category,
+                        Wh3UnitVisualRole.Mount,
+                        numMen,
+                        visualCounts);
+                }
+
+                if (engineKey.Length != 0 && engine != null)
+                {
+                    AddVariantUsage(
+                        Get(engine, "variant"),
+                        mainUnitKey,
+                        landUnitKey,
+                        caste,
+                        landCategory,
+                        uiGroupKey,
+                        category,
+                        Wh3UnitVisualRole.Engine,
+                        numMen,
+                        visualCounts);
+
+                    AddEngineAssetUsages(
+                        engine,
+                        mainUnitKey,
+                        landUnitKey,
+                        category,
+                        visualCounts);
+                }
+
+                if (!extraEngineRowsByLandUnit.TryGetValue(landUnitKey, out var extraEngines))
+                    return;
+
+                foreach (var extraEngineRow in extraEngines)
+                {
+                    var extraEngineKey = Get(extraEngineRow, "battle_engine");
+                    if (extraEngineKey.Length == 0 ||
+                        !engineRows.TryGetValue(extraEngineKey, out var extraEngine))
+                    {
+                        continue;
+                    }
+
+                    var extraEngineVisualCounts =
+                        ResolveExtraEngineVisualCounts(visualCounts);
+                    AddVariantUsage(
+                        Get(extraEngine, "variant"),
+                        mainUnitKey,
+                        landUnitKey,
+                        caste,
+                        landCategory,
+                        uiGroupKey,
+                        category,
+                        Wh3UnitVisualRole.Engine,
+                        numMen,
+                        extraEngineVisualCounts);
+
+                    AddEngineAssetUsages(
+                        extraEngine,
+                        mainUnitKey,
+                        landUnitKey,
+                        category,
+                        extraEngineVisualCounts);
+                }
+            }
+
+            // Unit-first resolution is authoritative for gameplay usage. Lords/heroes use
+            // their battle agent uniform chain first; unit_variants remains their fallback.
+            foreach (var main in mainRows)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var landUnitKey = Get(main, "land_unit");
+                if (landUnitKey.Length == 0 ||
+                    !landRows.TryGetValue(landUnitKey, out var land))
+                {
+                    continue;
+                }
+
+                var fallbackVariantNames = unitVariantsByLandUnit.TryGetValue(
+                    landUnitKey,
+                    out var variantsForLandUnit)
+                    ? variantsForLandUnit
+                    : Array.Empty<string>();
+                AddMainUnitVisualUsages(
+                    main,
+                    landUnitKey,
+                    land,
+                    fallbackVariantNames);
+            }
+
+            // Preserve the old land-unit fallback for unusual rows that have a unit_variant
+            // but no main_units consumer. These are not allowed to inflate a known main unit.
             foreach (var unitVariant in unitVariantRows)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var landUnitKey = Get(unitVariant, "unit");
                 var variantName = Get(unitVariant, "variant");
-                if (landUnitKey.Length == 0 || variantName.Length == 0)
-                    continue;
-                if (!variantRows.TryGetValue(variantName, out var variant))
-                    continue;
-
-                var vmdPath = ToVariantMeshDefinitionPath(Get(variant, "variant_filename"));
-                if (vmdPath.Length == 0)
-                    continue;
-                if (!landRows.TryGetValue(landUnitKey, out var land))
-                    continue;
-
-                if (!mainByLandUnit.TryGetValue(landUnitKey, out var mains) || mains.Count == 0)
+                if (landUnitKey.Length == 0 ||
+                    variantName.Length == 0 ||
+                    mainLandUnitKeys.Contains(landUnitKey) ||
+                    !landRows.TryGetValue(landUnitKey, out var land))
                 {
-                    var fallbackCounts = new Wh3UnitVisualCounts(1, 0, 0, 0);
-                    AddVariantUsage(
-                        variantName,
-                        string.Empty,
-                        landUnitKey,
-                        string.Empty,
-                        Get(land, "category"),
-                        string.Empty,
-                        Classify(string.Empty, Get(land, "category"), string.Empty),
-                        Wh3UnitVisualRole.Men,
-                        1,
-                        fallbackCounts);
                     continue;
                 }
 
-                foreach (var main in mains)
-                {
-                    var mainUnitKey = Get(main, "unit");
-                    var caste = Get(main, "caste");
-                    var landCategory = Get(land, "category");
-                    var uiGroupKey = ResolveUiGroupKey(
-                        main,
-                        caste,
-                        uiUnitGroupings,
-                        uiUnitGroupParents);
-                    var numMen = TryParseInt(Get(main, "num_men"), out var parsedNumMen)
-                        ? Math.Max(1, parsedNumMen)
-                        : 1;
-                    var engineKey = Get(land, "engine");
-                    engineRows.TryGetValue(engineKey, out var engine);
-                    var visualCounts = ResolveVisualCountsForScenario(main, land, engine, activeScenario);
-                    var mainVisualRole = visualCounts.Crew > 0
-                        ? Wh3UnitVisualRole.Crew
-                        : Wh3UnitVisualRole.Men;
-
-                    AddVariantUsage(
-                        variantName,
-                        mainUnitKey,
-                        landUnitKey,
-                        caste,
-                        landCategory,
-                        uiGroupKey,
-                        Classify(caste, landCategory, uiGroupKey),
-                        mainVisualRole,
-                        numMen,
-                        visualCounts);
-
-                    var mountKey = Get(land, "mount");
-                    if (mountKey.Length != 0 &&
-                        mountRows.TryGetValue(mountKey, out var mount))
-                    {
-                        AddVariantUsage(
-                            Get(mount, "variant"),
-                            mainUnitKey,
-                            landUnitKey,
-                            caste,
-                            landCategory,
-                            uiGroupKey,
-                            Classify(caste, landCategory, uiGroupKey),
-                            Wh3UnitVisualRole.Mount,
-                            numMen,
-                            visualCounts);
-                    }
-
-                    if (engineKey.Length != 0 && engine != null)
-                    {
-                        AddVariantUsage(
-                            Get(engine, "variant"),
-                            mainUnitKey,
-                            landUnitKey,
-                            caste,
-                            landCategory,
-                            uiGroupKey,
-                            Classify(caste, landCategory, uiGroupKey),
-                            Wh3UnitVisualRole.Engine,
-                            numMen,
-                            visualCounts);
-
-                        AddEngineAssetUsages(
-                            engine,
-                            mainUnitKey,
-                            landUnitKey,
-                            Classify(caste, landCategory, uiGroupKey),
-                            visualCounts);
-                    }
-
-                    if (extraEngineRowsByLandUnit.TryGetValue(landUnitKey, out var extraEngines))
-                    {
-                        foreach (var extraEngineRow in extraEngines)
-                        {
-                            var extraEngineKey = Get(extraEngineRow, "battle_engine");
-                            if (extraEngineKey.Length == 0 ||
-                                !engineRows.TryGetValue(extraEngineKey, out var extraEngine))
-                            {
-                                continue;
-                            }
-
-                            var extraEngineVisualCounts =
-                                ResolveExtraEngineVisualCounts(visualCounts);
-                            AddVariantUsage(
-                                Get(extraEngine, "variant"),
-                                mainUnitKey,
-                                landUnitKey,
-                                caste,
-                                landCategory,
-                                uiGroupKey,
-                                Classify(caste, landCategory, uiGroupKey),
-                                Wh3UnitVisualRole.Engine,
-                                numMen,
-                                extraEngineVisualCounts);
-
-                            AddEngineAssetUsages(
-                                extraEngine,
-                                mainUnitKey,
-                                landUnitKey,
-                                Classify(caste, landCategory, uiGroupKey),
-                                extraEngineVisualCounts);
-                        }
-                    }
-                }
+                var fallbackCounts = new Wh3UnitVisualCounts(1, 0, 0, 0);
+                AddVariantUsage(
+                    variantName,
+                    string.Empty,
+                    landUnitKey,
+                    string.Empty,
+                    Get(land, "category"),
+                    string.Empty,
+                    Classify(string.Empty, Get(land, "category"), string.Empty),
+                    Wh3UnitVisualRole.Men,
+                    1,
+                    fallbackCounts);
             }
+
+            diagnostics.Add(
+                $"Battle agent visual resolution: {agentPrimaryMainUnits.Count:N0} main unit(s) " +
+                $"resolved through campaign character art/uniform tables; " +
+                $"{agentFallbackMainUnits.Count:N0} used unit_variants fallback.");
 
             // Seed the roster directly from effective main_units + land_units so the
             // denominator does not depend on a unit having a VMD/asset that happens to be
@@ -1020,6 +1108,103 @@ namespace Editors.KitbasherEditor.Services
                     }
                 }
             }
+        }
+
+        private static IReadOnlyList<string> ResolveBattleAgentVariantNames(
+            string mainUnitKey,
+            IReadOnlyDictionary<string, Dictionary<string, string>> agentSubtypeRows,
+            IReadOnlyDictionary<string, Dictionary<string, string>> agentSubtypeOverrideRows,
+            IReadOnlyDictionary<string, Dictionary<string, string>> campaignCharacterArtSetRows,
+            IEnumerable<Dictionary<string, string>> campaignCharacterArtRows,
+            IReadOnlyDictionary<string, Dictionary<string, string>> agentUniformRows)
+        {
+            if (string.IsNullOrWhiteSpace(mainUnitKey))
+                return [];
+
+            var subtypeKeys = agentSubtypeRows.Values
+                .Where(row => Get(row, "associated_unit_override")
+                    .Equals(mainUnitKey, StringComparison.OrdinalIgnoreCase))
+                .Select(row => Get(row, "key"))
+                .Concat(
+                    agentSubtypeOverrideRows.Values
+                        .Where(row => Get(row, "associated_unit_override")
+                            .Equals(mainUnitKey, StringComparison.OrdinalIgnoreCase))
+                        .Select(row => Get(row, "subtype")))
+                .Where(key => key.Length != 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (subtypeKeys.Count == 0)
+                return [];
+
+            var artSetIds = campaignCharacterArtSetRows.Values
+                .Where(row => subtypeKeys.Contains(Get(row, "agent_subtype")))
+                .Select(row => Get(row, "art_set_id"))
+                .Where(id => id.Length != 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (artSetIds.Length == 0)
+                return [];
+
+            var artRows = campaignCharacterArtRows.ToList();
+            var variants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var artSetId in artSetIds)
+            {
+                var rowsForSet = artRows
+                    .Where(row => Get(row, "art_set_id")
+                        .Equals(artSetId, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (rowsForSet.Count == 0)
+                    continue;
+
+                static int NumericOrder(
+                    IReadOnlyDictionary<string, string> row,
+                    string field)
+                    => TryParseInt(Get(row, field), out var value)
+                        ? value
+                        : int.MaxValue;
+
+                var minimumLevel = rowsForSet.Min(row => NumericOrder(row, "level"));
+                rowsForSet = rowsForSet
+                    .Where(row => NumericOrder(row, "level") == minimumLevel)
+                    .ToList();
+
+                var minimumAge = rowsForSet.Min(row => NumericOrder(row, "age"));
+                rowsForSet = rowsForSet
+                    .Where(row => NumericOrder(row, "age") == minimumAge)
+                    .ToList();
+
+                var noSeasonRows = rowsForSet
+                    .Where(row =>
+                    {
+                        var season = Get(row, "season");
+                        return season.Length == 0 ||
+                               season.Equals("none", StringComparison.OrdinalIgnoreCase);
+                    })
+                    .ToList();
+                if (noSeasonRows.Count != 0)
+                    rowsForSet = noSeasonRows;
+
+                foreach (var artRow in rowsForSet)
+                {
+                    var uniformName = Get(artRow, "uniform");
+                    if (uniformName.Length == 0 ||
+                        !agentUniformRows.TryGetValue(uniformName, out var uniform))
+                    {
+                        continue;
+                    }
+
+                    var variantName = Get(uniform, "battle_filename");
+                    if (variantName.Length == 0 || variantName == ".")
+                        variantName = Get(uniform, "filename");
+                    if (variantName.Length == 0 || variantName == ".")
+                        continue;
+
+                    variants.Add(variantName);
+                }
+            }
+
+            return variants
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
         }
 
         private static string ResolveUiGroupKey(
@@ -1522,6 +1707,11 @@ namespace Editors.KitbasherEditor.Services
                 ExtraEnginesTable =>
                     $"{Get(row, "land_unit")}\u001f{Get(row, "attach_articulation")}\u001f" +
                     Get(row, "battle_engine"),
+                AgentSubtypesTable => Get(row, "key"),
+                AgentSubtypeSubcultureOverridesTable => Get(row, "subtype"),
+                CampaignCharacterArtSetsTable => Get(row, "art_set_id"),
+                CampaignCharacterArtsTable => Get(row, "id"),
+                AgentUniformsTable => Get(row, "uniform_name"),
                 _ => string.Empty,
             };
         }

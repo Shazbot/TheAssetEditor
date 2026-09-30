@@ -97,6 +97,7 @@ namespace Editors.KitbasherEditor.Services
                 mergeCompatibleMeshes,
                 shareAtlasesAcrossVmds,
                 optimizeGeometry,
+                atlasAllVmds,
                 cancellationToken,
                 progress) =>
             {
@@ -108,7 +109,8 @@ namespace Editors.KitbasherEditor.Services
                     progress: progress,
                     mergeCompatibleMeshes: mergeCompatibleMeshes,
                     shareAtlasesAcrossVmds: shareAtlasesAcrossVmds,
-                    optimizeGeometry: optimizeGeometry);
+                    optimizeGeometry: optimizeGeometry,
+                    atlasAllVmds: atlasAllVmds);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -130,7 +132,7 @@ namespace Editors.KitbasherEditor.Services
             _standardDialogs.ShowDialogBox(
                 $"Texture atlas pack created successfully.\n\n" +
                 $"Output: {outputPath}\n" +
-                $"VMD roots: {result.VmdCount}\n" +
+                $"Atlas VMD roots: {result.VmdCount}\n" +
                 $"Mesh parts atlased: {result.AtlasedMeshCount}\n" +
                 $"Atlas textures generated: {result.GeneratedTextureCount}\n" +
                 $"Unused asset files removed: {result.RemovedFileCount}\n" +
@@ -147,7 +149,8 @@ namespace Editors.KitbasherEditor.Services
             IProgress<TextureAtlasPackProgress>? progress = null,
             bool mergeCompatibleMeshes = false,
             bool shareAtlasesAcrossVmds = true,
-            bool optimizeGeometry = false)
+            bool optimizeGeometry = false,
+            bool atlasAllVmds = false)
         {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
@@ -236,6 +239,22 @@ namespace Editors.KitbasherEditor.Services
                 state.ArmyResidencyModel = BuildArmyResidencyModel(state, state.UnitCategoryResolution);
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
 
+                var atlasVmdRoots = SelectAtlasVmdRoots(
+                    vmdRoots,
+                    state.UnitCategoryResolution.UsagesByVmd.Keys,
+                    atlasAllVmds);
+                state.AtlasAllVmdsEnabled = atlasAllVmds;
+                state.SourceVmdRootCount = vmdRoots.Count;
+                state.AtlasVmdRootCount = atlasVmdRoots.Count;
+                ReportProgress(
+                    progress,
+                    "Selecting atlas VMD population",
+                    atlasVmdRoots.Count,
+                    vmdRoots.Count,
+                    atlasAllVmds
+                        ? $"Pack-wide: {atlasVmdRoots.Count:N0} / {vmdRoots.Count:N0} VMD root(s)"
+                        : $"Gameplay-used: {atlasVmdRoots.Count:N0} / {vmdRoots.Count:N0} VMD root(s)");
+
                 ReportProgress(
                     progress,
                     "Scanning source dependencies",
@@ -312,7 +331,7 @@ namespace Editors.KitbasherEditor.Services
                 phaseStopwatch.Restart();
                 var candidateDiscovery = DiscoverAtlasCandidates(
                     state,
-                    vmdRoots,
+                    atlasVmdRoots,
                     shareAtlasesAcrossVmds,
                     cancellationToken,
                     progress);
@@ -338,18 +357,18 @@ namespace Editors.KitbasherEditor.Services
                 }
                 else
                 {
-                    for (var i = 0; i < vmdRoots.Count; i++)
+                    for (var i = 0; i < atlasVmdRoots.Count; i++)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         var rootCandidates = discoveredCandidates
                             .Where(x =>
                                 x.RootVmdPath.Equals(
-                                    vmdRoots[i],
+                                    atlasVmdRoots[i],
                                     StringComparison.OrdinalIgnoreCase))
                             .ToList();
                         ProcessVmd(
                             state,
-                            vmdRoots[i],
+                            atlasVmdRoots[i],
                             rootCandidates,
                             cancellationToken,
                             progress);
@@ -427,7 +446,7 @@ namespace Editors.KitbasherEditor.Services
                 WriteReport(state, vmdRoots, succeeded: true, failure: null);
 
                 return new BatchResult(
-                    vmdRoots.Count,
+                    atlasVmdRoots.Count,
                     state.ProcessedMeshes.Count,
                     state.GeneratedTexturePaths.Count,
                     state.RemovedFiles.Count,
@@ -474,6 +493,24 @@ namespace Editors.KitbasherEditor.Services
             var directory = Path.GetDirectoryName(outputPath) ?? string.Empty;
             var stem = Path.GetFileNameWithoutExtension(outputPath);
             return Path.Combine(directory, stem + "_report.txt");
+        }
+
+        private static List<string> SelectAtlasVmdRoots(
+            IReadOnlyList<string> validatedVmdRoots,
+            IEnumerable<string> gameplayUsedVmds,
+            bool atlasAllVmds)
+        {
+            if (atlasAllVmds)
+                return validatedVmdRoots.ToList();
+
+            var used = gameplayUsedVmds
+                .Select(Normalize)
+                .Where(path => path.Length != 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return validatedVmdRoots
+                .Where(path => used.Contains(Normalize(path)))
+                .ToList();
         }
 
         private static (List<string> ValidRoots, List<MalformedVmdEntry> MalformedRoots) ValidateVmdRoots(
@@ -9919,12 +9956,18 @@ namespace Editors.KitbasherEditor.Services
 
             sb.AppendLine("Summary");
             sb.AppendLine("-------");
-            sb.AppendLine($"VMD roots: {vmdRoots.Count}");
+            sb.AppendLine($"Validated source VMD roots: {vmdRoots.Count}");
+            sb.AppendLine(
+                $"Atlas VMD population: {(state.AtlasAllVmdsEnabled ? "PACK-WIDE" : "GAMEPLAY-USED")}");
+            sb.AppendLine($"Atlas VMD roots: {state.AtlasVmdRootCount:N0} / {state.SourceVmdRootCount:N0}");
             if (state.UnitCategoryResolution != null)
             {
                 sb.AppendLine(
-                    $"VMD roots resolved to unit categories: " +
-                    $"{state.UnitCategoryResolution.UsagesByVmd.Count} / {vmdRoots.Count}");
+                    $"Gameplay-used VMD roots: " +
+                    $"{state.UnitCategoryResolution.UsagesByVmd.Count:N0} / {vmdRoots.Count:N0}");
+                sb.AppendLine(
+                    $"VMD roots excluded from gameplay-used atlasing: " +
+                    $"{Math.Max(0, vmdRoots.Count - state.UnitCategoryResolution.UsagesByVmd.Count):N0}");
                 sb.AppendLine(
                     $"Unit-category DB table files read: " +
                     $"{state.UnitCategoryResolution.TableFilesRead}");
@@ -12143,6 +12186,9 @@ namespace Editors.KitbasherEditor.Services
             public bool MergeCompatibleMeshesEnabled { get; }
             public bool ShareAtlasesAcrossVmdsEnabled { get; }
             public bool OptimizeGeometryEnabled { get; }
+            public bool AtlasAllVmdsEnabled { get; set; }
+            public int SourceVmdRootCount { get; set; }
+            public int AtlasVmdRootCount { get; set; }
             public int PackWideCandidateCount { get; set; }
             public int AtlasBatchCount { get; set; }
             public int TexelDensityScaledMeshes { get; set; }

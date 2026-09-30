@@ -12,6 +12,7 @@ namespace Editors.KitbasherEditor.Services
             bool,
             bool,
             bool,
+            bool,
             CancellationToken,
             IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> _worker;
         private readonly CancellationTokenSource _cancellation = new();
@@ -28,7 +29,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
-            : this((mergeCompatibleMeshes, _, _, cancellationToken, progress) =>
+            : this((mergeCompatibleMeshes, _, _, _, cancellationToken, progress) =>
                 worker(mergeCompatibleMeshes, cancellationToken, progress))
         {
         }
@@ -39,13 +40,31 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
-            : this((mergeCompatibleMeshes, shareAcrossVmds, _, cancellationToken, progress) =>
+            : this((mergeCompatibleMeshes, shareAcrossVmds, _, _, cancellationToken, progress) =>
                 worker(mergeCompatibleMeshes, shareAcrossVmds, cancellationToken, progress))
         {
         }
 
         public TextureAtlasProgressWindow(
             Action<
+                bool,
+                bool,
+                bool,
+                CancellationToken,
+                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+            : this((mergeCompatibleMeshes, shareAcrossVmds, optimizeGeometry, _, cancellationToken, progress) =>
+                worker(
+                    mergeCompatibleMeshes,
+                    shareAcrossVmds,
+                    optimizeGeometry,
+                    cancellationToken,
+                    progress))
+        {
+        }
+
+        public TextureAtlasProgressWindow(
+            Action<
+                bool,
                 bool,
                 bool,
                 bool,
@@ -66,6 +85,7 @@ namespace Editors.KitbasherEditor.Services
             MergeMeshesCheckBox.IsEnabled = false;
             ShareAcrossVmdsCheckBox.IsEnabled = false;
             OptimizeGeometryCheckBox.IsEnabled = false;
+            AtlasAllVmdsCheckBox.IsEnabled = false;
             PhaseText.Text = "Preparing texture atlas pack...";
             ProgressBar.IsIndeterminate = true;
 
@@ -77,6 +97,7 @@ namespace Editors.KitbasherEditor.Services
                     MergeMeshesCheckBox.IsChecked == true,
                     ShareAcrossVmdsCheckBox.IsChecked == true,
                     OptimizeGeometryCheckBox.IsChecked == true,
+                    AtlasAllVmdsCheckBox.IsChecked == true,
                     _cancellation.Token,
                     progress);
                 _allowClose = true;

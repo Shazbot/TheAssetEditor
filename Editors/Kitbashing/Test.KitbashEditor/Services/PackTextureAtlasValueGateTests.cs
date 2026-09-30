@@ -528,6 +528,66 @@ namespace Test.KitbashEditor.Services
         }
 
 
+        private static IReadOnlyList<string> SelectAtlasVmdRoots(
+            string[] validatedRoots,
+            string[] gameplayUsedRoots,
+            bool atlasAllVmds)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "SelectAtlasVmdRoots",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.SelectAtlasVmdRoots was not found.");
+
+            return (IReadOnlyList<string>)(method.Invoke(
+                null,
+                [validatedRoots, gameplayUsedRoots, atlasAllVmds])
+                ?? throw new InvalidOperationException(
+                    "SelectAtlasVmdRoots returned null."));
+        }
+
+        [Test]
+        public void AtlasVmdPopulation_DefaultsToGameplayUsedRoots()
+        {
+            var selected = SelectAtlasVmdRoots(
+                [
+                    @"variantmeshes\variantmeshdefinitions\used.variantmeshdefinition",
+                    @"variantmeshes\variantmeshdefinitions\unused.variantmeshdefinition",
+                    @"variantmeshes\variantmeshdefinitions\child.variantmeshdefinition",
+                ],
+                [
+                    @"VARIANTMESHES/VARIANTMESHDEFINITIONS/USED.VARIANTMESHDEFINITION",
+                    @"variantmeshes\variantmeshdefinitions\child.variantmeshdefinition",
+                ],
+                atlasAllVmds: false);
+
+            Assert.That(
+                selected,
+                Is.EqualTo(new[]
+                {
+                    @"variantmeshes\variantmeshdefinitions\used.variantmeshdefinition",
+                    @"variantmeshes\variantmeshdefinitions\child.variantmeshdefinition",
+                }));
+        }
+
+        [Test]
+        public void AtlasVmdPopulation_PackWideModeKeepsAllValidatedRoots()
+        {
+            var roots = new[]
+            {
+                @"variantmeshes\variantmeshdefinitions\used.variantmeshdefinition",
+                @"variantmeshes\variantmeshdefinitions\unused.variantmeshdefinition",
+            };
+
+            Assert.That(
+                SelectAtlasVmdRoots(roots, Array.Empty<string>(), atlasAllVmds: true),
+                Is.EqualTo(roots));
+        }
+
 
     }
 }

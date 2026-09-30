@@ -23,6 +23,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
@@ -57,19 +59,34 @@
             Grid.Row="4"
             Margin="22,4,0,0"
             MaxWidth="620"
-            Text="When enabled, compatible mesh parts from all VMD roots in the pack are planned together so they can share atlas placements, atlas textures, and generated materials."
+            Text="When enabled, compatible mesh parts from the selected atlas VMD population are planned together so they can share atlas placements, atlas textures, and generated materials."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
+        <CheckBox
+            x:Name="AtlasAllVmdsCheckBox"
+            Grid.Row="5"
+            Margin="0,12,0,0"
+            Content="Atlas all VMDs in the pack (include non-gameplay visuals)"
+            IsChecked="False" />
+
+        <TextBlock
+            Grid.Row="6"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="Off by default: only VMDs reachable from gameplay units, battle agent visuals, mounts, engines, and child VMD references are atlased. Dependency scanning and safe cleanup still inspect the full pack."
             TextWrapping="Wrap"
             Opacity="0.7" />
 
         <CheckBox
             x:Name="OptimizeGeometryCheckBox"
-            Grid.Row="5"
+            Grid.Row="7"
             Margin="0,12,0,0"
             Content="Optimize geometry (experimental)"
             IsChecked="True" />
 
         <TextBlock
-            Grid.Row="6"
+            Grid.Row="8"
             Margin="22,4,0,0"
             MaxWidth="620"
             Text="When enabled, atlased rigid meshes remove unused vertices and degenerate triangles, deduplicate identical vertices, optimize triangle order for the GPU vertex cache, and reorder the vertex buffer for locality."
@@ -78,14 +95,14 @@
 
         <TextBlock
             x:Name="PhaseText"
-            Grid.Row="7"
+            Grid.Row="9"
             Margin="0,16,0,0"
             FontWeight="SemiBold"
             Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="8"
+            Grid.Row="10"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -95,7 +112,7 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="9"
+            Grid.Row="11"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
@@ -103,7 +120,7 @@
             IsIndeterminate="False"
             Value="0" />
 
-        <Grid Grid.Row="10" Margin="0,8,0,0">
+        <Grid Grid.Row="12" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>

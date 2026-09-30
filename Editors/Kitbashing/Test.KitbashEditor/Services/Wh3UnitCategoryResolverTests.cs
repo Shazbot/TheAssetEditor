@@ -514,5 +514,187 @@ namespace Test.KitbashEditor.Services
         }
 
 
+        private static IReadOnlyList<string> ResolveBattleAgentVariantNames(
+            string mainUnitKey,
+            Dictionary<string, Dictionary<string, string>> agentSubtypes,
+            Dictionary<string, Dictionary<string, string>> subtypeOverrides,
+            Dictionary<string, Dictionary<string, string>> artSets,
+            List<Dictionary<string, string>> arts,
+            Dictionary<string, Dictionary<string, string>> uniforms)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "ResolveBattleAgentVariantNames",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.ResolveBattleAgentVariantNames was not found.");
+
+            return (IReadOnlyList<string>)(method.Invoke(
+                null,
+                [mainUnitKey, agentSubtypes, subtypeOverrides, artSets, arts, uniforms])
+                ?? throw new InvalidOperationException(
+                    "ResolveBattleAgentVariantNames returned null."));
+        }
+
+        [Test]
+        public void BattleAgentVisual_PrefersBattleUniformVariant()
+        {
+            var variants = ResolveBattleAgentVariantNames(
+                "main_lord",
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["lord_subtype"] = new()
+                    {
+                        ["key"] = "lord_subtype",
+                        ["associated_unit_override"] = "main_lord",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["lord_art"] = new()
+                    {
+                        ["art_set_id"] = "lord_art",
+                        ["agent_subtype"] = "lord_subtype",
+                    },
+                },
+                [
+                    new()
+                    {
+                        ["art_set_id"] = "lord_art",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "lord_uniform",
+                    },
+                ],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["lord_uniform"] = new()
+                    {
+                        ["uniform_name"] = "lord_uniform",
+                        ["battle_filename"] = "lord_battle_variant",
+                        ["filename"] = "lord_campaign_variant",
+                    },
+                });
+
+            Assert.That(variants, Is.EqualTo(new[] { "lord_battle_variant" }));
+        }
+
+        [Test]
+        public void BattleAgentVisual_FallsBackToUniformFilenameWhenBattleFilenameIsMissing()
+        {
+            var variants = ResolveBattleAgentVariantNames(
+                "main_hero",
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["hero_subtype"] = new()
+                    {
+                        ["subtype"] = "hero_subtype",
+                        ["associated_unit_override"] = "main_hero",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["hero_art"] = new()
+                    {
+                        ["art_set_id"] = "hero_art",
+                        ["agent_subtype"] = "hero_subtype",
+                    },
+                },
+                [
+                    new()
+                    {
+                        ["art_set_id"] = "hero_art",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "hero_uniform",
+                    },
+                ],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["hero_uniform"] = new()
+                    {
+                        ["uniform_name"] = "hero_uniform",
+                        ["battle_filename"] = ".",
+                        ["filename"] = "hero_fallback_variant",
+                    },
+                });
+
+            Assert.That(variants, Is.EqualTo(new[] { "hero_fallback_variant" }));
+        }
+
+        [Test]
+        public void BattleAgentVisual_UsesLowestLevelAgeAndPrefersNoSeason()
+        {
+            var variants = ResolveBattleAgentVariantNames(
+                "main_lord",
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["lord_subtype"] = new()
+                    {
+                        ["key"] = "lord_subtype",
+                        ["associated_unit_override"] = "main_lord",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["lord_art"] = new()
+                    {
+                        ["art_set_id"] = "lord_art",
+                        ["agent_subtype"] = "lord_subtype",
+                    },
+                },
+                [
+                    new()
+                    {
+                        ["art_set_id"] = "lord_art",
+                        ["level"] = "2",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "later",
+                    },
+                    new()
+                    {
+                        ["art_set_id"] = "lord_art",
+                        ["level"] = "1",
+                        ["age"] = "1",
+                        ["season"] = "none",
+                        ["uniform"] = "older",
+                    },
+                    new()
+                    {
+                        ["art_set_id"] = "lord_art",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "winter",
+                        ["uniform"] = "winter",
+                    },
+                    new()
+                    {
+                        ["art_set_id"] = "lord_art",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "baseline",
+                    },
+                ],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["later"] = new() { ["uniform_name"] = "later", ["battle_filename"] = "later_variant" },
+                    ["older"] = new() { ["uniform_name"] = "older", ["battle_filename"] = "older_variant" },
+                    ["winter"] = new() { ["uniform_name"] = "winter", ["battle_filename"] = "winter_variant" },
+                    ["baseline"] = new() { ["uniform_name"] = "baseline", ["battle_filename"] = "baseline_variant" },
+                });
+
+            Assert.That(variants, Is.EqualTo(new[] { "baseline_variant" }));
+        }
+
     }
 }
