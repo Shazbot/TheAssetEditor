@@ -776,7 +776,12 @@ namespace Editors.KitbasherEditor.Services
                     : 1;
                 var engineKey = Get(land, "engine");
                 engineRows.TryGetValue(engineKey, out var engine);
-                var visualCounts = ResolveVisualCountsForScenario(main, land, engine, activeScenario);
+                var visualCounts = ResolveVisualCountsForScenario(
+                    main,
+                    land,
+                    engine,
+                    caste,
+                    activeScenario);
                 var mainVisualRole = visualCounts.Crew > 0
                     ? Wh3UnitVisualRole.Crew
                     : Wh3UnitVisualRole.Men;
@@ -1083,6 +1088,7 @@ namespace Editors.KitbasherEditor.Services
                     main,
                     land,
                     engine,
+                    caste,
                     activeScenario);
                 var identity = $"main:{mainUnitKey.Trim().ToLowerInvariant()}";
 
@@ -2081,12 +2087,18 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<string, string> main,
             IReadOnlyDictionary<string, string> land,
             IReadOnlyDictionary<string, string>? engine)
-            => ResolveVisualCountsForScenario(main, land, engine, Wh3ArmyVisualScenario.Default);
+            => ResolveVisualCountsForScenario(
+                main,
+                land,
+                engine,
+                Get(main, "caste"),
+                Wh3ArmyVisualScenario.Default);
 
         private static Wh3UnitVisualCounts ResolveVisualCountsForScenario(
             IReadOnlyDictionary<string, string> main,
             IReadOnlyDictionary<string, string> land,
             IReadOnlyDictionary<string, string>? engine,
+            string caste,
             Wh3ArmyVisualScenario scenario)
         {
             var rawMen = TryParseInt(Get(main, "num_men"), out var parsedMen)
@@ -2120,20 +2132,27 @@ namespace Editors.KitbasherEditor.Services
                 ? ScaleEntityCount(rawMen, scenario.CrewScale, scenario.EngineRoundingPolicy)
                 : 0;
 
-            // For a mounted unit, num_mounts is the number of mounts attached to one
-            // battlefield carrier.  A chariot uses num_engines as its carrier count, so
-            // Skeleton Chariots resolve to ceil(12 * .75) = 9 carriers and 9 * 2 = 18
-            // mounts.  Their rider VMD is still driven by the large-size num_men count:
-            // ceil(24 * .75) = 18 riders.
+            // Ordinary cavalry and warbeasts have one mount per scaled rider even though
+            // land_units.num_mounts commonly contains the raw unit mount population
+            // (for example, 60 for a 60-rider cavalry unit). Chariots and other engine-
+            // driven units instead use num_mounts as mounts attached to each carrier.
             var carrierCount = engines > 0 ? engines : Math.Max(1, riders);
             var mounts = hasMount
-                ? checked(carrierCount * Math.Max(1, mountsPerCarrier))
+                ? IsPerRiderMountCaste(caste)
+                    ? riders
+                    : checked(carrierCount * Math.Max(1, mountsPerCarrier))
                 : 0;
 
             // A Generic_3_Crew engine keeps its crew in the unit's main VMD.  The dump's
             // Screaming Skull Catapult row has num_men=44, so this intentionally resolves
             // to ceil(44 * .5) = 22 crew.  primary_ammo is not consulted.
             return new Wh3UnitVisualCounts(riders, mounts, engines, crew);
+        }
+
+        private static bool IsPerRiderMountCaste(string caste)
+        {
+            var normalized = caste.Trim().ToLowerInvariant().Replace("_", string.Empty).Replace("-", string.Empty).Replace(" ", string.Empty);
+            return normalized is "meleecavalry" or "missilecavalry" or "warbeast";
         }
 
         private static Wh3UnitVisualCounts ResolveExtraEngineVisualCounts(

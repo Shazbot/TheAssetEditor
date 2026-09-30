@@ -832,6 +832,31 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void VisualCounts_CavalryUsesOneMountPerScaledRider()
+        {
+            var counts = ResolveVisualCounts(
+                new Dictionary<string, string>
+                {
+                    ["caste"] = "melee_cavalry",
+                    ["num_men"] = "60",
+                },
+                new Dictionary<string, string>
+                {
+                    ["mount"] = "wh_main_mount",
+                    ["num_mounts"] = "60",
+                },
+                null);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetVisualCount(counts, "Riders"), Is.EqualTo(45));
+                Assert.That(GetVisualCount(counts, "Mounts"), Is.EqualTo(45));
+                Assert.That(GetVisualCount(counts, "Engines"), Is.EqualTo(0));
+                Assert.That(GetVisualCount(counts, "Crew"), Is.EqualTo(0));
+            });
+        }
+
+        [Test]
         public void VisualCounts_ScreamingSkullUsesCrewCountAndIgnoresAmmo()
         {
             var counts = ResolveVisualCounts(
