@@ -236,16 +236,10 @@ namespace Editors.KitbasherEditor.Services
                     vmdRoots,
                     childVmdsByVmd,
                     cancellationToken);
-                if (!atlasAllVmds &&
-                    !state.UnitCategoryResolution.IsGameplayResolutionHealthy)
-                {
-                    throw new InvalidOperationException(
-                        "Gameplay-used atlas population could not be resolved safely: " +
-                        state.UnitCategoryResolution.GameplayResolutionHealthMessage +
-                        " Fix the WH3 DB/schema resolution problem, or explicitly use pack-wide " +
-                        "atlas mode if gameplay filtering is not required.");
-                }
-
+                // Resolver health is reported, but gameplay-used mode no longer aborts the
+                // whole pack for a local unresolved visual path. Unresolved agent/unit
+                // visuals are omitted from UsagesByVmd and the value gate independently
+                // rejects any remaining scenario-unresolved candidate.
                 state.ArmyResidencyModel = BuildArmyResidencyModel(state, state.UnitCategoryResolution);
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
 
