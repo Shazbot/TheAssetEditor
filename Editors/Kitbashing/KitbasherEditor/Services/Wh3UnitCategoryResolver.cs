@@ -143,6 +143,14 @@ namespace Editors.KitbasherEditor.Services
         public bool IsTransitiveChild => ParentVmdPath.Length != 0;
     }
 
+    internal sealed record Wh3UnresolvedVmdConsumer(
+        string VmdPath,
+        string MainUnitKey,
+        string LandUnitKey,
+        Wh3ArmyUnitCategory Category,
+        Wh3UnitVisualRole VisualRole,
+        string Reason);
+
     internal sealed record Wh3ResolvedAgentVariant(
         string VariantName,
         Wh3VmdConsumerType ConsumerType,
@@ -205,6 +213,7 @@ namespace Editors.KitbasherEditor.Services
         IReadOnlyList<Wh3ResolvedUnitVisual> RosterUnits,
         Wh3ArmyVisualScenario Scenario,
         IReadOnlyList<string> UnresolvedVmdRoots,
+        IReadOnlyDictionary<string, IReadOnlyList<Wh3UnresolvedVmdConsumer>> UnresolvedConsumersByVmd,
         IReadOnlyDictionary<string, int> ParsedRowsByTable,
         int TableFilesRead,
         int DirectlyResolvedVmdCount,
@@ -217,6 +226,9 @@ namespace Editors.KitbasherEditor.Services
             => UsagesByVmd.TryGetValue(NormalizePath(vmdPath), out var usages)
                 ? usages
                 : [];
+
+        public bool IsVmdUsageComplete(string vmdPath)
+            => !UnresolvedConsumersByVmd.ContainsKey(NormalizePath(vmdPath));
 
         private static string NormalizePath(string value)
             => value.Replace('/', '\\').TrimStart('\\').ToLowerInvariant();
@@ -474,6 +486,10 @@ namespace Editors.KitbasherEditor.Services
                 string,
                 Dictionary<string, Wh3UnitDirectAssetUsage>>(
                 StringComparer.OrdinalIgnoreCase);
+            var unresolvedConsumersByVmd = new Dictionary<
+                string,
+                Dictionary<string, Wh3UnresolvedVmdConsumer>>(
+                StringComparer.OrdinalIgnoreCase);
 
             void AddVariantUsage(
                 string variantName,
@@ -538,6 +554,62 @@ namespace Editors.KitbasherEditor.Services
                                 artSetId),
                         ],
                     });
+            }
+
+            void AddUnresolvedConsumer(
+                string vmdPath,
+                string mainUnitKey,
+                string landUnitKey,
+                Wh3ArmyUnitCategory category,
+                Wh3UnitVisualRole visualRole,
+                string reason)
+            {
+                vmdPath = NormalizePath(vmdPath);
+                if (vmdPath.Length == 0)
+                    return;
+
+                if (!unresolvedConsumersByVmd.TryGetValue(vmdPath, out var consumers))
+                {
+                    consumers = new Dictionary<string, Wh3UnresolvedVmdConsumer>(
+                        StringComparer.OrdinalIgnoreCase);
+                    unresolvedConsumersByVmd[vmdPath] = consumers;
+                }
+
+                var identity = string.IsNullOrWhiteSpace(mainUnitKey)
+                    ? $"land:{landUnitKey}"
+                    : $"main:{mainUnitKey}";
+                identity += $"|role:{visualRole}";
+                consumers[identity] = new Wh3UnresolvedVmdConsumer(
+                    vmdPath,
+                    mainUnitKey,
+                    landUnitKey,
+                    category,
+                    visualRole,
+                    reason);
+            }
+
+            void AddUnresolvedVariantConsumer(
+                string variantName,
+                string mainUnitKey,
+                string landUnitKey,
+                Wh3ArmyUnitCategory category,
+                Wh3UnitVisualRole visualRole,
+                string reason)
+            {
+                if (variantName.Length == 0 ||
+                    !variantRows.TryGetValue(variantName, out var variant))
+                {
+                    return;
+                }
+
+                var vmdPath = ToVariantMeshDefinitionPath(Get(variant, "variant_filename"));
+                AddUnresolvedConsumer(
+                    vmdPath,
+                    mainUnitKey,
+                    landUnitKey,
+                    category,
+                    visualRole,
+                    reason);
             }
 
             void AddDirectAssetUsage(
@@ -686,6 +758,45 @@ namespace Editors.KitbasherEditor.Services
                         variantRows);
                     agentResolutionAttempted |= agentResolution.HasAgentVisualPathEvidence;
                     agentResolutionIssues.AddRange(agentResolution.Issues);
+
+                    var incompleteAgentVisualCoverage =
+                        agentResolution.HasAgentVisualPathEvidence &&
+                        (agentResolution.Variants.Count == 0 ||
+                         agentResolution.Issues.Count != 0);
+                    if (incompleteAgentVisualCoverage)
+                    {
+                        var reason = agentResolution.Issues.Count == 0
+                            ? $"{mainUnitKey}: agent visual path evidence was incomplete."
+                            : string.Join(" | ", agentResolution.Issues.Take(4));
+
+                        // The fallback VMD is not authoritative once an agent-specific path
+                        // exists, but it is still a known possible overlap with another
+                        // gameplay consumer. Taint it so a resolved unit sharing that VMD
+                        // cannot make the candidate look complete.
+                        foreach (var fallbackVariantName in fallbackVariantNames)
+                        {
+                            AddUnresolvedVariantConsumer(
+                                fallbackVariantName,
+                                mainUnitKey,
+                                landUnitKey,
+                                category,
+                                mainVisualRole,
+                                reason);
+                        }
+
+                        // If some scoped agent variants resolved while another scope failed,
+                        // conservatively taint the known variants for this consumer too.
+                        foreach (var agentVariant in agentResolution.Variants)
+                        {
+                            AddUnresolvedVariantConsumer(
+                                agentVariant.VariantName,
+                                mainUnitKey,
+                                landUnitKey,
+                                category,
+                                mainVisualRole,
+                                reason);
+                        }
+                    }
 
                     foreach (var agentVariant in agentResolution.Variants)
                     {
@@ -987,6 +1098,29 @@ namespace Editors.KitbasherEditor.Services
                 childVmdsByVmd,
                 cancellationToken);
 
+            // A root tainted by an unresolved consumer also taints every nested VMD it can
+            // reach. Otherwise a child shared with a fully resolved consumer could still be
+            // selected even though one of its parent gameplay paths is incomplete.
+            foreach (var (taintedRoot, consumers) in unresolvedConsumersByVmd.ToArray())
+            {
+                foreach (var (child, _) in GetTransitiveChildVmdParents(
+                             taintedRoot,
+                             childVmdsByVmd,
+                             cancellationToken))
+                {
+                    foreach (var consumer in consumers.Values)
+                    {
+                        AddUnresolvedConsumer(
+                            child,
+                            consumer.MainUnitKey,
+                            consumer.LandUnitKey,
+                            consumer.Category,
+                            consumer.VisualRole,
+                            consumer.Reason);
+                    }
+                }
+            }
+
             var filtered = new Dictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>>(
                 StringComparer.OrdinalIgnoreCase);
             var unresolved = new List<string>();
@@ -1012,6 +1146,22 @@ namespace Editors.KitbasherEditor.Services
                     agentResolutionAttempted,
                     agentResolutionIssues);
 
+            var unresolvedConsumers = unresolvedConsumersByVmd.ToDictionary(
+                entry => entry.Key,
+                entry => (IReadOnlyList<Wh3UnresolvedVmdConsumer>)entry.Value.Values
+                    .OrderBy(consumer => consumer.MainUnitKey, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(consumer => consumer.LandUnitKey, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(consumer => consumer.VisualRole)
+                    .ToArray(),
+                StringComparer.OrdinalIgnoreCase);
+            if (unresolvedConsumers.Count != 0)
+            {
+                diagnostics.Add(
+                    $"Tainted {unresolvedConsumers.Count:N0} VMD path(s) with " +
+                    $"{unresolvedConsumers.Values.Sum(consumers => consumers.Count):N0} " +
+                    "unresolved gameplay consumer link(s).");
+            }
+
             return new Wh3UnitCategoryResolution(
                 filtered,
                 directUsagesByVmd,
@@ -1026,6 +1176,7 @@ namespace Editors.KitbasherEditor.Services
                 rosterUnits,
                 activeScenario,
                 unresolved,
+                unresolvedConsumers,
                 parsedRowsByTable,
                 tableFilesRead,
                 directSourceVmds.Count,
@@ -1043,7 +1194,9 @@ namespace Editors.KitbasherEditor.Services
             var builders = new Dictionary<
                 string,
                 (string MainUnitKey, string LandUnitKey, Wh3ArmyUnitCategory Category,
-                    Wh3UnitVisualCounts Counts, List<Wh3ResolvedUnitComponent> Components)>(
+                    Wh3UnitVisualCounts Counts, List<Wh3ResolvedUnitComponent> Components,
+                    HashSet<string> FactionKeys, HashSet<string> SubcultureKeys,
+                    HashSet<string> CultureKeys)>(
                 StringComparer.OrdinalIgnoreCase);
 
             static string Identity(string mainUnitKey, string landUnitKey)
@@ -1058,7 +1211,10 @@ namespace Editors.KitbasherEditor.Services
                     seed.LandUnitKey,
                     seed.Category,
                     seed.VisualCounts,
-                    seed.Components.ToList());
+                    seed.Components.ToList(),
+                    new HashSet<string>(seed.FactionKeys, StringComparer.OrdinalIgnoreCase),
+                    new HashSet<string>(seed.SubcultureKeys, StringComparer.OrdinalIgnoreCase),
+                    new HashSet<string>(seed.CultureKeys, StringComparer.OrdinalIgnoreCase));
             }
 
             foreach (var (vmdPathValue, usages) in usagesByVmd)
@@ -1074,7 +1230,10 @@ namespace Editors.KitbasherEditor.Services
                             usage.LandUnitKey,
                             usage.Category,
                             usage.VisualCounts,
-                            []);
+                            [],
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
                     }
 
                     if (!builder.Components.Any(component =>
@@ -1089,6 +1248,16 @@ namespace Editors.KitbasherEditor.Services
                             Wh3VisualAssetState.Live,
                             0,
                             1.0));
+                    }
+
+                    foreach (var provenance in usage.Provenance)
+                    {
+                        if (!string.IsNullOrWhiteSpace(provenance.FactionKey))
+                            builder.FactionKeys.Add(provenance.FactionKey);
+                        if (!string.IsNullOrWhiteSpace(provenance.SubcultureKey))
+                            builder.SubcultureKeys.Add(provenance.SubcultureKey);
+                        if (!string.IsNullOrWhiteSpace(provenance.CultureKey))
+                            builder.CultureKeys.Add(provenance.CultureKey);
                     }
 
                     builders[identity] = builder;
@@ -1108,7 +1277,10 @@ namespace Editors.KitbasherEditor.Services
                             usage.LandUnitKey,
                             usage.Category,
                             usage.VisualCounts,
-                            []);
+                            [],
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
                     }
 
                     if (!builder.Components.Any(component =>
@@ -1144,7 +1316,12 @@ namespace Editors.KitbasherEditor.Services
                         .ThenBy(component => component.State)
                         .ThenBy(component => component.Lod)
                         .ThenBy(component => component.AssetPath, StringComparer.OrdinalIgnoreCase)
-                        .ToArray()))
+                        .ToArray())
+                {
+                    FactionKeys = entry.Value.FactionKeys,
+                    SubcultureKeys = entry.Value.SubcultureKeys,
+                    CultureKeys = entry.Value.CultureKeys,
+                })
                 .ToArray();
         }
 
@@ -1456,6 +1633,37 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var context in contexts)
             {
+                (string Faction, string Subculture, string Culture) ResolveEffectiveScope(
+                    string faction,
+                    string subculture,
+                    string culture)
+                {
+                    var resolvedFaction = context.Faction.Length != 0
+                        ? context.Faction
+                        : faction;
+                    var resolvedSubculture = context.Subculture.Length != 0
+                        ? context.Subculture
+                        : subculture;
+                    if (resolvedSubculture.Length == 0 && resolvedFaction.Length != 0)
+                    {
+                        resolvedSubculture =
+                            subcultureByFaction.GetValueOrDefault(resolvedFaction) ??
+                            string.Empty;
+                    }
+
+                    var resolvedCulture = context.Culture.Length != 0
+                        ? context.Culture
+                        : culture;
+                    if (resolvedCulture.Length == 0 && resolvedSubculture.Length != 0)
+                    {
+                        resolvedCulture =
+                            cultureBySubculture.GetValueOrDefault(resolvedSubculture) ??
+                            string.Empty;
+                    }
+
+                    return (resolvedFaction, resolvedSubculture, resolvedCulture);
+                }
+
                 var contextPermissions = permissions
                     .Where(row =>
                     {
@@ -1466,9 +1674,14 @@ namespace Editors.KitbasherEditor.Services
                     })
                     .ToList();
                 var explicitUniforms = contextPermissions
-                    .Select(row => Get(row, "general_uniform"))
-                    .Where(uniform => uniform.Length != 0 && uniform != ".")
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(row => new
+                    {
+                        UniformName = Get(row, "general_uniform"),
+                        FactionKey = Get(row, "faction"),
+                    })
+                    .Where(uniform =>
+                        uniform.UniformName.Length != 0 &&
+                        uniform.UniformName != ".")
                     .ToArray();
 
                 if (explicitUniforms.Length != 0)
@@ -1477,14 +1690,18 @@ namespace Editors.KitbasherEditor.Services
                     if (context.Faction.Length != 0)
                         hasAuthority = true;
 
-                    foreach (var uniformName in explicitUniforms)
+                    foreach (var uniform in explicitUniforms)
                     {
+                        var scope = ResolveEffectiveScope(
+                            uniform.FactionKey,
+                            string.Empty,
+                            string.Empty);
                         TryResolveUniformVariant(
-                            uniformName,
+                            uniform.UniformName,
                             Wh3VmdConsumerType.CustomBattleGeneralUniform,
-                            context.Faction,
-                            context.Subculture,
-                            context.Culture,
+                            scope.Faction,
+                            scope.Subculture,
+                            scope.Culture,
                             string.Empty);
                     }
 
@@ -1595,6 +1812,10 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var artSet in selectedArtSets)
                 {
                     var artSetId = Get(artSet, "art_set_id");
+                    var artSetScope = ResolveEffectiveScope(
+                        Get(artSet, "faction"),
+                        Get(artSet, "subculture"),
+                        Get(artSet, "culture"));
                     var rowsForSet = artRows
                         .Where(row => Get(row, "art_set_id")
                             .Equals(artSetId, StringComparison.OrdinalIgnoreCase))
@@ -1649,9 +1870,9 @@ namespace Editors.KitbasherEditor.Services
                         TryResolveUniformVariant(
                             uniformName,
                             Wh3VmdConsumerType.BattleAgentArtSet,
-                            context.Faction,
-                            context.Subculture,
-                            context.Culture,
+                            artSetScope.Faction,
+                            artSetScope.Subculture,
+                            artSetScope.Culture,
                             artSetId);
                     }
                 }
@@ -2253,7 +2474,11 @@ namespace Editors.KitbasherEditor.Services
                     count <= 0)
                 .ToArray();
 
-            var failedCriticalTables = requiredTables
+            var failureCriticalTables = GameplayCriticalTables
+                .Concat(AgentGameplayCriticalTables)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var failedCriticalTables = failureCriticalTables
                 .Where(table => diagnostics.Any(diagnostic =>
                 {
                     var normalized = NormalizePath(diagnostic);
@@ -2269,14 +2494,13 @@ namespace Editors.KitbasherEditor.Services
                 }))
                 .ToArray();
 
-            var semantic = semanticIssues?
-                .Where(issue => !string.IsNullOrWhiteSpace(issue))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray() ?? [];
+            // Semantic visual gaps are consumer-local. They taint the affected VMDs via
+            // UnresolvedConsumersByVmd but do not make the entire DB resolution globally
+            // unsafe. Global health is reserved for missing/undecodable critical tables.
+            _ = semanticIssues;
 
             if (missingRows.Length == 0 &&
-                failedCriticalTables.Length == 0 &&
-                semantic.Length == 0)
+                failedCriticalTables.Length == 0)
             {
                 return string.Empty;
             }
@@ -2293,16 +2517,6 @@ namespace Editors.KitbasherEditor.Services
                 problems.Add(
                     $"decode/schema failures in critical table(s): " +
                     $"{string.Join(", ", failedCriticalTables)}");
-            }
-
-            if (semantic.Length != 0)
-            {
-                problems.Add(
-                    $"agent visual reference coverage failed: " +
-                    $"{string.Join(" | ", semantic.Take(8))}" +
-                    (semantic.Length > 8
-                        ? $" | ... {semantic.Length - 8:N0} more"
-                        : string.Empty));
             }
 
             return string.Join("; ", problems) + ".";

@@ -430,6 +430,48 @@ namespace Test.KitbashEditor.Services
                 ?.GetValue(resolution)?.ToString()
                 ?? string.Empty;
 
+        private static bool ResolutionHasUnresolvedConsumer(
+            object resolution,
+            string vmdPath,
+            string mainUnitKey)
+        {
+            var unresolved = (IDictionary)(resolution.GetType()
+                .GetProperty("UnresolvedConsumersByVmd")?.GetValue(resolution)
+                ?? throw new InvalidOperationException(
+                    "UnresolvedConsumersByVmd was not found."));
+            var normalized = vmdPath.Replace('/', '\\').TrimStart('\\').ToLowerInvariant();
+            if (!unresolved.Contains(normalized))
+                return false;
+
+            return ((IEnumerable)(unresolved[normalized]
+                    ?? throw new InvalidOperationException("Unresolved consumer list was null.")))
+                .Cast<object>()
+                .Any(consumer =>
+                    string.Equals(
+                        consumer.GetType().GetProperty("MainUnitKey")?.GetValue(consumer)?.ToString(),
+                        mainUnitKey,
+                        StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static IReadOnlySet<string> ResolutionRosterScopeValues(
+            object resolution,
+            string mainUnitKey,
+            string propertyName)
+        {
+            var roster = (IEnumerable)(resolution.GetType()
+                .GetProperty("RosterUnits")?.GetValue(resolution)
+                ?? throw new InvalidOperationException("RosterUnits was not found."));
+            var unit = roster.Cast<object>().Single(candidate =>
+                string.Equals(
+                    candidate.GetType().GetProperty("MainUnitKey")?.GetValue(candidate)?.ToString(),
+                    mainUnitKey,
+                    StringComparison.OrdinalIgnoreCase));
+            var values = (IEnumerable)(unit.GetType().GetProperty(propertyName)?.GetValue(unit)
+                ?? throw new InvalidOperationException(
+                    $"Roster scope property '{propertyName}' was not found."));
+            return values.Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
         [TestCase("melee_cavalry", "war_beast", "CavalryChariot")]
         [TestCase("missile_cavalry", "inf_ranged", "CavalryChariot")]
         [TestCase("chariot", "war_machine", "CavalryChariot")]
@@ -1084,6 +1126,26 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void GameplayResolutionHealth_AgentCriticalDecodeFailureIsGlobal()
+        {
+            var rows = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["main_units_tables"] = 100,
+                ["land_units_tables"] = 100,
+                ["unit_variants_tables"] = 100,
+                ["variants_tables"] = 100,
+                ["mounts_tables"] = 10,
+                ["battlefield_engines_tables"] = 10,
+            };
+
+            var issue = GetGameplayResolutionHealthIssue(
+                rows,
+                ["Failed to decode db/agent_subtypes_tables/mod_rows from test.pack: bad row"]);
+
+            Assert.That(issue, Does.Contain("agent_subtypes_tables"));
+        }
+
+        [Test]
         public void GameplayResolutionHealth_IsHealthyWhenCriticalTablesDecode()
         {
             var rows = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
@@ -1100,7 +1162,7 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void GameplayResolutionHealth_AgentSemanticFailureIsFatal()
+        public void GameplayResolutionHealth_AgentSemanticFailureIsConsumerLocal()
         {
             var rows = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
             {
@@ -1124,7 +1186,7 @@ namespace Test.KitbashEditor.Services
                 rows,
                 semanticIssues: ["main_hero: missing explicit uniform"]);
 
-            Assert.That(issue, Does.Contain("agent visual reference coverage failed"));
+            Assert.That(issue, Is.Empty);
         }
 
         [Test]
@@ -1209,6 +1271,15 @@ namespace Test.KitbashEditor.Services
             {
                 Assert.That(ResolutionHasVmd(resolution, scopedVmd), Is.True);
                 Assert.That(ResolutionIsHealthy(resolution), Is.True);
+                Assert.That(
+                    ResolutionRosterScopeValues(resolution, "main_hero", "FactionKeys"),
+                    Does.Contain("faction_a"));
+                Assert.That(
+                    ResolutionRosterScopeValues(resolution, "main_hero", "SubcultureKeys"),
+                    Does.Contain("sub_a"));
+                Assert.That(
+                    ResolutionRosterScopeValues(resolution, "main_hero", "CultureKeys"),
+                    Does.Contain("culture_a"));
             });
         }
 
@@ -1230,9 +1301,32 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void FullResolver_UnresolvedSubtypeChainSkipsFallbackAndIsUnhealthy()
+        public void FullResolver_SharedVmdWithUnresolvedHeroIsResolvedButTainted()
         {
             var rows = CreateMinimalGameplayRows();
+            rows["main_units_tables"].Add(
+                new()
+                {
+                    ["unit"] = "main_infantry",
+                    ["land_unit"] = "land_infantry",
+                    ["caste"] = "melee_infantry",
+                    ["num_men"] = "100",
+                });
+            rows["land_units_tables"].Add(
+                new()
+                {
+                    ["key"] = "land_infantry",
+                    ["category"] = "inf_melee",
+                });
+            rows["unit_variants_tables"].Add(
+                new()
+                {
+                    ["faction"] = "",
+                    ["unit"] = "land_infantry",
+                    ["name"] = "body",
+                    ["variant"] = "fallback_variant",
+                });
+
             rows["agent_subtypes_tables"] =
             [
                 new()
@@ -1302,11 +1396,18 @@ namespace Test.KitbashEditor.Services
 
             Assert.Multiple(() =>
             {
-                Assert.That(ResolutionHasVmd(resolution, fallbackVmd), Is.False);
-                Assert.That(ResolutionIsHealthy(resolution), Is.False);
+                // The regular unit keeps the shared VMD in the known usage graph, while the
+                // unresolved hero taints it so gameplay atlas selection cannot treat that
+                // partial usage set as complete.
+                Assert.That(ResolutionHasVmd(resolution, fallbackVmd), Is.True);
                 Assert.That(
-                    ResolutionHealthMessage(resolution),
-                    Does.Contain("agent subtype/override chain matched"));
+                    ResolutionHasUnresolvedConsumer(
+                        resolution,
+                        fallbackVmd,
+                        "main_hero"),
+                    Is.True);
+                Assert.That(ResolutionIsHealthy(resolution), Is.True);
+                Assert.That(ResolutionHealthMessage(resolution), Is.Empty);
             });
         }
 

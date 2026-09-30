@@ -236,16 +236,24 @@ namespace Editors.KitbasherEditor.Services
                     vmdRoots,
                     childVmdsByVmd,
                     cancellationToken);
-                // Resolver health is reported, but gameplay-used mode no longer aborts the
-                // whole pack for a local unresolved visual path. Unresolved agent/unit
-                // visuals are omitted from UsagesByVmd and the value gate independently
-                // rejects any remaining scenario-unresolved candidate.
+                if (!atlasAllVmds &&
+                    !state.UnitCategoryResolution.IsGameplayResolutionHealthy)
+                {
+                    throw new InvalidOperationException(
+                        "Gameplay-used atlas population could not be resolved safely: " +
+                        state.UnitCategoryResolution.GameplayResolutionHealthMessage +
+                        " Fix the WH3 DB/schema resolution problem, or explicitly use pack-wide " +
+                        "atlas mode if gameplay filtering is not required.");
+                }
+
                 state.ArmyResidencyModel = BuildArmyResidencyModel(state, state.UnitCategoryResolution);
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
 
+                var gameplayEligibleVmdRoots = state.UnitCategoryResolution.UsagesByVmd.Keys
+                    .Where(state.UnitCategoryResolution.IsVmdUsageComplete);
                 var atlasVmdRoots = SelectAtlasVmdRoots(
                     vmdRoots,
-                    state.UnitCategoryResolution.UsagesByVmd.Keys,
+                    gameplayEligibleVmdRoots,
                     atlasAllVmds);
                 state.AtlasAllVmdsEnabled = atlasAllVmds;
                 state.SourceVmdRootCount = vmdRoots.Count;
@@ -4900,11 +4908,16 @@ namespace Editors.KitbasherEditor.Services
                 return false;
 
             var root = Normalize(candidate.RootVmdPath);
-            if (root.Length != 0 &&
-                resolution.UsagesByVmd.TryGetValue(root, out var usages) &&
-                usages.Count != 0)
+            if (root.Length != 0)
             {
-                return true;
+                if (!resolution.IsVmdUsageComplete(root))
+                    return false;
+
+                if (resolution.UsagesByVmd.TryGetValue(root, out var usages) &&
+                    usages.Count != 0)
+                {
+                    return true;
+                }
             }
 
             foreach (var usage in candidate.Usages)
@@ -10310,17 +10323,22 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas VMD roots: {state.AtlasVmdRootCount:N0} / {state.SourceVmdRootCount:N0}");
             if (state.UnitCategoryResolution != null)
             {
+                var gameplayEligibleVmdCount = state.UnitCategoryResolution.UsagesByVmd.Keys
+                    .Count(state.UnitCategoryResolution.IsVmdUsageComplete);
                 sb.AppendLine(
                     $"Gameplay-used VMD roots: " +
-                    $"{state.UnitCategoryResolution.UsagesByVmd.Count:N0} / {vmdRoots.Count:N0}");
+                    $"{gameplayEligibleVmdCount:N0} / {vmdRoots.Count:N0}");
+                sb.AppendLine(
+                    $"VMD roots tainted by unresolved gameplay consumers: " +
+                    $"{state.UnitCategoryResolution.UnresolvedConsumersByVmd.Count:N0}");
                 sb.AppendLine(
                     $"VMD roots excluded from gameplay-used atlasing: " +
-                    $"{Math.Max(0, vmdRoots.Count - state.UnitCategoryResolution.UsagesByVmd.Count):N0}");
+                    $"{Math.Max(0, vmdRoots.Count - gameplayEligibleVmdCount):N0}");
                 sb.AppendLine(
                     $"Unit-category DB table files read: " +
                     $"{state.UnitCategoryResolution.TableFilesRead}");
                 sb.AppendLine(
-                    $"Gameplay resolver health: " +
+                    $"Gameplay resolver global health: " +
                     $"{(state.UnitCategoryResolution.IsGameplayResolutionHealthy ? "HEALTHY" : "UNHEALTHY")}");
                 if (!string.IsNullOrWhiteSpace(
                         state.UnitCategoryResolution.GameplayResolutionHealthMessage))
@@ -10656,7 +10674,7 @@ namespace Editors.KitbasherEditor.Services
 
                 sb.AppendLine($"Relevant DB table files read: {unitResolution.TableFilesRead:N0}");
                 sb.AppendLine(
-                    $"Gameplay resolver health: " +
+                    $"Gameplay resolver global health: " +
                     $"{(unitResolution.IsGameplayResolutionHealthy ? "HEALTHY" : "UNHEALTHY")}");
                 if (!string.IsNullOrWhiteSpace(unitResolution.GameplayResolutionHealthMessage))
                 {
@@ -10668,6 +10686,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"VMD roots resolved through child propagation: {unitResolution.PropagatedVmdCount:N0}");
                 sb.AppendLine($"Resolved VMD roots: {unitResolution.UsagesByVmd.Count:N0}");
                 sb.AppendLine($"Unresolved VMD roots: {unitResolution.UnresolvedVmdRoots.Count:N0}");
+                sb.AppendLine(
+                    $"VMD roots tainted by unresolved gameplay consumers: " +
+                    $"{unitResolution.UnresolvedConsumersByVmd.Count:N0}");
                 sb.AppendLine($"Resolved VMD-to-unit links: {unitUsages.Count:N0}");
                 sb.AppendLine(
                     $"Resolved direct engine assets: {unitResolution.DirectAssetUsagesByPath.Count:N0} " +
@@ -10794,6 +10815,29 @@ namespace Editors.KitbasherEditor.Services
                                     $"art-set={provenance.ArtSetId}");
                             }
                         }
+                    }
+                }
+
+                if (unitResolution.UnresolvedConsumersByVmd.Count != 0)
+                {
+                    sb.AppendLine("Tainted VMD gameplay consumers:");
+                    foreach (var (vmdPath, consumers) in unitResolution.UnresolvedConsumersByVmd
+                                 .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
+                                 .Take(50))
+                    {
+                        sb.AppendLine($"  {vmdPath} | unresolved-consumers={consumers.Count:N0}");
+                        foreach (var consumer in consumers.Take(8))
+                        {
+                            sb.AppendLine(
+                                $"    main={consumer.MainUnitKey} | land={consumer.LandUnitKey} | " +
+                                $"category={consumer.Category} | role={consumer.VisualRole} | " +
+                                $"reason={consumer.Reason}");
+                        }
+                    }
+                    if (unitResolution.UnresolvedConsumersByVmd.Count > 50)
+                    {
+                        sb.AppendLine(
+                            $"  ... {unitResolution.UnresolvedConsumersByVmd.Count - 50:N0} more VMD path(s)");
                     }
                 }
 
