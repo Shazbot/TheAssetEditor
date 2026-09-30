@@ -155,6 +155,7 @@ namespace Editors.KitbasherEditor.Services
     internal sealed record Wh3AgentVisualResolution(
         IReadOnlyList<Wh3ResolvedAgentVariant> Variants,
         bool HasAuthoritativeVisualPath,
+        bool HasAgentVisualPathEvidence,
         IReadOnlyList<string> Issues);
 
     internal sealed record Wh3UnitDirectAssetUsage(
@@ -668,8 +669,6 @@ namespace Editors.KitbasherEditor.Services
                 var handledPrimaryVisuals = false;
                 if (category is Wh3ArmyUnitCategory.Lord or Wh3ArmyUnitCategory.Hero)
                 {
-                    agentResolutionAttempted = true;
-
                     var factions = factionsByMainUnit.TryGetValue(mainUnitKey, out var mainFactions)
                         ? (IReadOnlyCollection<string>)mainFactions
                         : Array.Empty<string>();
@@ -685,6 +684,7 @@ namespace Editors.KitbasherEditor.Services
                         campaignCharacterArtRows,
                         agentUniformRows,
                         variantRows);
+                    agentResolutionAttempted |= agentResolution.HasAgentVisualPathEvidence;
                     agentResolutionIssues.AddRange(agentResolution.Issues);
 
                     foreach (var agentVariant in agentResolution.Variants)
@@ -1271,18 +1271,19 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private static IReadOnlyDictionary<string, string> GetTransitiveChildVmdParents(
+        private static IReadOnlyList<KeyValuePair<string, string>> GetTransitiveChildVmdParents(
             string rootVmdPath,
             IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd,
             CancellationToken cancellationToken)
         {
             var root = NormalizePath(rootVmdPath);
-            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var result = new List<KeyValuePair<string, string>>();
             if (root.Length == 0)
                 return result;
 
             var queue = new Queue<string>();
-            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { root };
+            var expanded = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { root };
+            var seenEdges = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             queue.Enqueue(root);
 
             while (queue.Count != 0)
@@ -1295,11 +1296,17 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var childValue in children)
                 {
                     var child = NormalizePath(childValue);
-                    if (child.Length == 0 || !visited.Add(child))
+                    if (child.Length == 0 || child.Equals(root, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    result[child] = parent;
-                    queue.Enqueue(child);
+                    var edgeIdentity = $"{parent}\u001f{child}";
+                    if (seenEdges.Add(edgeIdentity))
+                        result.Add(new KeyValuePair<string, string>(child, parent));
+
+                    // Expand each node once to keep traversal finite, but retain every incoming
+                    // edge so a diamond dependency reports every immediate provenance parent.
+                    if (expanded.Add(child))
+                        queue.Enqueue(child);
                 }
             }
 
@@ -1367,7 +1374,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<string, Dictionary<string, string>> variantRows)
         {
             if (string.IsNullOrWhiteSpace(mainUnitKey))
-                return new Wh3AgentVisualResolution([], false, []);
+                return new Wh3AgentVisualResolution([], false, false, []);
 
             var issues = new List<string>();
             var results = new List<Wh3ResolvedAgentVariant>();
@@ -1441,6 +1448,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var hasAuthority = false;
+            var hasAgentVisualPathEvidence = false;
             var artRows = campaignCharacterArtRows.ToList();
 
             foreach (var context in contexts)
@@ -1462,7 +1470,10 @@ namespace Editors.KitbasherEditor.Services
 
                 if (explicitUniforms.Length != 0)
                 {
-                    hasAuthority = true;
+                    hasAgentVisualPathEvidence = true;
+                    if (context.Faction.Length != 0)
+                        hasAuthority = true;
+
                     foreach (var uniformName in explicitUniforms)
                     {
                         TryResolveUniformVariant(
@@ -1474,8 +1485,12 @@ namespace Editors.KitbasherEditor.Services
                             string.Empty);
                     }
 
-                    // general_uniform is explicit battle authority for this faction context.
-                    continue;
+                    // general_uniform is authoritative only when the faction context is
+                    // known. With no faction context, other factions may still use scoped
+                    // campaign art, so conservatively keep traversing and union all possible
+                    // visual paths instead of treating one permission row as globally final.
+                    if (context.Faction.Length != 0)
+                        continue;
                 }
 
                 var subtypeContexts = agentSubtypeRows.Values
@@ -1494,6 +1509,7 @@ namespace Editors.KitbasherEditor.Services
 
                                 var subculture = Get(row, "subculture");
                                 return subculture.Length == 0 ||
+                                       context.Subculture.Length == 0 ||
                                        subculture.Equals(
                                            context.Subculture,
                                            StringComparison.OrdinalIgnoreCase);
@@ -1507,8 +1523,15 @@ namespace Editors.KitbasherEditor.Services
                 if (subtypeContexts.Length == 0)
                     continue;
 
+                hasAgentVisualPathEvidence = true;
+
+                // Empty actual scope means the caller does not know the faction context.
+                // Treat scoped rows as potentially applicable rather than rejecting them:
+                // gameplay-use discovery must over-preserve instead of producing a false
+                // negative.
                 static bool ScopeMatches(string required, string actual)
                     => required.Length == 0 ||
+                       actual.Length == 0 ||
                        required.Equals(actual, StringComparison.OrdinalIgnoreCase);
 
                 var candidateArtSets = campaignCharacterArtSetRows.Values
@@ -1538,13 +1561,35 @@ namespace Editors.KitbasherEditor.Services
                     })
                     .ToList();
                 if (candidateArtSets.Count == 0)
+                {
+                    issues.Add(
+                        $"{mainUnitKey}: agent subtype/override chain matched, but no " +
+                        "campaign_character_art_sets row matched the available subtype, " +
+                        "agent type, and scope.");
                     continue;
+                }
 
-                hasAuthority = true;
-                var maxSpecificity = candidateArtSets.Max(candidate => candidate.Score);
-                foreach (var artSet in candidateArtSets
-                             .Where(candidate => candidate.Score == maxSpecificity)
-                             .Select(candidate => candidate.Row))
+                if (context.Faction.Length != 0)
+                    hasAuthority = true;
+
+                // Specificity is meaningful only for a known faction context. When faction
+                // is unknown, rows scoped to different factions/subcultures/cultures are
+                // alternatives, not competitors; keep all of them so no gameplay visual is
+                // accidentally classified as unused.
+                IEnumerable<Dictionary<string, string>> selectedArtSets;
+                if (context.Faction.Length == 0)
+                {
+                    selectedArtSets = candidateArtSets.Select(candidate => candidate.Row);
+                }
+                else
+                {
+                    var maxSpecificity = candidateArtSets.Max(candidate => candidate.Score);
+                    selectedArtSets = candidateArtSets
+                        .Where(candidate => candidate.Score == maxSpecificity)
+                        .Select(candidate => candidate.Row);
+                }
+
+                foreach (var artSet in selectedArtSets)
                 {
                     var artSetId = Get(artSet, "art_set_id");
                     var rowsForSet = artRows
@@ -1621,7 +1666,11 @@ namespace Editors.KitbasherEditor.Services
                 .ThenBy(result => result.FactionKey, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            return new Wh3AgentVisualResolution(deduplicated, hasAuthority, issues);
+            return new Wh3AgentVisualResolution(
+                deduplicated,
+                hasAuthority,
+                hasAgentVisualPathEvidence,
+                issues);
         }
 
         private static string ResolveUiGroupKey(
