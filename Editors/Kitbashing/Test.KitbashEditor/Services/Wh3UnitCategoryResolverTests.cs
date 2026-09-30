@@ -1004,6 +1004,99 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void BattleAgentVisual_SubtypeOverrideRespectsAgentType()
+        {
+            var resolved = ResolveBattleAgentVisuals(
+                "main_hero",
+                ["faction_a"],
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["faction_a"] = "sub_a",
+                },
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                [],
+                new(StringComparer.OrdinalIgnoreCase),
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["sub_a|shared|champion"] = new()
+                    {
+                        ["subculture"] = "sub_a",
+                        ["subtype"] = "shared_subtype",
+                        ["agent"] = "champion",
+                        ["associated_unit_override"] = "main_hero",
+                    },
+                    ["sub_a|shared|general"] = new()
+                    {
+                        ["subculture"] = "sub_a",
+                        ["subtype"] = "shared_subtype",
+                        ["agent"] = "general",
+                        ["associated_unit_override"] = "other_unit",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["champion_art"] = new()
+                    {
+                        ["art_set_id"] = "champion_art",
+                        ["agent_subtype"] = "shared_subtype",
+                        ["agent_type"] = "champion",
+                    },
+                    ["general_art"] = new()
+                    {
+                        ["art_set_id"] = "general_art",
+                        ["agent_subtype"] = "shared_subtype",
+                        ["agent_type"] = "general",
+                    },
+                },
+                [
+                    new Dictionary<string, string>
+                    {
+                        ["art_set_id"] = "champion_art",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "champion_uniform",
+                    },
+                    new Dictionary<string, string>
+                    {
+                        ["art_set_id"] = "general_art",
+                        ["level"] = "1",
+                        ["age"] = "0",
+                        ["season"] = "none",
+                        ["uniform"] = "general_uniform",
+                    },
+                ],
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["champion_uniform"] = new()
+                    {
+                        ["uniform_name"] = "champion_uniform",
+                        ["battle_filename"] = "champion_variant",
+                    },
+                    ["general_uniform"] = new()
+                    {
+                        ["uniform_name"] = "general_uniform",
+                        ["battle_filename"] = "general_variant",
+                    },
+                },
+                new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["champion_variant"] = new() { ["variant_name"] = "champion_variant" },
+                    ["general_variant"] = new() { ["variant_name"] = "general_variant" },
+                },
+                out var hasAuthority,
+                out var issues);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(hasAuthority, Is.True);
+                Assert.That(issues, Is.Empty);
+                Assert.That(resolved.Select(value => value["variant"]),
+                    Is.EqualTo(new[] { "champion_variant" }));
+            });
+        }
+
+        [Test]
         public void BattleAgentVisual_BrokenGeneralUniformIsAuthoritativeAndUnhealthy()
         {
             var resolved = ResolveBattleAgentVisuals(
