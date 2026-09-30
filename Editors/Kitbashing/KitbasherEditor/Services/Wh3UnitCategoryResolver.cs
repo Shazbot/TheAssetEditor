@@ -747,10 +747,8 @@ namespace Editors.KitbasherEditor.Services
                 .GroupBy(row => Get(row, "unit"), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(
                     group => group.Key,
-                    group => group
-                        .Select(row => Get(row, "variant"))
-                        .Where(variant => variant.Length != 0)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                    group => (IReadOnlyList<Dictionary<string, string>>)group
+                        .Where(row => Get(row, "variant").Length != 0)
                         .ToArray(),
                     StringComparer.OrdinalIgnoreCase);
             var agentPrimaryMainUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -762,7 +760,7 @@ namespace Editors.KitbasherEditor.Services
                 IReadOnlyDictionary<string, string> main,
                 string landUnitKey,
                 IReadOnlyDictionary<string, string> land,
-                IReadOnlyList<string> fallbackVariantNames)
+                IReadOnlyList<Dictionary<string, string>> fallbackVariantRows)
             {
                 var mainUnitKey = Get(main, "unit");
                 var caste = Get(main, "caste");
@@ -782,6 +780,11 @@ namespace Editors.KitbasherEditor.Services
                 var mainVisualRole = visualCounts.Crew > 0
                     ? Wh3UnitVisualRole.Crew
                     : Wh3UnitVisualRole.Men;
+                var fallbackVariantNames = fallbackVariantRows
+                    .Select(row => Get(row, "variant"))
+                    .Where(variant => variant.Length != 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
 
                 var handledPrimaryVisuals = false;
                 if (category is Wh3ArmyUnitCategory.Lord or Wh3ArmyUnitCategory.Hero)
@@ -886,10 +889,17 @@ namespace Editors.KitbasherEditor.Services
 
                 if (!handledPrimaryVisuals)
                 {
-                    foreach (var primaryVariantName in fallbackVariantNames)
+                    foreach (var fallbackVariantRow in fallbackVariantRows)
                     {
+                        var factionKey = Get(fallbackVariantRow, "faction");
+                        var subcultureKey = factionKey.Length == 0
+                            ? string.Empty
+                            : subcultureByFaction.GetValueOrDefault(factionKey) ?? string.Empty;
+                        var cultureKey = subcultureKey.Length == 0
+                            ? string.Empty
+                            : cultureBySubculture.GetValueOrDefault(subcultureKey) ?? string.Empty;
                         AddVariantUsage(
-                            primaryVariantName,
+                            Get(fallbackVariantRow, "variant"),
                             mainUnitKey,
                             landUnitKey,
                             caste,
@@ -899,7 +909,10 @@ namespace Editors.KitbasherEditor.Services
                             mainVisualRole,
                             Wh3VmdConsumerType.UnitVariant,
                             numMen,
-                            visualCounts);
+                            visualCounts,
+                            factionKey,
+                            subcultureKey,
+                            cultureKey);
                     }
                 }
 
@@ -993,16 +1006,16 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                var fallbackVariantNames = unitVariantsByLandUnit.TryGetValue(
+                var fallbackVariantRows = unitVariantsByLandUnit.TryGetValue(
                     landUnitKey,
                     out var variantsForLandUnit)
                     ? variantsForLandUnit
-                    : Array.Empty<string>();
+                    : Array.Empty<Dictionary<string, string>>();
                 AddMainUnitVisualUsages(
                     main,
                     landUnitKey,
                     land,
-                    fallbackVariantNames);
+                    fallbackVariantRows);
             }
 
             // Orphan unit_variants rows are deliberately not gameplay authority. Keep them

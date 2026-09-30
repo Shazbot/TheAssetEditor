@@ -472,6 +472,36 @@ namespace Test.KitbashEditor.Services
                     StringComparison.OrdinalIgnoreCase));
         }
 
+        private static IReadOnlySet<string> ResolutionVmdProvenanceFactions(
+            object resolution,
+            string vmdPath)
+        {
+            var usages = (IDictionary)(resolution.GetType()
+                .GetProperty("UsagesByVmd")?.GetValue(resolution)
+                ?? throw new InvalidOperationException("UsagesByVmd was not found."));
+            var normalized = vmdPath.Replace('/', '\\').TrimStart('\\').ToLowerInvariant();
+            if (!usages.Contains(normalized))
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var usage in (IEnumerable)(usages[normalized]
+                         ?? throw new InvalidOperationException("VMD usage list was null.")))
+            {
+                var provenance = (IEnumerable)(usage.GetType()
+                    .GetProperty("Provenance")?.GetValue(usage)
+                    ?? throw new InvalidOperationException("Usage provenance was not found."));
+                foreach (var item in provenance.Cast<object>())
+                {
+                    var faction = item.GetType()
+                        .GetProperty("FactionKey")?.GetValue(item)?.ToString() ?? string.Empty;
+                    if (faction.Length != 0)
+                        result.Add(faction);
+                }
+            }
+
+            return result;
+        }
+
         private static bool ResolutionHasVmd(object resolution, string vmdPath)
         {
             var usages = (IDictionary)(resolution.GetType()
@@ -1362,6 +1392,66 @@ namespace Test.KitbashEditor.Services
                         "main_hero"),
                     Is.True,
                     "unknown faction scope must behave as a wildcard for SelectedCulture");
+            });
+        }
+
+        [Test]
+        public void FullResolver_UnitVariantFactionScopeSurvivesIntoUsageProvenance()
+        {
+            var rows = CreateMinimalGameplayRows(
+                mainUnitKey: "main_unit",
+                landUnitKey: "land_unit",
+                fallbackVariant: "variant_a",
+                fallbackVmd: "variant_a");
+            rows["main_units_tables"][0]["caste"] = "melee_infantry";
+            rows["unit_variants_tables"] =
+            [
+                new()
+                {
+                    ["faction"] = "faction_a",
+                    ["unit"] = "land_unit",
+                    ["name"] = "body_a",
+                    ["variant"] = "variant_a",
+                },
+                new()
+                {
+                    ["faction"] = "faction_b",
+                    ["unit"] = "land_unit",
+                    ["name"] = "body_b",
+                    ["variant"] = "variant_b",
+                },
+            ];
+            rows["variants_tables"].Add(
+                new()
+                {
+                    ["variant_name"] = "variant_b",
+                    ["variant_filename"] = "variant_b",
+                });
+            rows["factions_tables"] =
+            [
+                new() { ["key"] = "faction_a", ["subculture"] = "sub_a" },
+                new() { ["key"] = "faction_b", ["subculture"] = "sub_b" },
+            ];
+            rows["cultures_subcultures_tables"] =
+            [
+                new() { ["subculture"] = "sub_a", ["culture"] = "culture_a" },
+                new() { ["subculture"] = "sub_b", ["culture"] = "culture_b" },
+            ];
+
+            const string vmdA =
+                @"variantmeshes\variantmeshdefinitions\variant_a.variantmeshdefinition";
+            const string vmdB =
+                @"variantmeshes\variantmeshdefinitions\variant_b.variantmeshdefinition";
+            var resolution = ResolveFromDecodedRows(rows, vmdA, vmdB);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    ResolutionVmdProvenanceFactions(resolution, vmdA),
+                    Is.EquivalentTo(new[] { "faction_a" }));
+                Assert.That(
+                    ResolutionVmdProvenanceFactions(resolution, vmdB),
+                    Is.EquivalentTo(new[] { "faction_b" }));
             });
         }
 

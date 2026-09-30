@@ -2241,6 +2241,49 @@ namespace Editors.KitbasherEditor.Services
                 count);
         }
 
+        private static bool UsageMatchesScenarioRosterScope(
+            Wh3UnitCategoryUsage usage,
+            Wh3ResolvedUnitVisual rosterUnit,
+            Wh3ArmyVisualScenario scenario)
+        {
+            if (rosterUnit.HasUnknownFactionScope)
+                return true;
+
+            var scopeKey = scenario.RosterScopeKey?.Trim() ?? string.Empty;
+            if (scopeKey.Length == 0)
+                return true;
+
+            if (scenario.RosterScope == Wh3RosterScope.SelectedFaction)
+            {
+                return usage.Provenance.Count == 0 ||
+                       usage.Provenance.Any(provenance =>
+                           string.IsNullOrWhiteSpace(provenance.FactionKey) ||
+                           provenance.FactionKey.Equals(
+                               scopeKey,
+                               StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (scenario.RosterScope == Wh3RosterScope.SelectedCulture)
+            {
+                return usage.Provenance.Count == 0 ||
+                       usage.Provenance.Any(provenance =>
+                       {
+                           var hasCultureScope =
+                               !string.IsNullOrWhiteSpace(provenance.CultureKey) ||
+                               !string.IsNullOrWhiteSpace(provenance.SubcultureKey);
+                           return !hasCultureScope ||
+                                  provenance.CultureKey.Equals(
+                                      scopeKey,
+                                      StringComparison.OrdinalIgnoreCase) ||
+                                  provenance.SubcultureKey.Equals(
+                                      scopeKey,
+                                      StringComparison.OrdinalIgnoreCase);
+                       });
+            }
+
+            return true;
+        }
+
         private static ArmyResidencyModel? BuildArmyResidencyModel(
             BatchState state,
             Wh3UnitCategoryResolution? resolution)
@@ -2261,10 +2304,15 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3UnitVisualRole, int>>(StringComparer.OrdinalIgnoreCase);
             var categoryByUnit = new Dictionary<string, Wh3ArmyUnitCategory>(
                 StringComparer.OrdinalIgnoreCase);
-            var allowedUnitIds = resolution.RosterUnits
-                .Select(GetArmyUnitIdentity)
-                .Where(identity => identity.Length != 0)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var rosterByUnitId = resolution.RosterUnits
+                .Select(unit => (Identity: GetArmyUnitIdentity(unit), Unit: unit))
+                .Where(entry => entry.Identity.Length != 0)
+                .ToDictionary(
+                    entry => entry.Identity,
+                    entry => entry.Unit,
+                    StringComparer.OrdinalIgnoreCase);
+            var allowedUnitIds = rosterByUnitId.Keys.ToHashSet(
+                StringComparer.OrdinalIgnoreCase);
 
             // Populate the denominator from the already scenario-filtered DB-derived roster,
             // not from the subset of VMD roots discovered in this pack. Later usage loops may
@@ -2301,8 +2349,15 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     var identity = GetArmyUnitIdentity(usage);
-                    if (identity.Length == 0 || !allowedUnitIds.Contains(identity))
+                    if (identity.Length == 0 ||
+                        !allowedUnitIds.Contains(identity) ||
+                        !UsageMatchesScenarioRosterScope(
+                            usage,
+                            rosterByUnitId[identity],
+                            resolution.Scenario))
+                    {
                         continue;
+                    }
 
                     unitsByCategory[usage.Category].Add(identity);
                     var entityCount = Math.Max(1, usage.EntityCount);
@@ -2379,8 +2434,15 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     var identity = GetArmyUnitIdentity(usage);
-                    if (identity.Length == 0 || !allowedUnitIds.Contains(identity))
+                    if (identity.Length == 0 ||
+                        !allowedUnitIds.Contains(identity) ||
+                        !UsageMatchesScenarioRosterScope(
+                            usage,
+                            rosterByUnitId[identity],
+                            resolution.Scenario))
+                    {
                         continue;
+                    }
 
                     if (!directVmdsByUnitAndRole.TryGetValue(identity, out var directVmdsByRole))
                     {
