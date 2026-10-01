@@ -12024,7 +12024,7 @@ namespace Editors.KitbasherEditor.Services
                     : string.Join(" -> ", messages)));
         }
 
-        private XmlDocument? GetWsDocument(BatchState state, string wsPath)
+        private static XmlDocument? GetWsDocument(BatchState state, string wsPath)
         {
             wsPath = Normalize(wsPath);
             if (state.WsDocuments.TryGetValue(wsPath, out var cached))
