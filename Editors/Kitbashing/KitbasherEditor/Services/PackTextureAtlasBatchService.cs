@@ -36,6 +36,29 @@ namespace Editors.KitbasherEditor.Services
         // battle draw savings while rejecting expensive low-value atlas batches.
         private const long MaxNetBcnBytesPerExpectedArmyDraw = 256L * 1024; // 0.25 MiB
         private const long MaxNetBcnBytesPerFallbackDraw = 8L * 1024 * 1024;
+        // A texture-only atlas has no geometry-merge draw credit. Permit it only when it
+        // retires multiple source textures and its net payload growth is small per retired
+        // source texture.
+        private const long MaxNetBcnBytesPerRetiredSourceTexture = 512L * 1024; // 0.5 MiB
+        private const int MinimumRetiredSourceTexturesForTextureOnlyAtlas = 2;
+        // A prospective texture merge does eliminate a real geometry draw, even when the
+        // original source textures remain reachable through other materials. Give that
+        // structural draw a bounded floor plus scenario-proportional credit, while keeping
+        // the cumulative pack-growth cap below.
+        private const long MaxNetBcnBytesPerTextureOnlyMergeDraw = 2L * 1024 * 1024; // 2 MiB
+        // A texture-consolidation atlas keeps geometry and draw credit unchanged. Permit it
+        // only when it replaces multiple real texture assignments at a tighter payload cost.
+        private const long MaxNetBcnBytesPerConsolidatedTextureAssignment = 256L * 1024; // 0.25 MiB
+        private const int MinimumConsolidatedTextureAssignmentsForAtlas = 2;
+        // Large planner batches can force a power-of-two atlas allocation for unrelated
+        // texture assignments. Start texture-consolidation scoring in small cohorts and
+        // recursively split cohorts whose marginal residency is still too expensive.
+        private const int TextureConsolidationInitialCohortCandidateLimit = 8;
+        // Prospective texture-merge groups can contain unrelated large placements. Search
+        // bounded pairs/triples before giving up on the whole group.
+        private const int TextureOnlyMergeSubsetCandidateLimit = 10;
+        private const int TextureOnlyMergeSubsetOptionLimit = 128;
+        private const int TextureOnlyMergeNearMissLimit = 24;
         private const double AtlasValueGateExpectedDrawEpsilon = 0.000001;
         private const double MaxReachableBcnGrowthRatio = 0.50;
         private static readonly bool AtlasProfilingEnabled =
@@ -296,6 +319,11 @@ namespace Editors.KitbasherEditor.Services
                     cancellationToken,
                     progress,
                     "Scanning source dependencies");
+                // The value gate must account for every source-root consumer, including
+                // roots that are intentionally outside the atlas population. Otherwise a
+                // texture shared by an atlased root and a non-atlased root can be credited as
+                // retired even though the latter still keeps it reachable in the output.
+                state.SourceReachableAssetFiles.UnionWith(originalReachable);
                 state.PhaseDurations["Scan source dependencies"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
@@ -436,15 +464,6 @@ namespace Editors.KitbasherEditor.Services
                 state.PhaseDurations["Scan rewritten dependencies"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
-                ReportProgress(progress, "Estimating output BCn residency");
-                state.OutputBcnResidency = CalculateBcnTextureResidency(
-                    state,
-                    output,
-                    currentReachable,
-                    cancellationToken);
-                state.PhaseDurations["Estimate output BCn residency"] = phaseStopwatch.Elapsed;
-
-                phaseStopwatch.Restart();
                 PruneUnusedAssetFiles(
                     state,
                     originalReachable,
@@ -452,6 +471,30 @@ namespace Editors.KitbasherEditor.Services
                     cancellationToken,
                     progress);
                 state.PhaseDurations["Prune unused assets"] = phaseStopwatch.Elapsed;
+
+                // The pre-prune dependency scan is needed to decide what to remove, but it
+                // still contains superseded source textures. Re-scan after pruning so the
+                // reported output residency and source-retirement accounting describe the
+                // pack that will actually be saved.
+                ReportProgress(progress, "Scanning final dependencies");
+                phaseStopwatch.Restart();
+                var finalReachable = CollectReachableAssetFiles(
+                    state,
+                    output,
+                    assetDependencyRoots,
+                    cancellationToken,
+                    progress,
+                    "Scanning final dependencies");
+                state.PhaseDurations["Scan final dependencies"] = phaseStopwatch.Elapsed;
+
+                phaseStopwatch.Restart();
+                ReportProgress(progress, "Estimating output BCn residency");
+                state.OutputBcnResidency = CalculateBcnTextureResidency(
+                    state,
+                    output,
+                    finalReachable,
+                    cancellationToken);
+                state.PhaseDurations["Estimate output BCn residency"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
                 ValidateOutput(state, vmdRoots, cancellationToken, progress);
@@ -1542,6 +1585,11 @@ namespace Editors.KitbasherEditor.Services
                     if (inspection.IsUniformConstant)
                     {
                         constantChannels[channel.Slot] = inspection.ConstantColor;
+                        RegisterUniformConstantTextureCanonicalPath(
+                            state,
+                            channel.Slot,
+                            inspection.ConstantColor,
+                            path);
                         continue;
                     }
 
@@ -1763,6 +1811,67 @@ namespace Editors.KitbasherEditor.Services
             state.TextureInspections[texturePath] = inspection;
             return inspection;
         }
+
+        private static void RegisterUniformConstantTextureCanonicalPath(
+            BatchState state,
+            string slot,
+            TextureAtlasConstantColor color,
+            string texturePath)
+        {
+            var key = BuildUniformConstantTextureKey(slot, color);
+            var normalizedPath = Normalize(texturePath);
+            if (normalizedPath.Length == 0)
+                return;
+
+            if (!state.UniformConstantTextureCanonicalPaths.TryGetValue(key, out var existing) ||
+                string.Compare(normalizedPath, existing, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                // The key is content-derived, so replacing the path with the stable
+                // lexicographically-first source is safe. It lets generated materials with
+                // equivalent uniform channels share an identity without treating arbitrary
+                // non-uniform textures as interchangeable.
+                state.UniformConstantTextureCanonicalPaths[key] = normalizedPath;
+            }
+        }
+
+        private static void CanonicalizeUniformConstantTexturePaths(
+            BatchState state,
+            XmlDocument material,
+            IReadOnlyDictionary<string, TextureAtlasConstantColor> constantChannels,
+            bool recordAssignment = true)
+        {
+            foreach (var (slot, color) in constantChannels)
+            {
+                var currentPath = GetTexturePath(material, slot);
+                if (currentPath.Length == 0 ||
+                    state.GeneratedTexturePaths.Contains(currentPath))
+                    continue;
+
+                var key = BuildUniformConstantTextureKey(slot, color);
+                if (!state.UniformConstantTextureCanonicalPaths.TryGetValue(
+                        key,
+                        out var canonicalPath) ||
+                    currentPath.Equals(canonicalPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                SetTexturePath(material, slot, canonicalPath);
+                if (recordAssignment)
+                    state.UniformConstantTextureAssignmentsCanonicalized++;
+            }
+        }
+
+        private static string BuildUniformConstantTextureKey(
+            string slot,
+            TextureAtlasConstantColor color)
+            => string.Join(
+                ":",
+                Normalize(slot),
+                color.B,
+                color.G,
+                color.R,
+                color.A);
 
         private static List<AtlasCandidate> ApplyTexelDensityScaling(
             BatchState state,
@@ -2252,7 +2361,7 @@ namespace Editors.KitbasherEditor.Services
 
             var allCandidates = working.SelectMany(batch => batch).ToList();
             var rootsByMesh = BuildCandidateRootVmdPaths(state, allCandidates);
-            var affinityGroups = BuildMergeAffinityGroups(allCandidates);
+            var affinityGroups = BuildMergeAffinityGroups(state, allCandidates);
             var optimized = new List<List<AtlasCandidate>>();
 
             foreach (var batch in working)
@@ -3780,6 +3889,7 @@ namespace Editors.KitbasherEditor.Services
                 return working;
 
             var affinityGroups = BuildMergeAffinityGroups(
+                state,
                 working.SelectMany(batch => batch));
             if (affinityGroups.Count == 0)
                 return working;
@@ -4324,63 +4434,182 @@ namespace Editors.KitbasherEditor.Services
                 materialIdentity);
 
         private static MergeAffinityIdentity BuildMergeAffinityIdentity(
+            BatchState state,
             AtlasCandidate candidate)
             => BuildMergeAffinityIdentity(
                 candidate.Key.GeometryPath,
                 candidate.Key.LodIndex,
                 GetRmvMergeIdentity(candidate.Model),
-                BuildMergeAffinityMaterialIdentity(candidate));
+                BuildMergeAffinityMaterialIdentity(state, candidate));
 
         private static List<MergeAffinityGroup> BuildMergeAffinityGroups(
+            BatchState state,
             IEnumerable<AtlasCandidate> candidates)
         {
             var result = new List<MergeAffinityGroup>();
 
-            var buckets = candidates
+            // Group by the material state that would remain after a safe texture rewrite.
+            // This deliberately admits only texture-only counterfactuals; shader and parameter
+            // differences remain separate. The value gate still decides whether the resulting
+            // atlas residency is worth accepting.
+            var prepared = candidates
                 .Where(CanEarnMergeDrawCredit)
-                .GroupBy(BuildMergeAffinityIdentity);
+                .Select(candidate => new MergeAffinityCandidateInfo(
+                    candidate,
+                    GetRmvMergeIdentity(candidate.Model),
+                    BuildMergeAffinityMaterialIdentity(state, candidate),
+                    GetMaterialMergeDiagnosticSnapshot(state, candidate.MaterialPath)))
+                .ToList();
+
+            var buckets = prepared
+                .GroupBy(info => new MergeAffinityBucketIdentity(
+                    info.Candidate.Key.GeometryPath,
+                    info.Candidate.Key.LodIndex,
+                    info.RmvIdentity,
+                    info.MaterialSnapshot?.Shader ?? string.Empty,
+                    info.MaterialSnapshot?.NonTextureIdentity ??
+                        $"strict:{info.StrictMaterialIdentity}",
+                    info.MaterialSnapshot != null));
 
             foreach (var bucket in buckets)
             {
-                var current = new List<AtlasCandidate>();
+                var current = new List<MergeAffinityCandidateInfo>();
                 var currentVertexCount = 0;
+                var currentHasProspectivePair = false;
 
-                foreach (var candidate in bucket
-                             .OrderBy(x => x.Key.PartIndex)
-                             .ThenBy(x => x.RootVmdPath, StringComparer.OrdinalIgnoreCase))
+                foreach (var info in bucket
+                             .OrderBy(x => x.Candidate.Key.PartIndex)
+                             .ThenBy(x => x.Candidate.RootVmdPath, StringComparer.OrdinalIgnoreCase))
                 {
+                    var candidate = info.Candidate;
                     var vertexCount = candidate.Model.Mesh.VertexList.Length;
                     if (vertexCount > ushort.MaxValue)
                         continue;
 
+                    var canJoinCurrent = current.Count == 0;
+                    var joinsProspectivePair = false;
+                    if (!canJoinCurrent)
+                    {
+                        canJoinCurrent = true;
+                        foreach (var existing in current)
+                        {
+                            // StrictMaterialIdentity is the material identity after the
+                            // atlas rewrite modeled by BuildMergeAffinityMaterialIdentity.
+                            // It must match exactly before a group can be admitted. The old
+                            // logic grouped by pre-rewrite non-texture fields and then allowed
+                            // a texture-only pair even when constant-vs-resolved channels (or
+                            // XML texture-node structure) still produced different generated
+                            // materials at execution time.
+                            if (!existing.StrictMaterialIdentity.Equals(
+                                    info.StrictMaterialIdentity,
+                                    StringComparison.Ordinal))
+                            {
+                                canJoinCurrent = false;
+                                break;
+                            }
+
+                            if (existing.MaterialSnapshot == null ||
+                                info.MaterialSnapshot == null ||
+                                existing.MaterialSnapshot.RenderingIdentity.Equals(
+                                    info.MaterialSnapshot.RenderingIdentity,
+                                    StringComparison.Ordinal))
+                            {
+                                continue;
+                            }
+
+                            if (!AreCounterfactuallyMergeCompatible(
+                                    state,
+                                    existing,
+                                    info))
+                            {
+                                canJoinCurrent = false;
+                                break;
+                            }
+
+                            joinsProspectivePair = true;
+                        }
+                    }
+
                     if (current.Count != 0 &&
-                        currentVertexCount + vertexCount > ushort.MaxValue)
+                        (!canJoinCurrent ||
+                         currentVertexCount + vertexCount > ushort.MaxValue))
                     {
                         if (current.Count > 1)
                         {
                             result.Add(new MergeAffinityGroup(
-                                current.Select(x => x.Key).ToArray()));
+                                current.Select(x => x.Candidate.Key).ToArray(),
+                                currentHasProspectivePair));
+                            if (currentHasProspectivePair)
+                                state.ProspectiveMergeAffinityGroupsAdded++;
                         }
 
                         current = [];
                         currentVertexCount = 0;
+                        currentHasProspectivePair = false;
                     }
 
-                    current.Add(candidate);
+                    current.Add(info);
                     currentVertexCount += vertexCount;
+                    if (joinsProspectivePair)
+                    {
+                        currentHasProspectivePair = true;
+                        state.ProspectiveMergeAffinityPairs++;
+                    }
                 }
 
                 if (current.Count > 1)
                 {
                     result.Add(new MergeAffinityGroup(
-                        current.Select(x => x.Key).ToArray()));
+                        current.Select(x => x.Candidate.Key).ToArray(),
+                        currentHasProspectivePair));
+                    if (currentHasProspectivePair)
+                        state.ProspectiveMergeAffinityGroupsAdded++;
                 }
             }
 
             return result;
         }
 
-        private static string BuildMergeAffinityMaterialIdentity(AtlasCandidate candidate)
+        private static bool AreCounterfactuallyMergeCompatible(
+            BatchState state,
+            MergeAffinityCandidateInfo left,
+            MergeAffinityCandidateInfo right)
+        {
+            if (left.MaterialSnapshot == null ||
+                right.MaterialSnapshot == null ||
+                !left.MaterialSnapshot.Shader.Equals(
+                    right.MaterialSnapshot.Shader,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !left.MaterialSnapshot.NonTextureIdentity.Equals(
+                    right.MaterialSnapshot.NonTextureIdentity,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var differingSlots = GetDifferingMaterialTextureSlots(
+                    left.MaterialSnapshot,
+                    right.MaterialSnapshot).ToList();
+            if (differingSlots.Count == 0)
+                return true;
+
+            var classification = ClassifyCounterfactualTexturePair(
+                state,
+                left.MaterialSnapshot,
+                right.MaterialSnapshot,
+                differingSlots,
+                out _);
+            return classification.Equals(
+                       "Atlasable differing texture channels",
+                       StringComparison.Ordinal) ||
+                   classification.Equals(
+                       "Uniform-constant equivalence",
+                       StringComparison.Ordinal);
+        }
+
+        private static string BuildMergeAffinityMaterialIdentity(
+            BatchState state,
+            AtlasCandidate candidate)
         {
             var material = new XmlDocument();
             material.LoadXml(candidate.MaterialDocument.OuterXml);
@@ -4393,10 +4622,15 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                // Only non-constant resolved channels are guaranteed to be rewritten to the
-                // same generated atlas path when two candidates share a batch. Preserved,
-                // missing, and constant-only sources remain part of the strict identity.
-                if (candidate.ResolvedChannels.Contains(channel.Slot))
+                // Both resolved and uniform-constant channels can receive the same final
+                // atlas path when this candidate shares a batch with a resolved source.
+                // Treating constants as preserved here admits a false prospective merge:
+                // the planner sees a shared material identity, but ProcessBatch gives the
+                // two candidates different generated-material identities. Constant-only
+                // batches are safe as well because ProcessBatch canonicalizes equal
+                // uniform constants to the same source path.
+                if (candidate.ResolvedChannels.Contains(channel.Slot) ||
+                    candidate.ConstantChannels.ContainsKey(channel.Slot))
                 {
                     SetTexturePath(
                         material,
@@ -4711,6 +4945,151 @@ namespace Editors.KitbasherEditor.Services
             return total;
         }
 
+        private static AtlasBatchCoverage CalculateAtlasBatchCoverage(
+            IReadOnlyList<AtlasCandidate> candidates,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh)
+        {
+            var affectedUnits = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            double expectedRenderedEntities = 0;
+
+            foreach (var candidate in candidates
+                         .GroupBy(candidate => candidate.Key)
+                         .Select(group => group.First()))
+            {
+                if (!expectedEntitiesByMesh.TryGetValue(
+                        candidate.Key,
+                        out var expectedByCategory))
+                {
+                    continue;
+                }
+
+                foreach (var (category, expectedByUnit) in expectedByCategory)
+                {
+                    foreach (var (unitId, expectedEntities) in expectedByUnit)
+                    {
+                        if (expectedEntities <= 0)
+                            continue;
+
+                        // Include the category in the identity. The same DB unit key can
+                        // legitimately appear in more than one visual slot in malformed or
+                        // synthetic data, and those are separate residency consumers.
+                        affectedUnits.Add($"{category}\u001f{unitId}");
+                        expectedRenderedEntities += expectedEntities;
+                    }
+                }
+            }
+
+            return new AtlasBatchCoverage(
+                affectedUnits,
+                expectedRenderedEntities);
+        }
+
+        private static List<List<AtlasCandidate>> OrderBatchesByCoverageEfficiency(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh)
+        {
+            return batches
+                .Select((batch, originalIndex) =>
+                {
+                    var coverage = CalculateAtlasBatchCoverage(
+                        batch,
+                        expectedEntitiesByMesh);
+                    var affinity = CalculateMergeAffinityScore(
+                        [batch],
+                        affinityGroups);
+                    var scenarioResolved = IsAtlasValueBatchScenarioResolved(state, batch);
+                    var scenarioAllowed = IsAtlasValueCandidateAllowedForMode(
+                        state.AtlasAllVmdsEnabled,
+                        scenarioResolved);
+                    var expectedNetBcnBytes = double.PositiveInfinity;
+                    if (scenarioAllowed &&
+                        TryEstimateIncrementalAtlasResidency(
+                            state,
+                            batch,
+                            out var residency))
+                    {
+                        expectedNetBcnBytes = residency.ExpectedArmyNetBcnBytes;
+                    }
+
+                    var coveragePerScenarioMiB =
+                        GetAffectedUnitsPerScenarioMiB(
+                            coverage.AffectedUnitCount,
+                            expectedNetBcnBytes);
+                    var stableKey = string.Join(
+                        "\u001f",
+                        batch
+                            .Select(candidate => candidate.Key.ToString())
+                            .OrderBy(key => key, StringComparer.OrdinalIgnoreCase));
+                    return (
+                        Batch: batch,
+                        Coverage: coverage,
+                        ScenarioAllowed: scenarioAllowed,
+                        CoveragePerScenarioMiB: coveragePerScenarioMiB,
+                        Affinity: affinity,
+                        StableKey: stableKey,
+                        OriginalIndex: originalIndex);
+                })
+                // Greedily spend the value-gate budget on the widest safe unit coverage per
+                // scenario-estimated net BCn MiB. This is intentionally a priority heuristic,
+                // not a relaxed acceptance rule: every selected batch still passes the full
+                // draw/value/memory gate below.
+                .OrderByDescending(entry => entry.ScenarioAllowed)
+                .ThenByDescending(entry => entry.CoveragePerScenarioMiB)
+                .ThenByDescending(entry => entry.Coverage.AffectedUnitCount)
+                .ThenByDescending(entry => entry.Coverage.ExpectedRenderedEntities)
+                .ThenByDescending(entry => entry.Affinity)
+                .ThenBy(entry => entry.StableKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(entry => entry.OriginalIndex)
+                .Select(entry => entry.Batch)
+                .ToList();
+        }
+
+        private static double GetAffectedUnitsPerScenarioMiB(
+            int affectedUnitCount,
+            double expectedNetBcnBytes)
+        {
+            if (affectedUnitCount <= 0 ||
+                double.IsPositiveInfinity(expectedNetBcnBytes) ||
+                double.IsNaN(expectedNetBcnBytes))
+            {
+                return 0;
+            }
+
+            var expectedNetMiB = Math.Max(
+                0.0,
+                expectedNetBcnBytes / (1024.0 * 1024.0));
+            return expectedNetMiB <= AtlasValueGateExpectedDrawEpsilon
+                ? double.MaxValue
+                : affectedUnitCount / expectedNetMiB;
+        }
+
+        private static string FormatAffectedUnitsPerScenarioMiB(
+            int affectedUnitCount,
+            double expectedNetBcnBytes)
+        {
+            if (affectedUnitCount <= 0)
+                return "0";
+
+            if (double.IsPositiveInfinity(expectedNetBcnBytes) ||
+                double.IsNaN(expectedNetBcnBytes))
+            {
+                return "N/A";
+            }
+
+            var expectedNetMiB = expectedNetBcnBytes / (1024.0 * 1024.0);
+            return expectedNetMiB <= AtlasValueGateExpectedDrawEpsilon
+                ? "retiring"
+                : $"{affectedUnitCount / expectedNetMiB:N3}";
+        }
+
         private static List<List<AtlasCandidate>> FilterBatchesForMergeValue(
             BatchState state,
             IReadOnlyList<List<AtlasCandidate>> batches)
@@ -4727,31 +5106,31 @@ namespace Editors.KitbasherEditor.Services
                 .Select(group => group.First())
                 .ToList();
             var candidateByKey = allCandidates.ToDictionary(candidate => candidate.Key);
-            var affinityGroups = BuildMergeAffinityGroups(allCandidates);
-            if (affinityGroups.Count == 0)
-            {
-                foreach (var candidate in allCandidates)
-                {
-                    RecordSkip(
-                        state,
-                        candidate.RootVmdPath,
-                        candidate.Key,
-                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
-                        "Atlas value gate: no compatible mesh merge would be enabled.");
-                    state.AtlasValueGateCandidatesRejected++;
-                }
-
-                return [];
-            }
+            var affinityGroups = BuildMergeAffinityGroups(state, allCandidates);
 
             var rootsByMesh = BuildCandidateRootVmdPaths(state, allCandidates);
             var expectedEntitiesByMesh = BuildExpectedArmyEntitiesByMesh(
                 state.ArmyResidencyModel,
                 allCandidates,
                 rootsByMesh);
+            var candidateCoverage = CalculateAtlasBatchCoverage(
+                allCandidates,
+                expectedEntitiesByMesh);
+            state.AtlasValueGateCandidateAffectedUnitCount =
+                candidateCoverage.AffectedUnitCount;
+            var orderedBatches = OrderBatchesByCoverageEfficiency(
+                state,
+                batches,
+                affinityGroups,
+                expectedEntitiesByMesh);
+            state.AtlasValueGateCoverageOrderedBatchCount = orderedBatches.Count;
             var result = new List<List<AtlasCandidate>>();
+            var pendingTextureMergeAttachments =
+                new List<AtlasValueGatePendingTextureMergeAttachment>();
+            var acceptedEconomicsStartIndex =
+                state.AtlasValueGateAcceptedBatchEconomics.Count;
 
-            foreach (var originalBatch in batches)
+            foreach (var originalBatch in orderedBatches)
             {
                 var batch = new List<AtlasCandidate>(originalBatch.Count);
                 foreach (var candidate in originalBatch)
@@ -4783,24 +5162,79 @@ namespace Editors.KitbasherEditor.Services
                 var batchKeys = batch.Select(candidate => candidate.Key).ToHashSet();
                 var contributingGroups = affinityGroups
                     .Select(group => new MergeAffinityGroup(
-                        group.Meshes.Where(batchKeys.Contains).ToArray()))
+                        group.Meshes.Where(batchKeys.Contains).ToArray(),
+                        group.IsProspectiveTextureMerge))
                     .Where(group => group.Meshes.Length >= 2)
                     .ToList();
                 var contributingKeys = contributingGroups
                     .SelectMany(group => group.Meshes)
                     .ToHashSet();
 
-                foreach (var candidate in batch.Where(
-                             candidate => !contributingKeys.Contains(candidate.Key)))
-                {
-                    RecordSkip(
+                var textureOnlyCandidates = batch
+                    .Where(candidate => !contributingKeys.Contains(candidate.Key))
+                    .ToList();
+                if (TryAcceptTextureOnlyAtlasBatch(
                         state,
-                        candidate.RootVmdPath,
-                        candidate.Key,
-                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
-                        "Atlas value gate: this mesh does not contribute to a compatible " +
-                        "mesh merge in its planned atlas batch.");
-                    state.AtlasValueGateCandidatesRejected++;
+                        textureOnlyCandidates,
+                        out var textureOnlyResidency,
+                        out var textureOnlyRejectionReason))
+                {
+                    result.Add(textureOnlyCandidates);
+                    RecordAtlasValueGateAccepted(
+                        state,
+                        textureOnlyCandidates,
+                        textureOnlyResidency,
+                        rawDrawsEliminated: 0,
+                        expectedArmyDrawsEliminated: 0,
+                        expectedEntitiesByMesh,
+                        acceptanceKind: AtlasValueGateAcceptanceKind.TextureOnlyRetirement);
+                }
+                else
+                {
+                    var textureConsolidationAcceptances =
+                        SelectTextureConsolidationCohorts(
+                            state,
+                            textureOnlyCandidates,
+                            out var textureConsolidationRejectionReasons);
+                    foreach (var acceptance in textureConsolidationAcceptances)
+                    {
+                        result.Add(acceptance.Candidates);
+                        RecordAtlasValueGateAccepted(
+                            state,
+                            acceptance.Candidates,
+                            acceptance.Residency,
+                            rawDrawsEliminated: 0,
+                            expectedArmyDrawsEliminated: 0,
+                            expectedEntitiesByMesh,
+                            acceptanceKind: AtlasValueGateAcceptanceKind.TextureConsolidation,
+                            consolidatedTextureAssignments:
+                                acceptance.ConsolidatedTextureAssignments);
+                    }
+
+                    var acceptedTextureConsolidationKeys =
+                        textureConsolidationAcceptances
+                            .SelectMany(acceptance => acceptance.Candidates)
+                            .Select(candidate => candidate.Key)
+                            .ToHashSet();
+                    foreach (var candidate in textureOnlyCandidates)
+                    {
+                        if (acceptedTextureConsolidationKeys.Contains(candidate.Key))
+                            continue;
+
+                        var rejectionReason =
+                            textureConsolidationRejectionReasons.GetValueOrDefault(
+                                candidate.Key,
+                                "no viable texture-consolidation cohort remained.");
+                        RecordSkip(
+                            state,
+                            candidate.RootVmdPath,
+                            candidate.Key,
+                            candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                            "Atlas value gate: this mesh does not contribute to a compatible " +
+                            $"mesh merge; texture-only fallback rejected: {textureOnlyRejectionReason}; " +
+                            $"texture-consolidation fallback rejected: {rejectionReason}");
+                        state.AtlasValueGateCandidatesRejected++;
+                    }
                 }
 
                 var trimmed = batch
@@ -4844,15 +5278,49 @@ namespace Editors.KitbasherEditor.Services
                                 residency,
                                 rawDraws,
                                 expectedDraws,
-                                WasMarginalOnly: false));
+                                WasMarginalOnly: false,
+                                AcceptanceKind: AtlasValueGateAcceptanceKind.DrawMerge));
                     }
                     else
                     {
+                        var candidateResidency = residency;
+                        var candidateRejectionReason = rejectionReason;
+                        if (plan.Group.IsProspectiveTextureMerge)
+                        {
+                            var textureMergeAccepted =
+                                TryAcceptTextureOnlyMergeAtlasBatch(
+                                    state,
+                                    plan,
+                                    expectedEntitiesByMesh,
+                                    out var textureMergeResidency,
+                                    out var textureMergeRawDraws,
+                                    out var textureMergeExpectedDraws,
+                                    out var textureMergeRejectionReason);
+                            if (textureMergeAccepted)
+                            {
+                                standaloneAccepted.Add(
+                                    new AtlasValueGateAcceptedGroup(
+                                        plan,
+                                        textureMergeResidency,
+                                        textureMergeRawDraws,
+                                        textureMergeExpectedDraws,
+                                        WasMarginalOnly: false,
+                                        AcceptanceKind:
+                                            AtlasValueGateAcceptanceKind.TextureOnlyMerge));
+                                continue;
+                            }
+
+                            candidateResidency = textureMergeResidency;
+                            candidateRejectionReason =
+                                $"{rejectionReason}; texture-only merge credit rejected: " +
+                                textureMergeRejectionReason;
+                        }
+
                         standaloneRejected.Add(
                             new AtlasValueGateRejectedGroup(
                                 plan,
-                                residency,
-                                rejectionReason));
+                                candidateResidency,
+                                candidateRejectionReason));
                     }
                 }
 
@@ -4863,11 +5331,68 @@ namespace Editors.KitbasherEditor.Services
 
                     foreach (var rejected in standaloneRejected)
                     {
-                        RejectAtlasValueGateGroup(
+                        if (rejected.Plan.Group.IsProspectiveTextureMerge)
+                        {
+                            pendingTextureMergeAttachments.Add(
+                                new AtlasValueGatePendingTextureMergeAttachment(
+                                    rejected.Plan,
+                                    rejected.Residency,
+                                    rejected.RejectionReason));
+                        }
+                        else
+                        {
+                            RejectAtlasValueGateGroup(
+                                state,
+                                rejected.Plan,
+                                rejected.Residency,
+                                rejected.RejectionReason);
+                        }
+                    }
+
+                    continue;
+                }
+
+                // A standalone texture-only merge has a deliberately separate budget because
+                // its source textures may remain reachable through unrelated materials. Keep
+                // standalone texture-merge groups isolated from normal groups; marginal
+                // attachments are handled later against the already accepted atlas cost.
+                if (standaloneAccepted.Any(group =>
+                        group.AcceptanceKind == AtlasValueGateAcceptanceKind.TextureOnlyMerge))
+                {
+                    if (groupPlans.Count > 1)
+                        state.AtlasValueGateBroadBatchesSplit++;
+
+                    foreach (var accepted in standaloneAccepted)
+                    {
+                        result.Add(accepted.Plan.Candidates);
+                        RecordAtlasValueGateAccepted(
                             state,
-                            rejected.Plan,
-                            rejected.Residency,
-                            rejected.RejectionReason);
+                            accepted.Plan.Candidates,
+                            accepted.Residency,
+                            accepted.RawDrawsEliminated,
+                            accepted.ExpectedArmyDrawsEliminated,
+                            expectedEntitiesByMesh,
+                            accepted.AcceptanceKind);
+                    }
+
+                    foreach (var rejected in standaloneRejected)
+                    {
+                        if (rejected.Plan.Group.IsProspectiveTextureMerge)
+                        {
+                            pendingTextureMergeAttachments.Add(
+                                new AtlasValueGatePendingTextureMergeAttachment(
+                                    rejected.Plan,
+                                    rejected.Residency,
+                                    rejected.RejectionReason));
+                        }
+                        else
+                        {
+                            RejectAtlasValueGateGroup(
+                                state,
+                                rejected.Plan,
+                                rejected.Residency,
+                                rejected.RejectionReason);
+                        }
                     }
 
                     continue;
@@ -4885,22 +5410,50 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var rejected in standaloneRejected)
                 {
-                    if (TryAcceptAtlasValueMarginalAddition(
+                    var marginalRawDraws = 0;
+                    var marginalExpectedDraws = 0.0;
+                    string marginalReason;
+                    AtlasValueGateAcceptanceKind marginalAcceptanceKind;
+                    var marginalAccepted = false;
+                    if (rejected.Plan.Group.IsProspectiveTextureMerge)
+                    {
+                        marginalAcceptanceKind =
+                            AtlasValueGateAcceptanceKind.TextureOnlyMerge;
+                        marginalAccepted = TryAcceptTextureOnlyMergeMarginalAddition(
                             state,
                             workingCandidates,
                             rejected.Plan.Candidates,
                             workingGroups,
                             rejected.Plan.Group,
                             expectedEntitiesByMesh,
-                            out var marginalReason))
+                            out marginalRawDraws,
+                            out marginalExpectedDraws,
+                            out marginalReason);
+                    }
+                    else
+                    {
+                        marginalAcceptanceKind =
+                            AtlasValueGateAcceptanceKind.DrawMerge;
+                        marginalAccepted = TryAcceptAtlasValueMarginalAddition(
+                            state,
+                            workingCandidates,
+                            rejected.Plan.Candidates,
+                            workingGroups,
+                            rejected.Plan.Group,
+                            expectedEntitiesByMesh,
+                            out marginalReason);
+                    }
+
+                    if (marginalAccepted)
                     {
                         workingAccepted.Add(
                             new AtlasValueGateAcceptedGroup(
                                 rejected.Plan,
                                 rejected.Residency,
-                                0,
-                                0,
-                                WasMarginalOnly: true));
+                                marginalRawDraws,
+                                marginalExpectedDraws,
+                                WasMarginalOnly: true,
+                                AcceptanceKind: marginalAcceptanceKind));
                         workingCandidates.AddRange(
                             rejected.Plan.Candidates.Where(candidate =>
                                 workingCandidates.All(existing =>
@@ -4910,12 +5463,23 @@ namespace Editors.KitbasherEditor.Services
                     }
                     else
                     {
-                        RejectAtlasValueGateGroup(
-                            state,
-                            rejected.Plan,
-                            rejected.Residency,
-                            $"mixed-batch marginal check: {marginalReason}");
-                        state.AtlasValueGateMixedGroupsRejected++;
+                        if (rejected.Plan.Group.IsProspectiveTextureMerge)
+                        {
+                            pendingTextureMergeAttachments.Add(
+                                new AtlasValueGatePendingTextureMergeAttachment(
+                                    rejected.Plan,
+                                    rejected.Residency,
+                                    $"mixed-batch marginal check: {marginalReason}"));
+                        }
+                        else
+                        {
+                            RejectAtlasValueGateGroup(
+                                state,
+                                rejected.Plan,
+                                rejected.Residency,
+                                $"mixed-batch marginal check: {marginalReason}");
+                            state.AtlasValueGateMixedGroupsRejected++;
+                        }
                     }
                 }
 
@@ -4928,7 +5492,9 @@ namespace Editors.KitbasherEditor.Services
                         accepted.Plan.Candidates,
                         accepted.Residency,
                         accepted.RawDrawsEliminated,
-                        accepted.ExpectedArmyDrawsEliminated);
+                        accepted.ExpectedArmyDrawsEliminated,
+                        expectedEntitiesByMesh,
+                        accepted.AcceptanceKind);
                     continue;
                 }
 
@@ -4948,7 +5514,53 @@ namespace Editors.KitbasherEditor.Services
                         workingCandidates,
                         combinedResidency,
                         combinedRawDraws,
-                        combinedExpectedDraws);
+                        combinedExpectedDraws,
+                        expectedEntitiesByMesh);
+                    continue;
+                }
+
+                var textureOnlyMarginalGroupCount = workingAccepted.Count(
+                    group => group.WasMarginalOnly &&
+                             group.AcceptanceKind ==
+                             AtlasValueGateAcceptanceKind.TextureOnlyMerge);
+                var combinedScenarioResolved =
+                    IsAtlasValueBatchScenarioResolved(state, workingCandidates);
+                var combinedGrowthWithinCap = true;
+                if (textureOnlyMarginalGroupCount > 0)
+                {
+                    var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+                    if (sourceBcnBytes > 0)
+                    {
+                        var projectedNetGrowth =
+                            state.AtlasValueGateNetBcnBytesAccepted +
+                            (double)combinedResidency.NetBcnBytes;
+                        combinedGrowthWithinCap = projectedNetGrowth <=
+                            sourceBcnBytes * MaxReachableBcnGrowthRatio;
+                    }
+                }
+
+                // A texture-only marginal attachment has already been checked against the
+                // incremental cost of the current accepted atlas. The ordinary aggregate gate
+                // can still reject the mixed batch because it prices the entire batch as a
+                // standalone draw-merge decision. Preserve the sequential marginal decisions
+                // when the combined plan is valid, has real draw benefit, and remains under the
+                // cumulative growth cap.
+                if (textureOnlyMarginalGroupCount > 0 &&
+                    combinedScenarioResolved &&
+                    combinedRawDraws > 0 &&
+                    combinedExpectedDraws > AtlasValueGateExpectedDrawEpsilon &&
+                    combinedGrowthWithinCap)
+                {
+                    result.Add(workingCandidates);
+                    state.AtlasValueGateTextureOnlyMergeMarginalGroupsAccepted +=
+                        textureOnlyMarginalGroupCount;
+                    RecordAtlasValueGateAccepted(
+                        state,
+                        workingCandidates,
+                        combinedResidency,
+                        combinedRawDraws,
+                        combinedExpectedDraws,
+                        expectedEntitiesByMesh);
                     continue;
                 }
 
@@ -4973,7 +5585,9 @@ namespace Editors.KitbasherEditor.Services
                             accepted.Plan.Candidates,
                             standaloneResidency,
                             standaloneRawDraws,
-                            standaloneExpectedDraws);
+                            standaloneExpectedDraws,
+                            expectedEntitiesByMesh,
+                            accepted.AcceptanceKind);
                     }
                     else
                     {
@@ -4989,15 +5603,36 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var marginalOnly in workingAccepted.Where(
                              group => group.WasMarginalOnly))
                 {
-                    RejectAtlasValueGateGroup(
-                        state,
-                        marginalOnly.Plan,
-                        marginalOnly.Residency,
-                        $"marginal sharing required a broad batch that was rejected: " +
-                        combinedRejectionReason);
-                    state.AtlasValueGateMixedGroupsRejected++;
+                    if (marginalOnly.AcceptanceKind ==
+                        AtlasValueGateAcceptanceKind.TextureOnlyMerge)
+                    {
+                        pendingTextureMergeAttachments.Add(
+                            new AtlasValueGatePendingTextureMergeAttachment(
+                                marginalOnly.Plan,
+                                marginalOnly.Residency,
+                                "marginal sharing required a broad batch that was rejected: " +
+                                combinedRejectionReason));
+                    }
+                    else
+                    {
+                        RejectAtlasValueGateGroup(
+                            state,
+                            marginalOnly.Plan,
+                            marginalOnly.Residency,
+                            $"marginal sharing required a broad batch that was rejected: " +
+                            combinedRejectionReason);
+                        state.AtlasValueGateMixedGroupsRejected++;
+                    }
                 }
             }
+
+            AttachPendingTextureOnlyMergeGroups(
+                state,
+                result,
+                affinityGroups,
+                expectedEntitiesByMesh,
+                pendingTextureMergeAttachments,
+                acceptedEconomicsStartIndex);
 
             return result;
         }
@@ -5028,7 +5663,13 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<AtlasCandidate> batch,
             AtlasValueGateResidencyEstimate residency,
             int rawDrawsEliminated,
-            double expectedArmyDrawsEliminated)
+            double expectedArmyDrawsEliminated,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh,
+            AtlasValueGateAcceptanceKind acceptanceKind = AtlasValueGateAcceptanceKind.DrawMerge,
+            int consolidatedTextureAssignments = 0)
         {
             state.AtlasValueGateBatchesAccepted++;
             state.AtlasValueGateCandidatesAccepted += batch.Count;
@@ -5045,6 +5686,37 @@ namespace Editors.KitbasherEditor.Services
             state.AtlasValueGateExpectedArmyNetBcnBytesAccepted +=
                 residency.ExpectedArmyNetBcnBytes;
             state.AtlasValueGateExpectedDrawsAccepted += expectedArmyDrawsEliminated;
+            if (acceptanceKind == AtlasValueGateAcceptanceKind.TextureOnlyMerge)
+            {
+                state.AtlasValueGateTextureOnlyMergeBatchesAccepted++;
+                state.AtlasValueGateTextureOnlyMergeCandidatesAccepted += batch.Count;
+            }
+            else if (acceptanceKind == AtlasValueGateAcceptanceKind.TextureOnlyRetirement)
+            {
+                state.AtlasValueGateTextureOnlyBatchesAccepted++;
+                state.AtlasValueGateTextureOnlyCandidatesAccepted += batch.Count;
+                state.AtlasValueGateTextureOnlyRetiredSourceTextureCount +=
+                    residency.RetiredSourceTextureCount;
+                state.AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount +=
+                    residency.ExpectedArmyRetiredSourceTextureCount;
+                state.AtlasValueGateTextureOnlyRetiredBcnBytesAccepted = checked(
+                    state.AtlasValueGateTextureOnlyRetiredBcnBytesAccepted +
+                    residency.RetiredSourceBcnBytes);
+                state.AtlasValueGateTextureOnlyExpectedRetiredBcnBytesAccepted +=
+                    residency.ExpectedArmyRetiredSourceBcnBytes;
+            }
+            else if (acceptanceKind == AtlasValueGateAcceptanceKind.TextureConsolidation)
+            {
+                state.AtlasValueGateTextureConsolidationBatchesAccepted++;
+                state.AtlasValueGateTextureConsolidationCandidatesAccepted += batch.Count;
+                state.AtlasValueGateTextureConsolidatedAssignments = checked(
+                    state.AtlasValueGateTextureConsolidatedAssignments +
+                    consolidatedTextureAssignments);
+            }
+
+            var coverage = CalculateAtlasBatchCoverage(batch, expectedEntitiesByMesh);
+            state.AtlasValueGateAcceptedAffectedUnits.UnionWith(
+                coverage.AffectedUnits);
 
             var roots = batch
                 .Select(candidate => Normalize(candidate.RootVmdPath))
@@ -5057,6 +5729,9 @@ namespace Editors.KitbasherEditor.Services
                     state.AtlasValueGateBatchesAccepted,
                     batch.Count,
                     roots,
+                    acceptanceKind,
+                    coverage.AffectedUnitCount,
+                    coverage.ExpectedRenderedEntities,
                     residency.GeneratedBcnBytes,
                     residency.RetiredSourceBcnBytes,
                     residency.NetBcnBytes,
@@ -5088,12 +5763,21 @@ namespace Editors.KitbasherEditor.Services
                 residency.ExpectedArmyNetBcnBytes;
         }
 
+        private enum AtlasValueGateAcceptanceKind
+        {
+            DrawMerge,
+            TextureOnlyMerge,
+            TextureOnlyRetirement,
+            TextureConsolidation,
+        }
+
         private enum AtlasValueGateBudgetDecision
         {
             Accept,
             ScenarioResolvedZeroBenefit,
             FallbackBudgetExceeded,
             ScenarioBudgetExceeded,
+            TextureOnlyMergeBudgetExceeded,
             GlobalGrowthCapExceeded,
         }
 
@@ -5129,6 +5813,46 @@ namespace Editors.KitbasherEditor.Services
                     (double)MaxNetBcnBytesPerFallbackDraw;
                 if (globalCostBytes > fallbackBudget)
                     return AtlasValueGateBudgetDecision.FallbackBudgetExceeded;
+            }
+
+            if (sourceBcnBytes > 0)
+            {
+                var projectedNetGrowth = acceptedNetBcnBytes + proposedNetBcnBytes;
+                var globalGrowthCap = sourceBcnBytes * MaxReachableBcnGrowthRatio;
+                if (projectedNetGrowth > globalGrowthCap)
+                    return AtlasValueGateBudgetDecision.GlobalGrowthCapExceeded;
+            }
+
+            return AtlasValueGateBudgetDecision.Accept;
+        }
+
+        private static AtlasValueGateBudgetDecision
+            EvaluateTextureOnlyMergeAtlasValueGateBudget(
+                bool scenarioResolved,
+                int rawDrawsEliminated,
+                double expectedArmyDrawsEliminated,
+                double globalCostBytes,
+                double expectedCostBytes,
+                double acceptedNetBcnBytes,
+                double proposedNetBcnBytes,
+                double sourceBcnBytes)
+        {
+            if (!scenarioResolved ||
+                rawDrawsEliminated <= 0 ||
+                expectedArmyDrawsEliminated <= AtlasValueGateExpectedDrawEpsilon)
+            {
+                return AtlasValueGateBudgetDecision.ScenarioResolvedZeroBenefit;
+            }
+
+            var structuralBudget = Math.Max(rawDrawsEliminated, 1) *
+                                    (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
+            var scenarioBudget = expectedArmyDrawsEliminated *
+                                 MaxNetBcnBytesPerExpectedArmyDraw;
+            var effectiveGlobalBudget = Math.Max(structuralBudget, scenarioBudget);
+            if (globalCostBytes > effectiveGlobalBudget ||
+                expectedCostBytes > scenarioBudget)
+            {
+                return AtlasValueGateBudgetDecision.TextureOnlyMergeBudgetExceeded;
             }
 
             if (sourceBcnBytes > 0)
@@ -5249,6 +5973,666 @@ namespace Editors.KitbasherEditor.Services
                 sourceBcnBytes);
         }
 
+        private static (int Raw, double Expected) CalculateAtlasBatchDrawSavings(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh)
+        {
+            var batches = new List<List<AtlasCandidate>>
+            {
+                candidates.ToList(),
+            };
+            var batchByMesh = BuildBatchIndexByMesh(batches);
+            return (
+                CalculateMergeAffinityScore(batches, affinityGroups),
+                CalculateExpectedArmyDrawCallsEliminated(
+                    state,
+                    batchByMesh,
+                    affinityGroups,
+                    expectedEntitiesByMesh));
+        }
+
+        private static List<MergeAffinityGroup> GetMergeAffinityGroupsForCandidates(
+            IReadOnlyList<AtlasCandidate> candidates,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups)
+        {
+            var candidateKeys = candidates
+                .Select(candidate => candidate.Key)
+                .ToHashSet();
+            return affinityGroups
+                .Select(group => new MergeAffinityGroup(
+                    group.Meshes.Where(candidateKeys.Contains).ToArray(),
+                    group.IsProspectiveTextureMerge))
+                .Where(group => group.Meshes.Length >= 2)
+                .ToList();
+        }
+
+        private static bool TryAcceptTextureOnlyMergeMarginalAddition(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> baseCandidates,
+            IReadOnlyList<AtlasCandidate> addedCandidates,
+            IReadOnlyList<MergeAffinityGroup> baseGroups,
+            MergeAffinityGroup addedGroup,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh,
+            out int marginalRawDrawsEliminated,
+            out double marginalExpectedArmyDrawsEliminated,
+            out string rejectionReason)
+        {
+            if (!addedGroup.IsProspectiveTextureMerge)
+            {
+                marginalRawDrawsEliminated = 0;
+                marginalExpectedArmyDrawsEliminated = 0;
+                rejectionReason =
+                    "marginal texture-only attachment requires a prospective texture merge.";
+                return false;
+            }
+
+            var combinedGroups = baseGroups
+                .Concat([addedGroup])
+                .ToList();
+            var accepted = TryEvaluateTextureOnlyMergeMarginalAddition(
+                state,
+                baseCandidates,
+                addedCandidates,
+                baseGroups,
+                combinedGroups,
+                expectedEntitiesByMesh,
+                baseAlreadyAccepted: false,
+                out var evaluation,
+                out rejectionReason);
+            marginalRawDrawsEliminated =
+                evaluation?.MarginalRawDrawsEliminated ?? 0;
+            marginalExpectedArmyDrawsEliminated =
+                evaluation?.MarginalExpectedArmyDrawsEliminated ?? 0;
+            return accepted;
+        }
+
+        private static bool TryEvaluateTextureOnlyMergeMarginalAddition(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> baseCandidates,
+            IReadOnlyList<AtlasCandidate> addedCandidates,
+            IReadOnlyList<MergeAffinityGroup> baseGroups,
+            IReadOnlyList<MergeAffinityGroup> combinedGroups,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh,
+            bool baseAlreadyAccepted,
+            out TextureOnlyMergeMarginalEvaluation? evaluation,
+            out string rejectionReason)
+        {
+            evaluation = null;
+            rejectionReason = string.Empty;
+
+            if (baseCandidates.Count == 0 || addedCandidates.Count < 2)
+            {
+                rejectionReason =
+                    "marginal texture-only attachment requires an accepted atlas and " +
+                    "at least two added candidates.";
+                return false;
+            }
+
+            var combinedCandidates = baseCandidates
+                .Concat(addedCandidates)
+                .DistinctBy(candidate => candidate.Key)
+                .ToList();
+            if (!TryEstimateIncrementalAtlasResidency(
+                    state,
+                    baseCandidates,
+                    out var baseResidency) ||
+                !TryEstimateIncrementalAtlasResidency(
+                    state,
+                    combinedCandidates,
+                    out var combinedResidency))
+            {
+                rejectionReason =
+                    "incremental BCn residency could not be estimated safely.";
+                return false;
+            }
+
+            var baseSavings = CalculateAtlasBatchDrawSavings(
+                state,
+                baseCandidates,
+                baseGroups,
+                expectedEntitiesByMesh);
+            var combinedSavings = CalculateAtlasBatchDrawSavings(
+                state,
+                combinedCandidates,
+                combinedGroups,
+                expectedEntitiesByMesh);
+            var marginalRawDraws = Math.Max(
+                0,
+                combinedSavings.Raw - baseSavings.Raw);
+            var marginalExpectedDraws = Math.Max(
+                0,
+                combinedSavings.Expected - baseSavings.Expected);
+            var marginalGenerated =
+                combinedResidency.GeneratedBcnBytes - baseResidency.GeneratedBcnBytes;
+            var marginalRetired =
+                combinedResidency.RetiredSourceBcnBytes -
+                baseResidency.RetiredSourceBcnBytes;
+            var marginalExpectedGenerated =
+                combinedResidency.ExpectedArmyGeneratedBcnBytes -
+                baseResidency.ExpectedArmyGeneratedBcnBytes;
+            var marginalExpectedRetired =
+                combinedResidency.ExpectedArmyRetiredSourceBcnBytes -
+                baseResidency.ExpectedArmyRetiredSourceBcnBytes;
+            var marginalGlobalCost = GetChargeableAtlasValueGateBytes(
+                marginalGenerated,
+                marginalRetired);
+            var marginalExpectedCost = GetChargeableAtlasValueGateBytes(
+                marginalExpectedGenerated,
+                marginalExpectedRetired);
+            var marginalNet =
+                combinedResidency.NetBcnBytes - baseResidency.NetBcnBytes;
+
+            evaluation = new TextureOnlyMergeMarginalEvaluation(
+                combinedCandidates,
+                baseResidency,
+                combinedResidency,
+                baseSavings.Raw,
+                combinedSavings.Raw,
+                baseSavings.Expected,
+                combinedSavings.Expected,
+                marginalRawDraws,
+                marginalExpectedDraws,
+                marginalGlobalCost,
+                marginalExpectedCost,
+                marginalNet);
+
+            var scenarioResolved = IsAtlasValueBatchScenarioResolved(
+                state,
+                addedCandidates);
+            if (!IsAtlasValueCandidateAllowedForMode(
+                    state.AtlasAllVmdsEnabled,
+                    scenarioResolved))
+            {
+                rejectionReason =
+                    "gameplay/scenario relevance could not be resolved safely.";
+                return false;
+            }
+
+            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var acceptedNetBcnBytes = state.AtlasValueGateNetBcnBytesAccepted;
+            if (!baseAlreadyAccepted)
+                acceptedNetBcnBytes += baseResidency.NetBcnBytes;
+
+            var budgetDecision = EvaluateTextureOnlyMergeAtlasValueGateBudget(
+                scenarioResolved,
+                marginalRawDraws,
+                marginalExpectedDraws,
+                marginalGlobalCost,
+                marginalExpectedCost,
+                acceptedNetBcnBytes,
+                marginalNet,
+                sourceBcnBytes);
+            if (budgetDecision == AtlasValueGateBudgetDecision.Accept)
+                return true;
+
+            rejectionReason =
+                $"marginal texture-only economics rejected ({budgetDecision}); " +
+                $"incremental global cost {FormatMiB(marginalGlobalCost)}, " +
+                $"scenario cost {FormatMiB(marginalExpectedCost)}, raw draws " +
+                $"+{marginalRawDraws:N0}, scenario draws " +
+                $"+{marginalExpectedDraws:N3}.";
+            return false;
+        }
+
+        private static void AttachPendingTextureOnlyMergeGroups(
+            BatchState state,
+            List<List<AtlasCandidate>> acceptedBatches,
+            IReadOnlyList<MergeAffinityGroup> affinityGroups,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh,
+            IReadOnlyList<AtlasValueGatePendingTextureMergeAttachment> pendingAttachments,
+            int acceptedEconomicsStartIndex)
+        {
+            if (pendingAttachments.Count == 0)
+                return;
+
+            var orderedAttachments = pendingAttachments
+                .OrderByDescending(attachment => attachment.Plan.Candidates.Count)
+                .ThenBy(
+                    attachment => string.Join(
+                        "\u001f",
+                        attachment.Plan.Candidates
+                            .Select(candidate => candidate.Key.ToString())
+                            .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)),
+                    StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var pending in orderedAttachments)
+            {
+                state.AtlasValueGateTextureOnlyMergeCrossBatchGroupsEvaluated++;
+                state.AtlasValueGateTextureOnlyMergeSubsetGroupsConsidered++;
+                var subsetPlans = BuildTextureOnlyMergeSubsetPlans(pending.Plan);
+                var attachedKeys = new HashSet<MeshKey>();
+                var bestRejectionReason = string.Empty;
+
+                while (true)
+                {
+                    var availableCandidates = pending.Plan.Candidates
+                        .Where(candidate => !attachedKeys.Contains(candidate.Key))
+                        .ToList();
+                    if (availableCandidates.Count < 2)
+                        break;
+
+                    var availableKeys = availableCandidates
+                        .Select(candidate => candidate.Key)
+                        .ToHashSet();
+                    AtlasValueGateGroupPlan? bestPlan = null;
+                    TextureOnlyMergeMarginalEvaluation? bestEvaluation = null;
+                    var bestHostIndex = -1;
+
+                    foreach (var subsetPlan in subsetPlans)
+                    {
+                        var subsetKeys = subsetPlan.Candidates
+                            .Select(candidate => candidate.Key)
+                            .ToHashSet();
+                        if (subsetPlan.Candidates.Count < 2 ||
+                            !subsetKeys.IsSubsetOf(availableKeys))
+                        {
+                            continue;
+                        }
+
+                        state.AtlasValueGateTextureOnlyMergeSubsetOptionsEvaluated++;
+                        for (var hostIndex = 0;
+                             hostIndex < acceptedBatches.Count;
+                             hostIndex++)
+                        {
+                            var host = acceptedBatches[hostIndex];
+                            if (host.Any(candidate => subsetKeys.Contains(candidate.Key)))
+                                continue;
+
+                            var baseGroups = GetMergeAffinityGroupsForCandidates(
+                                host,
+                                affinityGroups);
+                            var combinedCandidates = host
+                                .Concat(subsetPlan.Candidates)
+                                .DistinctBy(candidate => candidate.Key)
+                                .ToList();
+                            var combinedGroups = GetMergeAffinityGroupsForCandidates(
+                                combinedCandidates,
+                                affinityGroups);
+                            if (!combinedGroups.Any(group =>
+                                    group.Meshes.Any(subsetKeys.Contains) &&
+                                    subsetKeys.IsSubsetOf(group.Meshes)))
+                            {
+                                combinedGroups.Add(subsetPlan.Group);
+                            }
+
+                            if (!TryEvaluateTextureOnlyMergeMarginalAddition(
+                                    state,
+                                    host,
+                                    subsetPlan.Candidates,
+                                    baseGroups,
+                                    combinedGroups,
+                                    expectedEntitiesByMesh,
+                                    baseAlreadyAccepted: true,
+                                    out var evaluation,
+                                    out var rejectionReason))
+                            {
+                                if (evaluation != null)
+                                {
+                                    RecordTextureOnlyMergeNearMiss(
+                                        state,
+                                        subsetPlan,
+                                        host,
+                                        evaluation,
+                                        rejectionReason);
+                                }
+
+                                if (bestRejectionReason.Length == 0)
+                                    bestRejectionReason = rejectionReason;
+                                continue;
+                            }
+
+                            if (evaluation == null)
+                                continue;
+
+                            if (bestEvaluation == null ||
+                                IsBetterTextureOnlyMergeAttachment(
+                                    evaluation,
+                                    bestEvaluation))
+                            {
+                                bestPlan = subsetPlan;
+                                bestEvaluation = evaluation;
+                                bestHostIndex = hostIndex;
+                            }
+                        }
+                    }
+
+                    if (bestPlan == null ||
+                        bestEvaluation == null ||
+                        bestHostIndex < 0)
+                    {
+                        break;
+                    }
+
+                    var economicsIndex = acceptedEconomicsStartIndex + bestHostIndex;
+                    if (economicsIndex < 0 ||
+                        economicsIndex >= state.AtlasValueGateAcceptedBatchEconomics.Count)
+                    {
+                        bestRejectionReason =
+                            "accepted atlas economics bookkeeping was not aligned with " +
+                            "the planned batches.";
+                        break;
+                    }
+
+                    acceptedBatches[bestHostIndex] = bestEvaluation.CombinedCandidates;
+                    ApplyTextureOnlyMergeAttachmentAccounting(
+                        state,
+                        acceptedBatches[bestHostIndex],
+                        bestEvaluation,
+                        expectedEntitiesByMesh,
+                        economicsIndex);
+                    foreach (var candidate in bestPlan.Candidates)
+                        attachedKeys.Add(candidate.Key);
+                    state.AtlasValueGateMarginalGroupsAccepted++;
+                    state.AtlasValueGateTextureOnlyMergeMarginalGroupsAccepted++;
+                    state.AtlasValueGateTextureOnlyMergeCrossBatchGroupsAccepted++;
+                }
+
+                var remainderCandidates = pending.Plan.Candidates
+                    .Where(candidate => !attachedKeys.Contains(candidate.Key))
+                    .ToList();
+                if (remainderCandidates.Count == 0)
+                    continue;
+
+                var remainderPlan = new AtlasValueGateGroupPlan(
+                    new MergeAffinityGroup(
+                        remainderCandidates.Select(candidate => candidate.Key).ToArray(),
+                        IsProspectiveTextureMerge: true),
+                    remainderCandidates);
+                var rejectionResidency = pending.Residency;
+                if (TryEstimateIncrementalAtlasResidency(
+                        state,
+                        remainderCandidates,
+                        out var remainderResidency))
+                {
+                    rejectionResidency = remainderResidency;
+                }
+
+                RejectAtlasValueGateGroup(
+                    state,
+                    remainderPlan,
+                    rejectionResidency,
+                    "cross-batch texture-only attachment rejected: " +
+                    (bestRejectionReason.Length == 0
+                        ? "no compatible accepted atlas batch passed the incremental gate."
+                        : bestRejectionReason) +
+                    $" Original rejection: {pending.RejectionReason}");
+            }
+        }
+
+        private static List<AtlasValueGateGroupPlan> BuildTextureOnlyMergeSubsetPlans(
+            AtlasValueGateGroupPlan plan)
+        {
+            var candidates = plan.Candidates
+                .DistinctBy(candidate => candidate.Key)
+                .OrderBy(BuildAtlasPlanningOrderKey, StringComparer.Ordinal)
+                .ThenBy(candidate => candidate.Key.ToString(), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (candidates.Count <= 3)
+                return [plan];
+
+            var pool = candidates
+                .Take(TextureOnlyMergeSubsetCandidateLimit)
+                .ToList();
+            var subsetPlans = new List<AtlasValueGateGroupPlan>();
+            var subsetOptionLimit = Math.Max(1, TextureOnlyMergeSubsetOptionLimit - 1);
+
+            void AddSubset(IReadOnlyList<AtlasCandidate> subset)
+            {
+                if (subsetPlans.Count >= subsetOptionLimit)
+                    return;
+
+                subsetPlans.Add(
+                    new AtlasValueGateGroupPlan(
+                        new MergeAffinityGroup(
+                            subset.Select(candidate => candidate.Key).ToArray(),
+                            IsProspectiveTextureMerge: true),
+                        subset.ToList()));
+            }
+
+            for (var left = 0;
+                 left < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                 left++)
+            {
+                for (var right = left + 1;
+                     right < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                     right++)
+                {
+                    AddSubset([pool[left], pool[right]]);
+                }
+            }
+
+            for (var left = 0;
+                 left < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                 left++)
+            {
+                for (var middle = left + 1;
+                     middle < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                     middle++)
+                {
+                    for (var right = middle + 1;
+                         right < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                         right++)
+                    {
+                        AddSubset([pool[left], pool[middle], pool[right]]);
+                    }
+                }
+            }
+
+            // Retain the original group as a final option. This preserves a full-group win
+            // when the combined atlas happens to be cheaper than its smaller alternatives.
+            subsetPlans.Add(plan);
+            return subsetPlans;
+        }
+
+        private static void RecordTextureOnlyMergeNearMiss(
+            BatchState state,
+            AtlasValueGateGroupPlan plan,
+            IReadOnlyList<AtlasCandidate> host,
+            TextureOnlyMergeMarginalEvaluation evaluation,
+            string rejectionReason)
+        {
+            if (evaluation.MarginalExpectedArmyDrawsEliminated <=
+                AtlasValueGateExpectedDrawEpsilon)
+            {
+                return;
+            }
+
+            var structuralBudget = Math.Max(
+                    evaluation.MarginalRawDrawsEliminated,
+                    1) *
+                (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
+            var scenarioBudget = evaluation.MarginalExpectedArmyDrawsEliminated *
+                                 MaxNetBcnBytesPerExpectedArmyDraw;
+            var effectiveGlobalBudget = Math.Max(structuralBudget, scenarioBudget);
+            var globalPressure = effectiveGlobalBudget > 0
+                ? evaluation.MarginalGlobalCostBytes / effectiveGlobalBudget
+                : double.PositiveInfinity;
+            var scenarioPressure = scenarioBudget > 0
+                ? evaluation.MarginalExpectedCostBytes / scenarioBudget
+                : double.PositiveInfinity;
+            var budgetPressure = Math.Max(globalPressure, scenarioPressure);
+            if (double.IsNaN(budgetPressure))
+                return;
+
+            var candidateGroup = string.Join(
+                ", ",
+                plan.Candidates
+                    .Select(candidate => candidate.Key.ToString())
+                    .OrderBy(key => key, StringComparer.OrdinalIgnoreCase));
+            var hostBatch = string.Join(
+                ", ",
+                host
+                    .Select(candidate => Normalize(candidate.RootVmdPath))
+                    .Where(path => path.Length != 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(4));
+            state.AtlasValueGateTextureOnlyMergeNearMisses.Add(
+                new AtlasValueGateTextureOnlyMergeNearMiss(
+                    candidateGroup,
+                    hostBatch.Length == 0 ? "<none>" : hostBatch,
+                    plan.Candidates.Count,
+                    evaluation.MarginalGlobalCostBytes,
+                    evaluation.MarginalExpectedCostBytes,
+                    evaluation.MarginalRawDrawsEliminated,
+                    evaluation.MarginalExpectedArmyDrawsEliminated,
+                    budgetPressure,
+                    rejectionReason));
+
+            while (state.AtlasValueGateTextureOnlyMergeNearMisses.Count >
+                   TextureOnlyMergeNearMissLimit)
+            {
+                var worst = state.AtlasValueGateTextureOnlyMergeNearMisses
+                    .OrderByDescending(entry => entry.BudgetPressure)
+                    .ThenByDescending(entry => entry.ExpectedArmyDrawsEliminated)
+                    .First();
+                state.AtlasValueGateTextureOnlyMergeNearMisses.Remove(worst);
+            }
+        }
+
+        private static bool IsBetterTextureOnlyMergeAttachment(
+            TextureOnlyMergeMarginalEvaluation candidate,
+            TextureOnlyMergeMarginalEvaluation incumbent)
+        {
+            var candidateExpectedCostPerDraw = GetAtlasValueGateMiBPerDraw(
+                candidate.MarginalExpectedCostBytes,
+                candidate.MarginalExpectedArmyDrawsEliminated);
+            var incumbentExpectedCostPerDraw = GetAtlasValueGateMiBPerDraw(
+                incumbent.MarginalExpectedCostBytes,
+                incumbent.MarginalExpectedArmyDrawsEliminated);
+            const double epsilon = 0.000001;
+            if (candidateExpectedCostPerDraw <
+                incumbentExpectedCostPerDraw - epsilon)
+            {
+                return true;
+            }
+
+            if (Math.Abs(
+                    candidateExpectedCostPerDraw - incumbentExpectedCostPerDraw) >
+                epsilon)
+            {
+                return false;
+            }
+
+            if (candidate.MarginalExpectedArmyDrawsEliminated >
+                incumbent.MarginalExpectedArmyDrawsEliminated + epsilon)
+            {
+                return true;
+            }
+
+            if (Math.Abs(
+                    candidate.MarginalExpectedArmyDrawsEliminated -
+                    incumbent.MarginalExpectedArmyDrawsEliminated) > epsilon)
+            {
+                return false;
+            }
+
+            var candidateGlobalCostPerDraw = GetAtlasValueGateMiBPerDraw(
+                candidate.MarginalGlobalCostBytes,
+                candidate.MarginalRawDrawsEliminated);
+            var incumbentGlobalCostPerDraw = GetAtlasValueGateMiBPerDraw(
+                incumbent.MarginalGlobalCostBytes,
+                incumbent.MarginalRawDrawsEliminated);
+            return candidateGlobalCostPerDraw <
+                   incumbentGlobalCostPerDraw - epsilon;
+        }
+
+        private static void ApplyTextureOnlyMergeAttachmentAccounting(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> combinedBatch,
+            TextureOnlyMergeMarginalEvaluation evaluation,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh,
+            int economicsIndex)
+        {
+            var generatedDelta = evaluation.CombinedResidency.GeneratedBcnBytes -
+                                  evaluation.BaseResidency.GeneratedBcnBytes;
+            var retiredDelta = evaluation.CombinedResidency.RetiredSourceBcnBytes -
+                               evaluation.BaseResidency.RetiredSourceBcnBytes;
+            var netDelta = evaluation.CombinedResidency.NetBcnBytes -
+                           evaluation.BaseResidency.NetBcnBytes;
+            var expectedGeneratedDelta =
+                evaluation.CombinedResidency.ExpectedArmyGeneratedBcnBytes -
+                evaluation.BaseResidency.ExpectedArmyGeneratedBcnBytes;
+            var expectedRetiredDelta =
+                evaluation.CombinedResidency.ExpectedArmyRetiredSourceBcnBytes -
+                evaluation.BaseResidency.ExpectedArmyRetiredSourceBcnBytes;
+            var expectedNetDelta =
+                evaluation.CombinedResidency.ExpectedArmyNetBcnBytes -
+                evaluation.BaseResidency.ExpectedArmyNetBcnBytes;
+
+            state.AtlasValueGateCandidatesAccepted = checked(
+                state.AtlasValueGateCandidatesAccepted +
+                combinedBatch.Count -
+                state.AtlasValueGateAcceptedBatchEconomics[economicsIndex].CandidateCount);
+            state.AtlasValueGateGeneratedBcnBytesAccepted = checked(
+                state.AtlasValueGateGeneratedBcnBytesAccepted + generatedDelta);
+            state.AtlasValueGateRetiredBcnBytesAccepted = checked(
+                state.AtlasValueGateRetiredBcnBytesAccepted + retiredDelta);
+            state.AtlasValueGateNetBcnBytesAccepted = checked(
+                state.AtlasValueGateNetBcnBytesAccepted + netDelta);
+            state.AtlasValueGateExpectedArmyGeneratedBcnBytesAccepted +=
+                expectedGeneratedDelta;
+            state.AtlasValueGateExpectedArmyRetiredBcnBytesAccepted +=
+                expectedRetiredDelta;
+            state.AtlasValueGateExpectedArmyNetBcnBytesAccepted +=
+                expectedNetDelta;
+            state.AtlasValueGateExpectedDrawsAccepted +=
+                evaluation.CombinedExpectedArmyDrawsEliminated -
+                evaluation.BaseExpectedArmyDrawsEliminated;
+            state.AtlasValueGateAcceptedAffectedUnits.UnionWith(
+                CalculateAtlasBatchCoverage(combinedBatch, expectedEntitiesByMesh)
+                    .AffectedUnits);
+            state.AtlasValueGateRewrittenSourceReferences.UnionWith(
+                evaluation.CombinedResidency.RewrittenReferences);
+
+            var entry = state.AtlasValueGateAcceptedBatchEconomics[economicsIndex];
+            var coverage = CalculateAtlasBatchCoverage(
+                combinedBatch,
+                expectedEntitiesByMesh);
+            var roots = combinedBatch
+                .Select(candidate => Normalize(candidate.RootVmdPath))
+                .Where(path => path.Length != 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            state.AtlasValueGateAcceptedBatchEconomics[economicsIndex] = entry with
+            {
+                CandidateCount = combinedBatch.Count,
+                RootVmdPaths = roots,
+                AffectedUnitCount = coverage.AffectedUnitCount,
+                ExpectedRenderedEntities = coverage.ExpectedRenderedEntities,
+                GeneratedBcnBytes = evaluation.CombinedResidency.GeneratedBcnBytes,
+                RetiredSourceBcnBytes = evaluation.CombinedResidency.RetiredSourceBcnBytes,
+                NetBcnBytes = evaluation.CombinedResidency.NetBcnBytes,
+                ExpectedArmyGeneratedBcnBytes =
+                    evaluation.CombinedResidency.ExpectedArmyGeneratedBcnBytes,
+                ExpectedArmyRetiredSourceBcnBytes =
+                    evaluation.CombinedResidency.ExpectedArmyRetiredSourceBcnBytes,
+                ExpectedArmyNetBcnBytes =
+                    evaluation.CombinedResidency.ExpectedArmyNetBcnBytes,
+                RawDrawsEliminated = evaluation.CombinedRawDrawsEliminated,
+                ExpectedArmyDrawsEliminated =
+                    evaluation.CombinedExpectedArmyDrawsEliminated,
+            };
+        }
+
         private static bool TryAcceptAtlasValueMarginalAddition(
             BatchState state,
             IReadOnlyList<AtlasCandidate> baseCandidates,
@@ -5290,35 +6674,12 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
-            static (int Raw, double Expected) GetDrawSavings(
-                BatchState state,
-                IReadOnlyList<AtlasCandidate> candidates,
-                IReadOnlyList<MergeAffinityGroup> groups,
-                IReadOnlyDictionary<
-                    MeshKey,
-                    Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
-                    expectedEntitiesByMesh)
-            {
-                var batches = new List<List<AtlasCandidate>>
-                {
-                    candidates.ToList(),
-                };
-                var batchByMesh = BuildBatchIndexByMesh(batches);
-                return (
-                    CalculateMergeAffinityScore(batches, groups),
-                    CalculateExpectedArmyDrawCallsEliminated(
-                        state,
-                        batchByMesh,
-                        groups,
-                        expectedEntitiesByMesh));
-            }
-
-            var baseSavings = GetDrawSavings(
+            var baseSavings = CalculateAtlasBatchDrawSavings(
                 state,
                 baseCandidates,
                 baseGroups,
                 expectedEntitiesByMesh);
-            var combinedSavings = GetDrawSavings(
+            var combinedSavings = CalculateAtlasBatchDrawSavings(
                 state,
                 combinedCandidates,
                 combinedGroups,
@@ -5483,6 +6844,441 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
+        private static bool TryAcceptTextureOnlyMergeAtlasBatch(
+            BatchState state,
+            AtlasValueGateGroupPlan plan,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh,
+            out AtlasValueGateResidencyEstimate residency,
+            out int rawDrawsEliminated,
+            out double expectedArmyDrawsEliminated,
+            out string rejectionReason)
+        {
+            residency = AtlasValueGateResidencyEstimate.Empty;
+            rawDrawsEliminated = 0;
+            expectedArmyDrawsEliminated = 0;
+            rejectionReason = string.Empty;
+
+            if (!plan.Group.IsProspectiveTextureMerge)
+            {
+                rejectionReason = "the merge group has no prospective texture-only compatibility.";
+                return false;
+            }
+
+            var batch = plan.Candidates;
+            if (batch.Count < 2 ||
+                !TryEstimateIncrementalAtlasResidency(
+                    state,
+                    batch,
+                    out residency))
+            {
+                rejectionReason =
+                    batch.Count < 2
+                        ? "fewer than two texture-compatible mesh candidates were available."
+                        : "incremental BCn residency could not be estimated safely.";
+                return false;
+            }
+
+            var singletonBatches = new List<List<AtlasCandidate>>
+            {
+                batch.ToList()
+            };
+            var batchByMesh = BuildBatchIndexByMesh(singletonBatches);
+            var affinityGroups = new[] { plan.Group };
+            rawDrawsEliminated = CalculateMergeAffinityScore(
+                singletonBatches,
+                affinityGroups);
+            expectedArmyDrawsEliminated = CalculateExpectedArmyDrawCallsEliminated(
+                state,
+                batchByMesh,
+                affinityGroups,
+                expectedEntitiesByMesh);
+
+            var scenarioResolved = IsAtlasValueBatchScenarioResolved(state, batch);
+            if (!IsAtlasValueCandidateAllowedForMode(
+                    state.AtlasAllVmdsEnabled,
+                    scenarioResolved))
+            {
+                rejectionReason =
+                    "gameplay/scenario relevance could not be resolved safely.";
+                return false;
+            }
+
+            var globalCost = GetChargeableAtlasValueGateBytes(
+                residency.GeneratedBcnBytes,
+                residency.RetiredSourceBcnBytes);
+            var expectedCost = GetChargeableAtlasValueGateBytes(
+                residency.ExpectedArmyGeneratedBcnBytes,
+                residency.ExpectedArmyRetiredSourceBcnBytes);
+            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var budgetDecision = EvaluateTextureOnlyMergeAtlasValueGateBudget(
+                scenarioResolved,
+                rawDrawsEliminated,
+                expectedArmyDrawsEliminated,
+                globalCost,
+                expectedCost,
+                state.AtlasValueGateNetBcnBytesAccepted,
+                residency.NetBcnBytes,
+                sourceBcnBytes);
+
+            switch (budgetDecision)
+            {
+                case AtlasValueGateBudgetDecision.ScenarioResolvedZeroBenefit:
+                    rejectionReason =
+                        "texture-only merge has no modeled scenario draw benefit.";
+                    return false;
+
+                case AtlasValueGateBudgetDecision.TextureOnlyMergeBudgetExceeded:
+                    var structuralBudgetBytes = Math.Max(rawDrawsEliminated, 1) *
+                                                (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
+                    var scenarioBudgetBytes = expectedArmyDrawsEliminated *
+                                              MaxNetBcnBytesPerExpectedArmyDraw;
+                    var effectiveGlobalBudgetBytes = Math.Max(
+                        structuralBudgetBytes,
+                        scenarioBudgetBytes);
+                    rejectionReason =
+                        $"texture-only merge credit exceeded: generated " +
+                        $"{FormatMiB(residency.GeneratedBcnBytes)}, retires " +
+                        $"{FormatMiB(residency.RetiredSourceBcnBytes)}, net " +
+                        $"{FormatMiB(residency.NetBcnBytes)}; global chargeable cost is " +
+                        $"{FormatMiB(globalCost)}, scenario chargeable cost is " +
+                        $"{FormatMiB(expectedCost)}; structural credit is " +
+                        $"{FormatMiB(structuralBudgetBytes, 2)}, scenario credit is " +
+                        $"{FormatMiB(scenarioBudgetBytes, 2)}, and the effective global " +
+                        $"credit is {FormatMiB(effectiveGlobalBudgetBytes, 2)}.";
+                    return false;
+
+                case AtlasValueGateBudgetDecision.GlobalGrowthCapExceeded:
+                    var projectedNetGrowth =
+                        state.AtlasValueGateNetBcnBytesAccepted +
+                        (double)residency.NetBcnBytes;
+                    var globalGrowthCap =
+                        sourceBcnBytes * MaxReachableBcnGrowthRatio;
+                    rejectionReason =
+                        $"projected accepted net BCn growth {FormatMiB(projectedNetGrowth)} " +
+                        $"would exceed the {MaxReachableBcnGrowthRatio:P0} source-payload cap " +
+                        $"({FormatMiB(globalGrowthCap)}).";
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool TryAcceptTextureOnlyAtlasBatch(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> batch,
+            out AtlasValueGateResidencyEstimate residency,
+            out string rejectionReason)
+        {
+            residency = AtlasValueGateResidencyEstimate.Empty;
+            rejectionReason = string.Empty;
+
+            if (batch.Count < 2)
+            {
+                rejectionReason = "fewer than two non-merge candidates were available.";
+                return false;
+            }
+
+            if (state.ArmyResidencyModel == null ||
+                !IsAtlasValueBatchScenarioResolved(state, batch))
+            {
+                rejectionReason =
+                    "texture-only retirement requires resolved gameplay/scenario relevance.";
+                return false;
+            }
+
+            if (!TryEstimateIncrementalAtlasResidency(
+                    state,
+                    batch,
+                    out residency))
+            {
+                rejectionReason =
+                    "incremental BCn residency could not be estimated safely.";
+                return false;
+            }
+
+            if (residency.RetiredSourceTextureCount <
+                    MinimumRetiredSourceTexturesForTextureOnlyAtlas ||
+                residency.RetiredSourceBcnBytes <= 0)
+            {
+                rejectionReason =
+                    $"fewer than {MinimumRetiredSourceTexturesForTextureOnlyAtlas} " +
+                    "source textures would be retired.";
+                return false;
+            }
+
+            if (residency.ExpectedArmyRetiredSourceTextureCount < 1.0 ||
+                residency.ExpectedArmyRetiredSourceBcnBytes <= 0)
+            {
+                rejectionReason =
+                    "scenario residency predicts no meaningful source-texture retirement.";
+                return false;
+            }
+
+            var globalCost = GetChargeableAtlasValueGateBytes(
+                residency.GeneratedBcnBytes,
+                residency.RetiredSourceBcnBytes);
+            var expectedCost = GetChargeableAtlasValueGateBytes(
+                residency.ExpectedArmyGeneratedBcnBytes,
+                residency.ExpectedArmyRetiredSourceBcnBytes);
+            var globalBudget =
+                residency.RetiredSourceTextureCount *
+                (double)MaxNetBcnBytesPerRetiredSourceTexture;
+            var expectedBudget =
+                residency.ExpectedArmyRetiredSourceTextureCount *
+                MaxNetBcnBytesPerRetiredSourceTexture;
+
+            if (globalCost > globalBudget)
+            {
+                rejectionReason =
+                    $"texture-only net cost {FormatMiB(globalCost)} exceeds " +
+                    $"{FormatMiB(MaxNetBcnBytesPerRetiredSourceTexture, 2)} per " +
+                    "retired source texture.";
+                return false;
+            }
+
+            if (expectedCost > expectedBudget)
+            {
+                rejectionReason =
+                    $"scenario-estimated texture-only net cost {FormatMiB(expectedCost)} " +
+                    "exceeds the per-retired-texture budget.";
+                return false;
+            }
+
+            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            if (sourceBcnBytes > 0)
+            {
+                var projectedNetGrowth =
+                    state.AtlasValueGateNetBcnBytesAccepted +
+                    (double)residency.NetBcnBytes;
+                var globalGrowthCap = sourceBcnBytes * MaxReachableBcnGrowthRatio;
+                if (projectedNetGrowth > globalGrowthCap)
+                {
+                    rejectionReason =
+                        $"projected accepted net BCn growth {FormatMiB(projectedNetGrowth)} " +
+                        $"would exceed the {MaxReachableBcnGrowthRatio:P0} source-payload cap " +
+                        $"({FormatMiB(globalGrowthCap)}).";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static List<TextureConsolidationCohortAcceptance>
+            SelectTextureConsolidationCohorts(
+                BatchState state,
+                IReadOnlyList<AtlasCandidate> candidates,
+                out Dictionary<MeshKey, string> rejectionReasons)
+        {
+            rejectionReasons = new Dictionary<MeshKey, string>();
+            if (candidates.Count == 0)
+                return [];
+
+            var orderedCandidates = candidates
+                .OrderBy(candidate => (long)candidate.Width * candidate.Height)
+                .ThenBy(candidate => candidate.AtlasResolutionScale)
+                .ThenBy(
+                    candidate => BuildAtlasPlanningOrderKey(candidate),
+                    StringComparer.OrdinalIgnoreCase)
+                .ThenBy(
+                    candidate => candidate.Key.ToString(),
+                    StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var pending = new Queue<List<AtlasCandidate>>();
+            for (var offset = 0;
+                 offset < orderedCandidates.Count;
+                 offset += TextureConsolidationInitialCohortCandidateLimit)
+            {
+                pending.Enqueue(
+                    orderedCandidates
+                        .Skip(offset)
+                        .Take(TextureConsolidationInitialCohortCandidateLimit)
+                        .ToList());
+            }
+
+            var accepted = new List<TextureConsolidationCohortAcceptance>();
+            while (pending.Count != 0)
+            {
+                var cohort = pending.Dequeue();
+                state.AtlasValueGateTextureConsolidationCohortsEvaluated++;
+                if (TryAcceptTextureConsolidationAtlasBatch(
+                        state,
+                        cohort,
+                        out var residency,
+                        out var consolidatedTextureAssignments,
+                        out var rejectionReason))
+                {
+                    accepted.Add(
+                        new TextureConsolidationCohortAcceptance(
+                            cohort,
+                            residency,
+                            consolidatedTextureAssignments));
+                    continue;
+                }
+
+                if (ShouldSplitTextureConsolidationCohort(
+                        cohort,
+                        rejectionReason))
+                {
+                    var splitIndex = cohort.Count / 2;
+                    pending.Enqueue(cohort.Take(splitIndex).ToList());
+                    pending.Enqueue(cohort.Skip(splitIndex).ToList());
+                    state.AtlasValueGateTextureConsolidationCohortsSplit++;
+                    continue;
+                }
+
+                foreach (var candidate in cohort)
+                    rejectionReasons[candidate.Key] = rejectionReason;
+            }
+
+            return accepted;
+        }
+
+        private static bool ShouldSplitTextureConsolidationCohort(
+            IReadOnlyList<AtlasCandidate> cohort,
+            string rejectionReason)
+        {
+            if (cohort.Count <= 2)
+                return false;
+
+            return rejectionReason.Contains(
+                       "net cost",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   rejectionReason.Contains(
+                       "source-payload cap",
+                       StringComparison.OrdinalIgnoreCase) ||
+                   rejectionReason.Contains(
+                       "residency",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryAcceptTextureConsolidationAtlasBatch(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> batch,
+            out AtlasValueGateResidencyEstimate residency,
+            out int consolidatedTextureAssignments,
+            out string rejectionReason)
+        {
+            residency = AtlasValueGateResidencyEstimate.Empty;
+            consolidatedTextureAssignments = 0;
+            rejectionReason = string.Empty;
+
+            if (batch.Count < 2)
+            {
+                rejectionReason = "fewer than two non-merge candidates were available.";
+                return false;
+            }
+
+            if (state.ArmyResidencyModel == null ||
+                !IsAtlasValueBatchScenarioResolved(state, batch))
+            {
+                rejectionReason =
+                    "texture consolidation requires resolved gameplay/scenario relevance.";
+                return false;
+            }
+
+            if (!TryGetGeneratedAtlasBcnCost(
+                    state,
+                    batch,
+                    out var generatedBcnBytes,
+                    out var generatedBcnBytesBySlot) ||
+                !TryEstimateIncrementalAtlasResidency(
+                    state,
+                    batch,
+                    generatedBcnBytes,
+                    generatedBcnBytesBySlot,
+                    out residency))
+            {
+                rejectionReason =
+                    "incremental BCn residency could not be estimated safely.";
+                return false;
+            }
+
+            foreach (var channel in AtlasChannels)
+            {
+                if (!generatedBcnBytesBySlot.ContainsKey(channel.Slot))
+                    continue;
+
+                var distinctSourceAssignments = batch
+                    .Where(candidate => candidate.ResolvedChannels.Contains(channel.Slot))
+                    .Select(candidate => Normalize(
+                        GetTexturePath(candidate.MaterialDocument, channel.Slot)))
+                    .Where(path => path.Length != 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count();
+                consolidatedTextureAssignments +=
+                    Math.Max(0, distinctSourceAssignments - 1);
+            }
+
+            if (consolidatedTextureAssignments <
+                MinimumConsolidatedTextureAssignmentsForAtlas)
+            {
+                rejectionReason =
+                    "fewer than " +
+                    MinimumConsolidatedTextureAssignmentsForAtlas +
+                    " distinct texture assignments would be consolidated.";
+                return false;
+            }
+
+            var globalCost = GetChargeableAtlasValueGateBytes(
+                residency.GeneratedBcnBytes,
+                residency.RetiredSourceBcnBytes);
+            var expectedCost = GetChargeableAtlasValueGateBytes(
+                residency.ExpectedArmyGeneratedBcnBytes,
+                residency.ExpectedArmyRetiredSourceBcnBytes);
+            var consolidationBudget =
+                consolidatedTextureAssignments *
+                (double)MaxNetBcnBytesPerConsolidatedTextureAssignment;
+
+            if (globalCost > consolidationBudget)
+            {
+                rejectionReason =
+                    "texture-consolidation net cost " +
+                    FormatMiB(globalCost) +
+                    " exceeds " +
+                    FormatMiB(
+                        MaxNetBcnBytesPerConsolidatedTextureAssignment,
+                        2) +
+                    " per consolidated texture assignment.";
+                return false;
+            }
+
+            if (expectedCost > consolidationBudget)
+            {
+                rejectionReason =
+                    "scenario-estimated texture-consolidation net cost " +
+                    FormatMiB(expectedCost) +
+                    " exceeds the per-assignment budget.";
+                return false;
+            }
+
+            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            if (sourceBcnBytes > 0)
+            {
+                var projectedNetGrowth =
+                    state.AtlasValueGateNetBcnBytesAccepted +
+                    (double)residency.NetBcnBytes;
+                var globalGrowthCap = sourceBcnBytes * MaxReachableBcnGrowthRatio;
+                if (projectedNetGrowth > globalGrowthCap)
+                {
+                    rejectionReason =
+                        "projected accepted net BCn growth " +
+                        FormatMiB(projectedNetGrowth) +
+                        " would exceed the " +
+                        MaxReachableBcnGrowthRatio.ToString("P0") +
+                        " source-payload cap (" +
+                        FormatMiB(globalGrowthCap) +
+                        ").";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static double GetChargeableAtlasValueGateBytes(
             double generatedBytes,
             double retiredSourceBytes)
@@ -5503,6 +7299,22 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
+            return TryEstimateIncrementalAtlasResidency(
+                state,
+                candidates,
+                generatedBcnBytes,
+                generatedBcnBytesBySlot,
+                out estimate);
+        }
+
+        private static bool TryEstimateIncrementalAtlasResidency(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates,
+            long generatedBcnBytes,
+            IReadOnlyDictionary<string, long> generatedBcnBytesBySlot,
+            out AtlasValueGateResidencyEstimate estimate)
+        {
+            estimate = AtlasValueGateResidencyEstimate.Empty;
             var sourceIndex = state.AtlasValueGateSourceTextureIndex ??
                 BuildAtlasValueGateSourceTextureIndex(state);
             state.AtlasValueGateSourceTextureIndex = sourceIndex;
@@ -5540,7 +7352,9 @@ namespace Editors.KitbasherEditor.Services
             }
 
             long retiredSourceBcnBytes = 0;
+            var retiredSourceTextureCount = 0;
             double expectedArmyRetiredSourceBcnBytes = 0;
+            double expectedArmyRetiredSourceTextureCount = 0;
             foreach (var sourceTexture in sourceIndex.Values)
             {
                 if (!sourceTexture.References.Any(proposedRewrites.Contains))
@@ -5565,6 +7379,7 @@ namespace Editors.KitbasherEditor.Services
                 {
                     retiredSourceBcnBytes = checked(
                         retiredSourceBcnBytes + sourceTexture.BcnBytes);
+                    retiredSourceTextureCount++;
                 }
 
                 var currentExpectedResidency = GetExpectedArmySourceTextureResidency(
@@ -5577,9 +7392,12 @@ namespace Editors.KitbasherEditor.Services
                     sourceTexture,
                     state.AtlasValueGateRewrittenSourceReferences,
                     proposedRewrites);
-                expectedArmyRetiredSourceBcnBytes += Math.Max(
+                var expectedRetirement = Math.Max(
                     0.0,
                     currentExpectedResidency - proposedExpectedResidency);
+                expectedArmyRetiredSourceBcnBytes += expectedRetirement;
+                if (expectedRetirement > AtlasValueGateExpectedDrawEpsilon)
+                    expectedArmyRetiredSourceTextureCount++;
             }
 
             double expectedArmyGeneratedBcnBytes = 0;
@@ -5613,6 +7431,8 @@ namespace Editors.KitbasherEditor.Services
                 generatedBcnBytes,
                 retiredSourceBcnBytes,
                 checked(generatedBcnBytes - retiredSourceBcnBytes),
+                retiredSourceTextureCount,
+                expectedArmyRetiredSourceTextureCount,
                 expectedArmyGeneratedBcnBytes,
                 expectedArmyRetiredSourceBcnBytes,
                 expectedArmyGeneratedBcnBytes - expectedArmyRetiredSourceBcnBytes,
@@ -5676,10 +7496,20 @@ namespace Editors.KitbasherEditor.Services
         private static Dictionary<string, AtlasValueGateSourceTexture>
             BuildAtlasValueGateSourceTextureIndex(BatchState state)
         {
-            var reachableWsModels = state.ReachableWsModelsByRoot.Values
-                .SelectMany(paths => paths)
+            // Use the complete source dependency closure, not just the WSModels reached while
+            // discovering atlas candidates. Gameplay-used mode deliberately leaves some source
+            // roots untouched, and their material references must still block source-texture
+            // retirement credit.
+            var reachableWsModels = state.SourceReachableAssetFiles
+                .Where(path => Path.GetExtension(path).Equals(
+                    ".wsmodel",
+                    StringComparison.OrdinalIgnoreCase))
                 .Select(Normalize)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            reachableWsModels.UnionWith(state.ReachableWsModelsByRoot.Values
+                .SelectMany(paths => paths)
+                .Select(Normalize)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase));
             reachableWsModels.UnionWith(
                 state.UnitCategoryResolution?.DirectAssetUsagesByPath.Keys
                     .Where(path => Path.GetExtension(path).Equals(
@@ -5780,15 +7610,20 @@ namespace Editors.KitbasherEditor.Services
             // layer. Index its embedded material textures with the same identity used by the
             // synthetic direct-asset candidates, so the value gate can credit source textures
             // that become unreachable after the rigid is rewritten.
-            var directRigidPaths = state.UnitCategoryResolution?
-                .DirectAssetUsagesByPath.Keys
+            var directRigidPaths = state.SourceReachableAssetFiles
                 .Where(path => Path.GetExtension(path).Equals(
                     ".rigid_model_v2",
                     StringComparison.OrdinalIgnoreCase))
                 .Select(Normalize)
+                .Concat(
+                    state.UnitCategoryResolution?.DirectAssetUsagesByPath.Keys
+                        .Where(path => Path.GetExtension(path).Equals(
+                            ".rigid_model_v2",
+                            StringComparison.OrdinalIgnoreCase))
+                        .Select(Normalize)
+                    ?? [])
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray()
-                ?? [];
+                .ToArray();
             foreach (var rigidPath in directRigidPaths)
             {
                 var rigidFile = state.Source.FindFile(rigidPath);
@@ -6870,6 +8705,14 @@ namespace Editors.KitbasherEditor.Services
                         SetTexturePath(clonedMaterial, channel.Slot, atlasPath);
                 }
 
+                // Only canonicalize constant channels that remain source-backed. If another
+                // candidate caused this channel to receive an atlas, the generated atlas path
+                // is already the stronger sharing identity.
+                CanonicalizeUniformConstantTexturePaths(
+                    state,
+                    clonedMaterial,
+                    candidate.ConstantChannels);
+
                 var isEmbeddedMaterial = candidate.Usages.Any(
                     usage => !string.IsNullOrWhiteSpace(usage.EmbeddedRigidPath));
                 string resolvedMaterialPath;
@@ -7274,6 +9117,13 @@ namespace Editors.KitbasherEditor.Services
                                 "WSModel texture assignments differ",
                                 StringComparison.Ordinal))
                         {
+                            AnalyzeCounterfactualTexturePair(
+                                state,
+                                rigidPath,
+                                lodIndex,
+                                leftIndex,
+                                rightIndex,
+                                materialComparison);
                             AnalyzeTextureBlockedMergeOpportunity(
                                 state,
                                 rigidPath,
@@ -7307,6 +9157,312 @@ namespace Editors.KitbasherEditor.Services
                             rightIndex,
                             string.Join("; ", rmvDifferences)));
                 }
+            }
+        }
+
+        private static void AnalyzeCounterfactualTexturePair(
+            BatchState state,
+            string rigidPath,
+            int lodIndex,
+            int leftPartIndex,
+            int rightPartIndex,
+            MaterialMergeDiagnosticComparison materialComparison)
+        {
+            var left = GetMaterialMergeDiagnosticSnapshot(
+                state,
+                materialComparison.LeftMaterialPath);
+            var right = GetMaterialMergeDiagnosticSnapshot(
+                state,
+                materialComparison.RightMaterialPath);
+            if (left == null || right == null)
+                return;
+
+            var differingSlots = GetDifferingMaterialTextureSlots(left, right).ToList();
+            if (differingSlots.Count == 0)
+                return;
+
+            state.CounterfactualTextureOnlyPairsEvaluated++;
+            var classification = ClassifyCounterfactualTexturePair(
+                state,
+                left,
+                right,
+                differingSlots,
+                out var eligibilityDetail);
+
+            if (classification.Equals(
+                    "Atlasable differing texture channels",
+                    StringComparison.Ordinal))
+            {
+                state.CounterfactualTextureOnlyPairsAtlasable++;
+            }
+            else if (classification.Equals(
+                         "Uniform-constant equivalence",
+                         StringComparison.Ordinal))
+            {
+                state.CounterfactualTextureOnlyPairsCanonicalizable++;
+            }
+
+            IncrementDiagnosticCount(
+                state.CounterfactualTexturePairCounts,
+                classification);
+
+            var example = BuildMeshMergeBlockerExample(
+                rigidPath,
+                lodIndex,
+                leftPartIndex,
+                rightPartIndex,
+                $"slots [{string.Join(", ", differingSlots.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))}]; " +
+                $"materials {materialComparison.LeftMaterialPath} <> " +
+                $"{materialComparison.RightMaterialPath}; {eligibilityDetail}");
+            AddDiagnosticExample(
+                state.CounterfactualTexturePairExamples,
+                classification,
+                example);
+        }
+
+        private static string ClassifyCounterfactualTexturePair(
+            BatchState state,
+            MaterialMergeDiagnosticSnapshot left,
+            MaterialMergeDiagnosticSnapshot right,
+            IReadOnlyList<string> differingSlots,
+            out string detail)
+        {
+            detail = string.Empty;
+
+            if (left.Shader.Contains("emissive", StringComparison.OrdinalIgnoreCase) ||
+                right.Shader.Contains("emissive", StringComparison.OrdinalIgnoreCase) ||
+                left.TextureAssignments.Keys.Any(slot =>
+                    slot.Contains("emissive", StringComparison.OrdinalIgnoreCase)) ||
+                right.TextureAssignments.Keys.Any(slot =>
+                    slot.Contains("emissive", StringComparison.OrdinalIgnoreCase)))
+            {
+                detail = "emissive or UV0-dependent material content";
+                return "Material is not safely atlasable";
+            }
+
+            if (differingSlots.Any(slot => !IsAtlasChannelSlot(slot)))
+            {
+                detail = "at least one differing texture slot is outside the atlas channel set";
+                return "Non-atlas texture slot";
+            }
+
+            if (!TryValidateCounterfactualMaterialTextureSet(
+                    state,
+                    left,
+                    out var materialLeftFailure))
+            {
+                detail = materialLeftFailure ??
+                    "one material has an unusable texture source";
+                return "Material has an unresolved or unusable texture source";
+            }
+
+            if (!TryValidateCounterfactualMaterialTextureSet(
+                    state,
+                    right,
+                    out var materialRightFailure))
+            {
+                detail = materialRightFailure ??
+                    "one material has an unusable texture source";
+                return "Material has an unresolved or unusable texture source";
+            }
+
+            var onlyUniformConstants = true;
+            foreach (var slot in differingSlots)
+            {
+                left.TextureAssignments.TryGetValue(slot, out var leftPath);
+                right.TextureAssignments.TryGetValue(slot, out var rightPath);
+
+                if (!TryGetCounterfactualTextureSource(
+                        state,
+                        leftPath,
+                        out var leftSource,
+                        out var textureLeftFailure))
+                {
+                    detail = textureLeftFailure ??
+                        $"{slot} has an unusable texture source";
+                    return "Differing texture source is not atlasable";
+                }
+
+                if (!TryGetCounterfactualTextureSource(
+                        state,
+                        rightPath,
+                        out var rightSource,
+                        out var textureRightFailure))
+                {
+                    detail = textureRightFailure ??
+                        $"{slot} has an unusable texture source";
+                    return "Differing texture source is not atlasable";
+                }
+
+                var leftIsUniform = leftSource.IsUniformConstant;
+                var rightIsUniform = rightSource.IsUniformConstant;
+                if (leftIsUniform && rightIsUniform)
+                {
+                    if (!leftSource.ConstantColor.Equals(rightSource.ConstantColor))
+                    {
+                        detail =
+                            $"{slot} contains different uniform colors and cannot share one source path";
+                        return "Different uniform constants";
+                    }
+
+                    continue;
+                }
+
+                onlyUniformConstants = false;
+            }
+
+            if (onlyUniformConstants)
+            {
+                detail = "all differing channels have the same uniform color; path canonicalization is sufficient";
+                return "Uniform-constant equivalence";
+            }
+
+            detail = "all differing slots are atlas channels with readable source textures";
+            return "Atlasable differing texture channels";
+        }
+
+        private static bool TryValidateCounterfactualMaterialTextureSet(
+            BatchState state,
+            MaterialMergeDiagnosticSnapshot material,
+            out string? failure)
+        {
+            failure = null;
+            foreach (var channel in AtlasChannels)
+            {
+                var hasPath = material.TextureAssignments.TryGetValue(
+                    channel.Slot,
+                    out var path);
+                if (!hasPath || string.IsNullOrWhiteSpace(path))
+                {
+                    if (channel.Slot.Equals(
+                            "t_xml_base_colour",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        failure = "base-colour texture assignment is missing";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (IsTexturePlaceholder(path))
+                {
+                    if (channel.Slot.Equals(
+                            "t_xml_base_colour",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        failure = "base-colour texture assignment is a placeholder";
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (!TryGetCounterfactualTextureSource(
+                        state,
+                        path,
+                        out _,
+                        out var sourceFailure))
+                {
+                    if (channel.Slot.Equals(
+                            "t_xml_mask",
+                            StringComparison.OrdinalIgnoreCase) &&
+                        IsIgnorableUnresolvedAtlasTexture(channel.Slot, path))
+                    {
+                        continue;
+                    }
+
+                    failure = $"{channel.Slot}: {sourceFailure}";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryGetCounterfactualTextureSource(
+            BatchState state,
+            string? texturePath,
+            out TextureInspection source,
+            out string failure)
+        {
+            source = default;
+            failure = string.Empty;
+            var normalizedPath = Normalize(texturePath);
+            if (normalizedPath.Length == 0)
+            {
+                failure = "texture assignment is missing";
+                return false;
+            }
+
+            if (IsTexturePlaceholder(normalizedPath))
+            {
+                failure = "texture assignment is a placeholder";
+                return false;
+            }
+
+            if (state.GeneratedTexturePaths.Contains(normalizedPath))
+            {
+                // Generated atlases have already passed the atlas writer and can be treated as
+                // non-uniform sources for this diagnostic. Their precise source composition is
+                // irrelevant to the counterfactual classification.
+                source = new TextureInspection(0, 0, false, default);
+                return true;
+            }
+
+            var file = FindForReadStatic(state, normalizedPath);
+            if (file == null)
+            {
+                failure = $"source texture could not be resolved: {normalizedPath}";
+                return false;
+            }
+
+            try
+            {
+                source = GetTextureInspection(state, normalizedPath, file);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                failure = $"source texture could not be inspected: {normalizedPath} ({ex.Message})";
+                return false;
+            }
+        }
+
+        private static bool IsAtlasChannelSlot(string slot)
+            => AtlasChannels.Any(channel =>
+                channel.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase));
+
+        private static IEnumerable<string> GetDifferingMaterialTextureSlots(
+            MaterialMergeDiagnosticSnapshot left,
+            MaterialMergeDiagnosticSnapshot right)
+            => left.TextureAssignments.Keys
+                .Union(right.TextureAssignments.Keys, StringComparer.OrdinalIgnoreCase)
+                .Where(slot =>
+                {
+                    left.TextureAssignments.TryGetValue(slot, out var leftPath);
+                    right.TextureAssignments.TryGetValue(slot, out var rightPath);
+                    return !Normalize(leftPath).Equals(
+                        Normalize(rightPath),
+                        StringComparison.OrdinalIgnoreCase);
+                });
+
+        private static void AddDiagnosticExample(
+            Dictionary<string, List<string>> examplesByCategory,
+            string category,
+            string example)
+        {
+            if (!examplesByCategory.TryGetValue(category, out var examples))
+            {
+                examples = [];
+                examplesByCategory[category] = examples;
+            }
+
+            const int maxExamplesPerCategory = 8;
+            if (examples.Count < maxExamplesPerCategory &&
+                !examples.Contains(example, StringComparer.Ordinal))
+            {
+                examples.Add(example);
             }
         }
 
@@ -10638,6 +12794,9 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
             sb.AppendLine($"Constant-only atlas channels skipped: {state.ConstantOnlyAtlasChannelsSkipped}");
             sb.AppendLine($"Uniform constant source textures detected: {state.UniformConstantTexturePaths.Count}");
+            sb.AppendLine(
+                $"Uniform constant material assignments canonicalized: " +
+                $"{state.UniformConstantTextureAssignmentsCanonicalized}");
             sb.AppendLine($"Large BC split-compression channels: {state.LargeBcSplitCompressionChannels}");
             sb.AppendLine($"Atlas materials generated: {state.GeneratedMaterialPaths.Count}");
             sb.AppendLine($"Atlas material assignments reused: {state.GeneratedMaterialReuses}");
@@ -10669,6 +12828,33 @@ namespace Editors.KitbasherEditor.Services
             {
                 sb.AppendLine($"Atlas value-gate batches accepted: {state.AtlasValueGateBatchesAccepted}");
                 sb.AppendLine($"Atlas value-gate batches rejected: {state.AtlasValueGateBatchesRejected}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge batches accepted: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeBatchesAccepted}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge candidates accepted: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeCandidatesAccepted}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge marginal attachments accepted: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeMarginalGroupsAccepted}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge cross-batch attachment groups evaluated: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeCrossBatchGroupsEvaluated}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge cross-batch attachment groups accepted: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeCrossBatchGroupsAccepted}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge subset groups considered: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeSubsetGroupsConsidered}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge subset options evaluated: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeSubsetOptionsEvaluated}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only batches accepted: " +
+                    $"{state.AtlasValueGateTextureOnlyBatchesAccepted}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only candidates accepted: " +
+                    $"{state.AtlasValueGateTextureOnlyCandidatesAccepted}");
                 sb.AppendLine($"Atlas value-gate broad batches split: {state.AtlasValueGateBroadBatchesSplit}");
                 sb.AppendLine(
                     $"Atlas value-gate unresolved candidates skipped: " +
@@ -10683,9 +12869,52 @@ namespace Editors.KitbasherEditor.Services
                     $"Atlas value-gate unresolved policy: " +
                     $"{(state.AtlasAllVmdsEnabled ? "PACK-WIDE raw-draw fallback allowed" : "GAMEPLAY-USED unresolved assets are left unchanged")}");
                 sb.AppendLine(
+                    $"Atlas value-gate batch ordering: greedy affected-unit coverage per " +
+                    $"scenario-estimated net BCn MiB " +
+                    $"({state.AtlasValueGateCoverageOrderedBatchCount:N0} batch(es))");
+                sb.AppendLine(
+                    $"Atlas value-gate candidate affected-unit coverage: " +
+                    $"{state.AtlasValueGateCandidateAffectedUnitCount:N0}");
+                sb.AppendLine(
+                    $"Atlas value-gate accepted affected-unit coverage: " +
+                    $"{state.AtlasValueGateAcceptedAffectedUnitCount:N0}");
+                sb.AppendLine(
                     $"Atlas value-gate net BCn budgets: " +
                     $"{FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} per scenario-estimated draw; " +
                     $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} per raw draw only in pack-wide mode when scenario relevance is unresolved");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only budget: " +
+                    $"{FormatMiB(MaxNetBcnBytesPerRetiredSourceTexture, 2)} net per retired " +
+                    $"source texture; minimum {MinimumRetiredSourceTexturesForTextureOnlyAtlas:N0} " +
+                    "retired textures");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge credit: " +
+                    $"{FormatMiB(MaxNetBcnBytesPerTextureOnlyMergeDraw, 2)} per structural " +
+                    $"draw eliminated, or {FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} " +
+                    "per scenario-estimated draw when larger; scenario chargeable cost must " +
+                    "fit that scenario budget; scenario-resolved benefit required; source " +
+                    "retirement not required");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-consolidation batches accepted: " +
+                    $"{state.AtlasValueGateTextureConsolidationBatchesAccepted}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-consolidation candidates accepted: " +
+                    $"{state.AtlasValueGateTextureConsolidationCandidatesAccepted}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture assignments consolidated: " +
+                    $"{state.AtlasValueGateTextureConsolidatedAssignments:N0}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-consolidation cohorts evaluated: " +
+                    $"{state.AtlasValueGateTextureConsolidationCohortsEvaluated:N0}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-consolidation cohorts split: " +
+                    $"{state.AtlasValueGateTextureConsolidationCohortsSplit:N0}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-consolidation budget: " +
+                    $"{FormatMiB(MaxNetBcnBytesPerConsolidatedTextureAssignment, 2)} net per " +
+                    $"consolidated texture assignment; minimum " +
+                    $"{MinimumConsolidatedTextureAssignmentsForAtlas:N0} assignments; " +
+                    $"initial cohort limit {TextureConsolidationInitialCohortCandidateLimit:N0}");
                 sb.AppendLine(
                     $"Atlas value-gate cumulative reachable BCn growth cap: " +
                     $"{MaxReachableBcnGrowthRatio:P0} of source reachable BCn payload");
@@ -10697,6 +12926,14 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Atlas value-gate source BCn retired by accepted batches: " +
                     $"{FormatMiB(state.AtlasValueGateRetiredBcnBytesAccepted)}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only source textures retired: " +
+                    $"{state.AtlasValueGateTextureOnlyRetiredSourceTextureCount:N0} " +
+                    $"(scenario-estimated {state.AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount:N3})");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only source BCn retired: " +
+                    $"{FormatMiB(state.AtlasValueGateTextureOnlyRetiredBcnBytesAccepted)} " +
+                    $"(scenario-estimated {FormatMiB(state.AtlasValueGateTextureOnlyExpectedRetiredBcnBytesAccepted)})");
                 sb.AppendLine(
                     $"Atlas value-gate net BCn accepted: " +
                     $"{FormatMiB(state.AtlasValueGateNetBcnBytesAccepted)}");
@@ -10741,10 +12978,18 @@ namespace Editors.KitbasherEditor.Services
                     valueGateRank++;
                     sb.AppendLine(
                         $"  #{valueGateRank}: accepted-seq={entry.AcceptanceSequence}, " +
-                        $"candidates={entry.CandidateCount}, roots={entry.RootVmdPaths.Length}");
+                        $"kind={entry.AcceptanceKind}, candidates={entry.CandidateCount}, " +
+                        $"roots={entry.RootVmdPaths.Length}");
                     sb.AppendLine(
                         $"    draws: raw={entry.RawDrawsEliminated:N0}, " +
                         $"scenario-estimated={entry.ExpectedArmyDrawsEliminated:N3}");
+                    sb.AppendLine(
+                        $"    affected units={entry.AffectedUnitCount:N0}, " +
+                        $"expected rendered entities={entry.ExpectedRenderedEntities:N3}");
+                    sb.AppendLine(
+                        $"    coverage efficiency=" +
+                        $"{FormatAffectedUnitsPerScenarioMiB(entry.AffectedUnitCount, entry.ExpectedArmyNetBcnBytes)} " +
+                        $"affected units / scenario MiB");
                     sb.AppendLine(
                         $"    global BCn: generated={FormatMiB(entry.GeneratedBcnBytes)}, " +
                         $"retired={FormatMiB(entry.RetiredSourceBcnBytes)}, " +
@@ -10760,6 +13005,40 @@ namespace Editors.KitbasherEditor.Services
                 }
                 if (state.AtlasValueGateAcceptedBatchEconomics.Count == 0)
                     sb.AppendLine("  (none)");
+
+                sb.AppendLine();
+                sb.AppendLine(
+                    $"Texture-only merge near misses (best {TextureOnlyMergeNearMissLimit:N0})");
+                sb.AppendLine(
+                    "------------------------------------------------------------");
+                if (state.AtlasValueGateTextureOnlyMergeNearMisses.Count == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    var nearMissRank = 0;
+                    foreach (var nearMiss in state.AtlasValueGateTextureOnlyMergeNearMisses
+                                 .OrderBy(entry => entry.BudgetPressure)
+                                 .ThenByDescending(entry => entry.ExpectedArmyDrawsEliminated)
+                                 .Take(TextureOnlyMergeNearMissLimit))
+                    {
+                        nearMissRank++;
+                        sb.AppendLine(
+                            $"  #{nearMissRank}: candidates={nearMiss.CandidateCount:N0}, " +
+                            $"pressure={nearMiss.BudgetPressure:N3}x, " +
+                            $"global={FormatMiB(nearMiss.IncrementalGlobalCostBytes)}, " +
+                            $"scenario={FormatMiB(nearMiss.IncrementalExpectedCostBytes)}, " +
+                            $"draws raw={nearMiss.RawDrawsEliminated:N0}, " +
+                            $"scenario-estimated={nearMiss.ExpectedArmyDrawsEliminated:N3}");
+                        sb.AppendLine(
+                            $"    candidate group: {nearMiss.CandidateGroup}");
+                        sb.AppendLine(
+                            $"    host batch: {nearMiss.HostBatch}");
+                        sb.AppendLine(
+                            $"    reason: {nearMiss.RejectionReason}");
+                    }
+                }
             }
             sb.AppendLine($"Atlas pixel-area optimized splits: {state.AtlasPixelAreaOptimizedSplits}");
             sb.AppendLine($"Atlas pixel-area split evaluations: {state.AtlasPixelAreaSplitEvaluations}");
@@ -10855,6 +13134,21 @@ namespace Editors.KitbasherEditor.Services
                 var mergeOpportunities = state.TextureMergeOpportunities.Values.ToList();
                 sb.AppendLine($"Texture-blocked merge opportunities: {mergeOpportunities.Count}");
                 sb.AppendLine($"Texture-blocked merge opportunities whose atlas combination fits: {mergeOpportunities.Count(x => x.Combination.Fits)}");
+                sb.AppendLine(
+                    $"Counterfactual texture-only pairs evaluated: " +
+                    $"{state.CounterfactualTextureOnlyPairsEvaluated}");
+                sb.AppendLine(
+                    $"Counterfactual texture-only pairs atlasable: " +
+                    $"{state.CounterfactualTextureOnlyPairsAtlasable}");
+                sb.AppendLine(
+                    $"Counterfactual texture-only pairs constant-equivalent: " +
+                    $"{state.CounterfactualTextureOnlyPairsCanonicalizable}");
+                sb.AppendLine(
+                    $"Prospective merge-affinity groups added: " +
+                    $"{state.ProspectiveMergeAffinityGroupsAdded}");
+                sb.AppendLine(
+                    $"Prospective merge-affinity pairs: " +
+                    $"{state.ProspectiveMergeAffinityPairs}");
                 sb.AppendLine($"Zero-cost atlas batch combinations: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPixels <= 0)}");
                 sb.AppendLine($"Atlas combinations <=10% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPixels > 0 && x.Combination.AdditionalPercent <= 10)}");
                 sb.AppendLine($"Atlas combinations 10-25% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPercent > 10 && x.Combination.AdditionalPercent <= 25)}");
@@ -10868,6 +13162,8 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine();
                 sb.AppendLine("BCn texture resource payload and scenario residency estimate");
                 sb.AppendLine("-----------------------------------------------------------");
+                sb.AppendLine(
+                    "Output reachability is measured after superseded assets are pruned.");
                 sb.AppendLine(
                     $"Source reachable DDS textures: {sourceBcn.ReachableDdsCount:N0}; " +
                     $"BCn={sourceBcn.BcnTextureCount:N0}; unsupported/non-BCn={sourceBcn.UnsupportedDdsCount:N0}");
@@ -11594,6 +13890,43 @@ namespace Editors.KitbasherEditor.Services
                     "Material parameter/value pairs",
                     state.MaterialParameterFieldBlockerCounts,
                     maxEntries: 32);
+
+                sb.AppendLine();
+                sb.AppendLine("Counterfactual texture compatibility");
+                sb.AppendLine("------------------------------------");
+                sb.AppendLine(
+                    "Diagnostic only: these pairs retain their current shader and material " +
+                    "parameters and ask whether their differing texture sources could be " +
+                    "rewritten into common atlas channels.");
+                sb.AppendLine(
+                    $"Texture-only material pairs evaluated: " +
+                    $"{state.CounterfactualTextureOnlyPairsEvaluated}");
+                sb.AppendLine(
+                    $"Pairs with atlasable differing texture channels: " +
+                    $"{state.CounterfactualTextureOnlyPairsAtlasable}");
+                sb.AppendLine(
+                    $"Pairs reducible by uniform-constant path canonicalization: " +
+                    $"{state.CounterfactualTextureOnlyPairsCanonicalizable}");
+                sb.AppendLine(
+                    $"Prospective merge-affinity groups added: " +
+                    $"{state.ProspectiveMergeAffinityGroupsAdded}");
+                sb.AppendLine(
+                    $"Prospective merge-affinity pairs: " +
+                    $"{state.ProspectiveMergeAffinityPairs}");
+                AppendDiagnosticCounts(
+                    sb,
+                    "Classifications",
+                    state.CounterfactualTexturePairCounts,
+                    maxEntries: 16);
+                foreach (var category in state.CounterfactualTexturePairCounts
+                             .OrderByDescending(x => x.Value)
+                             .ThenBy(x => x.Key, StringComparer.Ordinal)
+                             .Where(x => state.CounterfactualTexturePairExamples.ContainsKey(x.Key)))
+                {
+                    sb.AppendLine($"  Examples — {category.Key}:");
+                    foreach (var example in state.CounterfactualTexturePairExamples[category.Key])
+                        sb.AppendLine($"    {example}");
+                }
 
                 sb.AppendLine();
                 sb.AppendLine("Texture-blocked merge opportunities");
@@ -12672,7 +15005,39 @@ namespace Editors.KitbasherEditor.Services
             var nameNode = normalized.SelectSingleNode("/material/name");
             nameNode?.ParentNode?.RemoveChild(nameNode);
 
+            // Pack resource paths are case-insensitive and may be authored with either slash
+            // convention. Normalize only those path-bearing fields; shader variants and all
+            // other material parameters remain part of the strict rendering identity.
+            NormalizeMaterialResourcePaths(normalized);
+
             return normalized.OuterXml;
+        }
+
+        private static void NormalizeMaterialResourcePaths(XmlDocument material)
+        {
+            var shaderNode = material.SelectSingleNode("/material/shader");
+            if (shaderNode != null)
+                shaderNode.InnerText = Normalize(shaderNode.InnerText);
+
+            var textureNodes = material.SelectNodes("/material/textures/texture");
+            if (textureNodes == null)
+                return;
+
+            foreach (XmlNode textureNode in textureNodes)
+            {
+                var sourceNode = textureNode.SelectSingleNode("source");
+                if (sourceNode != null)
+                {
+                    sourceNode.InnerText = Normalize(sourceNode.InnerText);
+                    continue;
+                }
+
+                if (textureNode.ChildNodes.Count == 1 &&
+                    textureNode.FirstChild?.NodeType == XmlNodeType.Text)
+                {
+                    textureNode.InnerText = Normalize(textureNode.InnerText);
+                }
+            }
         }
 
         private static bool IsTexturePlaceholder(string? path)
@@ -12876,6 +15241,7 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> SourceReachableAssetFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> TaintedGameplayWsModels { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Wh3UnitCategoryResolution? UnitCategoryResolution { get; set; }
@@ -12915,6 +15281,25 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<double, int> TexelDensityScaleCounts { get; } = [];
             public int AtlasValueGateBatchesAccepted { get; set; }
             public int AtlasValueGateBatchesRejected { get; set; }
+            public int AtlasValueGateTextureOnlyMergeBatchesAccepted { get; set; }
+            public int AtlasValueGateTextureOnlyMergeCandidatesAccepted { get; set; }
+            public int AtlasValueGateTextureOnlyMergeMarginalGroupsAccepted { get; set; }
+            public int AtlasValueGateTextureOnlyMergeCrossBatchGroupsEvaluated { get; set; }
+            public int AtlasValueGateTextureOnlyMergeCrossBatchGroupsAccepted { get; set; }
+            public int AtlasValueGateTextureOnlyMergeSubsetGroupsConsidered { get; set; }
+            public int AtlasValueGateTextureOnlyMergeSubsetOptionsEvaluated { get; set; }
+            public List<AtlasValueGateTextureOnlyMergeNearMiss> AtlasValueGateTextureOnlyMergeNearMisses { get; } = [];
+            public int AtlasValueGateTextureOnlyBatchesAccepted { get; set; }
+            public int AtlasValueGateTextureOnlyCandidatesAccepted { get; set; }
+            public int AtlasValueGateTextureConsolidationBatchesAccepted { get; set; }
+            public int AtlasValueGateTextureConsolidationCandidatesAccepted { get; set; }
+            public int AtlasValueGateTextureConsolidatedAssignments { get; set; }
+            public int AtlasValueGateTextureConsolidationCohortsEvaluated { get; set; }
+            public int AtlasValueGateTextureConsolidationCohortsSplit { get; set; }
+            public int AtlasValueGateTextureOnlyRetiredSourceTextureCount { get; set; }
+            public double AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount { get; set; }
+            public long AtlasValueGateTextureOnlyRetiredBcnBytesAccepted { get; set; }
+            public double AtlasValueGateTextureOnlyExpectedRetiredBcnBytesAccepted { get; set; }
             public int AtlasValueGateBroadBatchesSplit { get; set; }
             public int AtlasValueGateUnresolvedCandidatesSkipped { get; set; }
             public int AtlasValueGateMarginalGroupsAccepted { get; set; }
@@ -12934,12 +15319,21 @@ namespace Editors.KitbasherEditor.Services
             public double AtlasValueGateExpectedArmyNetBcnBytesAccepted { get; set; }
             public double AtlasValueGateExpectedArmyNetBcnBytesRejected { get; set; }
             public double AtlasValueGateExpectedDrawsAccepted { get; set; }
+            public int AtlasValueGateCandidateAffectedUnitCount { get; set; }
+            public int AtlasValueGateAcceptedAffectedUnitCount =>
+                AtlasValueGateAcceptedAffectedUnits.Count;
+            public int AtlasValueGateCoverageOrderedBatchCount { get; set; }
+            public HashSet<string> AtlasValueGateAcceptedAffectedUnits { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public List<AtlasValueGateBatchEconomics> AtlasValueGateAcceptedBatchEconomics { get; } = [];
             public Dictionary<string, AtlasValueGateSourceTexture>? AtlasValueGateSourceTextureIndex { get; set; }
             public Dictionary<string, HashSet<string>>? AtlasValueGateRootsByWsModel { get; set; }
             public HashSet<AtlasValueGateSourceReference> AtlasValueGateRewrittenSourceReferences { get; } = [];
             public int ConstantOnlyAtlasChannelsSkipped { get; set; }
             public HashSet<string> UniformConstantTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, string> UniformConstantTextureCanonicalPaths { get; } =
+                new(StringComparer.Ordinal);
+            public int UniformConstantTextureAssignmentsCanonicalized { get; set; }
             public int LargeBcSplitCompressionChannels { get; set; }
             public int AtlasPixelAreaOptimizedSplits { get; set; }
             public int AtlasPixelAreaSplitEvaluations { get; set; }
@@ -12997,6 +15391,15 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, int> MaterialShaderPairBlockerCounts { get; } = new(StringComparer.Ordinal);
             public Dictionary<string, int> MaterialTextureSlotBlockerCounts { get; } = new(StringComparer.Ordinal);
             public Dictionary<string, int> MaterialParameterFieldBlockerCounts { get; } = new(StringComparer.Ordinal);
+            public int CounterfactualTextureOnlyPairsEvaluated { get; set; }
+            public int CounterfactualTextureOnlyPairsAtlasable { get; set; }
+            public int CounterfactualTextureOnlyPairsCanonicalizable { get; set; }
+            public int ProspectiveMergeAffinityGroupsAdded { get; set; }
+            public int ProspectiveMergeAffinityPairs { get; set; }
+            public Dictionary<string, int> CounterfactualTexturePairCounts { get; } =
+                new(StringComparer.Ordinal);
+            public Dictionary<string, List<string>> CounterfactualTexturePairExamples { get; } =
+                new(StringComparer.Ordinal);
             public Dictionary<string, MaterialMergeDiagnosticSnapshot?> MeshMergeMaterialDiagnostics { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<MeshKey, int> AtlasBatchByMesh { get; } = [];
@@ -13236,17 +15639,51 @@ namespace Editors.KitbasherEditor.Services
             AtlasValueGateResidencyEstimate Residency,
             int RawDrawsEliminated,
             double ExpectedArmyDrawsEliminated,
-            bool WasMarginalOnly);
+            bool WasMarginalOnly,
+            AtlasValueGateAcceptanceKind AcceptanceKind);
 
         private sealed record AtlasValueGateRejectedGroup(
             AtlasValueGateGroupPlan Plan,
             AtlasValueGateResidencyEstimate Residency,
             string RejectionReason);
 
+        private sealed record AtlasValueGatePendingTextureMergeAttachment(
+            AtlasValueGateGroupPlan Plan,
+            AtlasValueGateResidencyEstimate Residency,
+            string RejectionReason);
+
+        private sealed record TextureOnlyMergeMarginalEvaluation(
+            List<AtlasCandidate> CombinedCandidates,
+            AtlasValueGateResidencyEstimate BaseResidency,
+            AtlasValueGateResidencyEstimate CombinedResidency,
+            int BaseRawDrawsEliminated,
+            int CombinedRawDrawsEliminated,
+            double BaseExpectedArmyDrawsEliminated,
+            double CombinedExpectedArmyDrawsEliminated,
+            int MarginalRawDrawsEliminated,
+            double MarginalExpectedArmyDrawsEliminated,
+            double MarginalGlobalCostBytes,
+            double MarginalExpectedCostBytes,
+            double MarginalNetBcnBytes);
+
+        private sealed record AtlasValueGateTextureOnlyMergeNearMiss(
+            string CandidateGroup,
+            string HostBatch,
+            int CandidateCount,
+            double IncrementalGlobalCostBytes,
+            double IncrementalExpectedCostBytes,
+            int RawDrawsEliminated,
+            double ExpectedArmyDrawsEliminated,
+            double BudgetPressure,
+            string RejectionReason);
+
         private sealed record AtlasValueGateBatchEconomics(
             int AcceptanceSequence,
             int CandidateCount,
             string[] RootVmdPaths,
+            AtlasValueGateAcceptanceKind AcceptanceKind,
+            int AffectedUnitCount,
+            double ExpectedRenderedEntities,
             long GeneratedBcnBytes,
             long RetiredSourceBcnBytes,
             long NetBcnBytes,
@@ -13256,16 +15693,32 @@ namespace Editors.KitbasherEditor.Services
             int RawDrawsEliminated,
             double ExpectedArmyDrawsEliminated);
 
+        private sealed record TextureConsolidationCohortAcceptance(
+            List<AtlasCandidate> Candidates,
+            AtlasValueGateResidencyEstimate Residency,
+            int ConsolidatedTextureAssignments);
+
+        private sealed record AtlasBatchCoverage(
+            IReadOnlySet<string> AffectedUnits,
+            double ExpectedRenderedEntities)
+        {
+            public int AffectedUnitCount => AffectedUnits.Count;
+        }
+
         private sealed record AtlasValueGateResidencyEstimate(
             long GeneratedBcnBytes,
             long RetiredSourceBcnBytes,
             long NetBcnBytes,
+            int RetiredSourceTextureCount,
+            double ExpectedArmyRetiredSourceTextureCount,
             double ExpectedArmyGeneratedBcnBytes,
             double ExpectedArmyRetiredSourceBcnBytes,
             double ExpectedArmyNetBcnBytes,
             HashSet<AtlasValueGateSourceReference> RewrittenReferences)
         {
             public static AtlasValueGateResidencyEstimate Empty { get; } = new(
+                0,
+                0,
                 0,
                 0,
                 0,
@@ -13303,8 +15756,23 @@ namespace Editors.KitbasherEditor.Services
             string RmvIdentity,
             string MaterialIdentity);
 
+        private sealed record MergeAffinityCandidateInfo(
+            AtlasCandidate Candidate,
+            string RmvIdentity,
+            string StrictMaterialIdentity,
+            MaterialMergeDiagnosticSnapshot? MaterialSnapshot);
+
+        private readonly record struct MergeAffinityBucketIdentity(
+            string GeometryPath,
+            int LodIndex,
+            string RmvIdentity,
+            string Shader,
+            string NonTextureIdentity,
+            bool MaterialSnapshotAvailable);
+
         private sealed record MergeAffinityGroup(
-            MeshKey[] Meshes);
+            MeshKey[] Meshes,
+            bool IsProspectiveTextureMerge = false);
 
         private sealed record MergeAwareRepartitionReportEntry(
             int FirstBatchIndex,

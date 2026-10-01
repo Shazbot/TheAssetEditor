@@ -95,7 +95,7 @@ namespace Test.KitbashEditor.Services
                 ?? throw new InvalidOperationException(
                     $"PackTextureAtlasBatchService.{name} was not found.");
 
-            return (long)(field.GetRawConstantValue()
+            return Convert.ToInt64(field.GetRawConstantValue()
                 ?? throw new InvalidOperationException($"{name} has no constant value."));
         }
 
@@ -112,8 +112,46 @@ namespace Test.KitbashEditor.Services
                     "PackTextureAtlasBatchService.GetAtlasValueGateMiBPerDraw was not found.");
 
             return (double)(method.Invoke(null, [netBytes, drawsEliminated])
+                   ?? throw new InvalidOperationException(
+                       "GetAtlasValueGateMiBPerDraw returned null."));
+        }
+
+        private static double GetAffectedUnitsPerScenarioMiB(
+            int affectedUnitCount,
+            double expectedNetBcnBytes)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "GetAffectedUnitsPerScenarioMiB",
+                BindingFlags.NonPublic | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
-                    "GetAtlasValueGateMiBPerDraw returned null."));
+                    "PackTextureAtlasBatchService.GetAffectedUnitsPerScenarioMiB was not found.");
+
+            return (double)(method.Invoke(null, [affectedUnitCount, expectedNetBcnBytes])
+                ?? throw new InvalidOperationException(
+                    "GetAffectedUnitsPerScenarioMiB returned null."));
+        }
+
+        private static string FormatAffectedUnitsPerScenarioMiB(
+            int affectedUnitCount,
+            double expectedNetBcnBytes)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "FormatAffectedUnitsPerScenarioMiB",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.FormatAffectedUnitsPerScenarioMiB was not found.");
+
+            return (string)(method.Invoke(null, [affectedUnitCount, expectedNetBcnBytes])
+                ?? throw new InvalidOperationException(
+                    "FormatAffectedUnitsPerScenarioMiB returned null."));
         }
 
         private static bool IsEmbeddedTextureTypeSafe(string textureTypeName)
@@ -180,6 +218,25 @@ namespace Test.KitbashEditor.Services
                        "BuildMergeAffinityIdentity returned null.");
         }
 
+        private static string GetMaterialRenderingIdentity(string materialXml)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "GetMaterialRenderingIdentity",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.GetMaterialRenderingIdentity was not found.");
+
+            var material = new XmlDocument();
+            material.LoadXml(materialXml);
+            return (string)(method.Invoke(null, [material])
+                ?? throw new InvalidOperationException(
+                    "GetMaterialRenderingIdentity returned null."));
+        }
+
         private static string GetValueGateBudgetDecision(
             bool scenarioResolved,
             int rawDrawsEliminated,
@@ -214,6 +271,42 @@ namespace Test.KitbashEditor.Services
                        ])?.ToString()
                    ?? throw new InvalidOperationException(
                        "EvaluateAtlasValueGateBudget returned null.");
+        }
+
+        private static string GetTextureOnlyMergeValueGateBudgetDecision(
+            bool scenarioResolved,
+            int rawDrawsEliminated,
+            double expectedArmyDrawsEliminated,
+            double globalCostBytes,
+            double expectedCostBytes,
+            double acceptedNetBcnBytes,
+            double proposedNetBcnBytes,
+            double sourceBcnBytes)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "EvaluateTextureOnlyMergeAtlasValueGateBudget",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.EvaluateTextureOnlyMergeAtlasValueGateBudget was not found.");
+
+            return method.Invoke(
+                       null,
+                       [
+                           scenarioResolved,
+                           rawDrawsEliminated,
+                           expectedArmyDrawsEliminated,
+                           globalCostBytes,
+                           expectedCostBytes,
+                           acceptedNetBcnBytes,
+                           proposedNetBcnBytes,
+                           sourceBcnBytes,
+                       ])?.ToString()
+                   ?? throw new InvalidOperationException(
+                       "EvaluateTextureOnlyMergeAtlasValueGateBudget returned null.");
         }
 
         private static IPackFileContainer? FindGameplayTraversalContainer(
@@ -746,6 +839,78 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void ValueGate_TextureOnlyMergeCreditUsesStructuralOrScenarioBudget()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            var decision = GetTextureOnlyMergeValueGateBudgetDecision(
+                scenarioResolved: true,
+                rawDrawsEliminated: 1,
+                expectedArmyDrawsEliminated: 0.15,
+                globalCostBytes: 1.75 * mib,
+                expectedCostBytes: 0.01 * mib,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 1.75 * mib,
+                sourceBcnBytes: 400 * mib);
+
+            Assert.That(decision, Is.EqualTo("Accept"));
+        }
+
+        [Test]
+        public void ValueGate_TextureOnlyMergeCreditExpandsForHighScenarioCoverage()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            var decision = GetTextureOnlyMergeValueGateBudgetDecision(
+                scenarioResolved: true,
+                rawDrawsEliminated: 1,
+                expectedArmyDrawsEliminated: 100,
+                globalCostBytes: 8 * mib,
+                expectedCostBytes: 1 * mib,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 8 * mib,
+                sourceBcnBytes: 400 * mib);
+
+            Assert.That(decision, Is.EqualTo("Accept"));
+        }
+
+        [Test]
+        public void ValueGate_TextureOnlyMergeCreditRejectsExcessiveGrowth()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            var decision = GetTextureOnlyMergeValueGateBudgetDecision(
+                scenarioResolved: true,
+                rawDrawsEliminated: 1,
+                expectedArmyDrawsEliminated: 0.15,
+                globalCostBytes: 2.1 * mib,
+                expectedCostBytes: 2.1 * mib,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 2.1 * mib,
+                sourceBcnBytes: 400 * mib);
+
+            Assert.That(decision, Is.EqualTo("TextureOnlyMergeBudgetExceeded"));
+        }
+
+        [Test]
+        public void ValueGate_TextureOnlyMergeCreditRequiresScenarioBenefit()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            var decision = GetTextureOnlyMergeValueGateBudgetDecision(
+                scenarioResolved: true,
+                rawDrawsEliminated: 1,
+                expectedArmyDrawsEliminated: 0,
+                globalCostBytes: 1 * mib,
+                expectedCostBytes: 1 * mib,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 1 * mib,
+                sourceBcnBytes: 400 * mib);
+
+            Assert.That(decision, Is.EqualTo("ScenarioResolvedZeroBenefit"));
+        }
+
+        [Test]
         public void ValueGate_MixedBatchCannotHideBadMarginalGroup()
         {
             const double mib = 1024.0 * 1024.0;
@@ -844,8 +1009,78 @@ namespace Test.KitbashEditor.Services
                     GetConstant("MaxNetBcnBytesPerFallbackDraw"),
                     Is.EqualTo(8L * 1024 * 1024));
                 Assert.That(
+                    GetConstant("MaxNetBcnBytesPerRetiredSourceTexture"),
+                    Is.EqualTo(512L * 1024));
+                Assert.That(
+                    GetConstant("MaxNetBcnBytesPerTextureOnlyMergeDraw"),
+                    Is.EqualTo(2L * 1024 * 1024));
+                Assert.That(
+                    GetConstant("MinimumRetiredSourceTexturesForTextureOnlyAtlas"),
+                    Is.EqualTo(2));
+                Assert.That(
+                    GetConstant("MaxNetBcnBytesPerConsolidatedTextureAssignment"),
+                    Is.EqualTo(256L * 1024));
+                Assert.That(
+                    GetConstant("MinimumConsolidatedTextureAssignmentsForAtlas"),
+                    Is.EqualTo(2));
+                Assert.That(
+                    GetConstant("TextureConsolidationInitialCohortCandidateLimit"),
+                    Is.EqualTo(8));
+                Assert.That(
                     GetDoubleConstant("MaxReachableBcnGrowthRatio"),
                     Is.EqualTo(0.50).Within(0.000001));
+            });
+        }
+
+        [Test]
+        public void MaterialRenderingIdentity_NormalizesEquivalentResourcePathSpelling()
+        {
+            const string lowerSlashMaterial =
+                "<material><name>first</name>" +
+                "<shader>shaders/weighted4_character.xml.shader</shader>" +
+                "<textures>" +
+                "<texture><slot version='2'>t_xml_base_colour</slot>" +
+                "<source>VariantMeshes/Foo.dds</source></texture>" +
+                "<texture><slot version='2'>t_xml_mask</slot>" +
+                "<source>MASK_PATH</source></texture>" +
+                "</textures></material>";
+            const string upperBackslashMaterial =
+                "<material><name>second</name>" +
+                "<shader>SHADERS\\WEIGHTED4_CHARACTER.XML.SHADER</shader>" +
+                "<textures>" +
+                "<texture><slot version='2'>t_xml_base_colour</slot>" +
+                "<source>variantmeshes\\foo.dds</source></texture>" +
+                "<texture><slot version='2'>t_xml_mask</slot>" +
+                "<source>mask_path</source></texture>" +
+                "</textures></material>";
+
+            Assert.That(
+                GetMaterialRenderingIdentity(lowerSlashMaterial),
+                Is.EqualTo(GetMaterialRenderingIdentity(upperBackslashMaterial)));
+        }
+
+        [Test]
+        public void CoverageSelection_PrefersMoreAffectedUnitsPerScenarioMiB()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            var broadEfficient = GetAffectedUnitsPerScenarioMiB(
+                affectedUnitCount: 6,
+                expectedNetBcnBytes: 2 * mib);
+            var narrowExpensive = GetAffectedUnitsPerScenarioMiB(
+                affectedUnitCount: 1,
+                expectedNetBcnBytes: 2 * mib);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(broadEfficient, Is.EqualTo(3).Within(0.000001));
+                Assert.That(broadEfficient, Is.GreaterThan(narrowExpensive));
+                Assert.That(
+                    GetAffectedUnitsPerScenarioMiB(0, 0),
+                    Is.EqualTo(0));
+                Assert.That(
+                    FormatAffectedUnitsPerScenarioMiB(4, -0.25 * mib),
+                    Is.EqualTo("retiring"));
             });
         }
 
