@@ -217,6 +217,8 @@ namespace Editors.KitbasherEditor.Services
                     mergeCompatibleMeshes,
                     shareAtlasesAcrossVmds,
                     optimizeGeometry);
+                state.CancellationToken = cancellationToken;
+                state.Progress = progress;
                 state.ExistingAtlasOutputDetected = HasGeneratedAtlasOutput(source);
 
                 var allVmdPaths = sourcePaths
@@ -2802,6 +2804,11 @@ namespace Editors.KitbasherEditor.Services
                         : "No second compatible mesh was available in this VMD dependency set.");
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(
+                progress,
+                "Optimizing atlas batches",
+                item: "Checking atlas size limits");
             var pixelOptimized = OptimizeMaxSizeBatchesForPixelArea(state, batches);
             if (packWide)
             {
@@ -2809,6 +2816,11 @@ namespace Editors.KitbasherEditor.Services
                     CalculateExpectedArmyResidentPixels(state, pixelOptimized);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(
+                progress,
+                "Optimizing atlas batches",
+                item: "Optimizing VMD locality");
             var localityOptimized = packWide
                 ? OptimizeBatchesForVmdLocality(state, pixelOptimized)
                 : pixelOptimized;
@@ -2819,7 +2831,17 @@ namespace Editors.KitbasherEditor.Services
                     CalculateExpectedArmyResidentPixels(state, localityOptimized);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(
+                progress,
+                "Optimizing atlas batches",
+                item: "Evaluating compatible mesh merges");
             var mergeOptimized = OptimizeBatchesForMergeAffinity(state, localityOptimized);
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(
+                progress,
+                "Evaluating atlas value",
+                item: "Applying residency and draw-value gates");
             var valueOptimized = state.MergeCompatibleMeshesEnabled
                 ? FilterBatchesForMergeValue(state, mergeOptimized)
                 : mergeOptimized;
@@ -2837,8 +2859,18 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<List<AtlasCandidate>> batches)
         {
             var optimized = new List<List<AtlasCandidate>>();
-            foreach (var batch in batches)
+            for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                state.CancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(
+                    state.Progress,
+                    "Optimizing atlas batches",
+                    batchIndex + 1,
+                    batches.Count,
+                    $"Size optimization batch {batchIndex + 1}");
+                var batch = batches[batchIndex];
                 OptimizeMaxSizeBatchForPixelArea(state, batch, optimized);
+            }
 
             return optimized;
         }
@@ -2848,6 +2880,7 @@ namespace Editors.KitbasherEditor.Services
             List<AtlasCandidate> batch,
             List<List<AtlasCandidate>> output)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             if (batch.Count < 4 ||
                 !TryGetGeneratedAtlasPixelCost(
                     state,
@@ -2892,6 +2925,7 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var splitIndex in splitIndices)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 state.AtlasPixelAreaSplitEvaluations++;
 
                 var left = batch.Take(splitIndex).ToList();
@@ -2915,6 +2949,7 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var proposal in CreateNonContiguousSplitProposals(batch))
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 state.AtlasPixelAreaSplitEvaluations++;
                 state.AtlasNonContiguousSplitEvaluations++;
 
@@ -2959,6 +2994,7 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             IReadOnlyList<List<AtlasCandidate>> batches)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             var working = batches.Select(batch => batch.ToList()).ToList();
             if (!state.ShareAtlasesAcrossVmdsEnabled || working.Count == 0)
                 return working;
@@ -2968,11 +3004,18 @@ namespace Editors.KitbasherEditor.Services
             var affinityGroups = BuildMergeAffinityGroups(state, allCandidates);
             var optimized = new List<List<AtlasCandidate>>();
 
-            foreach (var batch in working)
+            for (var batchIndex = 0; batchIndex < working.Count; batchIndex++)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(
+                    state.Progress,
+                    "Optimizing atlas batches",
+                    batchIndex + 1,
+                    working.Count,
+                    $"VMD locality batch {batchIndex + 1}");
                 OptimizeBatchForVmdLocality(
                     state,
-                    batch,
+                    working[batchIndex],
                     rootsByMesh,
                     affinityGroups,
                     optimized);
@@ -3967,13 +4010,15 @@ namespace Editors.KitbasherEditor.Services
             return atlasPixels * GetExpectedArmyResidentProbability(
                 state.ArmyResidencyModel,
                 targetWsModels,
-                roots);
+                roots,
+                state.CancellationToken);
         }
 
         private static double GetExpectedArmyResidentProbability(
             ArmyResidencyModel? model,
             IReadOnlyCollection<string> targetWsModels,
-            IEnumerable<string> fallbackRoots)
+            IEnumerable<string> fallbackRoots,
+            CancellationToken cancellationToken = default)
         {
             if (model == null || model.PlayerCultureWeights.Count == 0)
                 return 0;
@@ -3990,6 +4035,7 @@ namespace Editors.KitbasherEditor.Services
                 model,
                 normalizedTargets,
                 normalizedFallbackRoots);
+            cancellationToken.ThrowIfCancellationRequested();
             var relevantCultures = GetRelevantArmyCultures(
                 model,
                 normalizedTargets,
@@ -4017,6 +4063,7 @@ namespace Editors.KitbasherEditor.Services
                 StringComparer.OrdinalIgnoreCase);
             foreach (var culture in relevantCultures)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!model.UnitsByCultureAndCategory.TryGetValue(
                         culture,
                         out var unitsByCategory))
@@ -4027,6 +4074,7 @@ namespace Editors.KitbasherEditor.Services
                 var notResidentProbability = 1.0;
                 foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!unitsByCategory.TryGetValue(category, out var cultureUnits))
                         continue;
 
@@ -4035,11 +4083,11 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     double perSlotPresenceProbability = 0;
-                    foreach (var unitId in cultureUnits)
+                    foreach (var unitId in EnumerateRelevantArmyUnitIds(
+                                 cultureUnits,
+                                 relevantUnitIds))
                     {
-                        if (!relevantUnitIds.Contains(unitId))
-                            continue;
-
+                        cancellationToken.ThrowIfCancellationRequested();
                         double unitCardPresenceProbability = 0;
                         var notPresentAcrossRoles = 1.0;
                         var exactRoles = new HashSet<Wh3UnitVisualRole>();
@@ -4220,6 +4268,7 @@ namespace Editors.KitbasherEditor.Services
             double total = 0;
             foreach (var batch in batches)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 if (!TryGetGeneratedAtlasPixelCost(
                         state,
                         batch,
@@ -4284,6 +4333,31 @@ namespace Editors.KitbasherEditor.Services
             return result;
         }
 
+        private static IEnumerable<string> EnumerateRelevantArmyUnitIds(
+            IReadOnlySet<string> cultureUnits,
+            IReadOnlySet<string> relevantUnitIds)
+        {
+            // Most mesh groups touch a small subset of a culture's roster. Iterate the
+            // smaller side of the intersection so relevance filtering does not merely move
+            // the full-roster scan behind a Contains call.
+            if (relevantUnitIds.Count < cultureUnits.Count)
+            {
+                foreach (var unitId in relevantUnitIds)
+                {
+                    if (cultureUnits.Contains(unitId))
+                        yield return unitId;
+                }
+
+                yield break;
+            }
+
+            foreach (var unitId in cultureUnits)
+            {
+                if (relevantUnitIds.Contains(unitId))
+                    yield return unitId;
+            }
+        }
+
         private static HashSet<string> GetRelevantArmyCultures(
             ArmyResidencyModel model,
             IEnumerable<string> assetPaths,
@@ -4341,6 +4415,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<MergeAffinityGroup> affinityGroups,
             List<List<AtlasCandidate>> output)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             const int maxAcceptedLocalitySplits = 32;
             const int maxGlobalPixelIncreasePercent = 25;
             const int minimumResidentPixelSavingPercent = 10;
@@ -4392,8 +4467,10 @@ namespace Editors.KitbasherEditor.Services
             foreach (var proposal in CreateVmdLocalitySplitProposals(
                          batch,
                          rootsByMesh,
-                         state.ArmyResidencyModel))
+                         state.ArmyResidencyModel,
+                         state.CancellationToken))
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 state.VmdLocalitySplitEvaluations++;
 
                 if (!TryGetGeneratedAtlasPixelCost(
@@ -4579,8 +4656,10 @@ namespace Editors.KitbasherEditor.Services
         private static IReadOnlyList<AtlasBatchSplitProposal> CreateVmdLocalitySplitProposals(
             IReadOnlyList<AtlasCandidate> batch,
             IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh,
-            ArmyResidencyModel? armyModel)
+            ArmyResidencyModel? armyModel,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var groups = batch
                 .GroupBy(GetAtlasPlanningSourceIdentity)
                 .Select(group =>
@@ -4663,6 +4742,7 @@ namespace Editors.KitbasherEditor.Services
             {
                 foreach (var culture in armyModel.UnitsByCultureAndCategory.Keys)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     AddProposal(groups.Where(group =>
                         GetArmyCulturesForRoots(
                             armyModel,
@@ -4672,6 +4752,7 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var category in armyModel.Scenario.ArmySlotTemplate.Keys)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     AddProposal(groups.Where(group =>
                         GetArmyCategoriesForRoots(
                             armyModel,
@@ -4688,6 +4769,7 @@ namespace Editors.KitbasherEditor.Services
                          .ThenBy(root => root, StringComparer.OrdinalIgnoreCase)
                          .Take(12))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 AddProposal(groups.Where(group =>
                     rootsByGroup[group.Identity].Contains(root)));
             }
@@ -4707,6 +4789,7 @@ namespace Editors.KitbasherEditor.Services
             var boundaries = new List<int>();
             for (var index = 1; index < ordered.Count; index++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!RootSignature(ordered[index - 1]).Equals(
                         RootSignature(ordered[index]),
                         StringComparison.OrdinalIgnoreCase))
@@ -4727,7 +4810,10 @@ namespace Editors.KitbasherEditor.Services
             }
 
             foreach (var boundary in selectedBoundaries)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
                 AddProposal(ordered.Take(boundary));
+            }
 
             const int maxLocalitySplitProposals = 24;
             return proposals.Count <= maxLocalitySplitProposals
@@ -4739,6 +4825,7 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             IReadOnlyList<List<AtlasCandidate>> batches)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             var working = batches.Select(batch => batch.ToList()).ToList();
             if (!state.MergeCompatibleMeshesEnabled || working.Count < 2)
                 return working;
@@ -4755,7 +4842,8 @@ namespace Editors.KitbasherEditor.Services
             var expectedArmyEntitiesByMesh = BuildExpectedArmyEntitiesByMesh(
                 state.ArmyResidencyModel,
                 working.SelectMany(batch => batch),
-                rootsByMesh);
+                rootsByMesh,
+                state.CancellationToken);
             var currentExpectedArmyDrawCallsEliminated =
                 CalculateExpectedArmyDrawCallsEliminated(
                     state,
@@ -4771,12 +4859,14 @@ namespace Editors.KitbasherEditor.Services
             const int maxPasses = 2;
             for (var pass = 0; pass < maxPasses; pass++)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 var changed = false;
                 var batchByMesh = BuildBatchIndexByMesh(working);
                 var candidatePairWeights = new Dictionary<AtlasBatchPair, int>();
 
                 foreach (var group in affinityGroups)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     var occupiedBatches = group.Meshes
                         .Where(batchByMesh.ContainsKey)
                         .Select(mesh => batchByMesh[mesh])
@@ -4811,8 +4901,16 @@ namespace Editors.KitbasherEditor.Services
 
                 state.MergeAwareBatchPairsConsidered += candidatePairs.Count;
 
-                foreach (var pair in candidatePairs)
+                for (var pairIndex = 0; pairIndex < candidatePairs.Count; pairIndex++)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    ReportProgress(
+                        state.Progress,
+                        "Optimizing atlas batches",
+                        pairIndex + 1,
+                        candidatePairs.Count,
+                        $"Merge-affinity pass {pass + 1}: pair {pairIndex + 1}");
+                    var pair = candidatePairs[pairIndex];
                     var leftIndex = pair.FirstBatchId;
                     var rightIndex = pair.SecondBatchId;
                     var currentLeft = working[leftIndex];
@@ -4867,6 +4965,7 @@ namespace Editors.KitbasherEditor.Services
                                  currentRight,
                                  affinityGroups))
                     {
+                        state.CancellationToken.ThrowIfCancellationRequested();
                         state.MergeAwareRepartitionEvaluations++;
 
                         if (!TryGetGeneratedAtlasPixelCost(
@@ -5045,16 +5144,25 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>> expectedArmyEntitiesByMesh,
             ref double currentExpectedArmyDrawCallsEliminated)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             const int maxCoalesces = 16;
             const int maxPairEvaluationsPerPass = 64;
 
             for (var pass = 0; pass < maxCoalesces && working.Count >= 2; pass++)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(
+                    state.Progress,
+                    "Optimizing atlas batches",
+                    pass + 1,
+                    maxCoalesces,
+                    $"Coalescing merge batches, pass {pass + 1}");
                 var batchByMesh = BuildBatchIndexByMesh(working);
                 var candidatePairWeights = new Dictionary<AtlasBatchPair, int>();
 
                 foreach (var group in affinityGroups)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     var occupiedBatches = group.Meshes
                         .Where(batchByMesh.ContainsKey)
                         .Select(mesh => batchByMesh[mesh])
@@ -5088,12 +5196,22 @@ namespace Editors.KitbasherEditor.Services
                 long bestPixelsSaved = long.MinValue;
                 var bestPairWeight = -1;
 
-                foreach (var entry in candidatePairWeights
-                             .OrderByDescending(x => x.Value)
-                             .ThenBy(x => x.Key.FirstBatchId)
-                             .ThenBy(x => x.Key.SecondBatchId)
-                             .Take(maxPairEvaluationsPerPass))
+                var candidatePairs = candidatePairWeights
+                    .OrderByDescending(x => x.Value)
+                    .ThenBy(x => x.Key.FirstBatchId)
+                    .ThenBy(x => x.Key.SecondBatchId)
+                    .Take(maxPairEvaluationsPerPass)
+                    .ToArray();
+                for (var pairIndex = 0; pairIndex < candidatePairs.Length; pairIndex++)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    ReportProgress(
+                        state.Progress,
+                        "Optimizing atlas batches",
+                        pairIndex + 1,
+                        candidatePairs.Length,
+                        $"Coalescing pass {pass + 1}: pair {pairIndex + 1}");
+                    var entry = candidatePairs[pairIndex];
                     var pair = entry.Key;
                     var leftBatch = working[pair.FirstBatchId];
                     var rightBatch = working[pair.SecondBatchId];
@@ -5296,6 +5414,7 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             IEnumerable<AtlasCandidate> candidates)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             var result = new List<MergeAffinityGroup>();
 
             // Group by the material state that would remain after a safe texture rewrite.
@@ -5323,6 +5442,7 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var bucket in buckets)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 var current = new List<MergeAffinityCandidateInfo>();
                 var currentVertexCount = 0;
                 var currentHasProspectivePair = false;
@@ -5331,6 +5451,7 @@ namespace Editors.KitbasherEditor.Services
                              .OrderBy(x => x.Candidate.Key.PartIndex)
                              .ThenBy(x => x.Candidate.RootVmdPath, StringComparer.OrdinalIgnoreCase))
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     var candidate = info.Candidate;
                     var vertexCount = candidate.Model.Mesh.VertexList.Length;
                     if (vertexCount > ushort.MaxValue)
@@ -5343,6 +5464,7 @@ namespace Editors.KitbasherEditor.Services
                         canJoinCurrent = true;
                         foreach (var existing in current)
                         {
+                            state.CancellationToken.ThrowIfCancellationRequested();
                             // StrictMaterialIdentity is the material identity after the
                             // atlas rewrite modeled by BuildMergeAffinityMaterialIdentity.
                             // It must match exactly before a group can be admitted. The old
@@ -5652,7 +5774,8 @@ namespace Editors.KitbasherEditor.Services
             BuildExpectedArmyEntitiesByMesh(
                 ArmyResidencyModel? model,
                 IEnumerable<AtlasCandidate> candidates,
-                IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh)
+                IReadOnlyDictionary<MeshKey, HashSet<string>> rootsByMesh,
+                CancellationToken cancellationToken = default)
         {
             var result = new Dictionary<
                 MeshKey,
@@ -5664,6 +5787,7 @@ namespace Editors.KitbasherEditor.Services
                          .GroupBy(candidate => candidate.Key)
                          .Select(group => group.First()))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var wsModels = candidate.Usages
                     .Select(usage => Normalize(usage.AssetPath))
                     .Where(path => path.Length != 0)
@@ -5690,6 +5814,7 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>? byCategory = null;
                 foreach (var unitId in relevantUnitIds)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!model.CategoryByUnit.TryGetValue(unitId, out var category))
                         continue;
 
@@ -5813,6 +5938,8 @@ namespace Editors.KitbasherEditor.Services
             if (model == null)
                 return 0;
 
+            state.CancellationToken.ThrowIfCancellationRequested();
+
             var drawsByCulture = model.UnitsByCultureAndCategory.Keys.ToDictionary(
                 culture => culture,
                 _ => 0.0,
@@ -5820,10 +5947,12 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var group in affinityGroups)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 foreach (var colocatedMeshes in group.Meshes
                              .Where(batchByMesh.ContainsKey)
                              .GroupBy(mesh => batchByMesh[mesh]))
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     var meshes = colocatedMeshes.ToArray();
                     if (meshes.Length < 2)
                         continue;
@@ -5880,6 +6009,7 @@ namespace Editors.KitbasherEditor.Services
 
                     foreach (var culture in relevantCultures)
                     {
+                        state.CancellationToken.ThrowIfCancellationRequested();
                         if (!model.UnitsByCultureAndCategory.TryGetValue(
                                 culture,
                                 out var unitsByCategory))
@@ -5889,6 +6019,7 @@ namespace Editors.KitbasherEditor.Services
 
                         foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
                         {
+                            state.CancellationToken.ThrowIfCancellationRequested();
                             if (!unitsByCategory.TryGetValue(category, out var cultureUnits))
                                 continue;
 
@@ -5897,11 +6028,11 @@ namespace Editors.KitbasherEditor.Services
                                 continue;
 
                             double eliminatedDrawsAcrossResolvedUnits = 0;
-                            foreach (var unitId in cultureUnits)
+                            foreach (var unitId in EnumerateRelevantArmyUnitIds(
+                                         cultureUnits,
+                                         relevantUnitIds))
                             {
-                                if (!relevantUnitIds.Contains(unitId))
-                                    continue;
-
+                                state.CancellationToken.ThrowIfCancellationRequested();
                                 var usedExactConfigurations = false;
                                 if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
                                         unitId,
@@ -5911,6 +6042,7 @@ namespace Editors.KitbasherEditor.Services
                                     usedExactConfigurations = true;
                                     foreach (var (role, configurations) in configurationsByRole)
                                     {
+                                        state.CancellationToken.ThrowIfCancellationRequested();
                                         var entityCount = Math.Max(
                                             1,
                                             model.EntityCountByUnitAndRole
@@ -5921,6 +6053,7 @@ namespace Editors.KitbasherEditor.Services
                                         var coRenderedCountsByConfiguration = new List<int[]>();
                                         foreach (var configuration in configurations)
                                         {
+                                            state.CancellationToken.ThrowIfCancellationRequested();
                                             if (configuration.Probability <= 0)
                                                 continue;
 
@@ -6068,9 +6201,11 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
                 expectedEntitiesByMesh)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             return batches
                 .Select((batch, originalIndex) =>
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     var coverage = CalculateAtlasBatchCoverage(
                         batch,
                         expectedEntitiesByMesh);
@@ -6166,9 +6301,14 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             IReadOnlyList<List<AtlasCandidate>> batches)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             if (batches.Count == 0)
                 return [];
 
+            ReportProgress(
+                state.Progress,
+                "Evaluating atlas value",
+                item: "Indexing source texture consumers");
             state.AtlasValueGateSourceTextureIndex ??=
                 BuildAtlasValueGateSourceTextureIndex(state);
 
@@ -6216,7 +6356,8 @@ namespace Editors.KitbasherEditor.Services
             var expectedEntitiesByMesh = BuildExpectedArmyEntitiesByMesh(
                 state.ArmyResidencyModel,
                 allCandidates,
-                rootsByMesh);
+                rootsByMesh,
+                state.CancellationToken);
             var candidateCoverage = CalculateAtlasBatchCoverage(
                 allCandidates,
                 expectedEntitiesByMesh);
@@ -6234,11 +6375,22 @@ namespace Editors.KitbasherEditor.Services
             var acceptedEconomicsStartIndex =
                 state.AtlasValueGateAcceptedBatchEconomics.Count;
 
-            foreach (var originalBatch in orderedBatches)
+            for (var orderedBatchIndex = 0;
+                 orderedBatchIndex < orderedBatches.Count;
+                 orderedBatchIndex++)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(
+                    state.Progress,
+                    "Evaluating atlas value",
+                    orderedBatchIndex + 1,
+                    orderedBatches.Count,
+                    $"Value gate batch {orderedBatchIndex + 1}");
+                var originalBatch = orderedBatches[orderedBatchIndex];
                 var batch = new List<AtlasCandidate>(originalBatch.Count);
                 foreach (var candidate in originalBatch)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     var scenarioResolved =
                         IsAtlasValueCandidateScenarioResolved(state, candidate);
                     if (!IsAtlasValueCandidateAllowedForMode(
@@ -6305,6 +6457,7 @@ namespace Editors.KitbasherEditor.Services
                             out var textureConsolidationRejectionReasons);
                     foreach (var acceptance in textureConsolidationAcceptances)
                     {
+                        state.CancellationToken.ThrowIfCancellationRequested();
                         result.Add(acceptance.Candidates);
                         RecordAtlasValueGateAccepted(
                             state,
@@ -6325,6 +6478,7 @@ namespace Editors.KitbasherEditor.Services
                             .ToHashSet();
                     foreach (var candidate in textureOnlyCandidates)
                     {
+                        state.CancellationToken.ThrowIfCancellationRequested();
                         if (acceptedTextureConsolidationKeys.Contains(candidate.Key))
                             continue;
 
@@ -6369,6 +6523,7 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var plan in groupPlans)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     if (TryAcceptAtlasValueBatch(
                             state,
                             plan.Candidates,
@@ -6438,6 +6593,7 @@ namespace Editors.KitbasherEditor.Services
 
                     foreach (var rejected in standaloneRejected)
                     {
+                        state.CancellationToken.ThrowIfCancellationRequested();
                         if (rejected.Plan.Group.IsProspectiveTextureMerge)
                         {
                             pendingTextureMergeAttachments.Add(
@@ -6517,6 +6673,7 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var rejected in standaloneRejected)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     var marginalRawDraws = 0;
                     var marginalExpectedDraws = 0.0;
                     string marginalReason;
@@ -6676,6 +6833,7 @@ namespace Editors.KitbasherEditor.Services
                 state.AtlasValueGateBroadBatchesSplit++;
                 foreach (var accepted in standaloneAccepted)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     if (TryAcceptAtlasValueBatch(
                             state,
                             accepted.Plan.Candidates,
@@ -6710,6 +6868,7 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var marginalOnly in workingAccepted.Where(
                              group => group.WasMarginalOnly))
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     if (marginalOnly.AcceptanceKind ==
                         AtlasValueGateAcceptanceKind.TextureOnlyMerge)
                     {
@@ -7137,6 +7296,7 @@ namespace Editors.KitbasherEditor.Services
             out double marginalExpectedArmyDrawsEliminated,
             out string rejectionReason)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             if (!addedGroup.IsProspectiveTextureMerge)
             {
                 marginalRawDrawsEliminated = 0;
@@ -7180,6 +7340,7 @@ namespace Editors.KitbasherEditor.Services
             out TextureOnlyMergeMarginalEvaluation? evaluation,
             out string rejectionReason)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             evaluation = null;
             rejectionReason = string.Empty;
 
@@ -7308,6 +7469,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<AtlasValueGatePendingTextureMergeAttachment> pendingAttachments,
             int acceptedEconomicsStartIndex)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             if (pendingAttachments.Count == 0)
                 return;
 
@@ -7324,6 +7486,7 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var pending in orderedAttachments)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 state.AtlasValueGateTextureOnlyMergeCrossBatchGroupsEvaluated++;
                 state.AtlasValueGateTextureOnlyMergeSubsetGroupsConsidered++;
                 var subsetPlans = BuildTextureOnlyMergeSubsetPlans(pending.Plan);
@@ -7347,6 +7510,7 @@ namespace Editors.KitbasherEditor.Services
 
                     foreach (var subsetPlan in subsetPlans)
                     {
+                        state.CancellationToken.ThrowIfCancellationRequested();
                         var subsetKeys = subsetPlan.Candidates
                             .Select(candidate => candidate.Key)
                             .ToHashSet();
@@ -7763,6 +7927,7 @@ namespace Editors.KitbasherEditor.Services
                 expectedEntitiesByMesh,
             out string rejectionReason)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             rejectionReason = string.Empty;
             if (baseCandidates.Count == 0 || addedCandidates.Count == 0)
             {
@@ -7854,6 +8019,7 @@ namespace Editors.KitbasherEditor.Services
             out double expectedArmyDrawsEliminated,
             out string rejectionReason)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             residency = AtlasValueGateResidencyEstimate.Empty;
             rawDrawsEliminated = 0;
             expectedArmyDrawsEliminated = 0;
@@ -7974,6 +8140,7 @@ namespace Editors.KitbasherEditor.Services
             out double expectedArmyDrawsEliminated,
             out string rejectionReason)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             residency = AtlasValueGateResidencyEstimate.Empty;
             rawDrawsEliminated = 0;
             expectedArmyDrawsEliminated = 0;
@@ -8090,6 +8257,7 @@ namespace Editors.KitbasherEditor.Services
             out AtlasValueGateResidencyEstimate residency,
             out string rejectionReason)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             residency = AtlasValueGateResidencyEstimate.Empty;
             rejectionReason = string.Empty;
 
@@ -8209,6 +8377,7 @@ namespace Editors.KitbasherEditor.Services
                 IReadOnlyList<AtlasCandidate> candidates,
                 out Dictionary<MeshKey, string> rejectionReasons)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             rejectionReasons = new Dictionary<MeshKey, string>();
             if (candidates.Count == 0)
                 return [];
@@ -8228,6 +8397,7 @@ namespace Editors.KitbasherEditor.Services
                  offset < orderedCandidates.Count;
                  offset += TextureConsolidationInitialCohortCandidateLimit)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 pending.Enqueue(
                     orderedCandidates
                         .Skip(offset)
@@ -8238,6 +8408,7 @@ namespace Editors.KitbasherEditor.Services
             var accepted = new List<TextureConsolidationCohortAcceptance>();
             while (pending.Count != 0)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 var cohort = pending.Dequeue();
                 state.AtlasValueGateTextureConsolidationCohortsEvaluated++;
                 if (TryAcceptTextureConsolidationAtlasBatch(
@@ -8267,7 +8438,10 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 foreach (var candidate in cohort)
+                {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     rejectionReasons[candidate.Key] = rejectionReason;
+                }
             }
 
             return accepted;
@@ -8298,6 +8472,7 @@ namespace Editors.KitbasherEditor.Services
             out int consolidatedTextureAssignments,
             out string rejectionReason)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             residency = AtlasValueGateResidencyEstimate.Empty;
             consolidatedTextureAssignments = 0;
             rejectionReason = string.Empty;
@@ -8451,6 +8626,7 @@ namespace Editors.KitbasherEditor.Services
             out AtlasValueGateResidencyEstimate estimate)
         {
             estimate = AtlasValueGateResidencyEstimate.Empty;
+            state.CancellationToken.ThrowIfCancellationRequested();
             var sourceIndex = state.AtlasValueGateSourceTextureIndex ??
                 BuildAtlasValueGateSourceTextureIndex(state);
             state.AtlasValueGateSourceTextureIndex = sourceIndex;
@@ -8458,8 +8634,10 @@ namespace Editors.KitbasherEditor.Services
             var proposedRewrites = new HashSet<AtlasValueGateSourceReference>();
             foreach (var candidate in candidates)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 foreach (var slot in generatedBcnBytesBySlot.Keys)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     if (!candidate.ResolvedChannels.Contains(slot) &&
                         !candidate.ConstantChannels.ContainsKey(slot))
                     {
@@ -8494,6 +8672,7 @@ namespace Editors.KitbasherEditor.Services
             var scenarioDisplacedSourceTextureCount = 0;
             foreach (var sourceTexture in sourceIndex.Values)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 if (!sourceTexture.References.Any(proposedRewrites.Contains))
                     continue;
 
@@ -8549,6 +8728,7 @@ namespace Editors.KitbasherEditor.Services
             var rootsByMesh = BuildCandidateRootVmdPaths(state, candidates);
             foreach (var (slot, channelBytes) in generatedBcnBytesBySlot)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 var channelCandidates = candidates
                     .Where(candidate =>
                         candidate.ResolvedChannels.Contains(slot) ||
@@ -8567,7 +8747,8 @@ namespace Editors.KitbasherEditor.Services
                 var residentProbability = GetExpectedArmyResidentProbability(
                     state.ArmyResidencyModel,
                     targetWsModels,
-                    roots);
+                    roots,
+                    state.CancellationToken);
                 expectedArmyGeneratedBcnBytes +=
                     channelBytes * residentProbability;
             }
@@ -8637,13 +8818,15 @@ namespace Editors.KitbasherEditor.Services
             var residentProbability = GetExpectedArmyResidentProbability(
                 state.ArmyResidencyModel,
                 remainingWsModels,
-                fallbackRoots);
+                fallbackRoots,
+                state.CancellationToken);
             return sourceTexture.BcnBytes * residentProbability;
         }
 
         private static Dictionary<string, AtlasValueGateSourceTexture>
             BuildAtlasValueGateSourceTextureIndex(BatchState state)
         {
+            state.CancellationToken.ThrowIfCancellationRequested();
             var loadedContainers = GetGameplayTraversalContainers(state);
             var referencesByTexture =
                 new Dictionary<string, HashSet<AtlasValueGateSourceReference>>(
@@ -8720,6 +8903,7 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var wsModelPath in reachableWsModels)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 var wsContainer = FindGameplayTraversalContainer(
                     state.Source,
                     loadedContainers,
@@ -8745,6 +8929,7 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (XmlNode materialNode in materialNodes)
                 {
+                    state.CancellationToken.ThrowIfCancellationRequested();
                     MeshKey? mesh = null;
                     if (!string.IsNullOrWhiteSpace(geometryPath) &&
                         TryParseIndex(materialNode, "lod_index", out var lodIndex) &&
@@ -8782,6 +8967,7 @@ namespace Editors.KitbasherEditor.Services
                         StringComparer.OrdinalIgnoreCase);
                     foreach (XmlNode textureNode in textureNodes)
                     {
+                        state.CancellationToken.ThrowIfCancellationRequested();
                         var slot = GetTextureSlot(textureNode);
                         var normalizedSlot = string.IsNullOrWhiteSpace(slot)
                             ? "__unslotted__"
@@ -8831,6 +9017,7 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var rigidPath in directRigidPaths)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 var rigidContainer = FindGameplayTraversalContainer(
                     state.Source,
                     loadedContainers,
@@ -8844,10 +9031,12 @@ namespace Editors.KitbasherEditor.Services
                     var rigid = ModelFactory.Create().Load(rigidFile.DataSource.ReadData());
                     for (var lodIndex = 0; lodIndex < rigid.ModelList.Length; lodIndex++)
                     {
+                        state.CancellationToken.ThrowIfCancellationRequested();
                         for (var partIndex = 0;
                              partIndex < rigid.ModelList[lodIndex].Length;
                              partIndex++)
                         {
+                            state.CancellationToken.ThrowIfCancellationRequested();
                             var mesh = new MeshKey(rigidPath, lodIndex, partIndex);
                             var material = BuildEmbeddedMaterialDocument(
                                 rigid.ModelList[lodIndex][partIndex].Material);
@@ -8859,6 +9048,7 @@ namespace Editors.KitbasherEditor.Services
                                 StringComparer.OrdinalIgnoreCase);
                             foreach (XmlNode textureNode in textureNodes)
                             {
+                                state.CancellationToken.ThrowIfCancellationRequested();
                                 var slot = GetTextureSlot(textureNode);
                                 var normalizedSlot = string.IsNullOrWhiteSpace(slot)
                                     ? "__unslotted__"
@@ -8901,6 +9091,7 @@ namespace Editors.KitbasherEditor.Services
                 StringComparer.OrdinalIgnoreCase);
             foreach (var vmd in state.VmdDocuments.Values)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var childVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -8909,12 +9100,13 @@ namespace Editors.KitbasherEditor.Services
             }
 
             state.AtlasValueGateRootsByWsModel ??=
-                BuildArmyRootsByWsModel(state, CancellationToken.None);
+                BuildArmyRootsByWsModel(state, state.CancellationToken);
 
             var result = new Dictionary<string, AtlasValueGateSourceTexture>(
                 StringComparer.OrdinalIgnoreCase);
             foreach (var (texturePath, references) in referencesByTexture)
             {
+                state.CancellationToken.ThrowIfCancellationRequested();
                 if (!textureFiles.TryGetValue(texturePath, out var source))
                     continue;
 
@@ -12640,7 +12832,8 @@ namespace Editors.KitbasherEditor.Services
                 var residentProbability = GetExpectedArmyResidentProbability(
                     state.ArmyResidencyModel,
                     targetWsModels,
-                    fallbackRoots);
+                    fallbackRoots,
+                    state.CancellationToken);
                 var expectedBytes = estimate.Bytes * residentProbability;
                 estimatedScenarioResidentBcnBytes += expectedBytes;
 
@@ -17104,6 +17297,8 @@ namespace Editors.KitbasherEditor.Services
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
             public Dictionary<MeshKey, List<SkipDetail>> SkipDetails { get; } = [];
             public int BatchIndex { get; set; }
+            public CancellationToken CancellationToken { get; set; }
+            public IProgress<TextureAtlasPackProgress>? Progress { get; set; }
             public Dictionary<string, TimeSpan> PhaseDurations { get; } = new(StringComparer.Ordinal);
             public TimeSpan TotalElapsed { get; set; }
 

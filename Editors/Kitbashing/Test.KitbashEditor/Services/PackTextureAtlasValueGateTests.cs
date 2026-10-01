@@ -941,6 +941,32 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void CultureResidency_MissingUnrelatedCultureValueKeepsFullWeightDenominator()
+        {
+            var probabilities = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 0.5,
+            };
+            var playerWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 1.0,
+            };
+            var opponentWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 1.0 / 3.0,
+                ["dwarfs"] = 1.0 / 3.0,
+                ["cathay"] = 1.0 / 3.0,
+            };
+
+            Assert.That(
+                CombineBattleResidentProbabilities(
+                    probabilities,
+                    playerWeights,
+                    opponentWeights),
+                Is.EqualTo(7.0 / 12.0).Within(0.000001));
+        }
+
+        [Test]
         public void CultureResidency_GenuineCrossCultureSharingContributesWithoutPairMatrix()
         {
             var probabilities = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
