@@ -126,6 +126,25 @@ namespace Test.KitbashEditor.Services
                     "GetDirectEngineAssetExpectedLiveBattlePresence returned null."));
         }
 
+        private static bool ContainsGameplayAsset(
+            IEnumerable<IPackFileContainer> containers,
+            string assetPath)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "ContainsGameplayAsset",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.ContainsGameplayAsset was not found.");
+
+            return (bool)(method.Invoke(null, [containers, assetPath])
+                ?? throw new InvalidOperationException(
+                    "ContainsGameplayAsset returned null."));
+        }
+
         private static IReadOnlyList<string> ResolveEngineAssetPaths(
             string reference,
             IReadOnlyDictionary<string, List<string>> animatedLodRowsByKey)
@@ -915,6 +934,31 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 GetDirectEngineAssetExpectedLiveBattlePresence(field),
                 Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void DirectEngineAssetResolution_IncludesReadOnlyCaAssets()
+        {
+            const string assetPath =
+                @"warmachines\engines\vanilla\engine.rigid_model_v2";
+
+            var source = new Mock<IPackFileContainer>();
+            source.Setup(container => container.ContainsFile(It.IsAny<string>()))
+                .Returns(false);
+
+            var ca = new Mock<IPackFileContainer>();
+            ca.Setup(container => container.ContainsFile(assetPath))
+                .Returns(true);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    ContainsGameplayAsset([source.Object, ca.Object], assetPath),
+                    Is.True);
+                Assert.That(
+                    ContainsGameplayAsset([source.Object], assetPath),
+                    Is.False);
+            });
         }
 
         [Test]
