@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Reflection;
 using System.Xml;
 using Moq;
@@ -7,6 +8,113 @@ namespace Test.KitbashEditor.Services
 {
     public class PackTextureAtlasValueGateTests
     {
+        private static string GetStructuralMergePairKey(
+            string rigidPath,
+            int lodIndex,
+            int leftPartIndex,
+            int rightPartIndex)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "BuildStructuralMergePairKey",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.BuildStructuralMergePairKey was not found.");
+
+            return (string)(method.Invoke(
+                    null,
+                    [rigidPath, lodIndex, leftPartIndex, rightPartIndex])
+                ?? throw new InvalidOperationException(
+                    "BuildStructuralMergePairKey returned null."));
+        }
+
+        private static int GetMergeAffinityScore(
+            IReadOnlyCollection<string> preExistingPairs,
+            params int[] partIndices)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var meshKeyConstructor = meshKeyType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single();
+
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var atlasCandidateConstructor = atlasCandidateType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length > 5);
+
+            var meshKeys = partIndices
+                .Select(partIndex => meshKeyConstructor.Invoke(
+                    ["test.rigid_model_v2", 0, partIndex]))
+                .ToArray();
+            var atlasCandidates = meshKeys
+                .Select(meshKey =>
+                {
+                    var arguments = atlasCandidateConstructor.GetParameters()
+                        .Select(parameter =>
+                        {
+                            if (parameter.ParameterType == meshKeyType)
+                                return meshKey;
+                            if (parameter.ParameterType == typeof(string))
+                                return string.Empty;
+                            if (parameter.ParameterType.IsValueType)
+                                return Activator.CreateInstance(parameter.ParameterType);
+                            return null;
+                        })
+                        .ToArray();
+                    return atlasCandidateConstructor.Invoke(arguments);
+                })
+                .ToArray();
+
+            var candidateListType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var batch = Activator.CreateInstance(candidateListType)
+                ?? throw new InvalidOperationException("Could not create candidate batch.");
+            foreach (var candidate in atlasCandidates)
+                ((IList)batch).Add(candidate);
+
+            var batchesListType = typeof(List<>).MakeGenericType(candidateListType);
+            var batches = Activator.CreateInstance(batchesListType)
+                ?? throw new InvalidOperationException("Could not create candidate batches.");
+            ((IList)batches).Add(batch);
+
+            var mergeGroupType = serviceType.GetNestedType(
+                "MergeAffinityGroup",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MergeAffinityGroup was not found.");
+            var mergeGroupConstructor = mergeGroupType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 3);
+            var meshKeyArray = Array.CreateInstance(meshKeyType, meshKeys.Length);
+            for (var index = 0; index < meshKeys.Length; index++)
+                meshKeyArray.SetValue(meshKeys[index], index);
+
+            var mergeGroup = mergeGroupConstructor.Invoke(
+                [meshKeyArray, false, preExistingPairs.ToArray()]);
+            var mergeGroupListType = typeof(List<>).MakeGenericType(mergeGroupType);
+            var mergeGroups = Activator.CreateInstance(mergeGroupListType)
+                ?? throw new InvalidOperationException("Could not create affinity groups.");
+            ((IList)mergeGroups).Add(mergeGroup);
+
+            var method = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "CalculateMergeAffinityScore" &&
+                    candidate.GetParameters().Length == 2);
+            return Convert.ToInt32(method.Invoke(null, [batches, mergeGroups]));
+        }
+
         private static double GetChargeableBytes(double generatedBytes, double retiredSourceBytes)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
@@ -1341,6 +1449,41 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 SelectAtlasVmdRoots(roots, Array.Empty<string>(), atlasAllVmds: true),
                 Is.EqualTo(roots));
+        }
+
+        [Test]
+        public void StructuralMergePairKey_IsCanonicalForPartOrder()
+        {
+            Assert.That(
+                GetStructuralMergePairKey(
+                    @"TEST\BODY.RIGID_MODEL_V2",
+                    1,
+                    3,
+                    2),
+                Is.EqualTo(@"test\body.rigid_model_v2|1|2|3"));
+        }
+
+        [Test]
+        public void AtlasAffinity_CreditsOnlySavingsBeyondPreExistingStructuralComponents()
+        {
+            var preExistingPair = GetStructuralMergePairKey(
+                "test.rigid_model_v2",
+                0,
+                0,
+                1);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetMergeAffinityScore([preExistingPair], 0, 1),
+                    Is.EqualTo(0));
+                Assert.That(
+                    GetMergeAffinityScore([preExistingPair], 0, 1, 2),
+                    Is.EqualTo(1));
+                Assert.That(
+                    GetMergeAffinityScore([], 0, 1),
+                    Is.EqualTo(1));
+            });
         }
 
 

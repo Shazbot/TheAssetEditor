@@ -217,6 +217,7 @@ namespace Editors.KitbasherEditor.Services
                     mergeCompatibleMeshes,
                     shareAtlasesAcrossVmds,
                     optimizeGeometry);
+                state.ExistingAtlasOutputDetected = HasGeneratedAtlasOutput(source);
 
                 var allVmdPaths = sourcePaths
                     .Where(x => Path.GetExtension(x).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
@@ -372,6 +373,13 @@ namespace Editors.KitbasherEditor.Services
                 phaseStopwatch.Restart();
                 BuildWsUsageIndex(state, cancellationToken, progress);
                 IndexTaintedGameplayWsModels(state, cancellationToken);
+                if (mergeCompatibleMeshes)
+                {
+                    IndexImmutableMeshMergeConsumers(
+                        state,
+                        vmdRoots,
+                        cancellationToken);
+                }
                 state.PhaseDurations["Index WSModels"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
@@ -384,25 +392,54 @@ namespace Editors.KitbasherEditor.Services
                 state.PhaseDurations["Estimate source BCn residency"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
-                var candidateDiscovery = DiscoverAtlasCandidates(
-                    state,
-                    atlasVmdRoots,
-                    shareAtlasesAcrossVmds,
-                    cancellationToken,
-                    progress);
+                List<AtlasCandidate> discoveredCandidates;
+                if (state.ExistingAtlasOutputDetected)
+                {
+                    ReportProgress(
+                        progress,
+                        "Discovering atlas candidates",
+                        item: "Existing Asset Editor atlas output detected; preserving it for idempotence");
+                    discoveredCandidates = [];
+                }
+                else
+                {
+                    var candidateDiscovery = DiscoverAtlasCandidates(
+                        state,
+                        atlasVmdRoots,
+                        shareAtlasesAcrossVmds,
+                        cancellationToken,
+                        progress);
+
+                    // UV0 is shared by every material texture channel. If any real
+                    // secondary texture is unresolved, remapping UV0 while preserving that old
+                    // texture path would make it sample with atlas UVs and corrupt rendering.
+                    // Such meshes are therefore always skipped. The only unresolved sentinel
+                    // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
+                    discoveredCandidates = ApplyMissingTextureDecision(
+                        state,
+                        candidateDiscovery.Candidates);
+                }
                 state.PhaseDurations["Discover atlas candidates"] = phaseStopwatch.Elapsed;
 
-                // UV0 is shared by every material texture channel. If any real
-                // secondary texture is unresolved, remapping UV0 while preserving that old
-                // texture path would make it sample with atlas UVs and corrupt rendering.
-                // Such meshes are therefore always skipped. The only unresolved sentinel
-                // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
-                var discoveredCandidates = ApplyMissingTextureDecision(
-                    state,
-                    candidateDiscovery.Candidates);
+                if (mergeCompatibleMeshes)
+                {
+                    phaseStopwatch.Restart();
+                    AnalyzeCompatibleMeshMerges(
+                        state,
+                        cancellationToken,
+                        progress);
+                    state.PhaseDurations["Analyze structural mesh merges"] = phaseStopwatch.Elapsed;
+                }
 
                 phaseStopwatch.Restart();
-                if (shareAtlasesAcrossVmds)
+                if (state.ExistingAtlasOutputDetected)
+                {
+                    ReportProgress(
+                        progress,
+                        "Building texture atlases",
+                        item: "Skipped because the source is already an Asset Editor atlas output");
+                }
+                else if (shareAtlasesAcrossVmds)
                 {
                     ProcessPackWideAtlases(
                         state,
@@ -698,6 +735,306 @@ namespace Editors.KitbasherEditor.Services
                     usages.Add(new WsUsage(wsPath, doc, node, materialPath));
                 }
             }
+        }
+
+        private static void IndexImmutableMeshMergeConsumers(
+            BatchState state,
+            IReadOnlyList<string> vmdRoots,
+            CancellationToken cancellationToken)
+        {
+            var resolution = state.UnitCategoryResolution;
+            state.StructuralMergeConsumerDiscoveryComplete =
+                resolution != null && resolution.IsGameplayResolutionHealthy;
+
+            var roots = vmdRoots
+                .Concat(resolution?.UsagesByVmd.Keys ?? Array.Empty<string>())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var rootVmdPath in roots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var wsModelPath in CollectReachableGameplayWsModels(
+                             state,
+                             rootVmdPath,
+                             cancellationToken))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var normalizedWsPath = Normalize(wsModelPath);
+                    if (state.Source.ContainsFile(normalizedWsPath))
+                        continue;
+
+                    var container = FindGameplayTraversalContainer(
+                        state.Source,
+                        GetGameplayTraversalContainers(state),
+                        normalizedWsPath);
+                    var file = container?.FindFile(normalizedWsPath);
+                    if (container == null ||
+                        file == null ||
+                        !TryGetWsDocumentForTraversal(
+                            state,
+                            container,
+                            normalizedWsPath,
+                            file,
+                            out var document))
+                    {
+                        state.StructuralMergeConsumerDiscoveryComplete = false;
+                        continue;
+                    }
+
+                    var geometryPath = Normalize(
+                        document.SelectSingleNode("/model/geometry")?.InnerText);
+                    if (geometryPath.Length == 0 ||
+                        !state.Source.ContainsFile(geometryPath))
+                    {
+                        continue;
+                    }
+
+                    if (!state.ImmutableMeshMergeConsumersByRigid.TryGetValue(
+                            geometryPath,
+                            out var consumers))
+                    {
+                        consumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        state.ImmutableMeshMergeConsumersByRigid[geometryPath] = consumers;
+                    }
+
+                    consumers.Add(normalizedWsPath);
+                }
+            }
+        }
+
+        private HashSet<string> LoadStructuralMergeRigidModels(
+            BatchState state,
+            CancellationToken cancellationToken)
+        {
+            var rigidPaths = new HashSet<string>(
+                state.RigidModels.Keys.Select(Normalize),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var document in state.WsDocuments.Values)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var geometryPath = Normalize(
+                    document.SelectSingleNode("/model/geometry")?.InnerText);
+                if (geometryPath.Length != 0 && state.Source.ContainsFile(geometryPath))
+                    rigidPaths.Add(geometryPath);
+            }
+
+            foreach (var assetPath in state.SourceReachableAssetFiles)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Path.GetExtension(assetPath).Equals(
+                        ".rigid_model_v2",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    state.Source.ContainsFile(assetPath))
+                {
+                    rigidPaths.Add(Normalize(assetPath));
+                }
+            }
+
+            foreach (var rigidPath in rigidPaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!state.Source.ContainsFile(rigidPath) ||
+                    state.RigidModels.ContainsKey(rigidPath))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    _ = GetRmv(state, rigidPath);
+                }
+                catch (Exception ex) when (
+                    ex is InvalidDataException or
+                    InvalidOperationException or
+                    ArgumentException or
+                    FormatException)
+                {
+                    RecordStructuralMergeSkip(
+                        state,
+                        rigidPath,
+                        $"rigid model could not be loaded for structural merge analysis: {ex.Message}");
+                }
+            }
+
+            return state.RigidModels.Keys
+                .Where(path => state.Source.ContainsFile(path))
+                .Select(Normalize)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private void AnalyzeCompatibleMeshMerges(
+            BatchState state,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            var rigidPaths = LoadStructuralMergeRigidModels(state, cancellationToken)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            for (var rigidIndex = 0; rigidIndex < rigidPaths.Count; rigidIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rigidPath = rigidPaths[rigidIndex];
+                ReportProgress(
+                    progress,
+                    "Analyzing structural mesh merges",
+                    rigidIndex + 1,
+                    rigidPaths.Count,
+                    rigidPath);
+
+                if (!TryGetStructuralMergeBlockReason(state, rigidPath, out _))
+                    AnalyzeCompatibleMeshMergesForRigid(state, rigidPath, cancellationToken);
+            }
+        }
+
+        private void AnalyzeCompatibleMeshMergesForRigid(
+            BatchState state,
+            string rigidPath,
+            CancellationToken cancellationToken)
+        {
+            if (!state.RigidModels.TryGetValue(rigidPath, out var rmv))
+                return;
+
+            var wsModels = GetWritableWsModelsForRigid(state, rigidPath);
+            if (wsModels.Count == 0)
+            {
+                for (var lodIndex = 0; lodIndex < rmv.ModelList.Length; lodIndex++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var groups = BuildDirectMeshMergeGroups(
+                        rmv.ModelList[lodIndex],
+                        lodIndex,
+                        rigidPath);
+                    RecordPreAtlasStructuralMergeGroups(
+                        state,
+                        rigidPath,
+                        lodIndex,
+                        groups);
+                }
+
+                return;
+            }
+
+            var assignmentsByWsModel = new Dictionary<string, string[][]>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var (wsPath, wsDocument) in wsModels)
+            {
+                if (!TryReadWsMaterialAssignments(
+                        wsDocument,
+                        rmv,
+                        out var assignments,
+                        out var reason))
+                {
+                    RecordStructuralMergeSkip(state, rigidPath, $"{wsPath}: {reason}");
+                    return;
+                }
+
+                assignmentsByWsModel[wsPath] = assignments;
+            }
+
+            var wsModelPaths = wsModels
+                .Select(x => x.Key)
+                .ToList();
+            for (var lodIndex = 0; lodIndex < rmv.ModelList.Length; lodIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var models = rmv.ModelList[lodIndex];
+                if (models.Length < 2)
+                    continue;
+
+                var groups = BuildMeshMergeGroups(
+                    state,
+                    models,
+                    lodIndex,
+                    wsModelPaths,
+                    assignmentsByWsModel,
+                    recordDiagnostics: false);
+
+                RecordPreAtlasStructuralMergeGroups(
+                    state,
+                    rigidPath,
+                    lodIndex,
+                    groups);
+            }
+        }
+
+        private static void RecordPreAtlasStructuralMergeGroups(
+            BatchState state,
+            string rigidPath,
+            int lodIndex,
+            IReadOnlyList<MeshMergeGroup> groups)
+        {
+            foreach (var group in groups.Where(x => x.PartIndices.Count > 1))
+            {
+                state.PreAtlasStructuralMergeGroupCount++;
+                for (var left = 0; left < group.PartIndices.Count; left++)
+                {
+                    for (var right = left + 1;
+                         right < group.PartIndices.Count;
+                         right++)
+                    {
+                        state.PreAtlasStructuralMergePairs.Add(
+                            BuildStructuralMergePairKey(
+                                rigidPath,
+                                lodIndex,
+                                group.PartIndices[left],
+                                group.PartIndices[right]));
+                    }
+                }
+            }
+        }
+
+        private static List<KeyValuePair<string, XmlDocument>> GetWritableWsModelsForRigid(
+            BatchState state,
+            string rigidPath)
+            => state.WsDocuments
+                .Where(x =>
+                    Normalize(x.Value.SelectSingleNode("/model/geometry")?.InnerText)
+                        .Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        private static bool TryGetStructuralMergeBlockReason(
+            BatchState state,
+            string rigidPath,
+            out string reason)
+        {
+            if (!state.StructuralMergeConsumerDiscoveryComplete)
+            {
+                reason = "complete gameplay consumer discovery was not available; structural merge is blocked conservatively.";
+                RecordStructuralMergeSkip(state, rigidPath, reason);
+                return true;
+            }
+
+            if (state.ImmutableMeshMergeConsumersByRigid.TryGetValue(
+                    rigidPath,
+                    out var consumers) &&
+                consumers.Count != 0)
+            {
+                reason =
+                    $"immutable gameplay WSModel consumer(s) would require part remapping: " +
+                    $"{string.Join(", ", consumers.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))}";
+                RecordStructuralMergeSkip(state, rigidPath, reason);
+                return true;
+            }
+
+            reason = string.Empty;
+            return false;
+        }
+
+        private static void RecordStructuralMergeSkip(
+            BatchState state,
+            string rigidPath,
+            string reason)
+        {
+            var message = $"{rigidPath}: {reason}";
+            if (state.MeshMergeSkipMessages.Contains(message, StringComparer.Ordinal))
+                return;
+
+            state.MeshMergeSkipMessages.Add(message);
         }
 
         private static void IndexTaintedGameplayWsModels(
@@ -4542,12 +4879,7 @@ namespace Editors.KitbasherEditor.Services
 
             var score = 0;
             foreach (var group in affinityGroups)
-            {
-                score += group.Meshes
-                    .Where(batchByMesh.ContainsKey)
-                    .GroupBy(mesh => batchByMesh[mesh])
-                    .Sum(batch => Math.Max(0, batch.Count() - 1));
-            }
+                score += CalculateMergeAffinityContribution(group, batchByMesh);
 
             return score;
         }
@@ -4673,9 +5005,13 @@ namespace Editors.KitbasherEditor.Services
                     {
                         if (current.Count > 1)
                         {
+                            var meshKeys = current
+                                .Select(x => x.Candidate.Key)
+                                .ToArray();
                             result.Add(new MergeAffinityGroup(
-                                current.Select(x => x.Candidate.Key).ToArray(),
-                                currentHasProspectivePair));
+                                meshKeys,
+                                currentHasProspectivePair,
+                                GetPreExistingStructuralMergePairs(state, meshKeys)));
                             if (currentHasProspectivePair)
                                 state.ProspectiveMergeAffinityGroupsAdded++;
                         }
@@ -4696,9 +5032,13 @@ namespace Editors.KitbasherEditor.Services
 
                 if (current.Count > 1)
                 {
+                    var meshKeys = current
+                        .Select(x => x.Candidate.Key)
+                        .ToArray();
                     result.Add(new MergeAffinityGroup(
-                        current.Select(x => x.Candidate.Key).ToArray(),
-                        currentHasProspectivePair));
+                        meshKeys,
+                        currentHasProspectivePair,
+                        GetPreExistingStructuralMergePairs(state, meshKeys)));
                     if (currentHasProspectivePair)
                         state.ProspectiveMergeAffinityGroupsAdded++;
                 }
@@ -4791,6 +5131,127 @@ namespace Editors.KitbasherEditor.Services
             return result;
         }
 
+        private static int CalculateMergeAffinityContribution(
+            MergeAffinityGroup group,
+            IReadOnlyDictionary<MeshKey, int> batchByMesh)
+        {
+            var score = 0;
+            foreach (var batch in group.Meshes
+                         .Where(batchByMesh.ContainsKey)
+                         .GroupBy(mesh => batchByMesh[mesh]))
+            {
+                var meshes = batch.ToArray();
+                if (meshes.Length < 2)
+                    continue;
+
+                // Structural merges already collapse each connected pre-atlas component.
+                // Only the remaining component-to-component savings are attributable to
+                // atlas placement.
+                score += Math.Max(
+                    0,
+                    CountStructuralMergeComponents(
+                        meshes,
+                        group.PreExistingStructuralMergePairs) - 1);
+            }
+
+            return score;
+        }
+
+        private static int CountStructuralMergeComponents(
+            IReadOnlyList<MeshKey> meshes,
+            IReadOnlyCollection<string> preExistingPairs)
+        {
+            if (meshes.Count == 0)
+                return 0;
+
+            var labels = BuildStructuralMergeComponentLabels(meshes, preExistingPairs);
+            return labels.Distinct().Count();
+        }
+
+        private static int[] BuildStructuralMergeComponentLabels(
+            IReadOnlyList<MeshKey> meshes,
+            IReadOnlyCollection<string> preExistingPairs)
+        {
+            var parent = Enumerable.Range(0, meshes.Count).ToArray();
+
+            int Find(int index)
+            {
+                while (parent[index] != index)
+                {
+                    parent[index] = parent[parent[index]];
+                    index = parent[index];
+                }
+
+                return index;
+            }
+
+            void Union(int left, int right)
+            {
+                var leftRoot = Find(left);
+                var rightRoot = Find(right);
+                if (leftRoot != rightRoot)
+                    parent[rightRoot] = leftRoot;
+            }
+
+            for (var left = 0; left < meshes.Count; left++)
+            {
+                for (var right = left + 1; right < meshes.Count; right++)
+                {
+                    if (preExistingPairs.Contains(
+                            BuildStructuralMergePairKey(
+                                meshes[left].GeometryPath,
+                                meshes[left].LodIndex,
+                                meshes[left].PartIndex,
+                                meshes[right].PartIndex)))
+                    {
+                        Union(left, right);
+                    }
+                }
+            }
+
+            var componentByRoot = new Dictionary<int, int>();
+            var labels = new int[meshes.Count];
+            for (var index = 0; index < meshes.Count; index++)
+            {
+                var root = Find(index);
+                if (!componentByRoot.TryGetValue(root, out var component))
+                {
+                    component = componentByRoot.Count;
+                    componentByRoot[root] = component;
+                }
+
+                labels[index] = component;
+            }
+
+            return labels;
+        }
+
+        private static int[] CollapseStructuralMergeCounts(
+            IReadOnlyList<MeshKey> meshes,
+            IReadOnlyList<int> counts,
+            IReadOnlyCollection<string> preExistingPairs)
+        {
+            var labels = BuildStructuralMergeComponentLabels(meshes, preExistingPairs);
+            var collapsed = new int[labels.Distinct().Count()];
+            for (var index = 0; index < labels.Length; index++)
+                collapsed[labels[index]] = Math.Max(collapsed[labels[index]], counts[index]);
+
+            return collapsed;
+        }
+
+        private static double[] CollapseStructuralMergeCounts(
+            IReadOnlyList<MeshKey> meshes,
+            IReadOnlyList<double> counts,
+            IReadOnlyCollection<string> preExistingPairs)
+        {
+            var labels = BuildStructuralMergeComponentLabels(meshes, preExistingPairs);
+            var collapsed = new double[labels.Distinct().Count()];
+            for (var index = 0; index < labels.Length; index++)
+                collapsed[labels[index]] = Math.Max(collapsed[labels[index]], counts[index]);
+
+            return collapsed;
+        }
+
         private static int CalculateMergeAffinityScore(
             IReadOnlyList<List<AtlasCandidate>> batches,
             IReadOnlyList<MergeAffinityGroup> affinityGroups)
@@ -4799,12 +5260,7 @@ namespace Editors.KitbasherEditor.Services
             var score = 0;
 
             foreach (var group in affinityGroups)
-            {
-                score += group.Meshes
-                    .Where(batchByMesh.ContainsKey)
-                    .GroupBy(mesh => batchByMesh[mesh])
-                    .Sum(batch => Math.Max(0, batch.Count() - 1));
-            }
+                score += CalculateMergeAffinityContribution(group, batchByMesh);
 
             return score;
         }
@@ -4976,6 +5432,13 @@ namespace Editors.KitbasherEditor.Services
                     if (meshes.Length < 2)
                         continue;
 
+                    var structuralComponentCount =
+                        CountStructuralMergeComponents(
+                            meshes,
+                            group.PreExistingStructuralMergePairs);
+                    if (structuralComponentCount < 2)
+                        continue;
+
                     var lodIndex = meshes[0].LodIndex;
                     var lodProbability = model.Scenario.LodDistribution
                         .GetValueOrDefault(lodIndex);
@@ -5033,8 +5496,14 @@ namespace Editors.KitbasherEditor.Services
                                                         .GetValueOrDefault(path));
                                             }
 
+                                            var componentCounts =
+                                                CollapseStructuralMergeCounts(
+                                                    meshes,
+                                                    coRenderedCounts,
+                                                    group.PreExistingStructuralMergePairs);
+
                                             configurationProbabilities.Add(configuration.Probability);
-                                            coRenderedCountsByConfiguration.Add(coRenderedCounts);
+                                            coRenderedCountsByConfiguration.Add(componentCounts);
                                         }
 
                                         eliminatedDrawsAcrossResolvedUnits +=
@@ -5048,9 +5517,10 @@ namespace Editors.KitbasherEditor.Services
                                 if (usedExactConfigurations)
                                     continue;
 
-                                var expectedCounts = new List<double>(meshes.Length);
-                                foreach (var mesh in meshes)
+                                var expectedCountsByMesh = new double[meshes.Length];
+                                for (var meshIndex = 0; meshIndex < meshes.Length; meshIndex++)
                                 {
+                                    var mesh = meshes[meshIndex];
                                     if (!expectedEntitiesByMesh.TryGetValue(mesh, out var meshUnits) ||
                                         !meshUnits.TryGetValue(category, out var expectedByUnit) ||
                                         !expectedByUnit.TryGetValue(unitId, out var expectedEntities) ||
@@ -5059,8 +5529,15 @@ namespace Editors.KitbasherEditor.Services
                                         continue;
                                     }
 
-                                    expectedCounts.Add(expectedEntities);
+                                    expectedCountsByMesh[meshIndex] = expectedEntities;
                                 }
+
+                                var expectedCounts = CollapseStructuralMergeCounts(
+                                    meshes,
+                                    expectedCountsByMesh,
+                                    group.PreExistingStructuralMergePairs)
+                                    .Where(count => count > 0)
+                                    .ToList();
 
                                 if (expectedCounts.Count >= 2)
                                 {
@@ -5315,7 +5792,10 @@ namespace Editors.KitbasherEditor.Services
                 var contributingGroups = affinityGroups
                     .Select(group => new MergeAffinityGroup(
                         group.Meshes.Where(batchKeys.Contains).ToArray(),
-                        group.IsProspectiveTextureMerge))
+                        group.IsProspectiveTextureMerge,
+                        FilterPreExistingStructuralMergePairs(
+                            group,
+                            group.Meshes.Where(batchKeys.Contains).ToArray())))
                     .Where(group => group.Meshes.Length >= 2)
                     .ToList();
                 var contributingKeys = contributingGroups
@@ -6160,7 +6640,10 @@ namespace Editors.KitbasherEditor.Services
             return affinityGroups
                 .Select(group => new MergeAffinityGroup(
                     group.Meshes.Where(candidateKeys.Contains).ToArray(),
-                    group.IsProspectiveTextureMerge))
+                    group.IsProspectiveTextureMerge,
+                    FilterPreExistingStructuralMergePairs(
+                        group,
+                        group.Meshes.Where(candidateKeys.Contains).ToArray())))
                 .Where(group => group.Meshes.Length >= 2)
                 .ToList();
         }
@@ -6505,7 +6988,10 @@ namespace Editors.KitbasherEditor.Services
                 var remainderPlan = new AtlasValueGateGroupPlan(
                     new MergeAffinityGroup(
                         remainderCandidates.Select(candidate => candidate.Key).ToArray(),
-                        IsProspectiveTextureMerge: true),
+                        IsProspectiveTextureMerge: true,
+                        PreExistingStructuralMergePairs: GetPreExistingStructuralMergePairs(
+                            state,
+                            remainderCandidates.Select(candidate => candidate.Key).ToArray())),
                     remainderCandidates);
                 var rejectionResidency = pending.Residency;
                 if (TryEstimateIncrementalAtlasResidency(
@@ -6554,7 +7040,10 @@ namespace Editors.KitbasherEditor.Services
                     new AtlasValueGateGroupPlan(
                         new MergeAffinityGroup(
                             subset.Select(candidate => candidate.Key).ToArray(),
-                            IsProspectiveTextureMerge: true),
+                            IsProspectiveTextureMerge: true,
+                            PreExistingStructuralMergePairs: FilterPreExistingStructuralMergePairs(
+                                plan.Group,
+                                subset.Select(candidate => candidate.Key).ToArray())),
                         subset.ToList()));
             }
 
@@ -8092,12 +8581,7 @@ namespace Editors.KitbasherEditor.Services
 
             var score = 0;
             foreach (var group in affinityGroups)
-            {
-                score += group.Meshes
-                    .Where(batchByMesh.ContainsKey)
-                    .GroupBy(mesh => batchByMesh[mesh])
-                    .Sum(batch => Math.Max(0, batch.Count() - 1));
-            }
+                score += CalculateMergeAffinityContribution(group, batchByMesh);
 
             return score;
         }
@@ -8214,11 +8698,9 @@ namespace Editors.KitbasherEditor.Services
                     .SelectMany(group => group.Candidates)
                     .Select(candidate => candidate.Key)
                     .ToHashSet();
+                var batchByMesh = meshes.ToDictionary(mesh => mesh, _ => 0);
                 return affinityGroups.Sum(group =>
-                {
-                    var count = group.Meshes.Count(meshes.Contains);
-                    return Math.Max(0, count - 1);
-                });
+                    CalculateMergeAffinityContribution(group, batchByMesh));
             }
 
             void AddBalancedComponentProposal(
@@ -9048,12 +9530,221 @@ namespace Editors.KitbasherEditor.Services
             AddPhaseDuration(state, "Rewrite mesh UVs and materials", rewriteStopwatch.Elapsed);
         }
 
+        private void MergeDirectRigidModels(
+            BatchState state,
+            string rigidPath,
+            RmvFile rmv,
+            CancellationToken cancellationToken)
+        {
+            var rigidBefore = rmv.ModelList.Sum(x => x.Length);
+            var rigidAfter = rigidBefore;
+            var rigidChanged = false;
+
+            for (var lodIndex = 0; lodIndex < rmv.ModelList.Length; lodIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var originalModels = rmv.ModelList[lodIndex];
+                if (originalModels.Length < 2)
+                    continue;
+
+                var groups = BuildDirectMeshMergeGroups(
+                    originalModels,
+                    lodIndex,
+                    rigidPath);
+                if (groups.All(group => group.PartIndices.Count == 1))
+                    continue;
+
+                var lodInvariant = CaptureLodGeometryInvariant(
+                    originalModels,
+                    rigidPath,
+                    lodIndex);
+                var mergedModels = new List<RmvModel>(groups.Count);
+                for (var newPartIndex = 0; newPartIndex < groups.Count; newPartIndex++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var group = groups[newPartIndex];
+                    var models = group.PartIndices
+                        .Select(partIndex => originalModels[partIndex])
+                        .ToList();
+                    MergeGeometryInvariantSnapshot? groupInvariant = null;
+                    if (models.Count > 1)
+                    {
+                        groupInvariant = CaptureMergeGroupInvariant(
+                            models,
+                            rigidPath,
+                            lodIndex,
+                            group.PartIndices);
+                    }
+
+                    var merged = models.Count == 1
+                        ? models[0]
+                        : MergeRmvModels(models);
+                    if (groupInvariant != null)
+                    {
+                        ValidateMergedGroupGeometry(
+                            groupInvariant,
+                            merged,
+                            rigidPath,
+                            lodIndex,
+                            group.PartIndices);
+                        state.MeshMergeInvariantGroupCount++;
+                    }
+
+                    mergedModels.Add(merged);
+                    if (models.Count > 1)
+                    {
+                        var mergeOrigin = IsPreAtlasStructuralMergeGroup(
+                                state,
+                                rigidPath,
+                                lodIndex,
+                                group.PartIndices)
+                            ? "structural-only"
+                            : "atlas-assisted";
+                        if (mergeOrigin.Equals(
+                                "structural-only",
+                                StringComparison.Ordinal))
+                        {
+                            state.StructuralOnlyMergeGroupCount++;
+                        }
+                        else
+                        {
+                            state.AtlasAssistedMergeGroupCount++;
+                        }
+
+                        state.MeshMergeEntries.Add(new MeshMergeReportEntry(
+                            rigidPath,
+                            lodIndex,
+                            group.PartIndices.ToArray(),
+                            newPartIndex,
+                            merged.Mesh.VertexList.Length,
+                            BuildEmbeddedMaterialPath(
+                                rigidPath,
+                                lodIndex,
+                                group.PartIndices[0]),
+                            mergeOrigin));
+                    }
+                }
+
+                ValidateLodGeometryInvariant(
+                    lodInvariant,
+                    mergedModels,
+                    rigidPath,
+                    lodIndex);
+                state.MeshMergeInvariantLodCount++;
+                rmv.ModelList[lodIndex] = mergedModels.ToArray();
+                rigidAfter -= originalModels.Length - mergedModels.Count;
+                rigidChanged = true;
+            }
+
+            state.MeshPartsBeforeMerging += rigidBefore;
+            state.MeshPartsAfterMerging += rigidAfter;
+            if (rigidChanged)
+                state.ModifiedRigids.Add(rigidPath);
+        }
+
+        private static List<MeshMergeGroup> BuildDirectMeshMergeGroups(
+            IReadOnlyList<RmvModel> models,
+            int lodIndex,
+            string rigidPath)
+        {
+            var buckets = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+            for (var partIndex = 0; partIndex < models.Count; partIndex++)
+            {
+                var identity = GetDirectRmvMergeIdentity(models[partIndex]);
+                if (!buckets.TryGetValue(identity, out var parts))
+                {
+                    parts = [];
+                    buckets.Add(identity, parts);
+                }
+
+                parts.Add(partIndex);
+            }
+
+            var groups = new List<MeshMergeGroup>();
+            foreach (var parts in buckets.Values)
+            {
+                var current = new List<int>();
+                var currentVertexCount = 0;
+                foreach (var partIndex in parts.OrderBy(x => x))
+                {
+                    var vertexCount = models[partIndex].Mesh.VertexList.Length;
+                    if (vertexCount > ushort.MaxValue)
+                    {
+                        if (current.Count != 0)
+                        {
+                            groups.Add(CreateDirectMeshMergeGroup(
+                                current,
+                                rigidPath,
+                                lodIndex));
+                            current = [];
+                            currentVertexCount = 0;
+                        }
+
+                        groups.Add(CreateDirectMeshMergeGroup(
+                            [partIndex],
+                            rigidPath,
+                            lodIndex));
+                        continue;
+                    }
+
+                    if (current.Count != 0 &&
+                        currentVertexCount + vertexCount > ushort.MaxValue)
+                    {
+                        groups.Add(CreateDirectMeshMergeGroup(
+                            current,
+                            rigidPath,
+                            lodIndex));
+                        current = [];
+                        currentVertexCount = 0;
+                    }
+
+                    current.Add(partIndex);
+                    currentVertexCount += vertexCount;
+                }
+
+                if (current.Count != 0)
+                {
+                    groups.Add(CreateDirectMeshMergeGroup(
+                        current,
+                        rigidPath,
+                        lodIndex));
+                }
+            }
+
+            return groups
+                .OrderBy(group => group.PartIndices.Min())
+                .ToList();
+        }
+
+        private static MeshMergeGroup CreateDirectMeshMergeGroup(
+            IReadOnlyList<int> partIndices,
+            string rigidPath,
+            int lodIndex)
+            => new(
+                partIndices.ToList(),
+                [BuildEmbeddedMaterialPath(rigidPath, lodIndex, partIndices[0])]);
+
+        private static string GetDirectRmvMergeIdentity(RmvModel model)
+        {
+            var materialBytes = MaterialFactory.Create().Save(
+                model.CommonHeader.ModelTypeFlag,
+                model.Material);
+            var identity = string.Join(
+                "|",
+                model.CommonHeader.ModelTypeFlag,
+                model.CommonHeader.RenderFlag,
+                model.Material.BinaryVertexFormat,
+                model.CommonHeader.ShaderParams.ShaderName,
+                Convert.ToHexString(materialBytes));
+            return ContentHash(identity);
+        }
+
         private void MergeCompatibleMeshes(
             BatchState state,
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
-            var rigidPaths = state.ModifiedRigids
+            var rigidPaths = LoadStructuralMergeRigidModels(state, cancellationToken)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -9068,20 +9759,21 @@ namespace Editors.KitbasherEditor.Services
                     rigidPaths.Count,
                     rigidPath);
 
+                if (TryGetStructuralMergeBlockReason(state, rigidPath, out _))
+                    continue;
+
                 if (!state.RigidModels.TryGetValue(rigidPath, out var rmv))
                     continue;
 
-                var wsModels = state.WsDocuments
-                    .Where(x =>
-                        Normalize(x.Value.SelectSingleNode("/model/geometry")?.InnerText)
-                            .Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
-                    .OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
+                var wsModels = GetWritableWsModelsForRigid(state, rigidPath);
 
                 if (wsModels.Count == 0)
                 {
-                    state.MeshMergeSkipMessages.Add(
-                        $"{rigidPath}: no in-pack WSModel material table was available.");
+                    MergeDirectRigidModels(
+                        state,
+                        rigidPath,
+                        rmv,
+                        cancellationToken);
                     continue;
                 }
 
@@ -9169,13 +9861,32 @@ namespace Editors.KitbasherEditor.Services
 
                         if (models.Count > 1)
                         {
+                            var mergeOrigin = IsPreAtlasStructuralMergeGroup(
+                                    state,
+                                    rigidPath,
+                                    lodIndex,
+                                    group.PartIndices)
+                                ? "structural-only"
+                                : "atlas-assisted";
+                            if (mergeOrigin.Equals(
+                                    "structural-only",
+                                    StringComparison.Ordinal))
+                            {
+                                state.StructuralOnlyMergeGroupCount++;
+                            }
+                            else
+                            {
+                                state.AtlasAssistedMergeGroupCount++;
+                            }
+
                             state.MeshMergeEntries.Add(new MeshMergeReportEntry(
                                 rigidPath,
                                 lodIndex,
                                 group.PartIndices.ToArray(),
                                 newPartIndex,
                                 merged.Mesh.VertexList.Length,
-                                group.MaterialPathsByWsModel[0]));
+                                group.MaterialPathsByWsModel[0],
+                                mergeOrigin));
                         }
                     }
 
@@ -9206,6 +9917,7 @@ namespace Editors.KitbasherEditor.Services
                 if (!rigidChanged)
                     continue;
 
+                state.ModifiedRigids.Add(rigidPath);
                 foreach (var (wsPath, wsDocument) in wsModels)
                 {
                     RewriteWsMaterialAssignments(
@@ -10322,12 +11034,106 @@ namespace Editors.KitbasherEditor.Services
             string detail)
             => $"{rigidPath} [lod {lodIndex}, parts {leftPartIndex}/{rightPartIndex}]: {detail}";
 
+        private static string BuildStructuralMergePairKey(
+            string rigidPath,
+            int lodIndex,
+            int leftPartIndex,
+            int rightPartIndex)
+        {
+            var first = Math.Min(leftPartIndex, rightPartIndex);
+            var second = Math.Max(leftPartIndex, rightPartIndex);
+            return $"{Normalize(rigidPath)}|{lodIndex}|{first}|{second}";
+        }
+
+        private static bool IsPreAtlasStructuralMergeGroup(
+            BatchState state,
+            string rigidPath,
+            int lodIndex,
+            IReadOnlyList<int> partIndices)
+        {
+            if (partIndices.Count < 2)
+                return false;
+
+            for (var left = 0; left < partIndices.Count; left++)
+            {
+                for (var right = left + 1;
+                     right < partIndices.Count;
+                     right++)
+                {
+                    if (!state.PreAtlasStructuralMergePairs.Contains(
+                            BuildStructuralMergePairKey(
+                                rigidPath,
+                                lodIndex,
+                                partIndices[left],
+                                partIndices[right])))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static string[] GetPreExistingStructuralMergePairs(
+            BatchState state,
+            IReadOnlyList<MeshKey> meshes)
+        {
+            if (meshes.Count < 2)
+                return [];
+
+            var pairs = new List<string>();
+            for (var left = 0; left < meshes.Count; left++)
+            {
+                for (var right = left + 1; right < meshes.Count; right++)
+                {
+                    var pair = BuildStructuralMergePairKey(
+                        meshes[left].GeometryPath,
+                        meshes[left].LodIndex,
+                        meshes[left].PartIndex,
+                        meshes[right].PartIndex);
+                    if (state.PreAtlasStructuralMergePairs.Contains(pair))
+                        pairs.Add(pair);
+                }
+            }
+
+            return pairs.ToArray();
+        }
+
+        private static string[] FilterPreExistingStructuralMergePairs(
+            MergeAffinityGroup group,
+            IReadOnlyList<MeshKey> meshes)
+        {
+            if (meshes.Count < 2 || group.PreExistingStructuralMergePairs.Length == 0)
+                return [];
+
+            var existingPairs = group.PreExistingStructuralMergePairs
+                .ToHashSet(StringComparer.Ordinal);
+            var pairs = new List<string>();
+            for (var left = 0; left < meshes.Count; left++)
+            {
+                for (var right = left + 1; right < meshes.Count; right++)
+                {
+                    var pair = BuildStructuralMergePairKey(
+                        meshes[left].GeometryPath,
+                        meshes[left].LodIndex,
+                        meshes[left].PartIndex,
+                        meshes[right].PartIndex);
+                    if (existingPairs.Contains(pair))
+                        pairs.Add(pair);
+                }
+            }
+
+            return pairs.ToArray();
+        }
+
         private static List<MeshMergeGroup> BuildMeshMergeGroups(
             BatchState state,
             IReadOnlyList<RmvModel> models,
             int lodIndex,
             IReadOnlyList<string> wsModelPaths,
-            IReadOnlyDictionary<string, string[][]> assignmentsByWsModel)
+            IReadOnlyDictionary<string, string[][]> assignmentsByWsModel,
+            bool recordDiagnostics = true)
         {
             var buckets = new Dictionary<string, List<int>>(StringComparer.Ordinal);
 
@@ -10413,15 +11219,18 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var group in groups.Where(x => x.PartIndices.Count > 1))
             {
-                var mergedAcrossEquivalentPaths = wsModelPaths.Any(wsPath =>
-                    group.PartIndices
-                        .Select(partIndex => Normalize(assignmentsByWsModel[wsPath][lodIndex][partIndex]))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .Skip(1)
-                        .Any());
+                if (recordDiagnostics)
+                {
+                    var mergedAcrossEquivalentPaths = wsModelPaths.Any(wsPath =>
+                        group.PartIndices
+                            .Select(partIndex => Normalize(assignmentsByWsModel[wsPath][lodIndex][partIndex]))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Skip(1)
+                            .Any());
 
-                if (mergedAcrossEquivalentPaths)
-                    state.SemanticMaterialPathMergeParts += group.PartIndices.Count - 1;
+                    if (mergedAcrossEquivalentPaths)
+                        state.SemanticMaterialPathMergeParts += group.PartIndices.Count - 1;
+                }
             }
 
             return groups
@@ -13042,6 +13851,9 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Modified rigid meshes: {state.ModifiedRigids.Count:N0}");
             sb.AppendLine($"Modified WSModels: {state.ModifiedWsModels.Count:N0}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
+            sb.AppendLine(
+                $"Existing Asset Editor atlas output detected: " +
+                $"{(state.ExistingAtlasOutputDetected ? "YES (atlas rewrite skipped for idempotence)" : "NO")}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
             sb.AppendLine($"Constant-only atlas channels skipped: {state.ConstantOnlyAtlasChannelsSkipped}");
             sb.AppendLine($"Uniform constant source textures detected: {state.UniformConstantTexturePaths.Count}");
@@ -13389,6 +14201,21 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Mesh parts before merging: {state.MeshPartsBeforeMerging}");
                 sb.AppendLine($"Mesh parts after merging: {state.MeshPartsAfterMerging}");
                 sb.AppendLine($"Mesh parts eliminated: {state.MeshPartsEliminated}");
+                sb.AppendLine(
+                    $"Pre-atlas structural merge groups identified: " +
+                    $"{state.PreAtlasStructuralMergeGroupCount}");
+                sb.AppendLine(
+                    $"Structural-only merge groups applied: " +
+                    $"{state.StructuralOnlyMergeGroupCount}");
+                sb.AppendLine(
+                    $"Atlas-assisted merge groups applied: " +
+                    $"{state.AtlasAssistedMergeGroupCount}");
+                sb.AppendLine(
+                    $"Structural merge consumer discovery: " +
+                    $"{(state.StructuralMergeConsumerDiscoveryComplete ? "COMPLETE" : "INCOMPLETE/BLOCKED")}");
+                sb.AppendLine(
+                    $"Writable rigids with immutable gameplay consumers: " +
+                    $"{state.ImmutableMeshMergeConsumersByRigid.Count}");
                 sb.AppendLine($"Mesh parts merged across semantically identical material paths: {state.SemanticMaterialPathMergeParts}");
                 sb.AppendLine($"Mesh merge near-miss blocker occurrences: {state.MeshMergeBlockerCounts.Values.Sum()}");
                 var mergeOpportunities = state.TextureMergeOpportunities.Values.ToList();
@@ -14092,6 +14919,7 @@ namespace Editors.KitbasherEditor.Services
                         sb.AppendLine($"  New part: {entry.NewPartIndex}");
                         sb.AppendLine($"  Vertices: {entry.VertexCount}");
                         sb.AppendLine($"  Material: {entry.MaterialPath}");
+                        sb.AppendLine($"  Origin: {entry.MergeOrigin}");
                     }
                 }
 
@@ -15230,6 +16058,18 @@ namespace Editors.KitbasherEditor.Services
             return $"{stem}_{hash}_atlas_{batchIndex:D3}";
         }
 
+        private static bool HasGeneratedAtlasOutput(IPackFileContainer source)
+            => source.GetAllFiles().Keys.Any(path =>
+            {
+                var normalized = Normalize(path);
+                return normalized.StartsWith(
+                           AtlasDirectory + "\\",
+                           StringComparison.OrdinalIgnoreCase) &&
+                       Path.GetFileName(normalized).Contains(
+                           "_atlas_",
+                           StringComparison.OrdinalIgnoreCase);
+            });
+
         private static string BuildMaterialPath(string originalPath, MeshKey key)
         {
             var normalized = Normalize(originalPath);
@@ -15534,6 +16374,14 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<MeshKey> ProcessedMeshes { get; } = [];
             public HashSet<string> ModifiedWsModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> ModifiedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public bool StructuralMergeConsumerDiscoveryComplete { get; set; }
+            public Dictionary<string, HashSet<string>> ImmutableMeshMergeConsumersByRigid { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> PreAtlasStructuralMergePairs { get; } =
+                new(StringComparer.Ordinal);
+            public int PreAtlasStructuralMergeGroupCount { get; set; }
+            public int StructuralOnlyMergeGroupCount { get; set; }
+            public int AtlasAssistedMergeGroupCount { get; set; }
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, (int Width, int Height)> GeneratedTextureDimensions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
@@ -15545,6 +16393,7 @@ namespace Editors.KitbasherEditor.Services
             public bool MergeCompatibleMeshesEnabled { get; }
             public bool ShareAtlasesAcrossVmdsEnabled { get; }
             public bool OptimizeGeometryEnabled { get; }
+            public bool ExistingAtlasOutputDetected { get; set; }
             public bool AtlasAllVmdsEnabled { get; set; }
             public int SourceVmdRootCount { get; set; }
             public int AtlasVmdRootCount { get; set; }
@@ -15835,7 +16684,8 @@ namespace Editors.KitbasherEditor.Services
             int[] OldPartIndices,
             int NewPartIndex,
             int VertexCount,
-            string MaterialPath);
+            string MaterialPath,
+            string MergeOrigin);
 
         private sealed record MeshMergeGroup(
             List<int> PartIndices,
@@ -16051,7 +16901,8 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record MergeAffinityGroup(
             MeshKey[] Meshes,
-            bool IsProspectiveTextureMerge = false);
+            bool IsProspectiveTextureMerge,
+            string[] PreExistingStructuralMergePairs);
 
         private sealed record MergeAwareRepartitionReportEntry(
             int FirstBatchIndex,
