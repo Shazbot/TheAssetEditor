@@ -5840,6 +5840,8 @@ namespace Editors.KitbasherEditor.Services
                 state.AtlasValueGateTextureOnlyCandidatesAccepted += batch.Count;
                 state.AtlasValueGateTextureOnlyRetiredSourceTextureCount +=
                     residency.RetiredSourceTextureCount;
+                state.AtlasValueGateTextureOnlyScenarioDisplacedSourceTextureCount +=
+                    residency.ScenarioDisplacedSourceTextureCount;
                 state.AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount +=
                     residency.ExpectedArmyRetiredSourceTextureCount;
                 state.AtlasValueGateTextureOnlyRetiredBcnBytesAccepted = checked(
@@ -7142,16 +7144,12 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
-            var hasPhysicalRetirement =
-                residency.RetiredSourceTextureCount >=
-                    MinimumRetiredSourceTexturesForTextureOnlyAtlas &&
-                residency.RetiredSourceBcnBytes > 0;
-            var hasScenarioDisplacement =
-                residency.ScenarioDisplacedSourceTextureCount >=
-                    MinimumRetiredSourceTexturesForTextureOnlyAtlas &&
-                residency.ExpectedArmyRetiredSourceTextureCount >= 1.0 &&
-                residency.ExpectedArmyRetiredSourceBcnBytes > 0;
-            if (!hasPhysicalRetirement && !hasScenarioDisplacement)
+            if (!HasSufficientTextureOnlyRetirement(
+                    residency.RetiredSourceTextureCount,
+                    residency.RetiredSourceBcnBytes,
+                    residency.ScenarioDisplacedSourceTextureCount,
+                    residency.ExpectedArmyRetiredSourceTextureCount,
+                    residency.ExpectedArmyRetiredSourceBcnBytes))
             {
                 rejectionReason =
                     $"fewer than {MinimumRetiredSourceTexturesForTextureOnlyAtlas} " +
@@ -7211,6 +7209,25 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return true;
+        }
+
+        private static bool HasSufficientTextureOnlyRetirement(
+            int physicallyRetiredTextureCount,
+            long physicallyRetiredBcnBytes,
+            int scenarioDisplacedTextureCount,
+            double expectedRetiredTextureEquivalents,
+            double expectedRetiredBcnBytes)
+        {
+            var hasPhysicalRetirement =
+                physicallyRetiredTextureCount >=
+                    MinimumRetiredSourceTexturesForTextureOnlyAtlas &&
+                physicallyRetiredBcnBytes > 0;
+            var hasScenarioDisplacement =
+                scenarioDisplacedTextureCount >=
+                    MinimumRetiredSourceTexturesForTextureOnlyAtlas &&
+                expectedRetiredTextureEquivalents >= 1.0 &&
+                expectedRetiredBcnBytes > 0;
+            return hasPhysicalRetirement || hasScenarioDisplacement;
         }
 
         private static List<TextureConsolidationCohortAcceptance>
@@ -13080,6 +13097,13 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Atlas value-gate texture-only candidates accepted: " +
                     $"{state.AtlasValueGateTextureOnlyCandidatesAccepted}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only physically retired source textures: " +
+                    $"{state.AtlasValueGateTextureOnlyRetiredSourceTextureCount:N0}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only scenario-displaced source textures: " +
+                    $"{state.AtlasValueGateTextureOnlyScenarioDisplacedSourceTextureCount:N0} " +
+                    $"({state.AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount:N3} texture-equivalents)");
                 sb.AppendLine($"Atlas value-gate broad batches split: {state.AtlasValueGateBroadBatchesSplit}");
                 sb.AppendLine(
                     $"Atlas value-gate unresolved candidates skipped: " +
@@ -13109,9 +13133,11 @@ namespace Editors.KitbasherEditor.Services
                     $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} per raw draw only in pack-wide mode when scenario relevance is unresolved");
                 sb.AppendLine(
                     $"Atlas value-gate texture-only budget: " +
-                    $"{FormatMiB(MaxNetBcnBytesPerRetiredSourceTexture, 2)} net per retired " +
-                    $"source texture; minimum {MinimumRetiredSourceTexturesForTextureOnlyAtlas:N0} " +
-                    "retired textures");
+                    $"{FormatMiB(MaxNetBcnBytesPerRetiredSourceTexture, 2)} net per physically " +
+                    $"retired or scenario-displaced source texture; minimum " +
+                    $"{MinimumRetiredSourceTexturesForTextureOnlyAtlas:N0} source textures, " +
+                    "with at least 1.0 scenario-displaced texture-equivalent when physical " +
+                    "retirement alone does not qualify");
                 sb.AppendLine(
                     $"Atlas value-gate texture-only merge credit: " +
                     $"{FormatMiB(MaxNetBcnBytesPerTextureOnlyMergeDraw, 2)} per structural " +
@@ -15537,6 +15563,7 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasValueGateTextureConsolidationCohortsEvaluated { get; set; }
             public int AtlasValueGateTextureConsolidationCohortsSplit { get; set; }
             public int AtlasValueGateTextureOnlyRetiredSourceTextureCount { get; set; }
+            public int AtlasValueGateTextureOnlyScenarioDisplacedSourceTextureCount { get; set; }
             public double AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount { get; set; }
             public long AtlasValueGateTextureOnlyRetiredBcnBytesAccepted { get; set; }
             public double AtlasValueGateTextureOnlyExpectedRetiredBcnBytesAccepted { get; set; }
