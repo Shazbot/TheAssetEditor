@@ -102,6 +102,29 @@ namespace Test.KitbashEditor.Services
         }
 
 
+        private static double CombineBattleDrawSavings(
+            IReadOnlyDictionary<string, double> drawsByCulture,
+            IReadOnlyDictionary<string, double> playerCultureWeights,
+            IReadOnlyDictionary<string, double> opponentCultureWeights)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "CombineBattleDrawSavings",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.CombineBattleDrawSavings was not found.");
+
+            return (double)(method.Invoke(
+                null,
+                [drawsByCulture, playerCultureWeights, opponentCultureWeights])
+                ?? throw new InvalidOperationException(
+                    "CombineBattleDrawSavings returned null."));
+        }
+
+
         private static bool IsIgnorableUnresolvedTexture(string slot, string path)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
@@ -618,6 +641,29 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 CombineBattleResidentProbabilities(probabilities, weights, weights),
                 Is.EqualTo(0.75).Within(0.000001));
+        }
+
+        [Test]
+        public void DrawSavings_UnrelatedOpponentOnlyAddsMirrorCultureSavings()
+        {
+            var draws = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 10.0,
+                ["dwarfs"] = 0.0,
+            };
+            var playerWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 1.0,
+            };
+            var opponentWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 0.5,
+                ["dwarfs"] = 0.5,
+            };
+
+            Assert.That(
+                CombineBattleDrawSavings(draws, playerWeights, opponentWeights),
+                Is.EqualTo(15.0).Within(0.000001));
         }
 
         [TestCase(2, 1024L, 0, 0.0, 0.0, true)]
