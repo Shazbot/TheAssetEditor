@@ -3938,12 +3938,12 @@ namespace Editors.KitbasherEditor.Services
                 proposals.Add(new AtlasBatchSplitProposal(left, right));
             }
 
-            // Culture is the primary residency boundary. Units from different cultures are
-            // never sampled into one army, so propose separating cross-culture atlas groups
-            // before trying category/root locality splits.
+            // Culture is the primary residency boundary. Consider every modeled culture
+            // here, not only player-scored cultures, so proven opponent/shared-asset consumers
+            // can still keep unrelated placements out of the same atlas.
             if (armyModel != null)
             {
-                foreach (var culture in armyModel.PlayerCultureWeights.Keys)
+                foreach (var culture in armyModel.UnitsByCultureAndCategory.Keys)
                 {
                     AddProposal(groups.Where(group =>
                         GetArmyCulturesForRoots(
