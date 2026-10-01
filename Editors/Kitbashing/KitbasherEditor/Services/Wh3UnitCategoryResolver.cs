@@ -675,11 +675,8 @@ namespace Editors.KitbasherEditor.Services
                 double scenarioPresenceProbability)
             {
                 assetPath = NormalizePath(assetPath);
-                if (assetPath.Length == 0 ||
-                    !containers.Any(container => container.ContainsFile(assetPath)))
-                {
+                if (!ContainsGameplayAsset(containers, assetPath))
                     return;
-                }
 
                 var entityCount = visualCounts.ForRole(visualRole);
                 if (entityCount <= 0)
@@ -2548,6 +2545,15 @@ namespace Editors.KitbasherEditor.Services
 
         private static string NormalizePath(string value)
             => value.Replace('/', '\\').TrimStart('\\').Trim().ToLowerInvariant();
+
+        private static bool ContainsGameplayAsset(
+            IEnumerable<IPackFileContainer> containers,
+            string assetPathValue)
+        {
+            var assetPath = NormalizePath(assetPathValue);
+            return assetPath.Length != 0 &&
+                   containers.Any(container => container.ContainsFile(assetPath));
+        }
 
         private static IReadOnlyList<string> ResolveEngineAssetPaths(
             string reference,
