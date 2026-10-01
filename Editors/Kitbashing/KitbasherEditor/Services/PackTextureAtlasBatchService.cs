@@ -13597,13 +13597,20 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("---------------------------------------");
                 foreach (var category in state.ArmyResidencyModel.Scenario.ArmySlotTemplate.Keys)
                 {
+                    var culturePopulations = state.ArmyResidencyModel.CultureWeights.Keys
+                        .Select(culture =>
+                            state.ArmyResidencyModel.UnitsByCultureAndCategory[culture][category].Count)
+                        .Where(count => count > 0)
+                        .ToArray();
                     sb.AppendLine(
                         $"{category}: slots={state.ArmyResidencyModel.Scenario.ArmySlotTemplate[category]}, " +
-                        $"resolved-units={state.ArmyResidencyModel.UnitsByCategory[category].Count:N0}");
+                        $"resolved-units={state.ArmyResidencyModel.UnitsByCategory[category].Count:N0}, " +
+                        $"culture-population-range=" +
+                        $"{(culturePopulations.Length == 0 ? "0" : $"{culturePopulations.Min():N0}-{culturePopulations.Max():N0}")}");
                 }
 
                 sb.AppendLine(
-                    "Batch residency probability uses 1 - product((1 - coveredUnits/categoryUnits)^categorySlots).");
+                    "Batch residency probability is evaluated independently inside each culture roster, then averaged using the configured culture weights; units from different cultures are never pooled into one synthetic army.");
                 sb.AppendLine(
                     "VMD visual model: slot probability controls activation; child meshes/references in an active slot are treated as equal alternatives; missing probability means 1.");
                 sb.AppendLine(
