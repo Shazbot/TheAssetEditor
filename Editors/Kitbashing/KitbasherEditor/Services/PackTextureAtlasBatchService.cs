@@ -2559,10 +2559,21 @@ namespace Editors.KitbasherEditor.Services
                 .Select(value => value.Trim().ToLowerInvariant())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            var activeCultures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var modelCultures = new HashSet<string>(
+                allKnownCultures,
+                StringComparer.OrdinalIgnoreCase);
+            if (modelCultures.Count == 0)
+                modelCultures.Add("__unknown__");
+
+            // Player scoring stays pack-scoped by default, but every resolved culture is
+            // retained in the model as a possible opponent/read-only consumer. This avoids a
+            // full culture-pair matrix: unrelated cultures have zero presence for a culture-
+            // local asset and therefore cancel naturally, while mirror battles and genuine
+            // cross-culture asset sharing still contribute.
+            var playerCultures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (includeAllGameCultures)
             {
-                activeCultures.UnionWith(allKnownCultures);
+                playerCultures.UnionWith(modelCultures);
             }
             else
             {
@@ -2571,26 +2582,23 @@ namespace Editors.KitbasherEditor.Services
                     if (!rosterByUnitId.TryGetValue(unitId, out var unit))
                         continue;
 
-                    activeCultures.UnionWith(
+                    playerCultures.UnionWith(
                         unit.CultureKeys
                             .Where(value => !string.IsNullOrWhiteSpace(value))
-                            .Select(value => value.Trim().ToLowerInvariant()));
+                            .Select(value => value.Trim().ToLowerInvariant())
+                            .Where(modelCultures.Contains));
                 }
             }
 
-            // A pack whose affected units have incomplete culture metadata must not collapse
-            // to an empty value model. Fall back to every known culture; if culture metadata
-            // is unavailable globally, use one synthetic culture so the old single-roster
-            // behavior remains a conservative fallback rather than silently giving zero credit.
-            if (activeCultures.Count == 0)
-                activeCultures.UnionWith(allKnownCultures);
-            if (activeCultures.Count == 0)
-                activeCultures.Add("__unknown__");
+            // If the affected culture cannot be resolved, fall back to all modeled cultures
+            // rather than silently assigning zero value to the pack.
+            if (playerCultures.Count == 0)
+                playerCultures.UnionWith(modelCultures);
 
             var unitsByCategory = resolution.Scenario.ArmySlotTemplate.Keys.ToDictionary(
                 category => category,
                 _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-            var unitsByCultureAndCategory = activeCultures.ToDictionary(
+            var unitsByCultureAndCategory = modelCultures.ToDictionary(
                 culture => culture,
                 _ => resolution.Scenario.ArmySlotTemplate.Keys.ToDictionary(
                     category => category,
@@ -2631,7 +2639,7 @@ namespace Editors.KitbasherEditor.Services
                 var unitCultures = unit.CultureKeys
                     .Where(value => !string.IsNullOrWhiteSpace(value))
                     .Select(value => value.Trim().ToLowerInvariant())
-                    .Where(activeCultures.Contains)
+                    .Where(modelCultures.Contains)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
                 // Unknown culture/faction scope is a wildcard, not "matches nothing". This
@@ -2640,7 +2648,7 @@ namespace Editors.KitbasherEditor.Services
                 if (unitCultures.Count == 0 &&
                     (unit.HasUnknownFactionScope || unit.CultureKeys.Count == 0))
                 {
-                    unitCultures.UnionWith(activeCultures);
+                    unitCultures.UnionWith(modelCultures);
                 }
 
                 if (unitCultures.Count == 0)
@@ -2734,10 +2742,26 @@ namespace Editors.KitbasherEditor.Services
             if (populatedCultures.Length == 0)
                 return null;
 
-            var uniformCultureWeight = 1.0 / populatedCultures.Length;
-            var cultureWeights = populatedCultures.ToDictionary(
+            var scoredPlayerCultures = populatedCultures
+                .Where(playerCultures.Contains)
+                .ToArray();
+            if (scoredPlayerCultures.Length == 0)
+                scoredPlayerCultures = populatedCultures;
+
+            var playerCultureWeight = 1.0 / scoredPlayerCultures.Length;
+            var cultureWeights = scoredPlayerCultures.ToDictionary(
                 culture => culture,
-                _ => uniformCultureWeight,
+                _ => playerCultureWeight,
+                StringComparer.OrdinalIgnoreCase);
+
+            // Opponent cultures are uniformly distributed across the complete resolved game
+            // roster. For culture-local assets this only adds the same-culture mirror chance.
+            // If the dependency graph proves an asset is shared across cultures, those cultures
+            // automatically contribute without needing an explicit culture-pair matrix.
+            var opponentCultureWeight = 1.0 / populatedCultures.Length;
+            var opponentCultureWeights = populatedCultures.ToDictionary(
+                culture => culture,
+                _ => opponentCultureWeight,
                 StringComparer.OrdinalIgnoreCase);
 
             var occurrenceCache = new Dictionary<string, IReadOnlyDictionary<string, double>>(
@@ -2891,6 +2915,7 @@ namespace Editors.KitbasherEditor.Services
                 unitsByVmd,
                 culturesByUnit,
                 cultureWeights,
+                opponentCultureWeights,
                 entityCountByUnit,
                 entityCountByUnitAndRole,
                 categoryByUnit,
@@ -3326,7 +3351,7 @@ namespace Editors.KitbasherEditor.Services
 
             var probabilitiesByCulture = new Dictionary<string, double>(
                 StringComparer.OrdinalIgnoreCase);
-            foreach (var culture in model.CultureWeights.Keys)
+            foreach (var culture in model.UnitsByCultureAndCategory.Keys)
             {
                 if (!model.UnitsByCultureAndCategory.TryGetValue(
                         culture,
@@ -3460,13 +3485,14 @@ namespace Editors.KitbasherEditor.Services
                     1.0);
             }
 
-            return CombineCultureResidentProbabilities(
+            return CombineBattleResidentProbabilities(
                 probabilitiesByCulture,
-                model.CultureWeights);
+                model.CultureWeights,
+                model.OpponentCultureWeights);
         }
 
-        private static double CombineCultureResidentProbabilities(
-            IReadOnlyDictionary<string, double> probabilitiesByCulture,
+        private static double GetWeightedCultureAverage(
+            IReadOnlyDictionary<string, double> valuesByCulture,
             IReadOnlyDictionary<string, double> cultureWeights)
         {
             var totalWeight = cultureWeights.Values
@@ -3481,13 +3507,37 @@ namespace Editors.KitbasherEditor.Services
                 if (weight <= 0)
                     continue;
 
-                total += weight * Math.Clamp(
-                    probabilitiesByCulture.GetValueOrDefault(culture),
-                    0.0,
-                    1.0);
+                total += weight * valuesByCulture.GetValueOrDefault(culture);
             }
 
-            return Math.Clamp(total / totalWeight, 0.0, 1.0);
+            return total / totalWeight;
+        }
+
+        private static double CombineBattleResidentProbabilities(
+            IReadOnlyDictionary<string, double> probabilitiesByCulture,
+            IReadOnlyDictionary<string, double> playerCultureWeights,
+            IReadOnlyDictionary<string, double> opponentCultureWeights)
+        {
+            var playerProbability = Math.Clamp(
+                GetWeightedCultureAverage(
+                    probabilitiesByCulture,
+                    playerCultureWeights),
+                0.0,
+                1.0);
+            var opponentProbability = Math.Clamp(
+                GetWeightedCultureAverage(
+                    probabilitiesByCulture,
+                    opponentCultureWeights),
+                0.0,
+                1.0);
+
+            // The two armies are independent samples. For an asset used by only one culture,
+            // unrelated opponents contribute zero and this reduces to a mirror-battle
+            // adjustment. Genuine cross-culture sharing is handled automatically.
+            return Math.Clamp(
+                1.0 - (1.0 - playerProbability) * (1.0 - opponentProbability),
+                0.0,
+                1.0);
         }
 
         private static double CalculateExpectedArmyResidentPixels(
@@ -4911,7 +4961,11 @@ namespace Editors.KitbasherEditor.Services
             if (model == null)
                 return 0;
 
-            double total = 0;
+            var drawsByCulture = model.UnitsByCultureAndCategory.Keys.ToDictionary(
+                culture => culture,
+                _ => 0.0,
+                StringComparer.OrdinalIgnoreCase);
+
             foreach (var group in affinityGroups)
             {
                 foreach (var colocatedMeshes in group.Meshes
@@ -4928,16 +4982,8 @@ namespace Editors.KitbasherEditor.Services
                     if (lodProbability <= 0)
                         continue;
 
-                    foreach (var (culture, cultureWeight) in model.CultureWeights)
+                    foreach (var (culture, unitsByCategory) in model.UnitsByCultureAndCategory)
                     {
-                        if (cultureWeight <= 0 ||
-                            !model.UnitsByCultureAndCategory.TryGetValue(
-                                culture,
-                                out var unitsByCategory))
-                        {
-                            continue;
-                        }
-
                         foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
                         {
                             if (!unitsByCategory.TryGetValue(category, out var cultureUnits))
@@ -5026,7 +5072,7 @@ namespace Editors.KitbasherEditor.Services
                             if (eliminatedDrawsAcrossResolvedUnits <= 0)
                                 continue;
 
-                            total += cultureWeight *
+                            drawsByCulture[culture] +=
                                 lodProbability *
                                 slotCount *
                                 (eliminatedDrawsAcrossResolvedUnits / population);
@@ -5035,7 +5081,11 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            return total;
+            // Draw savings are additive across the two sides. Unrelated opponent cultures have
+            // zero savings for culture-local pack assets; mirror/shared-asset opponents add only
+            // when their own culture actually uses the affected meshes.
+            return GetWeightedCultureAverage(drawsByCulture, model.CultureWeights) +
+                   GetWeightedCultureAverage(drawsByCulture, model.OpponentCultureWeights);
         }
 
         private static AtlasBatchCoverage CalculateAtlasBatchCoverage(
@@ -7092,21 +7142,21 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
-            if (residency.RetiredSourceTextureCount <
-                    MinimumRetiredSourceTexturesForTextureOnlyAtlas ||
-                residency.RetiredSourceBcnBytes <= 0)
+            var hasPhysicalRetirement =
+                residency.RetiredSourceTextureCount >=
+                    MinimumRetiredSourceTexturesForTextureOnlyAtlas &&
+                residency.RetiredSourceBcnBytes > 0;
+            var hasScenarioDisplacement =
+                residency.ScenarioDisplacedSourceTextureCount >=
+                    MinimumRetiredSourceTexturesForTextureOnlyAtlas &&
+                residency.ExpectedArmyRetiredSourceTextureCount >= 1.0 &&
+                residency.ExpectedArmyRetiredSourceBcnBytes > 0;
+            if (!hasPhysicalRetirement && !hasScenarioDisplacement)
             {
                 rejectionReason =
                     $"fewer than {MinimumRetiredSourceTexturesForTextureOnlyAtlas} " +
-                    "source textures would be retired.";
-                return false;
-            }
-
-            if (residency.ExpectedArmyRetiredSourceTextureCount < 1.0 ||
-                residency.ExpectedArmyRetiredSourceBcnBytes <= 0)
-            {
-                rejectionReason =
-                    "scenario residency predicts no meaningful source-texture retirement.";
+                    "source textures would be physically retired or meaningfully displaced " +
+                    "from modeled battle residency.";
                 return false;
             }
 
@@ -7116,8 +7166,11 @@ namespace Editors.KitbasherEditor.Services
             var expectedCost = GetChargeableAtlasValueGateBytes(
                 residency.ExpectedArmyGeneratedBcnBytes,
                 residency.ExpectedArmyRetiredSourceBcnBytes);
+            var globalBudgetTextureCount = Math.Max(
+                residency.RetiredSourceTextureCount,
+                residency.ScenarioDisplacedSourceTextureCount);
             var globalBudget =
-                residency.RetiredSourceTextureCount *
+                globalBudgetTextureCount *
                 (double)MaxNetBcnBytesPerRetiredSourceTexture;
             var expectedBudget =
                 residency.ExpectedArmyRetiredSourceTextureCount *
@@ -7448,6 +7501,7 @@ namespace Editors.KitbasherEditor.Services
             var retiredSourceTextureCount = 0;
             double expectedArmyRetiredSourceBcnBytes = 0;
             double expectedArmyRetiredSourceTextureCount = 0;
+            var scenarioDisplacedSourceTextureCount = 0;
             foreach (var sourceTexture in sourceIndex.Values)
             {
                 if (!sourceTexture.References.Any(proposedRewrites.Contains))
@@ -7492,7 +7546,13 @@ namespace Editors.KitbasherEditor.Services
                     currentExpectedResidency - proposedExpectedResidency);
                 expectedArmyRetiredSourceBcnBytes += expectedRetirement;
                 if (expectedRetirement > AtlasValueGateExpectedDrawEpsilon)
-                    expectedArmyRetiredSourceTextureCount++;
+                {
+                    scenarioDisplacedSourceTextureCount++;
+                    expectedArmyRetiredSourceTextureCount += Math.Clamp(
+                        expectedRetirement / sourceTexture.BcnBytes,
+                        0.0,
+                        1.0);
+                }
             }
 
             double expectedArmyGeneratedBcnBytes = 0;
@@ -7527,6 +7587,7 @@ namespace Editors.KitbasherEditor.Services
                 retiredSourceBcnBytes,
                 checked(generatedBcnBytes - retiredSourceBcnBytes),
                 retiredSourceTextureCount,
+                scenarioDisplacedSourceTextureCount,
                 expectedArmyRetiredSourceTextureCount,
                 expectedArmyGeneratedBcnBytes,
                 expectedArmyRetiredSourceBcnBytes,
@@ -12892,8 +12953,11 @@ namespace Editors.KitbasherEditor.Services
                         $"Atlas value-model roster scope: culture-local " +
                         $"({(state.ArmyResidencyModel.IncludesAllGameCultures ? "all game cultures" : "pack-affected cultures")})");
                     sb.AppendLine(
-                        $"Atlas value-model cultures: {state.ArmyResidencyModel.CultureWeights.Count:N0} " +
+                        $"Atlas value-model player cultures: {state.ArmyResidencyModel.CultureWeights.Count:N0} " +
                         $"[{string.Join(", ", state.ArmyResidencyModel.CultureWeights.Keys.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))}]");
+                    sb.AppendLine(
+                        $"Atlas value-model opponent cultures: {state.ArmyResidencyModel.OpponentCultureWeights.Count:N0} " +
+                        "(uniform across the resolved game roster; unrelated cultures contribute zero for culture-local assets).");
                     sb.AppendLine(
                         "Vanilla visual assets: read-only residency consumers (never rewritten; never physically retired).");
                 }
@@ -13090,7 +13154,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Atlas value-gate texture-only source textures retired: " +
                     $"{state.AtlasValueGateTextureOnlyRetiredSourceTextureCount:N0} " +
-                    $"(scenario-estimated {state.AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount:N3})");
+                    $"(scenario-estimated {state.AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount:N3} texture-equivalents)");
                 sb.AppendLine(
                     $"Atlas value-gate texture-only source BCn retired: " +
                     $"{FormatMiB(state.AtlasValueGateTextureOnlyRetiredBcnBytesAccepted)} " +
@@ -13597,7 +13661,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("---------------------------------------");
                 foreach (var category in state.ArmyResidencyModel.Scenario.ArmySlotTemplate.Keys)
                 {
-                    var culturePopulations = state.ArmyResidencyModel.CultureWeights.Keys
+                    var culturePopulations = state.ArmyResidencyModel.UnitsByCultureAndCategory.Keys
                         .Select(culture =>
                             state.ArmyResidencyModel.UnitsByCultureAndCategory[culture][category].Count)
                         .Where(count => count > 0)
@@ -13610,7 +13674,7 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 sb.AppendLine(
-                    "Batch residency probability is evaluated independently inside each culture roster, then averaged using the configured culture weights; units from different cultures are never pooled into one synthetic army.");
+                    "Batch residency is evaluated per culture, then combined from player and opponent one-army marginals. Unrelated cultures contribute zero for culture-local assets; same-culture mirrors and proven cross-culture sharing contribute automatically without a culture-pair matrix.");
                 sb.AppendLine(
                     "VMD visual model: slot probability controls activation; child meshes/references in an active slot are treated as equal alternatives; missing probability means 1.");
                 sb.AppendLine(
@@ -15379,6 +15443,7 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByVmd,
             IReadOnlyDictionary<string, IReadOnlySet<string>> CulturesByUnit,
             IReadOnlyDictionary<string, double> CultureWeights,
+            IReadOnlyDictionary<string, double> OpponentCultureWeights,
             IReadOnlyDictionary<string, int> EntityCountByUnit,
             IReadOnlyDictionary<
                 string,
@@ -15886,6 +15951,7 @@ namespace Editors.KitbasherEditor.Services
             long RetiredSourceBcnBytes,
             long NetBcnBytes,
             int RetiredSourceTextureCount,
+            int ScenarioDisplacedSourceTextureCount,
             double ExpectedArmyRetiredSourceTextureCount,
             double ExpectedArmyGeneratedBcnBytes,
             double ExpectedArmyRetiredSourceBcnBytes,
@@ -15893,6 +15959,7 @@ namespace Editors.KitbasherEditor.Services
             HashSet<AtlasValueGateSourceReference> RewrittenReferences)
         {
             public static AtlasValueGateResidencyEstimate Empty { get; } = new(
+                0,
                 0,
                 0,
                 0,
