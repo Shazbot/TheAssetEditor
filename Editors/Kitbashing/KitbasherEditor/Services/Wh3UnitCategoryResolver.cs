@@ -675,8 +675,11 @@ namespace Editors.KitbasherEditor.Services
                 double scenarioPresenceProbability)
             {
                 assetPath = NormalizePath(assetPath);
-                if (assetPath.Length == 0 || !source.ContainsFile(assetPath))
+                if (assetPath.Length == 0 ||
+                    !containers.Any(container => container.ContainsFile(assetPath)))
+                {
                     return;
+                }
 
                 var entityCount = visualCounts.ForRole(visualRole);
                 if (entityCount <= 0)
