@@ -3326,7 +3326,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyCollection<string> targetWsModels,
             IEnumerable<string> fallbackRoots)
         {
-            if (model == null || model.CultureWeights.Count == 0)
+            if (model == null || model.PlayerCultureWeights.Count == 0)
                 return 0;
 
             var normalizedTargets = targetWsModels
@@ -3487,7 +3487,7 @@ namespace Editors.KitbasherEditor.Services
 
             return CombineBattleResidentProbabilities(
                 probabilitiesByCulture,
-                model.CultureWeights,
+                model.PlayerCultureWeights,
                 model.OpponentCultureWeights);
         }
 
@@ -3943,7 +3943,7 @@ namespace Editors.KitbasherEditor.Services
             // before trying category/root locality splits.
             if (armyModel != null)
             {
-                foreach (var culture in armyModel.CultureWeights.Keys)
+                foreach (var culture in armyModel.PlayerCultureWeights.Keys)
                 {
                     AddProposal(groups.Where(group =>
                         GetArmyCulturesForRoots(
@@ -5084,9 +5084,18 @@ namespace Editors.KitbasherEditor.Services
             // Draw savings are additive across the two sides. Unrelated opponent cultures have
             // zero savings for culture-local pack assets; mirror/shared-asset opponents add only
             // when their own culture actually uses the affected meshes.
-            return GetWeightedCultureAverage(drawsByCulture, model.CultureWeights) +
-                   GetWeightedCultureAverage(drawsByCulture, model.OpponentCultureWeights);
+            return CombineBattleDrawSavings(
+                drawsByCulture,
+                model.PlayerCultureWeights,
+                model.OpponentCultureWeights);
         }
+
+        private static double CombineBattleDrawSavings(
+            IReadOnlyDictionary<string, double> drawsByCulture,
+            IReadOnlyDictionary<string, double> playerCultureWeights,
+            IReadOnlyDictionary<string, double> opponentCultureWeights)
+            => GetWeightedCultureAverage(drawsByCulture, playerCultureWeights) +
+               GetWeightedCultureAverage(drawsByCulture, opponentCultureWeights);
 
         private static AtlasBatchCoverage CalculateAtlasBatchCoverage(
             IReadOnlyList<AtlasCandidate> candidates,
@@ -7164,12 +7173,12 @@ namespace Editors.KitbasherEditor.Services
             var expectedCost = GetChargeableAtlasValueGateBytes(
                 residency.ExpectedArmyGeneratedBcnBytes,
                 residency.ExpectedArmyRetiredSourceBcnBytes);
-            var globalBudgetTextureCount = Math.Max(
+            var globalBudgetTextureEquivalent = Math.Max(
                 residency.RetiredSourceTextureCount,
-                residency.ScenarioDisplacedSourceTextureCount);
+                residency.ExpectedArmyRetiredSourceTextureCount);
             var globalBudget =
-                globalBudgetTextureCount *
-                (double)MaxNetBcnBytesPerRetiredSourceTexture;
+                globalBudgetTextureEquivalent *
+                MaxNetBcnBytesPerRetiredSourceTexture;
             var expectedBudget =
                 residency.ExpectedArmyRetiredSourceTextureCount *
                 MaxNetBcnBytesPerRetiredSourceTexture;
@@ -12970,8 +12979,8 @@ namespace Editors.KitbasherEditor.Services
                         $"Atlas value-model roster scope: culture-local " +
                         $"({(state.ArmyResidencyModel.IncludesAllGameCultures ? "all game cultures" : "pack-affected cultures")})");
                     sb.AppendLine(
-                        $"Atlas value-model player cultures: {state.ArmyResidencyModel.CultureWeights.Count:N0} " +
-                        $"[{string.Join(", ", state.ArmyResidencyModel.CultureWeights.Keys.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))}]");
+                        $"Atlas value-model player cultures: {state.ArmyResidencyModel.PlayerCultureWeights.Count:N0} " +
+                        $"[{string.Join(", ", state.ArmyResidencyModel.PlayerCultureWeights.Keys.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))}]");
                     sb.AppendLine(
                         $"Atlas value-model opponent cultures: {state.ArmyResidencyModel.OpponentCultureWeights.Count:N0} " +
                         "(uniform across the resolved game roster; unrelated cultures contribute zero for culture-local assets).");
@@ -15468,7 +15477,7 @@ namespace Editors.KitbasherEditor.Services
                 string,
                 Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByVmd,
             IReadOnlyDictionary<string, IReadOnlySet<string>> CulturesByUnit,
-            IReadOnlyDictionary<string, double> CultureWeights,
+            IReadOnlyDictionary<string, double> PlayerCultureWeights,
             IReadOnlyDictionary<string, double> OpponentCultureWeights,
             IReadOnlyDictionary<string, int> EntityCountByUnit,
             IReadOnlyDictionary<
