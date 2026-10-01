@@ -91,7 +91,7 @@
             Grid.Row="8"
             Margin="22,4,0,0"
             MaxWidth="620"
-            Text="Off by default: residency is modeled independently for the cultures affected by this pack, using the full culture roster including read-only vanilla consumers. Enable this to score uniformly across every resolved game culture instead."
+            Text="Off by default: the player side is scored from cultures affected by this pack, while the opponent side is sampled uniformly from all resolved game cultures. Unrelated cultures contribute nothing for culture-local assets; same-culture mirrors and proven shared assets are accounted for automatically. Enable this to score the player side across all game cultures too."
             TextWrapping="Wrap"
             Opacity="0.7" />
 
