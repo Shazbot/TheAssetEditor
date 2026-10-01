@@ -392,33 +392,21 @@ namespace Editors.KitbasherEditor.Services
                 state.PhaseDurations["Estimate source BCn residency"] = phaseStopwatch.Elapsed;
 
                 phaseStopwatch.Restart();
-                List<AtlasCandidate> discoveredCandidates;
-                if (state.ExistingAtlasOutputDetected)
-                {
-                    ReportProgress(
-                        progress,
-                        "Discovering atlas candidates",
-                        item: "Existing Asset Editor atlas output detected; preserving it for idempotence");
-                    discoveredCandidates = [];
-                }
-                else
-                {
-                    var candidateDiscovery = DiscoverAtlasCandidates(
-                        state,
-                        atlasVmdRoots,
-                        shareAtlasesAcrossVmds,
-                        cancellationToken,
-                        progress);
+                var candidateDiscovery = DiscoverAtlasCandidates(
+                    state,
+                    atlasVmdRoots,
+                    shareAtlasesAcrossVmds,
+                    cancellationToken,
+                    progress);
 
-                    // UV0 is shared by every material texture channel. If any real
-                    // secondary texture is unresolved, remapping UV0 while preserving that old
-                    // texture path would make it sample with atlas UVs and corrupt rendering.
-                    // Such meshes are therefore always skipped. The only unresolved sentinel
-                    // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
-                    discoveredCandidates = ApplyMissingTextureDecision(
-                        state,
-                        candidateDiscovery.Candidates);
-                }
+                // UV0 is shared by every material texture channel. If any real
+                // secondary texture is unresolved, remapping UV0 while preserving that old
+                // texture path would make it sample with atlas UVs and corrupt rendering.
+                // Such meshes are therefore always skipped. The only unresolved sentinel
+                // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
+                var discoveredCandidates = ApplyMissingTextureDecision(
+                    state,
+                    candidateDiscovery.Candidates);
                 state.PhaseDurations["Discover atlas candidates"] = phaseStopwatch.Elapsed;
 
                 if (mergeCompatibleMeshes)
@@ -432,14 +420,7 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 phaseStopwatch.Restart();
-                if (state.ExistingAtlasOutputDetected)
-                {
-                    ReportProgress(
-                        progress,
-                        "Building texture atlases",
-                        item: "Skipped because the source is already an Asset Editor atlas output");
-                }
-                else if (shareAtlasesAcrossVmds)
+                if (shareAtlasesAcrossVmds)
                 {
                     ProcessPackWideAtlases(
                         state,
@@ -746,50 +727,101 @@ namespace Editors.KitbasherEditor.Services
             state.StructuralMergeConsumerDiscoveryComplete =
                 resolution != null && resolution.IsGameplayResolutionHealthy;
 
+            // Gameplay can reach a mesh through a normal VMD, an unresolved VMD
+            // consumer, or a direct engine asset.  The latter two populations must be
+            // included even when they are absent from UsagesByVmd.
             var roots = vmdRoots
                 .Concat(resolution?.UsagesByVmd.Keys ?? Array.Empty<string>())
+                .Concat(resolution?.UnresolvedConsumersByVmd.Keys ?? Array.Empty<string>())
+                .Concat(
+                    resolution?.DirectAssetUsagesByPath.Keys
+                        .Where(IsMeshConsumerAssetPath) ??
+                    Array.Empty<string>())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            foreach (var rootVmdPath in roots)
+            foreach (var rootAssetPath in roots)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                foreach (var wsModelPath in CollectReachableGameplayWsModels(
-                             state,
-                             rootVmdPath,
-                             cancellationToken))
+                var traversal = CollectGameplayMeshConsumers(
+                    state,
+                    rootAssetPath,
+                    cancellationToken);
+                if (!traversal.IsComplete)
+                {
+                    state.StructuralMergeConsumerDiscoveryComplete = false;
+                    foreach (var unresolvedPath in traversal.UnresolvedPaths)
+                    {
+                        state.StructuralMergeConsumerDiscoveryFailures.Add(
+                            $"{Normalize(rootAssetPath)} -> {unresolvedPath}");
+                    }
+                }
+
+                foreach (var wsModelPath in traversal.WsModelPaths)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var normalizedWsPath = Normalize(wsModelPath);
-                    if (state.Source.ContainsFile(normalizedWsPath))
-                        continue;
-
                     var container = FindGameplayTraversalContainer(
                         state.Source,
                         GetGameplayTraversalContainers(state),
                         normalizedWsPath);
                     var file = container?.FindFile(normalizedWsPath);
-                    if (container == null ||
-                        file == null ||
-                        !TryGetWsDocumentForTraversal(
+                    if (container == null || file == null)
+                    {
+                        RecordStructuralMergeConsumerDiscoveryFailure(
+                            state,
+                            normalizedWsPath,
+                            "WSModel could not be resolved");
+                        continue;
+                    }
+
+                    // A malformed source WSModel is deliberately not present in
+                    // WsDocuments.  It is still a consumer, so it must fail closed rather
+                    // than allowing its rigid to be mistaken for a direct-rigid asset.
+                    if (state.Source.ContainsFile(normalizedWsPath) &&
+                        state.MalformedWsModelsIgnored.Any(entry =>
+                            entry.Path.Equals(
+                                normalizedWsPath,
+                                StringComparison.OrdinalIgnoreCase)))
+                    {
+                        RecordStructuralMergeConsumerDiscoveryFailure(
+                            state,
+                            normalizedWsPath,
+                            "source WSModel is malformed and its geometry consumer cannot be established");
+                        continue;
+                    }
+
+                    if (!TryGetWsDocumentForTraversal(
                             state,
                             container,
                             normalizedWsPath,
                             file,
                             out var document))
                     {
-                        state.StructuralMergeConsumerDiscoveryComplete = false;
+                        RecordStructuralMergeConsumerDiscoveryFailure(
+                            state,
+                            normalizedWsPath,
+                            "WSModel could not be parsed");
                         continue;
                     }
 
                     var geometryPath = Normalize(
                         document.SelectSingleNode("/model/geometry")?.InnerText);
-                    if (geometryPath.Length == 0 ||
-                        !state.Source.ContainsFile(geometryPath))
+                    if (geometryPath.Length == 0)
                     {
+                        RecordStructuralMergeConsumerDiscoveryFailure(
+                            state,
+                            normalizedWsPath,
+                            "WSModel has no geometry path");
                         continue;
                     }
+
+                    if (!state.Source.ContainsFile(geometryPath))
+                        continue;
+
+                    if (state.Source.ContainsFile(normalizedWsPath))
+                        continue;
 
                     if (!state.ImmutableMeshMergeConsumersByRigid.TryGetValue(
                             geometryPath,
@@ -801,7 +833,196 @@ namespace Editors.KitbasherEditor.Services
 
                     consumers.Add(normalizedWsPath);
                 }
+
+                foreach (var rigidPath in traversal.DirectRigidPaths)
+                {
+                    if (!state.Source.ContainsFile(rigidPath))
+                        continue;
+
+                    if (!state.DirectRigidMeshMergeConsumersByRigid.TryGetValue(
+                            rigidPath,
+                            out var consumers))
+                    {
+                        consumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        state.DirectRigidMeshMergeConsumersByRigid[rigidPath] = consumers;
+                    }
+
+                    consumers.Add(Normalize(rootAssetPath));
+                }
             }
+        }
+
+        private static void RecordStructuralMergeConsumerDiscoveryFailure(
+            BatchState state,
+            string path,
+            string reason)
+        {
+            state.StructuralMergeConsumerDiscoveryComplete = false;
+            state.StructuralMergeConsumerDiscoveryFailures.Add(
+                $"{Normalize(path)}: {reason}");
+        }
+
+        private static bool IsMeshConsumerAssetPath(string path)
+        {
+            var extension = Path.GetExtension(Normalize(path));
+            return extension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
+                   extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase) ||
+                   extension.Equals(
+                       ".variantmeshdefinition",
+                       StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static GameplayMeshConsumerTraversal CollectGameplayMeshConsumers(
+            BatchState state,
+            string rootAssetPath,
+            CancellationToken cancellationToken)
+        {
+            var result = new GameplayMeshConsumerTraversal();
+            var queue = new Queue<string>();
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var rootPath = Normalize(rootAssetPath);
+            if (rootPath.Length == 0)
+            {
+                result.IsComplete = false;
+                result.UnresolvedPaths.Add("<empty root>");
+                return result;
+            }
+
+            queue.Enqueue(rootPath);
+            while (queue.Count != 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var assetPath = queue.Dequeue();
+                if (!visited.Add(assetPath))
+                    continue;
+
+                var extension = Path.GetExtension(assetPath);
+                if (extension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase))
+                {
+                    result.WsModelPaths.Add(assetPath);
+                    continue;
+                }
+
+                if (extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (state.Source.ContainsFile(assetPath))
+                        result.DirectRigidPaths.Add(assetPath);
+                    continue;
+                }
+
+                if (!extension.Equals(
+                        ".variantmeshdefinition",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    if (FindGameplayTraversalContainer(
+                            state.Source,
+                            GetGameplayTraversalContainers(state),
+                            assetPath) == null)
+                    {
+                        result.IsComplete = false;
+                        result.UnresolvedPaths.Add(assetPath);
+                    }
+                    else
+                    {
+                        // A gameplay model reference without a recognized extension cannot
+                        // be classified as a WSModel or a direct rigid consumer safely.
+                        result.IsComplete = false;
+                        result.UnresolvedPaths.Add($"{assetPath} (unrecognized asset type)");
+                    }
+
+                    continue;
+                }
+
+                var container = FindGameplayTraversalContainer(
+                    state.Source,
+                    GetGameplayTraversalContainers(state),
+                    assetPath);
+                var file = container?.FindFile(assetPath);
+                if (container == null ||
+                    file == null ||
+                    !TryGetVmdForTraversal(
+                        state,
+                        container,
+                        assetPath,
+                        file,
+                        out var vmd))
+                {
+                    result.IsComplete = false;
+                    result.UnresolvedPaths.Add(assetPath);
+                    continue;
+                }
+
+                var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var children = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                CollectVmdReferences(vmd, models, children, textures);
+
+                foreach (var modelValue in models)
+                {
+                    var modelPath = Normalize(modelValue);
+                    if (modelPath.Length == 0)
+                        continue;
+
+                    var modelContainer = FindGameplayTraversalContainer(
+                        state.Source,
+                        GetGameplayTraversalContainers(state),
+                        modelPath);
+                    if (modelContainer == null)
+                    {
+                        result.IsComplete = false;
+                        result.UnresolvedPaths.Add(modelPath);
+                        continue;
+                    }
+
+                    var modelExtension = Path.GetExtension(modelPath);
+                    if (modelExtension.Equals(
+                            ".wsmodel",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.WsModelPaths.Add(modelPath);
+                    }
+                    else if (modelExtension.Equals(
+                                 ".rigid_model_v2",
+                                 StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (state.Source.ContainsFile(modelPath))
+                            result.DirectRigidPaths.Add(modelPath);
+                    }
+                    else if (modelExtension.Equals(
+                                 ".variantmeshdefinition",
+                                 StringComparison.OrdinalIgnoreCase))
+                    {
+                        queue.Enqueue(modelPath);
+                    }
+                    else
+                    {
+                        result.IsComplete = false;
+                        result.UnresolvedPaths.Add(
+                            $"{modelPath} (unrecognized model reference)");
+                    }
+                }
+
+                foreach (var childValue in children)
+                {
+                    var childPath = Normalize(childValue);
+                    if (childPath.Length == 0)
+                        continue;
+
+                    if (FindGameplayTraversalContainer(
+                            state.Source,
+                            GetGameplayTraversalContainers(state),
+                            childPath) == null)
+                    {
+                        result.IsComplete = false;
+                        result.UnresolvedPaths.Add(childPath);
+                        continue;
+                    }
+
+                    queue.Enqueue(childPath);
+                }
+            }
+
+            return result;
         }
 
         private HashSet<string> LoadStructuralMergeRigidModels(
@@ -970,6 +1191,12 @@ namespace Editors.KitbasherEditor.Services
             foreach (var group in groups.Where(x => x.PartIndices.Count > 1))
             {
                 state.PreAtlasStructuralMergeGroupCount++;
+                foreach (var partIndex in group.PartIndices)
+                {
+                    state.PreAtlasStructuralMergeMeshes.Add(
+                        new MeshKey(rigidPath, lodIndex, partIndex));
+                }
+
                 for (var left = 0; left < group.PartIndices.Count; left++)
                 {
                     for (var right = left + 1;
@@ -1369,6 +1596,31 @@ namespace Editors.KitbasherEditor.Services
                 progress,
                 inspectedKeys,
                 missingTextures));
+
+            if (state.ExistingAtlasOutputDetected)
+            {
+                var existingAtlasCandidates = candidates
+                    .Where(candidate => IsAlreadyGeneratedAtlasCandidate(candidate))
+                    .ToList();
+                foreach (var candidate in existingAtlasCandidates)
+                {
+                    RecordSkip(
+                        state,
+                        candidate.RootVmdPath,
+                        candidate.Key,
+                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                        "Existing generated atlas material/texture was preserved; only newly un-atlased candidates remain eligible.");
+                }
+
+                state.ExistingGeneratedAtlasCandidateCount =
+                    existingAtlasCandidates
+                        .Select(candidate => candidate.Key)
+                        .Distinct()
+                        .Count();
+                candidates = candidates
+                    .Where(candidate => !IsAlreadyGeneratedAtlasCandidate(candidate))
+                    .ToList();
+            }
 
             return new CandidateDiscoveryResult(
                 candidates,
@@ -5923,6 +6175,38 @@ namespace Editors.KitbasherEditor.Services
                 .GroupBy(candidate => candidate.Key)
                 .Select(group => group.First())
                 .ToList();
+
+            // A pre-atlas structural component is a protected invariant.  Atlas-rewriting
+            // only one member (or assigning different generated materials to its members)
+            // would destroy the later mesh merge, so protected meshes are left on their
+            // original materials.  The structural pass still merges them after atlasing.
+            var protectedStructuralCandidates = allCandidates
+                .Where(candidate => state.PreAtlasStructuralMergeMeshes.Contains(candidate.Key))
+                .ToList();
+            foreach (var candidate in protectedStructuralCandidates)
+            {
+                RecordSkip(
+                    state,
+                    candidate.RootVmdPath,
+                    candidate.Key,
+                    candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                    "Pre-atlas structural merge opportunity protected from atlas rewriting.");
+            }
+
+            state.AtlasProtectedStructuralMeshCount +=
+                protectedStructuralCandidates.Count;
+            var eligibleBatches = batches
+                .Select(batch => batch
+                    .Where(candidate =>
+                        !state.PreAtlasStructuralMergeMeshes.Contains(candidate.Key))
+                    .ToList())
+                .Where(batch => batch.Count != 0)
+                .ToList();
+            allCandidates = eligibleBatches
+                .SelectMany(batch => batch)
+                .GroupBy(candidate => candidate.Key)
+                .Select(group => group.First())
+                .ToList();
             var candidateByKey = allCandidates.ToDictionary(candidate => candidate.Key);
             var affinityGroups = BuildMergeAffinityGroups(state, allCandidates);
 
@@ -5938,7 +6222,7 @@ namespace Editors.KitbasherEditor.Services
                 candidateCoverage.AffectedUnitCount;
             var orderedBatches = OrderBatchesByCoverageEfficiency(
                 state,
-                batches,
+                eligibleBatches,
                 affinityGroups,
                 expectedEntitiesByMesh);
             state.AtlasValueGateCoverageOrderedBatchCount = orderedBatches.Count;
@@ -9782,23 +10066,12 @@ namespace Editors.KitbasherEditor.Services
                     mergedModels.Add(merged);
                     if (models.Count > 1)
                     {
-                        var mergeOrigin = IsPreAtlasStructuralMergeGroup(
-                                state,
-                                rigidPath,
-                                lodIndex,
-                                group.PartIndices)
-                            ? "structural-only"
-                            : "atlas-assisted";
-                        if (mergeOrigin.Equals(
-                                "structural-only",
-                                StringComparison.Ordinal))
-                        {
-                            state.StructuralOnlyMergeGroupCount++;
-                        }
-                        else
-                        {
-                            state.AtlasAssistedMergeGroupCount++;
-                        }
+                        var mergeOrigin = GetMeshMergeOrigin(
+                            state,
+                            rigidPath,
+                            lodIndex,
+                            group.PartIndices);
+                        RecordMeshMergeOrigin(state, mergeOrigin);
 
                         state.MeshMergeEntries.Add(new MeshMergeReportEntry(
                             rigidPath,
@@ -10050,23 +10323,12 @@ namespace Editors.KitbasherEditor.Services
 
                         if (models.Count > 1)
                         {
-                            var mergeOrigin = IsPreAtlasStructuralMergeGroup(
-                                    state,
-                                    rigidPath,
-                                    lodIndex,
-                                    group.PartIndices)
-                                ? "structural-only"
-                                : "atlas-assisted";
-                            if (mergeOrigin.Equals(
-                                    "structural-only",
-                                    StringComparison.Ordinal))
-                            {
-                                state.StructuralOnlyMergeGroupCount++;
-                            }
-                            else
-                            {
-                                state.AtlasAssistedMergeGroupCount++;
-                            }
+                            var mergeOrigin = GetMeshMergeOrigin(
+                                state,
+                                rigidPath,
+                                lodIndex,
+                                group.PartIndices);
+                            RecordMeshMergeOrigin(state, mergeOrigin);
 
                             state.MeshMergeEntries.Add(new MeshMergeReportEntry(
                                 rigidPath,
@@ -11262,6 +11524,60 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return true;
+        }
+
+        private static string GetMeshMergeOrigin(
+            BatchState state,
+            string rigidPath,
+            int lodIndex,
+            IReadOnlyList<int> partIndices)
+        {
+            if (IsPreAtlasStructuralMergeGroup(
+                    state,
+                    rigidPath,
+                    lodIndex,
+                    partIndices))
+            {
+                return "structural-only";
+            }
+
+            var hasPreExistingPair = false;
+            for (var left = 0; left < partIndices.Count && !hasPreExistingPair; left++)
+            {
+                for (var right = left + 1;
+                     right < partIndices.Count;
+                     right++)
+                {
+                    if (state.PreAtlasStructuralMergePairs.Contains(
+                            BuildStructuralMergePairKey(
+                                rigidPath,
+                                lodIndex,
+                                partIndices[left],
+                                partIndices[right])))
+                    {
+                        hasPreExistingPair = true;
+                        break;
+                    }
+                }
+            }
+
+            return hasPreExistingPair
+                ? "structural+atlas-assisted"
+                : "atlas-assisted";
+        }
+
+        private static void RecordMeshMergeOrigin(
+            BatchState state,
+            string mergeOrigin)
+        {
+            if (mergeOrigin.Equals("structural-only", StringComparison.Ordinal))
+                state.StructuralOnlyMergeGroupCount++;
+            else if (mergeOrigin.Equals(
+                         "structural+atlas-assisted",
+                         StringComparison.Ordinal))
+                state.StructuralAndAtlasAssistedMergeGroupCount++;
+            else
+                state.AtlasAssistedMergeGroupCount++;
         }
 
         private static string[] GetPreExistingStructuralMergePairs(
@@ -14042,7 +14358,9 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
             sb.AppendLine(
                 $"Existing Asset Editor atlas output detected: " +
-                $"{(state.ExistingAtlasOutputDetected ? "YES (atlas rewrite skipped for idempotence)" : "NO")}");
+                $"{(state.ExistingAtlasOutputDetected
+                    ? $"YES ({state.ExistingGeneratedAtlasCandidateCount:N0} existing candidate(s) preserved; new candidates remained eligible)"
+                    : "NO")}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
             sb.AppendLine($"Constant-only atlas channels skipped: {state.ConstantOnlyAtlasChannelsSkipped}");
             sb.AppendLine($"Uniform constant source textures detected: {state.UniformConstantTexturePaths.Count}");
@@ -14397,14 +14715,26 @@ namespace Editors.KitbasherEditor.Services
                     $"Structural-only merge groups applied: " +
                     $"{state.StructuralOnlyMergeGroupCount}");
                 sb.AppendLine(
+                    $"Structural+atlas-assisted merge groups applied: " +
+                    $"{state.StructuralAndAtlasAssistedMergeGroupCount}");
+                sb.AppendLine(
                     $"Atlas-assisted merge groups applied: " +
                     $"{state.AtlasAssistedMergeGroupCount}");
+                sb.AppendLine(
+                    $"Pre-atlas structural meshes protected from atlas rewriting: " +
+                    $"{state.AtlasProtectedStructuralMeshCount}");
                 sb.AppendLine(
                     $"Structural merge consumer discovery: " +
                     $"{(state.StructuralMergeConsumerDiscoveryComplete ? "COMPLETE" : "INCOMPLETE/BLOCKED")}");
                 sb.AppendLine(
                     $"Writable rigids with immutable gameplay consumers: " +
                     $"{state.ImmutableMeshMergeConsumersByRigid.Count}");
+                sb.AppendLine(
+                    $"Writable rigids with direct gameplay rigid consumers: " +
+                    $"{state.DirectRigidMeshMergeConsumersByRigid.Count}");
+                sb.AppendLine(
+                    $"Structural consumer discovery failures: " +
+                    $"{state.StructuralMergeConsumerDiscoveryFailures.Count}");
                 sb.AppendLine($"Mesh parts merged across semantically identical material paths: {state.SemanticMaterialPathMergeParts}");
                 sb.AppendLine($"Mesh merge near-miss blocker occurrences: {state.MeshMergeBlockerCounts.Values.Sum()}");
                 var mergeOpportunities = state.TextureMergeOpportunities.Values.ToList();
@@ -16259,6 +16589,13 @@ namespace Editors.KitbasherEditor.Services
                            StringComparison.OrdinalIgnoreCase);
             });
 
+        private static bool IsAlreadyGeneratedAtlasCandidate(AtlasCandidate candidate)
+            => AtlasChannels.Any(channel =>
+                Normalize(GetTexturePath(candidate.MaterialDocument, channel.Slot))
+                    .StartsWith(
+                        AtlasDirectory + "\\",
+                        StringComparison.OrdinalIgnoreCase));
+
         private static string BuildMaterialPath(string originalPath, MeshKey key)
         {
             var normalized = Normalize(originalPath);
@@ -16568,11 +16905,18 @@ namespace Editors.KitbasherEditor.Services
             public bool StructuralMergeConsumerDiscoveryComplete { get; set; }
             public Dictionary<string, HashSet<string>> ImmutableMeshMergeConsumersByRigid { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> DirectRigidMeshMergeConsumersByRigid { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> StructuralMergeConsumerDiscoveryFailures { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<MeshKey> PreAtlasStructuralMergeMeshes { get; } = [];
             public HashSet<string> PreAtlasStructuralMergePairs { get; } =
                 new(StringComparer.Ordinal);
             public int PreAtlasStructuralMergeGroupCount { get; set; }
             public int StructuralOnlyMergeGroupCount { get; set; }
+            public int StructuralAndAtlasAssistedMergeGroupCount { get; set; }
             public int AtlasAssistedMergeGroupCount { get; set; }
+            public int AtlasProtectedStructuralMeshCount { get; set; }
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, (int Width, int Height)> GeneratedTextureDimensions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
@@ -16585,6 +16929,7 @@ namespace Editors.KitbasherEditor.Services
             public bool ShareAtlasesAcrossVmdsEnabled { get; }
             public bool OptimizeGeometryEnabled { get; }
             public bool ExistingAtlasOutputDetected { get; set; }
+            public int ExistingGeneratedAtlasCandidateCount { get; set; }
             public bool AtlasAllVmdsEnabled { get; set; }
             public int SourceVmdRootCount { get; set; }
             public int AtlasVmdRootCount { get; set; }
@@ -17069,6 +17414,17 @@ namespace Editors.KitbasherEditor.Services
         private sealed record CandidateDiscoveryResult(
             List<AtlasCandidate> Candidates,
             List<MissingTextureDependency> MissingTextures);
+
+        private sealed class GameplayMeshConsumerTraversal
+        {
+            public HashSet<string> WsModelPaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> DirectRigidPaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> UnresolvedPaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public bool IsComplete { get; set; } = true;
+        }
 
         private readonly record struct MergeAffinityIdentity(
             string GeometryPath,
