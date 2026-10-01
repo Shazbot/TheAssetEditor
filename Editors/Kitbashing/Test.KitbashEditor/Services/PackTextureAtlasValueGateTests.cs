@@ -26,6 +26,7 @@ namespace Test.KitbashEditor.Services
 
 
         private static bool IsSourceTextureRetired(
+            bool isOwnedBySourcePack,
             bool hasDirectVmdReference,
             int referenceCount,
             int rewrittenReferenceCount)
@@ -42,9 +43,31 @@ namespace Test.KitbashEditor.Services
 
             return (bool)(method.Invoke(
                 null,
-                [hasDirectVmdReference, referenceCount, rewrittenReferenceCount])
+                [isOwnedBySourcePack, hasDirectVmdReference, referenceCount, rewrittenReferenceCount])
                 ?? throw new InvalidOperationException(
                     "IsAtlasValueGateSourceTextureRetired returned null."));
+        }
+
+
+        private static double CombineCultureResidentProbabilities(
+            IReadOnlyDictionary<string, double> probabilitiesByCulture,
+            IReadOnlyDictionary<string, double> cultureWeights)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "CombineCultureResidentProbabilities",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.CombineCultureResidentProbabilities was not found.");
+
+            return (double)(method.Invoke(
+                null,
+                [probabilitiesByCulture, cultureWeights])
+                ?? throw new InvalidOperationException(
+                    "CombineCultureResidentProbabilities returned null."));
         }
 
 
@@ -472,11 +495,13 @@ namespace Test.KitbashEditor.Services
                 GetChargeableBytes(generatedBytes, retiredSourceBytes),
                 Is.EqualTo(expected));
         }
-        [TestCase(false, 2, 2, true)]
-        [TestCase(false, 2, 1, false)]
-        [TestCase(false, 0, 0, false)]
-        [TestCase(true, 2, 2, false)]
-        public void SourceTextureRetirement_RequiresCompleteRewriteCoverageAndNoDirectVmdReference(
+        [TestCase(true, false, 2, 2, true)]
+        [TestCase(true, false, 2, 1, false)]
+        [TestCase(true, false, 0, 0, false)]
+        [TestCase(true, true, 2, 2, false)]
+        [TestCase(false, false, 2, 2, false)]
+        public void SourceTextureRetirement_RequiresPackOwnershipCompleteRewriteCoverageAndNoDirectVmdReference(
+            bool isOwnedBySourcePack,
             bool hasDirectVmdReference,
             int referenceCount,
             int rewrittenReferenceCount,
@@ -484,10 +509,49 @@ namespace Test.KitbashEditor.Services
         {
             Assert.That(
                 IsSourceTextureRetired(
+                    isOwnedBySourcePack,
                     hasDirectVmdReference,
                     referenceCount,
                     rewrittenReferenceCount),
                 Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void CultureResidency_UsesScenarioWeightsInsteadOfCrossCultureCoResidency()
+        {
+            var probabilities = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 1.0,
+                ["dwarfs"] = 0.0,
+            };
+            var weights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 0.5,
+                ["dwarfs"] = 0.5,
+            };
+
+            Assert.That(
+                CombineCultureResidentProbabilities(probabilities, weights),
+                Is.EqualTo(0.5).Within(0.000001));
+        }
+
+        [Test]
+        public void CultureResidency_SharedTextureStillCountsOnceWithinEachCultureScenario()
+        {
+            var probabilities = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 1.0,
+                ["dwarfs"] = 1.0,
+            };
+            var weights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 0.25,
+                ["dwarfs"] = 0.75,
+            };
+
+            Assert.That(
+                CombineCultureResidentProbabilities(probabilities, weights),
+                Is.EqualTo(1.0).Within(0.000001));
         }
 
         [TestCase("t_xml_mask", "test_mask.dds", true)]
