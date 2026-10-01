@@ -878,6 +878,28 @@ namespace Test.KitbashEditor.Services
                     "CanEarnMergeDrawCredit returned null."));
         }
 
+        private static bool HasDirectRigidConsumerAtlasConflict(
+            object state,
+            string geometryPath,
+            bool hasWsModelMaterialConsumer)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "HasDirectRigidConsumerAtlasConflict",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "HasDirectRigidConsumerAtlasConflict was not found.");
+
+            return (bool)(method.Invoke(
+                    null,
+                    [state, geometryPath, hasWsModelMaterialConsumer])
+                ?? throw new InvalidOperationException(
+                    "HasDirectRigidConsumerAtlasConflict returned null."));
+        }
+
         [TestCase(16.0, 0.0, 16.0)]
         [TestCase(16.0, 12.0, 4.0)]
         [TestCase(16.0, 16.0, 0.0)]
@@ -1772,6 +1794,53 @@ namespace Test.KitbashEditor.Services
                         "embedded_a"),
                     Is.EqualTo(1),
                     "Identical embedded materials remain mergeable for mixed consumers.");
+            });
+        }
+
+        [Test]
+        public void MixedDirectRigidAndWsModelConsumers_RejectWsModelAtlasCandidate()
+        {
+            const string rigidPath = @"models\shared.rigid_model_v2";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var consumers = (IDictionary)(state.GetType()
+                .GetProperty(
+                    "DirectRigidMeshMergeConsumersByRigid",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state)
+                ?? throw new InvalidOperationException(
+                    "DirectRigidMeshMergeConsumersByRigid was not found."));
+            consumers.Add(
+                rigidPath,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    @"models\direct_consumer.rigid_model_v2",
+                });
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    HasDirectRigidConsumerAtlasConflict(
+                        state,
+                        rigidPath,
+                        hasWsModelMaterialConsumer: true),
+                    Is.True,
+                    "The WSModel candidate must be rejected before ProcessBatch can rewrite UV0.");
+                Assert.That(
+                    HasDirectRigidConsumerAtlasConflict(
+                        state,
+                        rigidPath,
+                        hasWsModelMaterialConsumer: false),
+                    Is.False,
+                    "A direct-only candidate can still rewrite its embedded material atomically.");
+                Assert.That(
+                    HasDirectRigidConsumerAtlasConflict(
+                        state,
+                        @"models\unshared.rigid_model_v2",
+                        hasWsModelMaterialConsumer: true),
+                    Is.False);
             });
         }
 
