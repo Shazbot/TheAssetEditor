@@ -3,6 +3,8 @@ using System.Reflection;
 using System.Xml;
 using Moq;
 using Shared.Core.PackFiles.Models;
+using Shared.GameFormats.RigidModel;
+using Shared.GameFormats.RigidModel.MaterialHeaders;
 
 namespace Test.KitbashEditor.Services
 {
@@ -113,6 +115,80 @@ namespace Test.KitbashEditor.Services
                     candidate.Name == "CalculateMergeAffinityScore" &&
                     candidate.GetParameters().Length == 2);
             return Convert.ToInt32(method.Invoke(null, [batches, mergeGroups]));
+        }
+
+        private static int GetWsMergeGroupCount(
+            bool includeEmbeddedMaterialIdentity,
+            string leftEmbeddedModelName,
+            string rightEmbeddedModelName)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "BuildMeshMergeGroups",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "BuildMeshMergeGroups was not found.");
+
+            var models = new[]
+            {
+                CreateIdentityTestModel(leftEmbeddedModelName),
+                CreateIdentityTestModel(rightEmbeddedModelName),
+            };
+            var groups = method.Invoke(
+                    null,
+                    [
+                        null,
+                        models,
+                        0,
+                        Array.Empty<string>(),
+                        new Dictionary<string, string[][]>(),
+                        false,
+                        includeEmbeddedMaterialIdentity,
+                    ]) as IEnumerable
+                ?? throw new InvalidOperationException(
+                    "BuildMeshMergeGroups returned null.");
+
+            return groups.Cast<object>().Count();
+        }
+
+        private static RmvModel CreateIdentityTestModel(string embeddedModelName)
+        {
+            var commonHeader = RmvCommonHeader.CreateDefault();
+            commonHeader.ModelTypeFlag = ModelMaterialEnum.weighted;
+
+            return new RmvModel
+            {
+                CommonHeader = commonHeader,
+                Material = new WeightedMaterial
+                {
+                    ModelName = embeddedModelName,
+                },
+                Mesh = new RmvMesh
+                {
+                    VertexList = [],
+                    IndexList = [],
+                },
+            };
+        }
+
+        private static bool IsMeshConsumerAssetPath(string path)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "IsMeshConsumerAssetPath",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "IsMeshConsumerAssetPath was not found.");
+
+            return (bool)(method.Invoke(null, [path])
+                ?? throw new InvalidOperationException(
+                    "IsMeshConsumerAssetPath returned null."));
         }
 
         private static double GetChargeableBytes(double generatedBytes, double retiredSourceBytes)
@@ -1483,6 +1559,50 @@ namespace Test.KitbashEditor.Services
                 Assert.That(
                     GetMergeAffinityScore([], 0, 1),
                     Is.EqualTo(1));
+            });
+        }
+
+        [Test]
+        public void MixedDirectRigidAndWsModelConsumers_UseEmbeddedMaterialIdentity()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetWsMergeGroupCount(
+                        includeEmbeddedMaterialIdentity: false,
+                        "embedded_a",
+                        "embedded_b"),
+                    Is.EqualTo(1),
+                    "WSModel-only compatibility may ignore redundant embedded weighted textures.");
+                Assert.That(
+                    GetWsMergeGroupCount(
+                        includeEmbeddedMaterialIdentity: true,
+                        "embedded_a",
+                        "embedded_b"),
+                    Is.EqualTo(2),
+                    "A direct rigid consumer requires distinct embedded materials to remain distinct.");
+                Assert.That(
+                    GetWsMergeGroupCount(
+                        includeEmbeddedMaterialIdentity: true,
+                        "embedded_a",
+                        "embedded_a"),
+                    Is.EqualTo(1),
+                    "Identical embedded materials remain mergeable for mixed consumers.");
+            });
+        }
+
+        [Test]
+        public void DirectAssetConsumerRootFilter_ExcludesNonMeshEngineAssets()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(IsMeshConsumerAssetPath(@"models\unit.wsmodel"), Is.True);
+                Assert.That(IsMeshConsumerAssetPath(@"models\unit.rigid_model_v2"), Is.True);
+                Assert.That(
+                    IsMeshConsumerAssetPath(
+                        @"variantmeshes\variantmeshdefinitions\unit.variantmeshdefinition"),
+                    Is.True);
+                Assert.That(IsMeshConsumerAssetPath(@"animations\unit.xml"), Is.False);
             });
         }
 

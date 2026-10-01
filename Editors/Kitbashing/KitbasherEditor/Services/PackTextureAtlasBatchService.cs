@@ -1172,7 +1172,9 @@ namespace Editors.KitbasherEditor.Services
                     lodIndex,
                     wsModelPaths,
                     assignmentsByWsModel,
-                    recordDiagnostics: false);
+                    recordDiagnostics: false,
+                    includeEmbeddedMaterialIdentity:
+                        state.DirectRigidMeshMergeConsumersByRigid.ContainsKey(rigidPath));
 
                 RecordPreAtlasStructuralMergeGroups(
                     state,
@@ -10282,14 +10284,18 @@ namespace Editors.KitbasherEditor.Services
                         lodIndex,
                         originalModels,
                         wsModels.Select(x => x.Key).ToList(),
-                        assignmentsByWsModel);
+                        assignmentsByWsModel,
+                        includeEmbeddedMaterialIdentity:
+                            state.DirectRigidMeshMergeConsumersByRigid.ContainsKey(rigidPath));
 
                     var groups = BuildMeshMergeGroups(
                         state,
                         originalModels,
                         lodIndex,
                         wsModels.Select(x => x.Key).ToList(),
-                        assignmentsByWsModel);
+                        assignmentsByWsModel,
+                        includeEmbeddedMaterialIdentity:
+                            state.DirectRigidMeshMergeConsumersByRigid.ContainsKey(rigidPath));
 
                     if (groups.All(x => x.PartIndices.Count == 1))
                         continue;
@@ -10433,16 +10439,21 @@ namespace Editors.KitbasherEditor.Services
             int lodIndex,
             IReadOnlyList<RmvModel> models,
             IReadOnlyList<string> wsModelPaths,
-            IReadOnlyDictionary<string, string[][]> assignmentsByWsModel)
+            IReadOnlyDictionary<string, string[][]> assignmentsByWsModel,
+            bool includeEmbeddedMaterialIdentity)
         {
             var rmvComponents = models
-                .Select(GetRmvMergeDiagnosticComponents)
+                .Select(model => GetRmvMergeDiagnosticComponents(
+                    model,
+                    includeEmbeddedMaterialIdentity))
                 .ToArray();
 
             var exactBuckets = Enumerable.Range(0, models.Count)
                 .GroupBy(partIndex => string.Join(
                     "\u001e",
-                    GetRmvMergeIdentity(models[partIndex]),
+                    GetRmvMergeIdentityForMerge(
+                        models[partIndex],
+                        includeEmbeddedMaterialIdentity),
                     string.Join(
                         "\u001f",
                         wsModelPaths.Select(
@@ -11410,10 +11421,12 @@ namespace Editors.KitbasherEditor.Services
             return result;
         }
 
-        private static RmvMergeDiagnosticComponents GetRmvMergeDiagnosticComponents(RmvModel model)
+        private static RmvMergeDiagnosticComponents GetRmvMergeDiagnosticComponents(
+            RmvModel model,
+            bool includeEmbeddedMaterialIdentity = false)
         {
             var material = model.Material.Clone();
-            if (material is WeightedMaterial weighted)
+            if (!includeEmbeddedMaterialIdentity && material is WeightedMaterial weighted)
             {
                 weighted.ModelName = string.Empty;
                 weighted.TextureDirectory = string.Empty;
@@ -11431,6 +11444,13 @@ namespace Editors.KitbasherEditor.Services
                 model.CommonHeader.ShaderParams.ShaderName ?? string.Empty,
                 ContentHash(Convert.ToHexString(materialBytes)));
         }
+
+        private static string GetRmvMergeIdentityForMerge(
+            RmvModel model,
+            bool includeEmbeddedMaterialIdentity)
+            => includeEmbeddedMaterialIdentity
+                ? GetDirectRmvMergeIdentity(model)
+                : GetRmvMergeIdentity(model);
 
         private static List<string> GetRmvMergeDiagnosticDifferences(
             RmvMergeDiagnosticComponents left,
@@ -11638,7 +11658,8 @@ namespace Editors.KitbasherEditor.Services
             int lodIndex,
             IReadOnlyList<string> wsModelPaths,
             IReadOnlyDictionary<string, string[][]> assignmentsByWsModel,
-            bool recordDiagnostics = true)
+            bool recordDiagnostics = true,
+            bool includeEmbeddedMaterialIdentity = false)
         {
             var buckets = new Dictionary<string, List<int>>(StringComparer.Ordinal);
 
@@ -11654,7 +11675,9 @@ namespace Editors.KitbasherEditor.Services
 
                 var identity = string.Join(
                     "\u001e",
-                    GetRmvMergeIdentity(models[partIndex]),
+                    GetRmvMergeIdentityForMerge(
+                        models[partIndex],
+                        includeEmbeddedMaterialIdentity),
                     string.Join("\u001f", materialIdentities));
 
                 if (!buckets.TryGetValue(identity, out var parts))
