@@ -3246,11 +3246,69 @@ namespace Editors.KitbasherEditor.Services
                         StringComparer.OrdinalIgnoreCase));
             }
 
+            // Index the resolved asset closure in the direction used by the planner. The
+            // residency and draw-value calculations are called once per proposed merge, so
+            // walking every unit in every culture for every proposal is prohibitively costly.
+            // Keep both directions: asset -> units lets a proposal identify its consumers,
+            // while asset -> cultures lets it skip cultures that cannot reference it at all.
+            var unitIdsByAssetPath = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+
+            void AddUnitAssetReference(string assetPathValue, string unitId)
+            {
+                var assetPath = Normalize(assetPathValue);
+                if (assetPath.Length == 0)
+                    return;
+
+                if (!unitIdsByAssetPath.TryGetValue(assetPath, out var unitIds))
+                {
+                    unitIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    unitIdsByAssetPath[assetPath] = unitIds;
+                }
+
+                unitIds.Add(unitId);
+            }
+
+            foreach (var (assetPath, unitsForVmd) in unitsByVmd)
+            {
+                foreach (var unitId in unitsForVmd.Values.SelectMany(unitIds => unitIds))
+                    AddUnitAssetReference(assetPath, unitId);
+            }
+
+            foreach (var (unitId, expectedOccurrences) in expectedWsModelOccurrencesByUnit)
+            {
+                foreach (var assetPath in expectedOccurrences.ByWsModel.Keys)
+                    AddUnitAssetReference(assetPath, unitId);
+            }
+
+            var culturesByAssetPath = new Dictionary<
+                string,
+                IReadOnlySet<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (assetPath, unitIds) in unitIdsByAssetPath)
+            {
+                var cultures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var unitId in unitIds)
+                {
+                    if (culturesByUnit.TryGetValue(unitId, out var unitCultures))
+                        cultures.UnionWith(unitCultures);
+                }
+
+                if (cultures.Count != 0)
+                    culturesByAssetPath[assetPath] = cultures;
+            }
+
+            var readOnlyUnitIdsByAssetPath = unitIdsByAssetPath.ToDictionary(
+                entry => entry.Key,
+                entry => (IReadOnlySet<string>)entry.Value,
+                StringComparer.OrdinalIgnoreCase);
+
             return new ArmyResidencyModel(
                 unitsByCategory,
                 unitsByCultureAndCategory,
                 unitsByVmd,
                 culturesByUnit,
+                readOnlyUnitIdsByAssetPath,
+                culturesByAssetPath,
                 cultureWeights,
                 opponentCultureWeights,
                 entityCountByUnit,
@@ -3670,12 +3728,27 @@ namespace Editors.KitbasherEditor.Services
                 .Select(Normalize)
                 .Where(path => path.Length != 0)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var normalizedFallbackRoots = fallbackRoots
+                .Select(Normalize)
+                .Where(path => path.Length != 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var relevantUnitIds = GetRelevantArmyUnitIds(
+                model,
+                normalizedTargets,
+                normalizedFallbackRoots);
+            var relevantCultures = GetRelevantArmyCultures(
+                model,
+                normalizedTargets,
+                normalizedFallbackRoots,
+                relevantUnitIds);
+            if (relevantUnitIds.Count == 0 || relevantCultures.Count == 0)
+                return 0;
+
             var fallbackCoveredByCategory = model.Scenario.ArmySlotTemplate.Keys.ToDictionary(
                 category => category,
                 _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-            foreach (var rootValue in fallbackRoots)
+            foreach (var root in normalizedFallbackRoots)
             {
-                var root = Normalize(rootValue);
                 if (!model.UnitsByVmd.TryGetValue(root, out var unitsForVmd))
                     continue;
 
@@ -3688,7 +3761,7 @@ namespace Editors.KitbasherEditor.Services
 
             var probabilitiesByCulture = new Dictionary<string, double>(
                 StringComparer.OrdinalIgnoreCase);
-            foreach (var culture in model.UnitsByCultureAndCategory.Keys)
+            foreach (var culture in relevantCultures)
             {
                 if (!model.UnitsByCultureAndCategory.TryGetValue(
                         culture,
@@ -3710,6 +3783,9 @@ namespace Editors.KitbasherEditor.Services
                     double perSlotPresenceProbability = 0;
                     foreach (var unitId in cultureUnits)
                     {
+                        if (!relevantUnitIds.Contains(unitId))
+                            continue;
+
                         double unitCardPresenceProbability = 0;
                         var notPresentAcrossRoles = 1.0;
                         var exactRoles = new HashSet<Wh3UnitVisualRole>();
@@ -3928,6 +4004,57 @@ namespace Editors.KitbasherEditor.Services
                     if (model.CulturesByUnit.TryGetValue(unitId, out var cultures))
                         result.UnionWith(cultures);
                 }
+            }
+
+            return result;
+        }
+
+        private static HashSet<string> GetRelevantArmyUnitIds(
+            ArmyResidencyModel model,
+            IEnumerable<string> assetPaths,
+            IEnumerable<string> fallbackRoots)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var assetPathValue in assetPaths.Concat(fallbackRoots))
+            {
+                var assetPath = Normalize(assetPathValue);
+                if (assetPath.Length == 0 ||
+                    !model.UnitIdsByAssetPath.TryGetValue(assetPath, out var unitIds))
+                {
+                    continue;
+                }
+
+                result.UnionWith(unitIds);
+            }
+
+            return result;
+        }
+
+        private static HashSet<string> GetRelevantArmyCultures(
+            ArmyResidencyModel model,
+            IEnumerable<string> assetPaths,
+            IEnumerable<string> fallbackRoots,
+            IEnumerable<string> relevantUnitIds)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var assetPathValue in assetPaths.Concat(fallbackRoots))
+            {
+                var assetPath = Normalize(assetPathValue);
+                if (assetPath.Length == 0 ||
+                    !model.CulturesByAssetPath.TryGetValue(assetPath, out var cultures))
+                {
+                    continue;
+                }
+
+                result.UnionWith(cultures);
+            }
+
+            // expectedEntitiesByMesh can provide a conservative unit fallback for an asset
+            // whose dependency path was not indexed. Include those units' cultures too.
+            foreach (var unitId in relevantUnitIds)
+            {
+                if (model.CulturesByUnit.TryGetValue(unitId, out var cultures))
+                    result.UnionWith(cultures);
             }
 
             return result;
@@ -5291,73 +5418,88 @@ namespace Editors.KitbasherEditor.Services
                 if (wsModels.Length == 0)
                     continue;
 
+                var fallbackRoots = rootsByMesh.TryGetValue(
+                        candidate.Key,
+                        out var candidateRoots)
+                    ? candidateRoots
+                        .Select(Normalize)
+                        .Where(path => path.Length != 0)
+                        .ToArray()
+                    : Array.Empty<string>();
+                var relevantUnitIds = GetRelevantArmyUnitIds(
+                    model,
+                    wsModels,
+                    fallbackRoots);
+                if (relevantUnitIds.Count == 0)
+                    continue;
+
                 Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>? byCategory = null;
-                foreach (var (category, unitIds) in model.UnitsByCategory)
+                foreach (var unitId in relevantUnitIds)
                 {
-                    foreach (var unitId in unitIds)
+                    if (!model.CategoryByUnit.TryGetValue(unitId, out var category))
+                        continue;
+
+                    double expectedRenderedEntities = 0;
+                    if (model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
+                            unitId,
+                            out var expectedOccurrences))
                     {
-                        double expectedRenderedEntities = 0;
-                        if (model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
-                                unitId,
-                                out var expectedOccurrences))
+                        foreach (var wsModelPath in wsModels)
                         {
-                            foreach (var wsModelPath in wsModels)
+                            if (!expectedOccurrences.ByWsModel.TryGetValue(
+                                    wsModelPath,
+                                    out var occurrencesByRole))
                             {
-                                if (!expectedOccurrences.ByWsModel.TryGetValue(
-                                        wsModelPath,
-                                        out var occurrencesByRole))
-                                {
-                                    continue;
-                                }
+                                continue;
+                            }
 
-                                foreach (var (role, expectedOccurrencesPerEntity) in occurrencesByRole)
-                                {
-                                    var entityCount = Math.Max(
-                                        1,
-                                        model.EntityCountByUnitAndRole
-                                            .GetValueOrDefault(unitId)?
-                                            .GetValueOrDefault(role, 1) ?? 1);
-                                    expectedRenderedEntities +=
-                                        Math.Clamp(expectedOccurrencesPerEntity, 0.0, 1.0) *
-                                        entityCount;
-                                }
+                            foreach (var (role, expectedOccurrencesPerEntity) in occurrencesByRole)
+                            {
+                                var entityCount = Math.Max(
+                                    1,
+                                    model.EntityCountByUnitAndRole
+                                        .GetValueOrDefault(unitId)?
+                                        .GetValueOrDefault(role, 1) ?? 1);
+                                expectedRenderedEntities +=
+                                    Math.Clamp(expectedOccurrencesPerEntity, 0.0, 1.0) *
+                                    entityCount;
                             }
                         }
-                        else if (rootsByMesh.TryGetValue(candidate.Key, out var roots))
-                        {
-                            // Preserve the old conservative behavior when probability data could
-                            // not be built for a resolved unit.
-                            foreach (var root in roots)
-                            {
-                                if (model.UnitsByVmd.TryGetValue(root, out var unitsForVmd) &&
-                                    unitsForVmd.TryGetValue(category, out var fallbackUnits) &&
-                                    fallbackUnits.Contains(unitId))
-                                {
-                                    expectedRenderedEntities = Math.Max(
-                                        1,
-                                        model.EntityCountByUnit.GetValueOrDefault(unitId, 1));
-                                    break;
-                                }
-                            }
-                        }
-
-                        if (expectedRenderedEntities <= 0)
-                            continue;
-
-                        byCategory ??=
-                            new Dictionary<
-                                Wh3ArmyUnitCategory,
-                                Dictionary<string, double>>();
-                        if (!byCategory.TryGetValue(category, out var expectedByUnit))
-                        {
-                            expectedByUnit =
-                                new Dictionary<string, double>(
-                                    StringComparer.OrdinalIgnoreCase);
-                            byCategory[category] = expectedByUnit;
-                        }
-
-                        expectedByUnit[unitId] = expectedRenderedEntities;
                     }
+                    else
+                    {
+                        // Preserve the old conservative behavior when probability data could
+                        // not be built for a resolved unit.
+                        foreach (var root in fallbackRoots)
+                        {
+                            if (model.UnitsByVmd.TryGetValue(root, out var unitsForVmd) &&
+                                unitsForVmd.TryGetValue(category, out var fallbackUnits) &&
+                                fallbackUnits.Contains(unitId))
+                            {
+                                expectedRenderedEntities = Math.Max(
+                                    1,
+                                    model.EntityCountByUnit.GetValueOrDefault(unitId, 1));
+                                break;
+                            }
+                        }
+                    }
+
+                    if (expectedRenderedEntities <= 0)
+                        continue;
+
+                    byCategory ??=
+                        new Dictionary<
+                            Wh3ArmyUnitCategory,
+                            Dictionary<string, double>>();
+                    if (!byCategory.TryGetValue(category, out var expectedByUnit))
+                    {
+                        expectedByUnit =
+                            new Dictionary<string, double>(
+                                StringComparer.OrdinalIgnoreCase);
+                        byCategory[category] = expectedByUnit;
+                    }
+
+                    expectedByUnit[unitId] = expectedRenderedEntities;
                 }
 
                 if (byCategory != null)
@@ -5445,8 +5587,52 @@ namespace Editors.KitbasherEditor.Services
                     if (lodProbability <= 0)
                         continue;
 
-                    foreach (var (culture, unitsByCategory) in model.UnitsByCultureAndCategory)
+                    var assetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var mesh in meshes)
                     {
+                        if (!state.Usages.TryGetValue(mesh, out var usages))
+                            continue;
+
+                        foreach (var assetPath in usages
+                                     .Select(usage => Normalize(usage.AssetPath))
+                                     .Where(path => path.Length != 0))
+                        {
+                            assetPaths.Add(assetPath);
+                        }
+                    }
+
+                    var relevantUnitIds = GetRelevantArmyUnitIds(
+                        model,
+                        assetPaths,
+                        Array.Empty<string>());
+                    // Keep the expected-entity fallback conservative if a candidate's asset
+                    // path was not present in the resolved dependency index.
+                    foreach (var mesh in meshes)
+                    {
+                        if (!expectedEntitiesByMesh.TryGetValue(mesh, out var byCategory))
+                            continue;
+
+                        foreach (var expectedByUnit in byCategory.Values)
+                            relevantUnitIds.UnionWith(expectedByUnit.Keys);
+                    }
+
+                    var relevantCultures = GetRelevantArmyCultures(
+                        model,
+                        assetPaths,
+                        Array.Empty<string>(),
+                        relevantUnitIds);
+                    if (relevantUnitIds.Count == 0 || relevantCultures.Count == 0)
+                        continue;
+
+                    foreach (var culture in relevantCultures)
+                    {
+                        if (!model.UnitsByCultureAndCategory.TryGetValue(
+                                culture,
+                                out var unitsByCategory))
+                        {
+                            continue;
+                        }
+
                         foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
                         {
                             if (!unitsByCategory.TryGetValue(category, out var cultureUnits))
@@ -5459,6 +5645,9 @@ namespace Editors.KitbasherEditor.Services
                             double eliminatedDrawsAcrossResolvedUnits = 0;
                             foreach (var unitId in cultureUnits)
                             {
+                                if (!relevantUnitIds.Contains(unitId))
+                                    continue;
+
                                 var usedExactConfigurations = false;
                                 if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
                                         unitId,
@@ -16317,6 +16506,8 @@ namespace Editors.KitbasherEditor.Services
                 string,
                 Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByVmd,
             IReadOnlyDictionary<string, IReadOnlySet<string>> CulturesByUnit,
+            IReadOnlyDictionary<string, IReadOnlySet<string>> UnitIdsByAssetPath,
+            IReadOnlyDictionary<string, IReadOnlySet<string>> CulturesByAssetPath,
             IReadOnlyDictionary<string, double> PlayerCultureWeights,
             IReadOnlyDictionary<string, double> OpponentCultureWeights,
             IReadOnlyDictionary<string, int> EntityCountByUnit,
