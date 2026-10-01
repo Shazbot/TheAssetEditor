@@ -84,14 +84,14 @@
             x:Name="ScoreAllGameUnitsCheckBox"
             Grid.Row="7"
             Margin="0,12,0,0"
-            Content="Score atlas value against all game units (conservative)"
+            Content="Score atlas value across all game cultures (conservative)"
             IsChecked="False" />
 
         <TextBlock
             Grid.Row="8"
             Margin="22,4,0,0"
             MaxWidth="620"
-            Text="Off by default: the value gate uses units whose visual components are present in the selected pack. Enable this when the output is intended for broad game-wide reuse rather than this pack's affected visuals."
+            Text="Off by default: residency is modeled independently for the cultures affected by this pack, using the full culture roster including read-only vanilla consumers. Enable this to score uniformly across every resolved game culture instead."
             TextWrapping="Wrap"
             Opacity="0.7" />
 
