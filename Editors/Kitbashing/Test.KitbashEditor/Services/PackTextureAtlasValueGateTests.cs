@@ -2,6 +2,7 @@ using System.Collections;
 using System.Reflection;
 using System.Xml;
 using Moq;
+using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
@@ -190,6 +191,163 @@ namespace Test.KitbashEditor.Services
                 ?? throw new InvalidOperationException(
                     "IsMeshConsumerAssetPath returned null."));
         }
+
+        private static object CreateTraversalBatchState(
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> loadedContainers)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var batchStateType = serviceType.GetNestedType(
+                "BatchState",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("BatchState was not found.");
+            var constructor = batchStateType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single();
+
+            var packFileService = new Mock<IPackFileService>();
+            packFileService
+                .Setup(service => service.GetAllPackfileContainers())
+                .Returns(loadedContainers.ToList());
+
+            var state = constructor.Invoke(
+                [
+                    source,
+                    source,
+                    packFileService.Object,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                ]);
+
+            batchStateType.GetProperty("GameplayTraversalContainers")!
+                .SetValue(state, loadedContainers);
+            return state;
+        }
+
+        private static void IndexImmutableMeshMergeConsumers(
+            object state,
+            params string[] roots)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "IndexImmutableMeshMergeConsumers",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "IndexImmutableMeshMergeConsumers was not found.");
+
+            method.Invoke(null, [state, roots, CancellationToken.None]);
+        }
+
+        private static (bool IsBlocked, string Reason) GetStructuralMergeBlockDecision(
+            object state,
+            string rigidPath)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "TryGetStructuralMergeBlockReason",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "TryGetStructuralMergeBlockReason was not found.");
+            var arguments = new object?[] { state, rigidPath, null };
+            var isBlocked = (bool)(method.Invoke(null, arguments)
+                ?? throw new InvalidOperationException(
+                    "TryGetStructuralMergeBlockReason returned null."));
+
+            return (isBlocked, arguments[2]?.ToString() ?? string.Empty);
+        }
+
+        private static bool StateDictionaryContains(
+            object state,
+            string propertyName,
+            string key)
+        {
+            var collection = state.GetType()
+                .GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state) as IDictionary
+                ?? throw new InvalidOperationException(
+                    $"State dictionary {propertyName} was not found.");
+
+            return collection.Contains(key);
+        }
+
+        private static int GetStateCollectionCount(object state, string propertyName)
+        {
+            var collection = state.GetType()
+                .GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state)
+                ?? throw new InvalidOperationException(
+                    $"State collection {propertyName} was not found.");
+            return Convert.ToInt32(
+                collection.GetType().GetProperty("Count")?.GetValue(collection)
+                ?? throw new InvalidOperationException(
+                    $"State collection {propertyName} has no Count property."));
+        }
+
+        private static void SetStateProperty(
+            object state,
+            string propertyName,
+            object value)
+        {
+            state.GetType()
+                .GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.SetValue(state, value);
+        }
+
+        private static bool IsPreAtlasStructuralMergeGroup(
+            object state,
+            string rigidPath,
+            int lodIndex,
+            params int[] partIndices)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "IsPreAtlasStructuralMergeGroup",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "IsPreAtlasStructuralMergeGroup was not found.");
+
+            return (bool)(method.Invoke(null, [state, rigidPath, lodIndex, partIndices])
+                ?? throw new InvalidOperationException(
+                    "IsPreAtlasStructuralMergeGroup returned null."));
+        }
+
+        private static Mock<IPackFileContainer> CreateTraversalContainer(
+            bool isCaPackFile,
+            IReadOnlyDictionary<string, PackFile> files)
+        {
+            var normalizedFiles = files.ToDictionary(
+                entry => NormalizeTestPath(entry.Key),
+                entry => entry.Value,
+                StringComparer.OrdinalIgnoreCase);
+            var container = new Mock<IPackFileContainer>();
+            container.SetupGet(value => value.IsCaPackFile).Returns(isCaPackFile);
+            container
+                .Setup(value => value.ContainsFile(It.IsAny<string>()))
+                .Returns((string path) => normalizedFiles.ContainsKey(NormalizeTestPath(path)));
+            container
+                .Setup(value => value.FindFile(It.IsAny<string>()))
+                .Returns((string path) => normalizedFiles.GetValueOrDefault(NormalizeTestPath(path)));
+            return container;
+        }
+
+        private static string NormalizeTestPath(string path)
+            => path.Replace('/', '\\').TrimStart('\\').ToLowerInvariant();
 
         private static double GetChargeableBytes(double generatedBytes, double retiredSourceBytes)
         {
@@ -1603,6 +1761,134 @@ namespace Test.KitbashEditor.Services
                         @"variantmeshes\variantmeshdefinitions\unit.variantmeshdefinition"),
                     Is.True);
                 Assert.That(IsMeshConsumerAssetPath(@"animations\unit.xml"), Is.False);
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_CaWsModelReferencingSourceRigid_BlocksMerge()
+        {
+            const string rigidPath = @"models\source.rigid_model_v2";
+            const string wsModelPath = @"models\ca_consumer.wsmodel";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [rigidPath] = PackFile.CreateFromASCII(rigidPath, string.Empty),
+                });
+            var ca = CreateTraversalContainer(
+                isCaPackFile: true,
+                new Dictionary<string, PackFile>
+                {
+                    [wsModelPath] = PackFile.CreateFromASCII(
+                        wsModelPath,
+                        $"<model><geometry>{rigidPath}</geometry></model>"),
+                });
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+
+            IndexImmutableMeshMergeConsumers(state, wsModelPath);
+            SetStateProperty(state, "StructuralMergeConsumerDiscoveryComplete", true);
+
+            var decision = GetStructuralMergeBlockDecision(state, rigidPath);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    StateDictionaryContains(
+                        state,
+                        "ImmutableMeshMergeConsumersByRigid",
+                        rigidPath),
+                    Is.True);
+                Assert.That(decision.IsBlocked, Is.True);
+                Assert.That(decision.Reason, Does.Contain("immutable gameplay WSModel"));
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_UnresolvedVmd_BlocksMerge()
+        {
+            const string unresolvedVmdPath =
+                @"variantmeshes\variantmeshdefinitions\unresolved.variantmeshdefinition";
+            const string rigidPath = @"models\source.rigid_model_v2";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+
+            IndexImmutableMeshMergeConsumers(state, unresolvedVmdPath);
+            var decision = GetStructuralMergeBlockDecision(state, rigidPath);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetStateCollectionCount(
+                        state,
+                        "StructuralMergeConsumerDiscoveryFailures"),
+                    Is.GreaterThan(0));
+                Assert.That(decision.IsBlocked, Is.True);
+                Assert.That(
+                    decision.Reason,
+                    Does.Contain("complete gameplay consumer discovery"));
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_MalformedSourceWsModel_BlocksMerge()
+        {
+            const string rigidPath = @"models\source.rigid_model_v2";
+            const string wsModelPath = @"models\malformed.wsmodel";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [rigidPath] = PackFile.CreateFromASCII(rigidPath, string.Empty),
+                    [wsModelPath] = PackFile.CreateFromASCII(wsModelPath, "<model>"),
+                });
+            var state = CreateTraversalBatchState(source.Object, []);
+
+            IndexImmutableMeshMergeConsumers(state, wsModelPath);
+            var decision = GetStructuralMergeBlockDecision(state, rigidPath);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetStateCollectionCount(state, "MalformedWsModelsIgnored"),
+                    Is.EqualTo(1));
+                Assert.That(decision.IsBlocked, Is.True);
+                Assert.That(
+                    decision.Reason,
+                    Does.Contain("complete gameplay consumer discovery"));
+            });
+        }
+
+        [Test]
+        public void PreAtlasStructuralMergeGroup_IsAtomic()
+        {
+            const string rigidPath = "models/source.rigid_model_v2";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var pair = GetStructuralMergePairKey(rigidPath, 0, 0, 1);
+            var pairs = (ISet<string>)(state.GetType()
+                .GetProperty(
+                    "PreAtlasStructuralMergePairs",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state)
+                ?? throw new InvalidOperationException(
+                    "PreAtlasStructuralMergePairs was not found."));
+            pairs.Add(pair);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    IsPreAtlasStructuralMergeGroup(state, rigidPath, 0, 0, 1),
+                    Is.True);
+                Assert.That(
+                    IsPreAtlasStructuralMergeGroup(state, rigidPath, 0, 0),
+                    Is.False);
+                Assert.That(
+                    IsPreAtlasStructuralMergeGroup(state, rigidPath, 0, 0, 2),
+                    Is.False);
             });
         }
 
