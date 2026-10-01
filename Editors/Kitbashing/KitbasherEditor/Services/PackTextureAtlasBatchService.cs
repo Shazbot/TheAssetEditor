@@ -1601,7 +1601,7 @@ namespace Editors.KitbasherEditor.Services
                 inspectedKeys,
                 missingTextures));
 
-            candidates = FilterAtlasCandidatesWithSharedDirectRigidConsumers(
+            candidates = FilterAtlasCandidatesWithUnrewritableMaterialConsumers(
                 state,
                 candidates);
 
@@ -1642,18 +1642,32 @@ namespace Editors.KitbasherEditor.Services
                     .ToList());
         }
 
-        private static List<AtlasCandidate> FilterAtlasCandidatesWithSharedDirectRigidConsumers(
+        private static List<AtlasCandidate> FilterAtlasCandidatesWithUnrewritableMaterialConsumers(
             BatchState state,
             IReadOnlyList<AtlasCandidate> candidates)
         {
-            // A direct rigid consumer reads the same rigid-owned UV0 but does not have an
-            // external WSModel material node that this atlas batch can rewrite. If a
-            // WSModel material consumer exists for the same mesh key, rewriting the rigid
-            // UVs for either candidate kind would leave one of those consumers sampling its
-            // original texture with atlas coordinates. Reject the whole key so discovery
-            // ordering cannot let a direct candidate slip through after a WSModel candidate.
+            if (!state.StructuralMergeConsumerDiscoveryComplete)
+            {
+                foreach (var candidate in candidates)
+                {
+                    RecordSkip(
+                        state,
+                        candidate.RootVmdPath,
+                        candidate.Key,
+                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                        "Gameplay mesh-consumer discovery was incomplete; atlas rewriting was skipped because every rigid material consumer could not be proven safe.");
+                }
+
+                return [];
+            }
+
+            // A rigid owns UV0, so every material consumer must be rewritten together with
+            // it. Direct embedded materials are safe only when there is no WSModel material
+            // consumer for the same key; immutable CA WSModels are never safe because their
+            // material nodes cannot be rewritten at all. Reject the whole key so discovery
+            // ordering cannot let another candidate slip through after the first one.
             var blockedKeys = candidates
-                .Where(candidate => HasSharedDirectRigidConsumerAtlasConflict(state, candidate))
+                .Where(candidate => HasUnrewritableMaterialConsumerAtlasConflict(state, candidate))
                 .Select(candidate => candidate.Key)
                 .ToHashSet();
             if (blockedKeys.Count == 0)
@@ -1666,7 +1680,7 @@ namespace Editors.KitbasherEditor.Services
                     candidate.RootVmdPath,
                     candidate.Key,
                     candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
-                    "Rigid mesh has both WSModel and direct/imposter material consumers; atlas rewriting would change shared UV0 without rewriting every consumer.");
+                    "Rigid mesh has a non-rewritable material consumer (direct/embedded or immutable CA WSModel); atlas rewriting would change shared UV0 without rewriting every consumer.");
             }
 
             return candidates
@@ -1674,10 +1688,14 @@ namespace Editors.KitbasherEditor.Services
                 .ToList();
         }
 
-        private static bool HasSharedDirectRigidConsumerAtlasConflict(
+        private static bool HasUnrewritableMaterialConsumerAtlasConflict(
             BatchState state,
             AtlasCandidate candidate)
         {
+            var geometryPath = Normalize(candidate.Key.GeometryPath);
+            if (state.ImmutableMeshMergeConsumersByRigid.ContainsKey(geometryPath))
+                return true;
+
             var hasWsModelMaterialConsumer = candidate.Usages.Any(
                 usage => string.IsNullOrWhiteSpace(usage.EmbeddedRigidPath));
             if (!hasWsModelMaterialConsumer &&
@@ -1689,7 +1707,7 @@ namespace Editors.KitbasherEditor.Services
 
             return HasDirectRigidConsumerAtlasConflict(
                 state,
-                candidate.Key.GeometryPath,
+                geometryPath,
                 hasWsModelMaterialConsumer);
         }
 
@@ -5486,7 +5504,7 @@ namespace Editors.KitbasherEditor.Services
             // atlas residency is worth accepting.
             var prepared = candidates
                 .Where(CanEarnMergeDrawCredit)
-                .Where(candidate => !HasSharedDirectRigidConsumerAtlasConflict(state, candidate))
+                .Where(candidate => !HasUnrewritableMaterialConsumerAtlasConflict(state, candidate))
                 .Select(candidate => new MergeAffinityCandidateInfo(
                     candidate,
                     GetRmvMergeIdentity(candidate.Model),

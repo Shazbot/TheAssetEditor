@@ -1,11 +1,13 @@
 using System.Collections;
 using System.Reflection;
 using System.Xml;
+using Microsoft.Xna.Framework;
 using Moq;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
+using Shared.GameFormats.RigidModel.Vertex;
 
 namespace Test.KitbashEditor.Services
 {
@@ -173,6 +175,128 @@ namespace Test.KitbashEditor.Services
                     IndexList = [],
                 },
             };
+        }
+
+        private static (object Candidate, RmvModel Model) CreateAtlasConsumerTestCandidate(
+            string geometryPath,
+            bool wsModelMaterialConsumer)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var meshKey = meshKeyType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single()
+                .Invoke([geometryPath, 0, 0]);
+
+            var usageType = serviceType.GetNestedType(
+                "WsUsage",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("WsUsage was not found.");
+            var usage = usageType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 5)
+                .Invoke(
+                [
+                    wsModelMaterialConsumer ? @"models\shared.wsmodel" : string.Empty,
+                    null,
+                    null,
+                    @"materials\shared.xml",
+                    wsModelMaterialConsumer ? null : geometryPath,
+                ]);
+            var usagesType = typeof(List<>).MakeGenericType(usageType);
+            var usages = Activator.CreateInstance(usagesType)
+                ?? throw new InvalidOperationException("Could not create usage list.");
+            ((IList)usages).Add(usage);
+
+            var model = CreateIdentityTestModel("embedded");
+            model.Mesh.VertexList =
+            [
+                new CommonVertex
+                {
+                    Uv = new Vector2(0.25f, 0.75f),
+                    BoneIndex = [],
+                    BoneWeight = [],
+                },
+            ];
+
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var constructor = atlasCandidateType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(candidate => candidate.GetParameters().Length > 5);
+            var arguments = constructor.GetParameters()
+                .Select(parameter =>
+                {
+                    var type = parameter.ParameterType;
+                    if (type == typeof(string))
+                        return (object?)"models\\root.variantmeshdefinition";
+                    if (type == meshKeyType)
+                        return meshKey;
+                    if (type == typeof(RmvModel))
+                        return model;
+                    if (type == usagesType)
+                        return usages;
+                    if (type == typeof(XmlDocument))
+                        return new XmlDocument();
+                    if (type == typeof(HashSet<string>))
+                        return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    if (type.IsGenericType &&
+                        type.GetGenericTypeDefinition() == typeof(Dictionary<,>))
+                    {
+                        return Activator.CreateInstance(type);
+                    }
+
+                    if (type.IsGenericType &&
+                        type.GetGenericTypeDefinition() == typeof(List<>))
+                    {
+                        return Activator.CreateInstance(type);
+                    }
+
+                    if (type.IsValueType)
+                        return Activator.CreateInstance(type);
+
+                    return null;
+                })
+                .ToArray();
+
+            return (
+                constructor.Invoke(arguments),
+                model);
+        }
+
+        private static int FilterAtlasConsumerTestCandidates(
+            object state,
+            object candidate)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidatesType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var candidates = Activator.CreateInstance(candidatesType)
+                ?? throw new InvalidOperationException("Could not create candidate list.");
+            ((IList)candidates).Add(candidate);
+
+            var method = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidateMethod =>
+                    candidateMethod.Name == "FilterAtlasCandidatesWithUnrewritableMaterialConsumers" &&
+                    candidateMethod.GetParameters().Length == 2);
+            var filtered = (IEnumerable)(method.Invoke(null, [state, candidates])
+                ?? throw new InvalidOperationException("Atlas candidate filter returned null."));
+            return filtered.Cast<object>().Count();
         }
 
         private static bool IsMeshConsumerAssetPath(string path)
@@ -1818,9 +1942,23 @@ namespace Test.KitbashEditor.Services
                 {
                     @"models\direct_consumer.rigid_model_v2",
                 });
+            SetStateProperty(state, "StructuralMergeConsumerDiscoveryComplete", true);
+            var (candidate, model) = CreateAtlasConsumerTestCandidate(
+                rigidPath,
+                wsModelMaterialConsumer: true);
+            var originalUv = model.Mesh.VertexList[0].Uv;
+            var filteredCount = FilterAtlasConsumerTestCandidates(state, candidate);
 
             Assert.Multiple(() =>
             {
+                Assert.That(
+                    filteredCount,
+                    Is.EqualTo(0),
+                    "The mixed-consumer candidate must be removed before ProcessBatch.");
+                Assert.That(
+                    model.Mesh.VertexList[0].Uv,
+                    Is.EqualTo(originalUv),
+                    "Rejecting the candidate must leave the rigid UV0 unchanged.");
                 Assert.That(
                     HasDirectRigidConsumerAtlasConflict(
                         state,
@@ -1841,6 +1979,65 @@ namespace Test.KitbashEditor.Services
                         @"models\unshared.rigid_model_v2",
                         hasWsModelMaterialConsumer: true),
                     Is.False);
+            });
+        }
+
+        [Test]
+        public void ImmutableCaWsModelConsumer_RejectsAtlasCandidate()
+        {
+            const string rigidPath = @"models\shared.rigid_model_v2";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var consumers = (IDictionary)(state.GetType()
+                .GetProperty(
+                    "ImmutableMeshMergeConsumersByRigid",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state)
+                ?? throw new InvalidOperationException(
+                    "ImmutableMeshMergeConsumersByRigid was not found."));
+            consumers.Add(
+                rigidPath,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    @"models\ca_consumer.wsmodel",
+                });
+            SetStateProperty(state, "StructuralMergeConsumerDiscoveryComplete", true);
+
+            var (candidate, model) = CreateAtlasConsumerTestCandidate(
+                rigidPath,
+                wsModelMaterialConsumer: true);
+            var originalUv = model.Mesh.VertexList[0].Uv;
+            var filteredCount = FilterAtlasConsumerTestCandidates(state, candidate);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(filteredCount, Is.EqualTo(0));
+                Assert.That(model.Mesh.VertexList[0].Uv, Is.EqualTo(originalUv));
+            });
+        }
+
+        [Test]
+        public void IncompleteConsumerDiscovery_RejectsAtlasCandidate()
+        {
+            const string rigidPath = @"models\unknown.rigid_model_v2";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            SetStateProperty(state, "StructuralMergeConsumerDiscoveryComplete", false);
+
+            var (candidate, model) = CreateAtlasConsumerTestCandidate(
+                rigidPath,
+                wsModelMaterialConsumer: true);
+            var originalUv = model.Mesh.VertexList[0].Uv;
+            var filteredCount = FilterAtlasConsumerTestCandidates(state, candidate);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(filteredCount, Is.EqualTo(0));
+                Assert.That(model.Mesh.VertexList[0].Uv, Is.EqualTo(originalUv));
             });
         }
 
