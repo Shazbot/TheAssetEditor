@@ -256,15 +256,17 @@ namespace Editors.KitbasherEditor.Services
                     source,
                     vmdRoots,
                     cancellationToken);
+                // Residency accounting always needs the complete game roster. Mutation is
+                // still restricted to the selected pack; culture scoping happens inside the
+                // residency model so vanilla units can remain read-only consumers without
+                // polluting a single mixed-culture army denominator.
                 state.UnitCategoryResolution = Wh3UnitCategoryResolver.Resolve(
                     _packFileService,
                     source,
                     vmdRoots,
                     childVmdsByVmd,
                     cancellationToken,
-                    scoreAllGameUnits
-                        ? Wh3ArmyVisualScenario.Default
-                        : Wh3ArmyVisualScenario.PackAffected);
+                    Wh3ArmyVisualScenario.Default);
                 if (!atlasAllVmds &&
                     !state.UnitCategoryResolution.IsGameplayResolutionHealthy)
                 {
@@ -277,7 +279,10 @@ namespace Editors.KitbasherEditor.Services
 
                 state.ArmyResidencyModel =
                     state.UnitCategoryResolution.IsGameplayResolutionHealthy
-                        ? BuildArmyResidencyModel(state, state.UnitCategoryResolution)
+                        ? BuildArmyResidencyModel(
+                            state,
+                            state.UnitCategoryResolution,
+                            includeAllGameCultures: scoreAllGameUnits)
                         : null;
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
 
@@ -747,6 +752,14 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return null;
+        }
+
+        private static IReadOnlyList<IPackFileContainer> GetGameplayTraversalContainers(
+            BatchState state)
+        {
+            state.GameplayTraversalContainers ??=
+                state.PackFileService.GetAllPackfileContainers().ToList();
+            return state.GameplayTraversalContainers;
         }
 
         private static HashSet<string> CollectReachableGameplayWsModels(
@@ -2502,24 +2515,12 @@ namespace Editors.KitbasherEditor.Services
 
         private static ArmyResidencyModel? BuildArmyResidencyModel(
             BatchState state,
-            Wh3UnitCategoryResolution? resolution)
+            Wh3UnitCategoryResolution? resolution,
+            bool includeAllGameCultures)
         {
             if (resolution == null)
                 return null;
 
-            var unitsByCategory = resolution.Scenario.ArmySlotTemplate.Keys.ToDictionary(
-                category => category,
-                _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-            var unitsByVmd = new Dictionary<
-                string,
-                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>>(
-                StringComparer.OrdinalIgnoreCase);
-            var entityCountByUnit = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            var entityCountByUnitAndRole = new Dictionary<
-                string,
-                Dictionary<Wh3UnitVisualRole, int>>(StringComparer.OrdinalIgnoreCase);
-            var categoryByUnit = new Dictionary<string, Wh3ArmyUnitCategory>(
-                StringComparer.OrdinalIgnoreCase);
             var rosterByUnitId = resolution.RosterUnits
                 .Select(unit => (Identity: GetArmyUnitIdentity(unit), Unit: unit))
                 .Where(entry => entry.Identity.Length != 0)
@@ -2527,110 +2528,86 @@ namespace Editors.KitbasherEditor.Services
                     entry => entry.Identity,
                     entry => entry.Unit,
                     StringComparer.OrdinalIgnoreCase);
-            var allowedUnitIds = rosterByUnitId.Keys.ToHashSet(
-                StringComparer.OrdinalIgnoreCase);
+            if (rosterByUnitId.Count == 0)
+                return null;
 
-            // Populate the denominator from the already scenario-filtered DB-derived roster,
-            // not from the subset of VMD roots discovered in this pack. Later usage loops may
-            // enrich these units, but must never reintroduce identities rejected by the
-            // selected faction/culture/mod scope.
-            foreach (var unit in resolution.RosterUnits)
+            var packAffectedUnitIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var usage in resolution.UsagesByVmd.Values.SelectMany(usages => usages))
             {
-                if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(unit.Category))
-                    continue;
-
-                var identity = GetArmyUnitIdentity(unit);
-                if (identity.Length == 0)
-                    continue;
-
-                unitsByCategory[unit.Category].Add(identity);
-                categoryByUnit[identity] = unit.Category;
-                var countsByRole = new Dictionary<Wh3UnitVisualRole, int>();
-                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Men, unit.VisualCounts.Riders);
-                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Mount, unit.VisualCounts.Mounts);
-                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Engine, unit.VisualCounts.Engines);
-                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Crew, unit.VisualCounts.Crew);
-                entityCountByUnitAndRole[identity] = countsByRole;
-                entityCountByUnit[identity] = Math.Max(
-                    1,
-                    countsByRole.Values.DefaultIfEmpty(1).Max());
+                var identity = GetArmyUnitIdentity(usage);
+                if (identity.Length != 0)
+                    packAffectedUnitIds.Add(identity);
             }
 
-            foreach (var (vmdPathValue, usages) in resolution.UsagesByVmd)
+            foreach (var (assetPathValue, usages) in resolution.DirectAssetUsagesByPath)
             {
-                var vmdPath = Normalize(vmdPathValue);
+                var assetPath = Normalize(assetPathValue);
+                if (!state.Source.ContainsFile(assetPath))
+                    continue;
+
                 foreach (var usage in usages)
                 {
-                    if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(usage.Category))
-                        continue;
-
                     var identity = GetArmyUnitIdentity(usage);
-                    if (identity.Length == 0 ||
-                        !allowedUnitIds.Contains(identity) ||
-                        !UsageMatchesScenarioRosterScope(
-                            usage,
-                            rosterByUnitId[identity],
-                            resolution.Scenario))
-                    {
-                        continue;
-                    }
-
-                    unitsByCategory[usage.Category].Add(identity);
-                    var entityCount = Math.Max(1, usage.EntityCount);
-                    entityCountByUnit[identity] = Math.Max(
-                        entityCountByUnit.GetValueOrDefault(identity, 1),
-                        entityCount);
-
-                    if (!entityCountByUnitAndRole.TryGetValue(identity, out var countsByRole))
-                    {
-                        countsByRole = new Dictionary<Wh3UnitVisualRole, int>();
-                        entityCountByUnitAndRole[identity] = countsByRole;
-                    }
-
-                    // Every usage carries the full DB-resolved composition.  Record all
-                    // components even when a component has no VMD of its own (classic
-                    // artillery engines often point directly at a rigid model).
-                    SetMaximumEntityCount(
-                        countsByRole,
-                        Wh3UnitVisualRole.Men,
-                        usage.VisualCounts.Riders);
-                    SetMaximumEntityCount(
-                        countsByRole,
-                        Wh3UnitVisualRole.Mount,
-                        usage.VisualCounts.Mounts);
-                    SetMaximumEntityCount(
-                        countsByRole,
-                        Wh3UnitVisualRole.Engine,
-                        usage.VisualCounts.Engines);
-                    SetMaximumEntityCount(
-                        countsByRole,
-                        Wh3UnitVisualRole.Crew,
-                        usage.VisualCounts.Crew);
-
-                    // The usage's role is the component represented by this VMD.  Keep it
-                    // even when a synthetic/legacy usage did not carry a complete count set.
-                    SetMaximumEntityCount(countsByRole, usage.VisualRole, entityCount);
-                    categoryByUnit[identity] = usage.Category;
-
-                    if (!unitsByVmd.TryGetValue(vmdPath, out var byCategory))
-                    {
-                        byCategory = new Dictionary<Wh3ArmyUnitCategory, HashSet<string>>();
-                        unitsByVmd[vmdPath] = byCategory;
-                    }
-
-                    if (!byCategory.TryGetValue(usage.Category, out var unitIds))
-                    {
-                        unitIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        byCategory[usage.Category] = unitIds;
-                    }
-
-                    unitIds.Add(identity);
+                    if (identity.Length != 0)
+                        packAffectedUnitIds.Add(identity);
                 }
             }
 
-            // Resolve visual probabilities from the DB-referenced VMDs only. Propagated child
-            // mappings are useful for atlas reachability but would make a nested VMD look like
-            // an independent 100%-probability unit visual.
+            var allKnownCultures = resolution.RosterUnits
+                .SelectMany(unit => unit.CultureKeys)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim().ToLowerInvariant())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var activeCultures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (includeAllGameCultures)
+            {
+                activeCultures.UnionWith(allKnownCultures);
+            }
+            else
+            {
+                foreach (var unitId in packAffectedUnitIds)
+                {
+                    if (!rosterByUnitId.TryGetValue(unitId, out var unit))
+                        continue;
+
+                    activeCultures.UnionWith(
+                        unit.CultureKeys
+                            .Where(value => !string.IsNullOrWhiteSpace(value))
+                            .Select(value => value.Trim().ToLowerInvariant()));
+                }
+            }
+
+            // A pack whose affected units have incomplete culture metadata must not collapse
+            // to an empty value model. Fall back to every known culture; if culture metadata
+            // is unavailable globally, use one synthetic culture so the old single-roster
+            // behavior remains a conservative fallback rather than silently giving zero credit.
+            if (activeCultures.Count == 0)
+                activeCultures.UnionWith(allKnownCultures);
+            if (activeCultures.Count == 0)
+                activeCultures.Add("__unknown__");
+
+            var unitsByCategory = resolution.Scenario.ArmySlotTemplate.Keys.ToDictionary(
+                category => category,
+                _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            var unitsByCultureAndCategory = activeCultures.ToDictionary(
+                culture => culture,
+                _ => resolution.Scenario.ArmySlotTemplate.Keys.ToDictionary(
+                    category => category,
+                    _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
+                StringComparer.OrdinalIgnoreCase);
+            var unitsByVmd = new Dictionary<
+                string,
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>>(
+                StringComparer.OrdinalIgnoreCase);
+            var culturesByUnit = new Dictionary<string, IReadOnlySet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            var entityCountByUnit = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var entityCountByUnitAndRole = new Dictionary<
+                string,
+                Dictionary<Wh3UnitVisualRole, int>>(StringComparer.OrdinalIgnoreCase);
+            var categoryByUnit = new Dictionary<string, Wh3ArmyUnitCategory>(
+                StringComparer.OrdinalIgnoreCase);
             var directVmdsByUnitAndRole = new Dictionary<
                 string,
                 Dictionary<Wh3UnitVisualRole, HashSet<string>>>(
@@ -2641,71 +2618,58 @@ namespace Editors.KitbasherEditor.Services
                     Wh3UnitVisualRole,
                     Dictionary<string, double>>>(
                 StringComparer.OrdinalIgnoreCase);
-            foreach (var (vmdPathValue, usages) in resolution.DirectUsagesByVmd)
+
+            foreach (var unit in resolution.RosterUnits)
             {
-                var vmdPath = Normalize(vmdPathValue);
-                foreach (var usage in usages)
+                if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(unit.Category))
+                    continue;
+
+                var identity = GetArmyUnitIdentity(unit);
+                if (identity.Length == 0)
+                    continue;
+
+                var unitCultures = unit.CultureKeys
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Select(value => value.Trim().ToLowerInvariant())
+                    .Where(activeCultures.Contains)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                // Unknown culture/faction scope is a wildcard, not "matches nothing". This
+                // keeps unresolved generic units available in each culture without ever mixing
+                // known units from unrelated cultures into the same army population.
+                if (unitCultures.Count == 0 &&
+                    (unit.HasUnknownFactionScope || unit.CultureKeys.Count == 0))
                 {
-                    if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(usage.Category))
-                        continue;
-
-                    var identity = GetArmyUnitIdentity(usage);
-                    if (identity.Length == 0 ||
-                        !allowedUnitIds.Contains(identity) ||
-                        !UsageMatchesScenarioRosterScope(
-                            usage,
-                            rosterByUnitId[identity],
-                            resolution.Scenario))
-                    {
-                        continue;
-                    }
-
-                    if (!directVmdsByUnitAndRole.TryGetValue(identity, out var directVmdsByRole))
-                    {
-                        directVmdsByRole = new Dictionary<Wh3UnitVisualRole, HashSet<string>>();
-                        directVmdsByUnitAndRole[identity] = directVmdsByRole;
-                    }
-
-                    if (!directVmdsByRole.TryGetValue(usage.VisualRole, out var directVmds))
-                    {
-                        directVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        directVmdsByRole[usage.VisualRole] = directVmds;
-                    }
-
-                    directVmds.Add(vmdPath);
+                    unitCultures.UnionWith(activeCultures);
                 }
-            }
 
-            foreach (var (assetPathValue, usages) in resolution.DirectAssetUsagesByPath)
-            {
-                var assetPath = Normalize(assetPathValue);
-                foreach (var usage in usages)
+                if (unitCultures.Count == 0)
+                    continue;
+
+                culturesByUnit[identity] = unitCultures;
+                unitsByCategory[unit.Category].Add(identity);
+                foreach (var culture in unitCultures)
+                    unitsByCultureAndCategory[culture][unit.Category].Add(identity);
+
+                categoryByUnit[identity] = unit.Category;
+                var countsByRole = new Dictionary<Wh3UnitVisualRole, int>();
+                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Men, unit.VisualCounts.Riders);
+                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Mount, unit.VisualCounts.Mounts);
+                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Engine, unit.VisualCounts.Engines);
+                SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Crew, unit.VisualCounts.Crew);
+                entityCountByUnitAndRole[identity] = countsByRole;
+                entityCountByUnit[identity] = Math.Max(
+                    1,
+                    countsByRole.Values.DefaultIfEmpty(1).Max());
+
+                foreach (var component in unit.Components)
                 {
-                    if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(usage.Category))
+                    if (component.ScenarioPresenceProbability <= 0)
                         continue;
 
-                    var identity = GetArmyUnitIdentity(usage);
-                    if (identity.Length == 0 || !allowedUnitIds.Contains(identity))
+                    var assetPath = Normalize(component.AssetPath);
+                    if (assetPath.Length == 0)
                         continue;
-
-                    unitsByCategory[usage.Category].Add(identity);
-                    var entityCount = Math.Max(1, usage.EntityCount);
-                    entityCountByUnit[identity] = Math.Max(
-                        entityCountByUnit.GetValueOrDefault(identity, 1),
-                        entityCount);
-
-                    if (!entityCountByUnitAndRole.TryGetValue(identity, out var countsByRole))
-                    {
-                        countsByRole = new Dictionary<Wh3UnitVisualRole, int>();
-                        entityCountByUnitAndRole[identity] = countsByRole;
-                    }
-
-                    SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Men, usage.VisualCounts.Riders);
-                    SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Mount, usage.VisualCounts.Mounts);
-                    SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Engine, usage.VisualCounts.Engines);
-                    SetMaximumEntityCount(countsByRole, Wh3UnitVisualRole.Crew, usage.VisualCounts.Crew);
-                    SetMaximumEntityCount(countsByRole, usage.VisualRole, entityCount);
-                    categoryByUnit[identity] = usage.Category;
 
                     if (!unitsByVmd.TryGetValue(assetPath, out var byCategory))
                     {
@@ -2713,13 +2677,31 @@ namespace Editors.KitbasherEditor.Services
                         unitsByVmd[assetPath] = byCategory;
                     }
 
-                    if (!byCategory.TryGetValue(usage.Category, out var unitIds))
+                    if (!byCategory.TryGetValue(unit.Category, out var unitIds))
                     {
                         unitIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        byCategory[usage.Category] = unitIds;
+                        byCategory[unit.Category] = unitIds;
                     }
 
                     unitIds.Add(identity);
+
+                    if (component.IsVariantMeshDefinition)
+                    {
+                        if (!directVmdsByUnitAndRole.TryGetValue(identity, out var byRole))
+                        {
+                            byRole = new Dictionary<Wh3UnitVisualRole, HashSet<string>>();
+                            directVmdsByUnitAndRole[identity] = byRole;
+                        }
+
+                        if (!byRole.TryGetValue(component.Role, out var vmds))
+                        {
+                            vmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            byRole[component.Role] = vmds;
+                        }
+
+                        vmds.Add(assetPath);
+                        continue;
+                    }
 
                     if (!directAssetsByUnitAndRole.TryGetValue(identity, out var directAssetsByRole))
                     {
@@ -2729,23 +2711,34 @@ namespace Editors.KitbasherEditor.Services
                         directAssetsByUnitAndRole[identity] = directAssetsByRole;
                     }
 
-                    if (!directAssetsByRole.TryGetValue(usage.VisualRole, out var directAssets))
+                    if (!directAssetsByRole.TryGetValue(component.Role, out var directAssets))
                     {
                         directAssets = new Dictionary<string, double>(
                             StringComparer.OrdinalIgnoreCase);
-                        directAssetsByRole[usage.VisualRole] = directAssets;
+                        directAssetsByRole[component.Role] = directAssets;
                     }
 
                     directAssets[assetPath] = Math.Clamp(
                         directAssets.GetValueOrDefault(assetPath) +
-                        usage.ScenarioPresenceProbability,
+                        component.ScenarioPresenceProbability,
                         0.0,
                         1.0);
                 }
             }
 
-            if (!unitsByCategory.Values.Any(units => units.Count != 0))
+            var populatedCultures = unitsByCultureAndCategory
+                .Where(entry => entry.Value.Values.Any(units => units.Count != 0))
+                .Select(entry => entry.Key)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (populatedCultures.Length == 0)
                 return null;
+
+            var uniformCultureWeight = 1.0 / populatedCultures.Length;
+            var cultureWeights = populatedCultures.ToDictionary(
+                culture => culture,
+                _ => uniformCultureWeight,
+                StringComparer.OrdinalIgnoreCase);
 
             var occurrenceCache = new Dictionary<string, IReadOnlyDictionary<string, double>>(
                 StringComparer.OrdinalIgnoreCase);
@@ -2894,13 +2887,17 @@ namespace Editors.KitbasherEditor.Services
 
             return new ArmyResidencyModel(
                 unitsByCategory,
+                unitsByCultureAndCategory,
                 unitsByVmd,
+                culturesByUnit,
+                cultureWeights,
                 entityCountByUnit,
                 entityCountByUnitAndRole,
                 categoryByUnit,
                 expectedWsModelOccurrencesByUnit,
                 visualConfigurationsByUnitAndRole,
-                resolution.Scenario);
+                resolution.Scenario,
+                includeAllGameCultures);
         }
 
         private static IReadOnlyDictionary<string, double> GetExpectedWsModelOccurrencesForVmd(
@@ -2917,8 +2914,12 @@ namespace Editors.KitbasherEditor.Services
 
             try
             {
-                var file = state.Source.FindFile(vmdPath);
-                if (file == null)
+                var container = FindGameplayTraversalContainer(
+                    state.Source,
+                    GetGameplayTraversalContainers(state),
+                    vmdPath);
+                var file = container?.FindFile(vmdPath);
+                if (container == null || file == null)
                 {
                     var empty = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
                     cache[vmdPath] = empty;
@@ -2927,7 +2928,7 @@ namespace Editors.KitbasherEditor.Services
 
                 if (!TryGetVmdForTraversal(
                         state,
-                        state.Source,
+                        container,
                         vmdPath,
                         file,
                         out var vmd))
@@ -2970,9 +2971,14 @@ namespace Editors.KitbasherEditor.Services
 
             try
             {
-                var file = state.Source.FindFile(vmdPath);
-                if (file == null ||
-                    !TryGetVmdForTraversal(state, state.Source, vmdPath, file, out var vmd))
+                var container = FindGameplayTraversalContainer(
+                    state.Source,
+                    GetGameplayTraversalContainers(state),
+                    vmdPath);
+                var file = container?.FindFile(vmdPath);
+                if (container == null ||
+                    file == null ||
+                    !TryGetVmdForTraversal(state, container, vmdPath, file, out var vmd))
                 {
                     cache[vmdPath] = [];
                     return [];
@@ -3004,7 +3010,10 @@ namespace Editors.KitbasherEditor.Services
                 var modelPath = Normalize(mesh.ModelReference);
                 if (Path.GetExtension(modelPath)
                         .Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) &&
-                    state.Source.ContainsFile(modelPath))
+                    FindGameplayTraversalContainer(
+                        state.Source,
+                        GetGameplayTraversalContainers(state),
+                        modelPath) != null)
                 {
                     baseModels[modelPath] = 1;
                 }
@@ -3147,7 +3156,10 @@ namespace Editors.KitbasherEditor.Services
                 var modelPath = Normalize(mesh.ModelReference);
                 if (Path.GetExtension(modelPath)
                         .Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) &&
-                    state.Source.ContainsFile(modelPath))
+                    FindGameplayTraversalContainer(
+                        state.Source,
+                        GetGameplayTraversalContainers(state),
+                        modelPath) != null)
                 {
                     result[modelPath] =
                         result.GetValueOrDefault(modelPath) + parentProbability;
@@ -3289,9 +3301,13 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyCollection<string> targetWsModels,
             IEnumerable<string> fallbackRoots)
         {
-            if (model == null)
+            if (model == null || model.CultureWeights.Count == 0)
                 return 0;
 
+            var normalizedTargets = targetWsModels
+                .Select(Normalize)
+                .Where(path => path.Length != 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var fallbackCoveredByCategory = model.Scenario.ArmySlotTemplate.Keys.ToDictionary(
                 category => category,
                 _ => new HashSet<string>(StringComparer.OrdinalIgnoreCase));
@@ -3308,133 +3324,170 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            var notResidentProbability = 1.0;
-            foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
+            var probabilitiesByCulture = new Dictionary<string, double>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var culture in model.CultureWeights.Keys)
             {
-                var population = model.UnitsByCategory[category].Count;
-                if (population == 0)
-                    continue;
-
-                var normalizedTargets = targetWsModels
-                    .Select(Normalize)
-                    .Where(path => path.Length != 0)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                double perSlotPresenceProbability = 0;
-                foreach (var unitId in model.UnitsByCategory[category])
+                if (!model.UnitsByCultureAndCategory.TryGetValue(
+                        culture,
+                        out var unitsByCategory))
                 {
-                    double unitCardPresenceProbability = 0;
-                    var notPresentAcrossRoles = 1.0;
-                    var exactRoles = new HashSet<Wh3UnitVisualRole>();
-
-                    // Prefer exact VMD configurations for union probability. Summing marginal
-                    // probabilities is wrong when target assets can overlap in the same state
-                    // (e.g. two independent 50% slots have union 75%, not 100%).
-                    if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
-                            unitId,
-                            out var configurationsByRole))
-                    {
-                        foreach (var (role, configurations) in configurationsByRole)
-                        {
-                            if (configurations.Count == 0)
-                                continue;
-
-                            exactRoles.Add(role);
-                            var perEntityPresenceProbability = configurations
-                                .Where(configuration =>
-                                    configuration.WsModelOccurrences.Any(entry =>
-                                        entry.Value > 0 &&
-                                        normalizedTargets.Contains(entry.Key)))
-                                .Sum(configuration => configuration.Probability);
-                            perEntityPresenceProbability = Math.Clamp(
-                                perEntityPresenceProbability,
-                                0.0,
-                                1.0);
-                            if (perEntityPresenceProbability <= 0)
-                                continue;
-
-                            var entityCount = Math.Max(
-                                1,
-                                model.EntityCountByUnitAndRole
-                                    .GetValueOrDefault(unitId)?
-                                    .GetValueOrDefault(role, 1) ?? 1);
-                            notPresentAcrossRoles *= Math.Pow(
-                                1.0 - perEntityPresenceProbability,
-                                entityCount);
-                        }
-                    }
-
-                    // Direct assets and any VMD too large for exact enumeration retain the
-                    // marginal fallback. Skip roles already evaluated exactly so their target
-                    // union is not counted twice.
-                    if (model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
-                            unitId,
-                            out var expectedOccurrences))
-                    {
-                        var expectedPresenceByRole =
-                            new Dictionary<Wh3UnitVisualRole, double>();
-                        foreach (var wsModelPath in normalizedTargets)
-                        {
-                            if (!expectedOccurrences.ByWsModel.TryGetValue(
-                                    wsModelPath,
-                                    out var occurrencesByRole))
-                            {
-                                continue;
-                            }
-
-                            foreach (var (role, expectedOccurrencesPerEntity) in occurrencesByRole)
-                            {
-                                if (exactRoles.Contains(role))
-                                    continue;
-
-                                expectedPresenceByRole[role] =
-                                    expectedPresenceByRole.GetValueOrDefault(role) +
-                                    expectedOccurrencesPerEntity;
-                            }
-                        }
-
-                        foreach (var (role, expectedOccurrencesPerEntity) in expectedPresenceByRole)
-                        {
-                            if (expectedOccurrencesPerEntity <= 0)
-                                continue;
-
-                            var entityCount = Math.Max(
-                                1,
-                                model.EntityCountByUnitAndRole
-                                    .GetValueOrDefault(unitId)?
-                                    .GetValueOrDefault(role, 1) ?? 1);
-                            notPresentAcrossRoles *= Math.Pow(
-                                1.0 - Math.Clamp(expectedOccurrencesPerEntity, 0.0, 1.0),
-                                entityCount);
-                        }
-
-                        unitCardPresenceProbability = 1.0 - notPresentAcrossRoles;
-                    }
-                    else if (exactRoles.Count != 0)
-                    {
-                        unitCardPresenceProbability = 1.0 - notPresentAcrossRoles;
-                    }
-                    else if (fallbackCoveredByCategory[category].Contains(unitId))
-                    {
-                        unitCardPresenceProbability = 1.0;
-                    }
-
-                    if (unitCardPresenceProbability <= 0)
-                        continue;
-
-                    perSlotPresenceProbability +=
-                        unitCardPresenceProbability / population;
+                    continue;
                 }
 
-                perSlotPresenceProbability = Math.Clamp(
-                    perSlotPresenceProbability,
+                var notResidentProbability = 1.0;
+                foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
+                {
+                    if (!unitsByCategory.TryGetValue(category, out var cultureUnits))
+                        continue;
+
+                    var population = cultureUnits.Count;
+                    if (population == 0)
+                        continue;
+
+                    double perSlotPresenceProbability = 0;
+                    foreach (var unitId in cultureUnits)
+                    {
+                        double unitCardPresenceProbability = 0;
+                        var notPresentAcrossRoles = 1.0;
+                        var exactRoles = new HashSet<Wh3UnitVisualRole>();
+
+                        if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
+                                unitId,
+                                out var configurationsByRole))
+                        {
+                            foreach (var (role, configurations) in configurationsByRole)
+                            {
+                                if (configurations.Count == 0)
+                                    continue;
+
+                                exactRoles.Add(role);
+                                var perEntityPresenceProbability = configurations
+                                    .Where(configuration =>
+                                        configuration.WsModelOccurrences.Any(entry =>
+                                            entry.Value > 0 &&
+                                            normalizedTargets.Contains(entry.Key)))
+                                    .Sum(configuration => configuration.Probability);
+                                perEntityPresenceProbability = Math.Clamp(
+                                    perEntityPresenceProbability,
+                                    0.0,
+                                    1.0);
+                                if (perEntityPresenceProbability <= 0)
+                                    continue;
+
+                                var entityCount = Math.Max(
+                                    1,
+                                    model.EntityCountByUnitAndRole
+                                        .GetValueOrDefault(unitId)?
+                                        .GetValueOrDefault(role, 1) ?? 1);
+                                notPresentAcrossRoles *= Math.Pow(
+                                    1.0 - perEntityPresenceProbability,
+                                    entityCount);
+                            }
+                        }
+
+                        if (model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
+                                unitId,
+                                out var expectedOccurrences))
+                        {
+                            var expectedPresenceByRole =
+                                new Dictionary<Wh3UnitVisualRole, double>();
+                            foreach (var wsModelPath in normalizedTargets)
+                            {
+                                if (!expectedOccurrences.ByWsModel.TryGetValue(
+                                        wsModelPath,
+                                        out var occurrencesByRole))
+                                {
+                                    continue;
+                                }
+
+                                foreach (var (role, expectedOccurrencesPerEntity) in occurrencesByRole)
+                                {
+                                    if (exactRoles.Contains(role))
+                                        continue;
+
+                                    expectedPresenceByRole[role] =
+                                        expectedPresenceByRole.GetValueOrDefault(role) +
+                                        expectedOccurrencesPerEntity;
+                                }
+                            }
+
+                            foreach (var (role, expectedOccurrencesPerEntity) in expectedPresenceByRole)
+                            {
+                                if (expectedOccurrencesPerEntity <= 0)
+                                    continue;
+
+                                var entityCount = Math.Max(
+                                    1,
+                                    model.EntityCountByUnitAndRole
+                                        .GetValueOrDefault(unitId)?
+                                        .GetValueOrDefault(role, 1) ?? 1);
+                                notPresentAcrossRoles *= Math.Pow(
+                                    1.0 - Math.Clamp(expectedOccurrencesPerEntity, 0.0, 1.0),
+                                    entityCount);
+                            }
+
+                            unitCardPresenceProbability = 1.0 - notPresentAcrossRoles;
+                        }
+                        else if (exactRoles.Count != 0)
+                        {
+                            unitCardPresenceProbability = 1.0 - notPresentAcrossRoles;
+                        }
+                        else if (fallbackCoveredByCategory[category].Contains(unitId))
+                        {
+                            unitCardPresenceProbability = 1.0;
+                        }
+
+                        if (unitCardPresenceProbability <= 0)
+                            continue;
+
+                        perSlotPresenceProbability +=
+                            unitCardPresenceProbability / population;
+                    }
+
+                    perSlotPresenceProbability = Math.Clamp(
+                        perSlotPresenceProbability,
+                        0.0,
+                        1.0);
+                    notResidentProbability *= Math.Pow(
+                        1.0 - perSlotPresenceProbability,
+                        slotCount);
+                }
+
+                probabilitiesByCulture[culture] = Math.Clamp(
+                    1.0 - notResidentProbability,
                     0.0,
                     1.0);
-                notResidentProbability *= Math.Pow(
-                    1.0 - perSlotPresenceProbability,
-                    slotCount);
             }
 
-            return Math.Clamp(1.0 - notResidentProbability, 0.0, 1.0);
+            return CombineCultureResidentProbabilities(
+                probabilitiesByCulture,
+                model.CultureWeights);
+        }
+
+        private static double CombineCultureResidentProbabilities(
+            IReadOnlyDictionary<string, double> probabilitiesByCulture,
+            IReadOnlyDictionary<string, double> cultureWeights)
+        {
+            var totalWeight = cultureWeights.Values
+                .Where(weight => weight > 0)
+                .Sum();
+            if (totalWeight <= 0)
+                return 0;
+
+            double total = 0;
+            foreach (var (culture, weight) in cultureWeights)
+            {
+                if (weight <= 0)
+                    continue;
+
+                total += weight * Math.Clamp(
+                    probabilitiesByCulture.GetValueOrDefault(culture),
+                    0.0,
+                    1.0);
+            }
+
+            return Math.Clamp(total / totalWeight, 0.0, 1.0);
         }
 
         private static double CalculateExpectedArmyResidentPixels(
@@ -3467,6 +3520,30 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return total;
+        }
+
+        private static HashSet<string> GetArmyCulturesForRoots(
+            ArmyResidencyModel? model,
+            IEnumerable<string> roots)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (model == null)
+                return result;
+
+            foreach (var rootValue in roots)
+            {
+                var root = Normalize(rootValue);
+                if (!model.UnitsByVmd.TryGetValue(root, out var byCategory))
+                    continue;
+
+                foreach (var unitId in byCategory.Values.SelectMany(unitIds => unitIds))
+                {
+                    if (model.CulturesByUnit.TryGetValue(unitId, out var cultures))
+                        result.UnionWith(cultures);
+                }
+            }
+
+            return result;
         }
 
         private static HashSet<Wh3ArmyUnitCategory> GetArmyCategoriesForRoots(
@@ -3811,10 +3888,20 @@ namespace Editors.KitbasherEditor.Services
                 proposals.Add(new AtlasBatchSplitProposal(left, right));
             }
 
-            // Army-category boundaries are cheap, high-value proposals for the expected
-            // battle-residency objective. Shared source/crop identities remain indivisible.
+            // Culture is the primary residency boundary. Units from different cultures are
+            // never sampled into one army, so propose separating cross-culture atlas groups
+            // before trying category/root locality splits.
             if (armyModel != null)
             {
+                foreach (var culture in armyModel.CultureWeights.Keys)
+                {
+                    AddProposal(groups.Where(group =>
+                        GetArmyCulturesForRoots(
+                            armyModel,
+                            rootsByGroup[group.Identity])
+                        .Contains(culture)));
+                }
+
                 foreach (var category in armyModel.Scenario.ArmySlotTemplate.Keys)
                 {
                     AddProposal(groups.Where(group =>
@@ -4841,103 +4928,109 @@ namespace Editors.KitbasherEditor.Services
                     if (lodProbability <= 0)
                         continue;
 
-                    foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
+                    foreach (var (culture, cultureWeight) in model.CultureWeights)
                     {
-                        var population = model.UnitsByCategory[category].Count;
-                        if (population == 0)
-                            continue;
-
-                        double eliminatedDrawsAcrossResolvedUnits = 0;
-                        foreach (var unitId in model.UnitsByCategory[category])
+                        if (cultureWeight <= 0 ||
+                            !model.UnitsByCultureAndCategory.TryGetValue(
+                                culture,
+                                out var unitsByCategory))
                         {
-                            var usedExactConfigurations = false;
-                            if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
-                                    unitId,
-                                    out var configurationsByRole) &&
-                                configurationsByRole.Count != 0)
-                            {
-                                usedExactConfigurations = true;
-                                foreach (var (role, configurations) in configurationsByRole)
-                                {
-                                    var entityCount = Math.Max(
-                                        1,
-                                        model.EntityCountByUnitAndRole
-                                            .GetValueOrDefault(unitId)?
-                                            .GetValueOrDefault(role, 1) ?? 1);
-
-                                    var configurationProbabilities = new List<double>();
-                                    var coRenderedCountsByConfiguration = new List<int[]>();
-                                    foreach (var configuration in configurations)
-                                    {
-                                        if (configuration.Probability <= 0)
-                                            continue;
-
-                                        var coRenderedCounts = new int[meshes.Length];
-                                        for (var meshIndex = 0; meshIndex < meshes.Length; meshIndex++)
-                                        {
-                                            var mesh = meshes[meshIndex];
-                                            if (!state.Usages.TryGetValue(mesh, out var usages))
-                                                continue;
-
-                                            coRenderedCounts[meshIndex] = usages
-                                                .Select(usage => Normalize(usage.AssetPath))
-                                                .Where(path => path.Length != 0)
-                                                .Distinct(StringComparer.OrdinalIgnoreCase)
-                                                .Sum(path => configuration.WsModelOccurrences
-                                                    .GetValueOrDefault(path));
-                                        }
-
-                                        configurationProbabilities.Add(configuration.Probability);
-                                        coRenderedCountsByConfiguration.Add(coRenderedCounts);
-                                    }
-
-                                    // Evaluate concrete visual states, not marginal averages.
-                                    // Mutually-exclusive mesh alternatives can therefore never
-                                    // earn draw-call credit together.
-                                    eliminatedDrawsAcrossResolvedUnits +=
-                                        CalculateExpectedConfigurationMergeDrawSavings(
-                                            configurationProbabilities.ToArray(),
-                                            coRenderedCountsByConfiguration.ToArray(),
-                                            entityCount);
-                                }
-                            }
-
-                            if (usedExactConfigurations)
-                                continue;
-
-                            // Bounded fallback for VMDs whose configuration state space was too
-                            // large to enumerate exactly. This retains the previous conservative
-                            // marginal estimate instead of making the optimizer fail.
-                            var expectedCounts = new List<double>(meshes.Length);
-                            foreach (var mesh in meshes)
-                            {
-                                if (!expectedEntitiesByMesh.TryGetValue(mesh, out var meshUnits) ||
-                                    !meshUnits.TryGetValue(category, out var expectedByUnit) ||
-                                    !expectedByUnit.TryGetValue(unitId, out var expectedEntities) ||
-                                    expectedEntities <= 0)
-                                {
-                                    continue;
-                                }
-
-                                expectedCounts.Add(expectedEntities);
-                            }
-
-                            if (expectedCounts.Count >= 2)
-                            {
-                                eliminatedDrawsAcrossResolvedUnits +=
-                                    expectedCounts.Min() * (expectedCounts.Count - 1);
-                            }
+                            continue;
                         }
 
-                        if (eliminatedDrawsAcrossResolvedUnits <= 0)
-                            continue;
+                        foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
+                        {
+                            if (!unitsByCategory.TryGetValue(category, out var cultureUnits))
+                                continue;
 
-                        // Draw calls scale with rendered entity instances. Average the expected
-                        // per-unit-card saving across the category, then multiply by the number
-                        // of representative army slots in that category.
-                        total += lodProbability *
-                            slotCount *
-                            (eliminatedDrawsAcrossResolvedUnits / population);
+                            var population = cultureUnits.Count;
+                            if (population == 0)
+                                continue;
+
+                            double eliminatedDrawsAcrossResolvedUnits = 0;
+                            foreach (var unitId in cultureUnits)
+                            {
+                                var usedExactConfigurations = false;
+                                if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
+                                        unitId,
+                                        out var configurationsByRole) &&
+                                    configurationsByRole.Count != 0)
+                                {
+                                    usedExactConfigurations = true;
+                                    foreach (var (role, configurations) in configurationsByRole)
+                                    {
+                                        var entityCount = Math.Max(
+                                            1,
+                                            model.EntityCountByUnitAndRole
+                                                .GetValueOrDefault(unitId)?
+                                                .GetValueOrDefault(role, 1) ?? 1);
+
+                                        var configurationProbabilities = new List<double>();
+                                        var coRenderedCountsByConfiguration = new List<int[]>();
+                                        foreach (var configuration in configurations)
+                                        {
+                                            if (configuration.Probability <= 0)
+                                                continue;
+
+                                            var coRenderedCounts = new int[meshes.Length];
+                                            for (var meshIndex = 0; meshIndex < meshes.Length; meshIndex++)
+                                            {
+                                                var mesh = meshes[meshIndex];
+                                                if (!state.Usages.TryGetValue(mesh, out var usages))
+                                                    continue;
+
+                                                coRenderedCounts[meshIndex] = usages
+                                                    .Select(usage => Normalize(usage.AssetPath))
+                                                    .Where(path => path.Length != 0)
+                                                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                                                    .Sum(path => configuration.WsModelOccurrences
+                                                        .GetValueOrDefault(path));
+                                            }
+
+                                            configurationProbabilities.Add(configuration.Probability);
+                                            coRenderedCountsByConfiguration.Add(coRenderedCounts);
+                                        }
+
+                                        eliminatedDrawsAcrossResolvedUnits +=
+                                            CalculateExpectedConfigurationMergeDrawSavings(
+                                                configurationProbabilities.ToArray(),
+                                                coRenderedCountsByConfiguration.ToArray(),
+                                                entityCount);
+                                    }
+                                }
+
+                                if (usedExactConfigurations)
+                                    continue;
+
+                                var expectedCounts = new List<double>(meshes.Length);
+                                foreach (var mesh in meshes)
+                                {
+                                    if (!expectedEntitiesByMesh.TryGetValue(mesh, out var meshUnits) ||
+                                        !meshUnits.TryGetValue(category, out var expectedByUnit) ||
+                                        !expectedByUnit.TryGetValue(unitId, out var expectedEntities) ||
+                                        expectedEntities <= 0)
+                                    {
+                                        continue;
+                                    }
+
+                                    expectedCounts.Add(expectedEntities);
+                                }
+
+                                if (expectedCounts.Count >= 2)
+                                {
+                                    eliminatedDrawsAcrossResolvedUnits +=
+                                        expectedCounts.Min() * (expectedCounts.Count - 1);
+                                }
+                            }
+
+                            if (eliminatedDrawsAcrossResolvedUnits <= 0)
+                                continue;
+
+                            total += cultureWeight *
+                                lodProbability *
+                                slotCount *
+                                (eliminatedDrawsAcrossResolvedUnits / population);
+                        }
                     }
                 }
             }
@@ -7368,10 +7461,12 @@ namespace Editors.KitbasherEditor.Services
                         state.AtlasValueGateRewrittenSourceReferences.Contains(reference) ||
                         proposedRewrites.Contains(reference));
                 var currentlyRetired = IsAtlasValueGateSourceTextureRetired(
+                    sourceTexture.IsOwnedBySourcePack,
                     sourceTexture.HasDirectVmdReference,
                     sourceTexture.References.Count,
                     currentlyRewrittenReferenceCount);
                 var retiredAfterProposal = IsAtlasValueGateSourceTextureRetired(
+                    sourceTexture.IsOwnedBySourcePack,
                     sourceTexture.HasDirectVmdReference,
                     sourceTexture.References.Count,
                     rewrittenReferenceCountAfterProposal);
@@ -7441,10 +7536,12 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static bool IsAtlasValueGateSourceTextureRetired(
+            bool isOwnedBySourcePack,
             bool hasDirectVmdReference,
             int referenceCount,
             int rewrittenReferenceCount)
-            => !hasDirectVmdReference &&
+            => isOwnedBySourcePack &&
+               !hasDirectVmdReference &&
                referenceCount > 0 &&
                rewrittenReferenceCount >= referenceCount;
 
@@ -7496,10 +7593,60 @@ namespace Editors.KitbasherEditor.Services
         private static Dictionary<string, AtlasValueGateSourceTexture>
             BuildAtlasValueGateSourceTextureIndex(BatchState state)
         {
-            // Use the complete source dependency closure, not just the WSModels reached while
-            // discovering atlas candidates. Gameplay-used mode deliberately leaves some source
-            // roots untouched, and their material references must still block source-texture
-            // retirement credit.
+            var loadedContainers = GetGameplayTraversalContainers(state);
+            var referencesByTexture =
+                new Dictionary<string, HashSet<AtlasValueGateSourceReference>>(
+                    StringComparer.OrdinalIgnoreCase);
+            var textureFiles = new Dictionary<
+                string,
+                (PackFile File, bool IsOwnedBySourcePack)>(
+                StringComparer.OrdinalIgnoreCase);
+
+            bool TryResolveTexture(
+                string texturePathValue,
+                out string texturePath,
+                out PackFile textureFile,
+                out bool isOwnedBySourcePack)
+            {
+                texturePath = Normalize(texturePathValue);
+                textureFile = null!;
+                isOwnedBySourcePack = false;
+                if (texturePath.Length == 0 ||
+                    IsTexturePlaceholder(texturePath))
+                {
+                    return false;
+                }
+
+                var textureContainer = FindGameplayTraversalContainer(
+                    state.Source,
+                    loadedContainers,
+                    texturePath);
+                var resolvedFile = textureContainer?.FindFile(texturePath);
+                if (textureContainer == null || resolvedFile == null)
+                    return false;
+
+                textureFile = resolvedFile;
+                isOwnedBySourcePack = ReferenceEquals(textureContainer, state.Source);
+                textureFiles[texturePath] = (textureFile, isOwnedBySourcePack);
+                return true;
+            }
+
+            void AddReference(
+                string texturePath,
+                AtlasValueGateSourceReference reference)
+            {
+                if (!referencesByTexture.TryGetValue(texturePath, out var references))
+                {
+                    references = [];
+                    referencesByTexture[texturePath] = references;
+                }
+
+                references.Add(reference);
+            }
+
+            // Start with the selected-pack closure, then add every WSModel/rigid that can be
+            // reached by a unit in the culture-local army model. CA assets are read-only
+            // consumers: they can keep a DDS resident, but are never proposed rewrites.
             var reachableWsModels = state.SourceReachableAssetFiles
                 .Where(path => Path.GetExtension(path).Equals(
                     ".wsmodel",
@@ -7508,27 +7655,36 @@ namespace Editors.KitbasherEditor.Services
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             reachableWsModels.UnionWith(state.ReachableWsModelsByRoot.Values
                 .SelectMany(paths => paths)
-                .Select(Normalize)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase));
-            reachableWsModels.UnionWith(
-                state.UnitCategoryResolution?.DirectAssetUsagesByPath.Keys
-                    .Where(path => Path.GetExtension(path).Equals(
-                        ".wsmodel",
-                        StringComparison.OrdinalIgnoreCase))
-                    .Select(Normalize)
-                ?? []);
-            var referencesByTexture =
-                new Dictionary<string, HashSet<AtlasValueGateSourceReference>>(
-                    StringComparer.OrdinalIgnoreCase);
-
-            // Walk every reachable WSModel material entry, not just the mesh-usage index.
-            // Entries with missing/invalid lod_index or part_index are deliberately retained
-            // with Mesh=null so they can block source-texture retirement credit.
-            foreach (var (wsModelPathValue, wsDocument) in state.WsDocuments)
+                .Select(Normalize));
+            if (state.ArmyResidencyModel != null)
             {
-                var wsModelPath = Normalize(wsModelPathValue);
-                if (!reachableWsModels.Contains(wsModelPath))
+                reachableWsModels.UnionWith(
+                    state.ArmyResidencyModel.ExpectedWsModelOccurrencesByUnit.Values
+                        .SelectMany(occurrences => occurrences.ByWsModel.Keys)
+                        .Where(path => Path.GetExtension(path).Equals(
+                            ".wsmodel",
+                            StringComparison.OrdinalIgnoreCase))
+                        .Select(Normalize));
+            }
+
+            foreach (var wsModelPath in reachableWsModels)
+            {
+                var wsContainer = FindGameplayTraversalContainer(
+                    state.Source,
+                    loadedContainers,
+                    wsModelPath);
+                var wsFile = wsContainer?.FindFile(wsModelPath);
+                if (wsContainer == null ||
+                    wsFile == null ||
+                    !TryGetWsDocumentForTraversal(
+                        state,
+                        wsContainer,
+                        wsModelPath,
+                        wsFile,
+                        out var wsDocument))
+                {
                     continue;
+                }
 
                 var geometryPath = Normalize(
                     wsDocument.SelectSingleNode("/model/geometry")?.InnerText);
@@ -7547,15 +7703,22 @@ namespace Editors.KitbasherEditor.Services
                     }
 
                     var materialPath = Normalize(materialNode.InnerText);
-                    if (string.IsNullOrWhiteSpace(materialPath))
+                    if (materialPath.Length == 0)
                         continue;
 
-                    XmlDocument material;
-                    try
-                    {
-                        material = GetMaterialDocument(state, materialPath);
-                    }
-                    catch
+                    var materialContainer = FindGameplayTraversalContainer(
+                        state.Source,
+                        loadedContainers,
+                        materialPath);
+                    var materialFile = materialContainer?.FindFile(materialPath);
+                    if (materialContainer == null ||
+                        materialFile == null ||
+                        !TryGetMaterialDocumentForTraversal(
+                            state,
+                            materialContainer,
+                            materialPath,
+                            materialFile,
+                            out var material))
                     {
                         continue;
                     }
@@ -7575,59 +7738,54 @@ namespace Editors.KitbasherEditor.Services
                         var slotOccurrence = occurrenceBySlot.GetValueOrDefault(normalizedSlot);
                         occurrenceBySlot[normalizedSlot] = slotOccurrence + 1;
 
-                        var texturePath = Normalize(
+                        var texturePathValue =
                             textureNode.SelectSingleNode("source")?.InnerText ??
-                            textureNode.InnerText);
-                        if (string.IsNullOrWhiteSpace(texturePath) ||
-                            IsTexturePlaceholder(texturePath) ||
-                            state.Source.FindFile(texturePath) == null)
+                            textureNode.InnerText;
+                        if (!TryResolveTexture(
+                                texturePathValue,
+                                out var texturePath,
+                                out _,
+                                out _))
                         {
                             continue;
                         }
 
-                        if (!referencesByTexture.TryGetValue(
-                                texturePath,
-                                out var references))
-                        {
-                            references = [];
-                            referencesByTexture[texturePath] = references;
-                        }
-
-                        // Index every material texture reference, not only channels we atlas.
-                        // A source DDS cannot be credited as retired while an emissive/custom
-                        // slot, duplicate slot occurrence, or unindexed material entry still
-                        // points at it.
-                        references.Add(new AtlasValueGateSourceReference(
-                            mesh,
-                            wsModelPath.ToLowerInvariant(),
-                            normalizedSlot,
-                            slotOccurrence));
+                        AddReference(
+                            texturePath,
+                            new AtlasValueGateSourceReference(
+                                mesh,
+                                wsModelPath.ToLowerInvariant(),
+                                normalizedSlot,
+                                slotOccurrence));
                     }
                 }
             }
 
-            // Engine rows can point directly at a rigid_model_v2 without a WSModel/material
-            // layer. Index its embedded material textures with the same identity used by the
-            // synthetic direct-asset candidates, so the value gate can credit source textures
-            // that become unreachable after the rigid is rewritten.
             var directRigidPaths = state.SourceReachableAssetFiles
                 .Where(path => Path.GetExtension(path).Equals(
                     ".rigid_model_v2",
                     StringComparison.OrdinalIgnoreCase))
                 .Select(Normalize)
-                .Concat(
-                    state.UnitCategoryResolution?.DirectAssetUsagesByPath.Keys
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (state.ArmyResidencyModel != null)
+            {
+                directRigidPaths.UnionWith(
+                    state.ArmyResidencyModel.ExpectedWsModelOccurrencesByUnit.Values
+                        .SelectMany(occurrences => occurrences.ByWsModel.Keys)
                         .Where(path => Path.GetExtension(path).Equals(
                             ".rigid_model_v2",
                             StringComparison.OrdinalIgnoreCase))
-                        .Select(Normalize)
-                    ?? [])
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+                        .Select(Normalize));
+            }
+
             foreach (var rigidPath in directRigidPaths)
             {
-                var rigidFile = state.Source.FindFile(rigidPath);
-                if (rigidFile == null)
+                var rigidContainer = FindGameplayTraversalContainer(
+                    state.Source,
+                    loadedContainers,
+                    rigidPath);
+                var rigidFile = rigidContainer?.FindFile(rigidPath);
+                if (rigidContainer == null || rigidFile == null)
                     continue;
 
                 try
@@ -7654,32 +7812,29 @@ namespace Editors.KitbasherEditor.Services
                                 var normalizedSlot = string.IsNullOrWhiteSpace(slot)
                                     ? "__unslotted__"
                                     : slot.ToLowerInvariant();
-                                var slotOccurrence = occurrenceBySlot.GetValueOrDefault(normalizedSlot);
+                                var slotOccurrence =
+                                    occurrenceBySlot.GetValueOrDefault(normalizedSlot);
                                 occurrenceBySlot[normalizedSlot] = slotOccurrence + 1;
 
-                                var texturePath = Normalize(
+                                var texturePathValue =
                                     textureNode.SelectSingleNode("source")?.InnerText ??
-                                    textureNode.InnerText);
-                                if (string.IsNullOrWhiteSpace(texturePath) ||
-                                    IsTexturePlaceholder(texturePath) ||
-                                    state.Source.FindFile(texturePath) == null)
+                                    textureNode.InnerText;
+                                if (!TryResolveTexture(
+                                        texturePathValue,
+                                        out var texturePath,
+                                        out _,
+                                        out _))
                                 {
                                     continue;
                                 }
 
-                                if (!referencesByTexture.TryGetValue(
-                                        texturePath,
-                                        out var references))
-                                {
-                                    references = [];
-                                    referencesByTexture[texturePath] = references;
-                                }
-
-                                references.Add(new AtlasValueGateSourceReference(
-                                    mesh,
-                                    rigidPath.ToLowerInvariant(),
-                                    normalizedSlot,
-                                    slotOccurrence));
+                                AddReference(
+                                    texturePath,
+                                    new AtlasValueGateSourceReference(
+                                        mesh,
+                                        rigidPath.ToLowerInvariant(),
+                                        normalizedSlot,
+                                        slotOccurrence));
                             }
                         }
                     }
@@ -7709,15 +7864,14 @@ namespace Editors.KitbasherEditor.Services
                 StringComparer.OrdinalIgnoreCase);
             foreach (var (texturePath, references) in referencesByTexture)
             {
-                var file = state.Source.FindFile(texturePath);
-                if (file == null)
+                if (!textureFiles.TryGetValue(texturePath, out var source))
                     continue;
 
                 DdsBcnResidencyEstimate bcn;
                 try
                 {
                     if (!DdsBcnResidencyEstimator.TryEstimate(
-                            file.DataSource.PeekData(148),
+                            source.File.DataSource.PeekData(148),
                             out bcn))
                     {
                         continue;
@@ -7730,6 +7884,7 @@ namespace Editors.KitbasherEditor.Services
 
                 result[texturePath] = new AtlasValueGateSourceTexture(
                     bcn.Bytes,
+                    source.IsOwnedBySourcePack,
                     directVmdTextures.Contains(texturePath),
                     references);
             }
@@ -11802,7 +11957,7 @@ namespace Editors.KitbasherEditor.Services
                    ?? state.PackFileService.FindFile(path);
         }
 
-        private bool TryGetWsDocumentForTraversal(
+        private static bool TryGetWsDocumentForTraversal(
             BatchState state,
             IPackFileContainer container,
             string wsPathValue,
@@ -12731,11 +12886,17 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Atlas VMD roots: {state.AtlasVmdRootCount:N0} / {state.SourceVmdRootCount:N0}");
             if (state.UnitCategoryResolution != null)
             {
-                sb.AppendLine(
-                    $"Atlas value-model roster scope: {state.UnitCategoryResolution.Scenario.RosterScope}" +
-                    (string.IsNullOrWhiteSpace(state.UnitCategoryResolution.Scenario.RosterScopeKey)
-                        ? string.Empty
-                        : $" ({state.UnitCategoryResolution.Scenario.RosterScopeKey})"));
+                if (state.ArmyResidencyModel != null)
+                {
+                    sb.AppendLine(
+                        $"Atlas value-model roster scope: culture-local " +
+                        $"({(state.ArmyResidencyModel.IncludesAllGameCultures ? "all game cultures" : "pack-affected cultures")})");
+                    sb.AppendLine(
+                        $"Atlas value-model cultures: {state.ArmyResidencyModel.CultureWeights.Count:N0} " +
+                        $"[{string.Join(", ", state.ArmyResidencyModel.CultureWeights.Keys.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))}]");
+                    sb.AppendLine(
+                        "Vanilla visual assets: read-only residency consumers (never rewritten; never physically retired).");
+                }
                 var gameplayEligibleVmdCount = state.UnitCategoryResolution.UsagesByVmd.Keys
                     .Count(state.UnitCategoryResolution.IsVmdUsageComplete);
                 sb.AppendLine(
@@ -15205,7 +15366,12 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<Wh3ArmyUnitCategory, HashSet<string>> UnitsByCategory,
             IReadOnlyDictionary<
                 string,
+                Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByCultureAndCategory,
+            IReadOnlyDictionary<
+                string,
                 Dictionary<Wh3ArmyUnitCategory, HashSet<string>>> UnitsByVmd,
+            IReadOnlyDictionary<string, IReadOnlySet<string>> CulturesByUnit,
+            IReadOnlyDictionary<string, double> CultureWeights,
             IReadOnlyDictionary<string, int> EntityCountByUnit,
             IReadOnlyDictionary<
                 string,
@@ -15217,7 +15383,8 @@ namespace Editors.KitbasherEditor.Services
                 string,
                 Dictionary<Wh3UnitVisualRole, IReadOnlyList<UnitVisualConfiguration>>>
                 VisualConfigurationsByUnitAndRole,
-            Wh3ArmyVisualScenario Scenario);
+            Wh3ArmyVisualScenario Scenario,
+            bool IncludesAllGameCultures);
 
         private sealed record ArmyLocalitySplitEvaluationReportEntry(
             bool Accepted,
@@ -15245,6 +15412,7 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> TaintedGameplayWsModels { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Wh3UnitCategoryResolution? UnitCategoryResolution { get; set; }
+            public IReadOnlyList<IPackFileContainer>? GameplayTraversalContainers { get; set; }
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
@@ -15627,6 +15795,7 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record AtlasValueGateSourceTexture(
             long BcnBytes,
+            bool IsOwnedBySourcePack,
             bool HasDirectVmdReference,
             HashSet<AtlasValueGateSourceReference> References);
 
