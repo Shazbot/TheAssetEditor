@@ -49,25 +49,56 @@ namespace Test.KitbashEditor.Services
         }
 
 
-        private static double CombineCultureResidentProbabilities(
+        private static double CombineBattleResidentProbabilities(
             IReadOnlyDictionary<string, double> probabilitiesByCulture,
-            IReadOnlyDictionary<string, double> cultureWeights)
+            IReadOnlyDictionary<string, double> playerCultureWeights,
+            IReadOnlyDictionary<string, double> opponentCultureWeights)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
             var serviceType = assembly.GetType(
                 "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
                 throwOnError: true)!;
             var method = serviceType.GetMethod(
-                "CombineCultureResidentProbabilities",
+                "CombineBattleResidentProbabilities",
                 BindingFlags.NonPublic | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
-                    "PackTextureAtlasBatchService.CombineCultureResidentProbabilities was not found.");
+                    "PackTextureAtlasBatchService.CombineBattleResidentProbabilities was not found.");
 
             return (double)(method.Invoke(
                 null,
-                [probabilitiesByCulture, cultureWeights])
+                [probabilitiesByCulture, playerCultureWeights, opponentCultureWeights])
                 ?? throw new InvalidOperationException(
-                    "CombineCultureResidentProbabilities returned null."));
+                    "CombineBattleResidentProbabilities returned null."));
+        }
+
+        private static bool HasSufficientTextureOnlyRetirement(
+            int physicallyRetiredTextureCount,
+            long physicallyRetiredBcnBytes,
+            int scenarioDisplacedTextureCount,
+            double expectedRetiredTextureEquivalents,
+            double expectedRetiredBcnBytes)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "HasSufficientTextureOnlyRetirement",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.HasSufficientTextureOnlyRetirement was not found.");
+
+            return (bool)(method.Invoke(
+                null,
+                [
+                    physicallyRetiredTextureCount,
+                    physicallyRetiredBcnBytes,
+                    scenarioDisplacedTextureCount,
+                    expectedRetiredTextureEquivalents,
+                    expectedRetiredBcnBytes,
+                ])
+                ?? throw new InvalidOperationException(
+                    "HasSufficientTextureOnlyRetirement returned null."));
         }
 
 
@@ -517,41 +548,98 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void CultureResidency_UsesScenarioWeightsInsteadOfCrossCultureCoResidency()
+        public void CultureResidency_UnrelatedOpponentOnlyAddsMirrorChance()
         {
             var probabilities = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
             {
-                ["empire"] = 1.0,
-                ["dwarfs"] = 0.0,
-            };
-            var weights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
-            {
                 ["empire"] = 0.5,
-                ["dwarfs"] = 0.5,
+                ["dwarfs"] = 0.0,
+                ["cathay"] = 0.0,
+            };
+            var playerWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 1.0,
+            };
+            var opponentWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 1.0 / 3.0,
+                ["dwarfs"] = 1.0 / 3.0,
+                ["cathay"] = 1.0 / 3.0,
             };
 
             Assert.That(
-                CombineCultureResidentProbabilities(probabilities, weights),
-                Is.EqualTo(0.5).Within(0.000001));
+                CombineBattleResidentProbabilities(
+                    probabilities,
+                    playerWeights,
+                    opponentWeights),
+                Is.EqualTo(7.0 / 12.0).Within(0.000001));
         }
 
         [Test]
-        public void CultureResidency_SharedTextureStillCountsOnceWithinEachCultureScenario()
+        public void CultureResidency_GenuineCrossCultureSharingContributesWithoutPairMatrix()
         {
             var probabilities = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
             {
-                ["empire"] = 1.0,
-                ["dwarfs"] = 1.0,
+                ["empire"] = 0.5,
+                ["dwarfs"] = 0.25,
+                ["cathay"] = 0.0,
             };
-            var weights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            var playerWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
             {
-                ["empire"] = 0.25,
-                ["dwarfs"] = 0.75,
+                ["empire"] = 1.0,
+            };
+            var opponentWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 1.0 / 3.0,
+                ["dwarfs"] = 1.0 / 3.0,
+                ["cathay"] = 1.0 / 3.0,
             };
 
             Assert.That(
-                CombineCultureResidentProbabilities(probabilities, weights),
-                Is.EqualTo(1.0).Within(0.000001));
+                CombineBattleResidentProbabilities(
+                    probabilities,
+                    playerWeights,
+                    opponentWeights),
+                Is.EqualTo(0.625).Within(0.000001));
+        }
+
+        [Test]
+        public void CultureResidency_SameCultureOpponentUsesUnionNotDoubleCounting()
+        {
+            var probabilities = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 0.5,
+            };
+            var weights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["empire"] = 1.0,
+            };
+
+            Assert.That(
+                CombineBattleResidentProbabilities(probabilities, weights, weights),
+                Is.EqualTo(0.75).Within(0.000001));
+        }
+
+        [TestCase(2, 1024L, 0, 0.0, 0.0, true)]
+        [TestCase(0, 0L, 2, 1.0, 1024.0, true)]
+        [TestCase(0, 0L, 2, 0.99, 1024.0, false)]
+        [TestCase(0, 0L, 1, 1.0, 1024.0, false)]
+        public void TextureOnlyFallback_AllowsScenarioDisplacementWithoutPhysicalRetirement(
+            int physicallyRetiredTextureCount,
+            long physicallyRetiredBcnBytes,
+            int scenarioDisplacedTextureCount,
+            double expectedRetiredTextureEquivalents,
+            double expectedRetiredBcnBytes,
+            bool expected)
+        {
+            Assert.That(
+                HasSufficientTextureOnlyRetirement(
+                    physicallyRetiredTextureCount,
+                    physicallyRetiredBcnBytes,
+                    scenarioDisplacedTextureCount,
+                    expectedRetiredTextureEquivalents,
+                    expectedRetiredBcnBytes),
+                Is.EqualTo(expected));
         }
 
         [TestCase("t_xml_mask", "test_mask.dds", true)]
