@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Shared.Core.Misc;
+using Shared.Core.PackFiles.Models;
 using Shared.Core.Settings;
 
 namespace Editors.KitbasherEditor.Services;
@@ -15,8 +16,8 @@ namespace Editors.KitbasherEditor.Services;
 /// </summary>
 internal sealed class Wh3VanillaAtlasConsumerCache
 {
-    private const int CurrentVersion = 1;
-    private const string ParserVersion = "wsmodel-texture-consumers-v1";
+    private const int CurrentVersion = 2;
+    private const string ParserVersion = "wsmodel-texture-consumers-v2";
     private const string CacheFileName = "wh3-atlas-vanilla-consumers.json.gz";
 
     private readonly string _cachePath;
@@ -38,11 +39,12 @@ internal sealed class Wh3VanillaAtlasConsumerCache
     public int CacheMisses { get; private set; }
 
     public static Wh3VanillaAtlasConsumerCache? Load(
-        ApplicationSettingsService settingsService)
+        ApplicationSettingsService settingsService,
+        IReadOnlyList<IPackFileContainer> loadedContainers)
     {
         try
         {
-            var identity = BuildIdentity(settingsService);
+            var identity = BuildIdentity(settingsService, loadedContainers);
             if (identity == null)
                 return null;
 
@@ -230,6 +232,7 @@ internal sealed class Wh3VanillaAtlasConsumerCache
             entry.Materials.RemoveAll(binding => binding == null);
             foreach (var binding in entry.Materials)
                 binding.MaterialPath ??= string.Empty;
+            entry.CompatibilityRepairs = SanitizeRepairs(entry.CompatibilityRepairs);
         }
 
         foreach (var entry in document.Materials.Values)
@@ -241,6 +244,7 @@ internal sealed class Wh3VanillaAtlasConsumerCache
                 texture.TexturePath ??= string.Empty;
                 texture.Slot ??= string.Empty;
             }
+            entry.CompatibilityRepairs = SanitizeRepairs(entry.CompatibilityRepairs);
         }
 
         foreach (var entry in document.Rigids.Values)
@@ -255,14 +259,14 @@ internal sealed class Wh3VanillaAtlasConsumerCache
         }
     }
 
-    private static string? BuildIdentity(ApplicationSettingsService settingsService)
+    private static string? BuildIdentity(
+        ApplicationSettingsService settingsService,
+        IReadOnlyList<IPackFileContainer> loadedContainers)
     {
-        var dataFolder = settingsService.GetGamePathForCurrentGame();
-        if (string.IsNullOrWhiteSpace(dataFolder) || !Directory.Exists(dataFolder))
-            return null;
-
-        var packPaths = GetVanillaPackPaths(dataFolder);
-        if (packPaths.Count == 0)
+        var caContainers = loadedContainers
+            .Where(container => container.IsCaPackFile)
+            .ToArray();
+        if (caContainers.Length == 0)
             return null;
 
         var identityBuilder = new StringBuilder()
@@ -270,25 +274,44 @@ internal sealed class Wh3VanillaAtlasConsumerCache
             .Append(settingsService.CurrentSettings.CurrentGame)
             .Append(";parser=")
             .Append(ParserVersion)
-            .Append(";data=")
-            .Append(NormalizeFileSystemPath(dataFolder))
             .Append(';');
 
-        foreach (var packPath in packPaths)
+        // Tie this cache to the exact CA container snapshots currently being traversed,
+        // rather than re-fingerprinting the live game directory. The database-backed CA
+        // container path is derived from the pack fingerprint, so it remains stable for
+        // the loaded snapshot even if Steam updates the game files while Asset Editor is
+        // still running. If a CA container has no stable snapshot path, disable this
+        // disposable cache rather than risk accepting stale consumer data.
+        for (var index = 0; index < caContainers.Length; index++)
         {
-            identityBuilder.Append(NormalizeFileSystemPath(packPath)).Append('|');
+            var container = caContainers[index];
+            var snapshotPath = container.PackFileSettings.SaveLocationPath;
+            if (container.ContainerType != PackFileContainerType.Database ||
+                string.IsNullOrWhiteSpace(snapshotPath) ||
+                !File.Exists(snapshotPath))
+            {
+                return null;
+            }
+
             try
             {
-                var info = new FileInfo(packPath);
+                var info = new FileInfo(snapshotPath);
                 identityBuilder
-                    .Append(info.Exists ? info.Length : -1)
+                    .Append("ca[")
+                    .Append(index)
+                    .Append("]=")
+                    .Append(container.Name)
                     .Append('|')
-                    .Append(info.Exists ? info.LastWriteTimeUtc.Ticks : -1)
+                    .Append(NormalizeFileSystemPath(snapshotPath))
+                    .Append('|')
+                    .Append(info.Length)
+                    .Append('|')
+                    .Append(info.LastWriteTimeUtc.Ticks)
                     .Append(';');
             }
             catch
             {
-                identityBuilder.Append("unreadable;");
+                return null;
             }
         }
 
@@ -296,31 +319,12 @@ internal sealed class Wh3VanillaAtlasConsumerCache
             SHA256.HashData(Encoding.UTF8.GetBytes(identityBuilder.ToString())));
     }
 
-    private static List<string> GetVanillaPackPaths(string dataFolder)
-    {
-        var manifestPath = Path.Combine(dataFolder, "manifest.txt");
-        if (File.Exists(manifestPath))
-        {
-            var fromManifest = new List<string>();
-            foreach (var line in File.ReadLines(manifestPath))
-            {
-                var packName = line.Split('\t', 2)[0].Trim();
-                if (!packName.EndsWith(".pack", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                fromManifest.Add(Path.GetFullPath(Path.Combine(dataFolder, packName)));
-            }
-
-            if (fromManifest.Count != 0)
-                return fromManifest;
-        }
-
-        return Directory
-            .EnumerateFiles(dataFolder, "*.pack", SearchOption.TopDirectoryOnly)
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Select(Path.GetFullPath)
+    private static List<string> SanitizeRepairs(List<string>? repairs)
+        => (repairs ?? [])
+            .Where(repair => !string.IsNullOrWhiteSpace(repair))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(repair => repair, StringComparer.Ordinal)
             .ToList();
-    }
 
     private static string Normalize(string? path)
         => string.IsNullOrWhiteSpace(path)
@@ -354,6 +358,7 @@ internal sealed class VanillaWsModelConsumerEntry
 {
     public string GeometryPath { get; set; } = string.Empty;
     public List<VanillaWsModelMaterialBinding> Materials { get; set; } = [];
+    public List<string> CompatibilityRepairs { get; set; } = [];
 }
 
 internal sealed class VanillaWsModelMaterialBinding
@@ -366,6 +371,7 @@ internal sealed class VanillaWsModelMaterialBinding
 internal sealed class VanillaMaterialConsumerEntry
 {
     public List<VanillaMaterialTextureReference> Textures { get; set; } = [];
+    public List<string> CompatibilityRepairs { get; set; } = [];
 }
 
 internal sealed class VanillaMaterialTextureReference

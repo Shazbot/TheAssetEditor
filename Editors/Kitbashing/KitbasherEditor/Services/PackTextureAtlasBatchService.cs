@@ -220,7 +220,9 @@ namespace Editors.KitbasherEditor.Services
                 state.CancellationToken = cancellationToken;
                 state.Progress = progress;
                 state.VanillaAtlasConsumerCache =
-                    Wh3VanillaAtlasConsumerCache.Load(_settingsService);
+                    Wh3VanillaAtlasConsumerCache.Load(
+                        _settingsService,
+                        _packFileService.GetAllPackfileContainers());
                 state.ExistingAtlasOutputDetected = HasGeneratedAtlasOutput(source);
 
                 var allVmdPaths = sourcePaths
@@ -9168,6 +9170,10 @@ namespace Editors.KitbasherEditor.Services
             if (IsVanillaAtlasCacheContainer(state, container) &&
                 cache?.TryGetWsModel(wsModelPath, out entry) == true)
             {
+                ReplayXmlCompatibilityRepairs(
+                    state,
+                    wsModelPath,
+                    entry.CompatibilityRepairs);
                 return true;
             }
 
@@ -9183,6 +9189,8 @@ namespace Editors.KitbasherEditor.Services
             }
 
             entry = BuildWsModelConsumerEntry(document);
+            entry.CompatibilityRepairs =
+                GetRecordedXmlCompatibilityRepairs(state, wsModelPath);
             if (IsVanillaAtlasCacheContainer(state, container))
                 cache?.SetWsModel(wsModelPath, entry);
             return true;
@@ -9200,6 +9208,10 @@ namespace Editors.KitbasherEditor.Services
             if (IsVanillaAtlasCacheContainer(state, container) &&
                 cache?.TryGetMaterial(materialPath, out entry) == true)
             {
+                ReplayXmlCompatibilityRepairs(
+                    state,
+                    materialPath,
+                    entry.CompatibilityRepairs);
                 return true;
             }
 
@@ -9215,6 +9227,8 @@ namespace Editors.KitbasherEditor.Services
             }
 
             entry = BuildMaterialConsumerEntry(document);
+            entry.CompatibilityRepairs =
+                GetRecordedXmlCompatibilityRepairs(state, materialPath);
             if (IsVanillaAtlasCacheContainer(state, container))
                 cache?.SetMaterial(materialPath, entry);
             return true;
@@ -9254,6 +9268,27 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             IPackFileContainer container)
             => container.IsCaPackFile && !ReferenceEquals(container, state.Source);
+
+        private static List<string> GetRecordedXmlCompatibilityRepairs(
+            BatchState state,
+            string pathValue)
+        {
+            var path = Normalize(pathValue);
+            return state.XmlCompatibilityRepairs.TryGetValue(path, out var repairs)
+                ? repairs.OrderBy(repair => repair, StringComparer.Ordinal).ToList()
+                : [];
+        }
+
+        private static void ReplayXmlCompatibilityRepairs(
+            BatchState state,
+            string pathValue,
+            IReadOnlyList<string> repairs)
+        {
+            if (repairs.Count == 0)
+                return;
+
+            RecordXmlCompatibilityRepairs(state, pathValue, repairs);
+        }
 
         private static VanillaWsModelConsumerEntry BuildWsModelConsumerEntry(
             XmlDocument document)
