@@ -851,6 +851,7 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     var container = FindGameplayTraversalContainer(
+                        state,
                         state.Source,
                         GetGameplayTraversalContainers(state),
                         wsModelPath);
@@ -1086,6 +1087,7 @@ namespace Editors.KitbasherEditor.Services
                         StringComparison.OrdinalIgnoreCase))
                 {
                     if (FindGameplayTraversalContainer(
+                            state,
                             state.Source,
                             GetGameplayTraversalContainers(state),
                             assetPath) == null)
@@ -1105,6 +1107,7 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var container = FindGameplayTraversalContainer(
+                    state,
                     state.Source,
                     GetGameplayTraversalContainers(state),
                     assetPath);
@@ -1138,6 +1141,7 @@ namespace Editors.KitbasherEditor.Services
                     dependencyIndex?.AddRootReference(modelPath, rootPath);
 
                     var modelContainer = FindGameplayTraversalContainer(
+                        state,
                         state.Source,
                         GetGameplayTraversalContainers(state),
                         modelPath);
@@ -1185,6 +1189,7 @@ namespace Editors.KitbasherEditor.Services
                     dependencyIndex?.AddRootReference(childPath, rootPath);
 
                     if (FindGameplayTraversalContainer(
+                            state,
                             state.Source,
                             GetGameplayTraversalContainers(state),
                             childPath) == null)
@@ -1467,12 +1472,61 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+        // Kept as a small compatibility entry point for existing reflection-based tests and
+        // callers. Production traversal uses the BatchState overload below so repeated path
+        // resolution is memoized for the duration of a batch.
         private static IPackFileContainer? FindGameplayTraversalContainer(
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> loadedContainers,
+            string pathValue)
+            => ResolveGameplayTraversalContainer(
+                source,
+                loadedContainers,
+                Normalize(pathValue));
+
+        private static IPackFileContainer? FindGameplayTraversalContainer(
+            BatchState state,
             IPackFileContainer source,
             IReadOnlyList<IPackFileContainer> loadedContainers,
             string pathValue)
         {
             var path = Normalize(pathValue);
+            if (path.Length == 0)
+                return null;
+
+            if (state.GameplayTraversalContainerResolutions.TryGetValue(
+                    path,
+                    out var cachedResolution))
+            {
+                state.GameplayTraversalContainerResolutionCacheHits++;
+                return cachedResolution.Container;
+            }
+
+            state.GameplayTraversalContainerResolutionScans++;
+
+            var resolvedContainer = ResolveGameplayTraversalContainer(
+                source,
+                loadedContainers,
+                path);
+            if (resolvedContainer != null)
+            {
+                state.GameplayTraversalContainerResolutions[path] =
+                    new GameplayTraversalContainerResolution(resolvedContainer);
+                return resolvedContainer;
+            }
+
+            // Cache negative results too. The source and loaded CA containers are stable for
+            // the duration of a batch, so an unresolved path cannot become resolvable later.
+            state.GameplayTraversalContainerResolutions[path] =
+                GameplayTraversalContainerResolution.Missing;
+            return null;
+        }
+
+        private static IPackFileContainer? ResolveGameplayTraversalContainer(
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> loadedContainers,
+            string path)
+        {
             if (path.Length == 0)
                 return null;
 
@@ -1522,6 +1576,7 @@ namespace Editors.KitbasherEditor.Services
                     continue;
 
                 var container = FindGameplayTraversalContainer(
+                    state,
                     state.Source,
                     loadedContainers,
                     vmdPath);
@@ -1554,6 +1609,7 @@ namespace Editors.KitbasherEditor.Services
                     }
 
                     if (FindGameplayTraversalContainer(
+                            state,
                             state.Source,
                             loadedContainers,
                             model) != null)
@@ -1568,6 +1624,7 @@ namespace Editors.KitbasherEditor.Services
                 {
                     var child = Normalize(childValue);
                     if (FindGameplayTraversalContainer(
+                            state,
                             state.Source,
                             loadedContainers,
                             child) != null)
@@ -3914,6 +3971,7 @@ namespace Editors.KitbasherEditor.Services
             try
             {
                 var container = FindGameplayTraversalContainer(
+                    state,
                     state.Source,
                     GetGameplayTraversalContainers(state),
                     vmdPath);
@@ -3971,6 +4029,7 @@ namespace Editors.KitbasherEditor.Services
             try
             {
                 var container = FindGameplayTraversalContainer(
+                    state,
                     state.Source,
                     GetGameplayTraversalContainers(state),
                     vmdPath);
@@ -4010,6 +4069,7 @@ namespace Editors.KitbasherEditor.Services
                 if (Path.GetExtension(modelPath)
                         .Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) &&
                     FindGameplayTraversalContainer(
+                        state,
                         state.Source,
                         GetGameplayTraversalContainers(state),
                         modelPath) != null)
@@ -4156,6 +4216,7 @@ namespace Editors.KitbasherEditor.Services
                 if (Path.GetExtension(modelPath)
                         .Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) &&
                     FindGameplayTraversalContainer(
+                        state,
                         state.Source,
                         GetGameplayTraversalContainers(state),
                         modelPath) != null)
@@ -9619,6 +9680,7 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var textureContainer = FindGameplayTraversalContainer(
+                    state,
                     state.Source,
                     loadedContainers,
                     texturePath);
@@ -9702,6 +9764,7 @@ namespace Editors.KitbasherEditor.Services
                     "Indexing WSModel texture consumers");
                 var wsModelPath = reachableWsModelPaths[wsModelIndex];
                 var wsContainer = FindGameplayTraversalContainer(
+                    state,
                     state.Source,
                     loadedContainers,
                     wsModelPath);
@@ -9735,6 +9798,7 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     var materialContainer = FindGameplayTraversalContainer(
+                        state,
                         state.Source,
                         loadedContainers,
                         materialPath);
@@ -9813,6 +9877,7 @@ namespace Editors.KitbasherEditor.Services
                     "Indexing direct rigid texture consumers");
                 var rigidPath = directRigidPathValues[rigidIndex];
                 var rigidContainer = FindGameplayTraversalContainer(
+                    state,
                     state.Source,
                     loadedContainers,
                     rigidPath);
@@ -9889,6 +9954,7 @@ namespace Editors.KitbasherEditor.Services
                 // source-pack subset separate: CA VMDs must continue to affect residency and
                 // physical-retirement safety, but must not veto pack-local retirement credit.
                 var vmdContainer = FindGameplayTraversalContainer(
+                    state,
                     state.Source,
                     loadedContainers,
                     vmdPath);
@@ -18011,6 +18077,11 @@ namespace Editors.KitbasherEditor.Services
             public Wh3UnitCategoryResolution? UnitCategoryResolution { get; set; }
             public Wh3VanillaAtlasConsumerCache? VanillaAtlasConsumerCache { get; set; }
             public IReadOnlyList<IPackFileContainer>? GameplayTraversalContainers { get; set; }
+            public Dictionary<string, GameplayTraversalContainerResolution>
+                GameplayTraversalContainerResolutions { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public int GameplayTraversalContainerResolutionCacheHits { get; set; }
+            public int GameplayTraversalContainerResolutionScans { get; set; }
             public GameplayMeshDependencyIndex? GameplayMeshDependencyIndex { get; set; }
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
@@ -18428,6 +18499,12 @@ namespace Editors.KitbasherEditor.Services
             string WsModelPath,
             string Slot,
             int SlotOccurrence);
+
+        private readonly record struct GameplayTraversalContainerResolution(
+            IPackFileContainer? Container)
+        {
+            public static GameplayTraversalContainerResolution Missing { get; } = new(null);
+        }
 
         private readonly record struct ArmyResidencyProbabilityCacheKey(
             string TargetWsModels,
