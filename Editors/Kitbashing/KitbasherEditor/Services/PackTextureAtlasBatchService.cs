@@ -219,6 +219,8 @@ namespace Editors.KitbasherEditor.Services
                     optimizeGeometry);
                 state.CancellationToken = cancellationToken;
                 state.Progress = progress;
+                state.VanillaAtlasConsumerCache =
+                    Wh3VanillaAtlasConsumerCache.Load(_settingsService);
                 state.ExistingAtlasOutputDetected = HasGeneratedAtlasOutput(source);
 
                 var allVmdPaths = sourcePaths
@@ -9154,6 +9156,204 @@ namespace Editors.KitbasherEditor.Services
             return sourceTexture.BcnBytes * residentProbability;
         }
 
+        private static bool TryGetWsModelConsumerEntry(
+            BatchState state,
+            IPackFileContainer container,
+            string wsModelPath,
+            PackFile file,
+            out VanillaWsModelConsumerEntry entry)
+        {
+            wsModelPath = Normalize(wsModelPath);
+            var cache = state.VanillaAtlasConsumerCache;
+            if (IsVanillaAtlasCacheContainer(state, container) &&
+                cache?.TryGetWsModel(wsModelPath, out entry) == true)
+            {
+                return true;
+            }
+
+            if (!TryGetWsDocumentForTraversal(
+                    state,
+                    container,
+                    wsModelPath,
+                    file,
+                    out var document))
+            {
+                entry = null!;
+                return false;
+            }
+
+            entry = BuildWsModelConsumerEntry(document);
+            if (IsVanillaAtlasCacheContainer(state, container))
+                cache?.SetWsModel(wsModelPath, entry);
+            return true;
+        }
+
+        private static bool TryGetMaterialConsumerEntry(
+            BatchState state,
+            IPackFileContainer container,
+            string materialPath,
+            PackFile file,
+            out VanillaMaterialConsumerEntry entry)
+        {
+            materialPath = Normalize(materialPath);
+            var cache = state.VanillaAtlasConsumerCache;
+            if (IsVanillaAtlasCacheContainer(state, container) &&
+                cache?.TryGetMaterial(materialPath, out entry) == true)
+            {
+                return true;
+            }
+
+            if (!TryGetMaterialDocumentForTraversal(
+                    state,
+                    container,
+                    materialPath,
+                    file,
+                    out var document))
+            {
+                entry = null!;
+                return false;
+            }
+
+            entry = BuildMaterialConsumerEntry(document);
+            if (IsVanillaAtlasCacheContainer(state, container))
+                cache?.SetMaterial(materialPath, entry);
+            return true;
+        }
+
+        private static bool TryGetRigidConsumerEntry(
+            BatchState state,
+            IPackFileContainer container,
+            string rigidPath,
+            PackFile file,
+            out VanillaRigidConsumerEntry entry)
+        {
+            rigidPath = Normalize(rigidPath);
+            var cache = state.VanillaAtlasConsumerCache;
+            if (IsVanillaAtlasCacheContainer(state, container) &&
+                cache?.TryGetRigid(rigidPath, out entry) == true)
+            {
+                return true;
+            }
+
+            try
+            {
+                var rigid = ModelFactory.Create().Load(file.DataSource.ReadData());
+                entry = BuildRigidConsumerEntry(rigid);
+                if (IsVanillaAtlasCacheContainer(state, container))
+                    cache?.SetRigid(rigidPath, entry);
+                return true;
+            }
+            catch
+            {
+                entry = null!;
+                return false;
+            }
+        }
+
+        private static bool IsVanillaAtlasCacheContainer(
+            BatchState state,
+            IPackFileContainer container)
+            => container.IsCaPackFile && !ReferenceEquals(container, state.Source);
+
+        private static VanillaWsModelConsumerEntry BuildWsModelConsumerEntry(
+            XmlDocument document)
+        {
+            var entry = new VanillaWsModelConsumerEntry
+            {
+                GeometryPath = Normalize(
+                    document.SelectSingleNode("/model/geometry")?.InnerText),
+            };
+            var materialNodes = document.SelectNodes("/model/materials/material");
+            if (materialNodes == null)
+                return entry;
+
+            foreach (XmlNode materialNode in materialNodes)
+            {
+                var materialPath = Normalize(materialNode.InnerText);
+                if (materialPath.Length == 0)
+                    continue;
+
+                entry.Materials.Add(new VanillaWsModelMaterialBinding
+                {
+                    MaterialPath = materialPath,
+                    LodIndex = TryParseIndex(materialNode, "lod_index", out var lodIndex)
+                        ? lodIndex
+                        : null,
+                    PartIndex = TryParseIndex(materialNode, "part_index", out var partIndex)
+                        ? partIndex
+                        : null,
+                });
+            }
+
+            return entry;
+        }
+
+        private static VanillaMaterialConsumerEntry BuildMaterialConsumerEntry(
+            XmlDocument document)
+        {
+            var entry = new VanillaMaterialConsumerEntry();
+            var textureNodes = document.SelectNodes("/material/textures/texture");
+            if (textureNodes == null)
+                return entry;
+
+            var occurrenceBySlot = new Dictionary<string, int>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (XmlNode textureNode in textureNodes)
+            {
+                var slot = GetTextureSlot(textureNode);
+                var normalizedSlot = string.IsNullOrWhiteSpace(slot)
+                    ? "__unslotted__"
+                    : slot.ToLowerInvariant();
+                var slotOccurrence = occurrenceBySlot.GetValueOrDefault(normalizedSlot);
+                occurrenceBySlot[normalizedSlot] = slotOccurrence + 1;
+
+                var texturePath = Normalize(
+                    textureNode.SelectSingleNode("source")?.InnerText ??
+                    textureNode.InnerText);
+                if (texturePath.Length == 0)
+                    continue;
+
+                entry.Textures.Add(new VanillaMaterialTextureReference
+                {
+                    TexturePath = texturePath,
+                    Slot = normalizedSlot,
+                    SlotOccurrence = slotOccurrence,
+                });
+            }
+
+            return entry;
+        }
+
+        private static VanillaRigidConsumerEntry BuildRigidConsumerEntry(
+            RmvFile rigid)
+        {
+            var entry = new VanillaRigidConsumerEntry();
+            for (var lodIndex = 0; lodIndex < rigid.ModelList.Length; lodIndex++)
+            {
+                for (var partIndex = 0;
+                     partIndex < rigid.ModelList[lodIndex].Length;
+                     partIndex++)
+                {
+                    var material = BuildEmbeddedMaterialDocument(
+                        rigid.ModelList[lodIndex][partIndex].Material);
+                    var materialEntry = BuildMaterialConsumerEntry(material);
+                    foreach (var texture in materialEntry.Textures)
+                    {
+                        entry.Textures.Add(new VanillaRigidTextureReference
+                        {
+                            TexturePath = texture.TexturePath,
+                            LodIndex = lodIndex,
+                            PartIndex = partIndex,
+                            Slot = texture.Slot,
+                            SlotOccurrence = texture.SlotOccurrence,
+                        });
+                    }
+                }
+            }
+
+            return entry;
+        }
+
         private static Dictionary<string, AtlasValueGateSourceTexture>
             BuildAtlasValueGateSourceTextureIndex(BatchState state)
         {
@@ -9260,34 +9460,29 @@ namespace Editors.KitbasherEditor.Services
                 var wsFile = wsContainer?.FindFile(wsModelPath);
                 if (wsContainer == null ||
                     wsFile == null ||
-                    !TryGetWsDocumentForTraversal(
+                    !TryGetWsModelConsumerEntry(
                         state,
                         wsContainer,
                         wsModelPath,
                         wsFile,
-                        out var wsDocument))
+                        out var wsModelEntry))
                 {
                     continue;
                 }
 
-                var geometryPath = Normalize(
-                    wsDocument.SelectSingleNode("/model/geometry")?.InnerText);
-                var materialNodes = wsDocument.SelectNodes("/model/materials/material");
-                if (materialNodes == null)
-                    continue;
-
-                foreach (XmlNode materialNode in materialNodes)
+                foreach (var materialBinding in wsModelEntry.Materials)
                 {
                     state.CancellationToken.ThrowIfCancellationRequested();
-                    MeshKey? mesh = null;
-                    if (!string.IsNullOrWhiteSpace(geometryPath) &&
-                        TryParseIndex(materialNode, "lod_index", out var lodIndex) &&
-                        TryParseIndex(materialNode, "part_index", out var partIndex))
-                    {
-                        mesh = new MeshKey(geometryPath, lodIndex, partIndex);
-                    }
+                    MeshKey? mesh = wsModelEntry.GeometryPath.Length != 0 &&
+                                    materialBinding.LodIndex.HasValue &&
+                                    materialBinding.PartIndex.HasValue
+                        ? new MeshKey(
+                            wsModelEntry.GeometryPath,
+                            materialBinding.LodIndex.Value,
+                            materialBinding.PartIndex.Value)
+                        : null;
 
-                    var materialPath = Normalize(materialNode.InnerText);
+                    var materialPath = materialBinding.MaterialPath;
                     if (materialPath.Length == 0)
                         continue;
 
@@ -9298,37 +9493,21 @@ namespace Editors.KitbasherEditor.Services
                     var materialFile = materialContainer?.FindFile(materialPath);
                     if (materialContainer == null ||
                         materialFile == null ||
-                        !TryGetMaterialDocumentForTraversal(
+                        !TryGetMaterialConsumerEntry(
                             state,
                             materialContainer,
                             materialPath,
                             materialFile,
-                            out var material))
+                            out var materialEntry))
                     {
                         continue;
                     }
 
-                    var textureNodes = material.SelectNodes("/material/textures/texture");
-                    if (textureNodes == null)
-                        continue;
-
-                    var occurrenceBySlot = new Dictionary<string, int>(
-                        StringComparer.OrdinalIgnoreCase);
-                    foreach (XmlNode textureNode in textureNodes)
+                    foreach (var texture in materialEntry.Textures)
                     {
                         state.CancellationToken.ThrowIfCancellationRequested();
-                        var slot = GetTextureSlot(textureNode);
-                        var normalizedSlot = string.IsNullOrWhiteSpace(slot)
-                            ? "__unslotted__"
-                            : slot.ToLowerInvariant();
-                        var slotOccurrence = occurrenceBySlot.GetValueOrDefault(normalizedSlot);
-                        occurrenceBySlot[normalizedSlot] = slotOccurrence + 1;
-
-                        var texturePathValue =
-                            textureNode.SelectSingleNode("source")?.InnerText ??
-                            textureNode.InnerText;
                         if (!TryResolveTexture(
-                                texturePathValue,
+                                texture.TexturePath,
                                 out var texturePath,
                                 out _,
                                 out _))
@@ -9341,8 +9520,8 @@ namespace Editors.KitbasherEditor.Services
                             new AtlasValueGateSourceReference(
                                 mesh,
                                 wsModelPath.ToLowerInvariant(),
-                                normalizedSlot,
-                                slotOccurrence));
+                                texture.Slot,
+                                texture.SlotOccurrence));
                     }
                 }
             }
@@ -9390,67 +9569,40 @@ namespace Editors.KitbasherEditor.Services
                     loadedContainers,
                     rigidPath);
                 var rigidFile = rigidContainer?.FindFile(rigidPath);
-                if (rigidContainer == null || rigidFile == null)
+                if (rigidContainer == null ||
+                    rigidFile == null ||
+                    !TryGetRigidConsumerEntry(
+                        state,
+                        rigidContainer,
+                        rigidPath,
+                        rigidFile,
+                        out var rigidEntry))
+                {
                     continue;
-
-                try
-                {
-                    var rigid = ModelFactory.Create().Load(rigidFile.DataSource.ReadData());
-                    for (var lodIndex = 0; lodIndex < rigid.ModelList.Length; lodIndex++)
-                    {
-                        state.CancellationToken.ThrowIfCancellationRequested();
-                        for (var partIndex = 0;
-                             partIndex < rigid.ModelList[lodIndex].Length;
-                             partIndex++)
-                        {
-                            state.CancellationToken.ThrowIfCancellationRequested();
-                            var mesh = new MeshKey(rigidPath, lodIndex, partIndex);
-                            var material = BuildEmbeddedMaterialDocument(
-                                rigid.ModelList[lodIndex][partIndex].Material);
-                            var textureNodes = material.SelectNodes("/material/textures/texture");
-                            if (textureNodes == null)
-                                continue;
-
-                            var occurrenceBySlot = new Dictionary<string, int>(
-                                StringComparer.OrdinalIgnoreCase);
-                            foreach (XmlNode textureNode in textureNodes)
-                            {
-                                state.CancellationToken.ThrowIfCancellationRequested();
-                                var slot = GetTextureSlot(textureNode);
-                                var normalizedSlot = string.IsNullOrWhiteSpace(slot)
-                                    ? "__unslotted__"
-                                    : slot.ToLowerInvariant();
-                                var slotOccurrence =
-                                    occurrenceBySlot.GetValueOrDefault(normalizedSlot);
-                                occurrenceBySlot[normalizedSlot] = slotOccurrence + 1;
-
-                                var texturePathValue =
-                                    textureNode.SelectSingleNode("source")?.InnerText ??
-                                    textureNode.InnerText;
-                                if (!TryResolveTexture(
-                                        texturePathValue,
-                                        out var texturePath,
-                                        out _,
-                                        out _))
-                                {
-                                    continue;
-                                }
-
-                                AddReference(
-                                    texturePath,
-                                    new AtlasValueGateSourceReference(
-                                        mesh,
-                                        rigidPath.ToLowerInvariant(),
-                                        normalizedSlot,
-                                        slotOccurrence));
-                            }
-                        }
-                    }
                 }
-                catch
+
+                foreach (var texture in rigidEntry.Textures)
                 {
-                    // An unparseable direct rigid is reported/skipped during candidate
-                    // discovery; it must not make value-gate indexing fail for other assets.
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    if (!TryResolveTexture(
+                            texture.TexturePath,
+                            out var texturePath,
+                            out _,
+                            out _))
+                    {
+                        continue;
+                    }
+
+                    AddReference(
+                        texturePath,
+                        new AtlasValueGateSourceReference(
+                            new MeshKey(
+                                rigidPath,
+                                texture.LodIndex,
+                                texture.PartIndex),
+                            rigidPath.ToLowerInvariant(),
+                            texture.Slot,
+                            texture.SlotOccurrence));
                 }
             }
 
@@ -9532,6 +9684,7 @@ namespace Editors.KitbasherEditor.Services
                     references);
             }
 
+            state.VanillaAtlasConsumerCache?.Save();
             return result;
         }
 
@@ -17541,6 +17694,7 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> TaintedGameplayWsModels { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Wh3UnitCategoryResolution? UnitCategoryResolution { get; set; }
+            public Wh3VanillaAtlasConsumerCache? VanillaAtlasConsumerCache { get; set; }
             public IReadOnlyList<IPackFileContainer>? GameplayTraversalContainers { get; set; }
             public GameplayMeshDependencyIndex? GameplayMeshDependencyIndex { get; set; }
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
