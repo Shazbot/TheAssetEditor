@@ -774,8 +774,8 @@ namespace Test.KitbashEditor.Services
         private static bool IsSourceTextureRetired(
             bool isOwnedBySourcePack,
             bool hasDirectVmdReference,
-            int packReferenceCount,
-            int rewrittenPackReferenceCount)
+            int referenceCount,
+            int rewrittenReferenceCount)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
             var serviceType = assembly.GetType(
@@ -789,13 +789,13 @@ namespace Test.KitbashEditor.Services
 
             return (bool)(method.Invoke(
                 null,
-                [isOwnedBySourcePack, hasDirectVmdReference, packReferenceCount, rewrittenPackReferenceCount])
+                [isOwnedBySourcePack, hasDirectVmdReference, referenceCount, rewrittenReferenceCount])
                 ?? throw new InvalidOperationException(
                     "IsAtlasValueGateSourceTextureRetired returned null."));
         }
 
         private static bool ArePackReferencesRetired(
-            bool hasDirectVmdReference,
+            bool hasDirectSourcePackVmdReference,
             int packReferenceCount,
             int rewrittenPackReferenceCount)
         {
@@ -811,7 +811,7 @@ namespace Test.KitbashEditor.Services
 
             return (bool)(method.Invoke(
                 null,
-                [hasDirectVmdReference, packReferenceCount, rewrittenPackReferenceCount])
+                [hasDirectSourcePackVmdReference, packReferenceCount, rewrittenPackReferenceCount])
                 ?? throw new InvalidOperationException(
                     "IsAtlasValueGatePackReferenceRetired returned null."));
         }
@@ -1995,11 +1995,12 @@ namespace Test.KitbashEditor.Services
                 Is.EqualTo(expected));
         }
         [TestCase(true, false, 2, 2, true)]
+        [TestCase(true, false, 3, 2, false)]
         [TestCase(true, false, 2, 1, false)]
         [TestCase(true, false, 0, 0, false)]
         [TestCase(true, true, 2, 2, false)]
         [TestCase(false, false, 2, 2, false)]
-        public void SourceTextureRetirement_RequiresPackOwnershipCompletePackReferenceRewriteCoverageAndNoDirectVmdReference(
+        public void SourceTextureRetirement_RequiresPackOwnershipCompleteReferenceRewriteCoverageAndNoDirectVmdReference(
             bool isOwnedBySourcePack,
             bool hasDirectVmdReference,
             int referenceCount,
@@ -2015,18 +2016,36 @@ namespace Test.KitbashEditor.Services
                 Is.EqualTo(expected));
         }
 
+        [Test]
+        public void PackLocalRetirement_CanQualifyWhileVanillaReferenceBlocksPhysicalRetirement()
+        {
+            Assert.That(
+                ArePackReferencesRetired(
+                    hasDirectSourcePackVmdReference: false,
+                    packReferenceCount: 2,
+                    rewrittenPackReferenceCount: 2),
+                Is.True);
+            Assert.That(
+                IsSourceTextureRetired(
+                    isOwnedBySourcePack: true,
+                    hasDirectVmdReference: false,
+                    referenceCount: 3,
+                    rewrittenReferenceCount: 2),
+                Is.False);
+        }
+
         [TestCase(false, 2, 2, true)]
         [TestCase(false, 2, 1, false)]
         [TestCase(true, 2, 2, false)]
         public void PackReferenceRetirement_DoesNotRequireVanillaReferenceRewriteCoverage(
-            bool hasDirectVmdReference,
+            bool hasDirectSourcePackVmdReference,
             int packReferenceCount,
             int rewrittenPackReferenceCount,
             bool expected)
         {
             Assert.That(
                 ArePackReferencesRetired(
-                    hasDirectVmdReference,
+                    hasDirectSourcePackVmdReference,
                     packReferenceCount,
                     rewrittenPackReferenceCount),
                 Is.EqualTo(expected));

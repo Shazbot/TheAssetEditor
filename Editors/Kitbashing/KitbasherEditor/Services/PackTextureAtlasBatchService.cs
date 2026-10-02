@@ -9140,12 +9140,12 @@ namespace Editors.KitbasherEditor.Services
                     currentlyRewrittenPackReferenceCount + newlyProposedPackReferenceCount);
                 var currentlyPackReferencesRetired =
                     IsAtlasValueGatePackReferenceRetired(
-                        sourceTexture.HasDirectVmdReference,
+                        sourceTexture.HasDirectSourcePackVmdReference,
                         sourceTexture.PackReferences.Count,
                         currentlyRewrittenPackReferenceCount);
                 var packReferencesRetiredAfterProposal =
                     IsAtlasValueGatePackReferenceRetired(
-                        sourceTexture.HasDirectVmdReference,
+                        sourceTexture.HasDirectSourcePackVmdReference,
                         sourceTexture.PackReferences.Count,
                         rewrittenPackReferenceCountAfterProposal);
                 if (!currentlyPackReferencesRetired && packReferencesRetiredAfterProposal)
@@ -9153,13 +9153,13 @@ namespace Editors.KitbasherEditor.Services
                 var currentlyRetired = IsAtlasValueGateSourceTextureRetired(
                     sourceTexture.IsOwnedBySourcePack,
                     sourceTexture.HasDirectVmdReference,
-                    sourceTexture.PackReferences.Count,
-                    currentlyRewrittenPackReferenceCount);
+                    sourceTexture.References.Count,
+                    currentlyRewrittenReferenceCount);
                 var retiredAfterProposal = IsAtlasValueGateSourceTextureRetired(
                     sourceTexture.IsOwnedBySourcePack,
                     sourceTexture.HasDirectVmdReference,
-                    sourceTexture.PackReferences.Count,
-                    rewrittenPackReferenceCountAfterProposal);
+                    sourceTexture.References.Count,
+                    rewrittenReferenceCountAfterProposal);
                 if (!currentlyRetired && retiredAfterProposal)
                 {
                     retiredSourceBcnBytes = checked(
@@ -9235,23 +9235,22 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static bool IsAtlasValueGatePackReferenceRetired(
-            bool hasDirectVmdReference,
+            bool hasDirectSourcePackVmdReference,
             int packReferenceCount,
             int rewrittenPackReferenceCount)
-            => !hasDirectVmdReference &&
+            => !hasDirectSourcePackVmdReference &&
                packReferenceCount > 0 &&
                rewrittenPackReferenceCount >= packReferenceCount;
 
         private static bool IsAtlasValueGateSourceTextureRetired(
             bool isOwnedBySourcePack,
             bool hasDirectVmdReference,
-            int packReferenceCount,
-            int rewrittenPackReferenceCount)
+            int referenceCount,
+            int rewrittenReferenceCount)
             => isOwnedBySourcePack &&
-               IsAtlasValueGatePackReferenceRetired(
-                   hasDirectVmdReference,
-                   packReferenceCount,
-                   rewrittenPackReferenceCount);
+               !hasDirectVmdReference &&
+               referenceCount > 0 &&
+               rewrittenReferenceCount >= referenceCount;
 
         private static int GetAtlasValueGateRewrittenReferenceCount(
             BatchState state,
@@ -9857,7 +9856,9 @@ namespace Editors.KitbasherEditor.Services
 
             var directVmdTextures = new HashSet<string>(
                 StringComparer.OrdinalIgnoreCase);
-            var vmdDocuments = state.VmdDocuments.Values.ToArray();
+            var directSourcePackVmdTextures = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+            var vmdDocuments = state.VmdDocuments.ToArray();
             ReportProgress(
                 state.Progress,
                 "Evaluating atlas value",
@@ -9873,12 +9874,26 @@ namespace Editors.KitbasherEditor.Services
                     vmdIndex + 1,
                     vmdDocuments.Length,
                     "Indexing direct VMD texture consumers");
-                var vmd = vmdDocuments[vmdIndex];
+                var vmdPath = Normalize(vmdDocuments[vmdIndex].Key);
+                var vmd = vmdDocuments[vmdIndex].Value;
                 var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var childVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 CollectVmdReferences(vmd, models, childVmds, textures);
-                directVmdTextures.UnionWith(textures.Select(Normalize));
+                var normalizedTextures = textures
+                    .Select(Normalize)
+                    .ToArray();
+                directVmdTextures.UnionWith(normalizedTextures);
+
+                // Direct VMD references are not rewritten by atlas processing. Keep the
+                // source-pack subset separate: CA VMDs must continue to affect residency and
+                // physical-retirement safety, but must not veto pack-local retirement credit.
+                var vmdContainer = FindGameplayTraversalContainer(
+                    state.Source,
+                    loadedContainers,
+                    vmdPath);
+                if (ReferenceEquals(vmdContainer, state.Source))
+                    directSourcePackVmdTextures.UnionWith(normalizedTextures);
             }
 
             state.AtlasValueGateRootsByWsModel ??=
@@ -9935,6 +9950,7 @@ namespace Editors.KitbasherEditor.Services
                     bcn.Bytes,
                     source.IsOwnedBySourcePack,
                     directVmdTextures.Contains(texturePath),
+                    directSourcePackVmdTextures.Contains(texturePath),
                     references,
                     packReferences);
             }
@@ -15374,7 +15390,8 @@ namespace Editors.KitbasherEditor.Services
                         "Vanilla-owned visual assets: read-only residency consumers (never rewritten; never physically retired).");
                     sb.AppendLine(
                         "Atlas value-gate pack-local retirement scope: source-pack WSModel/rigid " +
-                        "references only; vanilla-only consumers remain residency-only.");
+                        "rewrites; source-pack direct VMD references still block retirement, while " +
+                        "vanilla-only consumers remain residency-only.");
                 }
                 var gameplayEligibleVmdCount = state.UnitCategoryResolution.UsagesByVmd.Keys
                     .Count(state.UnitCategoryResolution.IsVmdUsageComplete);
@@ -18420,6 +18437,7 @@ namespace Editors.KitbasherEditor.Services
             long BcnBytes,
             bool IsOwnedBySourcePack,
             bool HasDirectVmdReference,
+            bool HasDirectSourcePackVmdReference,
             HashSet<AtlasValueGateSourceReference> References,
             HashSet<AtlasValueGateSourceReference> PackReferences);
 
