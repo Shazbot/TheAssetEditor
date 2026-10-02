@@ -1832,6 +1832,27 @@ namespace Test.KitbashEditor.Services
                 [source, loadedContainers, path]);
         }
 
+        private static IPackFileContainer? FindCachedGameplayTraversalContainer(
+            object state,
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> loadedContainers,
+            string path)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "FindGameplayTraversalContainer" &&
+                    candidate.GetParameters().Length == 4);
+
+            return (IPackFileContainer?)method.Invoke(
+                null,
+                [state, source, loadedContainers, path]);
+        }
+
         private static bool IsSharedMeshSafeForGameplay(
             bool atlasAllVmdsEnabled,
             IEnumerable<string> affectedWsModels,
@@ -2402,6 +2423,72 @@ namespace Test.KitbashEditor.Services
                 path);
 
             Assert.That(selected, Is.SameAs(newerCa.Object));
+        }
+
+        [Test]
+        public void GameplayTraversal_StateCache_ReusesPositiveAndNegativeResolutions()
+        {
+            const string positivePath =
+                @"variantmeshes\variantmeshdefinitions\cached.variantmeshdefinition";
+            const string missingPath =
+                @"variantmeshes\variantmeshdefinitions\missing.variantmeshdefinition";
+            var source = new Mock<IPackFileContainer>();
+            var ca = new Mock<IPackFileContainer>();
+
+            source.Setup(container => container.ContainsFile(It.IsAny<string>()))
+                .Returns(false);
+            source.SetupGet(container => container.IsCaPackFile).Returns(false);
+            ca.Setup(container => container.ContainsFile(positivePath)).Returns(true);
+            ca.Setup(container => container.ContainsFile(missingPath)).Returns(false);
+            ca.SetupGet(container => container.IsCaPackFile).Returns(true);
+
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+
+            var positive = FindCachedGameplayTraversalContainer(
+                state,
+                source.Object,
+                [ca.Object],
+                positivePath);
+            var positiveCached = FindCachedGameplayTraversalContainer(
+                state,
+                source.Object,
+                [ca.Object],
+                positivePath.Replace('\\', '/').ToUpperInvariant());
+            var missing = FindCachedGameplayTraversalContainer(
+                state,
+                source.Object,
+                [ca.Object],
+                missingPath);
+            var missingCached = FindCachedGameplayTraversalContainer(
+                state,
+                source.Object,
+                [ca.Object],
+                missingPath.Replace('\\', '/').ToUpperInvariant());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(positive, Is.SameAs(ca.Object));
+                Assert.That(positiveCached, Is.SameAs(ca.Object));
+                Assert.That(missing, Is.Null);
+                Assert.That(missingCached, Is.Null);
+                Assert.That(
+                    (int)state.GetType()
+                        .GetProperty("GameplayTraversalContainerResolutionScans")!
+                        .GetValue(state)!,
+                    Is.EqualTo(2));
+                Assert.That(
+                    (int)state.GetType()
+                        .GetProperty("GameplayTraversalContainerResolutionCacheHits")!
+                        .GetValue(state)!,
+                    Is.EqualTo(2));
+            });
+
+            source.Verify(
+                container => container.ContainsFile(It.IsAny<string>()),
+                Times.Exactly(2));
+            ca.Verify(
+                container => container.ContainsFile(It.IsAny<string>()),
+                Times.Exactly(2));
         }
 
         [Test]

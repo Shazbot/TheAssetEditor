@@ -1565,7 +1565,7 @@ namespace Editors.KitbasherEditor.Services
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var queue = new Queue<string>();
             var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var loadedContainers = state.PackFileService.GetAllPackfileContainers();
+            var loadedContainers = GetGameplayTraversalContainers(state);
             queue.Enqueue(Normalize(rootVmdPath));
 
             while (queue.Count != 0)
@@ -15503,6 +15503,11 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Malformed referenced VMD files ignored: {state.MalformedReferencedVmds.Count}");
             sb.AppendLine($"Malformed WSModels ignored: {state.MalformedWsModelsIgnored.Count}");
             sb.AppendLine($"Malformed material XML files ignored: {state.MalformedMaterialsIgnored.Count}");
+            sb.AppendLine(
+                $"Gameplay traversal container resolutions: " +
+                $"{state.GameplayTraversalContainerResolutions.Count:N0} unique path(s); " +
+                $"{state.GameplayTraversalContainerResolutionScans:N0} scan(s), " +
+                $"{state.GameplayTraversalContainerResolutionCacheHits:N0} cache hit(s)");
             var transformedAtlasRoots = state.AtlasedMeshes
                 .Select(entry => entry.RootVmdPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
