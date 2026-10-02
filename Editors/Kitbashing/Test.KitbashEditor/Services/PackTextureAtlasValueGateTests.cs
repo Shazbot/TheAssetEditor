@@ -100,13 +100,18 @@ namespace Test.KitbashEditor.Services
                 ?? throw new InvalidOperationException("MergeAffinityGroup was not found.");
             var mergeGroupConstructor = mergeGroupType.GetConstructors(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                .Single(constructor => constructor.GetParameters().Length == 3);
+                .Single(constructor => constructor.GetParameters().Length == 4);
             var meshKeyArray = Array.CreateInstance(meshKeyType, meshKeys.Length);
             for (var index = 0; index < meshKeys.Length; index++)
                 meshKeyArray.SetValue(meshKeys[index], index);
 
             var mergeGroup = mergeGroupConstructor.Invoke(
-                [meshKeyArray, false, preExistingPairs.ToArray()]);
+                [
+                    meshKeyArray,
+                    0,
+                    preExistingPairs.ToArray(),
+                    Enumerable.Repeat("strict:test", meshKeys.Length).ToArray(),
+                ]);
             var mergeGroupListType = typeof(List<>).MakeGenericType(mergeGroupType);
             var mergeGroups = Activator.CreateInstance(mergeGroupListType)
                 ?? throw new InvalidOperationException("Could not create affinity groups.");
@@ -1006,8 +1011,280 @@ namespace Test.KitbashEditor.Services
             var material = new XmlDocument();
             material.LoadXml(materialXml);
             return (string)(method.Invoke(null, [material])
+                   ?? throw new InvalidOperationException(
+                       "GetMaterialRenderingIdentity returned null."));
+        }
+
+        private static int GetProspectiveTextureMergeDraws(
+            params string[] preAtlasMaterialIdentities)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "CalculateProspectiveTextureMergeDraws" &&
+                    candidate.GetParameters().Length == 1 &&
+                    candidate.GetParameters()[0].ParameterType ==
+                    typeof(IReadOnlyList<string>));
+
+            return Convert.ToInt32(method.Invoke(null, [preAtlasMaterialIdentities]));
+        }
+
+        private static object CreateAffinityTestCandidate(
+            string geometryPath,
+            int partIndex,
+            string materialPath,
+            string materialXml)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var meshKey = meshKeyType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single()
+                .Invoke([geometryPath, 0, partIndex]);
+
+            var model = CreateIdentityTestModel("embedded");
+            model.Mesh.VertexList =
+            [
+                new CommonVertex
+                {
+                    Uv = new Vector2(0.25f, 0.75f),
+                    BoneIndex = [],
+                    BoneWeight = [],
+                },
+            ];
+
+            var usageType = serviceType.GetNestedType(
+                "WsUsage",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("WsUsage was not found.");
+            var usage = usageType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 5)
+                .Invoke(
+                [
+                    @"models\shared.wsmodel",
+                    null,
+                    null,
+                    materialPath,
+                    null,
+                ]);
+            var usagesType = typeof(List<>).MakeGenericType(usageType);
+            var usages = Activator.CreateInstance(usagesType)
+                ?? throw new InvalidOperationException("Could not create usage list.");
+            ((IList)usages).Add(usage);
+
+            var material = new XmlDocument();
+            material.LoadXml(materialXml);
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var constructor = atlasCandidateType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(candidate => candidate.GetParameters().Length > 5);
+            var arguments = constructor.GetParameters()
+                .Select(parameter =>
+                {
+                    var type = parameter.ParameterType;
+                    var name = parameter.Name ?? string.Empty;
+                    if (type == typeof(string))
+                    {
+                        if (name.Contains("material", StringComparison.OrdinalIgnoreCase))
+                            return (object?)materialPath;
+                        if (name.Contains("root", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return @"models\root.variantmeshdefinition";
+                        }
+
+                        return string.Empty;
+                    }
+
+                    if (type == meshKeyType)
+                        return meshKey;
+                    if (type == typeof(RmvModel))
+                        return model;
+                    if (type == usagesType)
+                        return usages;
+                    if (type == typeof(XmlDocument))
+                        return material;
+                    if (type == typeof(int))
+                    {
+                        if (name.Contains("width", StringComparison.OrdinalIgnoreCase) ||
+                            name.Contains("height", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return 1;
+                        }
+
+                        return name.Contains("part", StringComparison.OrdinalIgnoreCase)
+                            ? partIndex
+                            : 0;
+                    }
+
+                    if (type == typeof(double))
+                        return 1.0;
+                    if (type == typeof(float))
+                        return 1.0f;
+                    if (type == typeof(HashSet<string>))
+                    {
+                        return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    }
+
+                    if (type.IsGenericType &&
+                        type.GetGenericTypeDefinition() == typeof(Dictionary<,>))
+                    {
+                        return Activator.CreateInstance(type);
+                    }
+
+                    if (type.IsGenericType &&
+                        type.GetGenericTypeDefinition() == typeof(List<>))
+                    {
+                        return Activator.CreateInstance(type);
+                    }
+
+                    if (type.IsValueType)
+                        return Activator.CreateInstance(type);
+
+                    return null;
+                })
+                .ToArray();
+
+            return constructor.Invoke(arguments);
+        }
+
+        private static (int GroupCount, int[] MeshCounts, int[] ProspectiveDraws)
+            GetMergeAffinitySummary(
+                object state,
+                params object[] candidates)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidatesType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var candidateList = Activator.CreateInstance(candidatesType)
+                ?? throw new InvalidOperationException("Could not create candidate list.");
+            foreach (var candidate in candidates)
+                ((IList)candidateList).Add(candidate);
+
+            var method = serviceType.GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidateMethod =>
+                    candidateMethod.Name == "BuildMergeAffinityGroups" &&
+                    candidateMethod.GetParameters().Length == 2);
+            var groups = ((IEnumerable)(method.Invoke(
+                    null,
+                    [state, candidateList])
                 ?? throw new InvalidOperationException(
-                    "GetMaterialRenderingIdentity returned null."));
+                    "BuildMergeAffinityGroups returned null.")))
+                .Cast<object>()
+                .ToArray();
+            var groupType = serviceType.GetNestedType(
+                "MergeAffinityGroup",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MergeAffinityGroup was not found.");
+
+            return (
+                groups.Length,
+                groups.Select(group => ((IEnumerable)(groupType.GetProperty("Meshes")!
+                        .GetValue(group)!
+                    )).Cast<object>().Count()).ToArray(),
+                groups.Select(group => Convert.ToInt32(
+                    groupType.GetProperty("ProspectiveTextureMergeDraws")!
+                        .GetValue(group))).ToArray());
+        }
+
+        private static (int[] CandidateCounts, int[] ProspectiveDraws)
+            GetTextureOnlyMergeSubsetShapes(
+                string[] preAtlasMaterialIdentities)
+        {
+            var candidates = preAtlasMaterialIdentities
+                .Select((_, index) => CreateAtlasConsumerTestCandidate(
+                    $"test{index}.rigid_model_v2",
+                    false).Candidate)
+                .ToArray();
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidateListType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var candidateList = Activator.CreateInstance(candidateListType)
+                ?? throw new InvalidOperationException("Could not create candidate list.");
+            foreach (var candidate in candidates)
+                ((IList)candidateList).Add(candidate);
+
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var meshKeys = Array.CreateInstance(meshKeyType, candidates.Length);
+            var keyProperty = atlasCandidateType.GetProperty("Key")
+                ?? throw new InvalidOperationException("AtlasCandidate.Key was not found.");
+            for (var index = 0; index < candidates.Length; index++)
+                meshKeys.SetValue(keyProperty.GetValue(candidates[index]), index);
+
+            var groupType = serviceType.GetNestedType(
+                "MergeAffinityGroup",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MergeAffinityGroup was not found.");
+            var group = groupType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 4)
+                .Invoke(
+                [
+                    meshKeys,
+                    preAtlasMaterialIdentities.Distinct(StringComparer.Ordinal).Count() - 1,
+                    Array.Empty<string>(),
+                    preAtlasMaterialIdentities,
+                ]);
+
+            var planType = serviceType.GetNestedType(
+                "AtlasValueGateGroupPlan",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasValueGateGroupPlan was not found.");
+            var plan = planType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 2)
+                .Invoke([group, candidateList]);
+            var method = serviceType.GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidateMethod =>
+                    candidateMethod.Name == "BuildTextureOnlyMergeSubsetPlans" &&
+                    candidateMethod.GetParameters().Length == 1);
+            var plans = ((IEnumerable)(method.Invoke(null, [plan])
+                ?? throw new InvalidOperationException(
+                    "BuildTextureOnlyMergeSubsetPlans returned null.")))
+                .Cast<object>()
+                .ToArray();
+            var groupProperty = planType.GetProperty("Group")
+                ?? throw new InvalidOperationException("AtlasValueGateGroupPlan.Group was not found.");
+            var candidatesProperty = planType.GetProperty("Candidates")
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateGroupPlan.Candidates was not found.");
+            var prospectiveProperty = groupType.GetProperty("ProspectiveTextureMergeDraws")
+                ?? throw new InvalidOperationException(
+                    "MergeAffinityGroup.ProspectiveTextureMergeDraws was not found.");
+
+            return (
+                plans.Select(value => ((IEnumerable)candidatesProperty.GetValue(value)!)
+                    .Cast<object>()
+                    .Count()).ToArray(),
+                plans.Select(value => Convert.ToInt32(
+                    prospectiveProperty.GetValue(groupProperty.GetValue(value)!))).ToArray());
         }
 
         private static string GetValueGateBudgetDecision(
@@ -1048,7 +1325,7 @@ namespace Test.KitbashEditor.Services
 
         private static string GetTextureOnlyMergeValueGateBudgetDecision(
             bool scenarioResolved,
-            int rawDrawsEliminated,
+            int prospectiveTextureMergeDraws,
             double expectedArmyDrawsEliminated,
             double globalCostBytes,
             double expectedCostBytes,
@@ -1070,7 +1347,7 @@ namespace Test.KitbashEditor.Services
                        null,
                        [
                            scenarioResolved,
-                           rawDrawsEliminated,
+                           prospectiveTextureMergeDraws,
                            expectedArmyDrawsEliminated,
                            globalCostBytes,
                            expectedCostBytes,
@@ -1787,7 +2064,7 @@ namespace Test.KitbashEditor.Services
 
             var decision = GetTextureOnlyMergeValueGateBudgetDecision(
                 scenarioResolved: true,
-                rawDrawsEliminated: 1,
+                prospectiveTextureMergeDraws: 1,
                 expectedArmyDrawsEliminated: 0.15,
                 globalCostBytes: 1.75 * mib,
                 expectedCostBytes: 0.01 * mib,
@@ -1799,13 +2076,44 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void ValueGate_TextureOnlyMergeCreditUsesProspectiveDrawCount()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            var oneProspectiveDraw = GetTextureOnlyMergeValueGateBudgetDecision(
+                scenarioResolved: true,
+                prospectiveTextureMergeDraws: 1,
+                expectedArmyDrawsEliminated: 0.01,
+                globalCostBytes: 2.1 * mib,
+                expectedCostBytes: 0,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 2.1 * mib,
+                sourceBcnBytes: 400 * mib);
+            var twoProspectiveDraws = GetTextureOnlyMergeValueGateBudgetDecision(
+                scenarioResolved: true,
+                prospectiveTextureMergeDraws: 2,
+                expectedArmyDrawsEliminated: 0.01,
+                globalCostBytes: 2.1 * mib,
+                expectedCostBytes: 0,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 2.1 * mib,
+                sourceBcnBytes: 400 * mib);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(oneProspectiveDraw, Is.EqualTo("TextureOnlyMergeBudgetExceeded"));
+                Assert.That(twoProspectiveDraws, Is.EqualTo("Accept"));
+            });
+        }
+
+        [Test]
         public void ValueGate_TextureOnlyMergeCreditExpandsForHighScenarioCoverage()
         {
             const double mib = 1024.0 * 1024.0;
 
             var decision = GetTextureOnlyMergeValueGateBudgetDecision(
                 scenarioResolved: true,
-                rawDrawsEliminated: 1,
+                prospectiveTextureMergeDraws: 1,
                 expectedArmyDrawsEliminated: 100,
                 globalCostBytes: 8 * mib,
                 expectedCostBytes: 1 * mib,
@@ -1823,7 +2131,7 @@ namespace Test.KitbashEditor.Services
 
             var decision = GetTextureOnlyMergeValueGateBudgetDecision(
                 scenarioResolved: true,
-                rawDrawsEliminated: 1,
+                prospectiveTextureMergeDraws: 1,
                 expectedArmyDrawsEliminated: 0.15,
                 globalCostBytes: 2.1 * mib,
                 expectedCostBytes: 2.1 * mib,
@@ -1841,7 +2149,7 @@ namespace Test.KitbashEditor.Services
 
             var decision = GetTextureOnlyMergeValueGateBudgetDecision(
                 scenarioResolved: true,
-                rawDrawsEliminated: 1,
+                prospectiveTextureMergeDraws: 1,
                 expectedArmyDrawsEliminated: 0,
                 globalCostBytes: 1 * mib,
                 expectedCostBytes: 1 * mib,
@@ -1999,6 +2307,95 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 GetMaterialRenderingIdentity(lowerSlashMaterial),
                 Is.EqualTo(GetMaterialRenderingIdentity(upperBackslashMaterial)));
+        }
+
+        [Test]
+        public void ProspectiveTextureMergeDraws_CountOnlyStrictPreAtlasGroupsCollapsed()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetProspectiveTextureMergeDraws("same", "same", "different"),
+                    Is.EqualTo(1));
+                Assert.That(
+                    GetProspectiveTextureMergeDraws("same", "same"),
+                    Is.EqualTo(0));
+                Assert.That(
+                    GetProspectiveTextureMergeDraws("a", "b", "c"),
+                    Is.EqualTo(2));
+            });
+        }
+
+        [Test]
+        public void TextureOnlyMergeSubsetPlans_ThreeCandidatesEnumeratePairsBeforeTriple()
+        {
+            var shapes = GetTextureOnlyMergeSubsetShapes(["a", "b", "c"]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(shapes.CandidateCounts, Is.EqualTo([2, 2, 2, 3]));
+                Assert.That(shapes.ProspectiveDraws, Is.EqualTo([1, 1, 1, 2]));
+            });
+        }
+
+        [Test]
+        public void TextureOnlyMergeSubsetPlans_SkipSubsetWithNoProspectiveDrawDelta()
+        {
+            var shapes = GetTextureOnlyMergeSubsetShapes(["same", "same", "different"]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(shapes.CandidateCounts, Is.EqualTo([2, 2, 3]));
+                Assert.That(shapes.ProspectiveDraws, Is.EqualTo([1, 1, 1]));
+            });
+        }
+
+        [Test]
+        public void MergeAffinity_NormalizedShaderSpellingUsesActualAffinityBucket()
+        {
+            const string lowerMaterialPath = @"materials\lower.xml";
+            const string upperMaterialPath = @"materials\upper.xml";
+            const string lowerMaterial =
+                "<material><name>first</name>" +
+                "<shader>shaders/weighted4_character.xml.shader</shader>" +
+                "<textures><texture><slot>t_xml_base_colour</slot>" +
+                "<source>VariantMeshes/Foo.dds</source></texture></textures></material>";
+            const string upperMaterial =
+                "<material><name>second</name>" +
+                "<shader>SHADERS\\WEIGHTED4_CHARACTER.XML.SHADER</shader>" +
+                "<textures><texture><slot>t_xml_base_colour</slot>" +
+                "<source>variantmeshes\\foo.dds</source></texture></textures></material>";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [lowerMaterialPath] = PackFile.CreateFromASCII(
+                        lowerMaterialPath,
+                        lowerMaterial),
+                    [upperMaterialPath] = PackFile.CreateFromASCII(
+                        upperMaterialPath,
+                        upperMaterial),
+                });
+            var state = CreateTraversalBatchState(source.Object, []);
+            var summary = GetMergeAffinitySummary(
+                state,
+                CreateAffinityTestCandidate(
+                    @"models\shared.rigid_model_v2",
+                    0,
+                    lowerMaterialPath,
+                    lowerMaterial),
+                CreateAffinityTestCandidate(
+                    @"models\shared.rigid_model_v2",
+                    1,
+                    upperMaterialPath,
+                    upperMaterial));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(summary.GroupCount, Is.EqualTo(1));
+                Assert.That(summary.MeshCounts, Is.EqualTo([2]));
+                Assert.That(summary.ProspectiveDraws, Is.EqualTo([0]));
+            });
         }
 
         [Test]

@@ -5639,7 +5639,6 @@ namespace Editors.KitbasherEditor.Services
                 state.CancellationToken.ThrowIfCancellationRequested();
                 var current = new List<MergeAffinityCandidateInfo>();
                 var currentVertexCount = 0;
-                var currentHasProspectivePair = false;
 
                 foreach (var info in bucket
                              .OrderBy(x => x.Candidate.Key.PartIndex)
@@ -5702,47 +5701,99 @@ namespace Editors.KitbasherEditor.Services
                     {
                         if (current.Count > 1)
                         {
-                            var meshKeys = current
-                                .Select(x => x.Candidate.Key)
-                                .ToArray();
-                            result.Add(new MergeAffinityGroup(
-                                meshKeys,
-                                currentHasProspectivePair,
-                                GetPreExistingStructuralMergePairs(state, meshKeys)));
-                            if (currentHasProspectivePair)
+                            var group = CreateMergeAffinityGroup(state, current);
+                            result.Add(group);
+                            if (group.ProspectiveTextureMergeDraws > 0)
                                 state.ProspectiveMergeAffinityGroupsAdded++;
                         }
 
                         current = [];
                         currentVertexCount = 0;
-                        currentHasProspectivePair = false;
                     }
 
                     current.Add(info);
                     currentVertexCount += vertexCount;
                     if (joinsProspectivePair)
                     {
-                        currentHasProspectivePair = true;
                         state.ProspectiveMergeAffinityPairs++;
                     }
                 }
 
                 if (current.Count > 1)
                 {
-                    var meshKeys = current
-                        .Select(x => x.Candidate.Key)
-                        .ToArray();
-                    result.Add(new MergeAffinityGroup(
-                        meshKeys,
-                        currentHasProspectivePair,
-                        GetPreExistingStructuralMergePairs(state, meshKeys)));
-                    if (currentHasProspectivePair)
+                    var group = CreateMergeAffinityGroup(state, current);
+                    result.Add(group);
+                    if (group.ProspectiveTextureMergeDraws > 0)
                         state.ProspectiveMergeAffinityGroupsAdded++;
                 }
             }
 
             return result;
         }
+
+        private static MergeAffinityGroup CreateMergeAffinityGroup(
+            BatchState state,
+            IReadOnlyList<MergeAffinityCandidateInfo> candidates)
+        {
+            var meshes = candidates
+                .Select(info => info.Candidate.Key)
+                .ToArray();
+            var preAtlasMaterialIdentities = candidates
+                .Select(GetPreAtlasMaterialIdentity)
+                .ToArray();
+
+            return new MergeAffinityGroup(
+                meshes,
+                CalculateProspectiveTextureMergeDraws(preAtlasMaterialIdentities),
+                GetPreExistingStructuralMergePairs(state, meshes),
+                preAtlasMaterialIdentities);
+        }
+
+        private static MergeAffinityGroup FilterMergeAffinityGroup(
+            MergeAffinityGroup group,
+            IReadOnlySet<MeshKey> candidateKeys)
+        {
+            var selected = group.Meshes
+                .Select((mesh, index) => (mesh, index))
+                .Where(entry => candidateKeys.Contains(entry.mesh))
+                .ToArray();
+            var meshes = selected
+                .Select(entry => entry.mesh)
+                .ToArray();
+            var preAtlasMaterialIdentities = selected
+                .Select(entry => group.PreAtlasMaterialIdentities[entry.index])
+                .ToArray();
+
+            return new MergeAffinityGroup(
+                meshes,
+                CalculateProspectiveTextureMergeDraws(preAtlasMaterialIdentities),
+                FilterPreExistingStructuralMergePairs(group, meshes),
+                preAtlasMaterialIdentities);
+        }
+
+        private static string GetPreAtlasMaterialIdentity(
+            MergeAffinityCandidateInfo info)
+            => info.MaterialSnapshot?.RenderingIdentity ??
+               $"strict:{info.StrictMaterialIdentity}";
+
+        private static int CalculateProspectiveTextureMergeDraws(
+            IReadOnlyList<string> preAtlasMaterialIdentities)
+        {
+            if (preAtlasMaterialIdentities.Count < 2)
+                return 0;
+
+            // Every MergeAffinityGroup shares one strict post-atlas material identity. The
+            // delta is therefore the number of strict pre-atlas material groups that the
+            // texture-compatible grouping collapses beyond the first group.
+            var strictPreAtlasGroupCount = preAtlasMaterialIdentities
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+            return Math.Max(0, strictPreAtlasGroupCount - 1);
+        }
+
+        private static int CalculateProspectiveTextureMergeDraws(
+            IReadOnlyList<MergeAffinityGroup> groups)
+            => groups.Sum(group => group.ProspectiveTextureMergeDraws);
 
         private static bool AreCounterfactuallyMergeCompatible(
             BatchState state,
@@ -6611,12 +6662,7 @@ namespace Editors.KitbasherEditor.Services
 
                 var batchKeys = batch.Select(candidate => candidate.Key).ToHashSet();
                 var contributingGroups = affinityGroups
-                    .Select(group => new MergeAffinityGroup(
-                        group.Meshes.Where(batchKeys.Contains).ToArray(),
-                        group.IsProspectiveTextureMerge,
-                        FilterPreExistingStructuralMergePairs(
-                            group,
-                            group.Meshes.Where(batchKeys.Contains).ToArray())))
+                    .Select(group => FilterMergeAffinityGroup(group, batchKeys))
                     .Where(group => group.Meshes.Length >= 2)
                     .ToList();
                 var contributingKeys = contributingGroups
@@ -6741,7 +6787,7 @@ namespace Editors.KitbasherEditor.Services
                     {
                         var candidateResidency = residency;
                         var candidateRejectionReason = rejectionReason;
-                        if (plan.Group.IsProspectiveTextureMerge)
+                        if (plan.Group.ProspectiveTextureMergeDraws > 0)
                         {
                             var textureMergeAccepted =
                                 TryAcceptTextureOnlyMergeAtlasBatch(
@@ -6788,7 +6834,7 @@ namespace Editors.KitbasherEditor.Services
                     foreach (var rejected in standaloneRejected)
                     {
                         state.CancellationToken.ThrowIfCancellationRequested();
-                        if (rejected.Plan.Group.IsProspectiveTextureMerge)
+                    if (rejected.Plan.Group.ProspectiveTextureMergeDraws > 0)
                         {
                             pendingTextureMergeAttachments.Add(
                                 new AtlasValueGatePendingTextureMergeAttachment(
@@ -6834,7 +6880,7 @@ namespace Editors.KitbasherEditor.Services
 
                     foreach (var rejected in standaloneRejected)
                     {
-                        if (rejected.Plan.Group.IsProspectiveTextureMerge)
+                        if (rejected.Plan.Group.ProspectiveTextureMergeDraws > 0)
                         {
                             pendingTextureMergeAttachments.Add(
                                 new AtlasValueGatePendingTextureMergeAttachment(
@@ -6873,7 +6919,7 @@ namespace Editors.KitbasherEditor.Services
                     string marginalReason;
                     AtlasValueGateAcceptanceKind marginalAcceptanceKind;
                     var marginalAccepted = false;
-                    if (rejected.Plan.Group.IsProspectiveTextureMerge)
+                    if (rejected.Plan.Group.ProspectiveTextureMergeDraws > 0)
                     {
                         marginalAcceptanceKind =
                             AtlasValueGateAcceptanceKind.TextureOnlyMerge;
@@ -6921,7 +6967,7 @@ namespace Editors.KitbasherEditor.Services
                     }
                     else
                     {
-                        if (rejected.Plan.Group.IsProspectiveTextureMerge)
+                        if (rejected.Plan.Group.ProspectiveTextureMergeDraws > 0)
                         {
                             pendingTextureMergeAttachments.Add(
                                 new AtlasValueGatePendingTextureMergeAttachment(
@@ -7291,7 +7337,7 @@ namespace Editors.KitbasherEditor.Services
         private static AtlasValueGateBudgetDecision
             EvaluateTextureOnlyMergeAtlasValueGateBudget(
                 bool scenarioResolved,
-                int rawDrawsEliminated,
+                int prospectiveTextureMergeDraws,
                 double expectedArmyDrawsEliminated,
                 double globalCostBytes,
                 double expectedCostBytes,
@@ -7300,13 +7346,13 @@ namespace Editors.KitbasherEditor.Services
                 double sourceBcnBytes)
         {
             if (!scenarioResolved ||
-                rawDrawsEliminated <= 0 ||
+                prospectiveTextureMergeDraws <= 0 ||
                 expectedArmyDrawsEliminated <= AtlasValueGateExpectedDrawEpsilon)
             {
                 return AtlasValueGateBudgetDecision.ScenarioResolvedZeroBenefit;
             }
 
-            var structuralBudget = Math.Max(rawDrawsEliminated, 1) *
+            var structuralBudget = prospectiveTextureMergeDraws *
                                     (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
             var scenarioBudget = expectedArmyDrawsEliminated *
                                  MaxNetBcnBytesPerExpectedArmyDraw;
@@ -7466,12 +7512,7 @@ namespace Editors.KitbasherEditor.Services
                 .Select(candidate => candidate.Key)
                 .ToHashSet();
             return affinityGroups
-                .Select(group => new MergeAffinityGroup(
-                    group.Meshes.Where(candidateKeys.Contains).ToArray(),
-                    group.IsProspectiveTextureMerge,
-                    FilterPreExistingStructuralMergePairs(
-                        group,
-                        group.Meshes.Where(candidateKeys.Contains).ToArray())))
+                .Select(group => FilterMergeAffinityGroup(group, candidateKeys))
                 .Where(group => group.Meshes.Length >= 2)
                 .ToList();
         }
@@ -7491,7 +7532,7 @@ namespace Editors.KitbasherEditor.Services
             out string rejectionReason)
         {
             state.CancellationToken.ThrowIfCancellationRequested();
-            if (!addedGroup.IsProspectiveTextureMerge)
+            if (addedGroup.ProspectiveTextureMergeDraws <= 0)
             {
                 marginalRawDrawsEliminated = 0;
                 marginalExpectedArmyDrawsEliminated = 0;
@@ -7580,6 +7621,10 @@ namespace Editors.KitbasherEditor.Services
             var marginalExpectedDraws = Math.Max(
                 0,
                 combinedSavings.Expected - baseSavings.Expected);
+            var marginalProspectiveTextureMergeDraws = Math.Max(
+                0,
+                CalculateProspectiveTextureMergeDraws(combinedGroups) -
+                CalculateProspectiveTextureMergeDraws(baseGroups));
             var marginalGenerated =
                 combinedResidency.GeneratedBcnBytes - baseResidency.GeneratedBcnBytes;
             var marginalRetired =
@@ -7608,6 +7653,7 @@ namespace Editors.KitbasherEditor.Services
                 combinedSavings.Raw,
                 baseSavings.Expected,
                 combinedSavings.Expected,
+                marginalProspectiveTextureMergeDraws,
                 marginalRawDraws,
                 marginalExpectedDraws,
                 marginalGlobalCost,
@@ -7633,7 +7679,7 @@ namespace Editors.KitbasherEditor.Services
 
             var budgetDecision = EvaluateTextureOnlyMergeAtlasValueGateBudget(
                 scenarioResolved,
-                marginalRawDraws,
+                marginalProspectiveTextureMergeDraws,
                 marginalExpectedDraws,
                 marginalGlobalCost,
                 marginalExpectedCost,
@@ -7818,13 +7864,11 @@ namespace Editors.KitbasherEditor.Services
                 if (remainderCandidates.Count == 0)
                     continue;
 
+                var remainderKeys = remainderCandidates
+                    .Select(candidate => candidate.Key)
+                    .ToHashSet();
                 var remainderPlan = new AtlasValueGateGroupPlan(
-                    new MergeAffinityGroup(
-                        remainderCandidates.Select(candidate => candidate.Key).ToArray(),
-                        IsProspectiveTextureMerge: true,
-                        PreExistingStructuralMergePairs: GetPreExistingStructuralMergePairs(
-                            state,
-                            remainderCandidates.Select(candidate => candidate.Key).ToArray())),
+                    FilterMergeAffinityGroup(pending.Plan.Group, remainderKeys),
                     remainderCandidates);
                 var rejectionResidency = pending.Residency;
                 if (TryEstimateIncrementalAtlasResidency(
@@ -7855,8 +7899,18 @@ namespace Editors.KitbasherEditor.Services
                 .OrderBy(BuildAtlasPlanningOrderKey, StringComparer.Ordinal)
                 .ThenBy(candidate => candidate.Key.ToString(), StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            if (candidates.Count <= 3)
-                return [plan];
+            if (candidates.Count <= 2)
+            {
+                var candidateKeys = candidates
+                    .Select(candidate => candidate.Key)
+                    .ToHashSet();
+                var candidateGroup = FilterMergeAffinityGroup(
+                    plan.Group,
+                    candidateKeys);
+                return candidateGroup.ProspectiveTextureMergeDraws > 0
+                    ? [new AtlasValueGateGroupPlan(candidateGroup, candidates)]
+                    : [];
+            }
 
             var pool = candidates
                 .Take(TextureOnlyMergeSubsetCandidateLimit)
@@ -7869,14 +7923,16 @@ namespace Editors.KitbasherEditor.Services
                 if (subsetPlans.Count >= subsetOptionLimit)
                     return;
 
+                var subsetKeys = subset
+                    .Select(candidate => candidate.Key)
+                    .ToHashSet();
+                var subsetGroup = FilterMergeAffinityGroup(plan.Group, subsetKeys);
+                if (subsetGroup.ProspectiveTextureMergeDraws <= 0)
+                    return;
+
                 subsetPlans.Add(
                     new AtlasValueGateGroupPlan(
-                        new MergeAffinityGroup(
-                            subset.Select(candidate => candidate.Key).ToArray(),
-                            IsProspectiveTextureMerge: true,
-                            PreExistingStructuralMergePairs: FilterPreExistingStructuralMergePairs(
-                                plan.Group,
-                                subset.Select(candidate => candidate.Key).ToArray())),
+                        subsetGroup,
                         subset.ToList()));
             }
 
@@ -7892,26 +7948,30 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            for (var left = 0;
-                 left < pool.Count && subsetPlans.Count < subsetOptionLimit;
-                 left++)
+            if (pool.Count > 3)
             {
-                for (var middle = left + 1;
-                     middle < pool.Count && subsetPlans.Count < subsetOptionLimit;
-                     middle++)
+                for (var left = 0;
+                     left < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                     left++)
                 {
-                    for (var right = middle + 1;
-                         right < pool.Count && subsetPlans.Count < subsetOptionLimit;
-                         right++)
+                    for (var middle = left + 1;
+                         middle < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                         middle++)
                     {
-                        AddSubset([pool[left], pool[middle], pool[right]]);
+                        for (var right = middle + 1;
+                             right < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                             right++)
+                        {
+                            AddSubset([pool[left], pool[middle], pool[right]]);
+                        }
                     }
                 }
             }
 
             // Retain the original group as a final option. This preserves a full-group win
             // when the combined atlas happens to be cheaper than its smaller alternatives.
-            subsetPlans.Add(plan);
+            if (plan.Group.ProspectiveTextureMergeDraws > 0)
+                subsetPlans.Add(plan);
             return subsetPlans;
         }
 
@@ -7928,9 +7988,7 @@ namespace Editors.KitbasherEditor.Services
                 return;
             }
 
-            var structuralBudget = Math.Max(
-                    evaluation.MarginalRawDrawsEliminated,
-                    1) *
+            var structuralBudget = evaluation.MarginalProspectiveTextureMergeDraws *
                 (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
             var scenarioBudget = evaluation.MarginalExpectedArmyDrawsEliminated *
                                  MaxNetBcnBytesPerExpectedArmyDraw;
@@ -8340,7 +8398,7 @@ namespace Editors.KitbasherEditor.Services
             expectedArmyDrawsEliminated = 0;
             rejectionReason = string.Empty;
 
-            if (!plan.Group.IsProspectiveTextureMerge)
+            if (plan.Group.ProspectiveTextureMergeDraws <= 0)
             {
                 rejectionReason = "the merge group has no prospective texture-only compatibility.";
                 return false;
@@ -8394,7 +8452,7 @@ namespace Editors.KitbasherEditor.Services
             var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
             var budgetDecision = EvaluateTextureOnlyMergeAtlasValueGateBudget(
                 scenarioResolved,
-                rawDrawsEliminated,
+                plan.Group.ProspectiveTextureMergeDraws,
                 expectedArmyDrawsEliminated,
                 globalCost,
                 expectedCost,
@@ -8410,7 +8468,7 @@ namespace Editors.KitbasherEditor.Services
                     return false;
 
                 case AtlasValueGateBudgetDecision.TextureOnlyMergeBudgetExceeded:
-                    var structuralBudgetBytes = Math.Max(rawDrawsEliminated, 1) *
+                    var structuralBudgetBytes = plan.Group.ProspectiveTextureMergeDraws *
                                                 (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
                     var scenarioBudgetBytes = expectedArmyDrawsEliminated *
                                               MaxNetBcnBytesPerExpectedArmyDraw;
@@ -11677,6 +11735,7 @@ namespace Editors.KitbasherEditor.Services
                 nameNode?.ParentNode?.RemoveChild(nameNode);
                 var texturesNode = nonTexture.SelectSingleNode("/material/textures");
                 texturesNode?.ParentNode?.RemoveChild(texturesNode);
+                NormalizeMaterialResourcePaths(nonTexture);
 
                 var snapshot = new MaterialMergeDiagnosticSnapshot(
                     GetMaterialRenderingIdentity(material),
@@ -17850,6 +17909,7 @@ namespace Editors.KitbasherEditor.Services
             int CombinedRawDrawsEliminated,
             double BaseExpectedArmyDrawsEliminated,
             double CombinedExpectedArmyDrawsEliminated,
+            int MarginalProspectiveTextureMergeDraws,
             int MarginalRawDrawsEliminated,
             double MarginalExpectedArmyDrawsEliminated,
             double MarginalGlobalCostBytes,
@@ -18080,8 +18140,9 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record MergeAffinityGroup(
             MeshKey[] Meshes,
-            bool IsProspectiveTextureMerge,
-            string[] PreExistingStructuralMergePairs);
+            int ProspectiveTextureMergeDraws,
+            string[] PreExistingStructuralMergePairs,
+            string[] PreAtlasMaterialIdentities);
 
         private sealed record MergeAwareRepartitionReportEntry(
             int FirstBatchIndex,
