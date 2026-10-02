@@ -740,6 +740,7 @@ namespace Editors.KitbasherEditor.Services
             state.ImmutableMeshMergeConsumersByRigid.Clear();
             state.DirectRigidMeshMergeConsumersByRigid.Clear();
             state.StructuralMergeConsumerDiscoveryFailures.Clear();
+            state.ConsumerDiscoveryBlocks.Clear();
             foreach (var failure in dependencyIndex.Failures)
                 state.StructuralMergeConsumerDiscoveryFailures.Add(failure);
 
@@ -804,28 +805,62 @@ namespace Editors.KitbasherEditor.Services
                 .Where(path => !string.IsNullOrWhiteSpace(path))
                 ?? Array.Empty<string>();
 
-            var roots = sourceVmdRoots
-                .Concat(indexedGameplayAssets)
-                .Concat(safetyRosterVmdRoots)
-                .Concat(resolution?.UnresolvedConsumersByVmd.Keys ?? Array.Empty<string>())
-                .Concat(
-                    resolution?.DirectAssetUsagesByPath.Keys
-                        .Where(IsMeshConsumerAssetPath) ??
-                    Array.Empty<string>())
-                .Select(Normalize)
-                .Where(path => path.Length != 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+            var rootKindsByPath =
+                new Dictionary<string, HashSet<GameplayMeshDependencyRootKind>>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            void AddRoot(
+                string pathValue,
+                GameplayMeshDependencyRootKind rootKind)
+            {
+                var path = Normalize(pathValue);
+                if (path.Length == 0)
+                    return;
+
+                if (!rootKindsByPath.TryGetValue(path, out var kinds))
+                {
+                    kinds = [];
+                    rootKindsByPath[path] = kinds;
+                }
+
+                kinds.Add(rootKind);
+            }
+
+            foreach (var path in sourceVmdRoots)
+                AddRoot(path, GameplayMeshDependencyRootKind.SourcePackVmd);
+            foreach (var path in indexedGameplayAssets)
+                AddRoot(path, GameplayMeshDependencyRootKind.ResidencyAsset);
+            foreach (var path in safetyRosterVmdRoots)
+                AddRoot(path, GameplayMeshDependencyRootKind.ResolvedRosterVmd);
+            foreach (var path in resolution?.UnresolvedConsumersByVmd.Keys ??
+                         Array.Empty<string>())
+            {
+                AddRoot(path, GameplayMeshDependencyRootKind.UnresolvedResolverVmd);
+            }
+
+            foreach (var path in resolution?.DirectAssetUsagesByPath.Keys
+                         .Where(IsMeshConsumerAssetPath) ?? Array.Empty<string>())
+            {
+                AddRoot(path, GameplayMeshDependencyRootKind.DirectGameplayAsset);
+            }
+
+            var roots = rootKindsByPath.Keys
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
             var index = new GameplayMeshDependencyIndex();
+            foreach (var (rootPath, rootKinds) in rootKindsByPath)
+            {
+                foreach (var rootKind in rootKinds)
+                    index.RegisterRoot(rootPath, rootKind);
+            }
+
             var processedWsModels = new HashSet<string>(
                 StringComparer.OrdinalIgnoreCase);
 
             foreach (var rootAssetPath in roots)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                index.GameplayRoots.Add(rootAssetPath);
 
                 var traversal = CollectGameplayMeshConsumers(
                     state,
@@ -834,12 +869,13 @@ namespace Editors.KitbasherEditor.Services
                     index);
                 if (!traversal.IsComplete)
                 {
-                    foreach (var unresolvedPath in traversal.UnresolvedPaths)
+                    foreach (var failure in traversal.Failures)
                     {
                         index.RecordFailure(
                             rootAssetPath,
-                            unresolvedPath,
-                            "dependency traversal was incomplete");
+                            failure.AssetPath,
+                            failure.Reason,
+                            failure.AssetScope);
                     }
                 }
 
@@ -861,7 +897,11 @@ namespace Editors.KitbasherEditor.Services
                         index.RecordFailure(
                             rootAssetPath,
                             wsModelPath,
-                            "WSModel could not be resolved");
+                            "WSModel could not be resolved",
+                            GetGameplayMeshDependencyAssetScope(
+                                state,
+                                wsModelPath,
+                                container));
                         continue;
                     }
 
@@ -876,7 +916,8 @@ namespace Editors.KitbasherEditor.Services
                         index.RecordFailure(
                             rootAssetPath,
                             wsModelPath,
-                            "source WSModel is malformed and its geometry consumer cannot be established");
+                            "source WSModel is malformed and its geometry consumer cannot be established",
+                            GameplayMeshDependencyAssetScope.SourcePack);
                         continue;
                     }
 
@@ -890,7 +931,11 @@ namespace Editors.KitbasherEditor.Services
                         index.RecordFailure(
                             rootAssetPath,
                             wsModelPath,
-                            "WSModel could not be parsed");
+                            "WSModel could not be parsed",
+                            GetGameplayMeshDependencyAssetScope(
+                                state,
+                                wsModelPath,
+                                container));
                         continue;
                     }
 
@@ -901,7 +946,11 @@ namespace Editors.KitbasherEditor.Services
                         index.RecordFailure(
                             rootAssetPath,
                             wsModelPath,
-                            "WSModel has no geometry path");
+                            "WSModel has no geometry path",
+                            GetGameplayMeshDependencyAssetScope(
+                                state,
+                                wsModelPath,
+                                container));
                         continue;
                     }
 
@@ -1041,6 +1090,33 @@ namespace Editors.KitbasherEditor.Services
                        StringComparison.OrdinalIgnoreCase);
         }
 
+        private static GameplayMeshDependencyAssetScope
+            GetGameplayMeshDependencyAssetScope(
+                BatchState state,
+                string assetPathValue,
+                IPackFileContainer? resolvedContainer = null)
+        {
+            var assetPath = Normalize(assetPathValue);
+            if (resolvedContainer != null)
+            {
+                return ReferenceEquals(resolvedContainer, state.Source)
+                    ? GameplayMeshDependencyAssetScope.SourcePack
+                    : GameplayMeshDependencyAssetScope.CaPack;
+            }
+
+            if (assetPath.Length != 0 && state.Source.ContainsFile(assetPath))
+                return GameplayMeshDependencyAssetScope.SourcePack;
+
+            return assetPath.Length != 0 &&
+                   FindGameplayTraversalContainer(
+                       state,
+                       state.Source,
+                       GetGameplayTraversalContainers(state),
+                       assetPath) != null
+                ? GameplayMeshDependencyAssetScope.CaPack
+                : GameplayMeshDependencyAssetScope.Missing;
+        }
+
         private static GameplayMeshConsumerTraversal CollectGameplayMeshConsumers(
             BatchState state,
             string rootAssetPath,
@@ -1054,7 +1130,11 @@ namespace Editors.KitbasherEditor.Services
             if (rootPath.Length == 0)
             {
                 result.IsComplete = false;
-                result.UnresolvedPaths.Add("<empty root>");
+                result.Failures.Add(
+                    new GameplayMeshTraversalFailure(
+                        "<empty root>",
+                        "empty root",
+                        GameplayMeshDependencyAssetScope.Missing));
                 return result;
             }
 
@@ -1086,21 +1166,33 @@ namespace Editors.KitbasherEditor.Services
                         ".variantmeshdefinition",
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    if (FindGameplayTraversalContainer(
+                    var referencedContainer = FindGameplayTraversalContainer(
                             state,
                             state.Source,
                             GetGameplayTraversalContainers(state),
-                            assetPath) == null)
+                            assetPath);
+                    if (referencedContainer == null)
                     {
                         result.IsComplete = false;
-                        result.UnresolvedPaths.Add(assetPath);
+                        result.Failures.Add(
+                            new GameplayMeshTraversalFailure(
+                                assetPath,
+                                "asset could not be resolved",
+                                GameplayMeshDependencyAssetScope.Missing));
                     }
                     else
                     {
                         // A gameplay model reference without a recognized extension cannot
                         // be classified as a WSModel or a direct rigid consumer safely.
                         result.IsComplete = false;
-                        result.UnresolvedPaths.Add($"{assetPath} (unrecognized asset type)");
+                        result.Failures.Add(
+                            new GameplayMeshTraversalFailure(
+                                assetPath,
+                                "unrecognized asset type",
+                                GetGameplayMeshDependencyAssetScope(
+                                    state,
+                                    assetPath,
+                                    referencedContainer)));
                     }
 
                     continue;
@@ -1122,7 +1214,16 @@ namespace Editors.KitbasherEditor.Services
                         out var vmd))
                 {
                     result.IsComplete = false;
-                    result.UnresolvedPaths.Add(assetPath);
+                    result.Failures.Add(
+                        new GameplayMeshTraversalFailure(
+                            assetPath,
+                            container == null || file == null
+                                ? "VMD could not be resolved"
+                                : "VMD could not be parsed",
+                            GetGameplayMeshDependencyAssetScope(
+                                state,
+                                assetPath,
+                                container)));
                     continue;
                 }
 
@@ -1148,7 +1249,11 @@ namespace Editors.KitbasherEditor.Services
                     if (modelContainer == null)
                     {
                         result.IsComplete = false;
-                        result.UnresolvedPaths.Add(modelPath);
+                        result.Failures.Add(
+                            new GameplayMeshTraversalFailure(
+                                modelPath,
+                                "model dependency could not be resolved",
+                                GameplayMeshDependencyAssetScope.Missing));
                         continue;
                     }
 
@@ -1174,8 +1279,14 @@ namespace Editors.KitbasherEditor.Services
                     else
                     {
                         result.IsComplete = false;
-                        result.UnresolvedPaths.Add(
-                            $"{modelPath} (unrecognized model reference)");
+                        result.Failures.Add(
+                            new GameplayMeshTraversalFailure(
+                                modelPath,
+                                "unrecognized model reference",
+                                GetGameplayMeshDependencyAssetScope(
+                                    state,
+                                    modelPath,
+                                    modelContainer)));
                     }
                 }
 
@@ -1195,7 +1306,11 @@ namespace Editors.KitbasherEditor.Services
                             childPath) == null)
                     {
                         result.IsComplete = false;
-                        result.UnresolvedPaths.Add(childPath);
+                        result.Failures.Add(
+                            new GameplayMeshTraversalFailure(
+                                childPath,
+                                "child VMD dependency could not be resolved",
+                                GameplayMeshDependencyAssetScope.Missing));
                         continue;
                     }
 
@@ -1415,6 +1530,10 @@ namespace Editors.KitbasherEditor.Services
             if (!IsGameplayConsumerDiscoverySafeForAsset(state, rigidPath))
             {
                 reason = "complete gameplay consumer discovery was not available; structural merge is blocked conservatively.";
+                RecordGameplayMeshDiscoveryBlock(
+                    state,
+                    "StructuralMerge",
+                    [rigidPath]);
                 RecordStructuralMergeSkip(state, rigidPath, reason);
                 return true;
             }
@@ -1885,6 +2004,23 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
+                var discoveryPaths = new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase)
+                {
+                    candidate.RootVmdPath,
+                    candidate.Key.GeometryPath,
+                };
+                foreach (var usage in candidate.Usages)
+                {
+                    if (!string.IsNullOrWhiteSpace(usage.WsModelPath))
+                        discoveryPaths.Add(usage.WsModelPath);
+                }
+
+                RecordGameplayMeshDiscoveryBlock(
+                    state,
+                    "AtlasRewrite",
+                    discoveryPaths);
+
                 RecordSkip(
                     state,
                     candidate.RootVmdPath,
@@ -1919,6 +2055,51 @@ namespace Editors.KitbasherEditor.Services
             return candidates
                 .Where(candidate => !blockedKeys.Contains(candidate.Key))
                 .ToList();
+        }
+
+        private static void RecordGameplayMeshDiscoveryBlock(
+            BatchState state,
+            string blockKind,
+            IEnumerable<string> assetPaths)
+        {
+            var index = state.GameplayMeshDependencyIndex;
+            var globalDiscoveryFailure = index == null ||
+                                         state.UnitCategoryResolution == null ||
+                                         !state.UnitCategoryResolution.IsGameplayResolutionHealthy;
+            foreach (var assetPathValue in assetPaths)
+            {
+                var assetPath = Normalize(assetPathValue);
+                if (assetPath.Length == 0)
+                    continue;
+
+                var incompleteRoots = index?.GetIncompleteRootsForAsset(assetPath)
+                    ?? Array.Empty<string>();
+                if (incompleteRoots.Count == 0)
+                {
+                    if (globalDiscoveryFailure ||
+                        index?.IsAssetAffectedByIncompleteRoot(assetPath) == true)
+                    {
+                        state.ConsumerDiscoveryBlocks.Add(
+                            new GameplayMeshDiscoveryBlock(
+                                assetPath,
+                                blockKind,
+                                globalDiscoveryFailure
+                                    ? "<global>"
+                                    : "<unattributed>"));
+                    }
+
+                    continue;
+                }
+
+                foreach (var incompleteRoot in incompleteRoots)
+                {
+                    state.ConsumerDiscoveryBlocks.Add(
+                        new GameplayMeshDiscoveryBlock(
+                            assetPath,
+                            blockKind,
+                            incompleteRoot));
+                }
+            }
         }
 
         private static bool HasUnrewritableMaterialConsumerAtlasConflict(
@@ -15159,6 +15340,170 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"    ... {counts.Count - maxEntries} more");
         }
 
+        private static void AppendGameplayMeshDependencyDiagnostics(
+            StringBuilder sb,
+            BatchState state)
+        {
+            sb.AppendLine("Gameplay mesh-consumer discovery diagnostics");
+            sb.AppendLine("--------------------------------------------");
+
+            var index = state.GameplayMeshDependencyIndex;
+            if (index == null)
+            {
+                sb.AppendLine("(not available)");
+                sb.AppendLine();
+                return;
+            }
+
+            sb.AppendLine($"Discovery roots: {index.GameplayRoots.Count}");
+            sb.AppendLine($"Incomplete roots: {index.IncompleteRoots.Count}");
+            sb.AppendLine($"Failure details: {index.FailureDetails.Count}");
+            sb.AppendLine(
+                $"Discovery-blocked assets: " +
+                $"{state.ConsumerDiscoveryBlocks.Select(x => x.AssetPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).Count()}");
+            sb.AppendLine(
+                $"Discovery-blocked structural assets: " +
+                $"{state.ConsumerDiscoveryBlocks
+                    .Where(x => x.BlockKind.Equals(
+                        "StructuralMerge",
+                        StringComparison.Ordinal))
+                    .Select(x => x.AssetPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count()}");
+            sb.AppendLine(
+                $"Discovery-blocked atlas candidates: " +
+                $"{state.ConsumerDiscoveryBlocks
+                    .Where(x => x.BlockKind.Equals(
+                        "AtlasRewrite",
+                        StringComparison.Ordinal))
+                    .Select(x => x.AssetPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count()}");
+
+            var rootOriginCounts = index.RootKindsByPath
+                .SelectMany(entry => entry.Value.Select(kind =>
+                    FormatGameplayMeshDependencyRootKind(kind)))
+                .GroupBy(value => value, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            AppendDiagnosticCounts(
+                sb,
+                "Root origins",
+                rootOriginCounts,
+                maxEntries: 16);
+
+            var incompleteRootOriginCounts = index.IncompleteRoots
+                .SelectMany(root => index.GetRootKinds(root)
+                    .Select(kind => FormatGameplayMeshDependencyRootKind(kind)))
+                .GroupBy(value => value, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            AppendDiagnosticCounts(
+                sb,
+                "Incomplete root origins",
+                incompleteRootOriginCounts,
+                maxEntries: 16);
+
+            var failureScopeCounts = index.FailureDetails
+                .GroupBy(
+                    failure => FormatGameplayMeshDependencyAssetScope(failure.AssetScope),
+                    StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            AppendDiagnosticCounts(
+                sb,
+                "Failure asset ownership",
+                failureScopeCounts,
+                maxEntries: 8);
+
+            var failureReasonCounts = index.FailureDetails
+                .GroupBy(failure => failure.Reason, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            AppendDiagnosticCounts(
+                sb,
+                "Failure reasons",
+                failureReasonCounts,
+                maxEntries: 32);
+
+            sb.AppendLine("Failure details");
+            sb.AppendLine("---------------");
+            if (index.FailureDetails.Count == 0)
+            {
+                sb.AppendLine("(none)");
+            }
+            else
+            {
+                foreach (var failure in index.FailureDetails
+                             .OrderBy(entry => entry.RootPath, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(entry => entry.AssetPath, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(entry => entry.Reason, StringComparer.Ordinal)
+                             .ThenBy(entry => entry.AssetScope))
+                {
+                    var rootOrigins = index.GetRootKinds(failure.RootPath)
+                        .Select(FormatGameplayMeshDependencyRootKind)
+                        .OrderBy(value => value, StringComparer.Ordinal)
+                        .ToArray();
+                    sb.AppendLine(
+                        $"  root={FormatDiagnosticPath(failure.RootPath)} | " +
+                        $"origins={(rootOrigins.Length == 0 ? "Unknown" : string.Join(",", rootOrigins))} | " +
+                        $"asset={FormatDiagnosticPath(failure.AssetPath)} | " +
+                        $"owner={FormatGameplayMeshDependencyAssetScope(failure.AssetScope)} | " +
+                        $"reason={failure.Reason}");
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("Discovery-blocked assets");
+            sb.AppendLine("------------------------");
+            if (state.ConsumerDiscoveryBlocks.Count == 0)
+            {
+                sb.AppendLine("(none)");
+            }
+            else
+            {
+                foreach (var block in state.ConsumerDiscoveryBlocks
+                             .OrderBy(entry => entry.BlockKind, StringComparer.Ordinal)
+                             .ThenBy(entry => entry.AssetPath, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(entry => entry.IncompleteRootPath, StringComparer.OrdinalIgnoreCase))
+                {
+                    var rootOrigins = index.GetRootKinds(block.IncompleteRootPath)
+                        .Select(FormatGameplayMeshDependencyRootKind)
+                        .OrderBy(value => value, StringComparer.Ordinal)
+                        .ToArray();
+                    sb.AppendLine(
+                        $"  kind={block.BlockKind} | " +
+                        $"asset={FormatDiagnosticPath(block.AssetPath)} | " +
+                        $"incomplete-root={FormatDiagnosticPath(block.IncompleteRootPath)} | " +
+                        $"origins={(rootOrigins.Length == 0 ? "Unknown" : string.Join(",", rootOrigins))}");
+                }
+            }
+
+            sb.AppendLine();
+        }
+
+        private static string FormatGameplayMeshDependencyRootKind(
+            GameplayMeshDependencyRootKind rootKind)
+            => rootKind switch
+            {
+                GameplayMeshDependencyRootKind.SourcePackVmd => "SourcePackVmd",
+                GameplayMeshDependencyRootKind.ResolvedRosterVmd => "ResolvedRosterVmd",
+                GameplayMeshDependencyRootKind.ResidencyAsset => "ResidencyAsset",
+                GameplayMeshDependencyRootKind.UnresolvedResolverVmd => "UnresolvedResolverVmd",
+                GameplayMeshDependencyRootKind.DirectGameplayAsset => "DirectGameplayAsset",
+                _ => rootKind.ToString(),
+            };
+
+        private static string FormatGameplayMeshDependencyAssetScope(
+            GameplayMeshDependencyAssetScope assetScope)
+            => assetScope switch
+            {
+                GameplayMeshDependencyAssetScope.SourcePack => "SourcePack",
+                GameplayMeshDependencyAssetScope.CaPack => "CaPack",
+                GameplayMeshDependencyAssetScope.Missing => "Missing",
+                _ => assetScope.ToString(),
+            };
+
+        private static string FormatDiagnosticPath(string path)
+            => string.IsNullOrWhiteSpace(path) ? "<unknown>" : path;
+
         private static AtlasComponentReuseAnalysis BuildAtlasComponentReuseAnalysis(
             BatchState state)
         {
@@ -16785,6 +17130,8 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine();
             }
 
+            AppendGameplayMeshDependencyDiagnostics(sb, state);
+
             sb.AppendLine("Uniform constant source textures");
             sb.AppendLine("--------------------------------");
             foreach (var path in state.UniformConstantTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
@@ -18109,6 +18456,7 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> StructuralMergeConsumerDiscoveryFailures { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<GameplayMeshDiscoveryBlock> ConsumerDiscoveryBlocks { get; } = [];
             public HashSet<MeshKey> PreAtlasStructuralMergeMeshes { get; } = [];
             public HashSet<string> PreAtlasStructuralMergePairs { get; } =
                 new(StringComparer.Ordinal);
@@ -18648,9 +18996,44 @@ namespace Editors.KitbasherEditor.Services
             List<AtlasCandidate> Candidates,
             List<MissingTextureDependency> MissingTextures);
 
+        private enum GameplayMeshDependencyRootKind
+        {
+            SourcePackVmd,
+            ResolvedRosterVmd,
+            ResidencyAsset,
+            UnresolvedResolverVmd,
+            DirectGameplayAsset,
+        }
+
+        private enum GameplayMeshDependencyAssetScope
+        {
+            SourcePack,
+            CaPack,
+            Missing,
+        }
+
+        private sealed record GameplayMeshDependencyFailure(
+            string RootPath,
+            string AssetPath,
+            string Reason,
+            GameplayMeshDependencyAssetScope AssetScope);
+
+        private sealed record GameplayMeshTraversalFailure(
+            string AssetPath,
+            string Reason,
+            GameplayMeshDependencyAssetScope AssetScope);
+
+        private sealed record GameplayMeshDiscoveryBlock(
+            string AssetPath,
+            string BlockKind,
+            string IncompleteRootPath);
+
         private sealed class GameplayMeshDependencyIndex
         {
             public HashSet<string> GameplayRoots { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<GameplayMeshDependencyRootKind>>
+                RootKindsByPath { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> DependenciesByAssetPath { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
@@ -18662,6 +19045,7 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> Failures { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<GameplayMeshDependencyFailure> FailureDetails { get; } = [];
             public HashSet<string> IncompleteRoots { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
 
@@ -18679,6 +19063,53 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 return roots.Any(IncompleteRoots.Contains);
+            }
+
+            public IReadOnlyList<string> GetIncompleteRootsForAsset(
+                string assetPathValue)
+            {
+                var assetPath = Normalize(assetPathValue);
+                if (assetPath.Length == 0)
+                    return Array.Empty<string>();
+
+                IEnumerable<string> roots = RootsByAssetPath.TryGetValue(assetPath, out var referencedRoots)
+                    ? referencedRoots
+                    : Array.Empty<string>();
+                return roots
+                    .Concat(IncompleteRoots.Contains(assetPath)
+                        ? [assetPath]
+                        : Array.Empty<string>())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Where(IncompleteRoots.Contains)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+
+            public void RegisterRoot(
+                string rootPathValue,
+                GameplayMeshDependencyRootKind rootKind)
+            {
+                var rootPath = Normalize(rootPathValue);
+                if (rootPath.Length == 0)
+                    return;
+
+                GameplayRoots.Add(rootPath);
+                if (!RootKindsByPath.TryGetValue(rootPath, out var kinds))
+                {
+                    kinds = [];
+                    RootKindsByPath[rootPath] = kinds;
+                }
+
+                kinds.Add(rootKind);
+            }
+
+            public IReadOnlyCollection<GameplayMeshDependencyRootKind> GetRootKinds(
+                string rootPathValue)
+            {
+                var rootPath = Normalize(rootPathValue);
+                return RootKindsByPath.TryGetValue(rootPath, out var kinds)
+                    ? kinds
+                    : Array.Empty<GameplayMeshDependencyRootKind>();
             }
 
             public void PropagateRootReferences()
@@ -18795,15 +19226,24 @@ namespace Editors.KitbasherEditor.Services
             public void RecordFailure(
                 string rootPathValue,
                 string assetPathValue,
-                string reason)
+                string reason,
+                GameplayMeshDependencyAssetScope assetScope)
             {
                 var rootPath = Normalize(rootPathValue);
                 var assetPath = Normalize(assetPathValue);
                 if (rootPath.Length != 0)
                     IncompleteRoots.Add(rootPath);
+
+                FailureDetails.Add(
+                    new GameplayMeshDependencyFailure(
+                        rootPath,
+                        assetPath,
+                        reason,
+                        assetScope));
                 Failures.Add(
                     $"{(rootPath.Length == 0 ? "<unknown-root>" : rootPath)} -> " +
-                    $"{(assetPath.Length == 0 ? "<unknown-asset>" : assetPath)}: {reason}");
+                    $"{(assetPath.Length == 0 ? "<unknown-asset>" : assetPath)}: {reason} " +
+                    $"(scope={assetScope})");
             }
         }
 
@@ -18813,8 +19253,7 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> DirectRigidPaths { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
-            public HashSet<string> UnresolvedPaths { get; } =
-                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<GameplayMeshTraversalFailure> Failures { get; } = [];
             public bool IsComplete { get; set; } = true;
         }
 
