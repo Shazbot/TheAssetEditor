@@ -591,6 +591,32 @@ namespace Test.KitbashEditor.Services
                 .ToArray();
         }
 
+        private static bool GameplayDependencyIndexContains(
+            object state,
+            string dictionaryProperty,
+            string key,
+            string value)
+        {
+            var index = GetStateProperty<object>(state, "GameplayMeshDependencyIndex");
+            var dictionary = index.GetType()
+                .GetProperty(
+                    dictionaryProperty,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(index) as IDictionary
+                ?? throw new InvalidOperationException(
+                    $"Gameplay dependency dictionary {dictionaryProperty} was not found.");
+            var normalizedKey = NormalizeTestPath(key);
+            if (!dictionary.Contains(normalizedKey))
+                return false;
+
+            return ((IEnumerable)dictionary[normalizedKey]!)
+                .Cast<object>()
+                .Select(item => NormalizeTestPath(item.ToString() ?? string.Empty))
+                .Contains(
+                    NormalizeTestPath(value),
+                    StringComparer.OrdinalIgnoreCase);
+        }
+
         private static bool IsPreAtlasStructuralMergeGroup(
             object state,
             string rigidPath,
@@ -2344,6 +2370,30 @@ namespace Test.KitbashEditor.Services
                     consumers,
                     Does.Contain(NormalizeTestPath(caWsModelPath)),
                     "The CA VMD from the complete gameplay roster must be traversed even though it is not a source root.");
+                Assert.That(
+                    GameplayDependencyIndexContains(
+                        state,
+                        "DependenciesByAssetPath",
+                        caVmdPath,
+                        caWsModelPath),
+                    Is.True,
+                    "The reusable dependency index must retain the CA VMD -> WSModel edge.");
+                Assert.That(
+                    GameplayDependencyIndexContains(
+                        state,
+                        "DependenciesByAssetPath",
+                        caWsModelPath,
+                        rigidPath),
+                    Is.True,
+                    "The reusable dependency index must retain the WSModel -> rigid edge.");
+                Assert.That(
+                    GameplayDependencyIndexContains(
+                        state,
+                        "WsModelConsumersByRigid",
+                        rigidPath,
+                        caWsModelPath),
+                    Is.True,
+                    "The reverse-consumer index must retain the immutable CA WSModel consumer.");
                 Assert.That(filteredCount, Is.EqualTo(0));
                 Assert.That(model.Mesh.VertexList[0].Uv, Is.EqualTo(originalUv));
             });

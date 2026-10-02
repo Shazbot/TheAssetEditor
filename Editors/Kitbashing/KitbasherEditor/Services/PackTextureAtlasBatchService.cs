@@ -726,79 +726,150 @@ namespace Editors.KitbasherEditor.Services
             CancellationToken cancellationToken)
         {
             var resolution = state.UnitCategoryResolution;
-            state.StructuralMergeConsumerDiscoveryComplete =
-                resolution != null && resolution.IsGameplayResolutionHealthy;
+            var dependencyIndex = BuildGameplayMeshDependencyIndex(
+                state,
+                vmdRoots,
+                cancellationToken);
+            state.GameplayMeshDependencyIndex = dependencyIndex;
 
-            // Gameplay can reach a mesh through a normal VMD, an unresolved VMD
-            // consumer, or a direct engine asset.  The latter two populations must be
-            // included even when they are absent from UsagesByVmd.  The resolved roster is
-            // also a gameplay authority: a CA VMD can be a valid consumer without being a
-            // child of a source-pack VMD or appearing in the selected-pack usage index.
-            var rosterVmdRoots = resolution?.RosterUnits
-                .SelectMany(unit => unit.Components)
-                .Where(component => component.IsVariantMeshDefinition)
-                .Select(component => component.AssetPath)
-                .Where(path => !string.IsNullOrWhiteSpace(path))
-                ?? Array.Empty<string>();
-            var roots = vmdRoots
-                .Concat(rosterVmdRoots)
-                .Concat(resolution?.UsagesByVmd.Keys ?? Array.Empty<string>())
+            state.ImmutableMeshMergeConsumersByRigid.Clear();
+            state.DirectRigidMeshMergeConsumersByRigid.Clear();
+            state.StructuralMergeConsumerDiscoveryFailures.Clear();
+            foreach (var failure in dependencyIndex.Failures)
+                state.StructuralMergeConsumerDiscoveryFailures.Add(failure);
+
+            state.StructuralMergeConsumerDiscoveryComplete =
+                resolution != null &&
+                resolution.IsGameplayResolutionHealthy &&
+                dependencyIndex.IsComplete;
+
+            // These two dictionaries are retained as compact reporting/test views. The
+            // dependency index is the authoritative topology and safety source.
+            foreach (var (rigidPath, wsModelPaths) in dependencyIndex.WsModelConsumersByRigid)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!state.Source.ContainsFile(rigidPath))
+                    continue;
+
+                var immutableConsumers = wsModelPaths
+                    .Where(path => !state.Source.ContainsFile(path))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (immutableConsumers.Count != 0)
+                {
+                    state.ImmutableMeshMergeConsumersByRigid[rigidPath] =
+                        immutableConsumers;
+                }
+            }
+
+            foreach (var (rigidPath, rootConsumers) in dependencyIndex.DirectConsumersByRigid)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!state.Source.ContainsFile(rigidPath) || rootConsumers.Count == 0)
+                    continue;
+
+                state.DirectRigidMeshMergeConsumersByRigid[rigidPath] =
+                    new HashSet<string>(
+                        rootConsumers,
+                        StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        private static GameplayMeshDependencyIndex BuildGameplayMeshDependencyIndex(
+            BatchState state,
+            IReadOnlyList<string> sourceVmdRoots,
+            CancellationToken cancellationToken)
+        {
+            var resolution = state.UnitCategoryResolution;
+            IEnumerable<string> indexedGameplayAssets;
+            if (state.ArmyResidencyModel != null)
+            {
+                // bc8b75c9 already built the expensive gameplay-facing reverse index. Reuse
+                // its asset population instead of walking the full resolved roster again.
+                indexedGameplayAssets = state.ArmyResidencyModel.UnitIdsByAssetPath.Keys
+                    .Where(IsMeshConsumerAssetPath);
+            }
+            else
+            {
+                // Tests and defensive callers may build consumer safety without an army
+                // model. Preserve the complete-roster fallback for those cases.
+                indexedGameplayAssets = resolution?.RosterUnits
+                    .SelectMany(unit => unit.Components)
+                    .Where(component => component.IsVariantMeshDefinition)
+                    .Select(component => component.AssetPath)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    ?? Array.Empty<string>();
+            }
+
+            var roots = sourceVmdRoots
+                .Concat(indexedGameplayAssets)
                 .Concat(resolution?.UnresolvedConsumersByVmd.Keys ?? Array.Empty<string>())
                 .Concat(
                     resolution?.DirectAssetUsagesByPath.Keys
                         .Where(IsMeshConsumerAssetPath) ??
                     Array.Empty<string>())
+                .Select(Normalize)
+                .Where(path => path.Length != 0)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+                .ToArray();
+
+            var index = new GameplayMeshDependencyIndex();
+            var processedWsModels = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
 
             foreach (var rootAssetPath in roots)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                index.GameplayRoots.Add(rootAssetPath);
+
                 var traversal = CollectGameplayMeshConsumers(
                     state,
                     rootAssetPath,
-                    cancellationToken);
+                    cancellationToken,
+                    index);
                 if (!traversal.IsComplete)
                 {
-                    state.StructuralMergeConsumerDiscoveryComplete = false;
                     foreach (var unresolvedPath in traversal.UnresolvedPaths)
                     {
-                        state.StructuralMergeConsumerDiscoveryFailures.Add(
-                            $"{Normalize(rootAssetPath)} -> {unresolvedPath}");
+                        index.RecordFailure(
+                            rootAssetPath,
+                            unresolvedPath,
+                            "dependency traversal was incomplete");
                     }
                 }
 
-                foreach (var wsModelPath in traversal.WsModelPaths)
+                foreach (var wsModelPathValue in traversal.WsModelPaths)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var normalizedWsPath = Normalize(wsModelPath);
+                    var wsModelPath = Normalize(wsModelPathValue);
+                    if (!processedWsModels.Add(wsModelPath))
+                        continue;
+
                     var container = FindGameplayTraversalContainer(
                         state.Source,
                         GetGameplayTraversalContainers(state),
-                        normalizedWsPath);
-                    var file = container?.FindFile(normalizedWsPath);
+                        wsModelPath);
+                    var file = container?.FindFile(wsModelPath);
                     if (container == null || file == null)
                     {
-                        RecordStructuralMergeConsumerDiscoveryFailure(
-                            state,
-                            normalizedWsPath,
+                        index.RecordFailure(
+                            rootAssetPath,
+                            wsModelPath,
                             "WSModel could not be resolved");
                         continue;
                     }
 
-                    // A malformed source WSModel is deliberately not present in
-                    // WsDocuments.  It is still a consumer, so it must fail closed rather
-                    // than allowing its rigid to be mistaken for a direct-rigid asset.
-                    if (state.Source.ContainsFile(normalizedWsPath) &&
+                    // BuildWsUsageIndex deliberately excludes malformed source WSModels. They
+                    // still consume the rigid topology, so consumer safety must fail closed.
+                    if (state.Source.ContainsFile(wsModelPath) &&
                         state.MalformedWsModelsIgnored.Any(entry =>
                             entry.Path.Equals(
-                                normalizedWsPath,
+                                wsModelPath,
                                 StringComparison.OrdinalIgnoreCase)))
                     {
-                        RecordStructuralMergeConsumerDiscoveryFailure(
-                            state,
-                            normalizedWsPath,
+                        index.RecordFailure(
+                            rootAssetPath,
+                            wsModelPath,
                             "source WSModel is malformed and its geometry consumer cannot be established");
                         continue;
                     }
@@ -806,13 +877,13 @@ namespace Editors.KitbasherEditor.Services
                     if (!TryGetWsDocumentForTraversal(
                             state,
                             container,
-                            normalizedWsPath,
+                            wsModelPath,
                             file,
                             out var document))
                     {
-                        RecordStructuralMergeConsumerDiscoveryFailure(
-                            state,
-                            normalizedWsPath,
+                        index.RecordFailure(
+                            rootAssetPath,
+                            wsModelPath,
                             "WSModel could not be parsed");
                         continue;
                     }
@@ -821,46 +892,68 @@ namespace Editors.KitbasherEditor.Services
                         document.SelectSingleNode("/model/geometry")?.InnerText);
                     if (geometryPath.Length == 0)
                     {
-                        RecordStructuralMergeConsumerDiscoveryFailure(
-                            state,
-                            normalizedWsPath,
+                        index.RecordFailure(
+                            rootAssetPath,
+                            wsModelPath,
                             "WSModel has no geometry path");
                         continue;
                     }
 
-                    if (!state.Source.ContainsFile(geometryPath))
-                        continue;
-
-                    if (state.Source.ContainsFile(normalizedWsPath))
-                        continue;
-
-                    if (!state.ImmutableMeshMergeConsumersByRigid.TryGetValue(
-                            geometryPath,
-                            out var consumers))
-                    {
-                        consumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        state.ImmutableMeshMergeConsumersByRigid[geometryPath] = consumers;
-                    }
-
-                    consumers.Add(normalizedWsPath);
+                    index.AddDependency(wsModelPath, geometryPath);
+                    foreach (var root in index.GetRootsForAsset(wsModelPath))
+                        index.AddRootReference(geometryPath, root);
+                    index.AddWsModelConsumer(geometryPath, wsModelPath);
                 }
 
                 foreach (var rigidPath in traversal.DirectRigidPaths)
                 {
-                    if (!state.Source.ContainsFile(rigidPath))
-                        continue;
-
-                    if (!state.DirectRigidMeshMergeConsumersByRigid.TryGetValue(
-                            rigidPath,
-                            out var consumers))
-                    {
-                        consumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        state.DirectRigidMeshMergeConsumersByRigid[rigidPath] = consumers;
-                    }
-
-                    consumers.Add(Normalize(rootAssetPath));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    index.AddDirectConsumer(rigidPath, rootAssetPath);
                 }
             }
+
+            return index;
+        }
+
+        private static IReadOnlyCollection<string> GetImmutableGameplayWsModelConsumersForRigid(
+            BatchState state,
+            string rigidPath)
+        {
+            rigidPath = Normalize(rigidPath);
+            if (state.GameplayMeshDependencyIndex != null &&
+                state.GameplayMeshDependencyIndex.WsModelConsumersByRigid.TryGetValue(
+                    rigidPath,
+                    out var indexedConsumers))
+            {
+                return indexedConsumers
+                    .Where(path => !state.Source.ContainsFile(path))
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+
+            return state.ImmutableMeshMergeConsumersByRigid.TryGetValue(
+                    rigidPath,
+                    out var consumers)
+                ? consumers
+                : Array.Empty<string>();
+        }
+
+        private static bool HasDirectGameplayRigidConsumer(
+            BatchState state,
+            string rigidPath)
+        {
+            rigidPath = Normalize(rigidPath);
+            if (state.GameplayMeshDependencyIndex != null)
+            {
+                return state.GameplayMeshDependencyIndex.DirectConsumersByRigid
+                    .TryGetValue(rigidPath, out var indexedConsumers) &&
+                    indexedConsumers.Count != 0;
+            }
+
+            return state.DirectRigidMeshMergeConsumersByRigid.TryGetValue(
+                       rigidPath,
+                       out var consumers) &&
+                   consumers.Count != 0;
         }
 
         private static void RecordStructuralMergeConsumerDiscoveryFailure(
@@ -886,7 +979,8 @@ namespace Editors.KitbasherEditor.Services
         private static GameplayMeshConsumerTraversal CollectGameplayMeshConsumers(
             BatchState state,
             string rootAssetPath,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            GameplayMeshDependencyIndex? dependencyIndex = null)
         {
             var result = new GameplayMeshConsumerTraversal();
             var queue = new Queue<string>();
@@ -899,6 +993,7 @@ namespace Editors.KitbasherEditor.Services
                 return result;
             }
 
+            dependencyIndex?.GameplayRoots.Add(rootPath);
             queue.Enqueue(rootPath);
             while (queue.Count != 0)
             {
@@ -906,6 +1001,8 @@ namespace Editors.KitbasherEditor.Services
                 var assetPath = queue.Dequeue();
                 if (!visited.Add(assetPath))
                     continue;
+
+                dependencyIndex?.AddRootReference(assetPath, rootPath);
 
                 var extension = Path.GetExtension(assetPath);
                 if (extension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase))
@@ -916,8 +1013,7 @@ namespace Editors.KitbasherEditor.Services
 
                 if (extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (state.Source.ContainsFile(assetPath))
-                        result.DirectRigidPaths.Add(assetPath);
+                    result.DirectRigidPaths.Add(assetPath);
                     continue;
                 }
 
@@ -974,6 +1070,9 @@ namespace Editors.KitbasherEditor.Services
                     if (modelPath.Length == 0)
                         continue;
 
+                    dependencyIndex?.AddDependency(assetPath, modelPath);
+                    dependencyIndex?.AddRootReference(modelPath, rootPath);
+
                     var modelContainer = FindGameplayTraversalContainer(
                         state.Source,
                         GetGameplayTraversalContainers(state),
@@ -996,8 +1095,7 @@ namespace Editors.KitbasherEditor.Services
                                  ".rigid_model_v2",
                                  StringComparison.OrdinalIgnoreCase))
                     {
-                        if (state.Source.ContainsFile(modelPath))
-                            result.DirectRigidPaths.Add(modelPath);
+                        result.DirectRigidPaths.Add(modelPath);
                     }
                     else if (modelExtension.Equals(
                                  ".variantmeshdefinition",
@@ -1018,6 +1116,9 @@ namespace Editors.KitbasherEditor.Services
                     var childPath = Normalize(childValue);
                     if (childPath.Length == 0)
                         continue;
+
+                    dependencyIndex?.AddDependency(assetPath, childPath);
+                    dependencyIndex?.AddRootReference(childPath, rootPath);
 
                     if (FindGameplayTraversalContainer(
                             state.Source,
@@ -1185,7 +1286,7 @@ namespace Editors.KitbasherEditor.Services
                     assignmentsByWsModel,
                     recordDiagnostics: false,
                     includeEmbeddedMaterialIdentity:
-                        state.DirectRigidMeshMergeConsumersByRigid.ContainsKey(rigidPath));
+                        HasDirectGameplayRigidConsumer(state, rigidPath));
 
                 RecordPreAtlasStructuralMergeGroups(
                     state,
@@ -1249,14 +1350,13 @@ namespace Editors.KitbasherEditor.Services
                 return true;
             }
 
-            if (state.ImmutableMeshMergeConsumersByRigid.TryGetValue(
-                    rigidPath,
-                    out var consumers) &&
-                consumers.Count != 0)
+            var immutableConsumers =
+                GetImmutableGameplayWsModelConsumersForRigid(state, rigidPath);
+            if (immutableConsumers.Count != 0)
             {
                 reason =
                     $"immutable gameplay WSModel consumer(s) would require part remapping: " +
-                    $"{string.Join(", ", consumers.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))}";
+                    $"{string.Join(", ", immutableConsumers.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))}";
                 RecordStructuralMergeSkip(state, rigidPath, reason);
                 return true;
             }
@@ -1702,8 +1802,12 @@ namespace Editors.KitbasherEditor.Services
             AtlasCandidate candidate)
         {
             var geometryPath = Normalize(candidate.Key.GeometryPath);
-            if (state.ImmutableMeshMergeConsumersByRigid.ContainsKey(geometryPath))
+            if (GetImmutableGameplayWsModelConsumersForRigid(
+                    state,
+                    geometryPath).Count != 0)
+            {
                 return true;
+            }
 
             var hasWsModelMaterialConsumer = candidate.Usages.Any(
                 usage => string.IsNullOrWhiteSpace(usage.EmbeddedRigidPath));
@@ -1725,8 +1829,7 @@ namespace Editors.KitbasherEditor.Services
             string geometryPath,
             bool hasWsModelMaterialConsumer)
             => hasWsModelMaterialConsumer &&
-               state.DirectRigidMeshMergeConsumersByRigid.ContainsKey(
-                   Normalize(geometryPath));
+               HasDirectGameplayRigidConsumer(state, geometryPath);
 
         private static List<AtlasCandidate> ApplyMissingTextureDecision(
             BatchState state,
@@ -10655,7 +10758,7 @@ namespace Editors.KitbasherEditor.Services
                         wsModels.Select(x => x.Key).ToList(),
                         assignmentsByWsModel,
                         includeEmbeddedMaterialIdentity:
-                            state.DirectRigidMeshMergeConsumersByRigid.ContainsKey(rigidPath));
+                            HasDirectGameplayRigidConsumer(state, rigidPath));
 
                     var groups = BuildMeshMergeGroups(
                         state,
@@ -10664,7 +10767,7 @@ namespace Editors.KitbasherEditor.Services
                         wsModels.Select(x => x.Key).ToList(),
                         assignmentsByWsModel,
                         includeEmbeddedMaterialIdentity:
-                            state.DirectRigidMeshMergeConsumersByRigid.ContainsKey(rigidPath));
+                            HasDirectGameplayRigidConsumer(state, rigidPath));
 
                     if (groups.All(x => x.PartIndices.Count == 1))
                         continue;
@@ -17309,6 +17412,7 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public Wh3UnitCategoryResolution? UnitCategoryResolution { get; set; }
             public IReadOnlyList<IPackFileContainer>? GameplayTraversalContainers { get; set; }
+            public GameplayMeshDependencyIndex? GameplayMeshDependencyIndex { get; set; }
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
@@ -17837,6 +17941,111 @@ namespace Editors.KitbasherEditor.Services
         private sealed record CandidateDiscoveryResult(
             List<AtlasCandidate> Candidates,
             List<MissingTextureDependency> MissingTextures);
+
+        private sealed class GameplayMeshDependencyIndex
+        {
+            public HashSet<string> GameplayRoots { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> DependenciesByAssetPath { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> RootsByAssetPath { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> WsModelConsumersByRigid { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, HashSet<string>> DirectConsumersByRigid { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> Failures { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+
+            public bool IsComplete => Failures.Count == 0;
+
+            public void AddDependency(string consumerPathValue, string dependencyPathValue)
+            {
+                var consumerPath = Normalize(consumerPathValue);
+                var dependencyPath = Normalize(dependencyPathValue);
+                if (consumerPath.Length == 0 || dependencyPath.Length == 0)
+                    return;
+
+                if (!DependenciesByAssetPath.TryGetValue(
+                        consumerPath,
+                        out var dependencies))
+                {
+                    dependencies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    DependenciesByAssetPath[consumerPath] = dependencies;
+                }
+
+                dependencies.Add(dependencyPath);
+            }
+
+            public void AddRootReference(string assetPathValue, string rootPathValue)
+            {
+                var assetPath = Normalize(assetPathValue);
+                var rootPath = Normalize(rootPathValue);
+                if (assetPath.Length == 0 || rootPath.Length == 0)
+                    return;
+
+                if (!RootsByAssetPath.TryGetValue(assetPath, out var roots))
+                {
+                    roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    RootsByAssetPath[assetPath] = roots;
+                }
+
+                roots.Add(rootPath);
+            }
+
+            public IEnumerable<string> GetRootsForAsset(string assetPathValue)
+            {
+                var assetPath = Normalize(assetPathValue);
+                return RootsByAssetPath.TryGetValue(assetPath, out var roots)
+                    ? roots
+                    : Array.Empty<string>();
+            }
+
+            public void AddWsModelConsumer(string rigidPathValue, string wsModelPathValue)
+            {
+                var rigidPath = Normalize(rigidPathValue);
+                var wsModelPath = Normalize(wsModelPathValue);
+                if (rigidPath.Length == 0 || wsModelPath.Length == 0)
+                    return;
+
+                if (!WsModelConsumersByRigid.TryGetValue(rigidPath, out var consumers))
+                {
+                    consumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    WsModelConsumersByRigid[rigidPath] = consumers;
+                }
+
+                consumers.Add(wsModelPath);
+            }
+
+            public void AddDirectConsumer(string rigidPathValue, string rootPathValue)
+            {
+                var rigidPath = Normalize(rigidPathValue);
+                var rootPath = Normalize(rootPathValue);
+                if (rigidPath.Length == 0 || rootPath.Length == 0)
+                    return;
+
+                if (!DirectConsumersByRigid.TryGetValue(rigidPath, out var consumers))
+                {
+                    consumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    DirectConsumersByRigid[rigidPath] = consumers;
+                }
+
+                consumers.Add(rootPath);
+                AddRootReference(rigidPath, rootPath);
+            }
+
+            public void RecordFailure(
+                string rootPathValue,
+                string assetPathValue,
+                string reason)
+            {
+                var rootPath = Normalize(rootPathValue);
+                var assetPath = Normalize(assetPathValue);
+                Failures.Add(
+                    $"{(rootPath.Length == 0 ? "<unknown-root>" : rootPath)} -> " +
+                    $"{(assetPath.Length == 0 ? "<unknown-asset>" : assetPath)}: {reason}");
+            }
+        }
 
         private sealed class GameplayMeshConsumerTraversal
         {
