@@ -912,6 +912,14 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // A WSModel can be reached from several gameplay roots. Some roots are
+            // processed before the WSModel is parsed and some after it, so the one-time
+            // consumer indexing above cannot reliably propagate every root to the
+            // geometry. Finish that propagation once all root traversals are known; this
+            // lets the safety gate reject only rigids in an incomplete dependency graph
+            // instead of poisoning unrelated atlas candidates in the pack.
+            index.PropagateRootReferences();
+
             return index;
         }
 
@@ -954,6 +962,57 @@ namespace Editors.KitbasherEditor.Services
                        rigidPath,
                        out var consumers) &&
                    consumers.Count != 0;
+        }
+
+        private static bool IsGameplayConsumerDiscoverySafeForAsset(
+            BatchState state,
+            string assetPath)
+        {
+            if (state.StructuralMergeConsumerDiscoveryComplete)
+                return true;
+
+            // A resolver/schema failure is a pack-wide safety failure. When the resolver
+            // is healthy, however, an incomplete traversal only invalidates the assets
+            // that are actually reachable from one of the failed roots.
+            if (state.UnitCategoryResolution == null ||
+                !state.UnitCategoryResolution.IsGameplayResolutionHealthy ||
+                state.GameplayMeshDependencyIndex == null)
+            {
+                return false;
+            }
+
+            return !state.GameplayMeshDependencyIndex.IsAssetAffectedByIncompleteRoot(
+                assetPath);
+        }
+
+        private static bool IsAtlasCandidateGameplayDiscoverySafe(
+            BatchState state,
+            AtlasCandidate candidate)
+        {
+            if (state.StructuralMergeConsumerDiscoveryComplete)
+                return true;
+
+            if (state.UnitCategoryResolution == null ||
+                !state.UnitCategoryResolution.IsGameplayResolutionHealthy ||
+                state.GameplayMeshDependencyIndex == null)
+            {
+                return false;
+            }
+
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                candidate.RootVmdPath,
+                candidate.Key.GeometryPath,
+            };
+            foreach (var usage in candidate.Usages)
+            {
+                if (!string.IsNullOrWhiteSpace(usage.WsModelPath))
+                    paths.Add(usage.WsModelPath);
+            }
+
+            return paths.All(
+                path => !state.GameplayMeshDependencyIndex.IsAssetAffectedByIncompleteRoot(
+                    path));
         }
 
         private static void RecordStructuralMergeConsumerDiscoveryFailure(
@@ -1343,7 +1402,7 @@ namespace Editors.KitbasherEditor.Services
             string rigidPath,
             out string reason)
         {
-            if (!state.StructuralMergeConsumerDiscoveryComplete)
+            if (!IsGameplayConsumerDiscoverySafeForAsset(state, rigidPath))
             {
                 reason = "complete gameplay consumer discovery was not available; structural merge is blocked conservatively.";
                 RecordStructuralMergeSkip(state, rigidPath, reason);
@@ -1755,20 +1814,23 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             IReadOnlyList<AtlasCandidate> candidates)
         {
-            if (!state.StructuralMergeConsumerDiscoveryComplete)
+            var discoverySafeCandidates = new List<AtlasCandidate>(candidates.Count);
+            foreach (var candidate in candidates)
             {
-                foreach (var candidate in candidates)
+                if (IsAtlasCandidateGameplayDiscoverySafe(state, candidate))
                 {
-                    RecordSkip(
-                        state,
-                        candidate.RootVmdPath,
-                        candidate.Key,
-                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
-                        "Gameplay mesh-consumer discovery was incomplete; atlas rewriting was skipped because every rigid material consumer could not be proven safe.");
+                    discoverySafeCandidates.Add(candidate);
+                    continue;
                 }
 
-                return [];
+                RecordSkip(
+                    state,
+                    candidate.RootVmdPath,
+                    candidate.Key,
+                    candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                    "Gameplay mesh-consumer discovery was incomplete; atlas rewriting was skipped because every rigid material consumer could not be proven safe.");
             }
+            candidates = discoverySafeCandidates;
 
             // A rigid owns UV0, so every material consumer must be rewritten together with
             // it. Direct embedded materials are safe only when there is no WSModel material
@@ -15293,9 +15355,15 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Pre-atlas structural meshes protected from atlas rewriting: " +
                     $"{state.AtlasProtectedStructuralMeshCount}");
+                var structuralDiscoveryStatus = state.StructuralMergeConsumerDiscoveryComplete
+                    ? "COMPLETE"
+                    : state.UnitCategoryResolution?.IsGameplayResolutionHealthy == true &&
+                      state.GameplayMeshDependencyIndex != null
+                        ? "PARTIAL (assets reachable from incomplete roots blocked)"
+                        : "INCOMPLETE/BLOCKED";
                 sb.AppendLine(
                     $"Structural merge consumer discovery: " +
-                    $"{(state.StructuralMergeConsumerDiscoveryComplete ? "COMPLETE" : "INCOMPLETE/BLOCKED")}");
+                    structuralDiscoveryStatus);
                 sb.AppendLine(
                     $"Writable rigids with immutable gameplay consumers: " +
                     $"{state.ImmutableMeshMergeConsumersByRigid.Count}");
@@ -15305,6 +15373,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Structural consumer discovery failures: " +
                     $"{state.StructuralMergeConsumerDiscoveryFailures.Count}");
+                sb.AppendLine(
+                    $"Gameplay roots with incomplete consumer discovery: " +
+                    $"{state.GameplayMeshDependencyIndex?.IncompleteRoots.Count ?? 0}");
                 sb.AppendLine($"Mesh parts merged across semantically identical material paths: {state.SemanticMaterialPathMergeParts}");
                 sb.AppendLine($"Mesh merge near-miss blocker occurrences: {state.MeshMergeBlockerCounts.Values.Sum()}");
                 var mergeOpportunities = state.TextureMergeOpportunities.Values.ToList();
@@ -18016,8 +18087,60 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> Failures { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> IncompleteRoots { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
 
             public bool IsComplete => Failures.Count == 0;
+
+            public bool IsAssetAffectedByIncompleteRoot(string assetPathValue)
+            {
+                var assetPath = Normalize(assetPathValue);
+                if (assetPath.Length == 0 ||
+                    !RootsByAssetPath.TryGetValue(assetPath, out var roots))
+                {
+                    // If the index cannot relate an asset to a traversed root, its
+                    // consumer topology is unknown and the caller must fail closed.
+                    return true;
+                }
+
+                return roots.Any(IncompleteRoots.Contains);
+            }
+
+            public void PropagateRootReferences()
+            {
+                bool changed;
+                do
+                {
+                    changed = false;
+                    foreach (var (consumerPath, dependencies) in DependenciesByAssetPath)
+                    {
+                        if (!RootsByAssetPath.TryGetValue(
+                                consumerPath,
+                                out var consumerRoots))
+                        {
+                            continue;
+                        }
+
+                        foreach (var dependencyPath in dependencies)
+                        {
+                            if (!RootsByAssetPath.TryGetValue(
+                                    dependencyPath,
+                                    out var dependencyRoots))
+                            {
+                                dependencyRoots = new HashSet<string>(
+                                    StringComparer.OrdinalIgnoreCase);
+                                RootsByAssetPath[dependencyPath] = dependencyRoots;
+                            }
+
+                            foreach (var root in consumerRoots)
+                            {
+                                changed |= dependencyRoots.Add(root);
+                            }
+                        }
+                    }
+                }
+                while (changed);
+            }
 
             public void AddDependency(string consumerPathValue, string dependencyPathValue)
             {
@@ -18101,6 +18224,8 @@ namespace Editors.KitbasherEditor.Services
             {
                 var rootPath = Normalize(rootPathValue);
                 var assetPath = Normalize(assetPathValue);
+                if (rootPath.Length != 0)
+                    IncompleteRoots.Add(rootPath);
                 Failures.Add(
                     $"{(rootPath.Length == 0 ? "<unknown-root>" : rootPath)} -> " +
                     $"{(assetPath.Length == 0 ? "<unknown-asset>" : assetPath)}: {reason}");
