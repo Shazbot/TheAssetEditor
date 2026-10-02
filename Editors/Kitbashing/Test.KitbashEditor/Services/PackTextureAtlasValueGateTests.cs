@@ -376,6 +376,11 @@ namespace Test.KitbashEditor.Services
         }
 
         private static object CreateHealthyResolutionWithRosterVmd(string vmdPath)
+            => CreateHealthyResolutionWithRosterVmds(
+                (vmdPath, "InfantryMissile"));
+
+        private static object CreateHealthyResolutionWithRosterVmds(
+            params (string VmdPath, string Category)[] rosterEntries)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
             var componentType = assembly.GetType(
@@ -403,20 +408,6 @@ namespace Test.KitbashEditor.Services
             var componentConstructor = componentType.GetConstructors(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Single(constructor => constructor.GetParameters().Length == 6);
-            var component = componentConstructor.Invoke(
-                [
-                    Enum.Parse(roleType, "Men"),
-                    vmdPath,
-                    true,
-                    Enum.Parse(assetStateType, "Live"),
-                    0,
-                    1.0,
-                ]);
-            var componentListType = typeof(List<>).MakeGenericType(componentType);
-            var components = Activator.CreateInstance(componentListType)
-                ?? throw new InvalidOperationException("Could not create roster components.");
-            ((IList)components).Add(component);
-
             var counts = countsType.GetConstructors(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Single(constructor => constructor.GetParameters().Length == 4)
@@ -424,19 +415,38 @@ namespace Test.KitbashEditor.Services
             var visualConstructor = visualType.GetConstructors(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Single(constructor => constructor.GetParameters().Length == 6);
-            var visual = visualConstructor.Invoke(
-                [
-                    "main:main_roster_test",
-                    "main_roster_test",
-                    "land_roster_test",
-                    Enum.Parse(categoryType, "InfantryMissile"),
-                    counts,
-                    components,
-                ]);
             var rosterListType = typeof(List<>).MakeGenericType(visualType);
             var rosterUnits = Activator.CreateInstance(rosterListType)
                 ?? throw new InvalidOperationException("Could not create roster units.");
-            ((IList)rosterUnits).Add(visual);
+
+            for (var index = 0; index < rosterEntries.Length; index++)
+            {
+                var entry = rosterEntries[index];
+                var component = componentConstructor.Invoke(
+                    [
+                        Enum.Parse(roleType, "Men"),
+                        entry.VmdPath,
+                        true,
+                        Enum.Parse(assetStateType, "Live"),
+                        0,
+                        1.0,
+                    ]);
+                var componentListType = typeof(List<>).MakeGenericType(componentType);
+                var components = Activator.CreateInstance(componentListType)
+                    ?? throw new InvalidOperationException("Could not create roster components.");
+                ((IList)components).Add(component);
+
+                var visual = visualConstructor.Invoke(
+                    [
+                        $"main:main_roster_test_{index}",
+                        $"main_roster_test_{index}",
+                        $"land_roster_test_{index}",
+                        Enum.Parse(categoryType, entry.Category),
+                        counts,
+                        components,
+                    ]);
+                ((IList)rosterUnits).Add(visual);
+            }
 
             var constructor = resolutionType.GetConstructors(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
@@ -477,6 +487,39 @@ namespace Test.KitbashEditor.Services
                 .ToArray();
 
             return constructor.Invoke(arguments);
+        }
+
+        private static void PopulateArmyResidencyModel(object state)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "BuildArmyResidencyModel",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "BuildArmyResidencyModel was not found.");
+            var resolution = GetStateProperty<object>(state, "UnitCategoryResolution");
+            var model = method.Invoke(null, [state, resolution, true])
+                ?? throw new InvalidOperationException(
+                    "BuildArmyResidencyModel returned null.");
+            SetStateProperty(state, "ArmyResidencyModel", model);
+        }
+
+        private static bool ArmyResidencyAssetIndexContains(
+            object state,
+            string assetPath)
+        {
+            var model = GetStateProperty<object>(state, "ArmyResidencyModel");
+            var index = model.GetType()
+                .GetProperty(
+                    "UnitIdsByAssetPath",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(model) as IDictionary
+                ?? throw new InvalidOperationException(
+                    "UnitIdsByAssetPath was not found.");
+            return index.Contains(NormalizeTestPath(assetPath));
         }
 
         private static void IndexImmutableMeshMergeConsumers(
@@ -2396,6 +2439,93 @@ namespace Test.KitbashEditor.Services
                     "The reverse-consumer index must retain the immutable CA WSModel consumer.");
                 Assert.That(filteredCount, Is.EqualTo(0));
                 Assert.That(model.Mesh.VertexList[0].Uv, Is.EqualTo(originalUv));
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_PreservesRosterVmdExcludedFromResidencyModel()
+        {
+            const string sourceVmdPath =
+                @"variantmeshes\variantmeshdefinitions\source.variantmeshdefinition";
+            const string sourceWsModelPath = @"models\source.wsmodel";
+            const string includedCaVmdPath =
+                @"variantmeshes\variantmeshdefinitions\included_ca.variantmeshdefinition";
+            const string includedCaWsModelPath = @"models\included_ca.wsmodel";
+            const string excludedCaVmdPath =
+                @"variantmeshes\variantmeshdefinitions\excluded_ca.variantmeshdefinition";
+            const string excludedCaWsModelPath = @"models\excluded_ca.wsmodel";
+            const string sharedRigidPath = @"models\shared.rigid_model_v2";
+
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [sourceVmdPath] = PackFile.CreateFromASCII(sourceVmdPath, string.Empty),
+                    [sourceWsModelPath] = PackFile.CreateFromASCII(
+                        sourceWsModelPath,
+                        $"<model><geometry>{sharedRigidPath}</geometry></model>"),
+                    [sharedRigidPath] = PackFile.CreateFromASCII(sharedRigidPath, string.Empty),
+                });
+            var ca = CreateTraversalContainer(
+                isCaPackFile: true,
+                new Dictionary<string, PackFile>
+                {
+                    [includedCaVmdPath] = PackFile.CreateFromASCII(includedCaVmdPath, string.Empty),
+                    [includedCaWsModelPath] = PackFile.CreateFromASCII(
+                        includedCaWsModelPath,
+                        "<model><geometry>models\\included.rigid_model_v2</geometry></model>"),
+                    [excludedCaVmdPath] = PackFile.CreateFromASCII(excludedCaVmdPath, string.Empty),
+                    [excludedCaWsModelPath] = PackFile.CreateFromASCII(
+                        excludedCaWsModelPath,
+                        $"<model><geometry>{sharedRigidPath}</geometry></model>"),
+                });
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+            AddCachedTraversalVmd(state, sourceVmdPath, sourceWsModelPath);
+            AddCachedTraversalVmd(state, includedCaVmdPath, includedCaWsModelPath);
+            AddCachedTraversalVmd(state, excludedCaVmdPath, excludedCaWsModelPath);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmds(
+                    (includedCaVmdPath, "InfantryMissile"),
+                    (excludedCaVmdPath, "Unknown")));
+            PopulateArmyResidencyModel(state);
+
+            Assert.That(
+                ArmyResidencyAssetIndexContains(state, includedCaVmdPath),
+                Is.True,
+                "The modeled unit should be present in the optimized residency index.");
+            Assert.That(
+                ArmyResidencyAssetIndexContains(state, excludedCaVmdPath),
+                Is.False,
+                "The Unknown-category unit must reproduce the residency-model exclusion.");
+
+            IndexImmutableMeshMergeConsumers(state, sourceVmdPath);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GameplayDependencyIndexContains(
+                        state,
+                        "DependenciesByAssetPath",
+                        excludedCaVmdPath,
+                        excludedCaWsModelPath),
+                    Is.True,
+                    "Safety traversal must retain a resolver-roster VMD even when the residency model excludes its unit.");
+                Assert.That(
+                    GameplayDependencyIndexContains(
+                        state,
+                        "WsModelConsumersByRigid",
+                        sharedRigidPath,
+                        excludedCaWsModelPath),
+                    Is.True,
+                    "The excluded unit's immutable CA WSModel must still protect the shared source rigid.");
+                Assert.That(
+                    StateDictionaryContains(
+                        state,
+                        "ImmutableMeshMergeConsumersByRigid",
+                        sharedRigidPath),
+                    Is.True);
             });
         }
 

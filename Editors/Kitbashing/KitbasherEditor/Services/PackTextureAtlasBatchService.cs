@@ -780,28 +780,28 @@ namespace Editors.KitbasherEditor.Services
             CancellationToken cancellationToken)
         {
             var resolution = state.UnitCategoryResolution;
-            IEnumerable<string> indexedGameplayAssets;
-            if (state.ArmyResidencyModel != null)
-            {
-                // bc8b75c9 already built the expensive gameplay-facing reverse index. Reuse
-                // its asset population instead of walking the full resolved roster again.
-                indexedGameplayAssets = state.ArmyResidencyModel.UnitIdsByAssetPath.Keys
-                    .Where(IsMeshConsumerAssetPath);
-            }
-            else
-            {
-                // Tests and defensive callers may build consumer safety without an army
-                // model. Preserve the complete-roster fallback for those cases.
-                indexedGameplayAssets = resolution?.RosterUnits
-                    .SelectMany(unit => unit.Components)
-                    .Where(component => component.IsVariantMeshDefinition)
-                    .Select(component => component.AssetPath)
-                    .Where(path => !string.IsNullOrWhiteSpace(path))
-                    ?? Array.Empty<string>();
-            }
+
+            // bc8b75c9's UnitIdsByAssetPath is intentionally an army-planning index: units
+            // outside the slot template or modeled cultures may be absent. Reuse that fast
+            // population, but never treat it as the complete mutation-safety authority.
+            var indexedGameplayAssets = state.ArmyResidencyModel?.UnitIdsByAssetPath.Keys
+                .Where(IsMeshConsumerAssetPath)
+                ?? Array.Empty<string>();
+
+            // The resolver roster is the complete DB-derived visual population before the
+            // residency model applies army/category/culture filters. Every resolved VMD
+            // component remains a safety root because an excluded unit can still reference
+            // an immutable CA WSModel sharing a source-owned rigid.
+            var safetyRosterVmdRoots = resolution?.RosterUnits
+                .SelectMany(unit => unit.Components)
+                .Where(component => component.IsVariantMeshDefinition)
+                .Select(component => component.AssetPath)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                ?? Array.Empty<string>();
 
             var roots = sourceVmdRoots
                 .Concat(indexedGameplayAssets)
+                .Concat(safetyRosterVmdRoots)
                 .Concat(resolution?.UnresolvedConsumersByVmd.Keys ?? Array.Empty<string>())
                 .Concat(
                     resolution?.DirectAssetUsagesByPath.Keys
