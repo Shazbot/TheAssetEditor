@@ -355,6 +355,130 @@ namespace Test.KitbashEditor.Services
             return state;
         }
 
+        private static void AddCachedTraversalVmd(
+            object state,
+            string vmdPath,
+            string modelPath)
+        {
+            var documents = state.GetType()
+                .GetProperty(
+                    "VmdDocuments",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state) as IDictionary
+                ?? throw new InvalidOperationException("VmdDocuments was not found.");
+
+            documents.Add(
+                NormalizeTestPath(vmdPath),
+                new Shared.GameFormats.Vmd.VariantMeshDefinition.VariantMesh
+                {
+                    ModelReference = modelPath,
+                });
+        }
+
+        private static object CreateHealthyResolutionWithRosterVmd(string vmdPath)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var componentType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3ResolvedUnitComponent",
+                throwOnError: true)!;
+            var visualType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3ResolvedUnitVisual",
+                throwOnError: true)!;
+            var countsType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitVisualCounts",
+                throwOnError: true)!;
+            var resolutionType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolution",
+                throwOnError: true)!;
+            var roleType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitVisualRole",
+                throwOnError: true)!;
+            var assetStateType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3VisualAssetState",
+                throwOnError: true)!;
+            var categoryType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3ArmyUnitCategory",
+                throwOnError: true)!;
+
+            var componentConstructor = componentType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 6);
+            var component = componentConstructor.Invoke(
+                [
+                    Enum.Parse(roleType, "Men"),
+                    vmdPath,
+                    true,
+                    Enum.Parse(assetStateType, "Live"),
+                    0,
+                    1.0,
+                ]);
+            var componentListType = typeof(List<>).MakeGenericType(componentType);
+            var components = Activator.CreateInstance(componentListType)
+                ?? throw new InvalidOperationException("Could not create roster components.");
+            ((IList)components).Add(component);
+
+            var counts = countsType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 4)
+                .Invoke([1, 0, 0, 0]);
+            var visualConstructor = visualType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 6);
+            var visual = visualConstructor.Invoke(
+                [
+                    "main:main_roster_test",
+                    "main_roster_test",
+                    "land_roster_test",
+                    Enum.Parse(categoryType, "InfantryMissile"),
+                    counts,
+                    components,
+                ]);
+            var rosterListType = typeof(List<>).MakeGenericType(visualType);
+            var rosterUnits = Activator.CreateInstance(rosterListType)
+                ?? throw new InvalidOperationException("Could not create roster units.");
+            ((IList)rosterUnits).Add(visual);
+
+            var constructor = resolutionType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length > 10);
+            var arguments = constructor.GetParameters()
+                .Select(parameter =>
+                {
+                    if (parameter.ParameterType.IsInstanceOfType(rosterUnits) ||
+                        parameter.ParameterType.IsAssignableFrom(rosterUnits.GetType()))
+                        return (object?)rosterUnits;
+                    if (parameter.ParameterType == typeof(bool))
+                        return true;
+                    if (parameter.ParameterType == typeof(int))
+                        return 0;
+                    if (parameter.ParameterType == typeof(string))
+                        return string.Empty;
+
+                    if (parameter.ParameterType.IsGenericType &&
+                        parameter.ParameterType.GetGenericTypeDefinition() ==
+                        typeof(IReadOnlyDictionary<,>))
+                    {
+                        return Activator.CreateInstance(
+                            typeof(Dictionary<,>).MakeGenericType(
+                                parameter.ParameterType.GetGenericArguments()));
+                    }
+
+                    if (parameter.ParameterType.IsGenericType &&
+                        parameter.ParameterType.GetGenericTypeDefinition() ==
+                        typeof(IReadOnlyList<>))
+                    {
+                        return Array.CreateInstance(
+                            parameter.ParameterType.GetGenericArguments()[0],
+                            0);
+                    }
+
+                    return null;
+                })
+                .ToArray();
+
+            return constructor.Invoke(arguments);
+        }
+
         private static void IndexImmutableMeshMergeConsumers(
             object state,
             params string[] roots)
@@ -428,6 +552,43 @@ namespace Test.KitbashEditor.Services
             state.GetType()
                 .GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 ?.SetValue(state, value);
+        }
+
+        private static T GetStateProperty<T>(
+            object state,
+            string propertyName)
+            => (T)(state.GetType()
+                .GetProperty(
+                    propertyName,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state)
+                ?? throw new InvalidOperationException(
+                    $"State property {propertyName} was not found."));
+
+        private static string[] GetResolutionRosterVmdPaths(object state)
+        {
+            var resolution = GetStateProperty<object>(state, "UnitCategoryResolution");
+            var roster = (IEnumerable)(resolution.GetType()
+                .GetProperty("RosterUnits")
+                ?.GetValue(resolution)
+                ?? throw new InvalidOperationException("RosterUnits was not found."));
+
+            return roster
+                .Cast<object>()
+                .SelectMany(unit => ((IEnumerable)(unit.GetType()
+                        .GetProperty("Components")
+                        ?.GetValue(unit)
+                        ?? throw new InvalidOperationException("Roster components were not found.")))
+                    .Cast<object>())
+                .Where(component => (bool)(component.GetType()
+                    .GetProperty("IsVariantMeshDefinition")
+                    ?.GetValue(component)
+                    ?? false))
+                .Select(component => component.GetType()
+                    .GetProperty("AssetPath")
+                    ?.GetValue(component)
+                    ?.ToString() ?? string.Empty)
+                .ToArray();
         }
 
         private static bool IsPreAtlasStructuralMergeGroup(
@@ -2092,6 +2253,99 @@ namespace Test.KitbashEditor.Services
                     Is.True);
                 Assert.That(decision.IsBlocked, Is.True);
                 Assert.That(decision.Reason, Does.Contain("immutable gameplay WSModel"));
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_SeedsRootsFromCompleteGameplayRoster()
+        {
+            const string sourceVmdPath =
+                @"variantmeshes\variantmeshdefinitions\source.variantmeshdefinition";
+            const string sourceWsModelPath = @"models\source.wsmodel";
+            const string caVmdPath =
+                @"variantmeshes\variantmeshdefinitions\ca.variantmeshdefinition";
+            const string caWsModelPath = @"models\ca.wsmodel";
+            const string rigidPath = @"models\shared.rigid_model_v2";
+
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [sourceVmdPath] = PackFile.CreateFromASCII(sourceVmdPath, string.Empty),
+                    [sourceWsModelPath] = PackFile.CreateFromASCII(
+                        sourceWsModelPath,
+                        $"<model><geometry>{rigidPath}</geometry></model>"),
+                    [rigidPath] = PackFile.CreateFromASCII(rigidPath, string.Empty),
+                });
+            var ca = CreateTraversalContainer(
+                isCaPackFile: true,
+                new Dictionary<string, PackFile>
+                {
+                    [caVmdPath] = PackFile.CreateFromASCII(caVmdPath, string.Empty),
+                    [caWsModelPath] = PackFile.CreateFromASCII(
+                        caWsModelPath,
+                        $"<model><geometry>{rigidPath}</geometry></model>"),
+                });
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+            AddCachedTraversalVmd(state, sourceVmdPath, sourceWsModelPath);
+            AddCachedTraversalVmd(state, caVmdPath, caWsModelPath);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmd(caVmdPath));
+
+            IndexImmutableMeshMergeConsumers(state, sourceVmdPath);
+
+            var immutableConsumers = (IDictionary)(state.GetType()
+                .GetProperty(
+                    "ImmutableMeshMergeConsumersByRigid",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state)
+                ?? throw new InvalidOperationException(
+                    "ImmutableMeshMergeConsumersByRigid was not found."));
+            var normalizedRigidPath = NormalizeTestPath(rigidPath);
+            var hasImmutableRigid = immutableConsumers.Contains(normalizedRigidPath);
+            var consumers = hasImmutableRigid
+                ? ((IEnumerable)immutableConsumers[normalizedRigidPath]!)
+                    .Cast<object>()
+                    .Select(value => value.ToString() ?? string.Empty)
+                    .ToArray()
+                : Array.Empty<string>();
+            var discoveryFailures = ((IEnumerable)(state.GetType()
+                .GetProperty(
+                    "StructuralMergeConsumerDiscoveryFailures",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state)
+                ?? throw new InvalidOperationException(
+                    "StructuralMergeConsumerDiscoveryFailures was not found.")))
+                .Cast<object>()
+                .Select(value => value.ToString() ?? string.Empty)
+                .ToArray();
+            var (candidate, model) = CreateAtlasConsumerTestCandidate(
+                rigidPath,
+                wsModelMaterialConsumer: true);
+            var originalUv = model.Mesh.VertexList[0].Uv;
+            var filteredCount = FilterAtlasConsumerTestCandidates(state, candidate);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetResolutionRosterVmdPaths(state),
+                    Does.Contain(NormalizeTestPath(caVmdPath)),
+                    "The test resolution must expose the CA VMD in its complete roster.");
+                Assert.That(
+                    hasImmutableRigid,
+                    Is.True,
+                    $"The shared rigid was not indexed as an immutable-consumer rigid. Failures: {string.Join("; ", discoveryFailures)}");
+                Assert.That(
+                    GetStateProperty<bool>(state, "StructuralMergeConsumerDiscoveryComplete"),
+                    Is.True);
+                Assert.That(
+                    consumers,
+                    Does.Contain(NormalizeTestPath(caWsModelPath)),
+                    "The CA VMD from the complete gameplay roster must be traversed even though it is not a source root.");
+                Assert.That(filteredCount, Is.EqualTo(0));
+                Assert.That(model.Mesh.VertexList[0].Uv, Is.EqualTo(originalUv));
             });
         }
 

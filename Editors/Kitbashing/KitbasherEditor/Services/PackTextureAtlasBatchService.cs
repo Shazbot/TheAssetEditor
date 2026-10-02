@@ -270,14 +270,14 @@ namespace Editors.KitbasherEditor.Services
                     childVmdsByVmd,
                     cancellationToken,
                     Wh3ArmyVisualScenario.Default);
-                if (!atlasAllVmds &&
-                    !state.UnitCategoryResolution.IsGameplayResolutionHealthy)
+                if (!state.UnitCategoryResolution.IsGameplayResolutionHealthy)
                 {
                     throw new InvalidOperationException(
-                        "Gameplay-used atlas population could not be resolved safely: " +
+                        "Atlas processing could not be resolved safely because gameplay " +
+                        "mesh-consumer discovery requires a healthy WH3 DB/schema resolution: " +
                         state.UnitCategoryResolution.GameplayResolutionHealthMessage +
-                        " Fix the WH3 DB/schema resolution problem, or explicitly use pack-wide " +
-                        "atlas mode if gameplay filtering is not required.");
+                        " Fix the WH3 DB/schema resolution problem before running atlas " +
+                        "processing; pack-wide mode cannot bypass this safety gate.");
                 }
 
                 state.ArmyResidencyModel =
@@ -731,8 +731,17 @@ namespace Editors.KitbasherEditor.Services
 
             // Gameplay can reach a mesh through a normal VMD, an unresolved VMD
             // consumer, or a direct engine asset.  The latter two populations must be
-            // included even when they are absent from UsagesByVmd.
+            // included even when they are absent from UsagesByVmd.  The resolved roster is
+            // also a gameplay authority: a CA VMD can be a valid consumer without being a
+            // child of a source-pack VMD or appearing in the selected-pack usage index.
+            var rosterVmdRoots = resolution?.RosterUnits
+                .SelectMany(unit => unit.Components)
+                .Where(component => component.IsVariantMeshDefinition)
+                .Select(component => component.AssetPath)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                ?? Array.Empty<string>();
             var roots = vmdRoots
+                .Concat(rosterVmdRoots)
                 .Concat(resolution?.UsagesByVmd.Keys ?? Array.Empty<string>())
                 .Concat(resolution?.UnresolvedConsumersByVmd.Keys ?? Array.Empty<string>())
                 .Concat(
@@ -8752,11 +8761,28 @@ namespace Editors.KitbasherEditor.Services
             double expectedArmyRetiredSourceBcnBytes = 0;
             double expectedArmyRetiredSourceTextureCount = 0;
             var scenarioDisplacedSourceTextureCount = 0;
-            foreach (var sourceTexture in sourceIndex.Values)
+            var affectedSourceTextures = sourceIndex.Values
+                .Where(sourceTexture =>
+                    sourceTexture.References.Any(proposedRewrites.Contains))
+                .ToArray();
+            ReportProgress(
+                state.Progress,
+                "Evaluating atlas value",
+                0,
+                affectedSourceTextures.Length,
+                "Evaluating affected source textures");
+            for (var sourceTextureIndex = 0;
+                 sourceTextureIndex < affectedSourceTextures.Length;
+                 sourceTextureIndex++)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
-                if (!sourceTexture.References.Any(proposedRewrites.Contains))
-                    continue;
+                ReportPeriodicProgress(
+                    state.Progress,
+                    "Evaluating atlas value",
+                    sourceTextureIndex + 1,
+                    affectedSourceTextures.Length,
+                    "Evaluating affected source textures");
+                var sourceTexture = affectedSourceTextures[sourceTextureIndex];
 
                 var currentlyRewrittenReferenceCount =
                     sourceTexture.References.Count(
@@ -8983,9 +9009,27 @@ namespace Editors.KitbasherEditor.Services
                         .Select(Normalize));
             }
 
-            foreach (var wsModelPath in reachableWsModels)
+            var reachableWsModelPaths = reachableWsModels
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            ReportProgress(
+                state.Progress,
+                "Evaluating atlas value",
+                0,
+                reachableWsModelPaths.Length,
+                "Indexing WSModel texture consumers");
+            for (var wsModelIndex = 0;
+                 wsModelIndex < reachableWsModelPaths.Length;
+                 wsModelIndex++)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
+                ReportPeriodicProgress(
+                    state.Progress,
+                    "Evaluating atlas value",
+                    wsModelIndex + 1,
+                    reachableWsModelPaths.Length,
+                    "Indexing WSModel texture consumers");
+                var wsModelPath = reachableWsModelPaths[wsModelIndex];
                 var wsContainer = FindGameplayTraversalContainer(
                     state.Source,
                     loadedContainers,
@@ -9097,9 +9141,27 @@ namespace Editors.KitbasherEditor.Services
                         .Select(Normalize));
             }
 
-            foreach (var rigidPath in directRigidPaths)
+            var directRigidPathValues = directRigidPaths
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            ReportProgress(
+                state.Progress,
+                "Evaluating atlas value",
+                0,
+                directRigidPathValues.Length,
+                "Indexing direct rigid texture consumers");
+            for (var rigidIndex = 0;
+                 rigidIndex < directRigidPathValues.Length;
+                 rigidIndex++)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
+                ReportPeriodicProgress(
+                    state.Progress,
+                    "Evaluating atlas value",
+                    rigidIndex + 1,
+                    directRigidPathValues.Length,
+                    "Indexing direct rigid texture consumers");
+                var rigidPath = directRigidPathValues[rigidIndex];
                 var rigidContainer = FindGameplayTraversalContainer(
                     state.Source,
                     loadedContainers,
@@ -9171,9 +9233,23 @@ namespace Editors.KitbasherEditor.Services
 
             var directVmdTextures = new HashSet<string>(
                 StringComparer.OrdinalIgnoreCase);
-            foreach (var vmd in state.VmdDocuments.Values)
+            var vmdDocuments = state.VmdDocuments.Values.ToArray();
+            ReportProgress(
+                state.Progress,
+                "Evaluating atlas value",
+                0,
+                vmdDocuments.Length,
+                "Indexing direct VMD texture consumers");
+            for (var vmdIndex = 0; vmdIndex < vmdDocuments.Length; vmdIndex++)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
+                ReportPeriodicProgress(
+                    state.Progress,
+                    "Evaluating atlas value",
+                    vmdIndex + 1,
+                    vmdDocuments.Length,
+                    "Indexing direct VMD texture consumers");
+                var vmd = vmdDocuments[vmdIndex];
                 var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var childVmds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -9182,13 +9258,32 @@ namespace Editors.KitbasherEditor.Services
             }
 
             state.AtlasValueGateRootsByWsModel ??=
-                BuildArmyRootsByWsModel(state, state.CancellationToken);
+                BuildArmyRootsByWsModel(
+                    state,
+                    state.CancellationToken,
+                    state.Progress);
 
             var result = new Dictionary<string, AtlasValueGateSourceTexture>(
                 StringComparer.OrdinalIgnoreCase);
-            foreach (var (texturePath, references) in referencesByTexture)
+            var textureReferences = referencesByTexture.ToArray();
+            ReportProgress(
+                state.Progress,
+                "Evaluating atlas value",
+                0,
+                textureReferences.Length,
+                "Estimating source texture residency");
+            for (var textureIndex = 0;
+                 textureIndex < textureReferences.Length;
+                 textureIndex++)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
+                ReportPeriodicProgress(
+                    state.Progress,
+                    "Evaluating atlas value",
+                    textureIndex + 1,
+                    textureReferences.Length,
+                    "Estimating source texture residency");
+                var (texturePath, references) = textureReferences[textureIndex];
                 if (!textureFiles.TryGetValue(texturePath, out var source))
                     continue;
 
@@ -13075,16 +13170,31 @@ namespace Editors.KitbasherEditor.Services
 
         private static Dictionary<string, HashSet<string>> BuildArmyRootsByWsModel(
             BatchState state,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress = null)
         {
             var result = new Dictionary<string, HashSet<string>>(
                 StringComparer.OrdinalIgnoreCase);
             if (state.ArmyResidencyModel == null)
                 return result;
 
-            foreach (var root in state.ArmyResidencyModel.UnitsByVmd.Keys)
+            var rootPaths = state.ArmyResidencyModel.UnitsByVmd.Keys.ToArray();
+            ReportProgress(
+                progress,
+                "Evaluating atlas value",
+                0,
+                rootPaths.Length,
+                "Indexing army asset roots");
+            for (var rootIndex = 0; rootIndex < rootPaths.Length; rootIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                ReportPeriodicProgress(
+                    progress,
+                    "Evaluating atlas value",
+                    rootIndex + 1,
+                    rootPaths.Length,
+                    "Indexing army asset roots");
+                var root = rootPaths[rootIndex];
 
                 var rootExtension = Path.GetExtension(root);
                 if (!rootExtension.Equals(
@@ -17047,6 +17157,19 @@ namespace Editors.KitbasherEditor.Services
             int total = 0,
             string? item = null)
             => progress?.Report(new TextureAtlasPackProgress(phase, current, total, item));
+
+        private static void ReportPeriodicProgress(
+            IProgress<TextureAtlasPackProgress>? progress,
+            string phase,
+            int current,
+            int total,
+            string item)
+        {
+            if (current == 1 || current == total || current % 16 == 0)
+            {
+                ReportProgress(progress, phase, current, total, item);
+            }
+        }
 
         public sealed record BatchResult(
             int VmdCount,
