@@ -409,6 +409,15 @@ namespace Test.KitbashEditor.Services
             var categoryType = assembly.GetType(
                 "Editors.KitbasherEditor.Services.Wh3ArmyUnitCategory",
                 throwOnError: true)!;
+            var scenarioType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3ArmyVisualScenario",
+                throwOnError: true)!;
+            var scenario = scenarioType.GetProperty(
+                               "Default",
+                               BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                           ?.GetValue(null)
+                       ?? throw new InvalidOperationException(
+                           "The default army visual scenario was not found.");
 
             var componentConstructor = componentType.GetConstructors(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
@@ -468,6 +477,8 @@ namespace Test.KitbashEditor.Services
                         return 0;
                     if (parameter.ParameterType == typeof(string))
                         return string.Empty;
+                    if (parameter.ParameterType == scenarioType)
+                        return scenario;
 
                     if (parameter.ParameterType.IsGenericType &&
                         parameter.ParameterType.GetGenericTypeDefinition() ==
