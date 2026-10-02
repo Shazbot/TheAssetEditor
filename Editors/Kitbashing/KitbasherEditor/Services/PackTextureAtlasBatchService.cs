@@ -37,8 +37,9 @@ namespace Editors.KitbasherEditor.Services
         private const long MaxNetBcnBytesPerExpectedArmyDraw = 256L * 1024; // 0.25 MiB
         private const long MaxNetBcnBytesPerFallbackDraw = 8L * 1024 * 1024;
         // A texture-only atlas has no geometry-merge draw credit. Permit it only when it
-        // retires multiple source textures and its net payload growth is small per retired
-        // source texture.
+        // retires multiple source textures from the source pack's references and its net
+        // payload growth is small per retired texture (or meaningfully displaces modeled
+        // battle residency).
         private const long MaxNetBcnBytesPerRetiredSourceTexture = 512L * 1024; // 0.5 MiB
         private const int MinimumRetiredSourceTexturesForTextureOnlyAtlas = 2;
         // A prospective texture merge does eliminate a real geometry draw, even when the
@@ -7324,6 +7325,8 @@ namespace Editors.KitbasherEditor.Services
             {
                 state.AtlasValueGateTextureOnlyBatchesAccepted++;
                 state.AtlasValueGateTextureOnlyCandidatesAccepted += batch.Count;
+                state.AtlasValueGateTextureOnlyPackReferenceRetiredSourceTextureCount +=
+                    residency.PackReferenceRetiredSourceTextureCount;
                 state.AtlasValueGateTextureOnlyRetiredSourceTextureCount +=
                     residency.RetiredSourceTextureCount;
                 state.AtlasValueGateTextureOnlyScenarioDisplacedSourceTextureCount +=
@@ -8663,6 +8666,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             if (!HasSufficientTextureOnlyRetirement(
+                    residency.PackReferenceRetiredSourceTextureCount,
                     residency.RetiredSourceTextureCount,
                     residency.RetiredSourceBcnBytes,
                     residency.ScenarioDisplacedSourceTextureCount,
@@ -8671,8 +8675,8 @@ namespace Editors.KitbasherEditor.Services
             {
                 rejectionReason =
                     $"fewer than {MinimumRetiredSourceTexturesForTextureOnlyAtlas} " +
-                    "source textures would be physically retired or meaningfully displaced " +
-                    "from modeled battle residency.";
+                    "source textures would have all source-pack references retired or be " +
+                    "displaced from modeled battle residency.";
                 return false;
             }
 
@@ -8683,7 +8687,7 @@ namespace Editors.KitbasherEditor.Services
                 residency.ExpectedArmyGeneratedBcnBytes,
                 residency.ExpectedArmyRetiredSourceBcnBytes);
             var globalBudgetTextureEquivalent = Math.Max(
-                residency.RetiredSourceTextureCount,
+                residency.PackReferenceRetiredSourceTextureCount,
                 residency.ExpectedArmyRetiredSourceTextureCount);
             var globalBudget =
                 globalBudgetTextureEquivalent *
@@ -8730,12 +8734,16 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static bool HasSufficientTextureOnlyRetirement(
+            int packReferenceRetiredTextureCount,
             int physicallyRetiredTextureCount,
             long physicallyRetiredBcnBytes,
             int scenarioDisplacedTextureCount,
             double expectedRetiredTextureEquivalents,
             double expectedRetiredBcnBytes)
         {
+            var hasPackReferenceRetirement =
+                packReferenceRetiredTextureCount >=
+                MinimumRetiredSourceTexturesForTextureOnlyAtlas;
             var hasPhysicalRetirement =
                 physicallyRetiredTextureCount >=
                     MinimumRetiredSourceTexturesForTextureOnlyAtlas &&
@@ -8745,7 +8753,9 @@ namespace Editors.KitbasherEditor.Services
                     MinimumRetiredSourceTexturesForTextureOnlyAtlas &&
                 expectedRetiredTextureEquivalents >= 1.0 &&
                 expectedRetiredBcnBytes > 0;
-            return hasPhysicalRetirement || hasScenarioDisplacement;
+            return hasPackReferenceRetirement ||
+                   hasPhysicalRetirement ||
+                   hasScenarioDisplacement;
         }
 
         private static List<TextureConsolidationCohortAcceptance>
@@ -9048,6 +9058,7 @@ namespace Editors.KitbasherEditor.Services
 
             long retiredSourceBcnBytes = 0;
             var retiredSourceTextureCount = 0;
+            var packReferenceRetiredSourceTextureCount = 0;
             double expectedArmyRetiredSourceBcnBytes = 0;
             double expectedArmyRetiredSourceTextureCount = 0;
             var scenarioDisplacedSourceTextureCount = 0;
@@ -9116,16 +9127,39 @@ namespace Editors.KitbasherEditor.Services
                     proposedRewrites.Contains(reference));
                 var rewrittenReferenceCountAfterProposal = checked(
                     currentlyRewrittenReferenceCount + newlyProposedReferenceCount);
+                var currentlyRewrittenPackReferenceCount =
+                    GetAtlasValueGateRewrittenPackReferenceCount(
+                        state,
+                        sourceTexturePath,
+                        sourceTexture);
+                var newlyProposedPackReferenceCount = sourceTexture.PackReferences.Count(
+                    reference =>
+                        !state.AtlasValueGateRewrittenSourceReferences.Contains(reference) &&
+                        proposedRewrites.Contains(reference));
+                var rewrittenPackReferenceCountAfterProposal = checked(
+                    currentlyRewrittenPackReferenceCount + newlyProposedPackReferenceCount);
+                var currentlyPackReferencesRetired =
+                    IsAtlasValueGatePackReferenceRetired(
+                        sourceTexture.HasDirectVmdReference,
+                        sourceTexture.PackReferences.Count,
+                        currentlyRewrittenPackReferenceCount);
+                var packReferencesRetiredAfterProposal =
+                    IsAtlasValueGatePackReferenceRetired(
+                        sourceTexture.HasDirectVmdReference,
+                        sourceTexture.PackReferences.Count,
+                        rewrittenPackReferenceCountAfterProposal);
+                if (!currentlyPackReferencesRetired && packReferencesRetiredAfterProposal)
+                    packReferenceRetiredSourceTextureCount++;
                 var currentlyRetired = IsAtlasValueGateSourceTextureRetired(
                     sourceTexture.IsOwnedBySourcePack,
                     sourceTexture.HasDirectVmdReference,
-                    sourceTexture.References.Count,
-                    currentlyRewrittenReferenceCount);
+                    sourceTexture.PackReferences.Count,
+                    currentlyRewrittenPackReferenceCount);
                 var retiredAfterProposal = IsAtlasValueGateSourceTextureRetired(
                     sourceTexture.IsOwnedBySourcePack,
                     sourceTexture.HasDirectVmdReference,
-                    sourceTexture.References.Count,
-                    rewrittenReferenceCountAfterProposal);
+                    sourceTexture.PackReferences.Count,
+                    rewrittenPackReferenceCountAfterProposal);
                 if (!currentlyRetired && retiredAfterProposal)
                 {
                     retiredSourceBcnBytes = checked(
@@ -9190,6 +9224,7 @@ namespace Editors.KitbasherEditor.Services
                 retiredSourceBcnBytes,
                 checked(generatedBcnBytes - retiredSourceBcnBytes),
                 retiredSourceTextureCount,
+                packReferenceRetiredSourceTextureCount,
                 scenarioDisplacedSourceTextureCount,
                 expectedArmyRetiredSourceTextureCount,
                 expectedArmyGeneratedBcnBytes,
@@ -9199,15 +9234,24 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
+        private static bool IsAtlasValueGatePackReferenceRetired(
+            bool hasDirectVmdReference,
+            int packReferenceCount,
+            int rewrittenPackReferenceCount)
+            => !hasDirectVmdReference &&
+               packReferenceCount > 0 &&
+               rewrittenPackReferenceCount >= packReferenceCount;
+
         private static bool IsAtlasValueGateSourceTextureRetired(
             bool isOwnedBySourcePack,
             bool hasDirectVmdReference,
-            int referenceCount,
-            int rewrittenReferenceCount)
+            int packReferenceCount,
+            int rewrittenPackReferenceCount)
             => isOwnedBySourcePack &&
-               !hasDirectVmdReference &&
-               referenceCount > 0 &&
-               rewrittenReferenceCount >= referenceCount;
+               IsAtlasValueGatePackReferenceRetired(
+                   hasDirectVmdReference,
+                   packReferenceCount,
+                   rewrittenPackReferenceCount);
 
         private static int GetAtlasValueGateRewrittenReferenceCount(
             BatchState state,
@@ -9228,6 +9272,25 @@ namespace Editors.KitbasherEditor.Services
             return count;
         }
 
+        private static int GetAtlasValueGateRewrittenPackReferenceCount(
+            BatchState state,
+            string texturePath,
+            AtlasValueGateSourceTexture sourceTexture)
+        {
+            texturePath = Normalize(texturePath);
+            if (state.AtlasValueGateRewrittenPackReferenceCountByTexture.TryGetValue(
+                    texturePath,
+                    out var cachedCount))
+            {
+                return cachedCount;
+            }
+
+            var count = sourceTexture.PackReferences.Count(
+                state.AtlasValueGateRewrittenSourceReferences.Contains);
+            state.AtlasValueGateRewrittenPackReferenceCountByTexture[texturePath] = count;
+            return count;
+        }
+
         private static void AddAtlasValueGateRewrittenReferences(
             BatchState state,
             IEnumerable<AtlasValueGateSourceReference> references)
@@ -9237,6 +9300,7 @@ namespace Editors.KitbasherEditor.Services
             if (state.AtlasValueGateRewrittenSourceReferences.Count != countBefore)
             {
                 state.AtlasValueGateRewrittenReferenceCountByTexture.Clear();
+                state.AtlasValueGateRewrittenPackReferenceCountByTexture.Clear();
             }
         }
 
@@ -9516,12 +9580,23 @@ namespace Editors.KitbasherEditor.Services
             return entry;
         }
 
+        private static bool IsAtlasValueGateSourcePackReference(
+            BatchState state,
+            AtlasValueGateSourceReference reference)
+        {
+            var consumerPath = Normalize(reference.WsModelPath);
+            return consumerPath.Length != 0 && state.Source.ContainsFile(consumerPath);
+        }
+
         private static Dictionary<string, AtlasValueGateSourceTexture>
             BuildAtlasValueGateSourceTextureIndex(BatchState state)
         {
             state.CancellationToken.ThrowIfCancellationRequested();
             var loadedContainers = GetGameplayTraversalContainers(state);
             var referencesByTexture =
+                new Dictionary<string, HashSet<AtlasValueGateSourceReference>>(
+                    StringComparer.OrdinalIgnoreCase);
+            var packReferencesByTexture =
                 new Dictionary<string, HashSet<AtlasValueGateSourceReference>>(
                     StringComparer.OrdinalIgnoreCase);
             var textureFiles = new Dictionary<
@@ -9569,6 +9644,18 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 references.Add(reference);
+                if (IsAtlasValueGateSourcePackReference(state, reference))
+                {
+                    if (!packReferencesByTexture.TryGetValue(
+                            texturePath,
+                            out var packReferences))
+                    {
+                        packReferences = [];
+                        packReferencesByTexture[texturePath] = packReferences;
+                    }
+
+                    packReferences.Add(reference);
+                }
             }
 
             // Start with the selected-pack closure, then add every WSModel/rigid that can be
@@ -9823,6 +9910,11 @@ namespace Editors.KitbasherEditor.Services
                 var (texturePath, references) = textureReferences[textureIndex];
                 if (!textureFiles.TryGetValue(texturePath, out var source))
                     continue;
+                var packReferences = packReferencesByTexture.TryGetValue(
+                    texturePath,
+                    out var existingPackReferences)
+                    ? existingPackReferences
+                    : [];
 
                 DdsBcnResidencyEstimate bcn;
                 try
@@ -9843,7 +9935,8 @@ namespace Editors.KitbasherEditor.Services
                     bcn.Bytes,
                     source.IsOwnedBySourcePack,
                     directVmdTextures.Contains(texturePath),
-                    references);
+                    references,
+                    packReferences);
             }
 
             BuildAtlasValueGateSourceTextureReverseIndex(state, result);
@@ -15278,7 +15371,10 @@ namespace Editors.KitbasherEditor.Services
                         $"Atlas value-model opponent cultures: {state.ArmyResidencyModel.OpponentCultureWeights.Count:N0} " +
                         "(uniform across the resolved game roster; unrelated cultures contribute zero for culture-local assets).");
                     sb.AppendLine(
-                        "Vanilla visual assets: read-only residency consumers (never rewritten; never physically retired).");
+                        "Vanilla-owned visual assets: read-only residency consumers (never rewritten; never physically retired).");
+                    sb.AppendLine(
+                        "Atlas value-gate pack-local retirement scope: source-pack WSModel/rigid " +
+                        "references only; vanilla-only consumers remain residency-only.");
                 }
                 var gameplayEligibleVmdCount = state.UnitCategoryResolution.UsagesByVmd.Keys
                     .Count(state.UnitCategoryResolution.IsVmdUsageComplete);
@@ -15408,6 +15504,9 @@ namespace Editors.KitbasherEditor.Services
                     $"Atlas value-gate texture-only physically retired source textures: " +
                     $"{state.AtlasValueGateTextureOnlyRetiredSourceTextureCount:N0}");
                 sb.AppendLine(
+                    $"Atlas value-gate texture-only pack-local source textures no longer referenced: " +
+                    $"{state.AtlasValueGateTextureOnlyPackReferenceRetiredSourceTextureCount:N0}");
+                sb.AppendLine(
                     $"Atlas value-gate texture-only scenario-displaced source textures: " +
                     $"{state.AtlasValueGateTextureOnlyScenarioDisplacedSourceTextureCount:N0} " +
                     $"({state.AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount:N3} texture-equivalents)");
@@ -15440,11 +15539,12 @@ namespace Editors.KitbasherEditor.Services
                     $"{FormatMiB(MaxNetBcnBytesPerFallbackDraw, 2)} per raw draw only in pack-wide mode when scenario relevance is unresolved");
                 sb.AppendLine(
                     $"Atlas value-gate texture-only budget: " +
-                    $"{FormatMiB(MaxNetBcnBytesPerRetiredSourceTexture, 2)} net per physically " +
-                    $"retired or scenario-displaced source texture; minimum " +
-                    $"{MinimumRetiredSourceTexturesForTextureOnlyAtlas:N0} source textures, " +
-                    "with at least 1.0 scenario-displaced texture-equivalent when physical " +
-                    "retirement alone does not qualify");
+                    $"{FormatMiB(MaxNetBcnBytesPerRetiredSourceTexture, 2)} net per " +
+                    $"pack-local source texture removed from references or scenario-displaced " +
+                    $"source texture; minimum " +
+                    $"{MinimumRetiredSourceTexturesForTextureOnlyAtlas:N0} pack-local source " +
+                    "texture retirements, with at least 1.0 scenario-displaced " +
+                    "texture-equivalent when pack-local retirement alone does not qualify");
                 sb.AppendLine(
                     $"Atlas value-gate texture-only merge credit: " +
                     $"{FormatMiB(MaxNetBcnBytesPerTextureOnlyMergeDraw, 2)} per structural " +
@@ -15488,6 +15588,9 @@ namespace Editors.KitbasherEditor.Services
                     $"Atlas value-gate texture-only source textures retired: " +
                     $"{state.AtlasValueGateTextureOnlyRetiredSourceTextureCount:N0} " +
                     $"(scenario-estimated {state.AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount:N3} texture-equivalents)");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only pack-local source textures no longer referenced: " +
+                    $"{state.AtlasValueGateTextureOnlyPackReferenceRetiredSourceTextureCount:N0}");
                 sb.AppendLine(
                     $"Atlas value-gate texture-only source BCn retired: " +
                     $"{FormatMiB(state.AtlasValueGateTextureOnlyRetiredBcnBytesAccepted)} " +
@@ -17960,6 +18063,7 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasValueGateTextureConsolidatedAssignments { get; set; }
             public int AtlasValueGateTextureConsolidationCohortsEvaluated { get; set; }
             public int AtlasValueGateTextureConsolidationCohortsSplit { get; set; }
+            public int AtlasValueGateTextureOnlyPackReferenceRetiredSourceTextureCount { get; set; }
             public int AtlasValueGateTextureOnlyRetiredSourceTextureCount { get; set; }
             public int AtlasValueGateTextureOnlyScenarioDisplacedSourceTextureCount { get; set; }
             public double AtlasValueGateTextureOnlyExpectedRetiredSourceTextureCount { get; set; }
@@ -18002,6 +18106,8 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<MeshKey, HashSet<string>> AtlasValueGateRootsByMesh { get; } = [];
             public HashSet<AtlasValueGateSourceReference> AtlasValueGateRewrittenSourceReferences { get; } = [];
             public Dictionary<string, int> AtlasValueGateRewrittenReferenceCountByTexture { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, int> AtlasValueGateRewrittenPackReferenceCountByTexture { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<ArmyResidencyProbabilityCacheKey, double>
                 AtlasValueGateArmyResidentProbabilityCache { get; } = [];
@@ -18314,7 +18420,8 @@ namespace Editors.KitbasherEditor.Services
             long BcnBytes,
             bool IsOwnedBySourcePack,
             bool HasDirectVmdReference,
-            HashSet<AtlasValueGateSourceReference> References);
+            HashSet<AtlasValueGateSourceReference> References,
+            HashSet<AtlasValueGateSourceReference> PackReferences);
 
         private sealed record AtlasValueGateGroupPlan(
             MergeAffinityGroup Group,
@@ -18397,6 +18504,7 @@ namespace Editors.KitbasherEditor.Services
             long RetiredSourceBcnBytes,
             long NetBcnBytes,
             int RetiredSourceTextureCount,
+            int PackReferenceRetiredSourceTextureCount,
             int ScenarioDisplacedSourceTextureCount,
             double ExpectedArmyRetiredSourceTextureCount,
             double ExpectedArmyGeneratedBcnBytes,
@@ -18405,6 +18513,7 @@ namespace Editors.KitbasherEditor.Services
             HashSet<AtlasValueGateSourceReference> RewrittenReferences)
         {
             public static AtlasValueGateResidencyEstimate Empty { get; } = new(
+                0,
                 0,
                 0,
                 0,

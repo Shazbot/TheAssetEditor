@@ -774,8 +774,8 @@ namespace Test.KitbashEditor.Services
         private static bool IsSourceTextureRetired(
             bool isOwnedBySourcePack,
             bool hasDirectVmdReference,
-            int referenceCount,
-            int rewrittenReferenceCount)
+            int packReferenceCount,
+            int rewrittenPackReferenceCount)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
             var serviceType = assembly.GetType(
@@ -789,9 +789,31 @@ namespace Test.KitbashEditor.Services
 
             return (bool)(method.Invoke(
                 null,
-                [isOwnedBySourcePack, hasDirectVmdReference, referenceCount, rewrittenReferenceCount])
+                [isOwnedBySourcePack, hasDirectVmdReference, packReferenceCount, rewrittenPackReferenceCount])
                 ?? throw new InvalidOperationException(
                     "IsAtlasValueGateSourceTextureRetired returned null."));
+        }
+
+        private static bool ArePackReferencesRetired(
+            bool hasDirectVmdReference,
+            int packReferenceCount,
+            int rewrittenPackReferenceCount)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "IsAtlasValueGatePackReferenceRetired",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.IsAtlasValueGatePackReferenceRetired was not found.");
+
+            return (bool)(method.Invoke(
+                null,
+                [hasDirectVmdReference, packReferenceCount, rewrittenPackReferenceCount])
+                ?? throw new InvalidOperationException(
+                    "IsAtlasValueGatePackReferenceRetired returned null."));
         }
 
 
@@ -818,6 +840,7 @@ namespace Test.KitbashEditor.Services
         }
 
         private static bool HasSufficientTextureOnlyRetirement(
+            int packReferenceRetiredTextureCount,
             int physicallyRetiredTextureCount,
             long physicallyRetiredBcnBytes,
             int scenarioDisplacedTextureCount,
@@ -837,6 +860,7 @@ namespace Test.KitbashEditor.Services
             return (bool)(method.Invoke(
                 null,
                 [
+                    packReferenceRetiredTextureCount,
                     physicallyRetiredTextureCount,
                     physicallyRetiredBcnBytes,
                     scenarioDisplacedTextureCount,
@@ -1975,7 +1999,7 @@ namespace Test.KitbashEditor.Services
         [TestCase(true, false, 0, 0, false)]
         [TestCase(true, true, 2, 2, false)]
         [TestCase(false, false, 2, 2, false)]
-        public void SourceTextureRetirement_RequiresPackOwnershipCompleteRewriteCoverageAndNoDirectVmdReference(
+        public void SourceTextureRetirement_RequiresPackOwnershipCompletePackReferenceRewriteCoverageAndNoDirectVmdReference(
             bool isOwnedBySourcePack,
             bool hasDirectVmdReference,
             int referenceCount,
@@ -1988,6 +2012,23 @@ namespace Test.KitbashEditor.Services
                     hasDirectVmdReference,
                     referenceCount,
                     rewrittenReferenceCount),
+                Is.EqualTo(expected));
+        }
+
+        [TestCase(false, 2, 2, true)]
+        [TestCase(false, 2, 1, false)]
+        [TestCase(true, 2, 2, false)]
+        public void PackReferenceRetirement_DoesNotRequireVanillaReferenceRewriteCoverage(
+            bool hasDirectVmdReference,
+            int packReferenceCount,
+            int rewrittenPackReferenceCount,
+            bool expected)
+        {
+            Assert.That(
+                ArePackReferencesRetired(
+                    hasDirectVmdReference,
+                    packReferenceCount,
+                    rewrittenPackReferenceCount),
                 Is.EqualTo(expected));
         }
 
@@ -2113,11 +2154,13 @@ namespace Test.KitbashEditor.Services
                 Is.EqualTo(15.0).Within(0.000001));
         }
 
-        [TestCase(2, 1024L, 0, 0.0, 0.0, true)]
-        [TestCase(0, 0L, 2, 1.0, 1024.0, true)]
-        [TestCase(0, 0L, 2, 0.99, 1024.0, false)]
-        [TestCase(0, 0L, 1, 1.0, 1024.0, false)]
+        [TestCase(2, 0, 0L, 0, 0.0, 0.0, true)]
+        [TestCase(0, 2, 1024L, 0, 0.0, 0.0, true)]
+        [TestCase(0, 0, 0L, 2, 1.0, 1024.0, true)]
+        [TestCase(0, 0, 0L, 2, 0.99, 1024.0, false)]
+        [TestCase(0, 0, 0L, 1, 1.0, 1024.0, false)]
         public void TextureOnlyFallback_AllowsScenarioDisplacementWithoutPhysicalRetirement(
+            int packReferenceRetiredTextureCount,
             int physicallyRetiredTextureCount,
             long physicallyRetiredBcnBytes,
             int scenarioDisplacedTextureCount,
@@ -2127,6 +2170,7 @@ namespace Test.KitbashEditor.Services
         {
             Assert.That(
                 HasSufficientTextureOnlyRetirement(
+                    packReferenceRetiredTextureCount,
                     physicallyRetiredTextureCount,
                     physicallyRetiredBcnBytes,
                     scenarioDisplacedTextureCount,
