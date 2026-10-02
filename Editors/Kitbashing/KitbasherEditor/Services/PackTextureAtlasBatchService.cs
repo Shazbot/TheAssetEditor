@@ -3287,43 +3287,65 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             IEnumerable<AtlasCandidate> candidates)
         {
-            var rootsByWsModel = new Dictionary<string, HashSet<string>>(
-                StringComparer.OrdinalIgnoreCase);
-
-            foreach (var (rootVmdPath, reachableWsModels) in state.ReachableWsModelsByRoot)
+            if (state.AtlasValueGateRootsByWsModelCache == null ||
+                state.AtlasValueGateRootsByWsModelCacheVersion !=
+                state.ReachableWsModelsByRootVersion)
             {
-                var normalizedRoot = Normalize(rootVmdPath);
-                foreach (var reachableWsModel in reachableWsModels)
+                var rootsByWsModel = new Dictionary<string, HashSet<string>>(
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var (rootVmdPath, reachableWsModels) in state.ReachableWsModelsByRoot)
                 {
-                    var wsModelPath = Normalize(reachableWsModel);
-                    if (!rootsByWsModel.TryGetValue(wsModelPath, out var roots))
+                    var normalizedRoot = Normalize(rootVmdPath);
+                    foreach (var reachableWsModel in reachableWsModels)
                     {
-                        roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        rootsByWsModel[wsModelPath] = roots;
-                    }
+                        var wsModelPath = Normalize(reachableWsModel);
+                        if (!rootsByWsModel.TryGetValue(wsModelPath, out var roots))
+                        {
+                            roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            rootsByWsModel[wsModelPath] = roots;
+                        }
 
-                    roots.Add(normalizedRoot);
+                        roots.Add(normalizedRoot);
+                    }
                 }
+
+                state.AtlasValueGateRootsByWsModelCache = rootsByWsModel;
+                state.AtlasValueGateRootsByWsModelCacheVersion =
+                    state.ReachableWsModelsByRootVersion;
+                state.AtlasValueGateRootsByMesh.Clear();
             }
 
+            var cachedRootsByWsModel = state.AtlasValueGateRootsByWsModelCache
+                ?? throw new InvalidOperationException(
+                    "Atlas root cache was not initialized.");
             var result = new Dictionary<MeshKey, HashSet<string>>();
             foreach (var candidate in candidates)
             {
-                var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var usage in candidate.Usages)
+                if (!state.AtlasValueGateRootsByMesh.TryGetValue(
+                        candidate.Key,
+                        out var cachedRoots))
                 {
-                    if (rootsByWsModel.TryGetValue(
-                            Normalize(usage.AssetPath),
-                            out var usageRoots))
+                    cachedRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var usage in candidate.Usages)
                     {
-                        roots.UnionWith(usageRoots);
+                        if (cachedRootsByWsModel.TryGetValue(
+                                Normalize(usage.AssetPath),
+                                out var usageRoots))
+                        {
+                            cachedRoots.UnionWith(usageRoots);
+                        }
                     }
+
+                    if (cachedRoots.Count == 0)
+                        cachedRoots.Add(Normalize(candidate.RootVmdPath));
+
+                    state.AtlasValueGateRootsByMesh[candidate.Key] = cachedRoots;
                 }
 
-                if (roots.Count == 0)
-                    roots.Add(Normalize(candidate.RootVmdPath));
-
-                result[candidate.Key] = roots;
+                // Return a private set so callers cannot mutate the per-run cache.
+                result[candidate.Key] = new HashSet<string>(
+                    cachedRoots,
+                    StringComparer.OrdinalIgnoreCase);
             }
 
             return result;
@@ -4267,11 +4289,46 @@ namespace Editors.KitbasherEditor.Services
             var roots = GetBatchRoots(candidates, rootsByMesh);
 
             return atlasPixels * GetExpectedArmyResidentProbability(
+                state,
+                targetWsModels,
+                roots);
+        }
+
+        private static double GetExpectedArmyResidentProbability(
+            BatchState state,
+            IReadOnlyCollection<string> targetWsModels,
+            IEnumerable<string> fallbackRoots)
+        {
+            state.CancellationToken.ThrowIfCancellationRequested();
+            var cacheKey = new ArmyResidencyProbabilityCacheKey(
+                BuildCanonicalPathSetKey(targetWsModels),
+                BuildCanonicalPathSetKey(fallbackRoots));
+            if (state.AtlasValueGateArmyResidentProbabilityCache.TryGetValue(
+                    cacheKey,
+                    out var cachedProbability))
+            {
+                state.AtlasValueGateArmyResidentProbabilityCacheHits++;
+                return cachedProbability;
+            }
+
+            state.AtlasValueGateArmyResidentProbabilityCacheMisses++;
+            var probability = GetExpectedArmyResidentProbability(
                 state.ArmyResidencyModel,
                 targetWsModels,
-                roots,
+                fallbackRoots,
                 state.CancellationToken);
+            state.AtlasValueGateArmyResidentProbabilityCache[cacheKey] = probability;
+            return probability;
         }
+
+        private static string BuildCanonicalPathSetKey(IEnumerable<string> paths)
+            => string.Join(
+                '\u001f',
+                paths
+                    .Select(Normalize)
+                    .Where(path => path.Length != 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
 
         private static double GetExpectedArmyResidentProbability(
             ArmyResidencyModel? model,
@@ -7315,7 +7372,8 @@ namespace Editors.KitbasherEditor.Services
                     rawDrawsEliminated,
                     expectedArmyDrawsEliminated));
 
-            state.AtlasValueGateRewrittenSourceReferences.UnionWith(
+            AddAtlasValueGateRewrittenReferences(
+                state,
                 residency.RewrittenReferences);
         }
 
@@ -8199,7 +8257,8 @@ namespace Editors.KitbasherEditor.Services
             state.AtlasValueGateAcceptedAffectedUnits.UnionWith(
                 CalculateAtlasBatchCoverage(combinedBatch, expectedEntitiesByMesh)
                     .AffectedUnits);
-            state.AtlasValueGateRewrittenSourceReferences.UnionWith(
+            AddAtlasValueGateRewrittenReferences(
+                state,
                 evaluation.CombinedResidency.RewrittenReferences);
 
             var entry = state.AtlasValueGateAcceptedBatchEconomics[economicsIndex];
@@ -8948,6 +9007,10 @@ namespace Editors.KitbasherEditor.Services
             var sourceIndex = state.AtlasValueGateSourceTextureIndex ??
                 BuildAtlasValueGateSourceTextureIndex(state);
             state.AtlasValueGateSourceTextureIndex = sourceIndex;
+            if (state.AtlasValueGateSourceTexturesByReference == null)
+            {
+                BuildAtlasValueGateSourceTextureReverseIndex(state, sourceIndex);
+            }
 
             var proposedRewrites = new HashSet<AtlasValueGateSourceReference>();
             foreach (var candidate in candidates)
@@ -8988,18 +9051,49 @@ namespace Editors.KitbasherEditor.Services
             double expectedArmyRetiredSourceBcnBytes = 0;
             double expectedArmyRetiredSourceTextureCount = 0;
             var scenarioDisplacedSourceTextureCount = 0;
-            var affectedSourceTextures = sourceIndex.Values
-                .Where(sourceTexture =>
-                    sourceTexture.References.Any(proposedRewrites.Contains))
-                .ToArray();
+            IReadOnlyList<(string Path, AtlasValueGateSourceTexture Texture)> affectedSourceTextures;
+            if (state.AtlasValueGateSourceTexturesByReference != null)
+            {
+                var affectedTexturePaths = new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var proposedReference in proposedRewrites)
+                {
+                    if (state.AtlasValueGateSourceTexturesByReference.TryGetValue(
+                            proposedReference,
+                            out var texturePaths))
+                    {
+                        affectedTexturePaths.UnionWith(texturePaths);
+                    }
+                }
+
+                affectedSourceTextures = affectedTexturePaths
+                    .Where(sourceIndex.ContainsKey)
+                    .OrderBy(path => state.AtlasValueGateSourceTextureOrder.TryGetValue(
+                        path,
+                        out var order)
+                        ? order
+                        : int.MaxValue)
+                    .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .Select(path => (Path: path, Texture: sourceIndex[path]))
+                    .ToArray();
+            }
+            else
+            {
+                // Keep a conservative fallback for callers that provide a prebuilt source
+                // index without its reverse index.
+                affectedSourceTextures = sourceIndex
+                    .Where(entry => entry.Value.References.Any(proposedRewrites.Contains))
+                    .Select(entry => (Path: entry.Key, Texture: entry.Value))
+                    .ToArray();
+            }
             ReportProgress(
                 state.Progress,
                 "Evaluating atlas value",
                 0,
-                affectedSourceTextures.Length,
+                affectedSourceTextures.Count,
                 "Evaluating affected source textures");
             for (var sourceTextureIndex = 0;
-                 sourceTextureIndex < affectedSourceTextures.Length;
+                 sourceTextureIndex < affectedSourceTextures.Count;
                  sourceTextureIndex++)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
@@ -9007,17 +9101,21 @@ namespace Editors.KitbasherEditor.Services
                     state.Progress,
                     "Evaluating atlas value",
                     sourceTextureIndex + 1,
-                    affectedSourceTextures.Length,
+                    affectedSourceTextures.Count,
                     "Evaluating affected source textures");
-                var sourceTexture = affectedSourceTextures[sourceTextureIndex];
+                var (sourceTexturePath, sourceTexture) =
+                    affectedSourceTextures[sourceTextureIndex];
 
                 var currentlyRewrittenReferenceCount =
-                    sourceTexture.References.Count(
-                        state.AtlasValueGateRewrittenSourceReferences.Contains);
-                var rewrittenReferenceCountAfterProposal =
-                    sourceTexture.References.Count(reference =>
-                        state.AtlasValueGateRewrittenSourceReferences.Contains(reference) ||
-                        proposedRewrites.Contains(reference));
+                    GetAtlasValueGateRewrittenReferenceCount(
+                        state,
+                        sourceTexturePath,
+                        sourceTexture);
+                var newlyProposedReferenceCount = sourceTexture.References.Count(reference =>
+                    !state.AtlasValueGateRewrittenSourceReferences.Contains(reference) &&
+                    proposedRewrites.Contains(reference));
+                var rewrittenReferenceCountAfterProposal = checked(
+                    currentlyRewrittenReferenceCount + newlyProposedReferenceCount);
                 var currentlyRetired = IsAtlasValueGateSourceTextureRetired(
                     sourceTexture.IsOwnedBySourcePack,
                     sourceTexture.HasDirectVmdReference,
@@ -9080,10 +9178,9 @@ namespace Editors.KitbasherEditor.Services
                     .ToArray();
                 var roots = GetBatchRoots(channelCandidates, rootsByMesh);
                 var residentProbability = GetExpectedArmyResidentProbability(
-                    state.ArmyResidencyModel,
+                    state,
                     targetWsModels,
-                    roots,
-                    state.CancellationToken);
+                    roots);
                 expectedArmyGeneratedBcnBytes +=
                     channelBytes * residentProbability;
             }
@@ -9111,6 +9208,37 @@ namespace Editors.KitbasherEditor.Services
                !hasDirectVmdReference &&
                referenceCount > 0 &&
                rewrittenReferenceCount >= referenceCount;
+
+        private static int GetAtlasValueGateRewrittenReferenceCount(
+            BatchState state,
+            string texturePath,
+            AtlasValueGateSourceTexture sourceTexture)
+        {
+            texturePath = Normalize(texturePath);
+            if (state.AtlasValueGateRewrittenReferenceCountByTexture.TryGetValue(
+                    texturePath,
+                    out var cachedCount))
+            {
+                return cachedCount;
+            }
+
+            var count = sourceTexture.References.Count(
+                state.AtlasValueGateRewrittenSourceReferences.Contains);
+            state.AtlasValueGateRewrittenReferenceCountByTexture[texturePath] = count;
+            return count;
+        }
+
+        private static void AddAtlasValueGateRewrittenReferences(
+            BatchState state,
+            IEnumerable<AtlasValueGateSourceReference> references)
+        {
+            var countBefore = state.AtlasValueGateRewrittenSourceReferences.Count;
+            state.AtlasValueGateRewrittenSourceReferences.UnionWith(references);
+            if (state.AtlasValueGateRewrittenSourceReferences.Count != countBefore)
+            {
+                state.AtlasValueGateRewrittenReferenceCountByTexture.Clear();
+            }
+        }
 
         private static double GetExpectedArmySourceTextureResidency(
             BatchState state,
@@ -9151,10 +9279,9 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var residentProbability = GetExpectedArmyResidentProbability(
-                state.ArmyResidencyModel,
+                state,
                 remainingWsModels,
-                fallbackRoots,
-                state.CancellationToken);
+                fallbackRoots);
             return sourceTexture.BcnBytes * residentProbability;
         }
 
@@ -9719,8 +9846,40 @@ namespace Editors.KitbasherEditor.Services
                     references);
             }
 
+            BuildAtlasValueGateSourceTextureReverseIndex(state, result);
             state.VanillaAtlasConsumerCache?.Save();
             return result;
+        }
+
+        private static void BuildAtlasValueGateSourceTextureReverseIndex(
+            BatchState state,
+            IReadOnlyDictionary<string, AtlasValueGateSourceTexture> sourceIndex)
+        {
+            var texturesByReference =
+                new Dictionary<AtlasValueGateSourceReference, List<string>>();
+            state.AtlasValueGateSourceTextureOrder.Clear();
+
+            var textureOrder = 0;
+            foreach (var (texturePath, sourceTexture) in sourceIndex)
+            {
+                var normalizedTexturePath = Normalize(texturePath);
+                state.AtlasValueGateSourceTextureOrder[normalizedTexturePath] =
+                    textureOrder++;
+                foreach (var reference in sourceTexture.References)
+                {
+                    if (!texturesByReference.TryGetValue(
+                            reference,
+                            out var texturePaths))
+                    {
+                        texturePaths = [];
+                        texturesByReference[reference] = texturePaths;
+                    }
+
+                    texturePaths.Add(normalizedTexturePath);
+                }
+            }
+
+            state.AtlasValueGateSourceTexturesByReference = texturesByReference;
         }
 
         private static bool TryGetGeneratedAtlasBcnCost(
@@ -13419,10 +13578,9 @@ namespace Editors.KitbasherEditor.Services
                     armyUnmappedBcnTextureCount++;
 
                 var residentProbability = GetExpectedArmyResidentProbability(
-                    state.ArmyResidencyModel,
+                    state,
                     targetWsModels,
-                    fallbackRoots,
-                    state.CancellationToken);
+                    fallbackRoots);
                 var expectedBytes = estimate.Bytes * residentProbability;
                 estimatedScenarioResidentBcnBytes += expectedBytes;
 
@@ -13994,6 +14152,7 @@ namespace Editors.KitbasherEditor.Services
                 rootVmdPath,
                 cancellationToken);
             state.ReachableWsModelsByRoot[rootVmdPath] = reachable;
+            state.ReachableWsModelsByRootVersion++;
             return reachable;
         }
 
@@ -17725,6 +17884,7 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public int ReachableWsModelsByRootVersion { get; set; }
             public HashSet<string> SourceReachableAssetFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> TaintedGameplayWsModels { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
@@ -17832,8 +17992,21 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public List<AtlasValueGateBatchEconomics> AtlasValueGateAcceptedBatchEconomics { get; } = [];
             public Dictionary<string, AtlasValueGateSourceTexture>? AtlasValueGateSourceTextureIndex { get; set; }
+            public Dictionary<AtlasValueGateSourceReference, List<string>>?
+                AtlasValueGateSourceTexturesByReference { get; set; }
+            public Dictionary<string, int> AtlasValueGateSourceTextureOrder { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>>? AtlasValueGateRootsByWsModel { get; set; }
+            public Dictionary<string, HashSet<string>>? AtlasValueGateRootsByWsModelCache { get; set; }
+            public int AtlasValueGateRootsByWsModelCacheVersion { get; set; } = -1;
+            public Dictionary<MeshKey, HashSet<string>> AtlasValueGateRootsByMesh { get; } = [];
             public HashSet<AtlasValueGateSourceReference> AtlasValueGateRewrittenSourceReferences { get; } = [];
+            public Dictionary<string, int> AtlasValueGateRewrittenReferenceCountByTexture { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<ArmyResidencyProbabilityCacheKey, double>
+                AtlasValueGateArmyResidentProbabilityCache { get; } = [];
+            public int AtlasValueGateArmyResidentProbabilityCacheHits { get; set; }
+            public int AtlasValueGateArmyResidentProbabilityCacheMisses { get; set; }
             public int ConstantOnlyAtlasChannelsSkipped { get; set; }
             public HashSet<string> UniformConstantTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, string> UniformConstantTextureCanonicalPaths { get; } =
@@ -18132,6 +18305,10 @@ namespace Editors.KitbasherEditor.Services
             string WsModelPath,
             string Slot,
             int SlotOccurrence);
+
+        private readonly record struct ArmyResidencyProbabilityCacheKey(
+            string TargetWsModels,
+            string FallbackRoots);
 
         private sealed record AtlasValueGateSourceTexture(
             long BcnBytes,
