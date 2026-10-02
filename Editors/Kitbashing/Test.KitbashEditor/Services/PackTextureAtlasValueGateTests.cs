@@ -502,7 +502,41 @@ namespace Test.KitbashEditor.Services
                 })
                 .ToArray();
 
-            return constructor.Invoke(arguments);
+            var resolution = constructor.Invoke(arguments);
+            var usageType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryUsage",
+                throwOnError: true)!;
+            var usageConstructor = usageType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(candidate => candidate.GetParameters().Length == 11);
+            var usageListType = typeof(List<>).MakeGenericType(usageType);
+            var usagesByVmd = (IDictionary)(resolutionType.GetProperty("UsagesByVmd")
+                ?.GetValue(resolution)
+                ?? throw new InvalidOperationException("UsagesByVmd was not found."));
+            for (var index = 0; index < rosterEntries.Length; index++)
+            {
+                var entry = rosterEntries[index];
+                var usage = usageConstructor.Invoke(
+                [
+                    entry.VmdPath,
+                    $"main_roster_test_{index}",
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    1,
+                    Enum.Parse(categoryType, entry.Category),
+                    Enum.Parse(roleType, "Men"),
+                    1,
+                    counts,
+                ]);
+                var usageList = Activator.CreateInstance(usageListType)
+                    ?? throw new InvalidOperationException("Could not create resolution usages.");
+                ((IList)usageList).Add(usage);
+                usagesByVmd[NormalizeTestPath(entry.VmdPath)] = usageList;
+            }
+
+            return resolution;
         }
 
         private static void PopulateArmyResidencyModel(object state)
@@ -1047,7 +1081,9 @@ namespace Test.KitbashEditor.Services
             string geometryPath,
             int partIndex,
             string materialPath,
-            string materialXml)
+            string materialXml,
+            int? atlasWidth = null,
+            int? atlasHeight = null)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
             var serviceType = assembly.GetType(
@@ -1072,6 +1108,31 @@ namespace Test.KitbashEditor.Services
                     BoneWeight = [],
                 },
             ];
+            if (atlasWidth.HasValue || atlasHeight.HasValue)
+            {
+                model.Mesh.VertexList =
+                [
+                    new CommonVertex
+                    {
+                        Uv = new Vector2(0f, 0f),
+                        BoneIndex = [],
+                        BoneWeight = [],
+                    },
+                    new CommonVertex
+                    {
+                        Uv = new Vector2(1f, 0f),
+                        BoneIndex = [],
+                        BoneWeight = [],
+                    },
+                    new CommonVertex
+                    {
+                        Uv = new Vector2(0f, 1f),
+                        BoneIndex = [],
+                        BoneWeight = [],
+                    },
+                ];
+                model.Mesh.IndexList = [0, 1, 2];
+            }
 
             var usageType = serviceType.GetNestedType(
                 "WsUsage",
@@ -1129,11 +1190,10 @@ namespace Test.KitbashEditor.Services
                         return material;
                     if (type == typeof(int))
                     {
-                        if (name.Contains("width", StringComparison.OrdinalIgnoreCase) ||
-                            name.Contains("height", StringComparison.OrdinalIgnoreCase))
-                        {
-                            return 1;
-                        }
+                        if (name.Contains("width", StringComparison.OrdinalIgnoreCase))
+                            return atlasWidth ?? 1;
+                        if (name.Contains("height", StringComparison.OrdinalIgnoreCase))
+                            return atlasHeight ?? 1;
 
                         return name.Contains("part", StringComparison.OrdinalIgnoreCase)
                             ? partIndex
@@ -1168,7 +1228,49 @@ namespace Test.KitbashEditor.Services
                 })
                 .ToArray();
 
-            return constructor.Invoke(arguments);
+            var candidate = constructor.Invoke(arguments);
+            if (atlasWidth.HasValue || atlasHeight.HasValue)
+            {
+                if (!atlasWidth.HasValue || !atlasHeight.HasValue)
+                {
+                    throw new ArgumentException(
+                        "Atlas width and height must be provided together.");
+                }
+
+                var resolvedChannels = (HashSet<string>)(atlasCandidateType
+                    .GetProperty("ResolvedChannels")
+                    ?.GetValue(candidate)
+                    ?? throw new InvalidOperationException(
+                        "AtlasCandidate.ResolvedChannels was not found."));
+                resolvedChannels.Add("t_xml_base_colour");
+
+                var boundsProperty = atlasCandidateType.GetProperty("Bounds")
+                    ?? throw new InvalidOperationException(
+                        "AtlasCandidate.Bounds was not found.");
+                var boundsConstructor = boundsProperty.PropertyType
+                    .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .Single(constructor => constructor.GetParameters().Length == 4);
+                boundsProperty.SetValue(
+                    candidate,
+                    boundsConstructor.Invoke([0f, 0f, 1f, 1f]));
+
+                atlasCandidateType.GetProperty("Width")?.SetValue(
+                    candidate,
+                    atlasWidth.Value);
+                atlasCandidateType.GetProperty("Height")?.SetValue(
+                    candidate,
+                    atlasHeight.Value);
+
+                var channelDimensions = (IDictionary)(atlasCandidateType
+                    .GetProperty("ChannelDimensions")
+                    ?.GetValue(candidate)
+                    ?? throw new InvalidOperationException(
+                        "AtlasCandidate.ChannelDimensions was not found."));
+                channelDimensions["t_xml_base_colour"] =
+                    (atlasWidth.Value, atlasHeight.Value);
+            }
+
+            return candidate;
         }
 
         private static (int GroupCount, int[] MeshCounts, int[] ProspectiveDraws)
@@ -1296,6 +1398,319 @@ namespace Test.KitbashEditor.Services
                     .Count()).ToArray(),
                 plans.Select(value => Convert.ToInt32(
                     prospectiveProperty.GetValue(groupProperty.GetValue(value)!))).ToArray());
+        }
+
+        private static object CreateTextureOnlyMergeAffinityGroup(
+            IReadOnlyList<object> candidates,
+            params string[] preAtlasMaterialIdentities)
+        {
+            if (candidates.Count != preAtlasMaterialIdentities.Length)
+            {
+                throw new ArgumentException(
+                    "Each candidate must have one pre-atlas material identity.");
+            }
+
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var keyProperty = atlasCandidateType.GetProperty("Key")
+                ?? throw new InvalidOperationException("AtlasCandidate.Key was not found.");
+            var meshKeys = Array.CreateInstance(meshKeyType, candidates.Count);
+            for (var index = 0; index < candidates.Count; index++)
+                meshKeys.SetValue(keyProperty.GetValue(candidates[index]), index);
+
+            var groupType = serviceType.GetNestedType(
+                "MergeAffinityGroup",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MergeAffinityGroup was not found.");
+            return groupType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 4)
+                .Invoke(
+                [
+                    meshKeys,
+                    preAtlasMaterialIdentities.Distinct(StringComparer.Ordinal).Count() - 1,
+                    Array.Empty<string>(),
+                    preAtlasMaterialIdentities,
+                ]);
+        }
+
+        private static object CreateAtlasValueGateGroupPlan(
+            object group,
+            IReadOnlyList<object> candidates)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidateListType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var candidateList = Activator.CreateInstance(candidateListType)
+                ?? throw new InvalidOperationException("Could not create candidate list.");
+            foreach (var candidate in candidates)
+                ((IList)candidateList).Add(candidate);
+
+            var planType = serviceType.GetNestedType(
+                "AtlasValueGateGroupPlan",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateGroupPlan was not found.");
+            return planType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 2)
+                .Invoke([group, candidateList]);
+        }
+
+        private static object CreateAtlasCandidateBatch(
+            IReadOnlyList<object> candidates)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidateListType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var candidateList = Activator.CreateInstance(candidateListType)
+                ?? throw new InvalidOperationException("Could not create candidate batch.");
+            foreach (var candidate in candidates)
+                ((IList)candidateList).Add(candidate);
+            return candidateList;
+        }
+
+        private static object CreateExpectedEntitiesByMesh(
+            IReadOnlyList<object> candidates,
+            string unitId)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var categoryType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3ArmyUnitCategory",
+                throwOnError: true)!;
+            var keyProperty = atlasCandidateType.GetProperty("Key")
+                ?? throw new InvalidOperationException("AtlasCandidate.Key was not found.");
+            var category = Enum.Parse(categoryType, "InfantryMissile");
+            var expectedByUnitType = typeof(Dictionary<,>)
+                .MakeGenericType(typeof(string), typeof(double));
+            var byCategoryType = typeof(Dictionary<,>)
+                .MakeGenericType(categoryType, expectedByUnitType);
+            var resultType = typeof(Dictionary<,>)
+                .MakeGenericType(meshKeyType, byCategoryType);
+            var result = Activator.CreateInstance(resultType)
+                ?? throw new InvalidOperationException(
+                    "Could not create expected-entities dictionary.");
+
+            foreach (var candidate in candidates)
+            {
+                var expectedByUnit = Activator.CreateInstance(expectedByUnitType)
+                    ?? throw new InvalidOperationException(
+                        "Could not create expected unit dictionary.");
+                ((IDictionary)expectedByUnit)[unitId] = 1.0;
+                var byCategory = Activator.CreateInstance(byCategoryType)
+                    ?? throw new InvalidOperationException(
+                        "Could not create expected category dictionary.");
+                ((IDictionary)byCategory)[category] = expectedByUnit;
+                ((IDictionary)result)[keyProperty.GetValue(candidate)!] = byCategory;
+            }
+
+            return result;
+        }
+
+        private static void AddCandidateUsageToState(
+            object state,
+            object candidate)
+        {
+            var usages = (IDictionary)(GetStateProperty<object>(state, "Usages")
+                ?? throw new InvalidOperationException("State Usages was not found."));
+            var candidateType = candidate.GetType();
+            var key = candidateType.GetProperty("Key")?.GetValue(candidate)
+                ?? throw new InvalidOperationException("AtlasCandidate.Key was not found.");
+            var candidateUsages = candidateType.GetProperty("Usages")?.GetValue(candidate)
+                ?? throw new InvalidOperationException("AtlasCandidate.Usages was not found.");
+            usages[key] = candidateUsages;
+        }
+
+        private static object CreateEmptyAtlasValueGateResidencyEstimate()
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var residencyType = serviceType.GetNestedType(
+                "AtlasValueGateResidencyEstimate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateResidencyEstimate was not found.");
+            return residencyType.GetProperty(
+                       "Empty",
+                       BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                   ?.GetValue(null)
+               ?? throw new InvalidOperationException(
+                   "AtlasValueGateResidencyEstimate.Empty was not found.");
+        }
+
+        private static object CreatePendingTextureOnlyMergeAttachment(
+            object plan)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var attachmentType = serviceType.GetNestedType(
+                "AtlasValueGatePendingTextureMergeAttachment",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGatePendingTextureMergeAttachment was not found.");
+            return attachmentType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 3)
+                .Invoke(
+                [
+                    plan,
+                    CreateEmptyAtlasValueGateResidencyEstimate(),
+                    "synthetic broad batch rejection for subset attachment regression",
+                ]);
+        }
+
+        private static object CreateTextureOnlyMergeAttachmentBatches(
+            object hostBatch)
+        {
+            var batchesType = typeof(List<>).MakeGenericType(hostBatch.GetType());
+            var batches = Activator.CreateInstance(batchesType)
+                ?? throw new InvalidOperationException("Could not create accepted batches.");
+            ((IList)batches).Add(hostBatch);
+            return batches;
+        }
+
+        private static void RecordAcceptedAtlasTestBatch(
+            object state,
+            object hostBatch,
+            object expectedEntitiesByMesh)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "RecordAtlasValueGateAccepted" &&
+                    candidate.GetParameters().Length == 8);
+            var acceptanceKindType = serviceType.GetNestedType(
+                "AtlasValueGateAcceptanceKind",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateAcceptanceKind was not found.");
+            method.Invoke(
+                null,
+                [
+                    state,
+                    hostBatch,
+                    CreateEmptyAtlasValueGateResidencyEstimate(),
+                    0,
+                    0.0,
+                    expectedEntitiesByMesh,
+                    Enum.Parse(acceptanceKindType, "DrawMerge"),
+                    0,
+                ]);
+        }
+
+        private static void AttachPendingTextureOnlyMergeTestGroup(
+            object state,
+            object acceptedBatches,
+            object affinityGroups,
+            object expectedEntitiesByMesh,
+            object pendingAttachments)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "AttachPendingTextureOnlyMergeGroups" &&
+                    candidate.GetParameters().Length == 6);
+            method.Invoke(
+                null,
+                [
+                    state,
+                    acceptedBatches,
+                    affinityGroups,
+                    expectedEntitiesByMesh,
+                    pendingAttachments,
+                    0,
+                ]);
+        }
+
+        private static bool AcceptedBatchContainsCandidate(
+            object acceptedBatches,
+            object candidate)
+        {
+            var firstBatch = ((IList)acceptedBatches)[0]
+                ?? throw new InvalidOperationException("No accepted batch was recorded.");
+            return ((IEnumerable)firstBatch).Cast<object>().Contains(candidate);
+        }
+
+        private static int GetAcceptedBatchCandidateCount(object acceptedBatches)
+        {
+            var firstBatch = ((IList)acceptedBatches)[0]
+                ?? throw new InvalidOperationException("No accepted batch was recorded.");
+            return ((IEnumerable)firstBatch).Cast<object>().Count();
+        }
+
+        private static int GetAcceptedEconomicsCandidateCount(object state)
+        {
+            var economics = (IList)(GetStateProperty<object>(
+                    state,
+                    "AtlasValueGateAcceptedBatchEconomics")
+                ?? throw new InvalidOperationException(
+                    "Accepted atlas economics were not found."));
+            var entry = economics[0]
+                ?? throw new InvalidOperationException("No accepted atlas economics were recorded.");
+            return Convert.ToInt32(
+                entry.GetType().GetProperty("CandidateCount")?.GetValue(entry)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateBatchEconomics.CandidateCount was not found."));
+        }
+
+        private static bool HasTextureOnlyMergeNearMiss(
+            object state,
+            int candidateCount)
+        {
+            var nearMisses = (IEnumerable)(GetStateProperty<object>(
+                    state,
+                    "AtlasValueGateTextureOnlyMergeNearMisses")
+                ?? throw new InvalidOperationException(
+                    "Texture-only merge near misses were not found."));
+            return nearMisses.Cast<object>().Any(entry =>
+                Convert.ToInt32(
+                    entry.GetType().GetProperty("CandidateCount")?.GetValue(entry)) ==
+                candidateCount);
         }
 
         private static string GetValueGateBudgetDecision(
@@ -2358,6 +2773,127 @@ namespace Test.KitbashEditor.Services
             {
                 Assert.That(shapes.CandidateCounts, Is.EqualTo([2, 2, 3]));
                 Assert.That(shapes.ProspectiveDraws, Is.EqualTo([1, 1, 1]));
+            });
+        }
+
+        [Test]
+        public void TextureOnlyMergeSubsetAttachment_RejectsTripleAndAttachesViablePair()
+        {
+            static string CreateMaterialXml(string texturePath)
+                => "<material><name>test</name>" +
+                   "<shader>shaders/weighted4_character.xml.shader</shader>" +
+                   "<textures><texture><slot>t_xml_base_colour</slot>" +
+                   $"<source>{texturePath}</source></texture></textures></material>";
+
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            SetStateProperty(state, "AtlasAllVmdsEnabled", true);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmds(
+                    ("models\\root.variantmeshdefinition", "InfantryMissile")));
+            PopulateArmyResidencyModel(state);
+
+            var host = CreateAffinityTestCandidate(
+                "models\\host.rigid_model_v2",
+                0,
+                "materials\\host.xml",
+                CreateMaterialXml("textures\\host.dds"),
+                atlasWidth: 512,
+                atlasHeight: 512);
+            var pairLeft = CreateAffinityTestCandidate(
+                "models\\shared.rigid_model_v2",
+                0,
+                "materials\\pair_left.xml",
+                CreateMaterialXml("textures\\pair_left.dds"),
+                atlasWidth: 512,
+                atlasHeight: 512);
+            var pairRight = CreateAffinityTestCandidate(
+                "models\\shared.rigid_model_v2",
+                1,
+                "materials\\pair_right.xml",
+                CreateMaterialXml("textures\\pair_right.dds"),
+                atlasWidth: 512,
+                atlasHeight: 512);
+            var expensiveThird = CreateAffinityTestCandidate(
+                "models\\shared.rigid_model_v2",
+                2,
+                "materials\\expensive.xml",
+                CreateMaterialXml("textures\\expensive.dds"),
+                atlasWidth: 2048,
+                atlasHeight: 2048);
+            var allCandidates = new[] { host, pairLeft, pairRight, expensiveThird };
+            foreach (var candidate in allCandidates)
+                AddCandidateUsageToState(state, candidate);
+
+            var expectedEntitiesByMesh = CreateExpectedEntitiesByMesh(
+                allCandidates,
+                "main:main_roster_test_0");
+            var hostBatch = CreateAtlasCandidateBatch([host]);
+            var acceptedBatches = CreateTextureOnlyMergeAttachmentBatches(hostBatch);
+            RecordAcceptedAtlasTestBatch(state, hostBatch, expectedEntitiesByMesh);
+
+            var pendingCandidates = new[] { pairLeft, pairRight, expensiveThird };
+            var group = CreateTextureOnlyMergeAffinityGroup(
+                pendingCandidates,
+                "pre:pair-left",
+                "pre:pair-right",
+                "pre:expensive");
+            var plan = CreateAtlasValueGateGroupPlan(group, pendingCandidates);
+            var pendingAttachment = CreatePendingTextureOnlyMergeAttachment(plan);
+            var pendingAttachmentsType = typeof(List<>).MakeGenericType(
+                pendingAttachment.GetType());
+            var pendingAttachments = Activator.CreateInstance(pendingAttachmentsType)
+                ?? throw new InvalidOperationException(
+                    "Could not create pending texture-only merge attachments.");
+            ((IList)pendingAttachments).Add(pendingAttachment);
+
+            var affinityGroupsType = typeof(List<>).MakeGenericType(group.GetType());
+            var affinityGroups = Activator.CreateInstance(affinityGroupsType)
+                ?? throw new InvalidOperationException("Could not create affinity groups.");
+            ((IList)affinityGroups).Add(group);
+
+            AttachPendingTextureOnlyMergeTestGroup(
+                state,
+                acceptedBatches,
+                affinityGroups,
+                expectedEntitiesByMesh,
+                pendingAttachments);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    AcceptedBatchContainsCandidate(acceptedBatches, pairLeft),
+                    Is.True,
+                    "The viable pair's first candidate should be attached to the accepted atlas.");
+                Assert.That(
+                    AcceptedBatchContainsCandidate(acceptedBatches, pairRight),
+                    Is.True,
+                    "The viable pair's second candidate should be attached to the accepted atlas.");
+                Assert.That(
+                    AcceptedBatchContainsCandidate(acceptedBatches, expensiveThird),
+                    Is.False,
+                    "The economically rejected triple's expensive candidate must not be attached.");
+                Assert.That(GetAcceptedBatchCandidateCount(acceptedBatches), Is.EqualTo(3));
+                Assert.That(GetAcceptedEconomicsCandidateCount(state), Is.EqualTo(3));
+                Assert.That(
+                    GetStateProperty<int>(
+                        state,
+                        "AtlasValueGateTextureOnlyMergeSubsetOptionsEvaluated"),
+                    Is.EqualTo(4),
+                    "The three pairs and the full triple must all reach the attachment gate.");
+                Assert.That(
+                    GetStateProperty<int>(
+                        state,
+                        "AtlasValueGateTextureOnlyMergeCrossBatchGroupsAccepted"),
+                    Is.EqualTo(1));
+                Assert.That(
+                    HasTextureOnlyMergeNearMiss(state, 3),
+                    Is.True,
+                    "The full triple should be recorded as an economic near miss.");
             });
         }
 
