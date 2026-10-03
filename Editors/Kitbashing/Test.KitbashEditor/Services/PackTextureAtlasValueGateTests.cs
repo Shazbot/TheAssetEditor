@@ -38,6 +38,151 @@ namespace Test.KitbashEditor.Services
                     "BuildStructuralMergePairKey returned null."));
         }
 
+        private static object CreateAtlasPlanningTestCandidate(
+            string geometryPath,
+            int lodIndex,
+            int partIndex)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var meshKey = meshKeyType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single()
+                .Invoke([geometryPath, lodIndex, partIndex]);
+
+            var model = CreateIdentityTestModel("planning");
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var constructor = atlasCandidateType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(candidate => candidate.GetParameters().Length > 5);
+            var uvBoundsType = serviceType.GetNestedType(
+                "UvBounds",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("UvBounds was not found.");
+            var uvBounds = uvBoundsType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single()
+                .Invoke([0f, 0f, 1f, 1f]);
+
+            var arguments = constructor.GetParameters()
+                .Select(parameter =>
+                {
+                    var type = parameter.ParameterType;
+                    if (type == typeof(string))
+                    {
+                        return parameter.Name switch
+                        {
+                            "RootVmdPath" => (object?)"models\\planning.variantmeshdefinition",
+                            "MaterialPath" => "materials\\planning.xml.material",
+                            _ => string.Empty,
+                        };
+                    }
+
+                    if (type == meshKeyType)
+                        return meshKey;
+                    if (type == typeof(RmvModel))
+                        return model;
+                    if (type == typeof(XmlDocument))
+                    {
+                        var material = new XmlDocument();
+                        material.LoadXml("<material />");
+                        return material;
+                    }
+                    if (type == uvBoundsType)
+                        return uvBounds;
+                    if (type == typeof(double))
+                        return 1.0;
+                    if (type == typeof(int))
+                        return 64;
+                    if (type == typeof(bool))
+                        return false;
+                    if (type == typeof(HashSet<string>))
+                        return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                    if (type.IsGenericType &&
+                        type.GetGenericTypeDefinition() == typeof(Dictionary<,>))
+                    {
+                        return Activator.CreateInstance(type);
+                    }
+
+                    if (type.IsGenericType &&
+                        type.GetGenericTypeDefinition() == typeof(List<>))
+                    {
+                        return Activator.CreateInstance(type);
+                    }
+
+                    return type.IsValueType
+                        ? Activator.CreateInstance(type)
+                        : null;
+                })
+                .ToArray();
+
+            return constructor.Invoke(arguments);
+        }
+
+        private static object GetAtlasPlanningIdentity(object candidate)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                    "GetAtlasPlanningSourceIdentity",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "GetAtlasPlanningSourceIdentity was not found.");
+            return method.Invoke(null, [candidate])
+                ?? throw new InvalidOperationException(
+                    "GetAtlasPlanningSourceIdentity returned null.");
+        }
+
+        private static IReadOnlyList<IReadOnlyList<object>> CloseAtlasPlanningTestBatches(
+            object state,
+            params (object First, object? Second)[] batches)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidateListType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var batchesListType = typeof(List<>).MakeGenericType(candidateListType);
+            var candidateBatches = Activator.CreateInstance(batchesListType)
+                ?? throw new InvalidOperationException("Could not create candidate batches.");
+            foreach (var (first, second) in batches)
+            {
+                var batch = Activator.CreateInstance(candidateListType)
+                    ?? throw new InvalidOperationException("Could not create candidate batch.");
+                ((IList)batch).Add(first);
+                if (second != null)
+                    ((IList)batch).Add(second);
+                ((IList)candidateBatches).Add(batch);
+            }
+
+            var method = serviceType.GetMethod(
+                    "CloseLodAtlasFamilies",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException("CloseLodAtlasFamilies was not found.");
+            var closed = (IEnumerable)(method.Invoke(null, [state, candidateBatches])
+                ?? throw new InvalidOperationException("CloseLodAtlasFamilies returned null."));
+            return closed
+                .Cast<IEnumerable>()
+                .Select(batch => batch.Cast<object>().ToArray())
+                .ToArray();
+        }
+
         private static int GetMergeAffinityScore(
             IReadOnlyCollection<string> preExistingPairs,
             params int[] partIndices)
@@ -4987,6 +5132,108 @@ namespace Test.KitbashEditor.Services
                         "StructuralMergeConsumerDiscoveryFailures"),
                     Is.EqualTo(2));
             });
+        }
+
+        [Test]
+        public void AtlasPlanningIdentity_IsSharedAcrossDifferentLods()
+        {
+            var lod0 = CreateAtlasPlanningTestCandidate(
+                "models/planning.rigid_model_v2",
+                0,
+                0);
+            var lod2 = CreateAtlasPlanningTestCandidate(
+                "models/planning.rigid_model_v2",
+                2,
+                0);
+
+            Assert.That(
+                GetAtlasPlanningIdentity(lod0),
+                Is.EqualTo(GetAtlasPlanningIdentity(lod2)));
+        }
+
+        [Test]
+        public void LodAwareAtlasFamilyClosure_ReusesPlacementAcrossLods()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            SetStateProperty(state, "LodAwareAtlasPlanningEnabled", true);
+
+            var closed = CloseAtlasPlanningTestBatches(
+                state,
+                (
+                    CreateAtlasPlanningTestCandidate(
+                        "models/planning.rigid_model_v2",
+                        0,
+                        0),
+                    null),
+                (
+                    CreateAtlasPlanningTestCandidate(
+                        "models/planning.rigid_model_v2",
+                        2,
+                        0),
+                    null));
+
+            Assert.That(closed, Has.Count.EqualTo(1));
+            Assert.That(closed[0], Has.Count.EqualTo(2));
+        }
+
+        [Test]
+        public void LodAwareAtlasFamilyClosure_KeepsStructuralComponentAtomic()
+        {
+            const string rigidPath = "models/planning.rigid_model_v2";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            SetStateProperty(state, "LodAwareAtlasPlanningEnabled", true);
+
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var meshKeyConstructor = meshKeyType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single();
+            var mesh0 = meshKeyConstructor.Invoke([rigidPath, 0, 0]);
+            var mesh1 = meshKeyConstructor.Invoke([rigidPath, 0, 1]);
+
+            var structuralMeshes = state.GetType()
+                .GetProperty(
+                    "PreAtlasStructuralMergeMeshes",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state)
+                ?? throw new InvalidOperationException(
+                    "PreAtlasStructuralMergeMeshes was not found.");
+            var addStructuralMesh = structuralMeshes.GetType().GetMethod("Add")
+                ?? throw new InvalidOperationException("Structural mesh set cannot add members.");
+            addStructuralMesh.Invoke(structuralMeshes, [mesh0]);
+            addStructuralMesh.Invoke(structuralMeshes, [mesh1]);
+            var structuralPairs = (ISet<string>)(state.GetType()
+                .GetProperty(
+                    "PreAtlasStructuralMergePairs",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state)
+                ?? throw new InvalidOperationException(
+                    "PreAtlasStructuralMergePairs was not found."));
+            structuralPairs.Add(GetStructuralMergePairKey(rigidPath, 0, 0, 1));
+
+            var closed = CloseAtlasPlanningTestBatches(
+                state,
+                (
+                    CreateAtlasPlanningTestCandidate(rigidPath, 0, 0),
+                    null),
+                (
+                    CreateAtlasPlanningTestCandidate(rigidPath, 0, 1),
+                    null));
+
+            Assert.That(closed, Has.Count.EqualTo(1));
+            Assert.That(closed[0], Has.Count.EqualTo(2));
         }
 
         [Test]

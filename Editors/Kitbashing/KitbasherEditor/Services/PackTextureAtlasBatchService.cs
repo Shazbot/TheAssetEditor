@@ -188,7 +188,8 @@ namespace Editors.KitbasherEditor.Services
             bool shareAtlasesAcrossVmds = true,
             bool optimizeGeometry = false,
             bool atlasAllVmds = false,
-            bool scoreAllGameUnits = false)
+            bool scoreAllGameUnits = false,
+            bool lodAwareAtlasPlanning = true)
         {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
@@ -229,6 +230,7 @@ namespace Editors.KitbasherEditor.Services
                     mergeCompatibleMeshes,
                     shareAtlasesAcrossVmds,
                     optimizeGeometry);
+                state.LodAwareAtlasPlanningEnabled = lodAwareAtlasPlanning;
                 state.CancellationToken = cancellationToken;
                 state.Progress = progress;
                 var gameplayContainerSnapshot =
@@ -1641,6 +1643,22 @@ namespace Editors.KitbasherEditor.Services
             foreach (var group in groups.Where(x => x.PartIndices.Count > 1))
             {
                 state.PreAtlasStructuralMergeGroupCount++;
+                var componentMembers = group.PartIndices
+                    .Select(partIndex => new MeshKey(rigidPath, lodIndex, partIndex))
+                    .ToHashSet();
+                var componentSignature = string.Join(
+                    "\u001f",
+                    componentMembers
+                        .OrderBy(member => member.PartIndex)
+                        .Select(member =>
+                            BuildStructuralMergePairKey(
+                                member.GeometryPath,
+                                member.LodIndex,
+                                member.PartIndex,
+                                member.PartIndex)));
+                if (state.PreAtlasStructuralMergeComponentSignatures.Add(componentSignature))
+                    state.PreAtlasStructuralMergeComponents.Add(componentMembers);
+
                 foreach (var partIndex in group.PartIndices)
                 {
                     state.PreAtlasStructuralMergeMeshes.Add(
@@ -3558,14 +3576,17 @@ namespace Editors.KitbasherEditor.Services
                 "Optimizing atlas batches",
                 item: "Evaluating compatible mesh merges");
             var mergeOptimized = OptimizeBatchesForMergeAffinity(state, localityOptimized);
+            var familyClosed = state.LodAwareAtlasPlanningEnabled
+                ? CloseLodAtlasFamilies(state, mergeOptimized)
+                : mergeOptimized;
             cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(
                 progress,
                 "Evaluating atlas value",
                 item: "Applying residency and draw-value gates");
             var valueOptimized = state.MergeCompatibleMeshesEnabled
-                ? FilterBatchesForMergeValue(state, mergeOptimized)
-                : mergeOptimized;
+                ? FilterBatchesForMergeValue(state, familyClosed)
+                : familyClosed;
             if (packWide)
             {
                 state.ExpectedArmyResidentPixelsAfterMergeAware =
@@ -3573,6 +3594,423 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return valueOptimized;
+        }
+
+        private static List<List<AtlasCandidate>> CloseLodAtlasFamilies(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            state.CancellationToken.ThrowIfCancellationRequested();
+            var working = batches
+                .Select(batch => batch
+                    .GroupBy(candidate => candidate.Key)
+                    .Select(group => group.First())
+                    .ToList())
+                .ToList();
+            if (!state.LodAwareAtlasPlanningEnabled || working.Count == 0)
+                return working;
+
+            var candidateByKey = working
+                .SelectMany(batch => batch)
+                .GroupBy(candidate => candidate.Key)
+                .ToDictionary(group => group.Key, group => group.First());
+            var structuralComponents = BuildAtlasStructuralMergeComponents(
+                state,
+                candidateByKey.Values);
+
+            // Structural components are the atomic unit of family attachment. Do this before
+            // exact-placement closure so a candidate cannot be moved to a host atlas while its
+            // pre-atlas merge partner is left behind in another batch.
+            foreach (var component in structuralComponents
+                         .OrderBy(component => component.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                         .ThenBy(component => component.LodIndex)
+                         .ThenBy(component => component.Members.Min(member => member.PartIndex)))
+            {
+                state.CancellationToken.ThrowIfCancellationRequested();
+                var members = component.Members
+                    .Where(candidateByKey.ContainsKey)
+                    .Select(member => candidateByKey[member])
+                    .ToList();
+                if (members.Count == 0)
+                    continue;
+
+                // A missing member is not safe to rewrite: the rigid material/UV state is
+                // shared by every structural part, even when one part was not in the selected
+                // atlas population.
+                if (members.Count != component.Members.Length ||
+                    !CanRewriteStructuralComponentAsOneMaterial(state, members))
+                {
+                    RemoveAtlasFamilyMembers(
+                        state,
+                        working,
+                        members,
+                        "LOD-aware atlas planning left a structural component unchanged because " +
+                        "the complete component or one compatible post-atlas material variant " +
+                        "was not available.");
+                    state.LodAwareAtlasStructuralComponentsRejected++;
+                    continue;
+                }
+
+                var occupiedBatchIds = GetBatchIdsForKeys(working, members.Select(x => x.Key));
+                if (occupiedBatchIds.Count <= 1)
+                    continue;
+
+                if (TryMoveAtlasFamilyMembersToBestHost(
+                        state,
+                        working,
+                        members,
+                        out _))
+                {
+                    state.LodAwareAtlasStructuralComponentsReplanned++;
+                    state.LodAwareAtlasFamilyClosureCandidates += members.Count;
+                    if (members.Select(member => member.Key.LodIndex).Distinct().Count() > 1)
+                        state.LodAwareAtlasFamiliesSpanningMultipleLods++;
+                }
+                else
+                {
+                    RemoveAtlasFamilyMembers(
+                        state,
+                        working,
+                        members,
+                        "LOD-aware atlas planning rejected a structural component because it " +
+                        "could not be hosted by one atlas page without splitting the component.");
+                    state.LodAwareAtlasStructuralComponentsRejected++;
+                }
+            }
+
+            // Close exact placement families after structural components are atomic. The
+            // planning identity intentionally excludes LOD and material shader/parameters;
+            // ProcessBatch will still generate separate material variants from each original
+            // material document while the shared atlas placement is emitted once.
+            var identityGroups = working
+                .SelectMany(batch => batch)
+                .GroupBy(GetAtlasPlanningSourceIdentity)
+                .OrderBy(group => BuildAtlasPlanningOrderKey(group.First()), StringComparer.Ordinal)
+                .ToList();
+            foreach (var identityGroup in identityGroups)
+            {
+                state.CancellationToken.ThrowIfCancellationRequested();
+                var members = identityGroup
+                    .GroupBy(candidate => candidate.Key)
+                    .Select(group => group.First())
+                    .ToList();
+                var occupiedBatchIds = GetBatchIdsForKeys(working, members.Select(x => x.Key));
+                if (occupiedBatchIds.Count <= 1)
+                    continue;
+
+                var structuralComponentByKey = structuralComponents
+                    .SelectMany(component => component.Members.Select(member =>
+                        (member, component)))
+                    .ToDictionary(entry => entry.member, entry => entry.component);
+                var handledStructuralComponents = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var member in members
+                             .OrderBy(candidate => candidate.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(candidate => candidate.Key.LodIndex)
+                             .ThenBy(candidate => candidate.Key.PartIndex))
+                {
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    if (!structuralComponentByKey.TryGetValue(member.Key, out var component))
+                        continue;
+
+                    var componentKey = string.Join(
+                        "\u001f",
+                        component.Members.Select(candidate => candidate.ToString()));
+                    if (!handledStructuralComponents.Add(componentKey))
+                        continue;
+
+                    var moveMembers = component.Members
+                        .Where(candidateByKey.ContainsKey)
+                        .Select(candidateKey => candidateByKey[candidateKey])
+                        .ToList();
+
+                    var memberBatchIds = GetBatchIdsForKeys(
+                        working,
+                        moveMembers.Select(candidate => candidate.Key));
+                    if (memberBatchIds.Count <= 1)
+                        continue;
+
+                    if (TryMoveAtlasFamilyMembersToBestHost(
+                            state,
+                            working,
+                            moveMembers,
+                            out _))
+                    {
+                        state.LodAwareAtlasFamilyClosureCandidates += moveMembers.Count;
+                        if (moveMembers.Select(candidate => candidate.Key.LodIndex).Distinct().Count() > 1)
+                            state.LodAwareAtlasFamiliesSpanningMultipleLods++;
+                    }
+                    else if (component != null)
+                    {
+                        RemoveAtlasFamilyMembers(
+                            state,
+                            working,
+                            moveMembers,
+                            "LOD-aware atlas planning rejected a cross-batch family attachment " +
+                            "because its structural component could not share one host atlas page.");
+                        state.LodAwareAtlasStructuralComponentsRejected++;
+                    }
+                }
+
+                var nonStructuralMembers = members
+                    .Where(member => !structuralComponentByKey.ContainsKey(member.Key))
+                    .ToList();
+                if (nonStructuralMembers.Count != 0 &&
+                    GetBatchIdsForKeys(
+                        working,
+                        nonStructuralMembers.Select(candidate => candidate.Key)).Count > 1)
+                {
+                    if (TryMoveAtlasFamilyMembersToBestHost(
+                            state,
+                            working,
+                            nonStructuralMembers,
+                            out _))
+                    {
+                        state.LodAwareAtlasFamilyClosureCandidates += nonStructuralMembers.Count;
+                        if (nonStructuralMembers.Select(candidate => candidate.Key.LodIndex).Distinct().Count() > 1)
+                            state.LodAwareAtlasFamiliesSpanningMultipleLods++;
+                    }
+                }
+
+                var remainingBatchIds = GetBatchIdsForKeys(
+                    working,
+                    members.Select(candidate => candidate.Key));
+                if (remainingBatchIds.Count == 1 && members.Count > 1)
+                {
+                    state.LodAwareAtlasFamilyClosures++;
+                    state.LodAwareAtlasFamilyClosureCandidates += members.Count;
+                }
+            }
+
+            return working
+                .Where(batch => batch.Count != 0)
+                .ToList();
+        }
+
+        private static bool TryMoveAtlasFamilyMembersToBestHost(
+            BatchState state,
+            List<List<AtlasCandidate>> batches,
+            IReadOnlyList<AtlasCandidate> members,
+            out int hostBatchIndex)
+        {
+            hostBatchIndex = -1;
+            var memberKeys = members.Select(candidate => candidate.Key).ToHashSet();
+            var occupiedBatchIds = GetBatchIdsForKeys(batches, memberKeys);
+            if (occupiedBatchIds.Count <= 1)
+            {
+                hostBatchIndex = occupiedBatchIds.FirstOrDefault(-1);
+                return hostBatchIndex >= 0;
+            }
+
+            long bestIncrementalPixels = long.MaxValue;
+            foreach (var candidateHost in occupiedBatchIds.OrderBy(index => index))
+            {
+                state.CancellationToken.ThrowIfCancellationRequested();
+                var proposed = batches[candidateHost]
+                    .Concat(members)
+                    .GroupBy(candidate => candidate.Key)
+                    .Select(group => group.First())
+                    .ToList();
+                if (!CanCreatePlan(state, proposed, out _))
+                    continue;
+
+                var baselinePixels = TryGetGeneratedAtlasPixelCost(
+                    state,
+                    batches[candidateHost],
+                    out var baselineCost,
+                    out _,
+                    deduplicateByContent: true)
+                    ? baselineCost
+                    : long.MaxValue;
+                var proposedPixels = TryGetGeneratedAtlasPixelCost(
+                    state,
+                    proposed,
+                    out var proposedCost,
+                    out _,
+                    deduplicateByContent: true)
+                    ? proposedCost
+                    : long.MaxValue;
+                if (baselinePixels == long.MaxValue || proposedPixels == long.MaxValue)
+                    continue;
+
+                var incrementalPixels = Math.Max(0, proposedPixels - baselinePixels);
+                if (incrementalPixels < bestIncrementalPixels)
+                {
+                    bestIncrementalPixels = incrementalPixels;
+                    hostBatchIndex = candidateHost;
+                }
+            }
+
+            if (hostBatchIndex < 0)
+                return false;
+
+            var hostMembers = batches[hostBatchIndex]
+                .Concat(members)
+                .GroupBy(candidate => candidate.Key)
+                .Select(group => group.First())
+                .OrderBy(candidate => BuildAtlasPlanningOrderKey(candidate), StringComparer.Ordinal)
+                .ThenBy(candidate => candidate.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(candidate => candidate.Key.LodIndex)
+                .ThenBy(candidate => candidate.Key.PartIndex)
+                .ToList();
+            var memberKeySet = members.Select(candidate => candidate.Key).ToHashSet();
+            for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                if (batchIndex == hostBatchIndex)
+                    continue;
+
+                batches[batchIndex].RemoveAll(candidate => memberKeySet.Contains(candidate.Key));
+            }
+
+            batches[hostBatchIndex] = hostMembers;
+            return true;
+        }
+
+        private static HashSet<int> GetBatchIdsForKeys(
+            IReadOnlyList<List<AtlasCandidate>> batches,
+            IEnumerable<MeshKey> keys)
+        {
+            var keySet = keys.ToHashSet();
+            var result = new HashSet<int>();
+            for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                if (batches[batchIndex].Any(candidate => keySet.Contains(candidate.Key)))
+                    result.Add(batchIndex);
+            }
+
+            return result;
+        }
+
+        private static void RemoveAtlasFamilyMembers(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches,
+            IReadOnlyList<AtlasCandidate> members,
+            string reason)
+        {
+            var memberKeys = members.Select(candidate => candidate.Key).ToHashSet();
+            foreach (var batch in batches)
+            {
+                foreach (var candidate in batch
+                             .Where(candidate => memberKeys.Contains(candidate.Key))
+                             .ToList())
+                {
+                    batch.Remove(candidate);
+                    RecordSkip(
+                        state,
+                        candidate.RootVmdPath,
+                        candidate.Key,
+                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                        reason);
+                }
+            }
+        }
+
+        private static bool CanRewriteStructuralComponentAsOneMaterial(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> members)
+        {
+            if (members.Count < 2)
+                return false;
+
+            var first = members[0];
+            var rmvIdentity = GetRmvMergeIdentity(first.Model);
+            var materialIdentity = BuildMergeAffinityMaterialIdentity(state, first);
+            return members.Skip(1).All(member =>
+                GetRmvMergeIdentity(member.Model).Equals(rmvIdentity, StringComparison.Ordinal) &&
+                BuildMergeAffinityMaterialIdentity(state, member)
+                    .Equals(materialIdentity, StringComparison.Ordinal));
+        }
+
+        private static List<AtlasStructuralMergeComponent> BuildAtlasStructuralMergeComponents(
+            BatchState state,
+            IEnumerable<AtlasCandidate> candidates)
+        {
+            var candidateKeys = candidates
+                .Select(candidate => candidate.Key)
+                .ToHashSet();
+            var result = new List<AtlasStructuralMergeComponent>();
+            var recordedComponents = state.PreAtlasStructuralMergeComponents.Count != 0
+                ? state.PreAtlasStructuralMergeComponents
+                : BuildFallbackAtlasStructuralMergeComponents(state);
+            foreach (var component in recordedComponents)
+            {
+                var members = component
+                    .OrderBy(member => member.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(member => member.LodIndex)
+                    .ThenBy(member => member.PartIndex)
+                    .ToArray();
+                if (members.Length >= 2 && members.Any(candidateKeys.Contains))
+                {
+                    result.Add(
+                        new AtlasStructuralMergeComponent(
+                            members[0].GeometryPath,
+                            members[0].LodIndex,
+                            members));
+                }
+            }
+
+            return result;
+        }
+
+        private static List<HashSet<MeshKey>> BuildFallbackAtlasStructuralMergeComponents(
+            BatchState state)
+        {
+            var result = new List<HashSet<MeshKey>>();
+            foreach (var rigidLod in state.PreAtlasStructuralMergeMeshes
+                         .GroupBy(mesh => (mesh.GeometryPath, mesh.LodIndex)))
+            {
+                var meshes = rigidLod
+                    .OrderBy(mesh => mesh.PartIndex)
+                    .ToArray();
+                if (meshes.Length < 2)
+                    continue;
+
+                var labels = BuildStructuralMergeComponentLabels(
+                    meshes,
+                    state.PreAtlasStructuralMergePairs);
+                foreach (var component in labels
+                             .Distinct()
+                             .Select(label => meshes
+                                 .Where((_, index) => labels[index] == label)
+                                 .ToHashSet())
+                             .Where(component => component.Count >= 2))
+                {
+                    result.Add(component);
+                }
+            }
+
+            return result;
+        }
+
+        private static HashSet<MeshKey> GetNonAtomicStructuralCandidateKeys(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            var candidateByKey = batches
+                .SelectMany(batch => batch)
+                .GroupBy(candidate => candidate.Key)
+                .ToDictionary(group => group.Key, group => group.First());
+            var result = new HashSet<MeshKey>();
+            foreach (var component in BuildAtlasStructuralMergeComponents(
+                         state,
+                         candidateByKey.Values))
+            {
+                var members = component.Members
+                    .Where(candidateByKey.ContainsKey)
+                    .Select(member => candidateByKey[member])
+                    .ToList();
+                var batchIds = GetBatchIdsForKeys(
+                    batches,
+                    members.Select(candidate => candidate.Key));
+                if (members.Count != component.Members.Length ||
+                    batchIds.Count != 1 ||
+                    !CanRewriteStructuralComponentAsOneMaterial(state, members))
+                {
+                    foreach (var member in members)
+                        result.Add(member.Key);
+                }
+            }
+
+            return result;
         }
 
         private static List<List<AtlasCandidate>> OptimizeMaxSizeBatchesForPixelArea(
@@ -7185,29 +7623,53 @@ namespace Editors.KitbasherEditor.Services
             state.AtlasValueGateSourceTextureIndex ??=
                 BuildAtlasValueGateSourceTextureIndex(state, candidateTexturePaths);
 
-            // A pre-atlas structural component is a protected invariant.  Atlas-rewriting
-            // only one member (or assigning different generated materials to its members)
-            // would destroy the later mesh merge, so protected meshes are left on their
-            // original materials.  The structural pass still merges them after atlasing.
-            var protectedStructuralCandidates = allCandidates
-                .Where(candidate => state.PreAtlasStructuralMergeMeshes.Contains(candidate.Key))
-                .ToList();
-            foreach (var candidate in protectedStructuralCandidates)
+            HashSet<MeshKey> nonAtomicStructuralCandidates;
+            if (state.LodAwareAtlasPlanningEnabled)
             {
-                RecordSkip(
-                    state,
-                    candidate.RootVmdPath,
-                    candidate.Key,
-                    candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
-                    "Pre-atlas structural merge opportunity protected from atlas rewriting.");
+                nonAtomicStructuralCandidates =
+                    GetNonAtomicStructuralCandidateKeys(state, batches);
+                foreach (var candidate in allCandidates
+                             .Where(candidate => nonAtomicStructuralCandidates.Contains(candidate.Key)))
+                {
+                    RecordSkip(
+                        state,
+                        candidate.RootVmdPath,
+                        candidate.Key,
+                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                        "LOD-aware atlas planning left a structural merge component unchanged " +
+                        "because its complete component was not present in one atlas family or " +
+                        "its post-atlas material variant was not atomic.");
+                }
+            }
+            else
+            {
+                // Preserve the pre-existing opt-out behavior for callers that explicitly use
+                // lodAwareAtlasPlanning=false: structural candidates remain untouched and are
+                // merged later by the structural pass.
+                var protectedStructuralCandidates = allCandidates
+                    .Where(candidate => state.PreAtlasStructuralMergeMeshes.Contains(candidate.Key))
+                    .ToList();
+                foreach (var candidate in protectedStructuralCandidates)
+                {
+                    RecordSkip(
+                        state,
+                        candidate.RootVmdPath,
+                        candidate.Key,
+                        candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                        "Pre-atlas structural merge opportunity protected from atlas rewriting.");
+                }
+
+                state.AtlasProtectedStructuralMeshCount +=
+                    protectedStructuralCandidates.Count;
+                nonAtomicStructuralCandidates = protectedStructuralCandidates
+                    .Select(candidate => candidate.Key)
+                    .ToHashSet();
             }
 
-            state.AtlasProtectedStructuralMeshCount +=
-                protectedStructuralCandidates.Count;
             var eligibleBatches = batches
                 .Select(batch => batch
                     .Where(candidate =>
-                        !state.PreAtlasStructuralMergeMeshes.Contains(candidate.Key))
+                        !nonAtomicStructuralCandidates.Contains(candidate.Key))
                     .ToList())
                 .Where(batch => batch.Count != 0)
                 .ToList();
@@ -16926,6 +17388,26 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Mesh references remapped by content dedupe: {state.ContentCanonicalizedMeshReferences}");
             sb.AppendLine($"Cropped-content hashes computed: {state.AtlasRegionContentHashes.Count}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
+            sb.AppendLine(
+                $"LOD-aware atlas family planning: " +
+                $"{(state.LodAwareAtlasPlanningEnabled ? "YES" : "NO")}");
+            if (state.LodAwareAtlasPlanningEnabled)
+            {
+                sb.AppendLine(
+                    $"LOD-aware atlas family closures: {state.LodAwareAtlasFamilyClosures:N0}");
+                sb.AppendLine(
+                    $"LOD-aware atlas families spanning multiple LODs: " +
+                    $"{state.LodAwareAtlasFamiliesSpanningMultipleLods:N0}");
+                sb.AppendLine(
+                    $"LOD-aware family candidates closed over: " +
+                    $"{state.LodAwareAtlasFamilyClosureCandidates:N0}");
+                sb.AppendLine(
+                    $"LOD-aware structural components replanned atomically: " +
+                    $"{state.LodAwareAtlasStructuralComponentsReplanned:N0}");
+                sb.AppendLine(
+                    $"LOD-aware structural components rejected: " +
+                    $"{state.LodAwareAtlasStructuralComponentsRejected:N0}");
+            }
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
             sb.AppendLine($"Texel-density downscale candidates: {state.TexelDensityScaledMeshes}");
             if (state.TexelDensityScaledMeshes != 0)
@@ -19545,11 +20027,20 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<MeshKey> PreAtlasStructuralMergeMeshes { get; } = [];
             public HashSet<string> PreAtlasStructuralMergePairs { get; } =
                 new(StringComparer.Ordinal);
+            public List<HashSet<MeshKey>> PreAtlasStructuralMergeComponents { get; } = [];
+            public HashSet<string> PreAtlasStructuralMergeComponentSignatures { get; } =
+                new(StringComparer.Ordinal);
             public int PreAtlasStructuralMergeGroupCount { get; set; }
             public int StructuralOnlyMergeGroupCount { get; set; }
             public int StructuralAndAtlasAssistedMergeGroupCount { get; set; }
             public int AtlasAssistedMergeGroupCount { get; set; }
             public int AtlasProtectedStructuralMeshCount { get; set; }
+            public bool LodAwareAtlasPlanningEnabled { get; set; } = true;
+            public int LodAwareAtlasFamilyClosures { get; set; }
+            public int LodAwareAtlasFamiliesSpanningMultipleLods { get; set; }
+            public int LodAwareAtlasFamilyClosureCandidates { get; set; }
+            public int LodAwareAtlasStructuralComponentsReplanned { get; set; }
+            public int LodAwareAtlasStructuralComponentsRejected { get; set; }
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, (int Width, int Height)> GeneratedTextureDimensions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
@@ -20461,6 +20952,11 @@ namespace Editors.KitbasherEditor.Services
             List<AtlasCandidate> Candidates,
             AtlasCandidate Representative,
             AtlasCrop Crop);
+
+        private sealed record AtlasStructuralMergeComponent(
+            string GeometryPath,
+            int LodIndex,
+            MeshKey[] Members);
 
         private sealed record SharedAtlasBatch(
             List<SharedAtlasSource> Sources,
