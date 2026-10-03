@@ -3838,6 +3838,9 @@ namespace Editors.KitbasherEditor.Services
                 return hostBatchIndex >= 0;
             }
 
+            var baselineMergeAffinity = CalculateMergeAffinityScore(
+                batches,
+                mergeAffinityGroups);
             var bestMergeAffinity = int.MinValue;
             long bestIncrementalPixels = long.MaxValue;
             foreach (var candidateHost in occupiedBatchIds.OrderBy(index => index))
@@ -3896,6 +3899,21 @@ namespace Editors.KitbasherEditor.Services
             if (hostBatchIndex < 0)
                 return false;
 
+            // A family closure is only allowed to preserve or improve the merge layout. If
+            // every single-host proposal would split a valid same-LOD merge, try the stronger
+            // but still safe alternative of combining the connected host batches as one atlas
+            // plan. If that is not feasible, leave the original batches untouched.
+            if (bestMergeAffinity < baselineMergeAffinity)
+            {
+                return TryCombineAtlasFamilyHostBatches(
+                    state,
+                    batches,
+                    occupiedBatchIds,
+                    mergeAffinityGroups,
+                    baselineMergeAffinity,
+                    out hostBatchIndex);
+            }
+
             var hostMembers = batches[hostBatchIndex]
                 .Concat(members)
                 .GroupBy(candidate => candidate.Key)
@@ -3915,6 +3933,58 @@ namespace Editors.KitbasherEditor.Services
             }
 
             batches[hostBatchIndex] = hostMembers;
+            return true;
+        }
+
+        private static bool TryCombineAtlasFamilyHostBatches(
+            BatchState state,
+            List<List<AtlasCandidate>> batches,
+            IReadOnlyCollection<int> occupiedBatchIds,
+            IReadOnlyList<MergeAffinityGroup> mergeAffinityGroups,
+            int baselineMergeAffinity,
+            out int hostBatchIndex)
+        {
+            var selectedHostBatchIndex = occupiedBatchIds
+                .OrderBy(index => index)
+                .FirstOrDefault(-1);
+            hostBatchIndex = selectedHostBatchIndex;
+            if (selectedHostBatchIndex < 0)
+                return false;
+
+            var occupied = occupiedBatchIds.ToHashSet();
+            var combined = occupied
+                .OrderBy(index => index)
+                .SelectMany(index => batches[index])
+                .GroupBy(candidate => candidate.Key)
+                .Select(group => group.First())
+                .OrderBy(candidate => BuildAtlasPlanningOrderKey(candidate), StringComparer.Ordinal)
+                .ThenBy(candidate => candidate.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(candidate => candidate.Key.LodIndex)
+                .ThenBy(candidate => candidate.Key.PartIndex)
+                .ToList();
+            if (!CanCreatePlan(state, combined, out _))
+                return false;
+
+            var proposedBatches = batches
+                .Select((batch, batchIndex) => occupied.Contains(batchIndex)
+                    ? batchIndex == selectedHostBatchIndex
+                        ? combined
+                        : []
+                    : batch)
+                .ToList();
+            if (CalculateMergeAffinityScore(proposedBatches, mergeAffinityGroups) <
+                baselineMergeAffinity)
+            {
+                return false;
+            }
+
+            foreach (var batchIndex in occupied)
+            {
+                if (batchIndex != selectedHostBatchIndex)
+                    batches[batchIndex].Clear();
+            }
+
+            batches[selectedHostBatchIndex] = combined;
             return true;
         }
 
@@ -6887,41 +6957,74 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlySet<MeshKey> batchKeys)
         {
             var plans = new List<AtlasValueGateGroupPlan>();
-            var assignedKeys = new HashSet<MeshKey>();
-            foreach (var group in contributingGroups)
+            var atomicFamilies = state.LodAwareAtlasFamilies
+                .Where(family =>
+                    family.Count >= 2 &&
+                    family.IsSubsetOf(batchKeys) &&
+                    family.All(candidateByKey.ContainsKey))
+                .Select(family => family.ToHashSet())
+                .OrderBy(
+                    family => family.Min(key => key.ToString()),
+                    StringComparer.Ordinal)
+                .ToList();
+            var remainingGroupIndexes = new HashSet<int>(
+                Enumerable.Range(0, contributingGroups.Count));
+
+            while (remainingGroupIndexes.Count != 0)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
-                var seedKeys = group.Meshes
-                    .Where(batchKeys.Contains)
-                    .Where(key => !assignedKeys.Contains(key))
-                    .ToHashSet();
-                if (seedKeys.Count == 0)
-                    continue;
+                var firstGroupIndex = remainingGroupIndexes
+                    .OrderBy(index => index)
+                    .First();
+                remainingGroupIndexes.Remove(firstGroupIndex);
 
-                var atomicFamilies = new List<MeshKey[]>();
-                foreach (var family in state.LodAwareAtlasFamilies
-                             .Where(family => family.Count >= 2)
-                             .OrderBy(family => family.Min(key => key.ToString()), StringComparer.Ordinal))
+                var componentGroupIndexes = new List<int> { firstGroupIndex };
+                var componentKeys = contributingGroups[firstGroupIndex].Meshes
+                    .Where(batchKeys.Contains)
+                    .ToHashSet();
+                var componentFamilyIndexes = new HashSet<int>();
+                var changed = true;
+                while (changed)
                 {
-                    state.CancellationToken.ThrowIfCancellationRequested();
-                    if (!family.IsSubsetOf(batchKeys) ||
-                        !family.Overlaps(seedKeys) ||
-                        family.Any(assignedKeys.Contains))
+                    changed = false;
+                    for (var familyIndex = 0;
+                         familyIndex < atomicFamilies.Count;
+                         familyIndex++)
                     {
-                        continue;
+                        state.CancellationToken.ThrowIfCancellationRequested();
+                        if (componentFamilyIndexes.Contains(familyIndex) ||
+                            !atomicFamilies[familyIndex].Overlaps(componentKeys))
+                        {
+                            continue;
+                        }
+
+                        componentFamilyIndexes.Add(familyIndex);
+                        componentKeys.UnionWith(atomicFamilies[familyIndex]);
+                        changed = true;
                     }
 
-                    seedKeys.UnionWith(family);
-                    atomicFamilies.Add(
-                        family
-                            .OrderBy(key => key.GeometryPath, StringComparer.OrdinalIgnoreCase)
-                            .ThenBy(key => key.LodIndex)
-                            .ThenBy(key => key.PartIndex)
-                            .ToArray());
+                    foreach (var groupIndex in remainingGroupIndexes.ToArray())
+                    {
+                        if (!contributingGroups[groupIndex].Meshes
+                                .Any(componentKeys.Contains))
+                        {
+                            continue;
+                        }
+
+                        remainingGroupIndexes.Remove(groupIndex);
+                        componentGroupIndexes.Add(groupIndex);
+                        componentKeys.UnionWith(contributingGroups[groupIndex].Meshes);
+                        changed = true;
+                    }
                 }
 
-                var planGroup = FilterMergeAffinityGroup(group, seedKeys);
-                var candidates = seedKeys
+                var planGroups = componentGroupIndexes
+                    .Select(index => FilterMergeAffinityGroup(
+                        contributingGroups[index],
+                        componentKeys))
+                    .Where(group => group.Meshes.Length >= 2)
+                    .ToList();
+                var candidates = componentKeys
                     .Where(candidateByKey.ContainsKey)
                     .Select(key => candidateByKey[key])
                     .OrderBy(candidate => BuildAtlasPlanningOrderKey(candidate), StringComparer.Ordinal)
@@ -6932,15 +7035,52 @@ namespace Editors.KitbasherEditor.Services
                 if (candidates.Count < 2)
                     continue;
 
-                assignedKeys.UnionWith(candidates.Select(candidate => candidate.Key));
+                var componentAtomicFamilies = componentFamilyIndexes
+                    .OrderBy(index => index)
+                    .Select(index => atomicFamilies[index]
+                        .OrderBy(key => key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(key => key.LodIndex)
+                        .ThenBy(key => key.PartIndex)
+                        .ToArray())
+                    .ToArray();
                 plans.Add(
                     new AtlasValueGateGroupPlan(
-                        planGroup,
+                        planGroups[0],
                         candidates,
-                        atomicFamilies));
+                        componentAtomicFamilies,
+                        planGroups));
             }
 
             return plans;
+        }
+
+        private static int GetAtlasValueGatePlanProspectiveTextureMergeDraws(
+            AtlasValueGateGroupPlan plan)
+            => CalculateProspectiveTextureMergeDraws(plan.AffinityGroups);
+
+        private static List<MergeAffinityGroup> FilterAtlasValueGatePlanGroups(
+            AtlasValueGateGroupPlan plan,
+            IReadOnlySet<MeshKey> candidateKeys)
+            => plan.AffinityGroups
+                .Select(group => FilterMergeAffinityGroup(group, candidateKeys))
+                .Where(group => group.Meshes.Length >= 2)
+                .ToList();
+
+        private static AtlasValueGateGroupPlan CreateAtlasValueGateSubPlan(
+            AtlasValueGateGroupPlan source,
+            IReadOnlyList<AtlasCandidate> candidates,
+            IReadOnlySet<MeshKey> candidateKeys,
+            IReadOnlyList<MeshKey[]>? atomicFamilies = null)
+        {
+            var groups = FilterAtlasValueGatePlanGroups(source, candidateKeys);
+            var representative = groups.FirstOrDefault() ??
+                FilterMergeAffinityGroup(source.Group, candidateKeys);
+            return new AtlasValueGateGroupPlan(
+                representative,
+                candidates.ToList(),
+                atomicFamilies ??
+                GetCompleteAtlasFamilySubsets(source.AtomicFamilies, candidateKeys),
+                groups);
         }
 
         private static string GetPreAtlasMaterialIdentity(
@@ -7992,7 +8132,7 @@ namespace Editors.KitbasherEditor.Services
                     if (TryAcceptAtlasValueBatch(
                             state,
                             plan.Candidates,
-                            [plan.Group],
+                            plan.AffinityGroups,
                             expectedEntitiesByMesh,
                             out var residency,
                             out var rawDraws,
@@ -8012,7 +8152,7 @@ namespace Editors.KitbasherEditor.Services
                     {
                         var candidateResidency = residency;
                         var candidateRejectionReason = rejectionReason;
-                        if (plan.Group.ProspectiveTextureMergeDraws > 0)
+                        if (GetAtlasValueGatePlanProspectiveTextureMergeDraws(plan) > 0)
                         {
                             var textureMergeAccepted =
                                 TryAcceptTextureOnlyMergeAtlasBatch(
@@ -8059,7 +8199,7 @@ namespace Editors.KitbasherEditor.Services
                     foreach (var rejected in standaloneRejected)
                     {
                         state.CancellationToken.ThrowIfCancellationRequested();
-                    if (rejected.Plan.Group.ProspectiveTextureMergeDraws > 0)
+                    if (GetAtlasValueGatePlanProspectiveTextureMergeDraws(rejected.Plan) > 0)
                         {
                             pendingTextureMergeAttachments.Add(
                                 new AtlasValueGatePendingTextureMergeAttachment(
@@ -8105,7 +8245,7 @@ namespace Editors.KitbasherEditor.Services
 
                     foreach (var rejected in standaloneRejected)
                     {
-                        if (rejected.Plan.Group.ProspectiveTextureMergeDraws > 0)
+                        if (GetAtlasValueGatePlanProspectiveTextureMergeDraws(rejected.Plan) > 0)
                         {
                             pendingTextureMergeAttachments.Add(
                                 new AtlasValueGatePendingTextureMergeAttachment(
@@ -8133,7 +8273,7 @@ namespace Editors.KitbasherEditor.Services
                     .DistinctBy(candidate => candidate.Key)
                     .ToList();
                 var workingGroups = standaloneAccepted
-                    .Select(group => group.Plan.Group)
+                    .SelectMany(group => group.Plan.AffinityGroups)
                     .ToList();
 
                 foreach (var rejected in standaloneRejected)
@@ -8144,7 +8284,7 @@ namespace Editors.KitbasherEditor.Services
                     string marginalReason;
                     AtlasValueGateAcceptanceKind marginalAcceptanceKind;
                     var marginalAccepted = false;
-                    if (rejected.Plan.Group.ProspectiveTextureMergeDraws > 0)
+                    if (GetAtlasValueGatePlanProspectiveTextureMergeDraws(rejected.Plan) > 0)
                     {
                         marginalAcceptanceKind =
                             AtlasValueGateAcceptanceKind.TextureOnlyMerge;
@@ -8153,7 +8293,7 @@ namespace Editors.KitbasherEditor.Services
                             workingCandidates,
                             rejected.Plan.Candidates,
                             workingGroups,
-                            rejected.Plan.Group,
+                            rejected.Plan.AffinityGroups,
                             expectedEntitiesByMesh,
                             out marginalRawDraws,
                             out marginalExpectedDraws,
@@ -8168,7 +8308,7 @@ namespace Editors.KitbasherEditor.Services
                             workingCandidates,
                             rejected.Plan.Candidates,
                             workingGroups,
-                            rejected.Plan.Group,
+                            rejected.Plan.AffinityGroups,
                             expectedEntitiesByMesh,
                             out marginalReason);
                     }
@@ -8187,12 +8327,12 @@ namespace Editors.KitbasherEditor.Services
                             rejected.Plan.Candidates.Where(candidate =>
                                 workingCandidates.All(existing =>
                                     existing.Key != candidate.Key)));
-                        workingGroups.Add(rejected.Plan.Group);
+                        workingGroups.AddRange(rejected.Plan.AffinityGroups);
                         state.AtlasValueGateMarginalGroupsAccepted++;
                     }
                     else
                     {
-                        if (rejected.Plan.Group.ProspectiveTextureMergeDraws > 0)
+                        if (GetAtlasValueGatePlanProspectiveTextureMergeDraws(rejected.Plan) > 0)
                         {
                             pendingTextureMergeAttachments.Add(
                                 new AtlasValueGatePendingTextureMergeAttachment(
@@ -8302,7 +8442,7 @@ namespace Editors.KitbasherEditor.Services
                     if (TryAcceptAtlasValueBatch(
                             state,
                             accepted.Plan.Candidates,
-                            [accepted.Plan.Group],
+                            accepted.Plan.AffinityGroups,
                             expectedEntitiesByMesh,
                             out var standaloneResidency,
                             out var standaloneRawDraws,
@@ -8750,7 +8890,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<AtlasCandidate> baseCandidates,
             IReadOnlyList<AtlasCandidate> addedCandidates,
             IReadOnlyList<MergeAffinityGroup> baseGroups,
-            MergeAffinityGroup addedGroup,
+            IReadOnlyList<MergeAffinityGroup> addedGroups,
             IReadOnlyDictionary<
                 MeshKey,
                 Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
@@ -8760,7 +8900,7 @@ namespace Editors.KitbasherEditor.Services
             out string rejectionReason)
         {
             state.CancellationToken.ThrowIfCancellationRequested();
-            if (addedGroup.ProspectiveTextureMergeDraws <= 0)
+            if (CalculateProspectiveTextureMergeDraws(addedGroups) <= 0)
             {
                 marginalRawDrawsEliminated = 0;
                 marginalExpectedArmyDrawsEliminated = 0;
@@ -8770,7 +8910,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var combinedGroups = baseGroups
-                .Concat([addedGroup])
+                .Concat(addedGroups)
                 .ToList();
             var accepted = TryEvaluateTextureOnlyMergeMarginalAddition(
                 state,
@@ -9020,11 +9160,15 @@ namespace Editors.KitbasherEditor.Services
                             var combinedGroups = GetMergeAffinityGroupsForCandidates(
                                 combinedCandidates,
                                 affinityGroups);
-                            if (!combinedGroups.Any(group =>
-                                    group.Meshes.Any(subsetKeys.Contains) &&
-                                    subsetKeys.IsSubsetOf(group.Meshes)))
+                            foreach (var subsetGroup in GetMergeAffinityGroupsForCandidates(
+                                         subsetPlan.Candidates,
+                                         subsetPlan.AffinityGroups))
                             {
-                                combinedGroups.Add(subsetPlan.Group);
+                                if (!combinedGroups.Any(group =>
+                                        group.Meshes.SequenceEqual(subsetGroup.Meshes)))
+                                {
+                                    combinedGroups.Add(subsetGroup);
+                                }
                             }
 
                             if (!TryEvaluateTextureOnlyMergeMarginalAddition(
@@ -9110,9 +9254,10 @@ namespace Editors.KitbasherEditor.Services
                 var remainderKeys = remainderCandidates
                     .Select(candidate => candidate.Key)
                     .ToHashSet();
-                var remainderPlan = new AtlasValueGateGroupPlan(
-                    FilterMergeAffinityGroup(pending.Plan.Group, remainderKeys),
+                var remainderPlan = CreateAtlasValueGateSubPlan(
+                    pending.Plan,
                     remainderCandidates,
+                    remainderKeys,
                     GetCompleteAtlasFamilySubsets(
                         pending.Plan.AtomicFamilies,
                         remainderKeys));
@@ -9150,15 +9295,14 @@ namespace Editors.KitbasherEditor.Services
                 var candidateKeys = candidates
                     .Select(candidate => candidate.Key)
                     .ToHashSet();
-                var candidateGroup = FilterMergeAffinityGroup(
-                    plan.Group,
-                    candidateKeys);
-                return candidateGroup.ProspectiveTextureMergeDraws > 0 &&
+                var candidatePlan = CreateAtlasValueGateSubPlan(
+                    plan,
+                    candidates,
+                    candidateKeys,
+                    GetCompleteAtlasFamilySubsets(plan.AtomicFamilies, candidateKeys));
+                return GetAtlasValueGatePlanProspectiveTextureMergeDraws(candidatePlan) > 0 &&
                        IsCompleteAtlasFamilySubset(plan.AtomicFamilies, candidateKeys)
-                    ? [new AtlasValueGateGroupPlan(
-                        candidateGroup,
-                        candidates,
-                        GetCompleteAtlasFamilySubsets(plan.AtomicFamilies, candidateKeys))]
+                    ? [candidatePlan]
                     : [];
             }
 
@@ -9182,15 +9326,15 @@ namespace Editors.KitbasherEditor.Services
                     .ToHashSet();
                 if (!IsCompleteAtlasFamilySubset(plan.AtomicFamilies, subsetKeys))
                     return;
-                var subsetGroup = FilterMergeAffinityGroup(plan.Group, subsetKeys);
-                if (subsetGroup.ProspectiveTextureMergeDraws <= 0)
+                var subsetPlan = CreateAtlasValueGateSubPlan(
+                    plan,
+                    subset,
+                    subsetKeys,
+                    GetCompleteAtlasFamilySubsets(plan.AtomicFamilies, subsetKeys));
+                if (GetAtlasValueGatePlanProspectiveTextureMergeDraws(subsetPlan) <= 0)
                     return;
 
-                subsetPlans.Add(
-                    new AtlasValueGateGroupPlan(
-                        subsetGroup,
-                        subset.ToList(),
-                        GetCompleteAtlasFamilySubsets(plan.AtomicFamilies, subsetKeys)));
+                subsetPlans.Add(subsetPlan);
             }
 
             for (var left = 0;
@@ -9265,7 +9409,7 @@ namespace Editors.KitbasherEditor.Services
 
             // Retain the original group as a final option. This preserves a full-group win
             // when the combined atlas happens to be cheaper than its smaller alternatives.
-            if (plan.Group.ProspectiveTextureMergeDraws > 0)
+            if (GetAtlasValueGatePlanProspectiveTextureMergeDraws(plan) > 0)
                 subsetPlans.Add(plan);
             return subsetPlans;
         }
@@ -9484,7 +9628,7 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyList<AtlasCandidate> baseCandidates,
             IReadOnlyList<AtlasCandidate> addedCandidates,
             IReadOnlyList<MergeAffinityGroup> baseGroups,
-            MergeAffinityGroup addedGroup,
+            IReadOnlyList<MergeAffinityGroup> addedGroups,
             IReadOnlyDictionary<
                 MeshKey,
                 Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
@@ -9504,7 +9648,7 @@ namespace Editors.KitbasherEditor.Services
                 .DistinctBy(candidate => candidate.Key)
                 .ToList();
             var combinedGroups = baseGroups
-                .Concat([addedGroup])
+                .Concat(addedGroups)
                 .ToList();
 
             if (!TryEstimateIncrementalAtlasResidency(
@@ -9709,8 +9853,10 @@ namespace Editors.KitbasherEditor.Services
             rawDrawsEliminated = 0;
             expectedArmyDrawsEliminated = 0;
             rejectionReason = string.Empty;
+            var prospectiveTextureMergeDraws =
+                GetAtlasValueGatePlanProspectiveTextureMergeDraws(plan);
 
-            if (plan.Group.ProspectiveTextureMergeDraws <= 0)
+            if (prospectiveTextureMergeDraws <= 0)
             {
                 rejectionReason = "the merge group has no prospective texture-only compatibility.";
                 return false;
@@ -9735,7 +9881,7 @@ namespace Editors.KitbasherEditor.Services
                 batch.ToList()
             };
             var batchByMesh = BuildBatchIndexByMesh(singletonBatches);
-            var affinityGroups = new[] { plan.Group };
+            var affinityGroups = plan.AffinityGroups;
             rawDrawsEliminated = CalculateMergeAffinityScore(
                 singletonBatches,
                 affinityGroups);
@@ -9764,7 +9910,7 @@ namespace Editors.KitbasherEditor.Services
             var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
             var budgetDecision = EvaluateTextureOnlyMergeAtlasValueGateBudget(
                 scenarioResolved,
-                plan.Group.ProspectiveTextureMergeDraws,
+                prospectiveTextureMergeDraws,
                 expectedArmyDrawsEliminated,
                 globalCost,
                 expectedCost,
@@ -9780,7 +9926,7 @@ namespace Editors.KitbasherEditor.Services
                     return false;
 
                 case AtlasValueGateBudgetDecision.TextureOnlyMergeBudgetExceeded:
-                    var structuralBudgetBytes = plan.Group.ProspectiveTextureMergeDraws *
+                    var structuralBudgetBytes = prospectiveTextureMergeDraws *
                                                 (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
                     var scenarioBudgetBytes = expectedArmyDrawsEliminated *
                                               MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
@@ -20643,16 +20789,40 @@ namespace Editors.KitbasherEditor.Services
             HashSet<AtlasValueGateSourceReference> References,
             HashSet<AtlasValueGateSourceReference> PackReferences);
 
-        private sealed record AtlasValueGateGroupPlan(
-            MergeAffinityGroup Group,
-            List<AtlasCandidate> Candidates,
-            IReadOnlyList<MeshKey[]>? AtomicFamilies)
+        private sealed record AtlasValueGateGroupPlan
         {
+            public MergeAffinityGroup Group { get; }
+            public List<AtlasCandidate> Candidates { get; }
+            public IReadOnlyList<MeshKey[]>? AtomicFamilies { get; }
+            public IReadOnlyList<MergeAffinityGroup> AffinityGroups { get; }
+
             public AtlasValueGateGroupPlan(
                 MergeAffinityGroup group,
                 List<AtlasCandidate> candidates)
-                : this(group, candidates, null)
+                : this(group, candidates, null, [group])
             {
+            }
+
+            public AtlasValueGateGroupPlan(
+                MergeAffinityGroup group,
+                List<AtlasCandidate> candidates,
+                IReadOnlyList<MeshKey[]>? atomicFamilies)
+                : this(group, candidates, atomicFamilies, [group])
+            {
+            }
+
+            public AtlasValueGateGroupPlan(
+                MergeAffinityGroup group,
+                List<AtlasCandidate> candidates,
+                IReadOnlyList<MeshKey[]>? atomicFamilies,
+                IReadOnlyList<MergeAffinityGroup> affinityGroups)
+            {
+                Group = group;
+                Candidates = candidates;
+                AtomicFamilies = atomicFamilies;
+                AffinityGroups = affinityGroups.Count == 0
+                    ? [group]
+                    : affinityGroups.ToArray();
             }
         }
 
