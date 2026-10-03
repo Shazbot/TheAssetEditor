@@ -4039,7 +4039,89 @@ namespace Editors.KitbasherEditor.Services
             var proposedBatchByMesh = BuildBatchIndexByMesh(proposedBatches);
             return mergeAffinityGroups.All(group =>
                 CalculateMergeAffinityContribution(group, proposedBatchByMesh) >=
-                CalculateMergeAffinityContribution(group, baselineBatchByMesh));
+                CalculateMergeAffinityContribution(group, baselineBatchByMesh) &&
+                PreservesMergeAffinityComponentCoLocation(
+                    group,
+                    baselineBatchByMesh,
+                    proposedBatchByMesh));
+        }
+
+        private static bool PreservesMergeAffinityComponentCoLocation(
+            MergeAffinityGroup group,
+            IReadOnlyDictionary<MeshKey, int> baselineBatchByMesh,
+            IReadOnlyDictionary<MeshKey, int> proposedBatchByMesh)
+        {
+            var componentLabels = BuildStructuralMergeComponentLabels(
+                group.Meshes,
+                group.PreExistingStructuralMergePairs);
+            var componentIds = componentLabels
+                .Distinct()
+                .ToArray();
+            var baselineBatchesByComponent = BuildAffinityComponentBatchSets(
+                group.Meshes,
+                componentLabels,
+                baselineBatchByMesh);
+            var proposedBatchesByComponent = BuildAffinityComponentBatchSets(
+                group.Meshes,
+                componentLabels,
+                proposedBatchByMesh);
+
+            for (var leftIndex = 0; leftIndex < componentIds.Length; leftIndex++)
+            {
+                for (var rightIndex = leftIndex + 1;
+                     rightIndex < componentIds.Length;
+                     rightIndex++)
+                {
+                    var leftComponent = componentIds[leftIndex];
+                    var rightComponent = componentIds[rightIndex];
+                    if (!baselineBatchesByComponent.TryGetValue(
+                            leftComponent,
+                            out var baselineLeftBatches) ||
+                        !baselineBatchesByComponent.TryGetValue(
+                            rightComponent,
+                            out var baselineRightBatches) ||
+                        !baselineLeftBatches.Overlaps(baselineRightBatches))
+                    {
+                        continue;
+                    }
+
+                    if (!proposedBatchesByComponent.TryGetValue(
+                            leftComponent,
+                            out var proposedLeftBatches) ||
+                        !proposedBatchesByComponent.TryGetValue(
+                            rightComponent,
+                            out var proposedRightBatches) ||
+                        !proposedLeftBatches.Overlaps(proposedRightBatches))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static Dictionary<int, HashSet<int>> BuildAffinityComponentBatchSets(
+            IReadOnlyList<MeshKey> meshes,
+            IReadOnlyList<int> componentLabels,
+            IReadOnlyDictionary<MeshKey, int> batchByMesh)
+        {
+            var result = new Dictionary<int, HashSet<int>>();
+            for (var index = 0; index < meshes.Count; index++)
+            {
+                if (!batchByMesh.TryGetValue(meshes[index], out var batchIndex))
+                    continue;
+
+                if (!result.TryGetValue(componentLabels[index], out var batchIndexes))
+                {
+                    batchIndexes = [];
+                    result[componentLabels[index]] = batchIndexes;
+                }
+
+                batchIndexes.Add(batchIndex);
+            }
+
+            return result;
         }
 
         private static void RegisterLodAtlasFamily(

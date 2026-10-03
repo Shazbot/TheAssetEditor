@@ -5581,6 +5581,38 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void LodAwareAtlasFamilyClosure_PreservesThreeMeshComponentPairing()
+        {
+            const string rigidPath = "models/planning.rigid_model_v2";
+            var meshA = CreateAtlasPlanningTestCandidate(rigidPath, 0, 0);
+            var meshB = CreateAtlasPlanningTestCandidate(rigidPath, 0, 1);
+            var meshC = CreateAtlasPlanningTestCandidate(rigidPath, 0, 2);
+            var affinityGroup = CreateTextureOnlyMergeAffinityGroup(
+                [meshA, meshB, meshC],
+                "planning-a",
+                "planning-b",
+                "planning-c");
+
+            var evaluation = EvaluateMergeAffinityContributionsForTest(
+                [
+                    [meshA, meshB],
+                    [meshC],
+                ],
+                [
+                    [meshA, meshC],
+                    [meshB],
+                ],
+                [affinityGroup]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(evaluation.BaselineScore, Is.EqualTo(1));
+                Assert.That(evaluation.ProposedScore, Is.EqualTo(1));
+                Assert.That(evaluation.Preserves, Is.False);
+            });
+        }
+
+        [Test]
         public void LodAwareAtlasFamilyClosure_KeepsStructuralComponentAtomic()
         {
             const string rigidPath = "models/planning.rigid_model_v2";
