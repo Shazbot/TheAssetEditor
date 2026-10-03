@@ -6315,6 +6315,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             var differingSlots = GetDifferingMaterialTextureSlots(
+                    state,
                     left.MaterialSnapshot,
                     right.MaterialSnapshot).ToList();
             if (differingSlots.Count == 0)
@@ -12143,7 +12144,11 @@ namespace Editors.KitbasherEditor.Services
             if (left == null || right == null)
                 return;
 
-            var differingSlots = GetDifferingMaterialTextureSlots(left, right).ToList();
+            var differingSlots = GetDifferingMaterialTextureSlots(
+                    state,
+                    left,
+                    right)
+                .ToList();
             if (differingSlots.Count == 0)
                 return;
 
@@ -12235,8 +12240,27 @@ namespace Editors.KitbasherEditor.Services
             var onlyUniformConstants = true;
             foreach (var slot in differingSlots)
             {
-                left.TextureAssignments.TryGetValue(slot, out var leftPath);
-                right.TextureAssignments.TryGetValue(slot, out var rightPath);
+                left.TextureAssignments.TryGetValue(slot, out var leftPathValue);
+                right.TextureAssignments.TryGetValue(slot, out var rightPathValue);
+                var leftPath = NormalizeCounterfactualTextureAssignment(
+                    state,
+                    slot,
+                    leftPathValue);
+                var rightPath = NormalizeCounterfactualTextureAssignment(
+                    state,
+                    slot,
+                    rightPathValue);
+
+                // An unresolved test mask is removed by the real atlas rewrite. If one
+                // side has that ignored mask and the other side has a real source, the
+                // materials still have different effective channel sets and cannot be
+                // treated as a texture-only merge.
+                if (leftPath.Length == 0 || rightPath.Length == 0)
+                {
+                    detail =
+                        $"{slot} has an ignored unresolved source on one material and a real source on the other";
+                    return "Differing texture source is not atlasable";
+                }
 
                 if (!TryGetCounterfactualTextureSource(
                         state,
@@ -12400,6 +12424,7 @@ namespace Editors.KitbasherEditor.Services
                 channel.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase));
 
         private static IEnumerable<string> GetDifferingMaterialTextureSlots(
+            BatchState state,
             MaterialMergeDiagnosticSnapshot left,
             MaterialMergeDiagnosticSnapshot right)
             => left.TextureAssignments.Keys
@@ -12408,10 +12433,35 @@ namespace Editors.KitbasherEditor.Services
                 {
                     left.TextureAssignments.TryGetValue(slot, out var leftPath);
                     right.TextureAssignments.TryGetValue(slot, out var rightPath);
-                    return !Normalize(leftPath).Equals(
-                        Normalize(rightPath),
+                    return !NormalizeCounterfactualTextureAssignment(
+                            state,
+                            slot,
+                            leftPath)
+                        .Equals(
+                        NormalizeCounterfactualTextureAssignment(
+                            state,
+                            slot,
+                            rightPath),
                         StringComparison.OrdinalIgnoreCase);
                 });
+
+        private static string NormalizeCounterfactualTextureAssignment(
+            BatchState state,
+            string slot,
+            string? path)
+        {
+            var normalized = Normalize(path);
+            if (normalized.Length != 0 &&
+                IsIgnorableUnresolvedAtlasTexture(slot, normalized) &&
+                FindForReadStatic(state, normalized) == null)
+            {
+                // This matches candidate discovery and ProcessBatch: unresolved test_mask
+                // is an absent channel, not a texture source that needs to be atlas-packed.
+                return string.Empty;
+            }
+
+            return normalized;
+        }
 
         private static void AddDiagnosticExample(
             Dictionary<string, List<string>> examplesByCategory,

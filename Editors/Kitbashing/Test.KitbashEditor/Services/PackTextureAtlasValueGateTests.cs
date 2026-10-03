@@ -1222,6 +1222,57 @@ namespace Test.KitbashEditor.Services
                        "GetMaterialRenderingIdentity returned null."));
         }
 
+        private static object CreateMaterialMergeDiagnosticSnapshot(
+            IReadOnlyDictionary<string, string> textureAssignments)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var snapshotType = serviceType.GetNestedType(
+                "MaterialMergeDiagnosticSnapshot",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "MaterialMergeDiagnosticSnapshot was not found.");
+            var constructor = snapshotType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(candidate => candidate.GetParameters().Length == 6);
+
+            return constructor.Invoke(
+                [
+                    "rendering",
+                    "shaders\\weighted4_character.xml.shader",
+                    "textures",
+                    "non-texture",
+                    new Dictionary<string, string>(
+                        textureAssignments,
+                        StringComparer.OrdinalIgnoreCase),
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ]);
+        }
+
+        private static string[] GetDifferingMaterialTextureSlots(
+            object state,
+            object left,
+            object right)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "GetDifferingMaterialTextureSlots",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "GetDifferingMaterialTextureSlots was not found.");
+
+            return ((IEnumerable)(method.Invoke(null, [state, left, right])
+                    ?? throw new InvalidOperationException(
+                        "GetDifferingMaterialTextureSlots returned null.")))
+                .Cast<string>()
+                .ToArray();
+        }
+
         private static int GetProspectiveTextureMergeDraws(
             params string[] preAtlasMaterialIdentities)
         {
@@ -3021,6 +3072,39 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 GetMaterialRenderingIdentity(lowerSlashMaterial),
                 Is.EqualTo(GetMaterialRenderingIdentity(upperBackslashMaterial)));
+        }
+
+        [Test]
+        public void CounterfactualTextureDifference_IgnoresUnresolvedTestMaskPaths()
+        {
+            var source = new Mock<IPackFileContainer>();
+            source.SetupGet(container => container.IsCaPackFile).Returns(false);
+            var state = CreateTraversalBatchState(source.Object, []);
+
+            var left = CreateMaterialMergeDiagnosticSnapshot(
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["t_xml_base_colour"] = "textures\\left.dds",
+                    ["t_xml_mask"] = "variantmeshes\\left\\test_mask.dds",
+                });
+            var right = CreateMaterialMergeDiagnosticSnapshot(
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["t_xml_base_colour"] = "textures\\right.dds",
+                    ["t_xml_mask"] = "variantmeshes\\right\\test_mask.dds",
+                });
+
+            var differingSlots = GetDifferingMaterialTextureSlots(state, left, right);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(differingSlots, Does.Contain("t_xml_base_colour"));
+                Assert.That(
+                    differingSlots,
+                    Does.Not.Contain("t_xml_mask"),
+                    "Unresolved test_mask is removed by the real atlas rewrite and must not " +
+                    "create a counterfactual texture mismatch.");
+            });
         }
 
         [Test]
