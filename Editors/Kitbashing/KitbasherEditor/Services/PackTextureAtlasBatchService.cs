@@ -9954,6 +9954,58 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
+        private static bool TryGetVanillaCachedWsModelConsumerEntry(
+            BatchState state,
+            IPackFileContainer container,
+            string wsModelPath,
+            out VanillaWsModelConsumerEntry entry)
+        {
+            entry = null!;
+            if (!IsVanillaAtlasCacheContainer(state, container) ||
+                state.VanillaAtlasConsumerCache?.TryGetWsModel(
+                    container,
+                    wsModelPath,
+                    out entry) != true)
+            {
+                return false;
+            }
+
+            state.WsModelConsumerCacheHits++;
+            state.WsModelConsumerVanillaCacheHits++;
+            state.WsModelConsumerEntries[Normalize(wsModelPath)] = entry;
+            ReplayXmlCompatibilityRepairs(
+                state,
+                wsModelPath,
+                entry.CompatibilityRepairs);
+            return true;
+        }
+
+        private static bool TryGetVanillaCachedMaterialConsumerEntry(
+            BatchState state,
+            IPackFileContainer container,
+            string materialPath,
+            out VanillaMaterialConsumerEntry entry)
+        {
+            entry = null!;
+            if (!IsVanillaAtlasCacheContainer(state, container) ||
+                state.VanillaAtlasConsumerCache?.TryGetMaterial(
+                    container,
+                    materialPath,
+                    out entry) != true)
+            {
+                return false;
+            }
+
+            state.MaterialConsumerCacheHits++;
+            state.MaterialConsumerVanillaCacheHits++;
+            state.MaterialConsumerEntries[Normalize(materialPath)] = entry;
+            ReplayXmlCompatibilityRepairs(
+                state,
+                materialPath,
+                entry.CompatibilityRepairs);
+            return true;
+        }
+
         private static bool TryGetRigidConsumerEntry(
             BatchState state,
             IPackFileContainer container,
@@ -10366,7 +10418,8 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     state.CancellationToken.ThrowIfCancellationRequested();
-                    if (vanillaCache!.TryGetWsModel(
+                    if (TryGetVanillaCachedWsModelConsumerEntry(
+                            state,
                             resolved.Container,
                             resolved.Path,
                             out var wsModelEntry))
@@ -10398,7 +10451,8 @@ namespace Editors.KitbasherEditor.Services
                                 continue;
 
                             if (!materialContainer.IsCaPackFile ||
-                                !vanillaCache.TryGetMaterial(
+                                !TryGetVanillaCachedMaterialConsumerEntry(
+                                    state,
                                     materialContainer,
                                     materialPath,
                                     out _))

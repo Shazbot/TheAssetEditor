@@ -62,6 +62,7 @@ internal sealed class Wh3VanillaAtlasConsumerCache
             _activeContainerScopes.Add(scope ?? GetVolatileScope(container));
         }
 
+        PruneInactivePersistentScopes();
         BuildReverseIndex();
     }
 
@@ -306,6 +307,9 @@ internal sealed class Wh3VanillaAtlasConsumerCache
     {
         foreach (var pair in _document.Containers)
         {
+            if (!_activeContainerScopes.Contains(pair.Key))
+                continue;
+
             foreach (var wsModel in pair.Value.WsModels)
                 AddWsModelToReverseIndex(pair.Key, wsModel.Key, wsModel.Value);
             foreach (var material in pair.Value.Materials)
@@ -319,6 +323,20 @@ internal sealed class Wh3VanillaAtlasConsumerCache
             foreach (var material in pair.Value.Materials)
                 AddMaterialToReverseIndex(GetVolatileScope(pair.Key), material.Key, material.Value);
         }
+    }
+
+    private void PruneInactivePersistentScopes()
+    {
+        var staleScopes = _document.Containers.Keys
+            .Where(scope => !_activeContainerScopes.Contains(scope))
+            .ToArray();
+        if (staleScopes.Length == 0)
+            return;
+
+        foreach (var scope in staleScopes)
+            _document.Containers.Remove(scope);
+
+        _dirty = true;
     }
 
     private void AddWsModelToReverseIndex(
