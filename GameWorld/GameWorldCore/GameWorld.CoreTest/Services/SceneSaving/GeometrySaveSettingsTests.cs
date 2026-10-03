@@ -32,6 +32,38 @@ namespace GameWorld.Core.Test.Services.SceneSaving
         }
 
         [TestCase]
+        public void TextureAtlasRequirement_Wh3ForcesWsModelOutput()
+        {
+            var gameSettings = new ApplicationSettingsService(GameTypeEnum.Warhammer3);
+            var saveSettings = new GeometrySaveSettings(gameSettings)
+            {
+                MaterialOutputType = MaterialStrategy.None
+            };
+
+            saveSettings.SetWarhammer3WsModelOutputRequired(true);
+
+            Assert.That(saveSettings.RequiresWarhammer3WsModelOutput, Is.True);
+            Assert.That(saveSettings.MaterialOutputType, Is.EqualTo(MaterialStrategy.WsModel_Warhammer3));
+
+            saveSettings.MaterialOutputType = MaterialStrategy.None;
+            saveSettings.EnforceRequiredMaterialOutput();
+
+            Assert.That(saveSettings.MaterialOutputType, Is.EqualTo(MaterialStrategy.WsModel_Warhammer3));
+        }
+
+        [TestCase]
+        public void TextureAtlasRequirement_NonWh3DoesNotForceWh3Output()
+        {
+            var gameSettings = new ApplicationSettingsService(GameTypeEnum.Warhammer2);
+            var saveSettings = new GeometrySaveSettings(gameSettings);
+
+            saveSettings.SetWarhammer3WsModelOutputRequired(true);
+
+            Assert.That(saveSettings.RequiresWarhammer3WsModelOutput, Is.False);
+            Assert.That(saveSettings.MaterialOutputType, Is.EqualTo(MaterialStrategy.WsModel_Warhammer2));
+        }
+
+        [TestCase]
         public void Initialize_OldGame()
         {
             // Arrange

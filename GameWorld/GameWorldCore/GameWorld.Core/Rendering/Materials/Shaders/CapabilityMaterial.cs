@@ -29,6 +29,19 @@ namespace GameWorld.Core.Rendering.Materials.Shaders
         public ICapability[] Capabilities { get; protected set; } = [];
         public CapabilityMaterialsEnum Type { get; protected set; }
 
+        // Preserve the originating WSModel material metadata separately from the reduced
+        // capability representation. Some WH3 shaders (notably prop_emissive) are rendered
+        // through the default capability material, so the capability enum alone is not enough
+        // to decide whether UV0 may be safely rewritten.
+        public string? SourceWsModelMaterialPath { get; set; }
+        public string? SourceWsModelShaderPath { get; set; }
+        public bool PreserveSourceWsModelMaterialOnSave { get; set; }
+
+        public bool UsesEmissiveShader =>
+            Type == CapabilityMaterialsEnum.MetalRoughPbr_Emissive ||
+            (!string.IsNullOrWhiteSpace(SourceWsModelShaderPath) &&
+             SourceWsModelShaderPath.Contains("emissive", StringComparison.InvariantCultureIgnoreCase));
+
         protected CapabilityMaterial(CapabilityMaterialsEnum materialType, ShaderTypes shaderType, IScopedResourceLibrary resourceLibrary)
         {
             _shaderType = shaderType;
@@ -106,6 +119,9 @@ namespace GameWorld.Core.Rendering.Materials.Shaders
         {
             var copy = CreateCloneInstance();
             copy.Capabilities = CloneCapabilities();
+            copy.SourceWsModelMaterialPath = SourceWsModelMaterialPath;
+            copy.SourceWsModelShaderPath = SourceWsModelShaderPath;
+            copy.PreserveSourceWsModelMaterialOnSave = PreserveSourceWsModelMaterialOnSave;
             return copy;
         }
 

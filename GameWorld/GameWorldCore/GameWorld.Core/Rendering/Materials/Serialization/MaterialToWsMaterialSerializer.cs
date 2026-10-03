@@ -47,6 +47,12 @@ namespace GameWorld.Core.Rendering.Materials.Serialization
 
         public string ProsessMaterial(string modelFilePath, string meshName, UiVertexFormat meshVertexFormat, CapabilityMaterial material)
         {
+            if (material.PreserveSourceWsModelMaterialOnSave &&
+                !string.IsNullOrWhiteSpace(material.SourceWsModelMaterialPath))
+            {
+                return material.SourceWsModelMaterialPath;
+            }
+
             var templateEditor = new WsMaterialTemplateEditor(material, _preferedGameHint);
             var fileName = templateEditor.AddTemplateHeader(meshName, meshVertexFormat, material);
 

@@ -146,11 +146,15 @@ namespace GameWorld.Core.SceneNodes
 
         public override void CopyInto(ISceneNode target)
         {
-            CopyInto(target, true);
-            base.CopyInto(target);
+            CopyInto(target, true, createGraphicsResources: true);
         }
 
         public void CopyInto(ISceneNode target, bool includeMesh)
+        {
+            CopyInto(target, includeMesh, createGraphicsResources: true);
+        }
+
+        public void CopyInto(ISceneNode target, bool includeMesh, bool createGraphicsResources)
         {
             if (target is not Rmv2MeshNode typedTarget)
                 throw new Exception("Error casting");
@@ -166,9 +170,9 @@ namespace GameWorld.Core.SceneNodes
             typedTarget.RmvMaterial = RmvMaterial.Clone();
             typedTarget.AnimationMatrixOverride = AnimationMatrixOverride;
             typedTarget.Material = Material.Clone();
-           
-            if(includeMesh)
-                typedTarget.Geometry = Geometry.Clone();
+
+            if (includeMesh)
+                typedTarget.Geometry = Geometry.Clone(createGraphicsResources: createGraphicsResources);
 
             base.CopyInto(target);
         }
