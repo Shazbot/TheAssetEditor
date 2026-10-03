@@ -331,6 +331,21 @@ namespace Editors.KitbasherEditor.Services
             IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd,
             CancellationToken cancellationToken,
             Wh3ArmyVisualScenario? scenario = null)
+            => ResolveAgainstContainers(
+                source,
+                rootVmdPaths,
+                childVmdsByVmd,
+                cancellationToken,
+                scenario,
+                packFileService.GetAllPackfileContainers().ToList());
+
+        internal static Wh3UnitCategoryResolution ResolveAgainstContainers(
+            IPackFileContainer source,
+            IReadOnlyCollection<string> rootVmdPaths,
+            IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd,
+            CancellationToken cancellationToken,
+            Wh3ArmyVisualScenario? scenario,
+            IReadOnlyList<IPackFileContainer> containerSnapshot)
         {
             var activeScenario = scenario ?? Wh3ArmyVisualScenario.Default;
             var diagnostics = new List<string>();
@@ -346,7 +361,7 @@ namespace Editors.KitbasherEditor.Services
             // Resolve against the game's CA database plus the selected source pack only.
             // Other editable/mod packs that happen to be open in Asset Editor must not change
             // classification of the pack being processed.
-            var containers = packFileService.GetAllPackfileContainers()
+            var containers = containerSnapshot
                 .Where(container =>
                     container.IsCaPackFile &&
                     !IsSameContainer(container, source))

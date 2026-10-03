@@ -782,6 +782,21 @@ namespace Test.KitbashEditor.Services
             return details.Cast<object>().ToArray();
         }
 
+        private static int GetGameplayDependencyIndexCollectionCount(
+            object state,
+            string propertyName)
+        {
+            var index = GetGameplayDependencyIndex(state);
+            var collection = index.GetType()
+                .GetProperty(
+                    propertyName,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(index) as IEnumerable
+                ?? throw new InvalidOperationException(
+                    $"Gameplay dependency index collection {propertyName} was not found.");
+            return collection.Cast<object>().Count();
+        }
+
         private static string GetRecordPropertyString(
             object record,
             string propertyName)
@@ -3549,6 +3564,282 @@ namespace Test.KitbashEditor.Services
                 Assert.That(
                     GetRecordPropertyString(failure, "AssetScope"),
                     Is.EqualTo("Missing"));
+                Assert.That(
+                    GetRecordPropertyString(failure, "Disposition"),
+                    Is.EqualTo("Blocking"));
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_TrustedMissingWsModel_IsVerifiedMissing()
+        {
+            const string sourceVmdPath =
+                @"variantmeshes\variantmeshdefinitions\source.variantmeshdefinition";
+            const string missingWsModelPath = @"models\missing.wsmodel";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [sourceVmdPath] = PackFile.CreateFromASCII(sourceVmdPath, string.Empty),
+                });
+            var ca = CreateTraversalContainer(
+                isCaPackFile: true,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+            AddCachedTraversalVmd(state, sourceVmdPath, missingWsModelPath);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmd(sourceVmdPath));
+
+            IndexImmutableMeshMergeConsumers(state, sourceVmdPath);
+
+            var failure = GetGameplayDependencyFailureDetails(state)
+                .Single(detail =>
+                    GetRecordPropertyString(detail, "AssetPath") ==
+                    NormalizeTestPath(missingWsModelPath));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetRecordPropertyString(failure, "FailureKind"),
+                    Is.EqualTo("MissingReference"));
+                Assert.That(
+                    GetRecordPropertyString(failure, "Disposition"),
+                    Is.EqualTo("VerifiedMissing"));
+                Assert.That(
+                    GetGameplayDependencyIndexCollectionCount(state, "IncompleteRoots"),
+                    Is.EqualTo(0));
+                Assert.That(
+                    GetStateCollectionCount(
+                        state,
+                        "StructuralMergeConsumerDiscoveryFailures"),
+                    Is.EqualTo(0));
+                Assert.That(
+                    GetStateProperty<bool>(
+                        GetGameplayDependencyIndex(state),
+                        "IsComplete"),
+                    Is.True);
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_TrustedWsModelMissingRigid_IsVerifiedMissing()
+        {
+            const string sourceVmdPath =
+                @"variantmeshes\variantmeshdefinitions\source.variantmeshdefinition";
+            const string wsModelPath = @"models\source.wsmodel";
+            const string missingRigidPath = @"models\missing.rigid_model_v2";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [sourceVmdPath] = PackFile.CreateFromASCII(sourceVmdPath, string.Empty),
+                    [wsModelPath] = PackFile.CreateFromASCII(
+                        wsModelPath,
+                        $"<model><geometry>{missingRigidPath}</geometry></model>"),
+                });
+            var ca = CreateTraversalContainer(
+                isCaPackFile: true,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+            AddCachedTraversalVmd(state, sourceVmdPath, wsModelPath);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmd(sourceVmdPath));
+
+            IndexImmutableMeshMergeConsumers(state, sourceVmdPath);
+
+            var failure = GetGameplayDependencyFailureDetails(state)
+                .Single(detail =>
+                    GetRecordPropertyString(detail, "AssetPath") ==
+                    NormalizeTestPath(missingRigidPath));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetRecordPropertyString(failure, "FailureKind"),
+                    Is.EqualTo("MissingReference"));
+                Assert.That(
+                    GetRecordPropertyString(failure, "Disposition"),
+                    Is.EqualTo("VerifiedMissing"));
+                Assert.That(
+                    GameplayDependencyIndexContains(
+                        state,
+                        "DependenciesByAssetPath",
+                        wsModelPath,
+                        missingRigidPath),
+                    Is.True);
+                Assert.That(
+                    GameplayDependencyIndexContains(
+                        state,
+                        "WsModelConsumersByRigid",
+                        missingRigidPath,
+                        wsModelPath),
+                    Is.False);
+                Assert.That(
+                    GetGameplayDependencyIndexCollectionCount(state, "IncompleteRoots"),
+                    Is.EqualTo(0));
+                Assert.That(
+                    GetStateProperty<bool>(
+                        GetGameplayDependencyIndex(state),
+                        "IsComplete"),
+                    Is.True);
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_TrustedMissingDirectRigid_IsVerifiedMissing()
+        {
+            const string missingRigidPath = @"models\missing.rigid_model_v2";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var ca = CreateTraversalContainer(
+                isCaPackFile: true,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmd(missingRigidPath));
+
+            IndexImmutableMeshMergeConsumers(state, missingRigidPath);
+
+            var failure = GetGameplayDependencyFailureDetails(state)
+                .Single(detail =>
+                    GetRecordPropertyString(detail, "AssetPath") ==
+                    NormalizeTestPath(missingRigidPath));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetRecordPropertyString(failure, "FailureKind"),
+                    Is.EqualTo("MissingReference"));
+                Assert.That(
+                    GetRecordPropertyString(failure, "Disposition"),
+                    Is.EqualTo("VerifiedMissing"));
+                Assert.That(
+                    GetGameplayDependencyIndexCollectionCount(state, "IncompleteRoots"),
+                    Is.EqualTo(0));
+                Assert.That(
+                    GetStateCollectionCount(
+                        state,
+                        "StructuralMergeConsumerDiscoveryFailures"),
+                    Is.EqualTo(0));
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_TrustedMissingRootVmd_IsVerifiedMissing()
+        {
+            const string missingRootVmdPath =
+                @"variantmeshes\variantmeshdefinitions\missing_root.variantmeshdefinition";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var ca = CreateTraversalContainer(
+                isCaPackFile: true,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmd(missingRootVmdPath));
+
+            IndexImmutableMeshMergeConsumers(state, missingRootVmdPath);
+
+            var failure = GetGameplayDependencyFailureDetails(state)
+                .Single(detail =>
+                    GetRecordPropertyString(detail, "AssetPath") ==
+                    NormalizeTestPath(missingRootVmdPath));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetRecordPropertyString(failure, "FailureKind"),
+                    Is.EqualTo("MissingReference"));
+                Assert.That(
+                    GetRecordPropertyString(failure, "Disposition"),
+                    Is.EqualTo("VerifiedMissing"));
+                Assert.That(
+                    GetGameplayDependencyIndexCollectionCount(state, "IncompleteRoots"),
+                    Is.EqualTo(0));
+                Assert.That(
+                    GetStateProperty<bool>(
+                        GetGameplayDependencyIndex(state),
+                        "IsComplete"),
+                    Is.True);
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_TrustedMissingChild_PreservesValidSiblingConsumer()
+        {
+            const string sourceVmdPath =
+                @"variantmeshes\variantmeshdefinitions\source.variantmeshdefinition";
+            const string sourceWsModelPath = @"models\source.wsmodel";
+            const string missingChildVmdPath =
+                @"variantmeshes\variantmeshdefinitions\missing_child.variantmeshdefinition";
+            const string rigidPath = @"models\source.rigid_model_v2";
+
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [sourceVmdPath] = PackFile.CreateFromASCII(sourceVmdPath, string.Empty),
+                    [sourceWsModelPath] = PackFile.CreateFromASCII(
+                        sourceWsModelPath,
+                        $"<model><geometry>{rigidPath}</geometry></model>"),
+                    [rigidPath] = PackFile.CreateFromASCII(rigidPath, string.Empty),
+                });
+            var ca = CreateTraversalContainer(
+                isCaPackFile: true,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+            AddCachedTraversalVmdWithChildReference(
+                state,
+                sourceVmdPath,
+                sourceWsModelPath,
+                missingChildVmdPath);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmd(sourceVmdPath));
+
+            IndexImmutableMeshMergeConsumers(state, sourceVmdPath);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GameplayDependencyIndexContains(
+                        state,
+                        "WsModelConsumersByRigid",
+                        rigidPath,
+                        sourceWsModelPath),
+                    Is.True);
+                Assert.That(
+                    GetGameplayDependencyIndexCollectionCount(state, "IncompleteRoots"),
+                    Is.EqualTo(0));
+                Assert.That(
+                    GetStateCollectionCount(
+                        state,
+                        "StructuralMergeConsumerDiscoveryFailures"),
+                    Is.EqualTo(0));
+                Assert.That(
+                    GetStateProperty<bool>(
+                        GetGameplayDependencyIndex(state),
+                        "IsComplete"),
+                    Is.True);
+                Assert.That(
+                    GetGameplayDependencyFailureDetails(state)
+                        .Any(detail =>
+                            GetRecordPropertyString(detail, "AssetPath") ==
+                            NormalizeTestPath(missingChildVmdPath) &&
+                            GetRecordPropertyString(detail, "Disposition") ==
+                            "VerifiedMissing"),
+                    Is.True);
             });
         }
 
@@ -3932,6 +4223,59 @@ namespace Test.KitbashEditor.Services
                 Assert.That(
                     GetRecordPropertyString(malformedFailure, "AssetScope"),
                     Is.EqualTo("SourcePack"));
+            });
+        }
+
+        [Test]
+        public void StructuralConsumerDiscovery_SharedMalformedWsModel_AttributesEveryRoot()
+        {
+            const string firstVmdPath =
+                @"variantmeshes\variantmeshdefinitions\first.variantmeshdefinition";
+            const string secondVmdPath =
+                @"variantmeshes\variantmeshdefinitions\second.variantmeshdefinition";
+            const string malformedWsModelPath = @"models\malformed.wsmodel";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [firstVmdPath] = PackFile.CreateFromASCII(firstVmdPath, string.Empty),
+                    [secondVmdPath] = PackFile.CreateFromASCII(secondVmdPath, string.Empty),
+                    [malformedWsModelPath] = PackFile.CreateFromASCII(
+                        malformedWsModelPath,
+                        "<model>"),
+                });
+            var state = CreateTraversalBatchState(source.Object, []);
+            AddCachedTraversalVmd(state, firstVmdPath, malformedWsModelPath);
+            AddCachedTraversalVmd(state, secondVmdPath, malformedWsModelPath);
+
+            IndexImmutableMeshMergeConsumers(state, firstVmdPath, secondVmdPath);
+
+            var failures = GetGameplayDependencyFailureDetails(state)
+                .Where(detail =>
+                    GetRecordPropertyString(detail, "AssetPath") ==
+                    NormalizeTestPath(malformedWsModelPath))
+                .ToArray();
+            var failureRoots = failures
+                .Select(detail => GetRecordPropertyString(detail, "RootPath"))
+                .ToArray();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(failures, Has.Length.EqualTo(2));
+                Assert.That(
+                    failureRoots,
+                    Does.Contain(NormalizeTestPath(firstVmdPath)));
+                Assert.That(
+                    failureRoots,
+                    Does.Contain(NormalizeTestPath(secondVmdPath)));
+                Assert.That(
+                    GetGameplayDependencyIndexCollectionCount(state, "IncompleteRoots"),
+                    Is.EqualTo(2));
+                Assert.That(
+                    GetStateCollectionCount(
+                        state,
+                        "StructuralMergeConsumerDiscoveryFailures"),
+                    Is.EqualTo(2));
             });
         }
 
