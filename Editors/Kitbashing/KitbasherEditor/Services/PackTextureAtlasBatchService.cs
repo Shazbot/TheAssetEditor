@@ -424,6 +424,10 @@ namespace Editors.KitbasherEditor.Services
                 var discoveredCandidates = ApplyMissingTextureDecision(
                     state,
                     candidateDiscovery.Candidates);
+                state.AtlasValueGateCandidateTexturePaths.Clear();
+                state.AtlasValueGateCandidateTexturePaths.UnionWith(
+                    GetAtlasValueGateCandidateTexturePaths(discoveredCandidates));
+                state.AtlasValueGateCandidateTexturePathsInitialized = true;
                 state.PhaseDurations["Discover atlas candidates"] = phaseStopwatch.Elapsed;
 
                 if (mergeCompatibleMeshes)
@@ -581,6 +585,7 @@ namespace Editors.KitbasherEditor.Services
             }
             finally
             {
+                state?.VanillaAtlasConsumerCache?.Save();
                 if (output != null)
                     _packFileService.UnloadPackContainer(output, force: true);
             }
@@ -7128,6 +7133,30 @@ namespace Editors.KitbasherEditor.Services
                 : $"{affectedUnitCount / expectedNetMiB:N3}";
         }
 
+        private static HashSet<string> GetAtlasValueGateCandidateTexturePaths(
+            IEnumerable<AtlasCandidate> candidates)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var candidate in candidates)
+            {
+                foreach (var channel in AtlasChannels)
+                {
+                    if (!candidate.ResolvedChannels.Contains(channel.Slot) &&
+                        !candidate.ConstantChannels.ContainsKey(channel.Slot))
+                    {
+                        continue;
+                    }
+
+                    var texturePath = Normalize(
+                        GetTexturePath(candidate.MaterialDocument, channel.Slot));
+                    if (texturePath.Length != 0 && !IsTexturePlaceholder(texturePath))
+                        result.Add(texturePath);
+                }
+            }
+
+            return result;
+        }
+
         private static List<List<AtlasCandidate>> FilterBatchesForMergeValue(
             BatchState state,
             IReadOnlyList<List<AtlasCandidate>> batches)
@@ -7136,18 +7165,21 @@ namespace Editors.KitbasherEditor.Services
             if (batches.Count == 0)
                 return [];
 
-            ReportProgress(
-                state.Progress,
-                "Evaluating atlas value",
-                item: "Indexing source texture consumers");
-            state.AtlasValueGateSourceTextureIndex ??=
-                BuildAtlasValueGateSourceTextureIndex(state);
-
             var allCandidates = batches
                 .SelectMany(batch => batch)
                 .GroupBy(candidate => candidate.Key)
                 .Select(group => group.First())
                 .ToList();
+            var candidateTexturePaths = state.AtlasValueGateCandidateTexturePathsInitialized
+                ? state.AtlasValueGateCandidateTexturePaths
+                : GetAtlasValueGateCandidateTexturePaths(allCandidates);
+
+            ReportProgress(
+                state.Progress,
+                "Evaluating atlas value",
+                item: "Indexing source texture consumers");
+            state.AtlasValueGateSourceTextureIndex ??=
+                BuildAtlasValueGateSourceTextureIndex(state, candidateTexturePaths);
 
             // A pre-atlas structural component is a protected invariant.  Atlas-rewriting
             // only one member (or assigning different generated materials to its members)
@@ -9477,7 +9509,9 @@ namespace Editors.KitbasherEditor.Services
             estimate = AtlasValueGateResidencyEstimate.Empty;
             state.CancellationToken.ThrowIfCancellationRequested();
             var sourceIndex = state.AtlasValueGateSourceTextureIndex ??
-                BuildAtlasValueGateSourceTextureIndex(state);
+                BuildAtlasValueGateSourceTextureIndex(
+                    state,
+                    GetAtlasValueGateCandidateTexturePaths(candidates));
             state.AtlasValueGateSourceTextureIndex = sourceIndex;
             if (state.AtlasValueGateSourceTexturesByReference == null)
             {
@@ -9831,7 +9865,7 @@ namespace Editors.KitbasherEditor.Services
 
             var cache = state.VanillaAtlasConsumerCache;
             if (IsVanillaAtlasCacheContainer(state, container) &&
-                cache?.TryGetWsModel(wsModelPath, out entry) == true)
+                cache?.TryGetWsModel(container, wsModelPath, out entry) == true)
             {
                 state.WsModelConsumerCacheHits++;
                 state.WsModelConsumerVanillaCacheHits++;
@@ -9861,7 +9895,7 @@ namespace Editors.KitbasherEditor.Services
                 GetRecordedXmlCompatibilityRepairs(state, wsModelPath);
             state.WsModelConsumerEntries[wsModelPath] = entry;
             if (IsVanillaAtlasCacheContainer(state, container))
-                cache?.SetWsModel(wsModelPath, entry);
+                cache?.SetWsModel(container, wsModelPath, entry);
             return true;
         }
 
@@ -9886,7 +9920,7 @@ namespace Editors.KitbasherEditor.Services
 
             var cache = state.VanillaAtlasConsumerCache;
             if (IsVanillaAtlasCacheContainer(state, container) &&
-                cache?.TryGetMaterial(materialPath, out entry) == true)
+                cache?.TryGetMaterial(container, materialPath, out entry) == true)
             {
                 state.MaterialConsumerCacheHits++;
                 state.MaterialConsumerVanillaCacheHits++;
@@ -9916,7 +9950,7 @@ namespace Editors.KitbasherEditor.Services
                 GetRecordedXmlCompatibilityRepairs(state, materialPath);
             state.MaterialConsumerEntries[materialPath] = entry;
             if (IsVanillaAtlasCacheContainer(state, container))
-                cache?.SetMaterial(materialPath, entry);
+                cache?.SetMaterial(container, materialPath, entry);
             return true;
         }
 
@@ -9930,7 +9964,7 @@ namespace Editors.KitbasherEditor.Services
             rigidPath = Normalize(rigidPath);
             var cache = state.VanillaAtlasConsumerCache;
             if (IsVanillaAtlasCacheContainer(state, container) &&
-                cache?.TryGetRigid(rigidPath, out entry) == true)
+                cache?.TryGetRigid(container, rigidPath, out entry) == true)
             {
                 return true;
             }
@@ -9940,7 +9974,7 @@ namespace Editors.KitbasherEditor.Services
                 var rigid = ModelFactory.Create().Load(file.DataSource.ReadData());
                 entry = BuildRigidConsumerEntry(rigid);
                 if (IsVanillaAtlasCacheContainer(state, container))
-                    cache?.SetRigid(rigidPath, entry);
+                    cache?.SetRigid(container, rigidPath, entry);
                 return true;
             }
             catch
@@ -10084,7 +10118,9 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static Dictionary<string, AtlasValueGateSourceTexture>
-            BuildAtlasValueGateSourceTextureIndex(BatchState state)
+            BuildAtlasValueGateSourceTextureIndex(
+                BatchState state,
+                IReadOnlySet<string>? targetTexturePaths = null)
         {
             state.CancellationToken.ThrowIfCancellationRequested();
             var containerResolutionScansBefore =
@@ -10126,7 +10162,9 @@ namespace Editors.KitbasherEditor.Services
                 textureFile = null!;
                 isOwnedBySourcePack = false;
                 if (texturePath.Length == 0 ||
-                    IsTexturePlaceholder(texturePath))
+                    IsTexturePlaceholder(texturePath) ||
+                    (targetTexturePaths != null &&
+                     !targetTexturePaths.Contains(texturePath)))
                 {
                     return false;
                 }
@@ -10201,6 +10239,8 @@ namespace Editors.KitbasherEditor.Services
             var sourceWsModelCount = 0;
             var caWsModelCount = 0;
             var unresolvedWsModelCount = 0;
+            var resolvedWsModels = new List<
+                (string Path, IPackFileContainer Container, PackFile File)>();
             ReportProgress(
                 state.Progress,
                 "Evaluating atlas value",
@@ -10238,16 +10278,14 @@ namespace Editors.KitbasherEditor.Services
                 else
                     unresolvedWsModelCount++;
 
-                if (!TryGetWsModelConsumerEntry(
-                        state,
-                        wsContainer,
-                        wsModelPath,
-                        wsFile,
-                        out var wsModelEntry))
-                {
-                    continue;
-                }
+                resolvedWsModels.Add((wsModelPath, wsContainer, wsFile));
+            }
 
+            void AddWsModelTextureReferences(
+                string wsModelPath,
+                VanillaWsModelConsumerEntry wsModelEntry,
+                bool sourceMaterialOnly)
+            {
                 foreach (var materialBinding in wsModelEntry.Materials)
                 {
                     state.CancellationToken.ThrowIfCancellationRequested();
@@ -10270,6 +10308,12 @@ namespace Editors.KitbasherEditor.Services
                         loadedContainers,
                         materialPath);
                     var materialFile = materialContainer?.FindFile(materialPath);
+                    if (sourceMaterialOnly &&
+                        !ReferenceEquals(materialContainer, state.Source))
+                    {
+                        continue;
+                    }
+
                     if (materialContainer == null ||
                         materialFile == null ||
                         !TryGetMaterialConsumerEntry(
@@ -10302,6 +10346,228 @@ namespace Editors.KitbasherEditor.Services
                                 texture.Slot,
                                 texture.SlotOccurrence));
                     }
+                }
+            }
+
+            var cachedCaWsModels = new List<
+                (string Path, IPackFileContainer Container, VanillaWsModelConsumerEntry Entry)>();
+            var useVanillaTextureReverseIndex =
+                targetTexturePaths != null &&
+                state.VanillaAtlasConsumerCache != null &&
+                resolvedWsModels.All(resolved =>
+                    ReferenceEquals(resolved.Container, state.Source) ||
+                    resolved.Container.IsCaPackFile);
+            var vanillaCache = state.VanillaAtlasConsumerCache;
+            if (useVanillaTextureReverseIndex)
+            {
+                foreach (var resolved in resolvedWsModels)
+                {
+                    if (ReferenceEquals(resolved.Container, state.Source))
+                        continue;
+
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    if (vanillaCache!.TryGetWsModel(
+                            resolved.Container,
+                            resolved.Path,
+                            out var wsModelEntry))
+                    {
+                        var entryIsComplete = true;
+                        foreach (var materialBinding in wsModelEntry.Materials)
+                        {
+                            state.CancellationToken.ThrowIfCancellationRequested();
+                            var materialPath = Normalize(materialBinding.MaterialPath);
+                            if (materialPath.Length == 0)
+                                continue;
+
+                            var materialContainer = FindGameplayTraversalContainer(
+                                state,
+                                state.Source,
+                                loadedContainers,
+                                materialPath);
+                            var materialFile = materialContainer?.FindFile(materialPath);
+                            if (materialContainer == null || materialFile == null)
+                            {
+                                entryIsComplete = false;
+                                break;
+                            }
+
+                            // A source-pack material is intentionally handled below. It is
+                            // mutable and therefore cannot be represented by the vanilla
+                            // reverse index.
+                            if (ReferenceEquals(materialContainer, state.Source))
+                                continue;
+
+                            if (!materialContainer.IsCaPackFile ||
+                                !vanillaCache.TryGetMaterial(
+                                    materialContainer,
+                                    materialPath,
+                                    out _))
+                            {
+                                entryIsComplete = false;
+                                break;
+                            }
+                        }
+
+                        if (entryIsComplete)
+                        {
+                            cachedCaWsModels.Add((
+                                resolved.Path,
+                                resolved.Container,
+                                wsModelEntry));
+                            continue;
+                        }
+                    }
+
+                    useVanillaTextureReverseIndex = false;
+                    break;
+                }
+            }
+
+            if (useVanillaTextureReverseIndex)
+            {
+                var sourceWsModels = resolvedWsModels
+                    .Where(resolved => ReferenceEquals(resolved.Container, state.Source))
+                    .ToArray();
+                ReportProgress(
+                    state.Progress,
+                    "Evaluating atlas value",
+                    0,
+                    sourceWsModels.Length,
+                    "Indexing source WSModel texture consumers");
+                for (var sourceIndex = 0; sourceIndex < sourceWsModels.Length; sourceIndex++)
+                {
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    ReportPeriodicProgress(
+                        state.Progress,
+                        "Evaluating atlas value",
+                        sourceIndex + 1,
+                        sourceWsModels.Length,
+                        "Indexing source WSModel texture consumers");
+                    var resolved = sourceWsModels[sourceIndex];
+                    if (TryGetWsModelConsumerEntry(
+                            state,
+                            resolved.Container,
+                            resolved.Path,
+                            resolved.File,
+                            out var wsModelEntry))
+                    {
+                        AddWsModelTextureReferences(
+                            resolved.Path,
+                            wsModelEntry,
+                            sourceMaterialOnly: false);
+                    }
+                }
+
+                // CA WSModels are immutable, but a selected source pack may override one of
+                // their material paths. Those bindings still need the source material's
+                // current texture relationships; only the unaffected CA relationships can
+                // use the reverse index below.
+                foreach (var cached in cachedCaWsModels)
+                {
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    AddWsModelTextureReferences(
+                        cached.Path,
+                        cached.Entry,
+                        sourceMaterialOnly: true);
+                }
+
+                foreach (var targetTexturePath in targetTexturePaths!)
+                {
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    if (!TryResolveTexture(
+                            targetTexturePath,
+                            out var resolvedTargetTexturePath,
+                            out _,
+                            out _))
+                    {
+                        continue;
+                    }
+
+                    foreach (var consumer in vanillaCache!.FindTextureConsumers(
+                                 resolvedTargetTexturePath,
+                                 reachableWsModels))
+                    {
+                        state.CancellationToken.ThrowIfCancellationRequested();
+                        var wsContainer = FindGameplayTraversalContainer(
+                            state,
+                            state.Source,
+                            loadedContainers,
+                            consumer.WsModelPath);
+                        var materialContainer = FindGameplayTraversalContainer(
+                            state,
+                            state.Source,
+                            loadedContainers,
+                            consumer.MaterialPath);
+                        var wsFile = wsContainer?.FindFile(consumer.WsModelPath);
+                        var materialFile = materialContainer?.FindFile(consumer.MaterialPath);
+                        if (wsContainer == null ||
+                            materialContainer == null ||
+                            wsFile == null ||
+                            materialFile == null ||
+                            !string.Equals(
+                                vanillaCache.GetContainerScope(wsContainer),
+                                consumer.WsModelContainerScope,
+                                StringComparison.Ordinal) ||
+                            !string.Equals(
+                                vanillaCache.GetContainerScope(materialContainer),
+                                consumer.MaterialContainerScope,
+                                StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        MeshKey? mesh = consumer.GeometryPath.Length != 0 &&
+                                        consumer.LodIndex.HasValue &&
+                                        consumer.PartIndex.HasValue
+                            ? new MeshKey(
+                                consumer.GeometryPath,
+                                consumer.LodIndex.Value,
+                                consumer.PartIndex.Value)
+                            : null;
+                        AddReference(
+                            resolvedTargetTexturePath,
+                            new AtlasValueGateSourceReference(
+                                mesh,
+                                consumer.WsModelPath.ToLowerInvariant(),
+                                consumer.Slot,
+                                consumer.SlotOccurrence));
+                    }
+                }
+            }
+            else
+            {
+                ReportProgress(
+                    state.Progress,
+                    "Evaluating atlas value",
+                    0,
+                    resolvedWsModels.Count,
+                    "Parsing WSModel texture consumers");
+                for (var resolvedIndex = 0;
+                     resolvedIndex < resolvedWsModels.Count;
+                     resolvedIndex++)
+                {
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    ReportPeriodicProgress(
+                        state.Progress,
+                        "Evaluating atlas value",
+                        resolvedIndex + 1,
+                        resolvedWsModels.Count,
+                        "Parsing WSModel texture consumers");
+                    var resolved = resolvedWsModels[resolvedIndex];
+                    if (!TryGetWsModelConsumerEntry(
+                            state,
+                            resolved.Container,
+                            resolved.Path,
+                            resolved.File,
+                            out var wsModelEntry))
+                    {
+                        continue;
+                    }
+
+                    AddWsModelTextureReferences(
+                        resolved.Path,
+                        wsModelEntry,
+                        sourceMaterialOnly: false);
                 }
             }
 
@@ -19246,6 +19512,9 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasValueGateGameplayTraversalWsModelXmlParseCount { get; set; }
             public int AtlasValueGateGameplayTraversalMaterialXmlParseCount { get; set; }
             public Dictionary<string, AtlasValueGateSourceTexture>? AtlasValueGateSourceTextureIndex { get; set; }
+            public HashSet<string> AtlasValueGateCandidateTexturePaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public bool AtlasValueGateCandidateTexturePathsInitialized { get; set; }
             public Dictionary<AtlasValueGateSourceReference, List<string>>?
                 AtlasValueGateSourceTexturesByReference { get; set; }
             public Dictionary<string, int> AtlasValueGateSourceTextureOrder { get; } =
