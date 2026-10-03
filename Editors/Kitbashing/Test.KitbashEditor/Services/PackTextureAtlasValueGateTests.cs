@@ -1066,6 +1066,38 @@ namespace Test.KitbashEditor.Services
             method.Invoke(null, [material, slot]);
         }
 
+        private static string CanonicalizeFaction3MaskParameter(XmlDocument material)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "CanonicalizeFaction3MaskParameter",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.CanonicalizeFaction3MaskParameter was not found.");
+
+            return method.Invoke(null, [material])?.ToString()
+                ?? throw new InvalidOperationException(
+                    "CanonicalizeFaction3MaskParameter returned null.");
+        }
+
+        private static void EnsureTexturePath(XmlDocument material, string slot, string path)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "EnsureTexturePath",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PackTextureAtlasBatchService.EnsureTexturePath was not found.");
+
+            method.Invoke(null, [material, slot, path]);
+        }
+
 
 
         private static long GetConstant(string name)
@@ -3072,6 +3104,56 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 GetMaterialRenderingIdentity(lowerSlashMaterial),
                 Is.EqualTo(GetMaterialRenderingIdentity(upperBackslashMaterial)));
+        }
+
+        [Test]
+        public void Faction3MaskCanonicalization_UsesBlueAndSynthesizesBlackMaskSlot()
+        {
+            var material = new XmlDocument();
+            material.LoadXml(
+                "<material><textures>" +
+                "<texture><slot version='2'>t_xml_base_colour</slot>" +
+                "<source>base.dds</source></texture>" +
+                "<texture><slot version='2'>t_xml_material_map</slot>" +
+                "<source>material_map.dds</source></texture>" +
+                "</textures><params>" +
+                "<param><name>faction3_mask_channel</name><type>float4</type>" +
+                "<value>0,0,0,0</value></param>" +
+                "</params></material>");
+
+            var mode = CanonicalizeFaction3MaskParameter(material);
+            EnsureTexturePath(
+                material,
+                "t_xml_mask",
+                @"commontextures\default_black.dds");
+            const string maskedMaterial =
+                "<material><textures>" +
+                "<texture><slot version='2'>t_xml_base_colour</slot>" +
+                "<source>base.dds</source></texture>" +
+                "<texture><slot version='2'>t_xml_mask</slot>" +
+                "<source>commontextures\\default_black.dds</source></texture>" +
+                "<texture><slot version='2'>t_xml_material_map</slot>" +
+                "<source>material_map.dds</source></texture>" +
+                "</textures><params>" +
+                "<param><name>faction3_mask_channel</name><type>float4</type>" +
+                "<value>0,0,1,0</value></param>" +
+                "</params></material>";
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(mode, Is.EqualTo("ZeroSelector"));
+                Assert.That(
+                    material.SelectSingleNode(
+                        "/material/params/param[name='faction3_mask_channel']/value")?.InnerText,
+                    Is.EqualTo("0,0,1,0"));
+                Assert.That(
+                    material.SelectSingleNode(
+                        "/material/textures/texture[slot='t_xml_mask']/source")?.InnerText,
+                    Is.EqualTo(@"commontextures\default_black.dds"));
+                Assert.That(
+                    GetMaterialRenderingIdentity(material.OuterXml),
+                    Is.EqualTo(GetMaterialRenderingIdentity(maskedMaterial)));
+            });
         }
 
         [Test]

@@ -116,6 +116,50 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void BuildMipPixels_CanClearOnlyBlueChannelForSelectedSource()
+        {
+            using var bitmap = new Bitmap(4, 4, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.Clear(Color.FromArgb(173, 41, 87, 219));
+
+            using var pngStream = new MemoryStream();
+            bitmap.Save(pngStream, DrawingImageFormat.Png);
+            var dds = PngToDdsImporter.ImportRaw(
+                pngStream.ToArray(),
+                TextureType.Mask,
+                GameTypeEnum.Warhammer3,
+                "mask.dds");
+            var sourceBytes = dds.DataSource.ReadData();
+            var plan = TextureAtlasBuilder.CreatePlan(
+                [new TextureAtlasLayoutSource(0, 4, 4, 0, 0, 1, 1)],
+                padding: 0);
+
+            var atlasPixels = TextureAtlasBuilder.BuildMipPixels(
+                plan,
+                new Dictionary<int, byte[]> { [0] = sourceBytes },
+                clearBlueSourceIds: new HashSet<int> { 0 });
+
+            using var sourceStream = new MemoryStream(sourceBytes);
+            using var sourceImage = Pfimage.FromStream(sourceStream);
+            var expected = ReadPfimPixel(
+                sourceImage,
+                0,
+                sourceImage.Stride,
+                2,
+                2);
+            var destinationOffset = (2 * plan.Width + 2) * 4;
+            var firstMip = atlasPixels[0];
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(firstMip[destinationOffset], Is.EqualTo(0));
+                Assert.That(firstMip[destinationOffset + 1], Is.EqualTo(expected.G));
+                Assert.That(firstMip[destinationOffset + 2], Is.EqualTo(expected.R));
+                Assert.That(firstMip[destinationOffset + 3], Is.EqualTo(expected.A));
+            });
+        }
+
+        [Test]
         public void CalculateDisconnectedUvIslandNormalization_ShiftsSeparatedWrappedIslandByWholeTile()
         {
             var uvs = new (float U, float V)[]

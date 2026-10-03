@@ -74,10 +74,15 @@ namespace Editors.KitbasherEditor.Services
         ];
 
         private const long MaxAutomaticCommonTextureConstantProbePixels = 4096;
+        private const string CanonicalBlackMaskTexturePath =
+            @"commontextures\default_black.dds";
+        private const string CanonicalFaction3MaskChannelValue = "0,0,1,0";
+        private static readonly TextureAtlasConstantColor ZeroMaskColor =
+            new(0, 0, 0, 0);
 
         private static readonly HashSet<string> KnownConstantTexturePaths =
         [
-            @"commontextures\default_black.dds",
+            CanonicalBlackMaskTexturePath,
             @"commontextures\default_white.dds",
             @"commontextures\default_normal.dds",
         ];
@@ -2742,6 +2747,15 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // GetMaterialDocument returns the cached source XML. Canonical mask rewriting is
+            // candidate-local, so never mutate that shared document while preparing a batch.
+            if (materialDocumentOverride == null)
+            {
+                var sourceMaterial = materialDoc;
+                materialDoc = new XmlDocument();
+                materialDoc.LoadXml(sourceMaterial.OuterXml);
+            }
+
             var shaderPath = materialDoc.SelectSingleNode("/material/shader")?.InnerText ?? string.Empty;
             if (shaderPath.Contains("emissive", StringComparison.OrdinalIgnoreCase))
             {
@@ -2762,6 +2776,39 @@ namespace Editors.KitbasherEditor.Services
             {
                 skipReason = "Material has no t_xml_base_colour texture.";
                 return null;
+            }
+
+            var faction3MaskCanonicalization = materialDocumentOverride == null
+                ? CanonicalizeFaction3MaskParameter(materialDoc)
+                : Faction3MaskCanonicalization.None;
+            var canonicalMaskWasAdded = false;
+            var clearMaskBlueChannel = false;
+            var requiresMaskAtlas = false;
+            if (faction3MaskCanonicalization != Faction3MaskCanonicalization.None)
+            {
+                var maskPath = GetTexturePath(materialDoc, "t_xml_mask");
+                var maskIsAbsent = string.IsNullOrWhiteSpace(maskPath) ||
+                    IsTexturePlaceholder(maskPath) ||
+                    (IsIgnorableUnresolvedAtlasTexture("t_xml_mask", maskPath) &&
+                     FindForRead(state, maskPath) == null);
+                if (maskIsAbsent)
+                {
+                    EnsureTexturePath(
+                        materialDoc,
+                        "t_xml_mask",
+                        CanonicalBlackMaskTexturePath);
+                    canonicalMaskWasAdded = true;
+                    requiresMaskAtlas = true;
+                }
+                else if (faction3MaskCanonicalization == Faction3MaskCanonicalization.ZeroSelector)
+                {
+                    // The old selector ignored this texture completely. Preserve that exact
+                    // result after switching to the common blue-channel selector by clearing
+                    // only blue in the source region; green, red and alpha remain untouched
+                    // for the other mask consumers.
+                    clearMaskBlueChannel = true;
+                    requiresMaskAtlas = true;
+                }
             }
 
             var candidateMissingTextures = new List<MissingTextureDependency>();
@@ -2792,6 +2839,19 @@ namespace Editors.KitbasherEditor.Services
                     continue;
 
                 var file = FindForRead(state, path);
+                if (canonicalMaskWasAdded &&
+                    channel.Slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase) &&
+                    path.Equals(CanonicalBlackMaskTexturePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    constantChannels[channel.Slot] = ZeroMaskColor;
+                    RegisterUniformConstantTextureCanonicalPath(
+                        state,
+                        channel.Slot,
+                        ZeroMaskColor,
+                        CanonicalBlackMaskTexturePath);
+                    continue;
+                }
+
                 if (file == null)
                 {
                     if (channel.Slot.Equals("t_xml_base_colour", StringComparison.OrdinalIgnoreCase))
@@ -2824,11 +2884,20 @@ namespace Editors.KitbasherEditor.Services
 
                     if (inspection.IsUniformConstant)
                     {
-                        constantChannels[channel.Slot] = inspection.ConstantColor;
+                        var constantColor = inspection.ConstantColor;
+                        if (channel.Slot.Equals(
+                                "t_xml_mask",
+                                StringComparison.OrdinalIgnoreCase) &&
+                            faction3MaskCanonicalization == Faction3MaskCanonicalization.ZeroSelector)
+                        {
+                            constantColor = constantColor with { B = 0 };
+                        }
+
+                        constantChannels[channel.Slot] = constantColor;
                         RegisterUniformConstantTextureCanonicalPath(
                             state,
                             channel.Slot,
-                            inspection.ConstantColor,
+                            constantColor,
                             path);
                         continue;
                     }
@@ -2900,7 +2969,9 @@ namespace Editors.KitbasherEditor.Services
                 candidateMissingTextures,
                 uvIslandAnalysis,
                 uvIslandNormalization,
-                AtlasResolutionScale: 1.0);
+                AtlasResolutionScale: 1.0,
+                RequiresMaskAtlas: requiresMaskAtlas,
+                ClearMaskBlueChannel: clearMaskBlueChannel);
         }
 
         private static bool IsEmbeddedAtlasTextureTypeSafe(TextureType textureType)
@@ -6123,7 +6194,10 @@ namespace Editors.KitbasherEditor.Services
                     candidate,
                     GetRmvMergeIdentity(candidate.Model),
                     BuildMergeAffinityMaterialIdentity(state, candidate),
-                    GetMaterialMergeDiagnosticSnapshot(state, candidate.MaterialPath)))
+                    GetMaterialMergeDiagnosticSnapshot(
+                        state,
+                        candidate.MaterialPath,
+                        candidate.MaterialDocument)))
                 .ToList();
 
             var buckets = prepared
@@ -6326,7 +6400,9 @@ namespace Editors.KitbasherEditor.Services
                 left.MaterialSnapshot,
                 right.MaterialSnapshot,
                 differingSlots,
-                out _);
+                out _,
+                allowDifferentUniformMaskConstants:
+                    (left.Candidate.RequiresMaskAtlas || right.Candidate.RequiresMaskAtlas));
             return classification.Equals(
                        "Atlasable differing texture channels",
                        StringComparison.Ordinal) ||
@@ -11288,7 +11364,10 @@ namespace Editors.KitbasherEditor.Services
                     }
                 }
 
-                if (textureBytes.Count == 0)
+                var requiresConstantOnlyAtlas =
+                    channel.Slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase) &&
+                    sharedBatch.Sources.Any(source => source.Representative.RequiresMaskAtlas);
+                if (textureBytes.Count == 0 && !requiresConstantOnlyAtlas)
                 {
                     // UV remapping cannot change a uniform texture. If every present source
                     // for this channel is constant, keep each material's original shared
@@ -11333,6 +11412,14 @@ namespace Editors.KitbasherEditor.Services
                     ? new TextureAtlasBuildStatistics()
                     : null;
                 var rasterStopwatch = Stopwatch.StartNew();
+                var clearBlueSourceIds = channel.Slot.Equals(
+                        "t_xml_mask",
+                        StringComparison.OrdinalIgnoreCase)
+                    ? sharedBatch.Sources
+                        .Where(source => source.Representative.ClearMaskBlueChannel)
+                        .Select(source => source.Id)
+                        .ToHashSet()
+                    : null;
                 _ = TextureAtlasBuilder.BuildMipPixels(
                     plan,
                     textureBytes,
@@ -11355,7 +11442,8 @@ namespace Editors.KitbasherEditor.Services
                     mipConsumer: (mipLevel, mipWidth, mipHeight, pixels) =>
                         mipWriter.WriteMip(mipLevel, pixels),
                     retainMipPixels: false,
-                    statistics: rasterStatistics);
+                    statistics: rasterStatistics,
+                    clearBlueSourceIds: clearBlueSourceIds);
                 rasterStopwatch.Stop();
                 var rasterElapsed = rasterStopwatch.Elapsed;
                 AddPhaseDuration(state, "Rasterize atlas pixels", rasterElapsed);
@@ -12196,7 +12284,8 @@ namespace Editors.KitbasherEditor.Services
             MaterialMergeDiagnosticSnapshot left,
             MaterialMergeDiagnosticSnapshot right,
             IReadOnlyList<string> differingSlots,
-            out string detail)
+            out string detail,
+            bool allowDifferentUniformMaskConstants = false)
         {
             detail = string.Empty;
 
@@ -12290,6 +12379,17 @@ namespace Editors.KitbasherEditor.Services
                 {
                     if (!leftSource.ConstantColor.Equals(rightSource.ConstantColor))
                     {
+                        if (allowDifferentUniformMaskConstants &&
+                            slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Canonical faction-3 masks are deliberately packed as regions,
+                            // even when both source regions happen to be uniform. A black
+                            // synthesized region and a non-black uniform region therefore
+                            // remain mergeable without forcing either source path to change.
+                            onlyUniformConstants = false;
+                            continue;
+                        }
+
                         detail =
                             $"{slot} contains different uniform colors and cannot share one source path";
                         return "Different uniform constants";
@@ -12389,6 +12489,17 @@ namespace Editors.KitbasherEditor.Services
             {
                 failure = "texture assignment is a placeholder";
                 return false;
+            }
+
+            // A synthesized mask slot intentionally uses the game-independent black
+            // semantic. It remains a valid uniform source even when the common texture is
+            // not present in the pack containers currently loaded by the planner.
+            if (normalizedPath.Equals(
+                    CanonicalBlackMaskTexturePath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                source = new TextureInspection(1, 1, true, ZeroMaskColor);
+                return true;
             }
 
             if (state.GeneratedTexturePaths.Contains(normalizedPath))
@@ -12760,22 +12871,33 @@ namespace Editors.KitbasherEditor.Services
 
         private static MaterialMergeDiagnosticSnapshot? GetMaterialMergeDiagnosticSnapshot(
             BatchState state,
-            string materialPath)
+            string materialPath,
+            XmlDocument? materialOverride = null)
         {
             materialPath = Normalize(materialPath);
-            if (state.MeshMergeMaterialDiagnostics.TryGetValue(materialPath, out var cached))
+            if (materialOverride == null &&
+                state.MeshMergeMaterialDiagnostics.TryGetValue(materialPath, out var cached))
                 return cached;
 
             try
             {
-                var file = FindForReadStatic(state, materialPath);
-                if (file == null)
+                XmlDocument material;
+                if (materialOverride != null)
                 {
-                    state.MeshMergeMaterialDiagnostics[materialPath] = null;
-                    return null;
+                    material = materialOverride;
+                }
+                else
+                {
+                    var file = FindForReadStatic(state, materialPath);
+                    if (file == null)
+                    {
+                        state.MeshMergeMaterialDiagnostics[materialPath] = null;
+                        return null;
+                    }
+
+                    material = GetMaterialDocument(state, materialPath, file);
                 }
 
-                var material = GetMaterialDocument(state, materialPath, file);
                 var shader = Normalize(material.SelectSingleNode("/material/shader")?.InnerText);
 
                 var textureAssignments = material.SelectNodes("/material/textures/texture")?
@@ -12814,12 +12936,14 @@ namespace Editors.KitbasherEditor.Services
                     nonTexture.OuterXml,
                     textureAssignments,
                     BuildMaterialLeafFieldMap(nonTexture));
-                state.MeshMergeMaterialDiagnostics[materialPath] = snapshot;
+                if (materialOverride == null)
+                    state.MeshMergeMaterialDiagnostics[materialPath] = snapshot;
                 return snapshot;
             }
             catch
             {
-                state.MeshMergeMaterialDiagnostics[materialPath] = null;
+                if (materialOverride == null)
+                    state.MeshMergeMaterialDiagnostics[materialPath] = null;
                 return null;
             }
         }
@@ -15191,6 +15315,122 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return string.Empty;
+        }
+
+        private static Faction3MaskCanonicalization CanonicalizeFaction3MaskParameter(
+            XmlDocument material)
+        {
+            var parameter = material.SelectNodes("/material/params/param")?
+                .Cast<XmlNode>()
+                .FirstOrDefault(node =>
+                    node.SelectSingleNode("name")?.InnerText.Trim().Equals(
+                        "faction3_mask_channel",
+                        StringComparison.OrdinalIgnoreCase) == true);
+            if (parameter == null ||
+                !string.Equals(
+                    parameter.SelectSingleNode("type")?.InnerText.Trim(),
+                    "float4",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return Faction3MaskCanonicalization.None;
+            }
+
+            var valueNode = parameter.SelectSingleNode("value");
+            if (valueNode == null)
+                return Faction3MaskCanonicalization.None;
+
+            var values = valueNode.InnerText
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(value => double.TryParse(
+                    value,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var parsed)
+                        ? (double?)parsed
+                        : null)
+                .ToArray();
+            if (values.Length != 4 || values.Any(value => !value.HasValue))
+                return Faction3MaskCanonicalization.None;
+
+            var components = values.Select(value => value!.Value).ToArray();
+            const double epsilon = 0.000001;
+            var isZero = components.All(value => Math.Abs(value) <= epsilon);
+            var isBlue = Math.Abs(components[0]) <= epsilon &&
+                         Math.Abs(components[1]) <= epsilon &&
+                         Math.Abs(components[2] - 1.0) <= epsilon &&
+                         Math.Abs(components[3]) <= epsilon;
+            if (isZero)
+            {
+                valueNode.InnerText = CanonicalFaction3MaskChannelValue;
+                return Faction3MaskCanonicalization.ZeroSelector;
+            }
+
+            return isBlue
+                ? Faction3MaskCanonicalization.BlueSelector
+                : Faction3MaskCanonicalization.None;
+        }
+
+        private static void EnsureTexturePath(XmlDocument material, string slot, string path)
+        {
+            if (GetTexturePath(material, slot).Length != 0)
+            {
+                SetTexturePath(material, slot, path);
+                return;
+            }
+
+            var textures = material.SelectSingleNode("/material/textures");
+            if (textures == null)
+            {
+                textures = material.CreateElement("textures");
+                material.DocumentElement?.AppendChild(textures);
+            }
+
+            if (textures == null)
+                return;
+
+            var texture = material.CreateElement("texture");
+            var slotNode = material.CreateElement("slot");
+            slotNode.SetAttribute("version", "2");
+            slotNode.InnerText = slot;
+            texture.AppendChild(slotNode);
+
+            var sourceNode = material.CreateElement("source");
+            sourceNode.InnerText = path;
+            texture.AppendChild(sourceNode);
+
+            // Most WH3 material XMLs place mask immediately after base colour and before
+            // material-map/normal. Use that stable position for a synthesized mask so the
+            // generated material can share identity with an otherwise identical masked one.
+            var requestedOrder = GetCanonicalAtlasTextureOrder(slot);
+            var insertBefore = textures.ChildNodes
+                .Cast<XmlNode>()
+                .FirstOrDefault(node =>
+                {
+                    if (!node.Name.Equals("texture", StringComparison.OrdinalIgnoreCase))
+                        return false;
+
+                    var existingOrder = GetCanonicalAtlasTextureOrder(GetTextureSlot(node));
+                    return requestedOrder >= 0 &&
+                           existingOrder > requestedOrder;
+                });
+            if (insertBefore != null)
+                textures.InsertBefore(texture, insertBefore);
+            else
+                textures.AppendChild(texture);
+        }
+
+        private static int GetCanonicalAtlasTextureOrder(string slot)
+        {
+            if (slot.Equals("t_xml_base_colour", StringComparison.OrdinalIgnoreCase))
+                return 0;
+            if (slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase))
+                return 1;
+            if (slot.Equals("t_xml_material_map", StringComparison.OrdinalIgnoreCase))
+                return 2;
+            if (slot.Equals("t_xml_normal", StringComparison.OrdinalIgnoreCase))
+                return 3;
+
+            return -1;
         }
 
         private static void SetTexturePath(XmlDocument material, string slot, string path)
@@ -18220,7 +18460,10 @@ namespace Editors.KitbasherEditor.Services
             if (candidate.ResolvedChannels.Contains(slot) &&
                 candidate.ChannelDimensions.TryGetValue(slot, out var dimensions))
             {
-                return $"resolved:{dimensions.Width}x{dimensions.Height}";
+                var clearBlue = slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase) &&
+                                candidate.ClearMaskBlueChannel;
+                return $"resolved{(clearBlue ? "-clear-blue" : string.Empty)}:" +
+                       $"{dimensions.Width}x{dimensions.Height}";
             }
 
             return "omitted";
@@ -18281,7 +18524,9 @@ namespace Editors.KitbasherEditor.Services
                 state.AtlasRegionContentHashes[cacheKey] = contentHash;
             }
 
-            return $"resolved:{contentHash}";
+            var clearBlue = slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase) &&
+                            candidate.ClearMaskBlueChannel;
+            return $"resolved{(clearBlue ? "-clear-blue" : string.Empty)}:{contentHash}";
         }
 
         private static AtlasTextureSetIdentity BuildAtlasTextureSetIdentity(AtlasCandidate candidate)
@@ -18384,9 +18629,20 @@ namespace Editors.KitbasherEditor.Services
             if (IsTexturePlaceholder(path))
                 return $"<placeholder>:{path}";
             if (candidate.ConstantChannels.ContainsKey(slot))
-                return $"<constant>:{path}";
+            {
+                var constant = candidate.ConstantChannels[slot];
+                return $"<constant>:{path}:{constant.B:X2}{constant.G:X2}{constant.R:X2}{constant.A:X2}";
+            }
             if (candidate.ResolvedChannels.Contains(slot))
+            {
+                if (slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase) &&
+                    candidate.ClearMaskBlueChannel)
+                {
+                    return $"<resolved-clear-blue>:{path}";
+                }
+
                 return $"<resolved>:{path}";
+            }
             return $"<unresolved>:{path}";
         }
 
@@ -19422,7 +19678,16 @@ namespace Editors.KitbasherEditor.Services
             List<MissingTextureDependency> MissingTextures,
             TextureAtlasUvIslandNormalization UvIslandAnalysis,
             UvIslandNormalization? UvIslandNormalization,
-            double AtlasResolutionScale);
+            double AtlasResolutionScale,
+            bool RequiresMaskAtlas = false,
+            bool ClearMaskBlueChannel = false);
+
+        private enum Faction3MaskCanonicalization
+        {
+            None,
+            ZeroSelector,
+            BlueSelector,
+        }
 
         private sealed record CandidateDiscoveryResult(
             List<AtlasCandidate> Candidates,
