@@ -983,6 +983,22 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
+                if (!Path.GetExtension(geometryPath).Equals(
+                        ".rigid_model_v2",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    RecordFailureForRoots(
+                        index,
+                        referencingRoots,
+                        geometryPath,
+                        "WSModel geometry reference has an unknown asset type",
+                        GameplayMeshDependencyFailureKind.UnknownType,
+                        GetGameplayMeshDependencyAssetScope(
+                            state,
+                            geometryPath));
+                    continue;
+                }
+
                 index.AddDependency(wsModelPath, geometryPath);
                 foreach (var root in referencingRoots)
                     index.AddRootReference(geometryPath, root);
@@ -1000,23 +1016,6 @@ namespace Editors.KitbasherEditor.Services
                         geometryPath,
                         "WSModel geometry dependency could not be resolved",
                         GameplayMeshDependencyFailureKind.MissingReference,
-                        GetGameplayMeshDependencyAssetScope(
-                            state,
-                            geometryPath,
-                            geometryContainer));
-                    continue;
-                }
-
-                if (!Path.GetExtension(geometryPath).Equals(
-                        ".rigid_model_v2",
-                        StringComparison.OrdinalIgnoreCase))
-                {
-                    RecordFailureForRoots(
-                        index,
-                        referencingRoots,
-                        geometryPath,
-                        "WSModel geometry reference has an unknown asset type",
-                        GameplayMeshDependencyFailureKind.UnknownType,
                         GetGameplayMeshDependencyAssetScope(
                             state,
                             geometryPath,
@@ -1291,36 +1290,18 @@ namespace Editors.KitbasherEditor.Services
                         ".variantmeshdefinition",
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    var referencedContainer = FindGameplayTraversalContainer(
-                            state,
-                            state.Source,
-                            GetGameplayTraversalContainers(state),
-                            assetPath);
-                    if (referencedContainer == null)
-                    {
-                        result.IsComplete = false;
-                        result.Failures.Add(
-                            new GameplayMeshTraversalFailure(
-                                assetPath,
-                                "asset could not be resolved",
-                                GameplayMeshDependencyFailureKind.MissingReference,
-                                GameplayMeshDependencyAssetScope.Missing));
-                    }
-                    else
-                    {
-                        // A gameplay model reference without a recognized extension cannot
-                        // be classified as a WSModel or a direct rigid consumer safely.
-                        result.IsComplete = false;
-                        result.Failures.Add(
-                            new GameplayMeshTraversalFailure(
-                                assetPath,
-                                "unrecognized asset type",
-                                GameplayMeshDependencyFailureKind.UnknownType,
-                                GetGameplayMeshDependencyAssetScope(
-                                    state,
-                                    assetPath,
-                                    referencedContainer)));
-                    }
+                    // A gameplay root/reference without a recognized extension cannot be
+                    // classified safely, regardless of whether a file happens to exist at
+                    // that path. Validate the type before treating absence as verified.
+                    result.IsComplete = false;
+                    result.Failures.Add(
+                        new GameplayMeshTraversalFailure(
+                            assetPath,
+                            "unrecognized asset type",
+                            GameplayMeshDependencyFailureKind.UnknownType,
+                            GetGameplayMeshDependencyAssetScope(
+                                state,
+                                assetPath)));
 
                     continue;
                 }
@@ -1368,6 +1349,30 @@ namespace Editors.KitbasherEditor.Services
                     if (modelPath.Length == 0)
                         continue;
 
+                    var modelExtension = Path.GetExtension(modelPath);
+                    var isWsModel = modelExtension.Equals(
+                        ".wsmodel",
+                        StringComparison.OrdinalIgnoreCase);
+                    var isRigidModel = modelExtension.Equals(
+                        ".rigid_model_v2",
+                        StringComparison.OrdinalIgnoreCase);
+                    var isVariantMeshDefinition = modelExtension.Equals(
+                        ".variantmeshdefinition",
+                        StringComparison.OrdinalIgnoreCase);
+                    if (!isWsModel && !isRigidModel && !isVariantMeshDefinition)
+                    {
+                        result.IsComplete = false;
+                        result.Failures.Add(
+                            new GameplayMeshTraversalFailure(
+                                modelPath,
+                                "unrecognized model reference",
+                                GameplayMeshDependencyFailureKind.UnknownType,
+                                GetGameplayMeshDependencyAssetScope(
+                                    state,
+                                    modelPath)));
+                        continue;
+                    }
+
                     dependencyIndex?.AddDependency(assetPath, modelPath);
                     dependencyIndex?.AddRootReference(modelPath, rootPath);
 
@@ -1388,37 +1393,17 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    var modelExtension = Path.GetExtension(modelPath);
-                    if (modelExtension.Equals(
-                            ".wsmodel",
-                            StringComparison.OrdinalIgnoreCase))
+                    if (isWsModel)
                     {
                         result.WsModelPaths.Add(modelPath);
                     }
-                    else if (modelExtension.Equals(
-                                 ".rigid_model_v2",
-                                 StringComparison.OrdinalIgnoreCase))
+                    else if (isRigidModel)
                     {
                         result.DirectRigidPaths.Add(modelPath);
                     }
-                    else if (modelExtension.Equals(
-                                 ".variantmeshdefinition",
-                                 StringComparison.OrdinalIgnoreCase))
+                    else if (isVariantMeshDefinition)
                     {
                         queue.Enqueue(modelPath);
-                    }
-                    else
-                    {
-                        result.IsComplete = false;
-                        result.Failures.Add(
-                            new GameplayMeshTraversalFailure(
-                                modelPath,
-                                "unrecognized model reference",
-                                GameplayMeshDependencyFailureKind.UnknownType,
-                                GetGameplayMeshDependencyAssetScope(
-                                    state,
-                                    modelPath,
-                                    modelContainer)));
                     }
                 }
 
@@ -1427,6 +1412,22 @@ namespace Editors.KitbasherEditor.Services
                     var childPath = Normalize(childValue);
                     if (childPath.Length == 0)
                         continue;
+
+                    if (!Path.GetExtension(childPath).Equals(
+                            ".variantmeshdefinition",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.IsComplete = false;
+                        result.Failures.Add(
+                            new GameplayMeshTraversalFailure(
+                                childPath,
+                                "unrecognized child VMD reference",
+                                GameplayMeshDependencyFailureKind.UnknownType,
+                                GetGameplayMeshDependencyAssetScope(
+                                    state,
+                                    childPath)));
+                        continue;
+                    }
 
                     dependencyIndex?.AddDependency(assetPath, childPath);
                     dependencyIndex?.AddRootReference(childPath, rootPath);
@@ -1443,7 +1444,9 @@ namespace Editors.KitbasherEditor.Services
                                 childPath,
                                 "child VMD dependency could not be resolved",
                                 GameplayMeshDependencyFailureKind.MissingReference,
-                                GameplayMeshDependencyAssetScope.Missing));
+                                GetGameplayMeshDependencyAssetScope(
+                                    state,
+                                    childPath)));
                         continue;
                     }
 
