@@ -2,6 +2,7 @@ using System.Collections;
 using System.Reflection;
 using System.Text;
 using System.Xml;
+using Editors.ImportExport.TextureAtlas;
 using Microsoft.Xna.Framework;
 using Moq;
 using Shared.Core.PackFiles;
@@ -1098,6 +1099,67 @@ namespace Test.KitbashEditor.Services
             method.Invoke(null, [material, slot, path]);
         }
 
+        private static (long PixelCost, bool HasMaskBcnCost) GetGeneratedAtlasCosts(
+            object state,
+            object candidate)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var candidateBatch = CreateAtlasCandidateBatch([candidate]);
+
+            var pixelMethod = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(method =>
+                    method.Name == "TryGetGeneratedAtlasPixelCost" &&
+                    method.GetParameters().Length == 5);
+            var pixelArguments = new object?[]
+            {
+                state,
+                candidateBatch,
+                0L,
+                false,
+                false,
+            };
+            if (!(bool)(pixelMethod.Invoke(null, pixelArguments)
+                ?? throw new InvalidOperationException(
+                    "TryGetGeneratedAtlasPixelCost returned null.")))
+            {
+                throw new InvalidOperationException(
+                    "TryGetGeneratedAtlasPixelCost could not create a plan.");
+            }
+
+            var bcnMethod = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(method =>
+                    method.Name == "TryGetGeneratedAtlasBcnCost" &&
+                    method.GetParameters().Length == 4);
+            var bcnArguments = new object?[]
+            {
+                state,
+                candidateBatch,
+                0L,
+                new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase),
+            };
+            if (!(bool)(bcnMethod.Invoke(null, bcnArguments)
+                ?? throw new InvalidOperationException(
+                    "TryGetGeneratedAtlasBcnCost returned null.")))
+            {
+                throw new InvalidOperationException(
+                    "TryGetGeneratedAtlasBcnCost could not create a plan.");
+            }
+
+            var bcnBySlot = (IDictionary)(bcnArguments[3]
+                ?? throw new InvalidOperationException(
+                    "TryGetGeneratedAtlasBcnCost did not return slot costs."));
+            return
+            (
+                Convert.ToInt64(pixelArguments[2]),
+                bcnBySlot.Contains("t_xml_mask")
+            );
+        }
+
 
 
         private static long GetConstant(string name)
@@ -1328,7 +1390,8 @@ namespace Test.KitbashEditor.Services
             string materialPath,
             string materialXml,
             int? atlasWidth = null,
-            int? atlasHeight = null)
+            int? atlasHeight = null,
+            bool requiresMaskAtlas = false)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
             var serviceType = assembly.GetType(
@@ -1449,6 +1512,13 @@ namespace Test.KitbashEditor.Services
                         return 1.0;
                     if (type == typeof(float))
                         return 1.0f;
+                    if (type == typeof(bool))
+                    {
+                        return name.Contains(
+                            "requiresMaskAtlas",
+                            StringComparison.OrdinalIgnoreCase) &&
+                            requiresMaskAtlas;
+                    }
                     if (type == typeof(HashSet<string>))
                     {
                         return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -3153,6 +3223,48 @@ namespace Test.KitbashEditor.Services
                 Assert.That(
                     GetMaterialRenderingIdentity(material.OuterXml),
                     Is.EqualTo(GetMaterialRenderingIdentity(maskedMaterial)));
+            });
+        }
+
+        [Test]
+        public void ForcedConstantOnlyMaskAtlas_IsIncludedInValueGateCosts()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var candidate = CreateAffinityTestCandidate(
+                "models\\constant_mask.rigid_model_v2",
+                0,
+                "materials\\constant_mask.xml",
+                "<material><shader>shaders/weighted4_character.xml.shader</shader>" +
+                "<textures><texture><slot version='2'>t_xml_base_colour</slot>" +
+                "<source>textures\\base.dds</source></texture>" +
+                "<texture><slot version='2'>t_xml_mask</slot>" +
+                "<source>textures\\mask.dds</source></texture></textures></material>",
+                atlasWidth: 16,
+                atlasHeight: 16,
+                requiresMaskAtlas: true);
+
+            var constantChannels = (IDictionary)(candidate.GetType()
+                .GetProperty("ConstantChannels")
+                ?.GetValue(candidate)
+                ?? throw new InvalidOperationException(
+                    "AtlasCandidate.ConstantChannels was not found."));
+            constantChannels["t_xml_mask"] = new TextureAtlasConstantColor(0, 0, 0, 0);
+
+            var costs = GetGeneratedAtlasCosts(state, candidate);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    costs.PixelCost,
+                    Is.GreaterThanOrEqualTo(2L * 16 * 16),
+                    "The forced constant-only mask atlas must be included in pixel cost.");
+                Assert.That(
+                    costs.HasMaskBcnCost,
+                    Is.True,
+                    "The forced constant-only mask atlas must be included in BCn cost.");
             });
         }
 

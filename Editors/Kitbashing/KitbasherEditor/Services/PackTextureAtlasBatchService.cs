@@ -2884,12 +2884,17 @@ namespace Editors.KitbasherEditor.Services
 
                     if (inspection.IsUniformConstant)
                     {
-                        var constantColor = inspection.ConstantColor;
+                        var sourceConstantColor = inspection.ConstantColor;
+                        var constantColor = sourceConstantColor;
                         if (channel.Slot.Equals(
                                 "t_xml_mask",
                                 StringComparison.OrdinalIgnoreCase) &&
                             faction3MaskCanonicalization == Faction3MaskCanonicalization.ZeroSelector)
                         {
+                            // constantChannels describes the future atlas bytes. The
+                            // canonical source-path map must still use the bytes in the
+                            // original texture, otherwise a B=255 source can be advertised
+                            // globally as a B=0 source.
                             constantColor = constantColor with { B = 0 };
                         }
 
@@ -2897,7 +2902,7 @@ namespace Editors.KitbasherEditor.Services
                         RegisterUniformConstantTextureCanonicalPath(
                             state,
                             channel.Slot,
-                            constantColor,
+                            sourceConstantColor,
                             path);
                         continue;
                     }
@@ -3126,10 +3131,10 @@ namespace Editors.KitbasherEditor.Services
         private static void RegisterUniformConstantTextureCanonicalPath(
             BatchState state,
             string slot,
-            TextureAtlasConstantColor color,
+            TextureAtlasConstantColor sourceColor,
             string texturePath)
         {
-            var key = BuildUniformConstantTextureKey(slot, color);
+            var key = BuildUniformConstantTextureKey(slot, sourceColor);
             var normalizedPath = Normalize(texturePath);
             if (normalizedPath.Length == 0)
                 return;
@@ -10616,7 +10621,11 @@ namespace Editors.KitbasherEditor.Services
                         }
                     }
 
-                    if (sourceDimensions.Count == 0)
+                    var requiresConstantOnlyAtlas =
+                        RequiresConstantOnlyMaskAtlas(
+                            channel.Slot,
+                            sharedPlan.Batch.Sources);
+                    if (sourceDimensions.Count == 0 && !requiresConstantOnlyAtlas)
                         continue;
 
                     var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
@@ -11073,10 +11082,14 @@ namespace Editors.KitbasherEditor.Services
                         }
                     }
 
+                    var requiresConstantOnlyAtlas =
+                        RequiresConstantOnlyMaskAtlas(
+                            channel.Slot,
+                            sharedPlan.Batch.Sources);
                     // ProcessBatch deliberately emits no texture when every present source
-                    // for a channel is uniform/constant, so the planning cost must match that
-                    // behavior rather than charging a full atlas for a skipped channel.
-                    if (sourceDimensions.Count == 0)
+                    // for a channel is uniform/constant, except for a mask channel forced
+                    // into an atlas to preserve canonicalized blue-mask semantics.
+                    if (sourceDimensions.Count == 0 && !requiresConstantOnlyAtlas)
                         continue;
 
                     var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
@@ -11162,6 +11175,12 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
         }
+
+        private static bool RequiresConstantOnlyMaskAtlas(
+            string slot,
+            IReadOnlyList<SharedAtlasSource> sources)
+            => slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase) &&
+                sources.Any(source => source.Representative.RequiresMaskAtlas);
 
         private static (SharedAtlasBatch Batch, TextureAtlasPlan Plan) CreateSharedAtlasPlan(
             BatchState state,
@@ -11365,8 +11384,7 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var requiresConstantOnlyAtlas =
-                    channel.Slot.Equals("t_xml_mask", StringComparison.OrdinalIgnoreCase) &&
-                    sharedBatch.Sources.Any(source => source.Representative.RequiresMaskAtlas);
+                    RequiresConstantOnlyMaskAtlas(channel.Slot, sharedBatch.Sources);
                 if (textureBytes.Count == 0 && !requiresConstantOnlyAtlas)
                 {
                     // UV remapping cannot change a uniform texture. If every present source
