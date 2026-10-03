@@ -58,9 +58,13 @@ namespace Editors.KitbasherEditor.Services
         // recursively split cohorts whose marginal residency is still too expensive.
         private const int TextureConsolidationInitialCohortCandidateLimit = 8;
         // Prospective texture-merge groups can contain unrelated large placements. Search
-        // bounded pairs/triples before giving up on the whole group.
+        // bounded pairs/triples/four-way subsets before giving up on the whole group.
         private const int TextureOnlyMergeSubsetCandidateLimit = 10;
         private const int TextureOnlyMergeSubsetOptionLimit = 128;
+        // Reserve part of the subset budget for four-way combinations. Pair/triple options
+        // remain the broad first pass; four-way options are most useful when the full group
+        // is too expensive but a compact four-mesh subset can still pass the value gate.
+        private const int TextureOnlyMergeFourWaySubsetOptionReserve = 32;
         private const int TextureOnlyMergeNearMissLimit = 24;
         private const double AtlasValueGateExpectedDrawEpsilon = 0.000001;
         private const double MaxReachableBcnGrowthRatio = 0.50;
@@ -8351,6 +8355,17 @@ namespace Editors.KitbasherEditor.Services
                 state.AtlasValueGateTextureOnlyMergeCrossBatchGroupsEvaluated++;
                 state.AtlasValueGateTextureOnlyMergeSubsetGroupsConsidered++;
                 var subsetPlans = BuildTextureOnlyMergeSubsetPlans(pending.Plan);
+                var pendingCandidateCount = pending.Plan.Candidates
+                    .DistinctBy(candidate => candidate.Key)
+                    .Count();
+                state.AtlasValueGateTextureOnlyMergeMaximumSubsetGroupCandidateCount =
+                    Math.Max(
+                        state.AtlasValueGateTextureOnlyMergeMaximumSubsetGroupCandidateCount,
+                        pendingCandidateCount);
+                state.AtlasValueGateTextureOnlyMergeFourWayOptionsGenerated +=
+                    subsetPlans.Count(plan => plan.Candidates.Count == 4);
+                if (subsetPlans.Count >= TextureOnlyMergeSubsetOptionLimit)
+                    state.AtlasValueGateTextureOnlyMergeSubsetOptionGroupsTruncated++;
                 var attachedKeys = new HashSet<MeshKey>();
                 var bestRejectionReason = string.Empty;
 
@@ -8382,6 +8397,8 @@ namespace Editors.KitbasherEditor.Services
                         }
 
                         state.AtlasValueGateTextureOnlyMergeSubsetOptionsEvaluated++;
+                        if (subsetPlan.Candidates.Count == 4)
+                            state.AtlasValueGateTextureOnlyMergeFourWayOptionsEvaluated++;
                         for (var hostIndex = 0;
                              hostIndex < acceptedBatches.Count;
                              hostIndex++)
@@ -8474,6 +8491,8 @@ namespace Editors.KitbasherEditor.Services
                         economicsIndex);
                     foreach (var candidate in bestPlan.Candidates)
                         attachedKeys.Add(candidate.Key);
+                    if (bestPlan.Candidates.Count == 4)
+                        state.AtlasValueGateTextureOnlyMergeFourWayGroupsAccepted++;
                     state.AtlasValueGateMarginalGroupsAccepted++;
                     state.AtlasValueGateTextureOnlyMergeMarginalGroupsAccepted++;
                     state.AtlasValueGateTextureOnlyMergeCrossBatchGroupsAccepted++;
@@ -8538,10 +8557,14 @@ namespace Editors.KitbasherEditor.Services
                 .ToList();
             var subsetPlans = new List<AtlasValueGateGroupPlan>();
             var subsetOptionLimit = Math.Max(1, TextureOnlyMergeSubsetOptionLimit - 1);
+            var fourWayOptionReserve = pool.Count > 4
+                ? Math.Min(TextureOnlyMergeFourWaySubsetOptionReserve, subsetOptionLimit)
+                : 0;
+            var activeSubsetOptionLimit = subsetOptionLimit - fourWayOptionReserve;
 
             void AddSubset(IReadOnlyList<AtlasCandidate> subset)
             {
-                if (subsetPlans.Count >= subsetOptionLimit)
+                if (subsetPlans.Count >= activeSubsetOptionLimit)
                     return;
 
                 var subsetKeys = subset
@@ -8558,11 +8581,11 @@ namespace Editors.KitbasherEditor.Services
             }
 
             for (var left = 0;
-                 left < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                 left < pool.Count && subsetPlans.Count < activeSubsetOptionLimit;
                  left++)
             {
                 for (var right = left + 1;
-                     right < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                     right < pool.Count && subsetPlans.Count < activeSubsetOptionLimit;
                      right++)
                 {
                     AddSubset([pool[left], pool[right]]);
@@ -8572,18 +8595,56 @@ namespace Editors.KitbasherEditor.Services
             if (pool.Count > 3)
             {
                 for (var left = 0;
-                     left < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                     left < pool.Count && subsetPlans.Count < activeSubsetOptionLimit;
                      left++)
                 {
                     for (var middle = left + 1;
-                         middle < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                         middle < pool.Count && subsetPlans.Count < activeSubsetOptionLimit;
                          middle++)
                     {
                         for (var right = middle + 1;
-                             right < pool.Count && subsetPlans.Count < subsetOptionLimit;
+                             right < pool.Count && subsetPlans.Count < activeSubsetOptionLimit;
                              right++)
                         {
                             AddSubset([pool[left], pool[middle], pool[right]]);
+                        }
+                    }
+                }
+            }
+
+            // Four-way subsets are intentionally searched only after the pair/triple pass,
+            // and only from the bounded planning pool. The reserved option budget prevents
+            // the much larger triple search from consuming every slot before four-way
+            // combinations get a chance. A group containing exactly four candidates is
+            // already covered by the original full-group option below.
+            if (pool.Count > 4)
+            {
+                activeSubsetOptionLimit = subsetOptionLimit;
+                for (var first = 0;
+                     first < pool.Count && subsetPlans.Count < activeSubsetOptionLimit;
+                     first++)
+                {
+                    for (var second = first + 1;
+                         second < pool.Count && subsetPlans.Count < activeSubsetOptionLimit;
+                         second++)
+                    {
+                        for (var third = second + 1;
+                             third < pool.Count && subsetPlans.Count < activeSubsetOptionLimit;
+                             third++)
+                        {
+                            for (var fourth = third + 1;
+                                 fourth < pool.Count &&
+                                 subsetPlans.Count < activeSubsetOptionLimit;
+                                 fourth++)
+                            {
+                                AddSubset(
+                                    [
+                                        pool[first],
+                                        pool[second],
+                                        pool[third],
+                                        pool[fourth],
+                                    ]);
+                            }
                         }
                     }
                 }
@@ -16904,6 +16965,21 @@ namespace Editors.KitbasherEditor.Services
                     $"Atlas value-gate texture-only merge subset options evaluated: " +
                     $"{state.AtlasValueGateTextureOnlyMergeSubsetOptionsEvaluated}");
                 sb.AppendLine(
+                    $"Atlas value-gate texture-only merge subset option groups truncated: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeSubsetOptionGroupsTruncated}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge maximum subset group candidates: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeMaximumSubsetGroupCandidateCount}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge four-way options generated: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeFourWayOptionsGenerated}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge four-way options evaluated: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeFourWayOptionsEvaluated}");
+                sb.AppendLine(
+                    $"Atlas value-gate texture-only merge four-way groups accepted: " +
+                    $"{state.AtlasValueGateTextureOnlyMergeFourWayGroupsAccepted}");
+                sb.AppendLine(
                     $"Atlas value-gate texture-only batches accepted: " +
                     $"{state.AtlasValueGateTextureOnlyBatchesAccepted}");
                 sb.AppendLine(
@@ -19505,6 +19581,11 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasValueGateTextureOnlyMergeCrossBatchGroupsAccepted { get; set; }
             public int AtlasValueGateTextureOnlyMergeSubsetGroupsConsidered { get; set; }
             public int AtlasValueGateTextureOnlyMergeSubsetOptionsEvaluated { get; set; }
+            public int AtlasValueGateTextureOnlyMergeSubsetOptionGroupsTruncated { get; set; }
+            public int AtlasValueGateTextureOnlyMergeMaximumSubsetGroupCandidateCount { get; set; }
+            public int AtlasValueGateTextureOnlyMergeFourWayOptionsGenerated { get; set; }
+            public int AtlasValueGateTextureOnlyMergeFourWayOptionsEvaluated { get; set; }
+            public int AtlasValueGateTextureOnlyMergeFourWayGroupsAccepted { get; set; }
             public List<AtlasValueGateTextureOnlyMergeNearMiss> AtlasValueGateTextureOnlyMergeNearMisses { get; } = [];
             public int AtlasValueGateTextureOnlyBatchesAccepted { get; set; }
             public int AtlasValueGateTextureOnlyCandidatesAccepted { get; set; }

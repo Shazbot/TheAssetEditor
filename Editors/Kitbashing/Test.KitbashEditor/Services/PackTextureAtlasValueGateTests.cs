@@ -3334,6 +3334,39 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void TextureOnlyMergeSubsetPlans_FourCandidatesKeepFullFourWayPlan()
+        {
+            var shapes = GetTextureOnlyMergeSubsetShapes(["a", "b", "c", "d"]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    shapes.CandidateCounts,
+                    Is.EqualTo([2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 4]));
+                Assert.That(
+                    shapes.ProspectiveDraws,
+                    Is.EqualTo([1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3]));
+            });
+        }
+
+        [Test]
+        public void TextureOnlyMergeSubsetPlans_TenCandidatesReserveFourWayOptions()
+        {
+            var shapes = GetTextureOnlyMergeSubsetShapes(
+                ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(shapes.CandidateCounts.Length, Is.EqualTo(128));
+                Assert.That(
+                    shapes.CandidateCounts.Count(count => count == 4),
+                    Is.EqualTo(32));
+                Assert.That(shapes.CandidateCounts[^1], Is.EqualTo(10));
+                Assert.That(shapes.ProspectiveDraws[^1], Is.EqualTo(9));
+            });
+        }
+
+        [Test]
         public void TextureOnlyMergeSubsetPlans_SkipSubsetWithNoProspectiveDrawDelta()
         {
             var shapes = GetTextureOnlyMergeSubsetShapes(["same", "same", "different"]);
