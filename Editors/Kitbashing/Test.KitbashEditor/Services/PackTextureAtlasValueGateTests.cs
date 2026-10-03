@@ -5152,6 +5152,129 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void LodAwareAtlasValueGatePlan_KeepsFamilyAttachmentWithMergeHost()
+        {
+            const string rigidPath = "models/planning.rigid_model_v2";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+
+            var lod0Part0 = CreateAtlasPlanningTestCandidate(rigidPath, 0, 0);
+            var lod0Part1 = CreateAtlasPlanningTestCandidate(rigidPath, 0, 1);
+            var lod2Part0 = CreateAtlasPlanningTestCandidate(rigidPath, 2, 0);
+
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var keyProperty = atlasCandidateType.GetProperty(
+                "Key",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate.Key was not found.");
+            object GetKey(object candidate)
+                => keyProperty.GetValue(candidate)
+                   ?? throw new InvalidOperationException("Atlas candidate key was null.");
+
+            var hostKey = GetKey(lod0Part0);
+            var mergePartnerKey = GetKey(lod0Part1);
+            var familyAttachmentKey = GetKey(lod2Part0);
+            var hashSetType = typeof(HashSet<>).MakeGenericType(meshKeyType);
+            var family = Activator.CreateInstance(hashSetType)
+                ?? throw new InvalidOperationException("Could not create LOD family.");
+            var addFamilyKey = hashSetType.GetMethod("Add")
+                ?? throw new InvalidOperationException("LOD family could not add members.");
+            addFamilyKey.Invoke(family, [hostKey]);
+            addFamilyKey.Invoke(family, [familyAttachmentKey]);
+
+            var families = state.GetType()
+                .GetProperty(
+                    "LodAwareAtlasFamilies",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(state) as IList
+                ?? throw new InvalidOperationException("LOD atlas families were not found.");
+            families.Add(family);
+
+            var dictionaryType = typeof(Dictionary<,>)
+                .MakeGenericType(meshKeyType, atlasCandidateType);
+            var candidateByKey = Activator.CreateInstance(dictionaryType) as IDictionary
+                ?? throw new InvalidOperationException("Could not create candidate dictionary.");
+            candidateByKey.Add(hostKey, lod0Part0);
+            candidateByKey.Add(mergePartnerKey, lod0Part1);
+            candidateByKey.Add(familyAttachmentKey, lod2Part0);
+
+            var batchKeys = Activator.CreateInstance(hashSetType)
+                ?? throw new InvalidOperationException("Could not create batch key set.");
+            addFamilyKey.Invoke(batchKeys, [hostKey]);
+            addFamilyKey.Invoke(batchKeys, [mergePartnerKey]);
+            addFamilyKey.Invoke(batchKeys, [familyAttachmentKey]);
+
+            var groupType = serviceType.GetNestedType(
+                "MergeAffinityGroup",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MergeAffinityGroup was not found.");
+            var groupConstructor = groupType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 4);
+            var groupMeshes = Array.CreateInstance(meshKeyType, 2);
+            groupMeshes.SetValue(hostKey, 0);
+            groupMeshes.SetValue(mergePartnerKey, 1);
+            var affinityGroup = groupConstructor.Invoke(
+                [
+                    groupMeshes,
+                    1,
+                    new[] { "models/planning.rigid_model_v2|lod0|parts0-1" },
+                    new[] { "planning-material-a", "planning-material-b" },
+                ]);
+            var groupsType = typeof(List<>).MakeGenericType(groupType);
+            var groups = Activator.CreateInstance(groupsType) as IList
+                ?? throw new InvalidOperationException("Could not create affinity groups.");
+            groups.Add(affinityGroup);
+
+            var method = serviceType.GetMethod(
+                    "BuildAtlasValueGateGroupPlans",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "BuildAtlasValueGateGroupPlans was not found.");
+            var plans = ((IEnumerable)(method.Invoke(
+                    null,
+                    [state, groups, candidateByKey, batchKeys])
+                ?? throw new InvalidOperationException(
+                    "BuildAtlasValueGateGroupPlans returned null.")))
+                .Cast<object>()
+                .ToArray();
+            var plan = plans.Single();
+            var candidates = (IEnumerable)(plan.GetType()
+                .GetProperty("Candidates")
+                ?.GetValue(plan)
+                ?? throw new InvalidOperationException("Value-gate candidates were missing."));
+            var atomicFamilies = (IEnumerable)(plan.GetType()
+                .GetProperty("AtomicFamilies")
+                ?.GetValue(plan)
+                ?? throw new InvalidOperationException("Atomic LOD families were missing."));
+            var atomicFamily = atomicFamilies.Cast<object>().Single() as IEnumerable
+                ?? throw new InvalidOperationException("Atomic LOD family was null.");
+            var candidateArray = candidates.Cast<object>().ToArray();
+            var atomicFamilyArray = atomicFamilies.Cast<object>().ToArray();
+            var atomicMemberArray = atomicFamily.Cast<object>().ToArray();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(candidateArray, Has.Length.EqualTo(3));
+                Assert.That(atomicFamilyArray, Has.Length.EqualTo(1));
+                Assert.That(atomicMemberArray, Has.Length.EqualTo(2));
+            });
+        }
+
+        [Test]
         public void LodAwareAtlasFamilyClosure_ReusesPlacementAcrossLods()
         {
             var source = CreateTraversalContainer(
