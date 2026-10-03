@@ -9604,6 +9604,8 @@ namespace Editors.KitbasherEditor.Services
             wsModelPath = Normalize(wsModelPath);
             if (state.WsModelConsumerEntries.TryGetValue(wsModelPath, out entry!))
             {
+                state.WsModelConsumerCacheHits++;
+                state.WsModelConsumerMemoryCacheHits++;
                 ReplayXmlCompatibilityRepairs(
                     state,
                     wsModelPath,
@@ -9615,6 +9617,8 @@ namespace Editors.KitbasherEditor.Services
             if (IsVanillaAtlasCacheContainer(state, container) &&
                 cache?.TryGetWsModel(wsModelPath, out entry) == true)
             {
+                state.WsModelConsumerCacheHits++;
+                state.WsModelConsumerVanillaCacheHits++;
                 state.WsModelConsumerEntries[wsModelPath] = entry;
                 ReplayXmlCompatibilityRepairs(
                     state,
@@ -9623,6 +9627,7 @@ namespace Editors.KitbasherEditor.Services
                 return true;
             }
 
+            state.WsModelConsumerCacheMisses++;
             if (!TryGetWsDocumentForTraversal(
                     state,
                     container,
@@ -9635,6 +9640,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             entry = BuildWsModelConsumerEntry(document);
+            state.WsModelConsumerEntryBuilds++;
             entry.CompatibilityRepairs =
                 GetRecordedXmlCompatibilityRepairs(state, wsModelPath);
             state.WsModelConsumerEntries[wsModelPath] = entry;
@@ -9653,6 +9659,8 @@ namespace Editors.KitbasherEditor.Services
             materialPath = Normalize(materialPath);
             if (state.MaterialConsumerEntries.TryGetValue(materialPath, out entry!))
             {
+                state.MaterialConsumerCacheHits++;
+                state.MaterialConsumerMemoryCacheHits++;
                 ReplayXmlCompatibilityRepairs(
                     state,
                     materialPath,
@@ -9664,6 +9672,8 @@ namespace Editors.KitbasherEditor.Services
             if (IsVanillaAtlasCacheContainer(state, container) &&
                 cache?.TryGetMaterial(materialPath, out entry) == true)
             {
+                state.MaterialConsumerCacheHits++;
+                state.MaterialConsumerVanillaCacheHits++;
                 state.MaterialConsumerEntries[materialPath] = entry;
                 ReplayXmlCompatibilityRepairs(
                     state,
@@ -9672,6 +9682,7 @@ namespace Editors.KitbasherEditor.Services
                 return true;
             }
 
+            state.MaterialConsumerCacheMisses++;
             if (!TryGetMaterialDocumentForTraversal(
                     state,
                     container,
@@ -9684,6 +9695,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             entry = BuildMaterialConsumerEntry(document);
+            state.MaterialConsumerEntryBuilds++;
             entry.CompatibilityRepairs =
                 GetRecordedXmlCompatibilityRepairs(state, materialPath);
             state.MaterialConsumerEntries[materialPath] = entry;
@@ -9859,6 +9871,23 @@ namespace Editors.KitbasherEditor.Services
             BuildAtlasValueGateSourceTextureIndex(BatchState state)
         {
             state.CancellationToken.ThrowIfCancellationRequested();
+            var containerResolutionScansBefore =
+                state.GameplayTraversalContainerResolutionScans;
+            var containerResolutionCacheHitsBefore =
+                state.GameplayTraversalContainerResolutionCacheHits;
+            var wsModelConsumerCacheHitsBefore = state.WsModelConsumerCacheHits;
+            var wsModelConsumerMemoryCacheHitsBefore = state.WsModelConsumerMemoryCacheHits;
+            var wsModelConsumerVanillaCacheHitsBefore = state.WsModelConsumerVanillaCacheHits;
+            var wsModelConsumerCacheMissesBefore = state.WsModelConsumerCacheMisses;
+            var wsModelConsumerEntryBuildsBefore = state.WsModelConsumerEntryBuilds;
+            var materialConsumerCacheHitsBefore = state.MaterialConsumerCacheHits;
+            var materialConsumerMemoryCacheHitsBefore = state.MaterialConsumerMemoryCacheHits;
+            var materialConsumerVanillaCacheHitsBefore = state.MaterialConsumerVanillaCacheHits;
+            var materialConsumerCacheMissesBefore = state.MaterialConsumerCacheMisses;
+            var materialConsumerEntryBuildsBefore = state.MaterialConsumerEntryBuilds;
+            var wsModelXmlParseCountBefore = state.GameplayTraversalWsModelXmlParseCount;
+            var materialXmlParseCountBefore = state.GameplayTraversalMaterialXmlParseCount;
+            var wsModelIndexStopwatch = Stopwatch.StartNew();
             var loadedContainers = GetGameplayTraversalContainers(state);
             var referencesByTexture =
                 new Dictionary<string, HashSet<AtlasValueGateSourceReference>>(
@@ -9952,6 +9981,10 @@ namespace Editors.KitbasherEditor.Services
             var reachableWsModelPaths = reachableWsModels
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            state.AtlasValueGateReachableWsModelCount = reachableWsModelPaths.Length;
+            var sourceWsModelCount = 0;
+            var caWsModelCount = 0;
+            var unresolvedWsModelCount = 0;
             ReportProgress(
                 state.Progress,
                 "Evaluating atlas value",
@@ -9976,9 +10009,20 @@ namespace Editors.KitbasherEditor.Services
                     loadedContainers,
                     wsModelPath);
                 var wsFile = wsContainer?.FindFile(wsModelPath);
-                if (wsContainer == null ||
-                    wsFile == null ||
-                    !TryGetWsModelConsumerEntry(
+                if (wsContainer == null || wsFile == null)
+                {
+                    unresolvedWsModelCount++;
+                    continue;
+                }
+
+                if (ReferenceEquals(wsContainer, state.Source))
+                    sourceWsModelCount++;
+                else if (wsContainer.IsCaPackFile)
+                    caWsModelCount++;
+                else
+                    unresolvedWsModelCount++;
+
+                if (!TryGetWsModelConsumerEntry(
                         state,
                         wsContainer,
                         wsModelPath,
@@ -10045,6 +10089,15 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            state.AtlasValueGateSourceWsModelCount = sourceWsModelCount;
+            state.AtlasValueGateCaWsModelCount = caWsModelCount;
+            state.AtlasValueGateUnresolvedWsModelCount = unresolvedWsModelCount;
+            AddPhaseDuration(
+                state,
+                "Index WSModel texture consumers",
+                wsModelIndexStopwatch.Elapsed);
+
+            var directRigidIndexStopwatch = Stopwatch.StartNew();
             var directRigidPaths = state.SourceReachableAssetFiles
                 .Where(path => Path.GetExtension(path).Equals(
                     ".rigid_model_v2",
@@ -10065,6 +10118,7 @@ namespace Editors.KitbasherEditor.Services
             var directRigidPathValues = directRigidPaths
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            state.AtlasValueGateDirectRigidPathCount = directRigidPathValues.Length;
             ReportProgress(
                 state.Progress,
                 "Evaluating atlas value",
@@ -10126,11 +10180,18 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            AddPhaseDuration(
+                state,
+                "Index direct rigid texture consumers",
+                directRigidIndexStopwatch.Elapsed);
+
+            var directVmdIndexStopwatch = Stopwatch.StartNew();
             var directVmdTextures = new HashSet<string>(
                 StringComparer.OrdinalIgnoreCase);
             var directSourcePackVmdTextures = new HashSet<string>(
                 StringComparer.OrdinalIgnoreCase);
             var vmdDocuments = state.VmdDocuments.ToArray();
+            state.AtlasValueGateDirectVmdPathCount = vmdDocuments.Length;
             ReportProgress(
                 state.Progress,
                 "Evaluating atlas value",
@@ -10168,6 +10229,11 @@ namespace Editors.KitbasherEditor.Services
                 if (ReferenceEquals(vmdContainer, state.Source))
                     directSourcePackVmdTextures.UnionWith(normalizedTextures);
             }
+
+            AddPhaseDuration(
+                state,
+                "Index direct VMD texture consumers",
+                directVmdIndexStopwatch.Elapsed);
 
             state.AtlasValueGateRootsByWsModel ??=
                 BuildArmyRootsByWsModel(
@@ -10227,6 +10293,37 @@ namespace Editors.KitbasherEditor.Services
                     references,
                     packReferences);
             }
+
+            state.AtlasValueGateContainerResolutionScans =
+                state.GameplayTraversalContainerResolutionScans -
+                containerResolutionScansBefore;
+            state.AtlasValueGateContainerResolutionCacheHits =
+                state.GameplayTraversalContainerResolutionCacheHits -
+                containerResolutionCacheHitsBefore;
+            state.AtlasValueGateWsModelConsumerCacheHits =
+                state.WsModelConsumerCacheHits - wsModelConsumerCacheHitsBefore;
+            state.AtlasValueGateWsModelConsumerMemoryCacheHits =
+                state.WsModelConsumerMemoryCacheHits - wsModelConsumerMemoryCacheHitsBefore;
+            state.AtlasValueGateWsModelConsumerVanillaCacheHits =
+                state.WsModelConsumerVanillaCacheHits - wsModelConsumerVanillaCacheHitsBefore;
+            state.AtlasValueGateWsModelConsumerCacheMisses =
+                state.WsModelConsumerCacheMisses - wsModelConsumerCacheMissesBefore;
+            state.AtlasValueGateWsModelConsumerEntryBuilds =
+                state.WsModelConsumerEntryBuilds - wsModelConsumerEntryBuildsBefore;
+            state.AtlasValueGateMaterialConsumerCacheHits =
+                state.MaterialConsumerCacheHits - materialConsumerCacheHitsBefore;
+            state.AtlasValueGateMaterialConsumerMemoryCacheHits =
+                state.MaterialConsumerMemoryCacheHits - materialConsumerMemoryCacheHitsBefore;
+            state.AtlasValueGateMaterialConsumerVanillaCacheHits =
+                state.MaterialConsumerVanillaCacheHits - materialConsumerVanillaCacheHitsBefore;
+            state.AtlasValueGateMaterialConsumerCacheMisses =
+                state.MaterialConsumerCacheMisses - materialConsumerCacheMissesBefore;
+            state.AtlasValueGateMaterialConsumerEntryBuilds =
+                state.MaterialConsumerEntryBuilds - materialConsumerEntryBuildsBefore;
+            state.AtlasValueGateGameplayTraversalWsModelXmlParseCount =
+                state.GameplayTraversalWsModelXmlParseCount - wsModelXmlParseCountBefore;
+            state.AtlasValueGateGameplayTraversalMaterialXmlParseCount =
+                state.GameplayTraversalMaterialXmlParseCount - materialXmlParseCountBefore;
 
             BuildAtlasValueGateSourceTextureReverseIndex(state, result);
             state.VanillaAtlasConsumerCache?.Save();
@@ -14637,6 +14734,7 @@ namespace Editors.KitbasherEditor.Services
                 }
                 else
                 {
+                    state.GameplayTraversalMaterialXmlParseCount++;
                     document = LoadXml(file, out var compatibilityRepairs);
                     RecordXmlCompatibilityRepairs(
                         state,
@@ -14700,6 +14798,7 @@ namespace Editors.KitbasherEditor.Services
             materialFile ??= FindForReadStatic(state, materialPath)
                 ?? throw new FileNotFoundException($"Material file could not be resolved: {materialPath}");
 
+            state.GameplayTraversalMaterialXmlParseCount++;
             var doc = LoadXml(
                 materialFile,
                 out var compatibilityRepairs);
@@ -14731,10 +14830,20 @@ namespace Editors.KitbasherEditor.Services
             {
                 if (ReferenceEquals(container, state.Source))
                 {
-                    document = GetWsDocument(state, wsPath) ?? LoadXml(file);
+                    var cachedDocument = GetWsDocument(state, wsPath);
+                    if (cachedDocument != null)
+                    {
+                        document = cachedDocument;
+                    }
+                    else
+                    {
+                        state.GameplayTraversalWsModelXmlParseCount++;
+                        document = LoadXml(file);
+                    }
                 }
                 else
                 {
+                    state.GameplayTraversalWsModelXmlParseCount++;
                     document = LoadXml(file, out var compatibilityRepairs);
                     RecordXmlCompatibilityRepairs(
                         state,
@@ -14796,6 +14905,7 @@ namespace Editors.KitbasherEditor.Services
             if (file == null)
                 return null;
 
+            state.GameplayTraversalWsModelXmlParseCount++;
             var doc = LoadXml(
                 file,
                 out var compatibilityRepairs);
@@ -15879,6 +15989,38 @@ namespace Editors.KitbasherEditor.Services
                 $"{state.GameplayTraversalContainerResolutions.Count:N0} unique path(s); " +
                 $"{state.GameplayTraversalContainerResolutionScans:N0} scan(s), " +
                 $"{state.GameplayTraversalContainerResolutionCacheHits:N0} cache hit(s)");
+            sb.AppendLine(
+                $"Atlas value-gate reachable WSModels: " +
+                $"{state.AtlasValueGateReachableWsModelCount:N0} total " +
+                $"(source={state.AtlasValueGateSourceWsModelCount:N0}, " +
+                $"CA={state.AtlasValueGateCaWsModelCount:N0}, " +
+                $"unresolved={state.AtlasValueGateUnresolvedWsModelCount:N0})");
+            sb.AppendLine(
+                $"Atlas value-gate direct consumer paths: " +
+                $"rigid={state.AtlasValueGateDirectRigidPathCount:N0}, " +
+                $"VMD={state.AtlasValueGateDirectVmdPathCount:N0}");
+            sb.AppendLine(
+                $"Atlas value-gate WSModel consumer cache: " +
+                $"{state.AtlasValueGateWsModelConsumerCacheHits:N0} hit(s) " +
+                $"(memory={state.AtlasValueGateWsModelConsumerMemoryCacheHits:N0}, " +
+                $"vanilla={state.AtlasValueGateWsModelConsumerVanillaCacheHits:N0}), " +
+                $"{state.AtlasValueGateWsModelConsumerCacheMisses:N0} miss(es), " +
+                $"{state.AtlasValueGateWsModelConsumerEntryBuilds:N0} entry build(s)");
+            sb.AppendLine(
+                $"Atlas value-gate material consumer cache: " +
+                $"{state.AtlasValueGateMaterialConsumerCacheHits:N0} hit(s) " +
+                $"(memory={state.AtlasValueGateMaterialConsumerMemoryCacheHits:N0}, " +
+                $"vanilla={state.AtlasValueGateMaterialConsumerVanillaCacheHits:N0}), " +
+                $"{state.AtlasValueGateMaterialConsumerCacheMisses:N0} miss(es), " +
+                $"{state.AtlasValueGateMaterialConsumerEntryBuilds:N0} entry build(s)");
+            sb.AppendLine(
+                $"Atlas value-gate traversal XML parses: " +
+                $"WSModel={state.AtlasValueGateGameplayTraversalWsModelXmlParseCount:N0}, " +
+                $"material={state.AtlasValueGateGameplayTraversalMaterialXmlParseCount:N0}");
+            sb.AppendLine(
+                $"Atlas value-gate container resolution activity: " +
+                $"{state.AtlasValueGateContainerResolutionScans:N0} scan(s), " +
+                $"{state.AtlasValueGateContainerResolutionCacheHits:N0} cache hit(s)");
             var transformedAtlasRoots = state.AtlasedMeshes
                 .Select(entry => entry.RootVmdPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -18451,6 +18593,18 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, VanillaMaterialConsumerEntry> MaterialConsumerEntries { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public int GameplayTraversalWsModelXmlParseCount { get; set; }
+            public int GameplayTraversalMaterialXmlParseCount { get; set; }
+            public int WsModelConsumerCacheHits { get; set; }
+            public int WsModelConsumerMemoryCacheHits { get; set; }
+            public int WsModelConsumerVanillaCacheHits { get; set; }
+            public int WsModelConsumerCacheMisses { get; set; }
+            public int WsModelConsumerEntryBuilds { get; set; }
+            public int MaterialConsumerCacheHits { get; set; }
+            public int MaterialConsumerMemoryCacheHits { get; set; }
+            public int MaterialConsumerVanillaCacheHits { get; set; }
+            public int MaterialConsumerCacheMisses { get; set; }
+            public int MaterialConsumerEntryBuilds { get; set; }
             public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
             public int ReachableWsModelsByRootVersion { get; set; }
             public HashSet<string> SourceReachableAssetFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -18566,6 +18720,26 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> AtlasValueGateAcceptedAffectedUnits { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public List<AtlasValueGateBatchEconomics> AtlasValueGateAcceptedBatchEconomics { get; } = [];
+            public int AtlasValueGateReachableWsModelCount { get; set; }
+            public int AtlasValueGateSourceWsModelCount { get; set; }
+            public int AtlasValueGateCaWsModelCount { get; set; }
+            public int AtlasValueGateUnresolvedWsModelCount { get; set; }
+            public int AtlasValueGateDirectRigidPathCount { get; set; }
+            public int AtlasValueGateDirectVmdPathCount { get; set; }
+            public int AtlasValueGateContainerResolutionScans { get; set; }
+            public int AtlasValueGateContainerResolutionCacheHits { get; set; }
+            public int AtlasValueGateWsModelConsumerCacheHits { get; set; }
+            public int AtlasValueGateWsModelConsumerMemoryCacheHits { get; set; }
+            public int AtlasValueGateWsModelConsumerVanillaCacheHits { get; set; }
+            public int AtlasValueGateWsModelConsumerCacheMisses { get; set; }
+            public int AtlasValueGateWsModelConsumerEntryBuilds { get; set; }
+            public int AtlasValueGateMaterialConsumerCacheHits { get; set; }
+            public int AtlasValueGateMaterialConsumerMemoryCacheHits { get; set; }
+            public int AtlasValueGateMaterialConsumerVanillaCacheHits { get; set; }
+            public int AtlasValueGateMaterialConsumerCacheMisses { get; set; }
+            public int AtlasValueGateMaterialConsumerEntryBuilds { get; set; }
+            public int AtlasValueGateGameplayTraversalWsModelXmlParseCount { get; set; }
+            public int AtlasValueGateGameplayTraversalMaterialXmlParseCount { get; set; }
             public Dictionary<string, AtlasValueGateSourceTexture>? AtlasValueGateSourceTextureIndex { get; set; }
             public Dictionary<AtlasValueGateSourceReference, List<string>>?
                 AtlasValueGateSourceTexturesByReference { get; set; }
