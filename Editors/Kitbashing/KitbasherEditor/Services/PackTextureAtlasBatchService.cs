@@ -46,7 +46,9 @@ namespace Editors.KitbasherEditor.Services
         // original source textures remain reachable through other materials. Give that
         // structural draw a bounded floor plus scenario-proportional credit, while keeping
         // the cumulative pack-growth cap below.
-        private const long MaxNetBcnBytesPerTextureOnlyMergeDraw = 2L * 1024 * 1024; // 2 MiB
+        private const long MaxNetBcnBytesPerTextureOnlyMergeDraw = 4L * 1024 * 1024; // 4 MiB
+        private const long MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw =
+            512L * 1024; // 0.5 MiB
         // A texture-consolidation atlas keeps geometry and draw credit unchanged. Permit it
         // only when it replaces multiple real texture assignments at a tighter payload cost.
         private const long MaxNetBcnBytesPerConsolidatedTextureAssignment = 256L * 1024; // 0.25 MiB
@@ -7942,7 +7944,7 @@ namespace Editors.KitbasherEditor.Services
             var structuralBudget = prospectiveTextureMergeDraws *
                                     (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
             var scenarioBudget = expectedArmyDrawsEliminated *
-                                 MaxNetBcnBytesPerExpectedArmyDraw;
+                                 MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
             var effectiveGlobalBudget = Math.Max(structuralBudget, scenarioBudget);
             if (globalCostBytes > effectiveGlobalBudget ||
                 expectedCostBytes > scenarioBudget)
@@ -8578,7 +8580,7 @@ namespace Editors.KitbasherEditor.Services
             var structuralBudget = evaluation.MarginalProspectiveTextureMergeDraws *
                 (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
             var scenarioBudget = evaluation.MarginalExpectedArmyDrawsEliminated *
-                                 MaxNetBcnBytesPerExpectedArmyDraw;
+                                 MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
             var effectiveGlobalBudget = Math.Max(structuralBudget, scenarioBudget);
             var globalPressure = effectiveGlobalBudget > 0
                 ? evaluation.MarginalGlobalCostBytes / effectiveGlobalBudget
@@ -9059,7 +9061,7 @@ namespace Editors.KitbasherEditor.Services
                     var structuralBudgetBytes = plan.Group.ProspectiveTextureMergeDraws *
                                                 (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
                     var scenarioBudgetBytes = expectedArmyDrawsEliminated *
-                                              MaxNetBcnBytesPerExpectedArmyDraw;
+                                              MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
                     var effectiveGlobalBudgetBytes = Math.Max(
                         structuralBudgetBytes,
                         scenarioBudgetBytes);
@@ -16635,7 +16637,8 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Atlas value-gate texture-only merge credit: " +
                     $"{FormatMiB(MaxNetBcnBytesPerTextureOnlyMergeDraw, 2)} per structural " +
-                    $"draw eliminated, or {FormatMiB(MaxNetBcnBytesPerExpectedArmyDraw, 2)} " +
+                    $"draw eliminated, or " +
+                    $"{FormatMiB(MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw, 2)} " +
                     "per scenario-estimated draw when larger; scenario chargeable cost must " +
                     "fit that scenario budget; scenario-resolved benefit required; source " +
                     "retirement not required");

@@ -2951,19 +2951,19 @@ namespace Test.KitbashEditor.Services
                 scenarioResolved: true,
                 prospectiveTextureMergeDraws: 1,
                 expectedArmyDrawsEliminated: 0.01,
-                globalCostBytes: 2.1 * mib,
+                globalCostBytes: 4.1 * mib,
                 expectedCostBytes: 0,
                 acceptedNetBcnBytes: 0,
-                proposedNetBcnBytes: 2.1 * mib,
+                proposedNetBcnBytes: 4.1 * mib,
                 sourceBcnBytes: 400 * mib);
             var twoProspectiveDraws = GetTextureOnlyMergeValueGateBudgetDecision(
                 scenarioResolved: true,
                 prospectiveTextureMergeDraws: 2,
                 expectedArmyDrawsEliminated: 0.01,
-                globalCostBytes: 2.1 * mib,
+                globalCostBytes: 4.1 * mib,
                 expectedCostBytes: 0,
                 acceptedNetBcnBytes: 0,
-                proposedNetBcnBytes: 2.1 * mib,
+                proposedNetBcnBytes: 4.1 * mib,
                 sourceBcnBytes: 400 * mib);
 
             Assert.Multiple(() =>
@@ -3130,7 +3130,10 @@ namespace Test.KitbashEditor.Services
                     Is.EqualTo(512L * 1024));
                 Assert.That(
                     GetConstant("MaxNetBcnBytesPerTextureOnlyMergeDraw"),
-                    Is.EqualTo(2L * 1024 * 1024));
+                    Is.EqualTo(4L * 1024 * 1024));
+                Assert.That(
+                    GetConstant("MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw"),
+                    Is.EqualTo(512L * 1024));
                 Assert.That(
                     GetConstant("MinimumRetiredSourceTexturesForTextureOnlyAtlas"),
                     Is.EqualTo(2));
@@ -3390,7 +3393,8 @@ namespace Test.KitbashEditor.Services
                 "materials\\expensive.xml",
                 CreateMaterialXml("textures\\expensive.dds"),
                 atlasWidth: 2048,
-                atlasHeight: 2048);
+                atlasHeight: 2048,
+                requiresMaskAtlas: true);
             var allCandidates = new[] { host, pairLeft, pairRight, expensiveThird };
             foreach (var candidate in allCandidates)
                 AddCandidateUsageToState(state, candidate);
