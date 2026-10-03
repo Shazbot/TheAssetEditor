@@ -921,12 +921,17 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    if (!TryGetWsDocumentForTraversal(
+                    // Reuse the compact effective WSModel entry used by atlas value
+                    // accounting. Source XML is already memoized in BatchState; for a
+                    // vanilla CA container this also populates the persistent consumer
+                    // cache, so the later value-gate pass does not parse the same WSModel
+                    // again.
+                    if (!TryGetWsModelConsumerEntry(
                             state,
                             container,
                             wsModelPath,
                             file,
-                            out var document))
+                            out var wsModelEntry))
                     {
                         index.RecordFailure(
                             rootAssetPath,
@@ -939,8 +944,7 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    var geometryPath = Normalize(
-                        document.SelectSingleNode("/model/geometry")?.InnerText);
+                    var geometryPath = wsModelEntry.GeometryPath;
                     if (geometryPath.Length == 0)
                     {
                         index.RecordFailure(
@@ -9598,10 +9602,20 @@ namespace Editors.KitbasherEditor.Services
             out VanillaWsModelConsumerEntry entry)
         {
             wsModelPath = Normalize(wsModelPath);
+            if (state.WsModelConsumerEntries.TryGetValue(wsModelPath, out entry!))
+            {
+                ReplayXmlCompatibilityRepairs(
+                    state,
+                    wsModelPath,
+                    entry.CompatibilityRepairs);
+                return true;
+            }
+
             var cache = state.VanillaAtlasConsumerCache;
             if (IsVanillaAtlasCacheContainer(state, container) &&
                 cache?.TryGetWsModel(wsModelPath, out entry) == true)
             {
+                state.WsModelConsumerEntries[wsModelPath] = entry;
                 ReplayXmlCompatibilityRepairs(
                     state,
                     wsModelPath,
@@ -9623,6 +9637,7 @@ namespace Editors.KitbasherEditor.Services
             entry = BuildWsModelConsumerEntry(document);
             entry.CompatibilityRepairs =
                 GetRecordedXmlCompatibilityRepairs(state, wsModelPath);
+            state.WsModelConsumerEntries[wsModelPath] = entry;
             if (IsVanillaAtlasCacheContainer(state, container))
                 cache?.SetWsModel(wsModelPath, entry);
             return true;
@@ -9636,10 +9651,20 @@ namespace Editors.KitbasherEditor.Services
             out VanillaMaterialConsumerEntry entry)
         {
             materialPath = Normalize(materialPath);
+            if (state.MaterialConsumerEntries.TryGetValue(materialPath, out entry!))
+            {
+                ReplayXmlCompatibilityRepairs(
+                    state,
+                    materialPath,
+                    entry.CompatibilityRepairs);
+                return true;
+            }
+
             var cache = state.VanillaAtlasConsumerCache;
             if (IsVanillaAtlasCacheContainer(state, container) &&
                 cache?.TryGetMaterial(materialPath, out entry) == true)
             {
+                state.MaterialConsumerEntries[materialPath] = entry;
                 ReplayXmlCompatibilityRepairs(
                     state,
                     materialPath,
@@ -9661,6 +9686,7 @@ namespace Editors.KitbasherEditor.Services
             entry = BuildMaterialConsumerEntry(document);
             entry.CompatibilityRepairs =
                 GetRecordedXmlCompatibilityRepairs(state, materialPath);
+            state.MaterialConsumerEntries[materialPath] = entry;
             if (IsVanillaAtlasCacheContainer(state, container))
                 cache?.SetMaterial(materialPath, entry);
             return true;
@@ -18421,6 +18447,10 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, VariantMesh> VmdDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, VanillaWsModelConsumerEntry> WsModelConsumerEntries { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, VanillaMaterialConsumerEntry> MaterialConsumerEntries { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, HashSet<string>> ReachableWsModelsByRoot { get; } = new(StringComparer.OrdinalIgnoreCase);
             public int ReachableWsModelsByRootVersion { get; set; }
             public HashSet<string> SourceReachableAssetFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
