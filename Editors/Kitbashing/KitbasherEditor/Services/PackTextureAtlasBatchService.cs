@@ -3686,11 +3686,20 @@ namespace Editors.KitbasherEditor.Services
 
             // Close exact placement families after structural components are atomic. The
             // planning identity intentionally excludes LOD and material shader/parameters;
-            // ProcessBatch will still generate separate material variants from each original
-            // material document while the shared atlas placement is emitted once.
+            // the family key adds the rigid geometry path and requires at least two LODs so
+            // unrelated VMDs that happen to share a texture region remain under the normal
+            // locality planner. ProcessBatch will still generate separate material variants
+            // from each original material document while the shared atlas placement is emitted
+            // once.
             var identityGroups = working
                 .SelectMany(batch => batch)
-                .GroupBy(GetAtlasPlanningSourceIdentity)
+                .GroupBy(candidate => (
+                    candidate.Key.GeometryPath,
+                    Identity: GetAtlasPlanningSourceIdentity(candidate)))
+                .Where(group => group
+                    .Select(candidate => candidate.Key.LodIndex)
+                    .Distinct()
+                    .Count() >= 2)
                 .OrderBy(group => BuildAtlasPlanningOrderKey(group.First()), StringComparer.Ordinal)
                 .ToList();
             foreach (var identityGroup in identityGroups)
@@ -3804,7 +3813,13 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var identityGroup in working
                          .SelectMany(batch => batch)
-                         .GroupBy(GetAtlasPlanningSourceIdentity))
+                         .GroupBy(candidate => (
+                             candidate.Key.GeometryPath,
+                             Identity: GetAtlasPlanningSourceIdentity(candidate)))
+                         .Where(group => group
+                             .Select(candidate => candidate.Key.LodIndex)
+                             .Distinct()
+                             .Count() >= 2))
             {
                 var members = identityGroup
                     .Select(candidate => candidate.Key)
@@ -3881,6 +3896,14 @@ namespace Editors.KitbasherEditor.Services
                             .Where(candidate => !memberKeys.Contains(candidate.Key))
                             .ToList())
                     .ToList();
+                if (!PreservesMergeAffinityContributions(
+                        batches,
+                        proposedBatches,
+                        mergeAffinityGroups))
+                {
+                    continue;
+                }
+
                 var mergeAffinity = CalculateMergeAffinityScore(
                     proposedBatches,
                     mergeAffinityGroups);
@@ -3897,7 +3920,19 @@ namespace Editors.KitbasherEditor.Services
             }
 
             if (hostBatchIndex < 0)
-                return false;
+            {
+                // Every single-host proposal either lost an existing merge contribution or
+                // could not be represented as one atlas. Try the stronger combined-host plan
+                // before giving up, then leave the original layout untouched if it is not
+                // safe either.
+                return TryCombineAtlasFamilyHostBatches(
+                    state,
+                    batches,
+                    occupiedBatchIds,
+                    mergeAffinityGroups,
+                    baselineMergeAffinity,
+                    out hostBatchIndex);
+            }
 
             // A family closure is only allowed to preserve or improve the merge layout. If
             // every single-host proposal would split a valid same-LOD merge, try the stronger
@@ -3977,6 +4012,13 @@ namespace Editors.KitbasherEditor.Services
             {
                 return false;
             }
+            if (!PreservesMergeAffinityContributions(
+                    batches,
+                    proposedBatches,
+                    mergeAffinityGroups))
+            {
+                return false;
+            }
 
             foreach (var batchIndex in occupied)
             {
@@ -3986,6 +4028,18 @@ namespace Editors.KitbasherEditor.Services
 
             batches[selectedHostBatchIndex] = combined;
             return true;
+        }
+
+        private static bool PreservesMergeAffinityContributions(
+            IReadOnlyList<List<AtlasCandidate>> baselineBatches,
+            IReadOnlyList<List<AtlasCandidate>> proposedBatches,
+            IReadOnlyList<MergeAffinityGroup> mergeAffinityGroups)
+        {
+            var baselineBatchByMesh = BuildBatchIndexByMesh(baselineBatches);
+            var proposedBatchByMesh = BuildBatchIndexByMesh(proposedBatches);
+            return mergeAffinityGroups.All(group =>
+                CalculateMergeAffinityContribution(group, proposedBatchByMesh) >=
+                CalculateMergeAffinityContribution(group, baselineBatchByMesh));
         }
 
         private static void RegisterLodAtlasFamily(

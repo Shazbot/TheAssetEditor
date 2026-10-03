@@ -2039,6 +2039,63 @@ namespace Test.KitbashEditor.Services
             return candidateList;
         }
 
+        private static (int BaselineScore, int ProposedScore, bool Preserves)
+            EvaluateMergeAffinityContributionsForTest(
+            IReadOnlyList<object[]> baselineBatches,
+            IReadOnlyList<object[]> proposedBatches,
+            IReadOnlyList<object> affinityGroups)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidateListType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var batchesType = typeof(List<>).MakeGenericType(candidateListType);
+            var baseline = Activator.CreateInstance(batchesType)
+                ?? throw new InvalidOperationException("Could not create baseline batches.");
+            var proposed = Activator.CreateInstance(batchesType)
+                ?? throw new InvalidOperationException("Could not create proposed batches.");
+            foreach (var batch in baselineBatches)
+                ((IList)baseline).Add(CreateAtlasCandidateBatch(batch));
+            foreach (var batch in proposedBatches)
+                ((IList)proposed).Add(CreateAtlasCandidateBatch(batch));
+
+            var groupType = serviceType.GetNestedType(
+                "MergeAffinityGroup",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MergeAffinityGroup was not found.");
+            var groupsType = typeof(List<>).MakeGenericType(groupType);
+            var groups = Activator.CreateInstance(groupsType)
+                ?? throw new InvalidOperationException("Could not create affinity groups.");
+            foreach (var group in affinityGroups)
+                ((IList)groups).Add(group);
+
+            var method = serviceType.GetMethod(
+                    "PreservesMergeAffinityContributions",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "PreservesMergeAffinityContributions was not found.");
+            var preserves = (bool)(method.Invoke(null, [baseline, proposed, groups])
+                ?? throw new InvalidOperationException(
+                    "PreservesMergeAffinityContributions returned null."));
+            var scoreMethod = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "CalculateMergeAffinityScore" &&
+                    candidate.GetParameters().Length == 2);
+            var baselineScore = Convert.ToInt32(scoreMethod.Invoke(
+                null,
+                [baseline, groups]));
+            var proposedScore = Convert.ToInt32(scoreMethod.Invoke(
+                null,
+                [proposed, groups]));
+            return (baselineScore, proposedScore, preserves);
+        }
+
         private static object CreateExpectedEntitiesByMesh(
             IReadOnlyList<object> candidates,
             string unitId)
@@ -5450,6 +5507,77 @@ namespace Test.KitbashEditor.Services
 
             Assert.That(closed, Has.Count.EqualTo(1));
             Assert.That(closed[0], Has.Count.EqualTo(2));
+        }
+
+        [Test]
+        public void LodAwareAtlasFamilyClosure_DoesNotLinkDifferentRigidsWithSamePlacement()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            SetStateProperty(state, "LodAwareAtlasPlanningEnabled", true);
+
+            var closed = CloseAtlasPlanningTestBatches(
+                state,
+                (
+                    CreateAtlasPlanningTestCandidate(
+                        "models/planning_a.rigid_model_v2",
+                        0,
+                        0),
+                    null),
+                (
+                    CreateAtlasPlanningTestCandidate(
+                        "models/planning_b.rigid_model_v2",
+                        2,
+                        0),
+                    null));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(closed, Has.Count.EqualTo(2));
+                Assert.That(closed.Select(batch => batch.Count), Is.EqualTo([1, 1]));
+            });
+        }
+
+        [Test]
+        public void LodAwareAtlasFamilyClosure_RejectsEqualTotalAffinitySwap()
+        {
+            const string rigidPath = "models/planning.rigid_model_v2";
+            var lod2A = CreateAtlasPlanningTestCandidate(rigidPath, 2, 0);
+            var lod2B = CreateAtlasPlanningTestCandidate(rigidPath, 2, 1);
+            var lod0A = CreateAtlasPlanningTestCandidate(rigidPath, 0, 0);
+            var lod0B = CreateAtlasPlanningTestCandidate(rigidPath, 0, 1);
+            var lod2Group = CreateTextureOnlyMergeAffinityGroup(
+                [lod2A, lod2B],
+                "planning-lod2-a",
+                "planning-lod2-b");
+            var lod0Group = CreateTextureOnlyMergeAffinityGroup(
+                [lod0A, lod0B],
+                "planning-lod0-a",
+                "planning-lod0-b");
+
+            // Both layouts have one raw merge opportunity, but they preserve different
+            // same-LOD groups. The family move must not treat the equal sums as interchangeable.
+            var evaluation = EvaluateMergeAffinityContributionsForTest(
+                [
+                    [lod2A, lod2B],
+                    [lod0A],
+                    [lod0B],
+                ],
+                [
+                    [lod2A],
+                    [lod2B],
+                    [lod0A, lod0B],
+                ],
+                [lod2Group, lod0Group]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(evaluation.BaselineScore, Is.EqualTo(1));
+                Assert.That(evaluation.ProposedScore, Is.EqualTo(1));
+                Assert.That(evaluation.Preserves, Is.False);
+            });
         }
 
         [Test]
