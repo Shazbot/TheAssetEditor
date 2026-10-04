@@ -3528,8 +3528,10 @@ namespace Editors.KitbasherEditor.Services
         }
 
 
-
-.rigid_model_v2");
+        private static string BuildCrossRigidGeneratedRigidPath(
+            string payloadId)
+            => Normalize(
+                $"variantmeshes\\wh_variantmodels\\asset_editor\\cross_rigid\\{payloadId.ToLowerInvariant()}.rigid_model_v2");
 
         private static string BuildCrossRigidGeneratedWsModelPath(
             string payloadId)
