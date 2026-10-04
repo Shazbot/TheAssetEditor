@@ -2122,7 +2122,6 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static bool TryBuildCrossRigidAnalysisComponent(
-        private static bool TryBuildCrossRigidAnalysisComponent(
             BatchState state,
             string vmdPath,
             string wsModelPathValue,
@@ -2441,7 +2440,6 @@ namespace Editors.KitbasherEditor.Services
                 model.OpponentCultureWeights);
         }
 
-        private static string GetCrossRigidWsModelTopologyIdentity(XmlDocument document)
         private static string GetCrossRigidWsModelTopologyIdentity(XmlDocument document)
         {
             var clone = new XmlDocument();
