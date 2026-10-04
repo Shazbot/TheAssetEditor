@@ -80,6 +80,7 @@ namespace Editors.KitbasherEditor.Services
         private const long MaxCrossRigidGeneratedGeometryGrowthBytes =
             256L * 1024 * 1024; // 256 MiB
         private const double MinimumCrossRigidSingleVmdExpectedArmyDraw = 0.02;
+        private const int MaxCrossRigidJointStateCombinations = 512;
         private static readonly bool AtlasProfilingEnabled =
             IsEnabledEnvironmentVariable(AtlasProfilingEnvironmentVariable);
 
@@ -1959,14 +1960,47 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var rewriteableOccurrenceSets =
-                    classifiedOccurrenceSets
-                        .Where(item =>
-                            item.RewriteClass ==
-                            CrossRigidActivationRewriteClass.ExactActivationSafe)
-                        .Select(item => item.OccurrenceSet)
-                        .ToArray();
+                    new List<CrossRigidRewriteOccurrenceSet>();
+                foreach (var classified in classifiedOccurrenceSets)
+                {
+                    if (classified.RewriteClass ==
+                        CrossRigidActivationRewriteClass.ExactActivationSafe)
+                    {
+                        rewriteableOccurrenceSets.Add(
+                            classified.OccurrenceSet);
+                        continue;
+                    }
+
+                    if (classified.RewriteClass !=
+                        CrossRigidActivationRewriteClass.JointAlwaysPresentSlots)
+                    {
+                        continue;
+                    }
+
+                    if (TryDescribeCrossRigidJointAlwaysPresentRewrite(
+                            state,
+                            classified.OccurrenceSet,
+                            activationClassificationVmdDocuments,
+                            out _,
+                            out var jointReason))
+                    {
+                        rewriteableOccurrenceSets.Add(
+                            classified.OccurrenceSet);
+                    }
+                    else
+                    {
+                        RecordCrossRigidAnalysisDiagnostic(
+                            state,
+                            "Joint probability-1 rewrite state is outside conservative writer",
+                            $"{plan.VmdPath} [{plan.AttachmentIdentity}]: " +
+                            jointReason);
+                    }
+                }
+
+                var rewriteableOccurrenceSetArray =
+                    rewriteableOccurrenceSets.ToArray();
                 var aggregatedProbability = Math.Clamp(
-                    rewriteableOccurrenceSets.Sum(set =>
+                    rewriteableOccurrenceSetArray.Sum(set =>
                         set.Probability),
                     0.0,
                     1.0);
@@ -2024,7 +2058,7 @@ namespace Editors.KitbasherEditor.Services
 
                 var excludedOccurrenceSetCount =
                     allRewriteOccurrenceSets.Length -
-                    rewriteableOccurrenceSets.Length;
+                    rewriteableOccurrenceSetArray.Length;
                 if (excludedOccurrenceSetCount != 0)
                 {
                     RecordCrossRigidAnalysisDiagnostic(
@@ -2050,10 +2084,10 @@ namespace Editors.KitbasherEditor.Services
                         plan.GeneratedPayloadId,
                         plan.VmdPath,
                         aggregatedProbability,
-                        rewriteableOccurrenceSets.Length,
+                        rewriteableOccurrenceSetArray.Length,
                         plan.AttachmentIdentity,
                         plan.SourceInstances,
-                        rewriteableOccurrenceSets,
+                        rewriteableOccurrenceSetArray,
                         plan.SourceGeometry,
                         plan.RigidPaths,
                         plan.Lods,
@@ -2293,14 +2327,266 @@ namespace Editors.KitbasherEditor.Services
                 : string.Join(" + ", parts);
         }
 
-        private static bool TryClassifyCrossRigidActivationToken(
+        private static bool TryDescribeCrossRigidJointAlwaysPresentRewrite(
+            BatchState state,
+            CrossRigidRewriteOccurrenceSet occurrenceSet,
+            Dictionary<string, XmlDocument> sourceVmdDocuments,
+            out CrossRigidJointAlwaysPresentRewriteDescriptor descriptor,
+            out string reason)
+        {
+            descriptor = null!;
+            reason = string.Empty;
+            if (occurrenceSet.SourceInstances.Length < 2)
+            {
+                reason = "fewer than two source model occurrences";
+                return false;
+            }
+
+            if (occurrenceSet.SourceInstances.Any(instance =>
+                    instance.HasRewriteBlockingModifiers))
+            {
+                reason =
+                    "source occurrence has imposter or decal state";
+                return false;
+            }
+
+            var definingVmdPaths = occurrenceSet.SourceInstances
+                .Select(instance => Normalize(instance.DefiningVmdPath))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (definingVmdPaths.Length != 1)
+            {
+                reason =
+                    "source occurrences are defined by different VMDs";
+                return false;
+            }
+
+            var referenceChainSignatures =
+                occurrenceSet.SourceInstances
+                    .Select(instance =>
+                        BuildCrossRigidReferenceChainSignature(
+                            instance.ReferenceChain))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+            if (referenceChainSignatures.Length != 1)
+            {
+                reason =
+                    "source occurrences use different VMD reference chains";
+                return false;
+            }
+
+            var tokenSets = occurrenceSet.SourceInstances
+                .Select(instance =>
+                    instance.ActivationSignature.Equals(
+                        "<always>",
+                        StringComparison.Ordinal)
+                        ? new HashSet<string>(StringComparer.Ordinal)
+                        : instance.ActivationSignature
+                            .Split(
+                                '\u001f',
+                                StringSplitOptions.RemoveEmptyEntries)
+                            .ToHashSet(StringComparer.Ordinal))
+                .ToArray();
+            if (tokenSets.Length == 0)
+            {
+                reason = "activation signature set is empty";
+                return false;
+            }
+
+            var commonTokens = new HashSet<string>(
+                tokenSets[0],
+                StringComparer.Ordinal);
+            foreach (var tokenSet in tokenSets.Skip(1))
+                commonTokens.IntersectWith(tokenSet);
+
+            var definingVmdPath = definingVmdPaths[0];
+            string? parentXmlPath = null;
+            var sourceSelections =
+                new List<CrossRigidJointSourceSelection>();
+            for (var instanceIndex = 0;
+                 instanceIndex < occurrenceSet.SourceInstances.Length;
+                 instanceIndex++)
+            {
+                var instance = occurrenceSet.SourceInstances[instanceIndex];
+                var differingTokens = tokenSets[instanceIndex]
+                    .Where(token => !commonTokens.Contains(token))
+                    .ToArray();
+                if (differingTokens.Length != 1)
+                {
+                    reason =
+                        "each source must differ by exactly one direct sibling-slot selection";
+                    return false;
+                }
+
+                if (!TryParseCrossRigidActivationToken(
+                        state,
+                        differingTokens[0],
+                        sourceVmdDocuments,
+                        out var tokenSelection,
+                        out reason))
+                {
+                    return false;
+                }
+
+                if (tokenSelection.OptionalSlot)
+                {
+                    reason =
+                        "joint writer does not support optional slots";
+                    return false;
+                }
+
+                if (tokenSelection.IsReference)
+                {
+                    reason =
+                        "joint writer currently requires direct VARIANT_MESH alternatives";
+                    return false;
+                }
+
+                if (!tokenSelection.OwnerVmdPath.Equals(
+                        definingVmdPath,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    reason =
+                        "joint selection owner does not match the model-defining VMD";
+                    return false;
+                }
+
+                parentXmlPath ??= tokenSelection.ParentXmlPath;
+                if (!tokenSelection.ParentXmlPath.Equals(
+                        parentXmlPath,
+                        StringComparison.Ordinal))
+                {
+                    reason =
+                        "joint selections do not share one VARIANT_MESH parent";
+                    return false;
+                }
+
+                var expectedModelXmlPath =
+                    $"{parentXmlPath}/SLOT[{tokenSelection.SlotIndex}]/" +
+                    $"VARIANT_MESH[{tokenSelection.AlternativeIndex}]";
+                if (!instance.ModelXmlPath.Equals(
+                        expectedModelXmlPath,
+                        StringComparison.Ordinal))
+                {
+                    reason =
+                        "source model is not the direct selected VARIANT_MESH alternative";
+                    return false;
+                }
+
+                sourceSelections.Add(
+                    new CrossRigidJointSourceSelection(
+                        instance,
+                        tokenSelection.SlotIndex,
+                        tokenSelection.AlternativeIndex));
+            }
+
+            if (sourceSelections
+                    .Select(selection => selection.SlotIndex)
+                    .Distinct()
+                    .Count() != sourceSelections.Count)
+            {
+                reason =
+                    "multiple source models come from the same joint slot";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(parentXmlPath) ||
+                !TryGetCrossRigidSourceVmdDocument(
+                    state,
+                    definingVmdPath,
+                    sourceVmdDocuments,
+                    out var definingDocument,
+                    out reason) ||
+                definingDocument.SelectSingleNode(
+                    parentXmlPath) is not XmlElement parentElement)
+            {
+                if (string.IsNullOrWhiteSpace(reason))
+                    reason = "joint parent VARIANT_MESH could not be resolved";
+                return false;
+            }
+
+            long combinationCount = 1;
+            foreach (var slotIndex in sourceSelections
+                         .Select(selection => selection.SlotIndex)
+                         .OrderBy(index => index))
+            {
+                if (parentElement.SelectSingleNode(
+                        $"SLOT[{slotIndex}]") is not XmlElement slotElement)
+                {
+                    reason =
+                        $"joint source slot {slotIndex} no longer resolves";
+                    return false;
+                }
+
+                var probability =
+                    ParseVmdSlotProbability(
+                        slotElement.GetAttribute("probability"));
+                if (probability <
+                    1.0 - AtlasValueGateExpectedDrawEpsilon)
+                {
+                    reason =
+                        $"joint source slot {slotIndex} is optional";
+                    return false;
+                }
+
+                var alternativeCount =
+                    (slotElement.SelectNodes("VARIANT_MESH")?.Count ?? 0) +
+                    (slotElement.SelectNodes(
+                        "VARIANT_MESH_REFERENCE")?.Count ?? 0);
+                if (alternativeCount <= 1)
+                {
+                    reason =
+                        $"joint source slot {slotIndex} is not an alternative slot";
+                    return false;
+                }
+
+                combinationCount *= alternativeCount;
+                if (combinationCount >
+                    MaxCrossRigidJointStateCombinations)
+                {
+                    reason =
+                        $"joint Cartesian product exceeds " +
+                        $"{MaxCrossRigidJointStateCombinations:N0} combinations";
+                    return false;
+                }
+            }
+
+            descriptor =
+                new CrossRigidJointAlwaysPresentRewriteDescriptor(
+                    definingVmdPath,
+                    parentXmlPath,
+                    occurrenceSet.SourceInstances[0]
+                        .ReferenceChain
+                        .ToArray(),
+                    sourceSelections
+                        .OrderBy(selection => selection.SlotIndex)
+                        .ToArray(),
+                    sourceSelections
+                        .Select(selection => selection.SlotIndex)
+                        .OrderBy(index => index)
+                        .ToArray(),
+                    (int)combinationCount);
+            return true;
+        }
+
+        private static string BuildCrossRigidReferenceChainSignature(
+            IEnumerable<CrossRigidVmdReferenceHop> referenceChain)
+            => string.Join(
+                "\u001e",
+                referenceChain.Select(hop => string.Join(
+                    "|",
+                    Normalize(hop.OwnerVmdPath),
+                    hop.ReferenceXmlPath,
+                    Normalize(hop.ReferencedVmdPath))));
+
+        private static bool TryParseCrossRigidActivationToken(
             BatchState state,
             string token,
             Dictionary<string, XmlDocument> sourceVmdDocuments,
-            out bool optionalSlot,
+            out CrossRigidActivationTokenSelection selection,
             out string reason)
         {
-            optionalSlot = false;
+            selection = null!;
             reason = string.Empty;
 
             var ownerSeparator = token.IndexOf(
@@ -2343,6 +2629,23 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
+            var isReference = referenceMarker == branchMarker;
+            var alternativeMarker =
+                isReference ? "/ref=" : "/mesh=";
+            var alternativeIndexText = token[
+                (branchMarker + alternativeMarker.Length)..];
+            if (!int.TryParse(
+                    alternativeIndexText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var alternativeIndex) ||
+                alternativeIndex <= 0)
+            {
+                reason =
+                    $"activation token has invalid alternative index: {token}";
+                return false;
+            }
+
             var ownerVmdPath = Normalize(
                 token[..ownerSeparator]);
             var parentXmlPath = token[
@@ -2369,9 +2672,37 @@ namespace Editors.KitbasherEditor.Services
             var slotProbability =
                 ParseVmdSlotProbability(
                     slotElement.GetAttribute("probability"));
-            optionalSlot =
-                slotProbability <
-                1.0 - AtlasValueGateExpectedDrawEpsilon;
+            selection =
+                new CrossRigidActivationTokenSelection(
+                    ownerVmdPath,
+                    parentXmlPath,
+                    slotIndex,
+                    isReference,
+                    alternativeIndex,
+                    slotProbability <
+                        1.0 - AtlasValueGateExpectedDrawEpsilon);
+            return true;
+        }
+
+        private static bool TryClassifyCrossRigidActivationToken(
+            BatchState state,
+            string token,
+            Dictionary<string, XmlDocument> sourceVmdDocuments,
+            out bool optionalSlot,
+            out string reason)
+        {
+            if (!TryParseCrossRigidActivationToken(
+                    state,
+                    token,
+                    sourceVmdDocuments,
+                    out var selection,
+                    out reason))
+            {
+                optionalSlot = false;
+                return false;
+            }
+
+            optionalSlot = selection.OptionalSlot;
             return true;
         }
 
@@ -26301,6 +26632,27 @@ namespace Editors.KitbasherEditor.Services
         private sealed record CrossRigidRewriteOccurrenceSet(
             double Probability,
             CrossRigidVisualInstance[] SourceInstances);
+
+        private sealed record CrossRigidActivationTokenSelection(
+            string OwnerVmdPath,
+            string ParentXmlPath,
+            int SlotIndex,
+            bool IsReference,
+            int AlternativeIndex,
+            bool OptionalSlot);
+
+        private sealed record CrossRigidJointSourceSelection(
+            CrossRigidVisualInstance Instance,
+            int SlotIndex,
+            int AlternativeIndex);
+
+        private sealed record CrossRigidJointAlwaysPresentRewriteDescriptor(
+            string DefiningVmdPath,
+            string ParentXmlPath,
+            CrossRigidVmdReferenceHop[] ReferenceChain,
+            CrossRigidJointSourceSelection[] SourceSelections,
+            int[] SlotIndices,
+            int CombinationCount);
 
         private sealed record CrossRigidSourceGeometryComponent(
             string WsModelPath,
