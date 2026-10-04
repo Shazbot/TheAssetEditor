@@ -4246,6 +4246,35 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void AtlasValueGateProjection_UnobservedRigidIsUnknownEvenWhenIndexIsComplete()
+        {
+            const string rootVmdPath =
+                @"variantmeshes\variantmeshdefinitions\complete.variantmeshdefinition";
+            const string rigidPath = @"models\unobserved.rigid_model_v2";
+            var state = CreateScenarioProjectionTestState(rootVmdPath);
+
+            // The dependency index is complete, but this rigid was never related to a
+            // traversed root. Absence from DirectConsumersByRigid is therefore not proof
+            // of geometry-only usage.
+            var projection = BuildAtlasValueGateScenarioProjection(
+                state,
+                CreateAtlasValueGateSourceReference(rigidPath, rigidEmbedded: true));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetProjectionPaths(projection, "GeometryOnlyRigidPaths"),
+                    Is.Empty);
+                Assert.That(
+                    GetProjectionPaths(projection, "UnresolvedConsumers"),
+                    Is.EqualTo([NormalizeTestPath(rigidPath)]));
+                Assert.That(
+                    GetProjectionPaths(projection, "UnresolvedReasons"),
+                    Has.Some.Contains("ConsumerTopologyUnobserved"));
+            });
+        }
+
+        [Test]
         public void AtlasValueGateResidency_IncompleteRigidTopologyKeepsFullResidency()
         {
             const string rootVmdPath =

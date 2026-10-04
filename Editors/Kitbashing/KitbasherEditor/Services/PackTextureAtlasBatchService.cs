@@ -11815,13 +11815,12 @@ namespace Editors.KitbasherEditor.Services
                 return AtlasValueGateRigidConsumerClassification.Unknown;
             }
 
-            if (!dependencyIndex.IsComplete &&
-                dependencyIndex.IsAssetAffectedByIncompleteRoot(rigidPath))
+            if (dependencyIndex.IsAssetAffectedByIncompleteRoot(rigidPath))
             {
                 var incompleteRoots = dependencyIndex
                     .GetIncompleteRootsForAsset(rigidPath);
                 reason = incompleteRoots.Count == 0
-                    ? $"DiscoveryIncomplete:{rigidPath}"
+                    ? $"ConsumerTopologyUnobserved:{rigidPath}"
                     : $"DiscoveryIncomplete:{rigidPath}<-" +
                       string.Join(",", incompleteRoots);
                 return AtlasValueGateRigidConsumerClassification.Unknown;
