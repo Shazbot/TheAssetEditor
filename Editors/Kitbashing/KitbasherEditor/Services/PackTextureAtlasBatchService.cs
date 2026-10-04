@@ -2322,7 +2322,6 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static bool TryBuildCrossRigidAnalysisComponent(
-        private static bool TryBuildCrossRigidAnalysisComponent(
             BatchState state,
             string vmdPath,
             string wsModelPathValue,
@@ -2538,7 +2537,6 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static int CountCrossRigidVertexLimitedMergeBins(
-        private static int CountCrossRigidVertexLimitedMergeBins(
             IEnumerable<int> vertexCounts)
         {
             var bins = new List<int>();
@@ -2745,7 +2743,6 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private void AnalyzeCompatibleMeshMergesForRigid(
         private void AnalyzeCompatibleMeshMergesForRigid(
             BatchState state,
             string rigidPath,
@@ -20983,7 +20980,6 @@ namespace Editors.KitbasherEditor.Services
             }
 
             if (state.SourceBcnResidency != null && state.OutputBcnResidency != null)
-            if (state.SourceBcnResidency != null && state.OutputBcnResidency != null)
             {
                 var sourceBcn = state.SourceBcnResidency;
                 var outputBcn = state.OutputBcnResidency;
@@ -23197,7 +23193,6 @@ namespace Editors.KitbasherEditor.Services
             string[] ExternalStructuralConsumers,
             bool ConsumerDiscoveryComplete);
 
-        private sealed record ArmyResidencyModel(
         private sealed record ArmyResidencyModel(
             IReadOnlyDictionary<Wh3ArmyUnitCategory, HashSet<string>> UnitsByCategory,
             IReadOnlyDictionary<
