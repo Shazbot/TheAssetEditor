@@ -8,6 +8,92 @@ namespace Test.KitbashEditor.Services
     {
         private static Assembly AssetEditorAssembly => Assembly.Load("Editors.KitbasherEditor");
 
+        private static object GetDefaultScenario()
+            => AssetEditorAssembly
+                .GetType(
+                    "Editors.KitbasherEditor.Services.Wh3ArmyVisualScenario",
+                    throwOnError: true)!
+                .GetProperty(
+                    "Default",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                ?.GetValue(null)
+                ?? throw new InvalidOperationException(
+                    "Wh3ArmyVisualScenario.Default was not found.");
+
+        private static object CreateScenarioWithLodDistribution(
+            object defaultScenario,
+            IReadOnlyDictionary<int, double> lodDistribution)
+        {
+            var scenarioType = defaultScenario.GetType();
+            var constructor = scenarioType.GetConstructors(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Single(candidate => candidate.GetParameters().Length == 9);
+
+            object Value(string propertyName)
+                => scenarioType.GetProperty(propertyName)?.GetValue(defaultScenario)
+                   ?? throw new InvalidOperationException(
+                       $"Scenario property '{propertyName}' was not found.");
+
+            return constructor.Invoke(
+            [
+                Value("UnitSizeScale"),
+                Value("CrewScale"),
+                Value("EngineRoundingPolicy"),
+                lodDistribution,
+                Value("DestructionProbability"),
+                Value("DestructTransitionProbability"),
+                Value("ArmySlotTemplate"),
+                Value("RosterScope"),
+                scenarioType.GetProperty("RosterScopeKey")?.GetValue(defaultScenario),
+            ]);
+        }
+
+        private static object NormalizeScenario(object scenario)
+            => scenario.GetType()
+                .GetMethod(
+                    "NormalizeForUse",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.Invoke(scenario, null)
+                ?? throw new InvalidOperationException(
+                    "Wh3ArmyVisualScenario.NormalizeForUse was not found.");
+
+        private static IReadOnlyDictionary<int, double> GetLodDistribution(object scenario)
+        {
+            return (IReadOnlyDictionary<int, double>)(scenario.GetType()
+                .GetProperty("LodDistribution")
+                ?.GetValue(scenario)
+                ?? throw new InvalidOperationException(
+                    "Scenario LOD distribution was not found."));
+        }
+
+        private static double GetLodWeightedDrawSavings(
+            object scenario,
+            int lod,
+            double unweightedDrawSavings)
+        {
+            return (double)(scenario.GetType()
+                .GetMethod(
+                    "GetLodWeightedDrawSavings",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.Invoke(scenario, [lod, unweightedDrawSavings])
+                ?? throw new InvalidOperationException(
+                    "Wh3ArmyVisualScenario.GetLodWeightedDrawSavings was not found."));
+        }
+
+        private static Exception GetInvocationException(Action action)
+        {
+            try
+            {
+                action();
+            }
+            catch (TargetInvocationException exception) when (exception.InnerException != null)
+            {
+                return exception.InnerException;
+            }
+
+            throw new AssertionException("Expected the reflected call to throw.");
+        }
+
         private static string ReadEmbeddedJson(string fileName)
         {
             var assembly = AssetEditorAssembly;
@@ -106,9 +192,7 @@ namespace Test.KitbashEditor.Services
         [Test]
         public void AtlasScenario_DefaultsToPackAffectedRosterScope()
         {
-            var scenarioType = AssetEditorAssembly.GetType(
-                "Editors.KitbasherEditor.Services.Wh3ArmyVisualScenario",
-                throwOnError: true)!;
+            var scenarioType = GetDefaultScenario().GetType();
             var scenario = scenarioType.GetProperty(
                     "PackAffected",
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
@@ -118,6 +202,91 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 scenarioType.GetProperty("RosterScope")?.GetValue(scenario)?.ToString(),
                 Is.EqualTo("ModAffectedUnits"));
+        }
+
+        [Test]
+        public void AtlasScenario_DefaultUsesNormalizedFourLodProfile()
+        {
+            var distribution = GetLodDistribution(GetDefaultScenario());
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(distribution.Keys, Is.EquivalentTo(new[] { 0, 1, 2, 3 }));
+                Assert.That(distribution[0], Is.EqualTo(0.25).Within(0.000000001));
+                Assert.That(distribution[1], Is.EqualTo(0.25).Within(0.000000001));
+                Assert.That(distribution[2], Is.EqualTo(0.25).Within(0.000000001));
+                Assert.That(distribution[3], Is.EqualTo(0.25).Within(0.000000001));
+                Assert.That(distribution.Values.Sum(), Is.EqualTo(1.0).Within(0.000000001));
+            });
+        }
+
+        [Test]
+        public void AtlasScenario_NormalizesCustomWeightsAndDropsZeroEntries()
+        {
+            var scenario = CreateScenarioWithLodDistribution(
+                GetDefaultScenario(),
+                new Dictionary<int, double>
+                {
+                    [0] = 2.0,
+                    [1] = 0.0,
+                    [3] = 1.0,
+                });
+            var normalized = GetLodDistribution(NormalizeScenario(scenario));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(normalized.Keys, Is.EquivalentTo(new[] { 0, 3 }));
+                Assert.That(normalized[0], Is.EqualTo(2.0 / 3.0).Within(0.000000001));
+                Assert.That(normalized[3], Is.EqualTo(1.0 / 3.0).Within(0.000000001));
+                Assert.That(normalized.Values.Sum(), Is.EqualTo(1.0).Within(0.000000001));
+            });
+        }
+
+        [Test]
+        public void AtlasScenario_MissingLodGetsNoCreditAndDrawSavingsAreWeighted()
+        {
+            var scenario = GetDefaultScenario();
+            var weightedLodSavings = Enumerable.Range(0, 4)
+                .Sum(lod => GetLodWeightedDrawSavings(scenario, lod, 4.0));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetLodWeightedDrawSavings(scenario, 2, 4.0), Is.EqualTo(1.0).Within(0.000000001));
+                Assert.That(GetLodWeightedDrawSavings(scenario, 4, 4.0), Is.EqualTo(0.0));
+                Assert.That(weightedLodSavings, Is.EqualTo(4.0).Within(0.000000001));
+            });
+        }
+
+        [Test]
+        public void AtlasScenario_RejectsInvalidLodWeights()
+        {
+            var scenario = GetDefaultScenario();
+            var invalidNegative = CreateScenarioWithLodDistribution(
+                scenario,
+                new Dictionary<int, double> { [0] = -1.0 });
+            var invalidTotal = CreateScenarioWithLodDistribution(
+                scenario,
+                new Dictionary<int, double> { [0] = 0.0, [1] = 0.0 });
+
+            var negativeException = GetInvocationException(() => NormalizeScenario(invalidNegative));
+            var totalException = GetInvocationException(() => NormalizeScenario(invalidTotal));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(negativeException, Is.TypeOf<ArgumentOutOfRangeException>());
+                Assert.That(totalException, Is.TypeOf<ArgumentException>());
+            });
+        }
+
+        [Test]
+        public void SharedContract_RejectsUnnormalizedLodDistribution()
+        {
+            var fixture = ReadEmbeddedJson("army-visual-contract-v1.json")
+                .Replace("\"0\": 0.75", "\"0\": 0.80", StringComparison.Ordinal);
+
+            var exception = GetInvocationException(() => DeserializeContract(fixture));
+
+            Assert.That(exception, Is.TypeOf<InvalidDataException>());
         }
     }
 }

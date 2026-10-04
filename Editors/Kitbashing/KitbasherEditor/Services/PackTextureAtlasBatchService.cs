@@ -8255,9 +8255,7 @@ namespace Editors.KitbasherEditor.Services
                         continue;
 
                     var lodIndex = meshes[0].LodIndex;
-                    var lodProbability = model.Scenario.LodDistribution
-                        .GetValueOrDefault(lodIndex);
-                    if (lodProbability <= 0)
+                    if (model.Scenario.GetLodProbability(lodIndex) <= 0)
                         continue;
 
                     var assetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -8416,9 +8414,10 @@ namespace Editors.KitbasherEditor.Services
                                 continue;
 
                             drawsByCulture[culture] +=
-                                lodProbability *
-                                slotCount *
-                                (eliminatedDrawsAcrossResolvedUnits / population);
+                                model.Scenario.GetLodWeightedDrawSavings(
+                                    lodIndex,
+                                    slotCount *
+                                    (eliminatedDrawsAcrossResolvedUnits / population));
                         }
                     }
                 }

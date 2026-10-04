@@ -923,7 +923,7 @@ namespace Test.KitbashEditor.Services
             });
         }
 
-        [TestCase("model", 1.0)]
+        [TestCase("model", 0.25)]
         [TestCase("destroyed_model", 0.0)]
         [TestCase("destruct_model", 0.0)]
         [TestCase("destruction_animation", 0.0)]

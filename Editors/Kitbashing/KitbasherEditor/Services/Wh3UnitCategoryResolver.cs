@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
@@ -77,7 +78,14 @@ namespace Editors.KitbasherEditor.Services
             0.75,
             0.50,
             Wh3EntityRoundingPolicy.Ceiling,
-            new Dictionary<int, double> { [0] = 1.0 },
+            NormalizeLodDistribution(
+                new Dictionary<int, double>
+                {
+                    [0] = 0.25,
+                    [1] = 0.25,
+                    [2] = 0.25,
+                    [3] = 0.25,
+                }),
             0.0,
             0.0,
             new Dictionary<Wh3ArmyUnitCategory, int>
@@ -97,6 +105,79 @@ namespace Editors.KitbasherEditor.Services
         // should not be charged for units whose visuals cannot be affected by that pack.
         public static Wh3ArmyVisualScenario PackAffected { get; } =
             Default with { RosterScope = Wh3RosterScope.ModAffectedUnits };
+
+        // Scenario construction is intentionally kept compatible with the positional record
+        // API used by callers and contract tests. Normalize at the resolver boundary so every
+        // downstream calculation sees a mutually exclusive probability distribution, while
+        // missing LOD keys continue to mean zero probability for that LOD.
+        internal Wh3ArmyVisualScenario NormalizeForUse()
+            => this with
+            {
+                LodDistribution = NormalizeLodDistribution(LodDistribution),
+            };
+
+        internal double GetLodProbability(int lod)
+            => LodDistribution.GetValueOrDefault(Math.Max(0, lod));
+
+        internal double GetLodWeightedDrawSavings(
+            int lod,
+            double unweightedDrawSavings)
+        {
+            if (!double.IsFinite(unweightedDrawSavings) || unweightedDrawSavings <= 0)
+                return 0;
+
+            return unweightedDrawSavings * GetLodProbability(lod);
+        }
+
+        internal static IReadOnlyDictionary<int, double> NormalizeLodDistribution(
+            IReadOnlyDictionary<int, double>? distribution)
+        {
+            if (distribution == null || distribution.Count == 0)
+            {
+                throw new ArgumentException(
+                    "The scenario LOD distribution must contain at least one entry.",
+                    nameof(distribution));
+            }
+
+            var positiveWeights = new Dictionary<int, double>();
+            double totalWeight = 0;
+            foreach (var (lod, weight) in distribution)
+            {
+                if (lod < 0)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(distribution),
+                        lod,
+                        "Scenario LOD indices cannot be negative.");
+                }
+
+                if (!double.IsFinite(weight) || weight < 0)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(distribution),
+                        weight,
+                        "Scenario LOD weights must be finite and non-negative.");
+                }
+
+                if (weight == 0)
+                    continue;
+
+                positiveWeights[lod] = weight;
+                totalWeight += weight;
+            }
+
+            if (!double.IsFinite(totalWeight) || totalWeight <= 0)
+            {
+                throw new ArgumentException(
+                    "The scenario LOD distribution must contain a positive total weight.",
+                    nameof(distribution));
+            }
+
+            return new ReadOnlyDictionary<int, double>(
+                positiveWeights.ToDictionary(
+                    entry => entry.Key,
+                    entry => entry.Value / totalWeight));
+        }
     }
 
     internal sealed record Wh3UnitVisualCounts(
@@ -347,7 +428,8 @@ namespace Editors.KitbasherEditor.Services
             Wh3ArmyVisualScenario? scenario,
             IReadOnlyList<IPackFileContainer> containerSnapshot)
         {
-            var activeScenario = scenario ?? Wh3ArmyVisualScenario.Default;
+            var activeScenario = (scenario ?? Wh3ArmyVisualScenario.Default)
+                .NormalizeForUse();
             var diagnostics = new List<string>();
             var parsedRowsByTable = RequiredTables.ToDictionary(
                 table => table,
@@ -2226,10 +2308,10 @@ namespace Editors.KitbasherEditor.Services
             if (stateProbability <= 0)
                 return 0;
 
-            if (!scenario.LodDistribution.TryGetValue(Math.Max(0, lod), out var lodProbability))
-                return 0;
-
-            return Math.Clamp(stateProbability * lodProbability, 0.0, 1.0);
+            return Math.Clamp(
+                stateProbability * scenario.GetLodProbability(lod),
+                0.0,
+                1.0);
         }
 
         private static int ResolveAssetLod(string assetPath)

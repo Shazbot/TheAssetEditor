@@ -246,10 +246,20 @@ namespace Editors.KitbasherEditor.Services
                 scenario.LodDistribution.Any(entry =>
                     !int.TryParse(entry.Key, out var lod) ||
                     lod < 0 ||
+                    !double.IsFinite(entry.Value) ||
                     entry.Value < 0 ||
                     entry.Value > 1))
             {
                 throw new InvalidDataException("Army visual scenario LOD distribution is invalid.");
+            }
+
+            var lodProbabilityTotal = scenario.LodDistribution.Values.Sum();
+            if (!double.IsFinite(lodProbabilityTotal) ||
+                lodProbabilityTotal <= 0 ||
+                Math.Abs(lodProbabilityTotal - 1.0) > 0.000001)
+            {
+                throw new InvalidDataException(
+                    "Army visual scenario LOD distribution must be normalized to a positive total of 1.");
             }
 
             if (scenario.DestructionProbability is < 0 or > 1 ||
