@@ -2345,7 +2345,6 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static bool IsCrossRigidSourceRigidFullyCovered(
-        private static bool IsCrossRigidSourceRigidFullyCovered(
             BatchState state,
             GameplayMeshDependencyIndex dependencyIndex,
             string rigidPath,
