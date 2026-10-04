@@ -1868,21 +1868,52 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var plan in rewritePlanAccumulators.Values)
             {
+                var allRewriteOccurrenceSets =
+                    MergeCrossRigidRewriteOccurrenceSets(
+                        plan.RewriteOccurrenceSets);
+                var rewriteableOccurrenceSets =
+                    allRewriteOccurrenceSets
+                        .Where(
+                            IsCrossRigidRewriteOccurrenceSetActivationSafe)
+                        .ToArray();
                 var aggregatedProbability = Math.Clamp(
-                    plan.AggregatedConfigurationProbability,
+                    rewriteableOccurrenceSets.Sum(set =>
+                        set.Probability),
                     0.0,
                     1.0);
+
+                var excludedOccurrenceSetCount =
+                    allRewriteOccurrenceSets.Length -
+                    rewriteableOccurrenceSets.Length;
+                if (excludedOccurrenceSetCount != 0)
+                {
+                    RecordCrossRigidAnalysisDiagnostic(
+                        state,
+                        "Activation-unsafe rewrite states excluded before value gate",
+                        $"{plan.VmdPath} [{plan.AttachmentIdentity}]: " +
+                        $"{excludedOccurrenceSetCount}/{allRewriteOccurrenceSets.Length} state(s)");
+                }
+
+                if (aggregatedProbability <=
+                    AtlasValueGateExpectedDrawEpsilon)
+                {
+                    RecordCrossRigidAnalysisBlocker(
+                        state,
+                        "No copy-on-write-safe activation state",
+                        $"{plan.VmdPath} [{plan.AttachmentIdentity}]");
+                    continue;
+                }
+
                 state.CrossRigidMergeAnalysisEntries.Add(
                     new CrossRigidMergeAnalysisEntry(
                         plan.RewritePlanId,
                         plan.GeneratedPayloadId,
                         plan.VmdPath,
                         aggregatedProbability,
-                        plan.ContributingConfigurationCount,
+                        rewriteableOccurrenceSets.Length,
                         plan.AttachmentIdentity,
                         plan.SourceInstances,
-                        MergeCrossRigidRewriteOccurrenceSets(
-                            plan.RewriteOccurrenceSets),
+                        rewriteableOccurrenceSets,
                         plan.SourceGeometry,
                         plan.RigidPaths,
                         plan.Lods,
@@ -1912,6 +1943,17 @@ namespace Editors.KitbasherEditor.Services
                         .OrderBy(
                             path => path,
                             StringComparer.OrdinalIgnoreCase)));
+
+        private static bool
+            IsCrossRigidRewriteOccurrenceSetActivationSafe(
+                CrossRigidRewriteOccurrenceSet occurrenceSet)
+            => occurrenceSet.SourceInstances.Length >= 2 &&
+               occurrenceSet.SourceInstances
+                   .Select(instance => instance.ActivationSignature)
+                   .Distinct(StringComparer.Ordinal)
+                   .Count() == 1 &&
+               occurrenceSet.SourceInstances.All(instance =>
+                   !instance.HasLocalModelModifiers);
 
         private static IReadOnlyList<CrossRigidRewriteOccurrenceSet>
             BuildCrossRigidRewriteOccurrenceSets(
