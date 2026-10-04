@@ -21375,6 +21375,8 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Generated-geometry residency uses a conservative upper-bound union of attachment-local rewrite probabilities; displaced-source credit is a strict lower bound.");
                 sb.AppendLine(
+                    "Geometry payload bytes are serialized vertex plus 16-bit index payload only; RMV headers and material metadata are excluded.");
+                sb.AppendLine(
                     $"VMD roots with multiple reachable WSModel paths analyzed: " +
                     $"{state.CrossRigidAnalysisVmdCount:N0}");
                 sb.AppendLine(
