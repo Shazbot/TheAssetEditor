@@ -1605,6 +1605,9 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidActivationRewriteOccurrenceSetCounts.Clear();
             state.CrossRigidActivationRewritePlanCounts.Clear();
             state.CrossRigidActivationRewriteExpectedDrawCalls.Clear();
+            state.CrossRigidModifierProfileOccurrenceSetCounts.Clear();
+            state.CrossRigidModifierProfilePlanCounts.Clear();
+            state.CrossRigidModifierProfileExpectedDrawCalls.Clear();
             state.CrossRigidWsModelOccurrenceProbabilities.Clear();
             state.CrossRigidDisplacedSourceGeometryEntries.Clear();
             state.CrossRigidAnalysisVmdCount = 0;
@@ -1894,6 +1897,67 @@ namespace Editors.KitbasherEditor.Services
                         (occurrenceSet, rewriteClass, classificationDetail));
                 }
 
+                var modifierProfiledOccurrenceSets =
+                    classifiedOccurrenceSets
+                        .Select(item =>
+                        {
+                            var topologyClass =
+                                ClassifyCrossRigidRewriteOccurrenceSetTopology(
+                                    state,
+                                    item.OccurrenceSet,
+                                    activationClassificationVmdDocuments,
+                                    out _);
+                            var modifierProfile =
+                                BuildCrossRigidModifierProfile(
+                                    item.OccurrenceSet,
+                                    plan.SourceGeometry);
+                            return (
+                                item.OccurrenceSet,
+                                TopologyClass: topologyClass,
+                                ModifierProfile: modifierProfile);
+                        })
+                        .ToArray();
+
+                foreach (var modifierGroup in
+                         modifierProfiledOccurrenceSets
+                             .Where(item =>
+                                 !item.ModifierProfile.Equals(
+                                     "none",
+                                     StringComparison.Ordinal))
+                             .GroupBy(item => string.Join(
+                                 " | ",
+                                 GetCrossRigidActivationRewriteClassLabel(
+                                     item.TopologyClass),
+                                 item.ModifierProfile),
+                                 StringComparer.Ordinal))
+                {
+                    var profileItems = modifierGroup.ToArray();
+                    var profileProbability = Math.Clamp(
+                        profileItems.Sum(item =>
+                            item.OccurrenceSet.Probability),
+                        0.0,
+                        1.0);
+                    state.CrossRigidModifierProfileOccurrenceSetCounts[
+                        modifierGroup.Key] =
+                        state.CrossRigidModifierProfileOccurrenceSetCounts
+                            .GetValueOrDefault(modifierGroup.Key) +
+                        profileItems.Length;
+                    state.CrossRigidModifierProfilePlanCounts[
+                        modifierGroup.Key] =
+                        state.CrossRigidModifierProfilePlanCounts
+                            .GetValueOrDefault(modifierGroup.Key) +
+                        1;
+                    state.CrossRigidModifierProfileExpectedDrawCalls[
+                        modifierGroup.Key] =
+                        state.CrossRigidModifierProfileExpectedDrawCalls
+                            .GetValueOrDefault(modifierGroup.Key) +
+                        CalculateExpectedCrossRigidArmyDrawSavings(
+                            state,
+                            plan.VmdPath,
+                            profileProbability,
+                            plan.Lods);
+                }
+
                 var rewriteableOccurrenceSets =
                     classifiedOccurrenceSets
                         .Where(item =>
@@ -2047,6 +2111,30 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<string, XmlDocument> sourceVmdDocuments,
                 out string detail)
         {
+            if (occurrenceSet.SourceInstances.Any(instance =>
+                    instance.HasLocalModelModifiers))
+            {
+                detail =
+                    BuildCrossRigidModifierProfile(
+                        occurrenceSet,
+                        []);
+                return CrossRigidActivationRewriteClass.LocalModelModifiers;
+            }
+
+            return ClassifyCrossRigidRewriteOccurrenceSetTopology(
+                state,
+                occurrenceSet,
+                sourceVmdDocuments,
+                out detail);
+        }
+
+        private static CrossRigidActivationRewriteClass
+            ClassifyCrossRigidRewriteOccurrenceSetTopology(
+                BatchState state,
+                CrossRigidRewriteOccurrenceSet occurrenceSet,
+                Dictionary<string, XmlDocument> sourceVmdDocuments,
+                out string detail)
+        {
             detail = string.Empty;
             if (occurrenceSet.SourceInstances.Length < 2)
             {
@@ -2054,16 +2142,12 @@ namespace Editors.KitbasherEditor.Services
                 return CrossRigidActivationRewriteClass.Unclassifiable;
             }
 
-            if (occurrenceSet.SourceInstances.Any(instance =>
-                    instance.HasLocalModelModifiers))
-            {
-                detail =
-                    "one or more source occurrences has local decal, imposter, or metadata state";
-                return CrossRigidActivationRewriteClass.LocalModelModifiers;
-            }
-
-            if (IsCrossRigidRewriteOccurrenceSetActivationSafe(
-                    occurrenceSet))
+            var activationSignatures =
+                occurrenceSet.SourceInstances
+                    .Select(instance => instance.ActivationSignature)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+            if (activationSignatures.Length == 1)
             {
                 return CrossRigidActivationRewriteClass.ExactActivationSafe;
             }
@@ -2126,6 +2210,87 @@ namespace Editors.KitbasherEditor.Services
             return hasOptionalSlot
                 ? CrossRigidActivationRewriteClass.JointOptionalSlots
                 : CrossRigidActivationRewriteClass.JointAlwaysPresentSlots;
+        }
+
+        private static string BuildCrossRigidModifierProfile(
+            CrossRigidRewriteOccurrenceSet occurrenceSet,
+            IReadOnlyList<CrossRigidSourceGeometryComponent>
+                sourceGeometry)
+        {
+            var rigidByWsModel = sourceGeometry
+                .GroupBy(
+                    source => source.WsModelPath,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.First().RigidPath,
+                    StringComparer.OrdinalIgnoreCase);
+
+            var imposterInstances = occurrenceSet.SourceInstances
+                .Where(instance =>
+                    !string.IsNullOrWhiteSpace(
+                        instance.ImposterModelPath))
+                .ToArray();
+            var hasMirroredImposter = false;
+            var hasIndependentImposter = false;
+            foreach (var instance in imposterInstances)
+            {
+                if (rigidByWsModel.TryGetValue(
+                        instance.WsModelPath,
+                        out var rigidPath) &&
+                    Normalize(instance.ImposterModelPath).Equals(
+                        Normalize(rigidPath),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    hasMirroredImposter = true;
+                }
+                else
+                {
+                    hasIndependentImposter = true;
+                }
+            }
+
+            var parts = new List<string>();
+            if (hasMirroredImposter)
+                parts.Add("imposter mirrors source rigid");
+            if (hasIndependentImposter)
+                parts.Add("independent imposter geometry");
+            if (occurrenceSet.SourceInstances.Any(instance =>
+                    instance.HasDecalDiffuse ||
+                    instance.HasDecalNormal))
+            {
+                var hasDiffuse = occurrenceSet.SourceInstances.Any(
+                    instance => instance.HasDecalDiffuse);
+                var hasNormal = occurrenceSet.SourceInstances.Any(
+                    instance => instance.HasDecalNormal);
+                parts.Add(
+                    hasDiffuse && hasNormal
+                        ? "diffuse+normal decal"
+                        : hasDiffuse
+                            ? "diffuse decal"
+                            : "normal decal");
+            }
+
+            if (occurrenceSet.SourceInstances.Any(instance =>
+                    instance.HasMetadata))
+            {
+                parts.Add("metadata");
+            }
+
+            // When source geometry is unavailable (for the broad diagnostic
+            // emitted before a plan is materialized), retain imposter presence
+            // instead of incorrectly classifying it as independent geometry.
+            if (imposterInstances.Length != 0 &&
+                sourceGeometry.Count == 0)
+            {
+                parts.Remove("independent imposter geometry");
+                parts.Remove("imposter mirrors source rigid");
+                parts.Insert(0, "imposter_model");
+            }
+
+            return parts.Count == 0
+                ? "none"
+                : string.Join(" + ", parts);
         }
 
         private static bool TryClassifyCrossRigidActivationToken(
@@ -4179,9 +4344,11 @@ namespace Editors.KitbasherEditor.Services
                         xmlPath,
                         activationSignature,
                         [],
-                        !string.IsNullOrWhiteSpace(mesh.ImposterModel) ||
-                        !string.IsNullOrWhiteSpace(mesh.DecalDiffuse) ||
-                        !string.IsNullOrWhiteSpace(mesh.DecalNormal) ||
+                        string.IsNullOrWhiteSpace(mesh.ImposterModel)
+                            ? string.Empty
+                            : Normalize(mesh.ImposterModel),
+                        !string.IsNullOrWhiteSpace(mesh.DecalDiffuse),
+                        !string.IsNullOrWhiteSpace(mesh.DecalNormal),
                         (mesh.MetaDataList?.Count ?? 0) != 0);
                     result[attachmentIdentity] =
                     [
@@ -23533,6 +23700,32 @@ namespace Editors.KitbasherEditor.Services
                         $"scenario-expected draws={expectedDraws:0.###}");
                 }
                 sb.AppendLine(
+                    "Local-modifier profile by activation topology " +
+                    "(plans may appear in more than one row):");
+                if (state.CrossRigidModifierProfileOccurrenceSetCounts.Count == 0)
+                {
+                    sb.AppendLine("  none");
+                }
+                else
+                {
+                    foreach (var profile in
+                             state.CrossRigidModifierProfileOccurrenceSetCounts
+                                 .Keys
+                                 .OrderByDescending(key =>
+                                     state.CrossRigidModifierProfileExpectedDrawCalls
+                                         .GetValueOrDefault(key))
+                                 .ThenBy(
+                                     key => key,
+                                     StringComparer.Ordinal))
+                    {
+                        sb.AppendLine(
+                            $"  {profile}: " +
+                            $"states={state.CrossRigidModifierProfileOccurrenceSetCounts.GetValueOrDefault(profile):N0}, " +
+                            $"plans={state.CrossRigidModifierProfilePlanCounts.GetValueOrDefault(profile):N0}, " +
+                            $"scenario-expected draws={state.CrossRigidModifierProfileExpectedDrawCalls.GetValueOrDefault(profile):0.###}");
+                    }
+                }
+                sb.AppendLine(
                     $"Unique copy-on-write-safe VMD rewrite plans with real draw savings: " +
                     $"{state.CrossRigidMergeAnalysisEntries.Count:N0}");
                 sb.AppendLine(
@@ -26032,7 +26225,17 @@ namespace Editors.KitbasherEditor.Services
             string ModelXmlPath,
             string ActivationSignature,
             CrossRigidVmdReferenceHop[] ReferenceChain,
-            bool HasLocalModelModifiers);
+            string ImposterModelPath,
+            bool HasDecalDiffuse,
+            bool HasDecalNormal,
+            bool HasMetadata)
+        {
+            public bool HasLocalModelModifiers =>
+                !string.IsNullOrWhiteSpace(ImposterModelPath) ||
+                HasDecalDiffuse ||
+                HasDecalNormal ||
+                HasMetadata;
+        }
 
         private sealed record CrossRigidVisualOccurrenceSet(
             double Probability,
@@ -26352,6 +26555,15 @@ namespace Editors.KitbasherEditor.Services
                 CrossRigidActivationRewritePlanCounts { get; } = [];
             public Dictionary<CrossRigidActivationRewriteClass, double>
                 CrossRigidActivationRewriteExpectedDrawCalls { get; } = [];
+            public Dictionary<string, int>
+                CrossRigidModifierProfileOccurrenceSetCounts { get; } =
+                new(StringComparer.Ordinal);
+            public Dictionary<string, int>
+                CrossRigidModifierProfilePlanCounts { get; } =
+                new(StringComparer.Ordinal);
+            public Dictionary<string, double>
+                CrossRigidModifierProfileExpectedDrawCalls { get; } =
+                new(StringComparer.Ordinal);
             public int CrossRigidAnalysisVmdCount { get; set; }
             public int CrossRigidAnalysisDirectWsModelCount { get; set; }
             public int CrossRigidAnalysisConfigurationCount { get; set; }
