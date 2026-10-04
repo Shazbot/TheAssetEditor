@@ -4163,7 +4163,7 @@ namespace Editors.KitbasherEditor.Services
             var combinationAlternatives =
                 new List<CrossRigidJointAlternative[]>
                 {
-                    [],
+                    Array.Empty<CrossRigidJointAlternative>(),
                 };
             foreach (var slotDefinition in slotDefinitions)
             {
