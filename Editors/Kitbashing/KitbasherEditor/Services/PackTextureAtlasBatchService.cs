@@ -5990,6 +5990,18 @@ namespace Editors.KitbasherEditor.Services
             var valueOptimized = state.MergeCompatibleMeshesEnabled
                 ? FilterBatchesForMergeValue(state, familyClosed)
                 : familyClosed;
+            if (state.MergeCompatibleMeshesEnabled)
+            {
+                // The value gate runs after merge-aware repartitioning and can admit
+                // texture-only groups that become real atlas-assisted mesh merges later in
+                // the pipeline. Recompute the final scenario draw estimate from the batches
+                // that actually survived the value gate; the merge-aware pass's intermediate
+                // total must not be reported as the final total.
+                state.ExpectedArmyDrawCallsEliminatedAfterValueGate +=
+                    CalculateExpectedArmyDrawCallsEliminatedForBatches(
+                        state,
+                        valueOptimized);
+            }
             if (packWide)
             {
                 state.ExpectedArmyResidentPixelsAfterMergeAware =
@@ -9072,8 +9084,6 @@ namespace Editors.KitbasherEditor.Services
 
             state.MergeAwareAffinityPotentialAfter +=
                 CalculateMergeAffinityScore(working, affinityGroups);
-            state.ExpectedArmyDrawCallsEliminatedAfterMergeAware +=
-                currentExpectedArmyDrawCallsEliminated;
             return working;
         }
 
@@ -10280,6 +10290,48 @@ namespace Editors.KitbasherEditor.Services
                 drawsByCulture,
                 model.PlayerCultureWeights,
                 model.OpponentCultureWeights);
+        }
+
+        private static double CalculateExpectedArmyDrawCallsEliminatedForBatches(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            if (!state.MergeCompatibleMeshesEnabled ||
+                state.ArmyResidencyModel == null ||
+                batches.Count == 0)
+            {
+                return 0;
+            }
+
+            var candidates = batches
+                .SelectMany(batch => batch)
+                .GroupBy(candidate => candidate.Key)
+                .Select(group => group.First())
+                .ToList();
+            if (candidates.Count == 0)
+                return 0;
+
+            // This is a final accounting pass, not another planning pass. Suppress the
+            // prospective-affinity diagnostics so the report does not count the same groups
+            // a second time merely because the post-value-gate total is being measured.
+            var affinityGroups = BuildMergeAffinityGroups(
+                state,
+                candidates,
+                recordDiagnostics: false);
+            if (affinityGroups.Count == 0)
+                return 0;
+
+            var rootsByMesh = BuildCandidateRootVmdPaths(state, candidates);
+            var expectedArmyEntitiesByMesh = BuildExpectedArmyEntitiesByMesh(
+                state.ArmyResidencyModel,
+                candidates,
+                rootsByMesh,
+                state.CancellationToken);
+            return CalculateExpectedArmyDrawCallsEliminated(
+                state,
+                BuildBatchIndexByMesh(batches),
+                affinityGroups,
+                expectedArmyEntitiesByMesh);
         }
 
         private static double CombineBattleDrawSavings(
@@ -21410,11 +21462,11 @@ namespace Editors.KitbasherEditor.Services
                     $"Scenario-estimated draw calls eliminated before merge-aware optimization: " +
                     $"{state.ExpectedArmyDrawCallsEliminatedBeforeMergeAware:N3}");
                 sb.AppendLine(
-                    $"Scenario-estimated draw calls eliminated after merge-aware optimization: " +
-                    $"{state.ExpectedArmyDrawCallsEliminatedAfterMergeAware:N3}");
+                    $"Scenario-estimated draw calls eliminated after merge-aware/value-gate optimization: " +
+                    $"{state.ExpectedArmyDrawCallsEliminatedAfterValueGate:N3}");
                 sb.AppendLine(
                     $"Scenario-estimated draw-call eliminations gained: " +
-                    $"{state.ExpectedArmyDrawCallsEliminatedAfterMergeAware - state.ExpectedArmyDrawCallsEliminatedBeforeMergeAware:+0.000;-0.000;0.000}");
+                    $"{state.ExpectedArmyDrawCallsEliminatedAfterValueGate - state.ExpectedArmyDrawCallsEliminatedBeforeMergeAware:+0.000;-0.000;0.000}");
             }
             if (state.ShareAtlasesAcrossVmdsEnabled)
             {
@@ -24417,7 +24469,7 @@ namespace Editors.KitbasherEditor.Services
             public int MergeAwareAffinityPotentialAfter { get; set; }
             public int MergeAwareAffinityEliminationsGained { get; set; }
             public double ExpectedArmyDrawCallsEliminatedBeforeMergeAware { get; set; }
-            public double ExpectedArmyDrawCallsEliminatedAfterMergeAware { get; set; }
+            public double ExpectedArmyDrawCallsEliminatedAfterValueGate { get; set; }
             public List<MergeAwareRepartitionReportEntry> MergeAwareRepartitionEntries { get; } = [];
             public int CrossVmdSharedAtlasBatches { get; set; }
             public int CrossVmdSharedAtlasPlacements { get; set; }
