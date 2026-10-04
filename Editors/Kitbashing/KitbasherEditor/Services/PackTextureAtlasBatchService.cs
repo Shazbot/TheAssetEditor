@@ -487,6 +487,15 @@ namespace Editors.KitbasherEditor.Services
                 if (mergeCompatibleMeshes)
                 {
                     phaseStopwatch.Restart();
+                    AnalyzeCrossRigidMergeOpportunities(
+                        state,
+                        atlasVmdRoots,
+                        cancellationToken,
+                        progress);
+                    state.PhaseDurations["Analyze cross-rigid merges"] =
+                        phaseStopwatch.Elapsed;
+
+                    phaseStopwatch.Restart();
                     MergeCompatibleMeshes(state, cancellationToken, progress);
                     state.PhaseDurations["Merge compatible meshes"] = phaseStopwatch.Elapsed;
                 }
@@ -1558,6 +1567,680 @@ namespace Editors.KitbasherEditor.Services
 
                 if (!TryGetStructuralMergeBlockReason(state, rigidPath, out _))
                     AnalyzeCompatibleMeshMergesForRigid(state, rigidPath, cancellationToken);
+            }
+        }
+
+        private static void AnalyzeCrossRigidMergeOpportunities(
+            BatchState state,
+            IReadOnlyList<string> vmdRoots,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            state.CrossRigidMergeAnalysisEntries.Clear();
+            state.CrossRigidAnalysisBlockerCounts.Clear();
+            state.CrossRigidAnalysisBlockerExamples.Clear();
+            state.CrossRigidAnalysisVmdCount = 0;
+            state.CrossRigidAnalysisDirectWsModelCount = 0;
+
+            var rigidCache = new Dictionary<string, RmvFile>(
+                state.RigidModels,
+                StringComparer.OrdinalIgnoreCase);
+            var traversalContainers = GetGameplayTraversalContainers(state);
+
+            for (var vmdIndex = 0; vmdIndex < vmdRoots.Count; vmdIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var vmdPath = Normalize(vmdRoots[vmdIndex]);
+                ReportProgress(
+                    progress,
+                    "Analyzing cross-rigid merges",
+                    vmdIndex + 1,
+                    vmdRoots.Count,
+                    vmdPath);
+
+                if (!state.VmdDocuments.TryGetValue(vmdPath, out var vmd))
+                {
+                    var vmdFile = state.Source.FindFile(vmdPath);
+                    if (vmdFile == null)
+                    {
+                        RecordCrossRigidAnalysisBlocker(
+                            state,
+                            "VMD unavailable",
+                            vmdPath);
+                        continue;
+                    }
+
+                    try
+                    {
+                        vmd = GetVmd(state, state.Source, vmdPath, vmdFile);
+                    }
+                    catch (Exception ex) when (
+                        ex is InvalidDataException or
+                        InvalidOperationException or
+                        ArgumentException or
+                        FormatException)
+                    {
+                        RecordCrossRigidAnalysisBlocker(
+                            state,
+                            "VMD could not be parsed",
+                            $"{vmdPath}: {ex.Message}");
+                        continue;
+                    }
+                }
+
+                var modelRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var childVmdRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var textureRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                CollectVmdReferences(vmd, modelRefs, childVmdRefs, textureRefs);
+
+                var directWsModels = modelRefs
+                    .Select(Normalize)
+                    .Where(path => Path.GetExtension(path).Equals(
+                        ".wsmodel",
+                        StringComparison.OrdinalIgnoreCase))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                if (directWsModels.Length < 2)
+                    continue;
+
+                state.CrossRigidAnalysisVmdCount++;
+                state.CrossRigidAnalysisDirectWsModelCount += directWsModels.Length;
+
+                var unsupportedDirectModels = modelRefs
+                    .Select(Normalize)
+                    .Where(path => path.Length != 0)
+                    .Where(path => !Path.GetExtension(path).Equals(
+                        ".wsmodel",
+                        StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                if (unsupportedDirectModels.Length != 0)
+                {
+                    RecordCrossRigidAnalysisBlocker(
+                        state,
+                        "Direct non-WSModel component present",
+                        $"{vmdPath}: {string.Join(", ", unsupportedDirectModels)}");
+                }
+
+                var components = new List<CrossRigidAnalysisComponent>();
+                foreach (var wsModelPath in directWsModels)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!TryBuildCrossRigidAnalysisComponent(
+                            state,
+                            vmdPath,
+                            wsModelPath,
+                            traversalContainers,
+                            rigidCache,
+                            out var component,
+                            out var reason))
+                    {
+                        RecordCrossRigidAnalysisBlocker(
+                            state,
+                            reason,
+                            $"{vmdPath}: {wsModelPath}");
+                        continue;
+                    }
+
+                    components.Add(component);
+                }
+
+                if (components.Count < 2)
+                    continue;
+
+                var topologyGroups = components
+                    .GroupBy(component => component.TopologyIdentity, StringComparer.Ordinal)
+                    .Select(group => group
+                        .OrderBy(component => component.WsModelPath, StringComparer.OrdinalIgnoreCase)
+                        .ToArray())
+                    .Where(group => group
+                        .Select(component => component.RigidPath)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Count() >= 2)
+                    .ToArray();
+
+                if (topologyGroups.Length == 0)
+                {
+                    RecordCrossRigidAnalysisBlocker(
+                        state,
+                        "WSModel non-material topology differs",
+                        $"{vmdPath}: {components.Count} direct WSModel components");
+                    continue;
+                }
+
+                foreach (var group in topologyGroups)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var dependencyIndex = state.GameplayMeshDependencyIndex;
+                    if (dependencyIndex != null &&
+                        group.Any(component =>
+                            dependencyIndex.IsAssetAffectedByIncompleteRoot(component.WsModelPath) ||
+                            dependencyIndex.IsAssetAffectedByIncompleteRoot(component.RigidPath)))
+                    {
+                        RecordCrossRigidAnalysisBlocker(
+                            state,
+                            "Incomplete gameplay consumer discovery",
+                            $"{vmdPath}: {string.Join(", ", group.Select(component => component.RigidPath).Distinct(StringComparer.OrdinalIgnoreCase))}");
+                        continue;
+                    }
+
+                    var lodAnalyses = new List<CrossRigidLodAnalysis>();
+                    var maxLodCount = group.Max(component => component.Rigid.ModelList.Length);
+                    for (var lodIndex = 0; lodIndex < maxLodCount; lodIndex++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var lod = AnalyzeCrossRigidLod(state, group, lodIndex);
+                        if (lod.ActiveRigidCount >= 2)
+                            lodAnalyses.Add(lod);
+                    }
+
+                    if (lodAnalyses.Count == 0 ||
+                        lodAnalyses.All(lod => lod.DrawsSaved <= 0))
+                    {
+                        RecordCrossRigidAnalysisBlocker(
+                            state,
+                            "No actual cross-rigid draw saving",
+                            $"{vmdPath}: {string.Join(", ", group.Select(component => component.RigidPath).Distinct(StringComparer.OrdinalIgnoreCase))}");
+                        continue;
+                    }
+
+                    var candidateWsModels = group
+                        .Select(component => component.WsModelPath)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    long generatedVertices = 0;
+                    long potentiallyDuplicatedVertices = 0;
+                    var externalConsumers = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var component in group)
+                    {
+                        var componentVertices = component.Rigid.ModelList
+                            .SelectMany(lod => lod)
+                            .Sum(model => (long)model.Mesh.VertexList.Length);
+                        generatedVertices += componentVertices;
+
+                        var hasExternalConsumer = false;
+                        if (dependencyIndex != null)
+                        {
+                            if (dependencyIndex.WsModelConsumersByRigid.TryGetValue(
+                                    component.RigidPath,
+                                    out var rigidWsConsumers))
+                            {
+                                foreach (var consumer in rigidWsConsumers)
+                                {
+                                    if (candidateWsModels.Contains(consumer))
+                                        continue;
+
+                                    hasExternalConsumer = true;
+                                    externalConsumers.Add(consumer);
+                                }
+                            }
+
+                            foreach (var root in dependencyIndex.GetRootsForAsset(
+                                         component.RigidPath))
+                            {
+                                if (root.Equals(
+                                        vmdPath,
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    continue;
+                                }
+
+                                hasExternalConsumer = true;
+                                externalConsumers.Add(root);
+                            }
+                        }
+
+                        if (hasExternalConsumer)
+                            potentiallyDuplicatedVertices += componentVertices;
+                    }
+
+                    var entry = new CrossRigidMergeAnalysisEntry(
+                        vmdPath,
+                        group.Select(component => component.WsModelPath).ToArray(),
+                        group.Select(component => component.RigidPath)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .ToArray(),
+                        lodAnalyses.ToArray(),
+                        CalculateExpectedCrossRigidArmyDrawSavings(
+                            state,
+                            vmdPath,
+                            group,
+                            lodAnalyses),
+                        generatedVertices,
+                        potentiallyDuplicatedVertices,
+                        externalConsumers
+                            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                            .ToArray());
+                    state.CrossRigidMergeAnalysisEntries.Add(entry);
+                }
+            }
+        }
+
+        private static bool TryBuildCrossRigidAnalysisComponent(
+            BatchState state,
+            string vmdPath,
+            string wsModelPathValue,
+            IReadOnlyList<IPackFileContainer> traversalContainers,
+            Dictionary<string, RmvFile> rigidCache,
+            out CrossRigidAnalysisComponent component,
+            out string reason)
+        {
+            component = null!;
+            reason = string.Empty;
+            var wsModelPath = Normalize(wsModelPathValue);
+            var wsContainer = FindGameplayTraversalContainer(
+                state,
+                state.Source,
+                traversalContainers,
+                wsModelPath);
+            var wsFile = wsContainer?.FindFile(wsModelPath);
+            if (wsContainer == null || wsFile == null)
+            {
+                reason = "WSModel could not be resolved";
+                return false;
+            }
+
+            XmlDocument wsDocument;
+            if (!state.WsDocuments.TryGetValue(wsModelPath, out wsDocument!))
+            {
+                if (!TryGetWsDocumentForTraversal(
+                        state,
+                        wsContainer,
+                        wsModelPath,
+                        wsFile,
+                        out wsDocument))
+                {
+                    reason = "WSModel could not be parsed";
+                    return false;
+                }
+            }
+
+            var rigidPath = Normalize(
+                wsDocument.SelectSingleNode("/model/geometry")?.InnerText);
+            if (rigidPath.Length == 0 ||
+                !Path.GetExtension(rigidPath).Equals(
+                    ".rigid_model_v2",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                reason = "WSModel has no supported rigid geometry path";
+                return false;
+            }
+
+            if (!rigidCache.TryGetValue(rigidPath, out var rigid))
+            {
+                var rigidContainer = FindGameplayTraversalContainer(
+                    state,
+                    state.Source,
+                    traversalContainers,
+                    rigidPath);
+                var rigidFile = rigidContainer?.FindFile(rigidPath);
+                if (rigidContainer == null || rigidFile == null)
+                {
+                    reason = "Rigid geometry could not be resolved";
+                    return false;
+                }
+
+                try
+                {
+                    rigid = ModelFactory.Create().Load(rigidFile.DataSource.ReadData());
+                    rigidCache[rigidPath] = rigid;
+                }
+                catch (Exception ex) when (
+                    ex is InvalidDataException or
+                    InvalidOperationException or
+                    ArgumentException or
+                    FormatException)
+                {
+                    reason = $"Rigid geometry could not be parsed ({ex.Message})";
+                    return false;
+                }
+            }
+
+            if (!TryReadWsMaterialAssignments(
+                    wsDocument,
+                    rigid,
+                    out var assignments,
+                    out var assignmentReason))
+            {
+                reason = $"WSModel material table is not structurally usable ({assignmentReason})";
+                return false;
+            }
+
+            component = new CrossRigidAnalysisComponent(
+                vmdPath,
+                wsModelPath,
+                rigidPath,
+                wsDocument,
+                rigid,
+                assignments,
+                GetCrossRigidWsModelTopologyIdentity(wsDocument),
+                state.Source.ContainsFile(wsModelPath),
+                state.Source.ContainsFile(rigidPath));
+            return true;
+        }
+
+        private static CrossRigidLodAnalysis AnalyzeCrossRigidLod(
+            BatchState state,
+            IReadOnlyList<CrossRigidAnalysisComponent> components,
+            int lodIndex)
+        {
+            var activeComponents = components
+                .Where(component => lodIndex < component.Rigid.ModelList.Length)
+                .ToArray();
+            var activeRigidCount = activeComponents
+                .Select(component => component.RigidPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            if (activeRigidCount < 2)
+            {
+                return new CrossRigidLodAnalysis(
+                    lodIndex,
+                    activeComponents.Length,
+                    activeRigidCount,
+                    0,
+                    0,
+                    0,
+                    state.ArmyResidencyModel?.Scenario.GetLodProbability(lodIndex) ?? 0);
+            }
+
+            var partsByIdentity = new Dictionary<string, List<CrossRigidAnalysisMeshPart>>(
+                StringComparer.Ordinal);
+            foreach (var component in activeComponents)
+            {
+                var models = component.Rigid.ModelList[lodIndex];
+                var materialAssignments = component.MaterialAssignments[lodIndex];
+                for (var partIndex = 0; partIndex < models.Length; partIndex++)
+                {
+                    var materialIdentity = GetMeshMergeMaterialIdentity(
+                        state,
+                        materialAssignments[partIndex]);
+                    var identity = string.Join(
+                        "\u001e",
+                        GetRmvMergeIdentityForMerge(
+                            models[partIndex],
+                            includeEmbeddedMaterialIdentity: false),
+                        materialIdentity);
+                    if (!partsByIdentity.TryGetValue(identity, out var parts))
+                    {
+                        parts = [];
+                        partsByIdentity[identity] = parts;
+                    }
+
+                    parts.Add(
+                        new CrossRigidAnalysisMeshPart(
+                            component.WsModelPath,
+                            component.RigidPath,
+                            models[partIndex].Mesh.VertexList.Length));
+                }
+            }
+
+            var inputDraws = 0;
+            var outputDraws = 0;
+            foreach (var parts in partsByIdentity.Values)
+            {
+                inputDraws += parts
+                    .GroupBy(part => part.RigidPath, StringComparer.OrdinalIgnoreCase)
+                    .Sum(group => CountCrossRigidVertexLimitedMergeBins(
+                        group.Select(part => part.VertexCount)));
+                outputDraws += CountCrossRigidVertexLimitedMergeBins(
+                    parts.Select(part => part.VertexCount));
+            }
+
+            return new CrossRigidLodAnalysis(
+                lodIndex,
+                activeComponents.Length,
+                activeRigidCount,
+                inputDraws,
+                outputDraws,
+                Math.Max(0, inputDraws - outputDraws),
+                state.ArmyResidencyModel?.Scenario.GetLodProbability(lodIndex) ?? 0);
+        }
+
+        private static int CountCrossRigidVertexLimitedMergeBins(
+            IEnumerable<int> vertexCounts)
+        {
+            var bins = new List<int>();
+            foreach (var vertexCount in vertexCounts.OrderByDescending(count => count))
+            {
+                if (vertexCount > ushort.MaxValue)
+                {
+                    bins.Add(vertexCount);
+                    continue;
+                }
+
+                var placed = false;
+                for (var index = 0; index < bins.Count; index++)
+                {
+                    if (bins[index] > ushort.MaxValue ||
+                        bins[index] + vertexCount > ushort.MaxValue)
+                    {
+                        continue;
+                    }
+
+                    bins[index] += vertexCount;
+                    placed = true;
+                    break;
+                }
+
+                if (!placed)
+                    bins.Add(vertexCount);
+            }
+
+            return bins.Count;
+        }
+
+        private static double CalculateExpectedCrossRigidArmyDrawSavings(
+            BatchState state,
+            string vmdPath,
+            IReadOnlyList<CrossRigidAnalysisComponent> components,
+            IReadOnlyList<CrossRigidLodAnalysis> lodAnalyses)
+        {
+            var model = state.ArmyResidencyModel;
+            if (model == null || lodAnalyses.Count == 0)
+                return 0;
+
+            var wsModels = components
+                .Select(component => component.WsModelPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var relevantUnitIds = GetRelevantArmyUnitIds(
+                model,
+                wsModels,
+                [vmdPath]);
+            var relevantCultures = GetRelevantArmyCultures(
+                model,
+                wsModels,
+                [vmdPath],
+                relevantUnitIds);
+            if (relevantUnitIds.Count == 0 || relevantCultures.Count == 0)
+                return 0;
+
+            var drawsByCulture = model.UnitsByCultureAndCategory.Keys.ToDictionary(
+                culture => culture,
+                _ => 0.0,
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var culture in relevantCultures)
+            {
+                if (!model.UnitsByCultureAndCategory.TryGetValue(
+                        culture,
+                        out var unitsByCategory))
+                {
+                    continue;
+                }
+
+                foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
+                {
+                    if (!unitsByCategory.TryGetValue(category, out var cultureUnits) ||
+                        cultureUnits.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    foreach (var lod in lodAnalyses.Where(lod => lod.DrawsSaved > 0))
+                    {
+                        double eliminatedDrawsAcrossResolvedUnits = 0;
+                        foreach (var unitId in EnumerateRelevantArmyUnitIds(
+                                     cultureUnits,
+                                     relevantUnitIds))
+                        {
+                            var usedExactConfigurations = false;
+                            if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
+                                    unitId,
+                                    out var configurationsByRole) &&
+                                configurationsByRole.Count != 0)
+                            {
+                                usedExactConfigurations = true;
+                                foreach (var (role, configurations) in configurationsByRole)
+                                {
+                                    var entityCount = Math.Max(
+                                        1,
+                                        model.EntityCountByUnitAndRole
+                                            .GetValueOrDefault(unitId)?
+                                            .GetValueOrDefault(role, 1) ?? 1);
+                                    foreach (var configuration in configurations)
+                                    {
+                                        if (configuration.Probability <= 0)
+                                            continue;
+
+                                        var activeComponents = components
+                                            .Where(component =>
+                                                configuration.WsModelOccurrences
+                                                    .GetValueOrDefault(component.WsModelPath) > 0)
+                                            .ToArray();
+                                        if (activeComponents
+                                                .Select(component => component.RigidPath)
+                                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                                .Count() < 2)
+                                        {
+                                            continue;
+                                        }
+
+                                        var configurationLod = AnalyzeCrossRigidLod(
+                                            state,
+                                            activeComponents,
+                                            lod.LodIndex);
+                                        if (configurationLod.DrawsSaved <= 0)
+                                            continue;
+
+                                        eliminatedDrawsAcrossResolvedUnits +=
+                                            configuration.Probability *
+                                            entityCount *
+                                            configurationLod.DrawsSaved;
+                                    }
+                                }
+                            }
+
+                            if (usedExactConfigurations)
+                                continue;
+
+                            if (!model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
+                                    unitId,
+                                    out var expectedOccurrences))
+                            {
+                                continue;
+                            }
+
+                            var expectedRenderedCounts = new List<double>();
+                            foreach (var component in components)
+                            {
+                                if (!expectedOccurrences.ByWsModel.TryGetValue(
+                                        component.WsModelPath,
+                                        out var occurrencesByRole))
+                                {
+                                    expectedRenderedCounts.Clear();
+                                    break;
+                                }
+
+                                double expectedRenderedEntities = 0;
+                                foreach (var (role, expectedOccurrencesPerEntity) in occurrencesByRole)
+                                {
+                                    var entityCount = Math.Max(
+                                        1,
+                                        model.EntityCountByUnitAndRole
+                                            .GetValueOrDefault(unitId)?
+                                            .GetValueOrDefault(role, 1) ?? 1);
+                                    expectedRenderedEntities +=
+                                        Math.Clamp(expectedOccurrencesPerEntity, 0.0, 1.0) *
+                                        entityCount;
+                                }
+
+                                if (expectedRenderedEntities <= 0)
+                                {
+                                    expectedRenderedCounts.Clear();
+                                    break;
+                                }
+
+                                expectedRenderedCounts.Add(expectedRenderedEntities);
+                            }
+
+                            if (expectedRenderedCounts.Count == components.Count)
+                            {
+                                eliminatedDrawsAcrossResolvedUnits +=
+                                    expectedRenderedCounts.Min() *
+                                    lod.DrawsSaved;
+                            }
+                        }
+
+                        if (eliminatedDrawsAcrossResolvedUnits <= 0)
+                            continue;
+
+                        drawsByCulture[culture] +=
+                            model.Scenario.GetLodWeightedDrawSavings(
+                                lod.LodIndex,
+                                slotCount *
+                                (eliminatedDrawsAcrossResolvedUnits /
+                                 cultureUnits.Count));
+                    }
+                }
+            }
+
+            return CombineBattleDrawSavings(
+                drawsByCulture,
+                model.PlayerCultureWeights,
+                model.OpponentCultureWeights);
+        }
+
+        private static string GetCrossRigidWsModelTopologyIdentity(XmlDocument document)
+        {
+            var clone = new XmlDocument();
+            clone.LoadXml(document.OuterXml);
+
+            var geometryNode = clone.SelectSingleNode("/model/geometry");
+            geometryNode?.ParentNode?.RemoveChild(geometryNode);
+
+            var materialNodes = clone.SelectNodes("/model/materials/material");
+            if (materialNodes != null)
+            {
+                foreach (XmlNode materialNode in materialNodes.Cast<XmlNode>().ToList())
+                    materialNode.ParentNode?.RemoveChild(materialNode);
+            }
+
+            return clone.OuterXml;
+        }
+
+        private static void RecordCrossRigidAnalysisBlocker(
+            BatchState state,
+            string reason,
+            string example)
+        {
+            state.CrossRigidAnalysisBlockerCounts[reason] =
+                state.CrossRigidAnalysisBlockerCounts.GetValueOrDefault(reason) + 1;
+            if (!state.CrossRigidAnalysisBlockerExamples.TryGetValue(
+                    reason,
+                    out var examples))
+            {
+                examples = [];
+                state.CrossRigidAnalysisBlockerExamples[reason] = examples;
+            }
+
+            const int maxExamplesPerReason = 8;
+            if (examples.Count < maxExamplesPerReason &&
+                !examples.Contains(example, StringComparer.Ordinal))
+            {
+                examples.Add(example);
             }
         }
 
@@ -19655,6 +20338,115 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Atlas combinations >25% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPercent > 25)}");
                 sb.AppendLine($"Atlas combinations that do not fit: {mergeOpportunities.Count(x => !x.Combination.Fits)}");
             }
+
+            if (state.MergeCompatibleMeshesEnabled)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Cross-rigid merge analysis (report-only)");
+                sb.AppendLine("----------------------------------------");
+                sb.AppendLine(
+                    "No VMD, WSModel, or RMV2 topology is rewritten by this analysis pass.");
+                sb.AppendLine(
+                    "Shared structural consumers are counted as generated-geometry duplication cost, not as an eligibility failure.");
+                sb.AppendLine(
+                    $"VMDs with multiple direct WSModel components analyzed: " +
+                    $"{state.CrossRigidAnalysisVmdCount:N0}");
+                sb.AppendLine(
+                    $"Direct WSModel components inspected: " +
+                    $"{state.CrossRigidAnalysisDirectWsModelCount:N0}");
+                sb.AppendLine(
+                    $"Eligible generated-asset cross-rigid groups with real draw savings: " +
+                    $"{state.CrossRigidMergeAnalysisEntries.Count:N0}");
+                sb.AppendLine(
+                    $"Raw cross-rigid draws saved across reported LODs: " +
+                    $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.Lods.Sum(lod => lod.DrawsSaved)):N0}");
+                sb.AppendLine(
+                    $"LOD-weighted draws saved per fully co-rendered entity: " +
+                    $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.Lods.Sum(lod => lod.DrawsSaved * lod.LodProbability)):0.###}");
+                sb.AppendLine(
+                    $"Scenario-expected battle draw calls eliminated: " +
+                    $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.ExpectedArmyDrawCallsEliminated):0.###}");
+                sb.AppendLine(
+                    $"Generated structural vertex payload proxy: " +
+                    $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.GeneratedVertexCount):N0} vertices");
+                sb.AppendLine(
+                    $"Potentially duplicated vertex payload due to external consumers: " +
+                    $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.PotentiallyDuplicatedVertexCount):N0} vertices");
+                sb.AppendLine(
+                    $"Eligible groups with external structural consumers: " +
+                    $"{state.CrossRigidMergeAnalysisEntries.Count(entry => entry.ExternalStructuralConsumers.Length != 0):N0}");
+                sb.AppendLine(
+                    $"Cross-rigid analysis blockers: " +
+                    $"{state.CrossRigidAnalysisBlockerCounts.Values.Sum():N0}");
+
+                if (state.CrossRigidAnalysisBlockerCounts.Count != 0)
+                {
+                    sb.AppendLine("Cross-rigid blocker breakdown:");
+                    foreach (var (reason, count) in state.CrossRigidAnalysisBlockerCounts
+                                 .OrderByDescending(entry => entry.Value)
+                                 .ThenBy(entry => entry.Key, StringComparer.Ordinal))
+                    {
+                        sb.AppendLine($"  {reason}: {count:N0}");
+                        if (!state.CrossRigidAnalysisBlockerExamples.TryGetValue(
+                                reason,
+                                out var examples))
+                        {
+                            continue;
+                        }
+
+                        foreach (var example in examples)
+                            sb.AppendLine($"    - {example}");
+                    }
+                }
+
+                const int maxCrossRigidReportEntries = 40;
+                if (state.CrossRigidMergeAnalysisEntries.Count != 0)
+                {
+                    sb.AppendLine("Top cross-rigid opportunities:");
+                    foreach (var entry in state.CrossRigidMergeAnalysisEntries
+                                 .OrderByDescending(item => item.ExpectedArmyDrawCallsEliminated)
+                                 .ThenByDescending(item => item.Lods.Sum(lod => lod.DrawsSaved))
+                                 .ThenBy(item => item.VmdPath, StringComparer.OrdinalIgnoreCase)
+                                 .Take(maxCrossRigidReportEntries))
+                    {
+                        sb.AppendLine(
+                            $"  {entry.VmdPath}: WSModels={entry.WsModelPaths.Length}, " +
+                            $"rigids={entry.RigidPaths.Length}, expectedBattleDrawsSaved=" +
+                            $"{entry.ExpectedArmyDrawCallsEliminated:0.###}, generatedVertices=" +
+                            $"{entry.GeneratedVertexCount:N0}, duplicatedVertices=" +
+                            $"{entry.PotentiallyDuplicatedVertexCount:N0}, externalConsumers=" +
+                            $"{entry.ExternalStructuralConsumers.Length}");
+                        sb.AppendLine(
+                            $"    WSModels: {string.Join(", ", entry.WsModelPaths)}");
+                        sb.AppendLine(
+                            $"    Rigids: {string.Join(", ", entry.RigidPaths)}");
+                        foreach (var lod in entry.Lods)
+                        {
+                            sb.AppendLine(
+                                $"    LOD {lod.LodIndex}: activeComponents={lod.ActiveComponentCount}, " +
+                                $"activeRigids={lod.ActiveRigidCount}, draws=" +
+                                $"{lod.InputDrawsAfterSameRigidMerge}->{lod.OutputDrawsAfterCrossRigidMerge}, " +
+                                $"saved={lod.DrawsSaved}, scenarioProbability={lod.LodProbability:0.###}");
+                        }
+
+                        if (entry.ExternalStructuralConsumers.Length != 0)
+                        {
+                            sb.AppendLine(
+                                $"    External consumers: " +
+                                $"{string.Join(", ", entry.ExternalStructuralConsumers.Take(12))}" +
+                                $"{(entry.ExternalStructuralConsumers.Length > 12 ? ", ..." : string.Empty)}");
+                        }
+                    }
+
+                    if (state.CrossRigidMergeAnalysisEntries.Count >
+                        maxCrossRigidReportEntries)
+                    {
+                        sb.AppendLine(
+                            $"  ... {state.CrossRigidMergeAnalysisEntries.Count - maxCrossRigidReportEntries:N0} more opportunity group(s)");
+                    }
+                }
+            }
+
             if (state.SourceBcnResidency != null && state.OutputBcnResidency != null)
             {
                 var sourceBcn = state.SourceBcnResidency;
@@ -21763,6 +22555,41 @@ namespace Editors.KitbasherEditor.Services
             double Probability,
             IReadOnlyDictionary<string, int> WsModelOccurrences);
 
+        private sealed record CrossRigidAnalysisComponent(
+            string VmdPath,
+            string WsModelPath,
+            string RigidPath,
+            XmlDocument WsDocument,
+            RmvFile Rigid,
+            string[][] MaterialAssignments,
+            string TopologyIdentity,
+            bool SourceOwnedWsModel,
+            bool SourceOwnedRigid);
+
+        private sealed record CrossRigidAnalysisMeshPart(
+            string WsModelPath,
+            string RigidPath,
+            int VertexCount);
+
+        private sealed record CrossRigidLodAnalysis(
+            int LodIndex,
+            int ActiveComponentCount,
+            int ActiveRigidCount,
+            int InputDrawsAfterSameRigidMerge,
+            int OutputDrawsAfterCrossRigidMerge,
+            int DrawsSaved,
+            double LodProbability);
+
+        private sealed record CrossRigidMergeAnalysisEntry(
+            string VmdPath,
+            string[] WsModelPaths,
+            string[] RigidPaths,
+            CrossRigidLodAnalysis[] Lods,
+            double ExpectedArmyDrawCallsEliminated,
+            long GeneratedVertexCount,
+            long PotentiallyDuplicatedVertexCount,
+            string[] ExternalStructuralConsumers);
+
         private sealed record ArmyResidencyModel(
             IReadOnlyDictionary<Wh3ArmyUnitCategory, HashSet<string>> UnitsByCategory,
             IReadOnlyDictionary<
@@ -21841,6 +22668,13 @@ namespace Editors.KitbasherEditor.Services
             public int GameplayTraversalContainerResolutionCacheHits { get; set; }
             public int GameplayTraversalContainerResolutionScans { get; set; }
             public GameplayMeshDependencyIndex? GameplayMeshDependencyIndex { get; set; }
+            public List<CrossRigidMergeAnalysisEntry> CrossRigidMergeAnalysisEntries { get; } = [];
+            public Dictionary<string, int> CrossRigidAnalysisBlockerCounts { get; } =
+                new(StringComparer.Ordinal);
+            public Dictionary<string, List<string>> CrossRigidAnalysisBlockerExamples { get; } =
+                new(StringComparer.Ordinal);
+            public int CrossRigidAnalysisVmdCount { get; set; }
+            public int CrossRigidAnalysisDirectWsModelCount { get; set; }
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
