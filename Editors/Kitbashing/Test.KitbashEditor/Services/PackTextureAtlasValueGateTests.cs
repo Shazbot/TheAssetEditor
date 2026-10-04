@@ -3461,6 +3461,7 @@ namespace Test.KitbashEditor.Services
             double expectedArmyDrawsEliminated,
             double globalCostBytes,
             double expectedCostBytes,
+            double packLocalRetirementCreditBytes,
             double acceptedNetBcnBytes,
             double proposedNetBcnBytes,
             double sourceBcnBytes)
@@ -3483,6 +3484,7 @@ namespace Test.KitbashEditor.Services
                            expectedArmyDrawsEliminated,
                            globalCostBytes,
                            expectedCostBytes,
+                           packLocalRetirementCreditBytes,
                            acceptedNetBcnBytes,
                            proposedNetBcnBytes,
                            sourceBcnBytes,
@@ -4701,11 +4703,47 @@ namespace Test.KitbashEditor.Services
                 expectedArmyDrawsEliminated: 0.15,
                 globalCostBytes: 1.75 * mib,
                 expectedCostBytes: 0.01 * mib,
+                packLocalRetirementCreditBytes: 0,
                 acceptedNetBcnBytes: 0,
                 proposedNetBcnBytes: 1.75 * mib,
                 sourceBcnBytes: 400 * mib);
 
             Assert.That(decision, Is.EqualTo("Accept"));
+        }
+
+        [Test]
+        public void ValueGate_TextureOnlyMergeCreditIncludesPackLocalRetirement()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            var withoutPackLocalCredit = GetTextureOnlyMergeValueGateBudgetDecision(
+                scenarioResolved: true,
+                prospectiveTextureMergeDraws: 1,
+                expectedArmyDrawsEliminated: 0.15,
+                globalCostBytes: 1.75 * mib,
+                expectedCostBytes: 0.5 * mib,
+                packLocalRetirementCreditBytes: 0,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 1.75 * mib,
+                sourceBcnBytes: 400 * mib);
+            var withPackLocalCredit = GetTextureOnlyMergeValueGateBudgetDecision(
+                scenarioResolved: true,
+                prospectiveTextureMergeDraws: 1,
+                expectedArmyDrawsEliminated: 0.15,
+                globalCostBytes: 1.75 * mib,
+                expectedCostBytes: 0.5 * mib,
+                packLocalRetirementCreditBytes: 0.5 * mib,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 1.75 * mib,
+                sourceBcnBytes: 400 * mib);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    withoutPackLocalCredit,
+                    Is.EqualTo("TextureOnlyMergeBudgetExceeded"));
+                Assert.That(withPackLocalCredit, Is.EqualTo("Accept"));
+            });
         }
 
         [Test]
@@ -4719,6 +4757,7 @@ namespace Test.KitbashEditor.Services
                 expectedArmyDrawsEliminated: 0.01,
                 globalCostBytes: 4.1 * mib,
                 expectedCostBytes: 0,
+                packLocalRetirementCreditBytes: 0,
                 acceptedNetBcnBytes: 0,
                 proposedNetBcnBytes: 4.1 * mib,
                 sourceBcnBytes: 400 * mib);
@@ -4728,6 +4767,7 @@ namespace Test.KitbashEditor.Services
                 expectedArmyDrawsEliminated: 0.01,
                 globalCostBytes: 4.1 * mib,
                 expectedCostBytes: 0,
+                packLocalRetirementCreditBytes: 0,
                 acceptedNetBcnBytes: 0,
                 proposedNetBcnBytes: 4.1 * mib,
                 sourceBcnBytes: 400 * mib);
@@ -4750,6 +4790,7 @@ namespace Test.KitbashEditor.Services
                 expectedArmyDrawsEliminated: 100,
                 globalCostBytes: 8 * mib,
                 expectedCostBytes: 1 * mib,
+                packLocalRetirementCreditBytes: 0,
                 acceptedNetBcnBytes: 0,
                 proposedNetBcnBytes: 8 * mib,
                 sourceBcnBytes: 400 * mib);
@@ -4768,6 +4809,7 @@ namespace Test.KitbashEditor.Services
                 expectedArmyDrawsEliminated: 0.15,
                 globalCostBytes: 2.1 * mib,
                 expectedCostBytes: 2.1 * mib,
+                packLocalRetirementCreditBytes: 0,
                 acceptedNetBcnBytes: 0,
                 proposedNetBcnBytes: 2.1 * mib,
                 sourceBcnBytes: 400 * mib);
@@ -4786,6 +4828,7 @@ namespace Test.KitbashEditor.Services
                 expectedArmyDrawsEliminated: 0,
                 globalCostBytes: 1 * mib,
                 expectedCostBytes: 1 * mib,
+                packLocalRetirementCreditBytes: 0,
                 acceptedNetBcnBytes: 0,
                 proposedNetBcnBytes: 1 * mib,
                 sourceBcnBytes: 400 * mib);
