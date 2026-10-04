@@ -98,27 +98,6 @@ namespace Test.KitbashEditor.Services
                     "GetLifecyclePresenceProbability returned null."));
         }
 
-        private static double GetExternalLodPresenceProbability(
-            object scenario,
-            string stateName,
-            int lod)
-        {
-            var stateType = AssetEditorAssembly.GetType(
-                "Editors.KitbasherEditor.Services.Wh3VisualAssetState",
-                throwOnError: true)!;
-            var method = scenario.GetType().GetMethod(
-                    "GetExternalLodPresenceProbability",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new InvalidOperationException(
-                    "Wh3ArmyVisualScenario.GetExternalLodPresenceProbability was not found.");
-
-            return (double)(method.Invoke(
-                    scenario,
-                    [Enum.Parse(stateType, stateName), lod])
-                ?? throw new InvalidOperationException(
-                    "GetExternalLodPresenceProbability returned null."));
-        }
-
         private static Exception GetInvocationException(Action action)
         {
             try
@@ -312,15 +291,9 @@ namespace Test.KitbashEditor.Services
         {
             var scenario = GetDefaultScenario();
 
-            Assert.Multiple(() =>
-            {
-                Assert.That(
-                    GetLifecyclePresenceProbability(scenario, "Live"),
-                    Is.EqualTo(1.0).Within(0.000000001));
-                Assert.That(
-                    GetExternalLodPresenceProbability(scenario, "Live", 2),
-                    Is.EqualTo(0.25).Within(0.000000001));
-            });
+            Assert.That(
+                GetLifecyclePresenceProbability(scenario, "Live"),
+                Is.EqualTo(1.0).Within(0.000000001));
         }
 
         [Test]

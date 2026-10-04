@@ -145,14 +145,6 @@ namespace Editors.KitbasherEditor.Services
             return Math.Clamp(stateProbability, 0.0, 1.0);
         }
 
-        internal double GetExternalLodPresenceProbability(
-            Wh3VisualAssetState stateValue,
-            int lod)
-            => Math.Clamp(
-                GetLifecyclePresenceProbability(stateValue) * GetLodProbability(lod),
-                0.0,
-                1.0);
-
         internal double GetLodWeightedDrawSavings(
             int lod,
             double unweightedDrawSavings)
@@ -861,19 +853,15 @@ namespace Editors.KitbasherEditor.Services
                 {
                     var stateValue = GetDirectEngineAssetState(field);
                     var reference = Get(engine, field);
-                    var isExternalLodVariantReference =
-                        IsExternalLodVariantReference(
-                            reference,
-                            animatedLodRowsByKey);
                     foreach (var assetPath in ResolveEngineAssetPaths(
                                  reference,
                                  animatedLodRowsByKey))
                     {
+                        // warscape_animated_lod_tables expands animation/dependency
+                        // references. Its filename, range, and animated fields do not
+                        // describe visibility, so they must not change direct asset
+                        // residency. The parsed suffix is retained only as metadata.
                         var lod = ResolveAssetLod(assetPath);
-                        var scenarioPresenceProbability =
-                            isExternalLodVariantReference
-                                ? activeScenario.GetExternalLodPresenceProbability(stateValue, lod)
-                                : activeScenario.GetLifecyclePresenceProbability(stateValue);
                         AddDirectAssetUsage(
                             assetPath,
                             mainUnitKey,
@@ -883,7 +871,7 @@ namespace Editors.KitbasherEditor.Services
                             visualCounts,
                             stateValue,
                             lod,
-                            scenarioPresenceProbability);
+                            activeScenario.GetLifecyclePresenceProbability(stateValue));
                     }
                 }
             }
@@ -2677,30 +2665,6 @@ namespace Editors.KitbasherEditor.Services
             return animatedLodRowsByKey.TryGetValue(reference, out var paths)
                 ? paths.Select(NormalizePath).Where(path => path.Length != 0).ToArray()
                 : [];
-        }
-
-        private static bool IsExternalLodVariantReference(
-            string reference,
-            IReadOnlyDictionary<string, List<string>> animatedLodRowsByKey)
-        {
-            reference = NormalizePath(reference);
-            if (reference.Length == 0 || Path.GetExtension(reference).Length != 0)
-                return false;
-
-            var paths = ResolveEngineAssetPaths(reference, animatedLodRowsByKey)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-            if (paths.Length < 2)
-                return false;
-
-            // A DB animation key is only treated as an external LOD partition when its
-            // expanded files have distinct, parseable LOD identities. Ordinary direct
-            // rigid/WSModel paths, including names containing "_lodN", remain full-presence
-            // assets because their own RMV may contain internal LODs.
-            return paths
-                .Select(ResolveAssetLod)
-                .Distinct()
-                .Count() == paths.Length;
         }
 
         private static string GetGameplayResolutionHealthIssue(

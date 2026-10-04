@@ -166,25 +166,6 @@ namespace Test.KitbashEditor.Services
                     "Wh3UnitCategoryResolver.ResolveEngineAssetPaths returned null."));
         }
 
-        private static bool IsExternalLodVariantReference(
-            string reference,
-            IReadOnlyDictionary<string, List<string>> animatedLodRowsByKey)
-        {
-            var assembly = Assembly.Load("Editors.KitbasherEditor");
-            var resolverType = assembly.GetType(
-                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
-                throwOnError: true)!;
-            var method = resolverType.GetMethod(
-                "IsExternalLodVariantReference",
-                BindingFlags.NonPublic | BindingFlags.Static)
-                ?? throw new InvalidOperationException(
-                    "Wh3UnitCategoryResolver.IsExternalLodVariantReference was not found.");
-
-            return (bool)(method.Invoke(null, [reference, animatedLodRowsByKey])
-                ?? throw new InvalidOperationException(
-                    "IsExternalLodVariantReference returned null."));
-        }
-
         private static byte[] BuildUiUnitGroupParentsRow(
             string icon,
             string key,
@@ -386,17 +367,28 @@ namespace Test.KitbashEditor.Services
         private static object ResolveFromDecodedRows(
             Dictionary<string, List<Dictionary<string, string>>> rowsByTable,
             params string[] rootVmdPaths)
-            => ResolveFromDecodedRowsCore(rowsByTable, null, rootVmdPaths);
+            => ResolveFromDecodedRowsCore(rowsByTable, null, null, rootVmdPaths);
+
+        private static object ResolveFromDecodedRowsWithAssets(
+            Dictionary<string, List<Dictionary<string, string>>> rowsByTable,
+            IReadOnlyCollection<string> gameplayAssetPaths,
+            params string[] rootVmdPaths)
+            => ResolveFromDecodedRowsCore(
+                rowsByTable,
+                null,
+                gameplayAssetPaths,
+                rootVmdPaths);
 
         private static object ResolveFromDecodedRowsWithScenario(
             Dictionary<string, List<Dictionary<string, string>>> rowsByTable,
             object scenario,
             params string[] rootVmdPaths)
-            => ResolveFromDecodedRowsCore(rowsByTable, scenario, rootVmdPaths);
+            => ResolveFromDecodedRowsCore(rowsByTable, scenario, null, rootVmdPaths);
 
         private static object ResolveFromDecodedRowsCore(
             Dictionary<string, List<Dictionary<string, string>>> rowsByTable,
             object? scenario,
+            IReadOnlyCollection<string>? gameplayAssetPaths,
             params string[] rootVmdPaths)
         {
             var packedFiles = rowsByTable.ToDictionary(
@@ -429,8 +421,13 @@ namespace Test.KitbashEditor.Services
                         ($"{normalized}\\fixture", file),
                     ];
                 });
+            var knownGameplayAssets = (gameplayAssetPaths ?? [])
+                .Concat(rootVmdPaths)
+                .Select(path => path.Replace('/', '\\').TrimStart('\\').ToLowerInvariant())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             source.Setup(container => container.ContainsFile(It.IsAny<string>()))
-                .Returns(false);
+                .Returns((string path) => knownGameplayAssets.Contains(
+                    path.Replace('/', '\\').TrimStart('\\').ToLowerInvariant()));
 
             var packFileService = new Mock<IPackFileService>();
             packFileService.Setup(service => service.GetAllPackfileContainers())
@@ -559,6 +556,24 @@ namespace Test.KitbashEditor.Services
             => resolution.GetType().GetProperty("GameplayResolutionHealthMessage")
                 ?.GetValue(resolution)?.ToString()
                 ?? string.Empty;
+
+        private static IReadOnlyList<object> ResolutionDirectAssetUsages(
+            object resolution,
+            string assetPath)
+        {
+            var directAssets = (IDictionary)(resolution.GetType()
+                .GetProperty("DirectAssetUsagesByPath")?.GetValue(resolution)
+                ?? throw new InvalidOperationException(
+                    "DirectAssetUsagesByPath was not found."));
+            var normalized = assetPath.Replace('/', '\\').TrimStart('\\').ToLowerInvariant();
+            return directAssets.Contains(normalized)
+                ? ((IEnumerable)(directAssets[normalized]
+                        ?? throw new InvalidOperationException(
+                            "Direct asset usage list was null.")))
+                    .Cast<object>()
+                    .ToArray()
+                : [];
+        }
 
         private static bool ResolutionHasUnresolvedConsumer(
             object resolution,
@@ -956,35 +971,69 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void DirectEngineAssetPresence_OnlyExternalAnimatedLodPartitionsAreLodWeighted()
+        public void DirectEngineAssetPresence_AnimatedLodAlternativesUseLifecyclePresence()
         {
-            var animatedLodRows = new Dictionary<string, List<string>>(
-                StringComparer.OrdinalIgnoreCase)
-            {
-                ["animated_engine"] =
-                [
-                    @"warmachines\engines\animated_engine\engine.rigid_model_v2",
-                    @"warmachines\engines\animated_engine\engine_lod2.rigid_model_v2",
-                ],
-                ["single_engine"] =
-                [
-                    @"warmachines\engines\single_engine\engine.rigid_model_v2",
-                ],
-            };
+            const string baseAsset =
+                @"warmachines\engines\animated_engine\engine.rigid_model_v2";
+            const string lod2Asset =
+                @"warmachines\engines\animated_engine\engine_lod2.rigid_model_v2";
+            const string rootVmd =
+                @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition";
+
+            var rows = CreateMinimalGameplayRows(
+                mainUnitKey: "main_engine_unit",
+                landUnitKey: "land_engine_unit");
+            rows["land_units_tables"][0]["engine"] = "animated_engine";
+            rows["land_units_tables"][0]["num_engines"] = "1";
+            rows["battlefield_engines_tables"] =
+            [
+                new()
+                {
+                    ["key"] = "animated_engine",
+                    ["engine_type"] = "Generic_No_Crew_Rotate",
+                    ["variant"] = "fallback_variant",
+                    ["model"] = "animated_engine",
+                },
+            ];
+            rows["warscape_animated_lod_tables"] =
+            [
+                new()
+                {
+                    ["key"] = "animated_engine",
+                    ["filename"] = baseAsset,
+                    ["range"] = "0.25",
+                    ["animated"] = "animated_engine",
+                },
+                new()
+                {
+                    ["key"] = "animated_engine",
+                    ["filename"] = lod2Asset,
+                    ["range"] = "0.75",
+                    ["animated"] = "animated_engine",
+                },
+            ];
+
+            var resolution = ResolveFromDecodedRowsWithAssets(
+                rows,
+                [baseAsset, lod2Asset],
+                rootVmd);
+
+            static double GetPresence(object usage)
+                => (double)(usage.GetType()
+                    .GetProperty("ScenarioPresenceProbability")
+                    ?.GetValue(usage)
+                    ?? throw new InvalidOperationException(
+                        "Direct asset scenario presence was not found."));
+
+            var baseUsages = ResolutionDirectAssetUsages(resolution, baseAsset);
+            var lod2Usages = ResolutionDirectAssetUsages(resolution, lod2Asset);
 
             Assert.Multiple(() =>
             {
-                Assert.That(
-                    IsExternalLodVariantReference("animated_engine", animatedLodRows),
-                    Is.True);
-                Assert.That(
-                    IsExternalLodVariantReference("single_engine", animatedLodRows),
-                    Is.False);
-                Assert.That(
-                    IsExternalLodVariantReference(
-                        @"warmachines\engines\ordinary_engine_lod2.rigid_model_v2",
-                        animatedLodRows),
-                    Is.False);
+                Assert.That(baseUsages, Has.Count.EqualTo(1));
+                Assert.That(lod2Usages, Has.Count.EqualTo(1));
+                Assert.That(GetPresence(baseUsages[0]), Is.EqualTo(1.0).Within(0.000000001));
+                Assert.That(GetPresence(lod2Usages[0]), Is.EqualTo(1.0).Within(0.000000001));
             });
         }
 
