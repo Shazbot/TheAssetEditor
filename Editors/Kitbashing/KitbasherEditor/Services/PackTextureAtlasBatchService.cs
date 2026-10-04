@@ -3311,6 +3311,27 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            var rewriteOccurrenceKeysByPayload =
+                state.CrossRigidMergeAnalysisEntries
+                    .GroupBy(
+                        plan => plan.GeneratedPayloadId,
+                        StringComparer.Ordinal)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group
+                            .SelectMany(plan =>
+                                plan.RewriteOccurrenceSets.SelectMany(
+                                    occurrenceSet =>
+                                        occurrenceSet.SourceInstances.Select(
+                                            instance =>
+                                                BuildCrossRigidConsumedOccurrenceKey(
+                                                    plan.VmdPath,
+                                                    instance))))
+                            .ToHashSet(StringComparer.Ordinal),
+                        StringComparer.Ordinal);
+            var selectedRewriteOccurrenceKeys =
+                new HashSet<string>(StringComparer.Ordinal);
+
             var acceptedGeneratedGeometryBytes = 0L;
             var rank = 0;
             foreach (var candidate in hardAcceptedCandidates
@@ -3325,6 +3346,24 @@ namespace Editors.KitbasherEditor.Services
                              StringComparer.Ordinal))
             {
                 rank++;
+                var occurrenceKeys =
+                    rewriteOccurrenceKeysByPayload.GetValueOrDefault(
+                        candidate.GeneratedPayloadId) ??
+                    new HashSet<string>(StringComparer.Ordinal);
+                if (occurrenceKeys.Overlaps(
+                        selectedRewriteOccurrenceKeys))
+                {
+                    state.CrossRigidPayloadSelectionEntries.Add(
+                        candidate with
+                        {
+                            Decision =
+                                CrossRigidPayloadSelectionDecision
+                                    .RewriteOccurrenceConflict,
+                            SelectionRank = rank,
+                        });
+                    continue;
+                }
+
                 var projectedGrowth =
                     acceptedGeneratedGeometryBytes +
                     candidate.GeneratedGeometryBytes;
@@ -3343,6 +3382,8 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 acceptedGeneratedGeometryBytes = projectedGrowth;
+                selectedRewriteOccurrenceKeys.UnionWith(
+                    occurrenceKeys);
                 state.CrossRigidSelectedPayloadIds.Add(
                     candidate.GeneratedPayloadId);
                 state.CrossRigidPayloadSelectionEntries.Add(
@@ -27723,6 +27764,7 @@ namespace Editors.KitbasherEditor.Services
             SingleVmdBenefitTooSmall,
             ScenarioResidencyBudgetExceeded,
             PhysicalPerDrawBudgetExceeded,
+            RewriteOccurrenceConflict,
             GlobalGrowthCapExceeded,
         }
 
