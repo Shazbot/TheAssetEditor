@@ -1582,6 +1582,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisBlockerExamples.Clear();
             state.CrossRigidAnalysisDiagnosticCounts.Clear();
             state.CrossRigidAnalysisDiagnosticExamples.Clear();
+            state.CrossRigidWsModelOccurrenceProbabilities.Clear();
+            state.CrossRigidDisplacedSourceGeometryEntries.Clear();
             state.CrossRigidAnalysisVmdCount = 0;
             state.CrossRigidAnalysisDirectWsModelCount = 0;
             state.CrossRigidAnalysisConfigurationCount = 0;
@@ -1624,6 +1626,10 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
+                RecordCrossRigidWsModelOccurrenceProbabilities(
+                    state,
+                    vmdPath,
+                    expansion);
                 var configurations = expansion.ConfigurationsByAttachment
                     .Values
                     .SelectMany(items => items)
@@ -1917,73 +1923,178 @@ namespace Editors.KitbasherEditor.Services
                 geometryBytes);
         }
 
+        private static void RecordCrossRigidWsModelOccurrenceProbabilities(
+            BatchState state,
+            string vmdPath,
+            CrossRigidAttachmentLocalExpansionResult expansion)
+        {
+            foreach (var (attachmentIdentity, configurations) in
+                     expansion.ConfigurationsByAttachment)
+            {
+                var wsModels = configurations
+                    .SelectMany(configuration => configuration.Instances)
+                    .Select(instance => instance.WsModelPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                foreach (var wsModelPath in wsModels)
+                {
+                    var occurrenceProbability = Math.Clamp(
+                        configurations
+                            .Where(configuration =>
+                                configuration.Instances.Any(instance =>
+                                    instance.WsModelPath.Equals(
+                                        wsModelPath,
+                                        StringComparison.OrdinalIgnoreCase)))
+                            .Sum(configuration => configuration.Probability),
+                        0.0,
+                        1.0);
+                    if (occurrenceProbability <= 0)
+                        continue;
+
+                    state.CrossRigidWsModelOccurrenceProbabilities[
+                        new CrossRigidWsModelOccurrenceKey(
+                            Normalize(vmdPath),
+                            attachmentIdentity,
+                            Normalize(wsModelPath))] =
+                        occurrenceProbability;
+                }
+            }
+        }
+
         private static void BuildCrossRigidGeneratedPayloadAnalysis(
             BatchState state)
         {
             var dependencyIndex = state.GameplayMeshDependencyIndex;
-            foreach (var payloadGroup in state.CrossRigidMergeAnalysisEntries
-                         .GroupBy(
-                             entry => entry.GeneratedPayloadId,
-                             StringComparer.Ordinal))
+            var rewriteCoverage =
+                BuildCrossRigidRewriteCoverageByOccurrence(state);
+            var sourceGeometryByRigid =
+                state.CrossRigidMergeAnalysisEntries
+                    .SelectMany(entry => entry.SourceGeometry)
+                    .GroupBy(
+                        source => source.RigidPath,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.First(),
+                        StringComparer.OrdinalIgnoreCase);
+
+            var fullyDisplacedRigids =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (dependencyIndex != null)
             {
-                var plans = payloadGroup.ToArray();
+                foreach (var (rigidPath, sourceGeometry) in
+                         sourceGeometryByRigid)
+                {
+                    if (!IsCrossRigidSourceRigidFullyCovered(
+                            state,
+                            dependencyIndex,
+                            rigidPath,
+                            rewriteCoverage,
+                            out var wsConsumers))
+                    {
+                        continue;
+                    }
+
+                    var residentProbability =
+                        GetExpectedArmyResidentProbability(
+                            state,
+                            wsConsumers,
+                            Array.Empty<string>());
+                    var expectedResidentBytes =
+                        sourceGeometry.GeometryBytes *
+                        residentProbability;
+                    fullyDisplacedRigids.Add(rigidPath);
+                    state.CrossRigidDisplacedSourceGeometryEntries.Add(
+                        new CrossRigidDisplacedSourceGeometryEntry(
+                            rigidPath,
+                            sourceGeometry.GeometryBytes,
+                            residentProbability,
+                            expectedResidentBytes));
+                }
+            }
+
+            var payloadGroups = state.CrossRigidMergeAnalysisEntries
+                .GroupBy(
+                    entry => entry.GeneratedPayloadId,
+                    StringComparer.Ordinal)
+                .Select(group => group.ToArray())
+                .ToArray();
+            var canonicalPayloadByDisplacedRigid =
+                new Dictionary<string, string>(
+                    StringComparer.OrdinalIgnoreCase);
+            foreach (var rigidPath in fullyDisplacedRigids)
+            {
+                var canonicalPayloadId = payloadGroups
+                    .Where(plans =>
+                        plans[0].SourceGeometry.Any(source =>
+                            source.RigidPath.Equals(
+                                rigidPath,
+                                StringComparison.OrdinalIgnoreCase)))
+                    .Select(plans => plans[0].GeneratedPayloadId)
+                    .OrderBy(id => id, StringComparer.Ordinal)
+                    .FirstOrDefault();
+                if (canonicalPayloadId != null)
+                {
+                    canonicalPayloadByDisplacedRigid[rigidPath] =
+                        canonicalPayloadId;
+                }
+            }
+
+            foreach (var plans in payloadGroups)
+            {
                 var representative = plans[0];
-                var sourceWsModels = representative.SourceInstances
-                    .Select(instance => instance.WsModelPath)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var rewriteVmds = plans
-                    .Select(plan => plan.VmdPath)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var consumerDiscoveryComplete =
+                    dependencyIndex != null &&
+                    representative.SourceGeometry.All(source =>
+                        !dependencyIndex.IsAssetAffectedByIncompleteRoot(
+                            source.WsModelPath) &&
+                        !dependencyIndex.IsAssetAffectedByIncompleteRoot(
+                            source.RigidPath));
                 var externalConsumers = new HashSet<string>(
                     StringComparer.OrdinalIgnoreCase);
-                var consumerDiscoveryComplete =
-                    dependencyIndex != null;
                 long potentiallyDuplicatedGeometryBytes = 0;
 
                 foreach (var source in representative.SourceGeometry)
                 {
-                    var hasExternalConsumer = dependencyIndex == null;
-                    if (dependencyIndex != null)
-                    {
-                        if (dependencyIndex.IsAssetAffectedByIncompleteRoot(
-                                source.WsModelPath) ||
-                            dependencyIndex.IsAssetAffectedByIncompleteRoot(
-                                source.RigidPath))
-                        {
-                            consumerDiscoveryComplete = false;
-                            hasExternalConsumer = true;
-                        }
-
-                        if (dependencyIndex.WsModelConsumersByRigid.TryGetValue(
-                                source.RigidPath,
-                                out var wsConsumers))
-                        {
-                            foreach (var consumer in wsConsumers)
-                            {
-                                if (sourceWsModels.Contains(consumer))
-                                    continue;
-
-                                hasExternalConsumer = true;
-                                externalConsumers.Add(consumer);
-                            }
-                        }
-
-                        foreach (var root in
-                                 dependencyIndex.GetRootsForAsset(
-                                     source.RigidPath))
-                        {
-                            if (rewriteVmds.Contains(root))
-                                continue;
-
-                            hasExternalConsumer = true;
-                            externalConsumers.Add(root);
-                        }
-                    }
-
-                    if (hasExternalConsumer)
+                    if (!fullyDisplacedRigids.Contains(source.RigidPath))
                     {
                         potentiallyDuplicatedGeometryBytes +=
                             source.GeometryBytes;
+                    }
+
+                    if (dependencyIndex == null)
+                        continue;
+
+                    if (dependencyIndex.WsModelConsumersByRigid.TryGetValue(
+                            source.RigidPath,
+                            out var wsConsumers))
+                    {
+                        foreach (var consumer in wsConsumers)
+                        {
+                            if (!IsCrossRigidWsModelFullyCovered(
+                                    state,
+                                    dependencyIndex,
+                                    consumer,
+                                    rewriteCoverage))
+                            {
+                                externalConsumers.Add(consumer);
+                            }
+                        }
+                    }
+
+                    if (dependencyIndex.DirectConsumersByRigid.TryGetValue(
+                            source.RigidPath,
+                            out var directConsumers))
+                    {
+                        externalConsumers.UnionWith(directConsumers);
+                    }
+
+                    if (dependencyIndex.IsAssetAffectedByIncompleteRoot(
+                            source.RigidPath))
+                    {
+                        externalConsumers.UnionWith(
+                            dependencyIndex.GetIncompleteRootsForAsset(
+                                source.RigidPath));
                     }
                 }
 
@@ -1999,20 +2110,25 @@ namespace Editors.KitbasherEditor.Services
                         plans);
                 var expectedResidentGeneratedBytes =
                     generatedGeometryBytes * residentProbability;
-
-                // Retirement credit is intentionally a strict lower bound. A source
-                // component is credited only when every rewrite using this payload is
-                // unconditional and no other/unknown structural consumer remains.
-                var canClaimFullDisplacement =
-                    consumerDiscoveryComplete &&
-                    externalConsumers.Count == 0 &&
-                    plans.All(plan =>
-                        plan.AggregatedConfigurationProbability >=
-                        1.0 - AtlasValueGateExpectedDrawEpsilon);
                 var expectedResidentDisplacedBytes =
-                    canClaimFullDisplacement
-                        ? expectedResidentGeneratedBytes
-                        : 0.0;
+                    representative.SourceGeometry
+                        .Select(source => source.RigidPath)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Where(rigidPath =>
+                            canonicalPayloadByDisplacedRigid
+                                .TryGetValue(
+                                    rigidPath,
+                                    out var payloadId) &&
+                            payloadId.Equals(
+                                representative.GeneratedPayloadId,
+                                StringComparison.Ordinal))
+                        .Sum(rigidPath =>
+                            state.CrossRigidDisplacedSourceGeometryEntries
+                                .First(entry =>
+                                    entry.RigidPath.Equals(
+                                        rigidPath,
+                                        StringComparison.OrdinalIgnoreCase))
+                                .ExpectedResidentGeometryBytes);
 
                 if (!consumerDiscoveryComplete)
                 {
@@ -2027,7 +2143,9 @@ namespace Editors.KitbasherEditor.Services
                     new CrossRigidGeneratedPayloadAnalysisEntry(
                         representative.GeneratedPayloadId,
                         plans.Length,
-                        rewriteVmds.Count,
+                        plans.Select(plan => plan.VmdPath)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count(),
                         representative.SourceInstances
                             .Select(instance => instance.WsModelPath)
                             .OrderBy(
@@ -2051,6 +2169,113 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+        private static Dictionary<
+                CrossRigidWsModelOccurrenceKey,
+                double>
+            BuildCrossRigidRewriteCoverageByOccurrence(
+                BatchState state)
+        {
+            var coverage = new Dictionary<
+                CrossRigidWsModelOccurrenceKey,
+                double>();
+            foreach (var plan in state.CrossRigidMergeAnalysisEntries)
+            {
+                foreach (var instance in plan.SourceInstances.Distinct())
+                {
+                    var key = new CrossRigidWsModelOccurrenceKey(
+                        plan.VmdPath,
+                        instance.AttachmentIdentity,
+                        instance.WsModelPath);
+                    coverage[key] = Math.Clamp(
+                        coverage.GetValueOrDefault(key) +
+                        plan.AggregatedConfigurationProbability,
+                        0.0,
+                        1.0);
+                }
+            }
+
+            return coverage;
+        }
+
+        private static bool IsCrossRigidSourceRigidFullyCovered(
+            BatchState state,
+            GameplayMeshDependencyIndex dependencyIndex,
+            string rigidPath,
+            IReadOnlyDictionary<
+                CrossRigidWsModelOccurrenceKey,
+                double> rewriteCoverage,
+            out string[] wsConsumers)
+        {
+            wsConsumers = dependencyIndex.WsModelConsumersByRigid
+                .GetValueOrDefault(rigidPath)?
+                .OrderBy(
+                    path => path,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToArray() ?? [];
+            if (wsConsumers.Length == 0 ||
+                dependencyIndex.IsAssetAffectedByIncompleteRoot(rigidPath))
+            {
+                return false;
+            }
+
+            if (dependencyIndex.DirectConsumersByRigid.TryGetValue(
+                    rigidPath,
+                    out var directConsumers) &&
+                directConsumers.Count != 0)
+            {
+                return false;
+            }
+
+            return wsConsumers.All(wsModelPath =>
+                IsCrossRigidWsModelFullyCovered(
+                    state,
+                    dependencyIndex,
+                    wsModelPath,
+                    rewriteCoverage));
+        }
+
+        private static bool IsCrossRigidWsModelFullyCovered(
+            BatchState state,
+            GameplayMeshDependencyIndex dependencyIndex,
+            string wsModelPathValue,
+            IReadOnlyDictionary<
+                CrossRigidWsModelOccurrenceKey,
+                double> rewriteCoverage)
+        {
+            var wsModelPath = Normalize(wsModelPathValue);
+            if (wsModelPath.Length == 0 ||
+                dependencyIndex.IsAssetAffectedByIncompleteRoot(
+                    wsModelPath))
+            {
+                return false;
+            }
+
+            var occurrences =
+                state.CrossRigidWsModelOccurrenceProbabilities
+                    .Where(entry =>
+                        entry.Key.WsModelPath.Equals(
+                            wsModelPath,
+                            StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+            if (occurrences.Length == 0)
+                return false;
+
+            var occurrenceRoots = occurrences
+                .Select(entry => entry.Key.VmdPath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (dependencyIndex.GetRootsForAsset(wsModelPath)
+                .Any(root => !occurrenceRoots.Contains(root)))
+            {
+                return false;
+            }
+
+            return occurrences.All(entry =>
+                rewriteCoverage.GetValueOrDefault(entry.Key) >=
+                entry.Value - AtlasValueGateExpectedDrawEpsilon);
+        }
+
+        private static double
+            CalculateExpectedCrossRigidPayloadResidentProbability(
         private static double
             CalculateExpectedCrossRigidPayloadResidentProbability(
                 BatchState state,
@@ -21209,8 +21434,14 @@ namespace Editors.KitbasherEditor.Services
                     $"Scenario-estimated resident generated geometry payload (conservative upper bound): " +
                     $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.ExpectedResidentGeneratedGeometryBytes))}");
                 sb.AppendLine(
+                    $"Source rigids with complete per-occurrence rewrite coverage: " +
+                    $"{state.CrossRigidDisplacedSourceGeometryEntries.Count:N0}");
+                sb.AppendLine(
+                    $"Source geometry eligible for displacement: " +
+                    $"{FormatMiB(state.CrossRigidDisplacedSourceGeometryEntries.Sum(entry => entry.GeometryBytes))}");
+                sb.AppendLine(
                     $"Scenario-estimated displaced source geometry residency credit (strict lower bound): " +
-                    $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.ExpectedResidentDisplacedSourceGeometryBytes))}");
+                    $"{FormatMiB(state.CrossRigidDisplacedSourceGeometryEntries.Sum(entry => entry.ExpectedResidentGeometryBytes))}");
                 sb.AppendLine(
                     $"Scenario-estimated net generated geometry residency: " +
                     $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.ExpectedResidentGeneratedGeometryBytes - payload.ExpectedResidentDisplacedSourceGeometryBytes))}");
@@ -23528,6 +23759,17 @@ namespace Editors.KitbasherEditor.Services
             long VertexCount,
             long GeometryBytes);
 
+        private sealed record CrossRigidWsModelOccurrenceKey(
+            string VmdPath,
+            string AttachmentIdentity,
+            string WsModelPath);
+
+        private sealed record CrossRigidDisplacedSourceGeometryEntry(
+            string RigidPath,
+            long GeometryBytes,
+            double ExpectedBattleResidentProbability,
+            double ExpectedResidentGeometryBytes);
+
         private sealed class CrossRigidMergePlanAccumulator
         {
             public CrossRigidMergePlanAccumulator(
@@ -23685,6 +23927,10 @@ namespace Editors.KitbasherEditor.Services
             public List<CrossRigidMergeAnalysisEntry> CrossRigidMergeAnalysisEntries { get; } = [];
             public List<CrossRigidGeneratedPayloadAnalysisEntry>
                 CrossRigidGeneratedPayloadAnalysisEntries { get; } = [];
+            public Dictionary<CrossRigidWsModelOccurrenceKey, double>
+                CrossRigidWsModelOccurrenceProbabilities { get; } = [];
+            public List<CrossRigidDisplacedSourceGeometryEntry>
+                CrossRigidDisplacedSourceGeometryEntries { get; } = [];
             public Dictionary<string, int> CrossRigidAnalysisBlockerCounts { get; } =
                 new(StringComparer.Ordinal);
             public Dictionary<string, List<string>> CrossRigidAnalysisBlockerExamples { get; } =
