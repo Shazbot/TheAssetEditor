@@ -2439,15 +2439,43 @@ namespace Editors.KitbasherEditor.Services
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
+            var pageGroups = BuildSharedAtlasPageGroups(
+                state,
+                batches,
+                cancellationToken,
+                progress);
+            var pageGroupByBatchIndex = new SharedAtlasPageGroup[batches.Count];
+            foreach (var pageGroup in pageGroups)
+            {
+                foreach (var batchIndex in pageGroup.BatchIndices)
+                    pageGroupByBatchIndex[batchIndex] = pageGroup;
+            }
+
+            var generatedPages = new Dictionary<SharedAtlasPageGroup, SharedAtlasPage>();
             for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var pageGroup = pageGroupByBatchIndex[batchIndex]
+                    ?? throw new InvalidOperationException(
+                        $"Atlas batch {batchIndex} was not assigned to a shared atlas page group.");
+                if (!generatedPages.TryGetValue(pageGroup, out var sharedPage))
+                {
+                    sharedPage = GenerateSharedAtlasPage(
+                        state,
+                        atlasScopeKey,
+                        progressScope,
+                        pageGroup,
+                        cancellationToken,
+                        progress);
+                    generatedPages.Add(pageGroup, sharedPage);
+                }
+
                 ReportProgress(
                     progress,
                     "Building texture atlases",
                     batchIndex + 1,
                     batches.Count,
-                    $"{progressScope} — batch {batchIndex + 1}");
+                    $"{progressScope} — batch {batchIndex + 1} ({sharedPage.AtlasStem})");
 
                 ProcessBatch(
                     state,
@@ -2455,8 +2483,522 @@ namespace Editors.KitbasherEditor.Services
                     progressScope,
                     batches[batchIndex],
                     cancellationToken,
-                    progress);
+                    progress,
+                    sharedPage);
             }
+        }
+
+        private static List<SharedAtlasPageGroup> BuildSharedAtlasPageGroups(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            var pageGroups = new List<SharedAtlasPageGroup>();
+            for (var batchIndex = 0; batchIndex < batches.Count; batchIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var batch = batches[batchIndex];
+                ReportProgress(
+                    progress,
+                    "Planning shared atlas pages",
+                    batchIndex + 1,
+                    batches.Count,
+                    $"Checking batch {batchIndex + 1}");
+
+                var canShare = TryGetSharedAtlasPageCompatibilityKey(
+                    batch,
+                    out var compatibilityKey);
+                var hasSinglePagePlan = TryCreateSharedAtlasPagePlan(
+                    state,
+                    batch,
+                    out var singlePagePlan);
+                SharedAtlasPageGroup? selectedGroup = null;
+
+                if (canShare && hasSinglePagePlan)
+                {
+                    foreach (var pageGroup in pageGroups)
+                    {
+                        if (!pageGroup.CompatibilityKey.HasValue ||
+                            pageGroup.CompatibilityKey.Value != compatibilityKey ||
+                            pageGroup.PagePlan == null)
+                        {
+                            continue;
+                        }
+
+                        state.SharedAtlasPageSharingEvaluations++;
+                        var combinedCandidates = pageGroup.Candidates
+                            .Concat(batch)
+                            .ToList();
+                        if (!TryCreateSharedAtlasPagePlan(
+                                state,
+                                combinedCandidates,
+                                out var combinedPagePlan) ||
+                            !FitsWithinLargestReplacedPage(
+                                pageGroup.OriginalPageFootprints
+                                    .Append(singlePagePlan.Footprint)
+                                    .ToArray(),
+                                combinedPagePlan.Footprint))
+                        {
+                            continue;
+                        }
+
+                        selectedGroup = pageGroup;
+                        pageGroup.BatchIndices.Add(batchIndex);
+                        pageGroup.Batches.Add(batch);
+                        pageGroup.Candidates.AddRange(batch);
+                        pageGroup.OriginalPageFootprints.Add(singlePagePlan.Footprint);
+                        pageGroup.PagePlan = combinedPagePlan;
+                        break;
+                    }
+                }
+
+                if (selectedGroup != null)
+                    continue;
+
+                pageGroups.Add(
+                    new SharedAtlasPageGroup(
+                        canShare ? compatibilityKey : null,
+                        new List<int> { batchIndex },
+                        new List<List<AtlasCandidate>> { batch },
+                        batch.ToList(),
+                        hasSinglePagePlan ? singlePagePlan : null,
+                        hasSinglePagePlan
+                            ? new List<AtlasPageFootprint> { singlePagePlan.Footprint }
+                            : []));
+            }
+
+            foreach (var pageGroup in pageGroups.Where(x => x.BatchIndices.Count > 1))
+            {
+                state.SharedAtlasPageCoalescesAccepted++;
+                state.SharedAtlasPageParticipatingBatches += pageGroup.BatchIndices.Count;
+                var originalPixels = pageGroup.OriginalPageFootprints.Sum(x => x.PixelCost);
+                var sharedPixels = pageGroup.PagePlan?.Footprint.PixelCost ?? originalPixels;
+                state.SharedAtlasPagePixelsSaved = checked(
+                    state.SharedAtlasPagePixelsSaved +
+                    Math.Max(0, originalPixels - sharedPixels));
+            }
+
+            return pageGroups;
+        }
+
+        private static bool TryGetSharedAtlasPageCompatibilityKey(
+            IReadOnlyList<AtlasCandidate> batch,
+            out SharedAtlasPageCompatibilityKey compatibilityKey)
+        {
+            compatibilityKey = default;
+            if (batch.Count == 0)
+                return false;
+
+            var roots = batch
+                .Select(candidate => Normalize(candidate.RootVmdPath))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (roots.Length != 1 || string.IsNullOrWhiteSpace(roots[0]))
+                return false;
+
+            var candidateSignatures = batch
+                .Select(BuildSharedAtlasPageCandidateSignature)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(signature => signature, StringComparer.Ordinal)
+                .ToArray();
+            compatibilityKey = new SharedAtlasPageCompatibilityKey(
+                roots[0],
+                string.Join("\u001e", candidateSignatures),
+                BuildSharedAtlasPageOutputPolicySignature());
+            return true;
+        }
+
+        private static string BuildSharedAtlasPageCandidateSignature(AtlasCandidate candidate)
+        {
+            var identity = BuildAtlasTextureSetIdentity(candidate);
+            var channelModes = AtlasChannels
+                .Select(channel =>
+                {
+                    if (candidate.ResolvedChannels.Contains(channel.Slot))
+                    {
+                        var dimensions = candidate.ChannelDimensions.TryGetValue(
+                            channel.Slot,
+                            out var resolvedDimensions)
+                            ? $"{resolvedDimensions.Width}x{resolvedDimensions.Height}"
+                            : "unknown";
+                        return $"{channel.Slot}:resolved:{dimensions}";
+                    }
+
+                    if (candidate.ConstantChannels.TryGetValue(
+                            channel.Slot,
+                            out var constant))
+                    {
+                        return
+                            $"{channel.Slot}:constant:{constant.B:X2}{constant.G:X2}" +
+                            $"{constant.R:X2}{constant.A:X2}";
+                    }
+
+                    if (candidate.MissingTextures.Any(missing =>
+                            missing.Slot.Equals(channel.Slot, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return $"{channel.Slot}:missing";
+                    }
+
+                    return $"{channel.Slot}:omitted";
+                });
+            var shader = Normalize(
+                candidate.MaterialDocument.SelectSingleNode("/material/shader")?.InnerText);
+
+            return string.Join(
+                "\u001f",
+                identity.SourceWidth,
+                identity.SourceHeight,
+                identity.BaseColour,
+                identity.MaterialMap,
+                identity.Normal,
+                identity.Mask,
+                candidate.AtlasResolutionScale.ToString("R", CultureInfo.InvariantCulture),
+                candidate.RequiresMaskAtlas,
+                candidate.ClearMaskBlueChannel,
+                shader,
+                string.Join("\u001d", channelModes));
+        }
+
+        private static string BuildSharedAtlasPageOutputPolicySignature()
+            => string.Join(
+                "\u001f",
+                "raw-bgra-mip-chain-v1",
+                PackAtlasMaxSize,
+                TextureAtlasBuilder.DefaultPadding,
+                string.Join(
+                    "\u001d",
+                    AtlasChannels.Select(channel =>
+                        $"{channel.Slot}:{channel.Type}:{channel.Suffix}")));
+
+        private static bool TryCreateSharedAtlasPagePlan(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates,
+            out SharedAtlasPagePlan pagePlan)
+        {
+            try
+            {
+                var sharedPlan = CreateSharedAtlasPlan(
+                    state,
+                    candidates,
+                    deduplicateByContent: true);
+                var footprint = CalculateAtlasPageFootprint(sharedPlan);
+                pagePlan = new SharedAtlasPagePlan(
+                    sharedPlan.Batch,
+                    sharedPlan.Plan,
+                    footprint);
+                return true;
+            }
+            catch (Exception ex) when (
+                ex is InvalidOperationException or ArgumentException or OverflowException)
+            {
+                pagePlan = null!;
+                return false;
+            }
+        }
+
+        private static AtlasPageFootprint CalculateAtlasPageFootprint(
+            (SharedAtlasBatch Batch, TextureAtlasPlan Plan) sharedPlan)
+        {
+            var outputDimensionsByChannel =
+                new Dictionary<string, (int Width, int Height)>(StringComparer.OrdinalIgnoreCase);
+            long pixelCost = 0;
+
+            foreach (var channel in AtlasChannels)
+            {
+                var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
+                foreach (var source in sharedPlan.Batch.Sources)
+                {
+                    var representative = source.Representative;
+                    if (representative.ResolvedChannels.Contains(channel.Slot) &&
+                        representative.ChannelDimensions.TryGetValue(
+                            channel.Slot,
+                            out var dimensions))
+                    {
+                        sourceDimensions[source.Id] = GetScaledAtlasDimensions(
+                            representative,
+                            dimensions.Width,
+                            dimensions.Height);
+                    }
+                }
+
+                var requiresConstantOnlyAtlas = RequiresConstantOnlyMaskAtlas(
+                    channel.Slot,
+                    sharedPlan.Batch.Sources);
+                if (sourceDimensions.Count == 0 && !requiresConstantOnlyAtlas)
+                    continue;
+
+                var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
+                    sharedPlan.Plan,
+                    sourceDimensions,
+                    PackAtlasMaxSize);
+                outputDimensionsByChannel[channel.Slot] = outputDimensions;
+                pixelCost = checked(
+                    pixelCost +
+                    (long)outputDimensions.Width * outputDimensions.Height);
+            }
+
+            return new AtlasPageFootprint(outputDimensionsByChannel, pixelCost);
+        }
+
+        private SharedAtlasPage GenerateSharedAtlasPage(
+            BatchState state,
+            string atlasScopeKey,
+            string progressScope,
+            SharedAtlasPageGroup pageGroup,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var pagePlan = pageGroup.PagePlan;
+            if (pagePlan == null)
+            {
+                if (!TryCreateSharedAtlasPagePlan(
+                        state,
+                        pageGroup.Candidates,
+                        out pagePlan))
+                {
+                    throw new InvalidOperationException(
+                        "Could not create the shared atlas page plan for an accepted atlas batch.");
+                }
+
+                pageGroup.PagePlan = pagePlan;
+            }
+
+            var sharedBatch = pagePlan.Batch;
+            var plan = pagePlan.Plan;
+            var candidates = pageGroup.Candidates;
+            state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
+            state.AtlasPlacementsReused += candidates.Count - sharedBatch.Sources.Count;
+            state.WrappedUvPlacementsCanonicalized += sharedBatch.MappingByMesh.Values.Count(
+                x => x.WrappedUvCanonicalized);
+            state.ContentDeduplicatedAtlasPlacements += sharedBatch.ContentPlacementsReused;
+            state.ContentCanonicalizedMeshReferences += sharedBatch.MappingByMesh.Values.Count(
+                x => x.ContentCanonicalized);
+
+            var atlasStem = BuildAtlasStem(atlasScopeKey, state.AtlasPageIndex++);
+            var generatedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            for (var channelIndex = 0; channelIndex < AtlasChannels.Length; channelIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var channel = AtlasChannels[channelIndex];
+                ReportProgress(
+                    progress,
+                    "Building texture atlases",
+                    channelIndex + 1,
+                    AtlasChannels.Length,
+                    $"{progressScope} — {channel.Suffix}");
+                var textureBytes = new Dictionary<int, byte[]>();
+                var textureBytesByPath = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+                var constantSources = new Dictionary<int, TextureAtlasConstantColor>();
+                var omitted = new HashSet<int>();
+
+                foreach (var source in sharedBatch.Sources)
+                {
+                    var representative = source.Representative;
+                    if (representative.ResolvedChannels.Contains(channel.Slot))
+                    {
+                        var sourcePath = GetTexturePath(representative.MaterialDocument, channel.Slot);
+                        if (string.IsNullOrWhiteSpace(sourcePath))
+                        {
+                            throw new InvalidOperationException(
+                                $"Resolved atlas channel {channel.Slot} has no texture path for {representative.Key}.");
+                        }
+
+                        sourcePath = Normalize(sourcePath);
+                        if (!textureBytesByPath.TryGetValue(sourcePath, out var bytes))
+                        {
+                            var file = FindForRead(state, sourcePath)
+                                ?? throw new InvalidOperationException(
+                                    $"Resolved atlas texture no longer exists: {sourcePath}");
+                            bytes = file.DataSource.ReadData();
+                            textureBytesByPath[sourcePath] = bytes;
+                        }
+
+                        textureBytes[source.Id] = bytes;
+                    }
+                    else if (representative.ConstantChannels.TryGetValue(
+                                 channel.Slot,
+                                 out var constantColor))
+                    {
+                        constantSources[source.Id] = constantColor;
+                    }
+                    else
+                    {
+                        omitted.Add(source.Id);
+                    }
+                }
+
+                var requiresConstantOnlyAtlas = RequiresConstantOnlyMaskAtlas(
+                    channel.Slot,
+                    sharedBatch.Sources);
+                if (textureBytes.Count == 0 && !requiresConstantOnlyAtlas)
+                {
+                    // UV remapping cannot change a uniform texture. If every present source
+                    // for this channel is constant, keep each material's original shared
+                    // constant texture path instead of allocating/compressing an atlas.
+                    if (constantSources.Count != 0)
+                        state.ConstantOnlyAtlasChannelsSkipped++;
+                    continue;
+                }
+
+                var sourceDimensions = new Dictionary<int, (int Width, int Height)>();
+                foreach (var source in sharedBatch.Sources)
+                {
+                    if (textureBytes.ContainsKey(source.Id) &&
+                        source.Representative.ChannelDimensions.TryGetValue(
+                            channel.Slot,
+                            out var dimensions))
+                    {
+                        sourceDimensions[source.Id] = GetScaledAtlasDimensions(
+                            source.Representative,
+                            dimensions.Width,
+                            dimensions.Height);
+                    }
+                }
+
+                var outputDimensions = TextureAtlasBuilder.CalculateOutputDimensions(
+                    plan,
+                    sourceDimensions,
+                    PackAtlasMaxSize);
+
+                var fileName = $"{atlasStem}_{channel.Suffix}.dds";
+                using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
+                    outputDimensions.Width,
+                    outputDimensions.Height,
+                    TextureAtlasBuilder.CalculateMipLevelCount(
+                        outputDimensions.Width,
+                        outputDimensions.Height),
+                    channel.Type,
+                    GameTypeEnum.Warhammer3,
+                    collectCompressionStatistics: AtlasProfilingEnabled);
+
+                var rasterStatistics = AtlasProfilingEnabled
+                    ? new TextureAtlasBuildStatistics()
+                    : null;
+                var rasterStopwatch = Stopwatch.StartNew();
+                var clearBlueSourceIds = channel.Slot.Equals(
+                        "t_xml_mask",
+                        StringComparison.OrdinalIgnoreCase)
+                    ? sharedBatch.Sources
+                        .Where(source => source.Representative.ClearMaskBlueChannel)
+                        .Select(source => source.Id)
+                        .ToHashSet()
+                    : null;
+                _ = TextureAtlasBuilder.BuildMipPixels(
+                    plan,
+                    textureBytes,
+                    forceOpaqueAlphaSourceIds: null,
+                    omittedSourceIds: omitted,
+                    cancellationToken: cancellationToken,
+                    heartbeat: () =>
+                    {
+                        ReportProgress(
+                            progress,
+                            "Building texture atlases",
+                            channelIndex + 1,
+                            AtlasChannels.Length,
+                            $"{progressScope} — {channel.Suffix}");
+                        cancellationToken.ThrowIfCancellationRequested();
+                    },
+                    constantSources: constantSources,
+                    outputWidth: outputDimensions.Width,
+                    outputHeight: outputDimensions.Height,
+                    mipConsumer: (mipLevel, mipWidth, mipHeight, pixels) =>
+                        mipWriter.WriteMip(mipLevel, pixels),
+                    retainMipPixels: false,
+                    statistics: rasterStatistics,
+                    clearBlueSourceIds: clearBlueSourceIds);
+                rasterStopwatch.Stop();
+                var rasterElapsed = rasterStopwatch.Elapsed;
+                AddPhaseDuration(state, "Rasterize atlas pixels", rasterElapsed);
+
+                var usesLargeBcSplitCompression = mipWriter.UsesLargeBcSplitCompression;
+                if (usesLargeBcSplitCompression)
+                    state.LargeBcSplitCompressionChannels++;
+
+                var compressionStopwatch = Stopwatch.StartNew();
+                var atlasPackFile = mipWriter.Complete(fileName);
+                compressionStopwatch.Stop();
+                var compressionElapsed = compressionStopwatch.Elapsed;
+                var compressionStatistics = mipWriter.LastCompressionStatistics;
+                AddPhaseDuration(state, "Compress atlas DDS", compressionElapsed);
+                var atlasPath = Normalize($@"{AtlasDirectory}\{fileName}");
+
+                if (AtlasProfilingEnabled && rasterStatistics != null)
+                {
+                    state.GeneratedTextureTimings.Add(new GeneratedTextureTimingEntry(
+                        atlasPath,
+                        outputDimensions.Width,
+                        outputDimensions.Height,
+                        channel.Type,
+                        DDSFormatHelper.GetDDSFormat(GameTypeEnum.Warhammer3, channel.Type),
+                        rasterElapsed,
+                        compressionElapsed,
+                        usesLargeBcSplitCompression,
+                        rasterStatistics,
+                        compressionStatistics));
+                }
+
+                WriteFile(state.Output, atlasPath, atlasPackFile.DataSource.ReadData());
+                generatedPaths[channel.Slot] = atlasPath;
+                state.GeneratedTexturePaths.Add(atlasPath);
+                state.GeneratedTextureDimensions[atlasPath] = outputDimensions;
+            }
+
+            state.AtlasPlacementDiagnostics.Add(
+                BuildAtlasPlacementDiagnosticSnapshot(
+                    atlasStem,
+                    plan,
+                    sharedBatch,
+                    candidates,
+                    generatedPaths));
+
+            return new SharedAtlasPage(
+                sharedBatch,
+                plan,
+                atlasStem,
+                generatedPaths);
+        }
+
+        private static bool FitsWithinLargestReplacedPage(
+            IReadOnlyList<AtlasPageFootprint> originalPages,
+            AtlasPageFootprint combinedPage)
+        {
+            if (originalPages.Count == 0)
+                return false;
+
+            var originalPixelCost = originalPages.Sum(page => page.PixelCost);
+            if (combinedPage.PixelCost > originalPixelCost)
+                return false;
+
+            foreach (var (channel, combinedDimensions) in combinedPage.OutputDimensionsByChannel)
+            {
+                var largestWidth = 0;
+                var largestHeight = 0;
+                foreach (var originalPage in originalPages)
+                {
+                    if (!originalPage.OutputDimensionsByChannel.TryGetValue(
+                            channel,
+                            out var originalDimensions))
+                    {
+                        continue;
+                    }
+
+                    largestWidth = Math.Max(largestWidth, originalDimensions.Width);
+                    largestHeight = Math.Max(largestHeight, originalDimensions.Height);
+                }
+
+                if (largestWidth == 0 ||
+                    combinedDimensions.Width > largestWidth ||
+                    combinedDimensions.Height > largestHeight)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private List<AtlasCandidate> CollectVmdCandidates(
@@ -12546,22 +13088,36 @@ namespace Editors.KitbasherEditor.Services
             string progressScope,
             List<AtlasCandidate> candidates,
             CancellationToken cancellationToken,
-            IProgress<TextureAtlasPackProgress>? progress)
+            IProgress<TextureAtlasPackProgress>? progress,
+            SharedAtlasPage? sharedPage)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var sharedPlan = CreateSharedAtlasPlan(
-                state,
-                candidates,
-                deduplicateByContent: true);
-            var sharedBatch = sharedPlan.Batch;
-            var plan = sharedPlan.Plan;
-            state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
-            state.AtlasPlacementsReused += candidates.Count - sharedBatch.Sources.Count;
-            state.WrappedUvPlacementsCanonicalized += sharedBatch.MappingByMesh.Values.Count(
-                x => x.WrappedUvCanonicalized);
-            state.ContentDeduplicatedAtlasPlacements += sharedBatch.ContentPlacementsReused;
-            state.ContentCanonicalizedMeshReferences += sharedBatch.MappingByMesh.Values.Count(
-                x => x.ContentCanonicalized);
+            SharedAtlasBatch sharedBatch;
+            TextureAtlasPlan plan;
+            Dictionary<string, string> generatedPaths;
+            if (sharedPage != null)
+            {
+                sharedBatch = sharedPage.Batch;
+                plan = sharedPage.Plan;
+                generatedPaths = sharedPage.GeneratedPaths;
+            }
+            else
+            {
+                var sharedPlan = CreateSharedAtlasPlan(
+                    state,
+                    candidates,
+                    deduplicateByContent: true);
+                sharedBatch = sharedPlan.Batch;
+                plan = sharedPlan.Plan;
+                state.AtlasPlacementsGenerated += sharedBatch.Sources.Count;
+                state.AtlasPlacementsReused += candidates.Count - sharedBatch.Sources.Count;
+                state.WrappedUvPlacementsCanonicalized += sharedBatch.MappingByMesh.Values.Count(
+                    x => x.WrappedUvCanonicalized);
+                state.ContentDeduplicatedAtlasPlacements += sharedBatch.ContentPlacementsReused;
+                state.ContentCanonicalizedMeshReferences += sharedBatch.MappingByMesh.Values.Count(
+                    x => x.ContentCanonicalized);
+                generatedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
 
             foreach (var candidate in candidates)
             {
@@ -12583,7 +13139,7 @@ namespace Editors.KitbasherEditor.Services
                     normalization.NormalizedCrop));
             }
 
-            var atlasBatchId = state.BatchIndex;
+            var atlasBatchId = state.BatchIndex++;
             if (!TryGetGeneratedAtlasPixelCost(
                     state,
                     candidates,
@@ -12623,11 +13179,12 @@ namespace Editors.KitbasherEditor.Services
                     state.CrossVmdSharedAtlasPlacements++;
             }
 
-            var atlasStem = BuildAtlasStem(atlasScopeKey, state.BatchIndex++);
-            var generatedPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-            for (var channelIndex = 0; channelIndex < AtlasChannels.Length; channelIndex++)
+            if (sharedPage == null)
             {
+                var atlasStem = BuildAtlasStem(atlasScopeKey, state.AtlasPageIndex++);
+
+                for (var channelIndex = 0; channelIndex < AtlasChannels.Length; channelIndex++)
+                {
                 cancellationToken.ThrowIfCancellationRequested();
                 var channel = AtlasChannels[channelIndex];
                 ReportProgress(
@@ -12800,6 +13357,7 @@ namespace Editors.KitbasherEditor.Services
                     sharedBatch,
                     candidates,
                     generatedPaths));
+            }
 
             var rewriteStopwatch = Stopwatch.StartNew();
             for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
@@ -17818,6 +18376,16 @@ namespace Editors.KitbasherEditor.Services
                     ? $"YES ({state.ExistingGeneratedAtlasCandidateCount:N0} existing candidate(s) preserved; new candidates remained eligible)"
                     : "NO")}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
+            sb.AppendLine(
+                $"Shared physical atlas-page evaluations: {state.SharedAtlasPageSharingEvaluations}");
+            sb.AppendLine(
+                $"Shared physical atlas pages accepted: {state.SharedAtlasPageCoalescesAccepted}");
+            sb.AppendLine(
+                $"Batches participating in shared physical pages: " +
+                $"{state.SharedAtlasPageParticipatingBatches}");
+            sb.AppendLine(
+                $"Pixels saved by shared physical atlas pages: " +
+                $"{state.SharedAtlasPagePixelsSaved:N0}");
             sb.AppendLine($"Constant-only atlas channels skipped: {state.ConstantOnlyAtlasChannelsSkipped}");
             sb.AppendLine($"Uniform constant source textures detected: {state.UniformConstantTexturePaths.Count}");
             sb.AppendLine(
@@ -20699,6 +21267,11 @@ namespace Editors.KitbasherEditor.Services
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
             public Dictionary<MeshKey, List<SkipDetail>> SkipDetails { get; } = [];
             public int BatchIndex { get; set; }
+            public int AtlasPageIndex { get; set; }
+            public int SharedAtlasPageSharingEvaluations { get; set; }
+            public int SharedAtlasPageCoalescesAccepted { get; set; }
+            public int SharedAtlasPageParticipatingBatches { get; set; }
+            public long SharedAtlasPagePixelsSaved { get; set; }
             public CancellationToken CancellationToken { get; set; }
             public IProgress<TextureAtlasPackProgress>? Progress { get; set; }
             public Dictionary<string, TimeSpan> PhaseDurations { get; } = new(StringComparer.Ordinal);
@@ -21446,6 +22019,47 @@ namespace Editors.KitbasherEditor.Services
             Dictionary<MeshKey, SharedAtlasMeshMapping> MappingByMesh,
             int ContentPlacementsReused);
 
+        private sealed class SharedAtlasPageGroup
+        {
+            public SharedAtlasPageGroup(
+                SharedAtlasPageCompatibilityKey? compatibilityKey,
+                List<int> batchIndices,
+                List<List<AtlasCandidate>> batches,
+                List<AtlasCandidate> candidates,
+                SharedAtlasPagePlan? pagePlan,
+                List<AtlasPageFootprint> originalPageFootprints)
+            {
+                CompatibilityKey = compatibilityKey;
+                BatchIndices = batchIndices;
+                Batches = batches;
+                Candidates = candidates;
+                PagePlan = pagePlan;
+                OriginalPageFootprints = originalPageFootprints;
+            }
+
+            public SharedAtlasPageCompatibilityKey? CompatibilityKey { get; }
+            public List<int> BatchIndices { get; }
+            public List<List<AtlasCandidate>> Batches { get; }
+            public List<AtlasCandidate> Candidates { get; }
+            public SharedAtlasPagePlan? PagePlan { get; set; }
+            public List<AtlasPageFootprint> OriginalPageFootprints { get; }
+        }
+
+        private sealed record SharedAtlasPagePlan(
+            SharedAtlasBatch Batch,
+            TextureAtlasPlan Plan,
+            AtlasPageFootprint Footprint);
+
+        private sealed record AtlasPageFootprint(
+            IReadOnlyDictionary<string, (int Width, int Height)> OutputDimensionsByChannel,
+            long PixelCost);
+
+        private sealed record SharedAtlasPage(
+            SharedAtlasBatch Batch,
+            TextureAtlasPlan Plan,
+            string AtlasStem,
+            Dictionary<string, string> GeneratedPaths);
+
         private readonly record struct SharedAtlasMeshMapping(
             int SourceId,
             float UvOffsetU,
@@ -21474,6 +22088,11 @@ namespace Editors.KitbasherEditor.Services
             AtlasTextureSetIdentity TextureSet,
             AtlasCrop Crop,
             double ResolutionScale);
+
+        private readonly record struct SharedAtlasPageCompatibilityKey(
+            string RootVmdPath,
+            string CandidateSignature,
+            string OutputPolicySignature);
 
         private readonly record struct AtlasContentCompatibilityKey(
             int SourceWidth,

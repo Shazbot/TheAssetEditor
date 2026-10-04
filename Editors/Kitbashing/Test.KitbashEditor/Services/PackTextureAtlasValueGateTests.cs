@@ -41,7 +41,8 @@ namespace Test.KitbashEditor.Services
         private static object CreateAtlasPlanningTestCandidate(
             string geometryPath,
             int lodIndex,
-            int partIndex)
+            int partIndex,
+            string? rootVmdPath = null)
         {
             var assembly = Assembly.Load("Editors.KitbasherEditor");
             var serviceType = assembly.GetType(
@@ -81,7 +82,7 @@ namespace Test.KitbashEditor.Services
                     {
                         return parameter.Name switch
                         {
-                            "RootVmdPath" => (object?)"models\\planning.variantmeshdefinition",
+                            "RootVmdPath" => (object?)(rootVmdPath ?? "models\\planning.variantmeshdefinition"),
                             "MaterialPath" => "materials\\planning.xml.material",
                             _ => string.Empty,
                         };
@@ -181,6 +182,114 @@ namespace Test.KitbashEditor.Services
                 .Cast<IEnumerable>()
                 .Select(batch => batch.Cast<object>().ToArray())
                 .ToArray();
+        }
+
+        private static IReadOnlyList<object> BuildSharedAtlasPageGroupsForTest(
+            object state,
+            params object[][] batches)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidateListType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var batchesType = typeof(List<>).MakeGenericType(candidateListType);
+            var candidateBatches = Activator.CreateInstance(batchesType)
+                ?? throw new InvalidOperationException("Could not create page batches.");
+            foreach (var batchCandidates in batches)
+            {
+                var candidateBatch = Activator.CreateInstance(candidateListType)
+                    ?? throw new InvalidOperationException("Could not create page batch.");
+                foreach (var candidate in batchCandidates)
+                    ((IList)candidateBatch).Add(candidate);
+                ((IList)candidateBatches).Add(candidateBatch);
+            }
+
+            var method = serviceType.GetMethod(
+                    "BuildSharedAtlasPageGroups",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "BuildSharedAtlasPageGroups was not found.");
+            return ((IEnumerable)(method.Invoke(
+                    null,
+                    [state, candidateBatches, CancellationToken.None, null])
+                ?? throw new InvalidOperationException(
+                    "BuildSharedAtlasPageGroups returned null.")))
+                .Cast<object>()
+                .ToArray();
+        }
+
+        private static int GetObjectCollectionCount(object instance, string propertyName)
+        {
+            var value = instance.GetType()
+                .GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(instance)
+                ?? throw new InvalidOperationException(
+                    $"Property {propertyName} was not found on {instance.GetType().Name}.");
+            return Convert.ToInt32(
+                value.GetType().GetProperty("Count")?.GetValue(value)
+                ?? throw new InvalidOperationException(
+                    $"Property {propertyName} has no Count value."));
+        }
+
+        private static void SetAtlasCandidateBounds(
+            object candidate,
+            float minU,
+            float minV,
+            float maxU,
+            float maxV)
+        {
+            var candidateType = candidate.GetType();
+            var boundsType = candidateType.Assembly
+                .GetType(
+                    "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService+UvBounds",
+                    throwOnError: true)!;
+            var bounds = boundsType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single()
+                .Invoke([minU, minV, maxU, maxV]);
+            candidateType.GetProperty(
+                    "Bounds",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.SetValue(candidate, bounds);
+        }
+
+        private static void SetAtlasCandidateTexturePath(
+            object candidate,
+            string slot,
+            string path)
+        {
+            var material = candidate.GetType()
+                .GetProperty(
+                    "MaterialDocument",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(candidate) as XmlDocument
+                ?? throw new InvalidOperationException("Atlas candidate material was not found.");
+            EnsureTexturePath(material, slot, path);
+        }
+
+        private static object BuildSharedAtlasBatchForTest(
+            object state,
+            IReadOnlyList<object> candidates,
+            bool mergeCompatibleCrops)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                    "BuildSharedAtlasBatch",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException("BuildSharedAtlasBatch was not found.");
+            return method.Invoke(
+                       null,
+                       [state, CreateAtlasCandidateBatch(candidates), mergeCompatibleCrops, false])
+                   ?? throw new InvalidOperationException(
+                       "BuildSharedAtlasBatch returned null.");
         }
 
         private static int GetMergeAffinityScore(
@@ -5293,6 +5402,176 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 GetAtlasPlanningIdentity(lod0),
                 Is.EqualTo(GetAtlasPlanningIdentity(lod2)));
+        }
+
+        [Test]
+        public void SharedAtlasPages_PreserveBatchBoundariesWhileSharingPhysicalPage()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var groups = BuildSharedAtlasPageGroupsForTest(
+                state,
+                [
+                    [
+                        CreateAtlasPlanningTestCandidate("models/page_a.rigid_model_v2", 0, 0),
+                        CreateAtlasPlanningTestCandidate("models/page_a.rigid_model_v2", 0, 1),
+                    ],
+                    [
+                        CreateAtlasPlanningTestCandidate("models/page_b.rigid_model_v2", 0, 0),
+                        CreateAtlasPlanningTestCandidate("models/page_b.rigid_model_v2", 0, 1),
+                    ],
+                    [
+                        CreateAtlasPlanningTestCandidate("models/page_c.rigid_model_v2", 0, 0),
+                        CreateAtlasPlanningTestCandidate("models/page_c.rigid_model_v2", 0, 1),
+                    ],
+                ]);
+
+            var group = groups.Single();
+            var groupBatches = (IEnumerable)(group.GetType()
+                .GetProperty("Batches")!
+                .GetValue(group)!
+                ?? throw new InvalidOperationException("Shared page batches were missing."));
+            var batchArrays = groupBatches
+                .Cast<IEnumerable>()
+                .Select(batch => batch.Cast<object>().ToArray())
+                .ToArray();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(groups, Has.Count.EqualTo(1));
+                Assert.That(GetObjectCollectionCount(group, "BatchIndices"), Is.EqualTo(3));
+                Assert.That(batchArrays, Has.Length.EqualTo(3));
+                Assert.That(batchArrays.Select(batch => batch.Length), Is.EqualTo([2, 2, 2]));
+                Assert.That(GetObjectCollectionCount(group, "Candidates"), Is.EqualTo(6));
+                Assert.That(GetStateProperty<int>(state, "SharedAtlasPageCoalescesAccepted"), Is.EqualTo(1));
+                Assert.That(GetStateProperty<int>(state, "SharedAtlasPageParticipatingBatches"), Is.EqualTo(3));
+            });
+        }
+
+        [Test]
+        public void SharedAtlasPages_DoNotCrossVmdRoots()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var groups = BuildSharedAtlasPageGroupsForTest(
+                state,
+                [
+                    [
+                        CreateAtlasPlanningTestCandidate(
+                            "models/page_a.rigid_model_v2",
+                            0,
+                            0,
+                            "models\\first.variantmeshdefinition"),
+                        CreateAtlasPlanningTestCandidate(
+                            "models/page_a.rigid_model_v2",
+                            0,
+                            1,
+                            "models\\first.variantmeshdefinition"),
+                    ],
+                    [
+                        CreateAtlasPlanningTestCandidate(
+                            "models/page_b.rigid_model_v2",
+                            0,
+                            0,
+                            "models\\second.variantmeshdefinition"),
+                        CreateAtlasPlanningTestCandidate(
+                            "models/page_b.rigid_model_v2",
+                            0,
+                            1,
+                            "models\\second.variantmeshdefinition"),
+                    ],
+                ]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(groups, Has.Count.EqualTo(2));
+                Assert.That(GetStateProperty<int>(state, "SharedAtlasPageCoalescesAccepted"), Is.EqualTo(0));
+                Assert.That(GetStateProperty<int>(state, "SharedAtlasPageSharingEvaluations"), Is.EqualTo(0));
+            });
+        }
+
+        [Test]
+        public void SharedAtlasPages_DoNotShareDifferentTextureIdentities()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var firstBatch = new[]
+            {
+                CreateAtlasPlanningTestCandidate("models/page_a.rigid_model_v2", 0, 0),
+                CreateAtlasPlanningTestCandidate("models/page_a.rigid_model_v2", 0, 1),
+            };
+            var secondBatch = new[]
+            {
+                CreateAtlasPlanningTestCandidate("models/page_b.rigid_model_v2", 0, 0),
+                CreateAtlasPlanningTestCandidate("models/page_b.rigid_model_v2", 0, 1),
+            };
+            foreach (var candidate in firstBatch)
+                SetAtlasCandidateTexturePath(
+                    candidate,
+                    "t_xml_base_colour",
+                    "textures\\planning_first.dds");
+            foreach (var candidate in secondBatch)
+                SetAtlasCandidateTexturePath(
+                    candidate,
+                    "t_xml_base_colour",
+                    "textures\\planning_second.dds");
+
+            var groups = BuildSharedAtlasPageGroupsForTest(state, firstBatch, secondBatch);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(groups, Has.Count.EqualTo(2));
+                Assert.That(GetStateProperty<int>(state, "SharedAtlasPageCoalescesAccepted"), Is.EqualTo(0));
+            });
+        }
+
+        [Test]
+        public void SharedAtlasBatch_CanonicalizesNestedCropUnion()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var outer = CreateAtlasPlanningTestCandidate(
+                "models/page.rigid_model_v2",
+                0,
+                0);
+            var inner = CreateAtlasPlanningTestCandidate(
+                "models/page.rigid_model_v2",
+                0,
+                1);
+            SetAtlasCandidateBounds(outer, 0f, 0f, 1f, 1f);
+            SetAtlasCandidateBounds(inner, 0.25f, 0.25f, 0.75f, 0.75f);
+
+            var sharedBatch = BuildSharedAtlasBatchForTest(
+                state,
+                [outer, inner],
+                mergeCompatibleCrops: true);
+            var sources = (IEnumerable)(sharedBatch.GetType()
+                .GetProperty("Sources")!
+                .GetValue(sharedBatch)!
+                ?? throw new InvalidOperationException("Shared atlas sources were missing."));
+            var sourceArray = sources.Cast<object>().ToArray();
+            var sourceEntry = sourceArray.Single();
+            var crop = sourceEntry.GetType()
+                .GetProperty("Crop")!
+                .GetValue(sourceEntry)
+                ?? throw new InvalidOperationException("Shared atlas crop was missing.");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(sourceArray, Has.Length.EqualTo(1));
+                Assert.That(crop.GetType().GetProperty("X")!.GetValue(crop), Is.EqualTo(0));
+                Assert.That(crop.GetType().GetProperty("Y")!.GetValue(crop), Is.EqualTo(0));
+                Assert.That(crop.GetType().GetProperty("Width")!.GetValue(crop), Is.EqualTo(64));
+                Assert.That(crop.GetType().GetProperty("Height")!.GetValue(crop), Is.EqualTo(64));
+            });
         }
 
         [Test]
