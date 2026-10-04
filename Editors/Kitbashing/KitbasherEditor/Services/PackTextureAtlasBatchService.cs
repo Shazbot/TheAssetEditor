@@ -1581,11 +1581,15 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisBlockerExamples.Clear();
             state.CrossRigidAnalysisVmdCount = 0;
             state.CrossRigidAnalysisDirectWsModelCount = 0;
+            state.CrossRigidAnalysisConfigurationCount = 0;
 
             var rigidCache = new Dictionary<string, RmvFile>(
                 state.RigidModels,
                 StringComparer.OrdinalIgnoreCase);
             var traversalContainers = GetGameplayTraversalContainers(state);
+            var visualConfigurationCache =
+                new Dictionary<string, IReadOnlyList<UnitVisualConfiguration>>(
+                    StringComparer.OrdinalIgnoreCase);
 
             for (var vmdIndex = 0; vmdIndex < vmdRoots.Count; vmdIndex++)
             {
@@ -1598,73 +1602,75 @@ namespace Editors.KitbasherEditor.Services
                     vmdRoots.Count,
                     vmdPath);
 
-                if (!state.VmdDocuments.TryGetValue(vmdPath, out var vmd))
-                {
-                    var vmdFile = state.Source.FindFile(vmdPath);
-                    if (vmdFile == null)
-                    {
-                        RecordCrossRigidAnalysisBlocker(
-                            state,
-                            "VMD unavailable",
-                            vmdPath);
-                        continue;
-                    }
-
-                    try
-                    {
-                        vmd = GetVmd(state, state.Source, vmdPath, vmdFile);
-                    }
-                    catch (Exception ex) when (
-                        ex is InvalidDataException or
-                        InvalidOperationException or
-                        ArgumentException or
-                        FormatException)
-                    {
-                        RecordCrossRigidAnalysisBlocker(
-                            state,
-                            "VMD could not be parsed",
-                            $"{vmdPath}: {ex.Message}");
-                        continue;
-                    }
-                }
-
-                var modelRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var childVmdRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var textureRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                CollectVmdReferences(vmd, modelRefs, childVmdRefs, textureRefs);
-
-                var directWsModels = modelRefs
-                    .Select(Normalize)
-                    .Where(path => Path.GetExtension(path).Equals(
-                        ".wsmodel",
-                        StringComparison.OrdinalIgnoreCase))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-
-                if (directWsModels.Length < 2)
-                    continue;
-
-                state.CrossRigidAnalysisVmdCount++;
-                state.CrossRigidAnalysisDirectWsModelCount += directWsModels.Length;
-
-                var unsupportedDirectModels = modelRefs
-                    .Select(Normalize)
-                    .Where(path => path.Length != 0)
-                    .Where(path => !Path.GetExtension(path).Equals(
-                        ".wsmodel",
-                        StringComparison.OrdinalIgnoreCase))
-                    .ToArray();
-                if (unsupportedDirectModels.Length != 0)
+                var vmdContainer = FindGameplayTraversalContainer(
+                    state,
+                    state.Source,
+                    traversalContainers,
+                    vmdPath);
+                var vmdFile = vmdContainer?.FindFile(vmdPath);
+                if (vmdContainer == null ||
+                    vmdFile == null ||
+                    !TryGetVmdForTraversal(
+                        state,
+                        vmdContainer,
+                        vmdPath,
+                        vmdFile,
+                        out var vmd))
                 {
                     RecordCrossRigidAnalysisBlocker(
                         state,
-                        "Direct non-WSModel component present",
-                        $"{vmdPath}: {string.Join(", ", unsupportedDirectModels)}");
+                        "VMD could not be resolved",
+                        vmdPath);
+                    continue;
                 }
 
-                var components = new List<CrossRigidAnalysisComponent>();
-                foreach (var wsModelPath in directWsModels)
+                var configurations = GetWsModelConfigurationsForVmd(
+                    state,
+                    vmdPath,
+                    visualConfigurationCache,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                if (configurations.Count == 0)
+                {
+                    RecordCrossRigidAnalysisBlocker(
+                        state,
+                        "Exact VMD visual configurations unavailable",
+                        vmdPath);
+                    continue;
+                }
+
+                var allWsModels = configurations
+                    .SelectMany(configuration => configuration.WsModelOccurrences)
+                    .Where(entry => entry.Value > 0)
+                    .Select(entry => Normalize(entry.Key))
+                    .Where(path => path.Length != 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (allWsModels.Length < 2)
+                    continue;
+
+                if (!TryCollectCrossRigidAttachmentContexts(
+                        state,
+                        vmdPath,
+                        vmd,
+                        out var attachmentContextsByWsModel,
+                        out var attachmentFailure))
+                {
+                    RecordCrossRigidAnalysisBlocker(
+                        state,
+                        "VMD attachment topology could not be resolved",
+                        $"{vmdPath}: {attachmentFailure}");
+                    continue;
+                }
+
+                state.CrossRigidAnalysisVmdCount++;
+                state.CrossRigidAnalysisDirectWsModelCount += allWsModels.Length;
+                state.CrossRigidAnalysisConfigurationCount += configurations.Count;
+
+                var componentsByWsModel =
+                    new Dictionary<string, CrossRigidAnalysisComponent>(
+                        StringComparer.OrdinalIgnoreCase);
+                foreach (var wsModelPath in allWsModels)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!TryBuildCrossRigidAnalysisComponent(
@@ -1683,141 +1689,439 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    components.Add(component);
+                    componentsByWsModel[wsModelPath] = component;
                 }
 
-                if (components.Count < 2)
-                    continue;
-
-                var topologyGroups = components
-                    .GroupBy(component => component.TopologyIdentity, StringComparer.Ordinal)
-                    .Select(group => group
-                        .OrderBy(component => component.WsModelPath, StringComparer.OrdinalIgnoreCase)
-                        .ToArray())
-                    .Where(group => group
-                        .Select(component => component.RigidPath)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .Count() >= 2)
-                    .ToArray();
-
-                if (topologyGroups.Length == 0)
-                {
-                    RecordCrossRigidAnalysisBlocker(
-                        state,
-                        "WSModel non-material topology differs",
-                        $"{vmdPath}: {components.Count} direct WSModel components");
-                    continue;
-                }
-
-                foreach (var group in topologyGroups)
+                var dependencyIndex = state.GameplayMeshDependencyIndex;
+                var seenOpportunitySignatures = new HashSet<string>(
+                    StringComparer.Ordinal);
+                foreach (var configuration in configurations
+                             .Where(configuration => configuration.Probability > 0))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var dependencyIndex = state.GameplayMeshDependencyIndex;
-                    if (dependencyIndex != null &&
-                        group.Any(component =>
-                            dependencyIndex.IsAssetAffectedByIncompleteRoot(component.WsModelPath) ||
-                            dependencyIndex.IsAssetAffectedByIncompleteRoot(component.RigidPath)))
+                    var configurationSignature =
+                        BuildCrossRigidVisualConfigurationSignature(configuration);
+
+                    var repeatedWsModels = configuration.WsModelOccurrences
+                        .Where(entry => entry.Value > 1)
+                        .Select(entry => Normalize(entry.Key))
+                        .Where(path => path.Length != 0)
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    foreach (var repeatedWsModel in repeatedWsModels)
                     {
                         RecordCrossRigidAnalysisBlocker(
                             state,
-                            "Incomplete gameplay consumer discovery",
-                            $"{vmdPath}: {string.Join(", ", group.Select(component => component.RigidPath).Distinct(StringComparer.OrdinalIgnoreCase))}");
-                        continue;
+                            "Repeated WSModel occurrence in one visual configuration",
+                            $"{vmdPath}: {repeatedWsModel} x" +
+                            $"{configuration.WsModelOccurrences[repeatedWsModel]}");
                     }
 
-                    var lodAnalyses = new List<CrossRigidLodAnalysis>();
-                    var maxLodCount = group.Max(component => component.Rigid.ModelList.Length);
-                    for (var lodIndex = 0; lodIndex < maxLodCount; lodIndex++)
+                    var attachmentGroups =
+                        new Dictionary<string, List<CrossRigidAnalysisComponent>>(
+                            StringComparer.Ordinal);
+                    foreach (var (wsModelPathValue, occurrenceCount) in
+                             configuration.WsModelOccurrences)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        var lod = AnalyzeCrossRigidLod(state, group, lodIndex);
-                        if (lod.ActiveRigidCount >= 2)
-                            lodAnalyses.Add(lod);
-                    }
+                        if (occurrenceCount != 1)
+                            continue;
 
-                    if (lodAnalyses.Count == 0 ||
-                        lodAnalyses.All(lod => lod.DrawsSaved <= 0))
-                    {
-                        RecordCrossRigidAnalysisBlocker(
-                            state,
-                            "No actual cross-rigid draw saving",
-                            $"{vmdPath}: {string.Join(", ", group.Select(component => component.RigidPath).Distinct(StringComparer.OrdinalIgnoreCase))}");
-                        continue;
-                    }
-
-                    var candidateWsModels = group
-                        .Select(component => component.WsModelPath)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    long generatedVertices = 0;
-                    long potentiallyDuplicatedVertices = 0;
-                    var externalConsumers = new HashSet<string>(
-                        StringComparer.OrdinalIgnoreCase);
-
-                    foreach (var component in group)
-                    {
-                        var componentVertices = component.Rigid.ModelList
-                            .SelectMany(lod => lod)
-                            .Sum(model => (long)model.Mesh.VertexList.Length);
-                        generatedVertices += componentVertices;
-
-                        var hasExternalConsumer = false;
-                        if (dependencyIndex != null)
+                        var wsModelPath = Normalize(wsModelPathValue);
+                        if (!componentsByWsModel.TryGetValue(
+                                wsModelPath,
+                                out var component))
                         {
-                            if (dependencyIndex.WsModelConsumersByRigid.TryGetValue(
-                                    component.RigidPath,
-                                    out var rigidWsConsumers))
-                            {
-                                foreach (var consumer in rigidWsConsumers)
-                                {
-                                    if (candidateWsModels.Contains(consumer))
-                                        continue;
-
-                                    hasExternalConsumer = true;
-                                    externalConsumers.Add(consumer);
-                                }
-                            }
-
-                            foreach (var root in dependencyIndex.GetRootsForAsset(
-                                         component.RigidPath))
-                            {
-                                if (root.Equals(
-                                        vmdPath,
-                                        StringComparison.OrdinalIgnoreCase))
-                                {
-                                    continue;
-                                }
-
-                                hasExternalConsumer = true;
-                                externalConsumers.Add(root);
-                            }
+                            continue;
                         }
 
-                        if (hasExternalConsumer)
-                            potentiallyDuplicatedVertices += componentVertices;
+                        if (!attachmentContextsByWsModel.TryGetValue(
+                                wsModelPath,
+                                out var attachmentContexts) ||
+                            attachmentContexts.Count == 0)
+                        {
+                            RecordCrossRigidAnalysisBlocker(
+                                state,
+                                "WSModel attachment context unavailable",
+                                $"{vmdPath}: {wsModelPath}");
+                            continue;
+                        }
+
+                        if (attachmentContexts.Count != 1)
+                        {
+                            RecordCrossRigidAnalysisBlocker(
+                                state,
+                                "WSModel has ambiguous attachment contexts",
+                                $"{vmdPath}: {wsModelPath}: " +
+                                $"{string.Join(", ", attachmentContexts.OrderBy(value => value, StringComparer.Ordinal))}");
+                            continue;
+                        }
+
+                        var attachmentIdentity = attachmentContexts.Single();
+                        if (!attachmentGroups.TryGetValue(
+                                attachmentIdentity,
+                                out var attachmentComponents))
+                        {
+                            attachmentComponents = [];
+                            attachmentGroups[attachmentIdentity] =
+                                attachmentComponents;
+                        }
+
+                        attachmentComponents.Add(component);
                     }
 
-                    var entry = new CrossRigidMergeAnalysisEntry(
-                        vmdPath,
-                        group.Select(component => component.WsModelPath).ToArray(),
-                        group.Select(component => component.RigidPath)
-                            .Distinct(StringComparer.OrdinalIgnoreCase)
-                            .ToArray(),
-                        lodAnalyses.ToArray(),
-                        CalculateExpectedCrossRigidArmyDrawSavings(
-                            state,
-                            vmdPath,
-                            group,
-                            lodAnalyses),
-                        generatedVertices,
-                        potentiallyDuplicatedVertices,
-                        externalConsumers
-                            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                            .ToArray());
-                    state.CrossRigidMergeAnalysisEntries.Add(entry);
+                    foreach (var (attachmentIdentity, attachmentComponents) in
+                             attachmentGroups)
+                    {
+                        if (attachmentComponents
+                                .Select(component => component.RigidPath)
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .Count() < 2)
+                        {
+                            continue;
+                        }
+
+                        // A generated WSModel can be built explicitly, but keep non-material
+                        // WSModel state strict in the first analysis pass. This prevents the
+                        // report from claiming opportunities that would require us to reverse-
+                        // engineer unrelated WSModel runtime fields in the writer phase.
+                        var topologyGroups = attachmentComponents
+                            .GroupBy(
+                                component => component.TopologyIdentity,
+                                StringComparer.Ordinal)
+                            .Select(group => group
+                                .OrderBy(
+                                    component => component.WsModelPath,
+                                    StringComparer.OrdinalIgnoreCase)
+                                .ToArray())
+                            .Where(group => group
+                                .Select(component => component.RigidPath)
+                                .Distinct(StringComparer.OrdinalIgnoreCase)
+                                .Count() >= 2)
+                            .ToArray();
+
+                        if (topologyGroups.Length == 0)
+                        {
+                            RecordCrossRigidAnalysisBlocker(
+                                state,
+                                "WSModel non-material topology differs",
+                                $"{vmdPath} [{attachmentIdentity}]: " +
+                                $"{attachmentComponents.Count} co-rendered component(s)");
+                            continue;
+                        }
+
+                        foreach (var group in topologyGroups)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (dependencyIndex != null &&
+                                group.Any(component =>
+                                    dependencyIndex.IsAssetAffectedByIncompleteRoot(
+                                        component.WsModelPath) ||
+                                    dependencyIndex.IsAssetAffectedByIncompleteRoot(
+                                        component.RigidPath)))
+                            {
+                                RecordCrossRigidAnalysisBlocker(
+                                    state,
+                                    "Incomplete gameplay consumer discovery",
+                                    $"{vmdPath}: " +
+                                    $"{string.Join(", ", group.Select(component => component.RigidPath).Distinct(StringComparer.OrdinalIgnoreCase))}");
+                                continue;
+                            }
+
+                            var opportunitySignature = string.Join(
+                                "\u001f",
+                                configurationSignature,
+                                attachmentIdentity,
+                                string.Join(
+                                    "\u001e",
+                                    group.Select(component => component.WsModelPath)
+                                        .OrderBy(
+                                            path => path,
+                                            StringComparer.OrdinalIgnoreCase)));
+                            if (!seenOpportunitySignatures.Add(opportunitySignature))
+                                continue;
+
+                            var lodAnalyses = new List<CrossRigidLodAnalysis>();
+                            var maxLodCount = group.Max(
+                                component => component.Rigid.ModelList.Length);
+                            for (var lodIndex = 0;
+                                 lodIndex < maxLodCount;
+                                 lodIndex++)
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                var lod = AnalyzeCrossRigidLod(
+                                    state,
+                                    group,
+                                    lodIndex);
+                                if (lod.ActiveRigidCount >= 2)
+                                    lodAnalyses.Add(lod);
+                            }
+
+                            if (lodAnalyses.Count == 0 ||
+                                lodAnalyses.All(lod => lod.DrawsSaved <= 0))
+                            {
+                                RecordCrossRigidAnalysisBlocker(
+                                    state,
+                                    "No actual cross-rigid draw saving",
+                                    $"{vmdPath} [{attachmentIdentity}]: " +
+                                    $"{string.Join(", ", group.Select(component => component.RigidPath).Distinct(StringComparer.OrdinalIgnoreCase))}");
+                                continue;
+                            }
+
+                            var candidateWsModels = group
+                                .Select(component => component.WsModelPath)
+                                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                            long generatedVertices = 0;
+                            long potentiallyDuplicatedVertices = 0;
+                            var externalConsumers = new HashSet<string>(
+                                StringComparer.OrdinalIgnoreCase);
+
+                            foreach (var component in group)
+                            {
+                                var componentVertices = component.Rigid.ModelList
+                                    .SelectMany(lod => lod)
+                                    .Sum(model =>
+                                        (long)model.Mesh.VertexList.Length);
+                                generatedVertices += componentVertices;
+
+                                var hasExternalConsumer = false;
+                                if (dependencyIndex != null)
+                                {
+                                    if (dependencyIndex.WsModelConsumersByRigid
+                                        .TryGetValue(
+                                            component.RigidPath,
+                                            out var rigidWsConsumers))
+                                    {
+                                        foreach (var consumer in rigidWsConsumers)
+                                        {
+                                            if (candidateWsModels.Contains(consumer))
+                                                continue;
+
+                                            hasExternalConsumer = true;
+                                            externalConsumers.Add(consumer);
+                                        }
+                                    }
+
+                                    foreach (var root in
+                                             dependencyIndex.GetRootsForAsset(
+                                                 component.RigidPath))
+                                    {
+                                        if (root.Equals(
+                                                vmdPath,
+                                                StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            continue;
+                                        }
+
+                                        hasExternalConsumer = true;
+                                        externalConsumers.Add(root);
+                                    }
+                                }
+
+                                if (hasExternalConsumer)
+                                    potentiallyDuplicatedVertices += componentVertices;
+                            }
+
+                            state.CrossRigidMergeAnalysisEntries.Add(
+                                new CrossRigidMergeAnalysisEntry(
+                                    vmdPath,
+                                    configuration.Probability,
+                                    configurationSignature,
+                                    attachmentIdentity,
+                                    group.Select(component => component.WsModelPath)
+                                        .ToArray(),
+                                    group.Select(component => component.RigidPath)
+                                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                                        .ToArray(),
+                                    lodAnalyses.ToArray(),
+                                    CalculateExpectedCrossRigidArmyDrawSavings(
+                                        state,
+                                        vmdPath,
+                                        configuration.Probability,
+                                        lodAnalyses),
+                                    generatedVertices,
+                                    potentiallyDuplicatedVertices,
+                                    externalConsumers
+                                        .OrderBy(
+                                            path => path,
+                                            StringComparer.OrdinalIgnoreCase)
+                                        .ToArray()));
+                        }
+                    }
                 }
             }
         }
 
+        private static string BuildCrossRigidVisualConfigurationSignature(
+            UnitVisualConfiguration configuration)
+            => string.Join(
+                "\u001f",
+                configuration.WsModelOccurrences
+                    .Where(entry => entry.Value > 0)
+                    .OrderBy(
+                        entry => entry.Key,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(entry =>
+                        $"{Normalize(entry.Key)}\u001e{entry.Value}"));
+
+        private static bool TryCollectCrossRigidAttachmentContexts(
+            BatchState state,
+            string vmdPath,
+            VariantMesh vmd,
+            out Dictionary<string, HashSet<string>> attachmentContextsByWsModel,
+            out string reason)
+        {
+            attachmentContextsByWsModel =
+                new Dictionary<string, HashSet<string>>(
+                    StringComparer.OrdinalIgnoreCase);
+            reason = string.Empty;
+            var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                Normalize(vmdPath),
+            };
+            return CollectCrossRigidAttachmentContexts(
+                state,
+                vmd,
+                "<root>",
+                attachmentContextsByWsModel,
+                visiting,
+                out reason);
+        }
+
+        private static bool CollectCrossRigidAttachmentContexts(
+            BatchState state,
+            VariantMesh mesh,
+            string attachmentIdentity,
+            Dictionary<string, HashSet<string>> attachmentContextsByWsModel,
+            HashSet<string> visiting,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (!string.IsNullOrWhiteSpace(mesh.ModelReference))
+            {
+                var wsModelPath = Normalize(mesh.ModelReference);
+                if (Path.GetExtension(wsModelPath).Equals(
+                        ".wsmodel",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!attachmentContextsByWsModel.TryGetValue(
+                            wsModelPath,
+                            out var attachmentContexts))
+                    {
+                        attachmentContexts =
+                            new HashSet<string>(StringComparer.Ordinal);
+                        attachmentContextsByWsModel[wsModelPath] =
+                            attachmentContexts;
+                    }
+
+                    attachmentContexts.Add(attachmentIdentity);
+                }
+            }
+
+            foreach (var slot in mesh.ChildSlots ?? [])
+            {
+                var childAttachmentIdentity =
+                    BuildCrossRigidAttachmentIdentity(
+                        attachmentIdentity,
+                        mesh.use_different_attach_point_parts,
+                        slot);
+
+                foreach (var child in slot.ChildMeshes ?? [])
+                {
+                    if (!CollectCrossRigidAttachmentContexts(
+                            state,
+                            child,
+                            childAttachmentIdentity,
+                            attachmentContextsByWsModel,
+                            visiting,
+                            out reason))
+                    {
+                        return false;
+                    }
+                }
+
+                foreach (var reference in slot.ChildReferences ?? [])
+                {
+                    if (string.IsNullOrWhiteSpace(reference.Reference))
+                    {
+                        reason = "child VMD reference is empty";
+                        return false;
+                    }
+
+                    var childVmdPath = Normalize(reference.Reference);
+                    if (!visiting.Add(childVmdPath))
+                    {
+                        reason = $"cyclic child VMD reference: {childVmdPath}";
+                        return false;
+                    }
+
+                    try
+                    {
+                        var container = FindGameplayTraversalContainer(
+                            state,
+                            state.Source,
+                            GetGameplayTraversalContainers(state),
+                            childVmdPath);
+                        var file = container?.FindFile(childVmdPath);
+                        if (container == null ||
+                            file == null ||
+                            !TryGetVmdForTraversal(
+                                state,
+                                container,
+                                childVmdPath,
+                                file,
+                                out var childVmd))
+                        {
+                            reason =
+                                $"child VMD could not be resolved: {childVmdPath}";
+                            return false;
+                        }
+
+                        if (!CollectCrossRigidAttachmentContexts(
+                                state,
+                                childVmd,
+                                childAttachmentIdentity,
+                                attachmentContextsByWsModel,
+                                visiting,
+                                out reason))
+                        {
+                            return false;
+                        }
+                    }
+                    finally
+                    {
+                        visiting.Remove(childVmdPath);
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static string BuildCrossRigidAttachmentIdentity(
+            string parentIdentity,
+            string? meshUsesDifferentAttachPointParts,
+            SLOT slot)
+        {
+            var attachmentPoint = string.IsNullOrWhiteSpace(slot.AttachmentPoint)
+                ? "<inherit>"
+                : slot.AttachmentPoint.Trim().ToLowerInvariant();
+            var meshPartsMode = string.IsNullOrWhiteSpace(
+                    meshUsesDifferentAttachPointParts)
+                ? "<default>"
+                : meshUsesDifferentAttachPointParts.Trim().ToLowerInvariant();
+            var slotPartsMode = string.IsNullOrWhiteSpace(
+                    slot.use_different_attach_point_parts)
+                ? "<default>"
+                : slot.use_different_attach_point_parts.Trim().ToLowerInvariant();
+            return string.Join(
+                "/",
+                parentIdentity,
+                $"attach={attachmentPoint}",
+                $"mesh_parts={meshPartsMode}",
+                $"slot_parts={slotPartsMode}");
+        }
+
+        private static bool TryBuildCrossRigidAnalysisComponent(
         private static bool TryBuildCrossRigidAnalysisComponent(
             BatchState state,
             string vmdPath,
@@ -2034,24 +2338,24 @@ namespace Editors.KitbasherEditor.Services
         private static double CalculateExpectedCrossRigidArmyDrawSavings(
             BatchState state,
             string vmdPath,
-            IReadOnlyList<CrossRigidAnalysisComponent> components,
+            double visualConfigurationProbability,
             IReadOnlyList<CrossRigidLodAnalysis> lodAnalyses)
         {
             var model = state.ArmyResidencyModel;
-            if (model == null || lodAnalyses.Count == 0)
+            if (model == null ||
+                visualConfigurationProbability <= 0 ||
+                lodAnalyses.Count == 0)
+            {
                 return 0;
+            }
 
-            var wsModels = components
-                .Select(component => component.WsModelPath)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
             var relevantUnitIds = GetRelevantArmyUnitIds(
                 model,
-                wsModels,
+                Array.Empty<string>(),
                 [vmdPath]);
             var relevantCultures = GetRelevantArmyCultures(
                 model,
-                wsModels,
+                Array.Empty<string>(),
                 [vmdPath],
                 relevantUnitIds);
             if (relevantUnitIds.Count == 0 || relevantCultures.Count == 0)
@@ -2073,7 +2377,9 @@ namespace Editors.KitbasherEditor.Services
 
                 foreach (var (category, slotCount) in model.Scenario.ArmySlotTemplate)
                 {
-                    if (!unitsByCategory.TryGetValue(category, out var cultureUnits) ||
+                    if (!unitsByCategory.TryGetValue(
+                            category,
+                            out var cultureUnits) ||
                         cultureUnits.Count == 0)
                     {
                         continue;
@@ -2086,100 +2392,32 @@ namespace Editors.KitbasherEditor.Services
                                      cultureUnits,
                                      relevantUnitIds))
                         {
-                            var usedExactConfigurations = false;
-                            if (model.VisualConfigurationsByUnitAndRole.TryGetValue(
+                            if (!model.DirectVmdsByUnitAndRole.TryGetValue(
                                     unitId,
-                                    out var configurationsByRole) &&
-                                configurationsByRole.Count != 0)
-                            {
-                                usedExactConfigurations = true;
-                                foreach (var (role, configurations) in configurationsByRole)
-                                {
-                                    var entityCount = Math.Max(
-                                        1,
-                                        model.EntityCountByUnitAndRole
-                                            .GetValueOrDefault(unitId)?
-                                            .GetValueOrDefault(role, 1) ?? 1);
-                                    foreach (var configuration in configurations)
-                                    {
-                                        if (configuration.Probability <= 0)
-                                            continue;
-
-                                        var activeComponents = components
-                                            .Where(component =>
-                                                configuration.WsModelOccurrences
-                                                    .GetValueOrDefault(component.WsModelPath) > 0)
-                                            .ToArray();
-                                        if (activeComponents
-                                                .Select(component => component.RigidPath)
-                                                .Distinct(StringComparer.OrdinalIgnoreCase)
-                                                .Count() < 2)
-                                        {
-                                            continue;
-                                        }
-
-                                        var configurationLod = AnalyzeCrossRigidLod(
-                                            state,
-                                            activeComponents,
-                                            lod.LodIndex);
-                                        if (configurationLod.DrawsSaved <= 0)
-                                            continue;
-
-                                        eliminatedDrawsAcrossResolvedUnits +=
-                                            configuration.Probability *
-                                            entityCount *
-                                            configurationLod.DrawsSaved;
-                                    }
-                                }
-                            }
-
-                            if (usedExactConfigurations)
-                                continue;
-
-                            if (!model.ExpectedWsModelOccurrencesByUnit.TryGetValue(
-                                    unitId,
-                                    out var expectedOccurrences))
+                                    out var vmdsByRole))
                             {
                                 continue;
                             }
 
-                            var expectedRenderedCounts = new List<double>();
-                            foreach (var component in components)
+                            foreach (var (role, directVmds) in vmdsByRole)
                             {
-                                if (!expectedOccurrences.ByWsModel.TryGetValue(
-                                        component.WsModelPath,
-                                        out var occurrencesByRole))
+                                if (directVmds.Count == 0 ||
+                                    !directVmds.Contains(vmdPath))
                                 {
-                                    expectedRenderedCounts.Clear();
-                                    break;
+                                    continue;
                                 }
 
-                                double expectedRenderedEntities = 0;
-                                foreach (var (role, expectedOccurrencesPerEntity) in occurrencesByRole)
-                                {
-                                    var entityCount = Math.Max(
-                                        1,
-                                        model.EntityCountByUnitAndRole
-                                            .GetValueOrDefault(unitId)?
-                                            .GetValueOrDefault(role, 1) ?? 1);
-                                    expectedRenderedEntities +=
-                                        Math.Clamp(expectedOccurrencesPerEntity, 0.0, 1.0) *
-                                        entityCount;
-                                }
-
-                                if (expectedRenderedEntities <= 0)
-                                {
-                                    expectedRenderedCounts.Clear();
-                                    break;
-                                }
-
-                                expectedRenderedCounts.Add(expectedRenderedEntities);
-                            }
-
-                            if (expectedRenderedCounts.Count == components.Count)
-                            {
+                                var entityCount = Math.Max(
+                                    1,
+                                    model.EntityCountByUnitAndRole
+                                        .GetValueOrDefault(unitId)?
+                                        .GetValueOrDefault(role, 1) ?? 1);
+                                var directVmdProbability =
+                                    1.0 / directVmds.Count;
                                 eliminatedDrawsAcrossResolvedUnits +=
-                                    expectedRenderedCounts.Min() *
+                                    visualConfigurationProbability *
+                                    directVmdProbability *
+                                    entityCount *
                                     lod.DrawsSaved;
                             }
                         }
@@ -2203,6 +2441,7 @@ namespace Editors.KitbasherEditor.Services
                 model.OpponentCultureWeights);
         }
 
+        private static string GetCrossRigidWsModelTopologyIdentity(XmlDocument document)
         private static string GetCrossRigidWsModelTopologyIdentity(XmlDocument document)
         {
             var clone = new XmlDocument();
@@ -6308,6 +6547,7 @@ namespace Editors.KitbasherEditor.Services
                 entityCountByUnit,
                 entityCountByUnitAndRole,
                 categoryByUnit,
+                directVmdsByUnitAndRole,
                 expectedWsModelOccurrencesByUnit,
                 visualConfigurationsByUnitAndRole,
                 resolution.Scenario,
@@ -20352,10 +20592,13 @@ namespace Editors.KitbasherEditor.Services
                     $"VMDs with multiple direct WSModel components analyzed: " +
                     $"{state.CrossRigidAnalysisVmdCount:N0}");
                 sb.AppendLine(
-                    $"Direct WSModel components inspected: " +
+                    $"Distinct WSModel paths inspected: " +
                     $"{state.CrossRigidAnalysisDirectWsModelCount:N0}");
                 sb.AppendLine(
-                    $"Eligible generated-asset cross-rigid groups with real draw savings: " +
+                    $"Exact VMD visual configurations inspected: " +
+                    $"{state.CrossRigidAnalysisConfigurationCount:N0}");
+                sb.AppendLine(
+                    $"Eligible generated-asset cross-rigid configuration groups with real draw savings: " +
                     $"{state.CrossRigidMergeAnalysisEntries.Count:N0}");
                 sb.AppendLine(
                     $"Raw cross-rigid draws saved across reported LODs: " +
@@ -20410,7 +20653,10 @@ namespace Editors.KitbasherEditor.Services
                                  .Take(maxCrossRigidReportEntries))
                     {
                         sb.AppendLine(
-                            $"  {entry.VmdPath}: WSModels={entry.WsModelPaths.Length}, " +
+                            $"  {entry.VmdPath}: configurationProbability=" +
+                            $"{entry.VisualConfigurationProbability:0.######}, " +
+                            $"attachment={entry.AttachmentIdentity}, " +
+                            $"WSModels={entry.WsModelPaths.Length}, " +
                             $"rigids={entry.RigidPaths.Length}, expectedBattleDrawsSaved=" +
                             $"{entry.ExpectedArmyDrawCallsEliminated:0.###}, generatedVertices=" +
                             $"{entry.GeneratedVertexCount:N0}, duplicatedVertices=" +
@@ -22582,6 +22828,9 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record CrossRigidMergeAnalysisEntry(
             string VmdPath,
+            double VisualConfigurationProbability,
+            string VisualConfigurationSignature,
+            string AttachmentIdentity,
             string[] WsModelPaths,
             string[] RigidPaths,
             CrossRigidLodAnalysis[] Lods,
@@ -22608,6 +22857,10 @@ namespace Editors.KitbasherEditor.Services
                 string,
                 Dictionary<Wh3UnitVisualRole, int>> EntityCountByUnitAndRole,
             IReadOnlyDictionary<string, Wh3ArmyUnitCategory> CategoryByUnit,
+            IReadOnlyDictionary<
+                string,
+                Dictionary<Wh3UnitVisualRole, HashSet<string>>>
+                DirectVmdsByUnitAndRole,
             IReadOnlyDictionary<string, ExpectedWsModelOccurrences>
                 ExpectedWsModelOccurrencesByUnit,
             IReadOnlyDictionary<
@@ -22675,6 +22928,7 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.Ordinal);
             public int CrossRigidAnalysisVmdCount { get; set; }
             public int CrossRigidAnalysisDirectWsModelCount { get; set; }
+            public int CrossRigidAnalysisConfigurationCount { get; set; }
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
