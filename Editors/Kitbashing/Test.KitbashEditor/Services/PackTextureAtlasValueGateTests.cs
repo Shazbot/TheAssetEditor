@@ -272,6 +272,24 @@ namespace Test.KitbashEditor.Services
             EnsureTexturePath(material, slot, path);
         }
 
+        private static void SetAtlasCandidateShader(object candidate, string shaderPath)
+        {
+            var material = candidate.GetType()
+                .GetProperty(
+                    "MaterialDocument",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(candidate) as XmlDocument
+                ?? throw new InvalidOperationException("Atlas candidate material was not found.");
+            var shader = material.SelectSingleNode("/material/shader") as XmlElement;
+            if (shader == null)
+            {
+                shader = material.CreateElement("shader");
+                material.DocumentElement!.AppendChild(shader);
+            }
+
+            shader.InnerText = shaderPath;
+        }
+
         private static object BuildSharedAtlasBatchForTest(
             object state,
             IReadOnlyList<object> candidates,
@@ -423,7 +441,7 @@ namespace Test.KitbashEditor.Services
                 : 0;
         }
 
-        private static bool FitsWithinLargestReplacedPageForTest(
+        private static bool FitsWithinReplacedPageBudgetForTest(
             IReadOnlyList<(int Width, int Height)> originalPages,
             (int Width, int Height) combinedPage)
         {
@@ -456,15 +474,15 @@ namespace Test.KitbashEditor.Services
                 ((IList)pages).Add(CreateFootprint(originalPage));
 
             var method = serviceType.GetMethod(
-                    "FitsWithinLargestReplacedPage",
+                    "FitsWithinReplacedPageBudget",
                     BindingFlags.NonPublic | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
-                    "FitsWithinLargestReplacedPage was not found.");
+                    "FitsWithinReplacedPageBudget was not found.");
             return (bool)(method.Invoke(
                     null,
                     [pages, CreateFootprint(combinedPage)])
                 ?? throw new InvalidOperationException(
-                    "FitsWithinLargestReplacedPage returned null."));
+                    "FitsWithinReplacedPageBudget returned null."));
         }
 
         private static void AddAtlasBatchDiagnosticForTest(
@@ -6995,7 +7013,7 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void SharedAtlasPages_DoNotShareDifferentTextureIdentities()
+        public void SharedAtlasPages_CanShareDifferentTextureAndMaterialIdentities()
         {
             var source = CreateTraversalContainer(
                 isCaPackFile: false,
@@ -7021,13 +7039,19 @@ namespace Test.KitbashEditor.Services
                     candidate,
                     "t_xml_base_colour",
                     "textures\\planning_second.dds");
+            foreach (var candidate in firstBatch)
+                SetAtlasCandidateShader(candidate, "shaders\\planning_first.xml.shader");
+            foreach (var candidate in secondBatch)
+                SetAtlasCandidateShader(candidate, "shaders\\planning_second.xml.shader");
 
             var groups = BuildSharedAtlasPageGroupsForTest(state, firstBatch, secondBatch);
 
             Assert.Multiple(() =>
             {
-                Assert.That(groups, Has.Count.EqualTo(2));
-                Assert.That(GetStateProperty<int>(state, "SharedAtlasPageCoalescesAccepted"), Is.EqualTo(0));
+                Assert.That(groups, Has.Count.EqualTo(1));
+                Assert.That(GetObjectCollectionCount(groups.Single(), "BatchIndices"), Is.EqualTo(2));
+                Assert.That(GetStateProperty<int>(state, "SharedAtlasPageCoalescesAccepted"), Is.EqualTo(1));
+                Assert.That(GetStateProperty<int>(state, "SharedAtlasPageSharingEvaluations"), Is.EqualTo(1));
             });
         }
 
@@ -7109,20 +7133,25 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void SharedAtlasPages_RejectIndependentDimensionEnvelope()
+        public void SharedAtlasPages_AllowAreaEquivalentDimensionTradeoff()
         {
             Assert.Multiple(() =>
             {
                 Assert.That(
-                    FitsWithinLargestReplacedPageForTest(
+                    FitsWithinReplacedPageBudgetForTest(
                         [(4096, 1024), (1024, 4096)],
                         (4096, 2048)),
-                    Is.False);
-                Assert.That(
-                    FitsWithinLargestReplacedPageForTest(
-                        [(4096, 4096), (1024, 1024)],
-                        (4096, 2048)),
                     Is.True);
+                Assert.That(
+                    FitsWithinReplacedPageBudgetForTest(
+                        [(1024, 2048), (1024, 2048)],
+                        (2048, 2048)),
+                    Is.True);
+                Assert.That(
+                    FitsWithinReplacedPageBudgetForTest(
+                        [(1024, 2048), (1024, 2048)],
+                        (4096, 2048)),
+                    Is.False);
             });
         }
 

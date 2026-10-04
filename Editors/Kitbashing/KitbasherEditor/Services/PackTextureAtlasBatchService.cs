@@ -3461,7 +3461,7 @@ namespace Editors.KitbasherEditor.Services
                                 state,
                                 combinedCandidates,
                                 out var combinedPagePlan) ||
-                            !FitsWithinLargestReplacedPage(
+                            !FitsWithinReplacedPageBudget(
                                 pageGroup.OriginalPageFootprints
                                     .Append(singlePagePlan.Footprint)
                                     .ToArray(),
@@ -3524,67 +3524,13 @@ namespace Editors.KitbasherEditor.Services
             if (roots.Length != 1 || string.IsNullOrWhiteSpace(roots[0]))
                 return false;
 
-            var candidateSignatures = batch
-                .Select(BuildSharedAtlasPageCandidateSignature)
-                .Distinct(StringComparer.Ordinal)
-                .OrderBy(signature => signature, StringComparer.Ordinal)
-                .ToArray();
+            // Source identities, channel modes, resolution scales, and material shaders do
+            // not need to match: each material is rewritten independently against the shared
+            // placement. The combined plan and page budget are the physical safety checks.
             compatibilityKey = new SharedAtlasPageCompatibilityKey(
                 roots[0],
-                string.Join("\u001e", candidateSignatures),
                 BuildSharedAtlasPageOutputPolicySignature());
             return true;
-        }
-
-        private static string BuildSharedAtlasPageCandidateSignature(AtlasCandidate candidate)
-        {
-            var identity = BuildAtlasTextureSetIdentity(candidate);
-            var channelModes = AtlasChannels
-                .Select(channel =>
-                {
-                    if (candidate.ResolvedChannels.Contains(channel.Slot))
-                    {
-                        var dimensions = candidate.ChannelDimensions.TryGetValue(
-                            channel.Slot,
-                            out var resolvedDimensions)
-                            ? $"{resolvedDimensions.Width}x{resolvedDimensions.Height}"
-                            : "unknown";
-                        return $"{channel.Slot}:resolved:{dimensions}";
-                    }
-
-                    if (candidate.ConstantChannels.TryGetValue(
-                            channel.Slot,
-                            out var constant))
-                    {
-                        return
-                            $"{channel.Slot}:constant:{constant.B:X2}{constant.G:X2}" +
-                            $"{constant.R:X2}{constant.A:X2}";
-                    }
-
-                    if (candidate.MissingTextures.Any(missing =>
-                            missing.Slot.Equals(channel.Slot, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        return $"{channel.Slot}:missing";
-                    }
-
-                    return $"{channel.Slot}:omitted";
-                });
-            var shader = Normalize(
-                candidate.MaterialDocument.SelectSingleNode("/material/shader")?.InnerText);
-
-            return string.Join(
-                "\u001f",
-                identity.SourceWidth,
-                identity.SourceHeight,
-                identity.BaseColour,
-                identity.MaterialMap,
-                identity.Normal,
-                identity.Mask,
-                candidate.AtlasResolutionScale.ToString("R", CultureInfo.InvariantCulture),
-                candidate.RequiresMaskAtlas,
-                candidate.ClearMaskBlueChannel,
-                shader,
-                string.Join("\u001d", channelModes));
         }
 
         private static string BuildSharedAtlasPageOutputPolicySignature()
@@ -3910,7 +3856,11 @@ namespace Editors.KitbasherEditor.Services
                 new AtlasPhysicalPageDiagnostic(candidates.ToList(), pixelCost));
         }
 
-        private static bool FitsWithinLargestReplacedPage(
+        // A shared page may trade rectangular shape for area: two 1024x2048 pages can
+        // legitimately become one 2048x2048 page. Keep both the raw-pixel guard and a
+        // per-channel BCn mip-chain budget, but do not require the result to fit inside
+        // one of the replaced rectangles.
+        private static bool FitsWithinReplacedPageBudget(
             IReadOnlyList<AtlasPageFootprint> originalPages,
             AtlasPageFootprint combinedPage)
         {
@@ -3923,20 +3873,38 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var (channel, combinedDimensions) in combinedPage.OutputDimensionsByChannel)
             {
-                var fitsWithinAnOriginalPage = originalPages.Any(originalPage =>
+                var combinedBcnBytes = CalculateAtlasChannelBcnMipChainBytes(
+                    channel,
+                    combinedDimensions);
+                var originalBcnBytes = originalPages.Sum(originalPage =>
                     originalPage.OutputDimensionsByChannel.TryGetValue(
                         channel,
-                        out var originalDimensions) &&
-                    combinedDimensions.Width <= originalDimensions.Width &&
-                    combinedDimensions.Height <= originalDimensions.Height);
+                        out var originalDimensions)
+                        ? CalculateAtlasChannelBcnMipChainBytes(channel, originalDimensions)
+                        : 0L);
 
-                if (!fitsWithinAnOriginalPage)
+                if (combinedBcnBytes > originalBcnBytes)
                 {
                     return false;
                 }
             }
 
             return true;
+        }
+
+        private static long CalculateAtlasChannelBcnMipChainBytes(
+            string channelSlot,
+            (int Width, int Height) dimensions)
+        {
+            var channel = AtlasChannels.Single(candidate =>
+                candidate.Slot.Equals(channelSlot, StringComparison.OrdinalIgnoreCase));
+            var bytesPerBlock = channel.Type is TextureType.BaseColour or TextureType.MaterialMap
+                ? 8
+                : 16;
+            return CalculateBcnMipChainBytes(
+                dimensions.Width,
+                dimensions.Height,
+                bytesPerBlock);
         }
 
         private List<AtlasCandidate> CollectVmdCandidates(
@@ -24067,7 +24035,6 @@ namespace Editors.KitbasherEditor.Services
 
         private readonly record struct SharedAtlasPageCompatibilityKey(
             string RootVmdPath,
-            string CandidateSignature,
             string OutputPolicySignature);
 
         private readonly record struct AtlasContentCompatibilityKey(
