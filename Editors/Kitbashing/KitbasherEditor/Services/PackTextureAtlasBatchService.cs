@@ -14036,6 +14036,28 @@ namespace Editors.KitbasherEditor.Services
                         rmvComponents[leftIndex],
                         rmvComponents[rightIndex]);
 
+                    if (rmvDifferences.Count == 0 &&
+                        materialComparison.SemanticallyEquivalent &&
+                        TryGetLogicalAtlasBatchBoundary(
+                            state,
+                            rigidPath,
+                            lodIndex,
+                            leftIndex,
+                            rightIndex,
+                            out var atlasBatchBoundaryDetail))
+                    {
+                        RecordMeshMergeBlocker(
+                            state,
+                            "Logical atlas batch boundary",
+                            BuildMeshMergeBlockerExample(
+                                rigidPath,
+                                lodIndex,
+                                leftIndex,
+                                rightIndex,
+                                atlasBatchBoundaryDetail));
+                        continue;
+                    }
+
                     if (rmvDifferences.Count == 0)
                     {
                         if (materialComparison.PathsEqual)
@@ -15456,6 +15478,31 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return "atlas-batch:none";
+        }
+
+        private static bool TryGetLogicalAtlasBatchBoundary(
+            BatchState state,
+            string rigidPath,
+            int lodIndex,
+            int leftPartIndex,
+            int rightPartIndex,
+            out string detail)
+        {
+            detail = string.Empty;
+            if (!state.AtlasBatchByMesh.TryGetValue(
+                    new MeshKey(rigidPath, lodIndex, leftPartIndex),
+                    out var leftBatchId) ||
+                !state.AtlasBatchByMesh.TryGetValue(
+                    new MeshKey(rigidPath, lodIndex, rightPartIndex),
+                    out var rightBatchId) ||
+                leftBatchId == rightBatchId)
+            {
+                return false;
+            }
+
+            detail =
+                $"logical atlas batches {leftBatchId} and {rightBatchId} remain separate";
+            return true;
         }
 
         private static MergeGeometryInvariantSnapshot CaptureMergeGroupInvariant(

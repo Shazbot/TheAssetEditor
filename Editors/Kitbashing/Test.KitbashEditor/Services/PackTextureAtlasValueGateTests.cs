@@ -353,6 +353,76 @@ namespace Test.KitbashEditor.Services
             return groups.Cast<object>().Count();
         }
 
+        private static int GetMeshMergeBlockerCountForAtlasBatches(
+            int leftAtlasBatchId,
+            int rightAtlasBatchId,
+            string reason)
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var meshKeyConstructor = meshKeyType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single();
+            var meshKeys = new[]
+            {
+                meshKeyConstructor.Invoke(["models\\merge.rigid_model_v2", 0, 0]),
+                meshKeyConstructor.Invoke(["models\\merge.rigid_model_v2", 0, 1]),
+            };
+
+            var atlasBatchByMesh = (IDictionary)(GetStateProperty<object>(
+                    state,
+                    "AtlasBatchByMesh")
+                ?? throw new InvalidOperationException("AtlasBatchByMesh was missing."));
+            atlasBatchByMesh.Add(meshKeys[0], leftAtlasBatchId);
+            atlasBatchByMesh.Add(meshKeys[1], rightAtlasBatchId);
+
+            var method = serviceType.GetMethod(
+                    "AnalyzeMeshMergeBlockers",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "AnalyzeMeshMergeBlockers was not found.");
+            var wsModelPath = "models\\merge.wsmodel";
+            method.Invoke(
+                null,
+                [
+                    state,
+                    "models\\merge.rigid_model_v2",
+                    0,
+                    new[]
+                    {
+                        CreateIdentityTestModel("same"),
+                        CreateIdentityTestModel("same"),
+                    },
+                    new[] { wsModelPath },
+                    new Dictionary<string, string[][]>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [wsModelPath] = new[]
+                        {
+                            new[] { "materials\\shared.xml", "materials\\shared.xml" },
+                        },
+                    },
+                    false,
+                ]);
+
+            var blockerCounts = (IDictionary)(GetStateProperty<object>(
+                    state,
+                    "MeshMergeBlockerCounts")
+                ?? throw new InvalidOperationException("MeshMergeBlockerCounts was missing."));
+            return blockerCounts.Contains(reason)
+                ? Convert.ToInt32(blockerCounts[reason])
+                : 0;
+        }
+
         private static bool FitsWithinLargestReplacedPageForTest(
             IReadOnlyList<(int Width, int Height)> originalPages,
             (int Width, int Height) combinedPage)
@@ -5788,6 +5858,26 @@ namespace Test.KitbashEditor.Services
                 Assert.That(
                     GetWsMergeGroupCountForAtlasBatches(7, 8),
                     Is.EqualTo(2));
+            });
+        }
+
+        [Test]
+        public void StructuralMergeDiagnostics_ExplainLogicalAtlasBatchBoundary()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetMeshMergeBlockerCountForAtlasBatches(
+                        7,
+                        8,
+                        "Logical atlas batch boundary"),
+                    Is.EqualTo(1));
+                Assert.That(
+                    GetMeshMergeBlockerCountForAtlasBatches(
+                        7,
+                        7,
+                        "Logical atlas batch boundary"),
+                    Is.EqualTo(0));
             });
         }
 
