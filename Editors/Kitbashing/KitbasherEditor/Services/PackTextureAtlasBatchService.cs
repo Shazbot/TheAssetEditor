@@ -2618,6 +2618,15 @@ namespace Editors.KitbasherEditor.Services
                 {
                     state.ModifiedVmdDocuments[vmdPath] =
                         rewrittenDocument;
+
+                    // Dependency/residency scans after SaveModifiedDocuments reuse the VMD
+                    // cache. Replace the analyzed source object with the emitted topology so
+                    // generated WSModel/RMV/material/texture dependencies stay reachable.
+                    state.VmdDocuments[vmdPath] =
+                        VariantMeshDefinitionLoader.Load(
+                            rewrittenDocument.OuterXml);
+                    state.ReachableWsModelsByRoot.Clear();
+                    state.ReachableWsModelsByRootVersion++;
                 }
             }
         }
