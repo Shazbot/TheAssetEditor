@@ -3485,30 +3485,9 @@ namespace Editors.KitbasherEditor.Services
             return bins;
         }
 
-        private static void CollectCrossRigidInlineModelOccurrences(
-            VariantMesh mesh,
-            string attachmentIdentity,
-            string activationSignature,
-            string xmlPath,
-            List<CrossRigidVmdModelOccurrence> occurrences,
-            ref int traversalOrder)
-        {
-            // Legacy inline-only emitter path intentionally retired. Provenance is now
-            // captured by the analyzer and applied through copy-on-write VMD chains.
-            throw new NotSupportedException(
-                "Cross-rigid inline occurrence rediscovery is no longer used.");
-        }
 
-        private static bool CrossRigidOccurrenceCountsMatch(
-            IReadOnlyList<CrossRigidVmdModelOccurrence> occurrences,
-            IReadOnlyDictionary<string, int> expectedCounts)
-            => throw new NotSupportedException(
-                "Cross-rigid occurrence rediscovery is no longer used.");
 
-        private static string BuildCrossRigidGeneratedRigidPath(
-            string payloadId)
-            => Normalize(
-                $"variantmeshes\\wh_variantmodels\\asset_editor\\cross_rigid\\{payloadId.ToLowerInvariant()}.rigid_model_v2");
+.rigid_model_v2");
 
         private static string BuildCrossRigidGeneratedWsModelPath(
             string payloadId)
@@ -23424,7 +23403,7 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidRawLodDrawsAfter:N0} " +
                     $"(-{Math.Max(0, state.CrossRigidRawLodDrawsBefore - state.CrossRigidRawLodDrawsAfter):N0})");
                 sb.AppendLine(
-                    $"Retained source WSModel/RMV2 paths protected from pruning: " +
+                    $"Retained original VMD/WSModel/RMV2 paths protected from pruning: " +
                     $"{state.CrossRigidRetainedSourceAssetPaths.Count:N0}");
                 sb.AppendLine(
                     "Cross-rigid source-asset retirement: DISABLED; originals are retained in this first writer.");
@@ -25788,14 +25767,6 @@ namespace Editors.KitbasherEditor.Services
             string RigidPath,
             long VertexCount,
             long GeometryBytes);
-
-        private sealed record CrossRigidVmdModelOccurrence(
-            string WsModelPath,
-            string AttachmentIdentity,
-            string ActivationSignature,
-            string XmlPath,
-            int TraversalOrder,
-            bool HasLocalModelModifiers);
 
         private sealed record CrossRigidGeneratedSourcePart(
             int InstanceIndex,
