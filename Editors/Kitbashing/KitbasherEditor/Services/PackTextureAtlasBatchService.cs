@@ -2276,8 +2276,6 @@ namespace Editors.KitbasherEditor.Services
 
         private static double
             CalculateExpectedCrossRigidPayloadResidentProbability(
-        private static double
-            CalculateExpectedCrossRigidPayloadResidentProbability(
                 BatchState state,
                 IReadOnlyList<CrossRigidMergeAnalysisEntry> rewritePlans)
         {
