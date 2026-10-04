@@ -1809,6 +1809,22 @@ namespace Editors.KitbasherEditor.Services
                             continue;
                         }
 
+                        var sourceVersions =
+                            distinctComponents
+                                .Select(component =>
+                                    component.Rigid.Header.Version)
+                                .Distinct()
+                                .ToArray();
+                        if (sourceVersions.Length > 1)
+                        {
+                            RecordCrossRigidAnalysisDiagnostic(
+                                state,
+                                "Cross-rigid source RMV versions normalized",
+                                $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
+                                $"{string.Join(", ", sourceVersions.OrderBy(version => version))} -> " +
+                                $"{sourceVersions.Max()}");
+                        }
+
                         var lodAnalyses = new List<CrossRigidLodAnalysis>();
                         var maxLodCount = group.Max(
                             item => item.Component.Rigid.ModelList.Length);
@@ -5159,12 +5175,24 @@ namespace Editors.KitbasherEditor.Services
                         outputMaterials.ToArray();
                 }
 
+                var generatedVersion =
+                    components
+                        .Select(component =>
+                            component.Rigid.Header.Version)
+                        .Max();
                 var header = representative.Rigid.Header;
+                header.Version = generatedVersion;
+                var lodHeaderFactory =
+                    LodHeaderFactory.Create();
                 var generatedRigid = new RmvFile
                 {
                     Header = header,
                     LodHeaders = representative.Rigid.LodHeaders
-                        .Select(lod => lod.Clone())
+                        .Select((lod, lodIndex) =>
+                            lodHeaderFactory.CreateFromBase(
+                                generatedVersion,
+                                lod,
+                                (uint)lodIndex))
                         .ToArray(),
                     ModelList = generatedModels,
                 };
@@ -5253,14 +5281,6 @@ namespace Editors.KitbasherEditor.Services
             foreach (var component in components.Skip(1))
             {
                 var rigid = component.Rigid;
-                if (rigid.Header.Version !=
-                    baseline.Header.Version)
-                {
-                    reason =
-                        "source rigid versions differ";
-                    return false;
-                }
-
                 if (!string.Equals(
                         rigid.Header.SkeletonName,
                         baselineSkeleton,
