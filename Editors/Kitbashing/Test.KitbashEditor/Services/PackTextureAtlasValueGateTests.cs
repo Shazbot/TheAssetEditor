@@ -1436,6 +1436,28 @@ namespace Test.KitbashEditor.Services
                     "GetChargeableAtlasValueGateBytes returned null."));
         }
 
+        private static double CalculateScenarioRetirement(
+            double bcnBytes,
+            double currentResidentProbability,
+            double proposedResidentProbability)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "CalculateAtlasValueGateScenarioRetirement",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "CalculateAtlasValueGateScenarioRetirement was not found.");
+
+            return (double)(method.Invoke(
+                    null,
+                    [bcnBytes, currentResidentProbability, proposedResidentProbability])
+                ?? throw new InvalidOperationException(
+                    "CalculateAtlasValueGateScenarioRetirement returned null."));
+        }
+
 
         private static bool IsSourceTextureRetired(
             bool isOwnedBySourcePack,
@@ -2977,6 +2999,49 @@ namespace Test.KitbashEditor.Services
                 GetChargeableBytes(generatedBytes, retiredSourceBytes),
                 Is.EqualTo(expected));
         }
+
+        [TestCase(16.0, 0.6, 0.0, 9.6)]
+        [TestCase(16.0, 1.0, 0.25, 12.0)]
+        [TestCase(16.0, 0.25, 0.75, 0.0)]
+        public void ScenarioRetirement_UsesResidencyProbabilityDelta(
+            double bcnBytes,
+            double currentResidentProbability,
+            double proposedResidentProbability,
+            double expected)
+        {
+            Assert.That(
+                CalculateScenarioRetirement(
+                    bcnBytes,
+                    currentResidentProbability,
+                    proposedResidentProbability),
+                Is.EqualTo(expected).Within(0.000001));
+        }
+
+        [Test]
+        public void PhysicalAndScenarioRetirement_AreParallelCredits()
+        {
+            const double generatedBytes = 16.0;
+            const double physicallyRetiredBytes = 8.0;
+
+            var globalChargeableBytes = GetChargeableBytes(
+                generatedBytes,
+                physicallyRetiredBytes);
+            var scenarioRetiredBytes = CalculateScenarioRetirement(
+                bcnBytes: 16.0,
+                currentResidentProbability: 0.75,
+                proposedResidentProbability: 0.25);
+            var scenarioChargeableBytes = GetChargeableBytes(
+                generatedBytes,
+                scenarioRetiredBytes);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(globalChargeableBytes, Is.EqualTo(8.0));
+                Assert.That(scenarioRetiredBytes, Is.EqualTo(8.0));
+                Assert.That(scenarioChargeableBytes, Is.EqualTo(8.0));
+            });
+        }
+
         [TestCase(true, false, 2, 2, true)]
         [TestCase(true, false, 3, 2, false)]
         [TestCase(true, false, 2, 1, false)]

@@ -9219,6 +9219,52 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+        private static void RecordAtlasValueGateSourceTextureResidencyDiagnostics(
+            BatchState state,
+            IReadOnlyList<AtlasValueGateSourceTextureResidencyDiagnostic> diagnostics)
+        {
+            foreach (var diagnostic in diagnostics)
+            {
+                var texturePath = Normalize(diagnostic.TexturePath);
+                if (texturePath.Length == 0)
+                    continue;
+
+                if (!state.AtlasValueGateSourceTextureResidencyDiagnostics.TryGetValue(
+                        texturePath,
+                        out var existing))
+                {
+                    state.AtlasValueGateSourceTextureResidencyDiagnostics[texturePath] =
+                        diagnostic with { TexturePath = texturePath };
+                    continue;
+                }
+
+                // A texture can participate in multiple accepted batches. Preserve the
+                // first accepted evaluation as Pbefore and advance only the post-rewrite
+                // side, so the report describes the cumulative accepted change rather than
+                // adding each batch's overlapping consumer delta.
+                state.AtlasValueGateSourceTextureResidencyDiagnostics[texturePath] =
+                    existing with
+                    {
+                        RewrittenReferenceCountAfter =
+                            diagnostic.RewrittenReferenceCountAfter,
+                        ConsumerMappingResolved =
+                            existing.ConsumerMappingResolved &&
+                            diagnostic.ConsumerMappingResolved,
+                        ProposedResidentProbability =
+                            diagnostic.ProposedResidentProbability,
+                        ProposedExpectedResidentBcnBytes =
+                            diagnostic.ProposedExpectedResidentBcnBytes,
+                        ExpectedRetiredBcnBytes =
+                            Math.Max(
+                                0.0,
+                                existing.CurrentExpectedResidentBcnBytes -
+                                diagnostic.ProposedExpectedResidentBcnBytes),
+                        ProposedConsumerWsModels =
+                            diagnostic.ProposedConsumerWsModels,
+                    };
+            }
+        }
+
         private static void RecordAtlasValueGateAccepted(
             BatchState state,
             IReadOnlyList<AtlasCandidate> batch,
@@ -9247,6 +9293,9 @@ namespace Editors.KitbasherEditor.Services
             state.AtlasValueGateExpectedArmyNetBcnBytesAccepted +=
                 residency.ExpectedArmyNetBcnBytes;
             state.AtlasValueGateExpectedDrawsAccepted += expectedArmyDrawsEliminated;
+            RecordAtlasValueGateSourceTextureResidencyDiagnostics(
+                state,
+                residency.SourceTextureResidencyDiagnostics);
             if (acceptanceKind == AtlasValueGateAcceptanceKind.TextureOnlyMerge)
             {
                 state.AtlasValueGateTextureOnlyMergeBatchesAccepted++;
@@ -10275,6 +10324,9 @@ namespace Editors.KitbasherEditor.Services
             state.AtlasValueGateExpectedDrawsAccepted +=
                 evaluation.CombinedExpectedArmyDrawsEliminated -
                 evaluation.BaseExpectedArmyDrawsEliminated;
+            RecordAtlasValueGateSourceTextureResidencyDiagnostics(
+                state,
+                evaluation.CombinedResidency.SourceTextureResidencyDiagnostics);
             state.AtlasValueGateAcceptedAffectedUnits.UnionWith(
                 CalculateAtlasBatchCoverage(combinedBatch, expectedEntitiesByMesh)
                     .AffectedUnits);
@@ -11084,6 +11136,8 @@ namespace Editors.KitbasherEditor.Services
             double expectedArmyRetiredSourceBcnBytes = 0;
             double expectedArmyRetiredSourceTextureCount = 0;
             var scenarioDisplacedSourceTextureCount = 0;
+            var sourceTextureResidencyDiagnostics =
+                new List<AtlasValueGateSourceTextureResidencyDiagnostic>();
             IReadOnlyList<(string Path, AtlasValueGateSourceTexture Texture)> affectedSourceTextures;
             if (state.AtlasValueGateSourceTexturesByReference != null)
             {
@@ -11189,19 +11243,16 @@ namespace Editors.KitbasherEditor.Services
                     retiredSourceTextureCount++;
                 }
 
-                var currentExpectedResidency = GetExpectedArmySourceTextureResidency(
+                var sourceTextureResidency = EvaluateAtlasValueGateSourceTextureResidency(
                     state,
+                    sourceTexturePath,
                     sourceTexture,
                     state.AtlasValueGateRewrittenSourceReferences,
-                    proposedRewrites: null);
-                var proposedExpectedResidency = GetExpectedArmySourceTextureResidency(
-                    state,
-                    sourceTexture,
-                    state.AtlasValueGateRewrittenSourceReferences,
-                    proposedRewrites);
-                var expectedRetirement = Math.Max(
-                    0.0,
-                    currentExpectedResidency - proposedExpectedResidency);
+                    proposedRewrites,
+                    currentlyRewrittenReferenceCount,
+                    rewrittenReferenceCountAfterProposal);
+                sourceTextureResidencyDiagnostics.Add(sourceTextureResidency);
+                var expectedRetirement = sourceTextureResidency.ExpectedRetiredBcnBytes;
                 expectedArmyRetiredSourceBcnBytes += expectedRetirement;
                 if (expectedRetirement > AtlasValueGateExpectedDrawEpsilon)
                 {
@@ -11252,7 +11303,8 @@ namespace Editors.KitbasherEditor.Services
                 expectedArmyGeneratedBcnBytes,
                 expectedArmyRetiredSourceBcnBytes,
                 expectedArmyGeneratedBcnBytes - expectedArmyRetiredSourceBcnBytes,
-                proposedRewrites);
+                proposedRewrites,
+                sourceTextureResidencyDiagnostics);
             return true;
         }
 
@@ -11325,14 +11377,47 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private static double GetExpectedArmySourceTextureResidency(
+        private static AtlasValueGateSourceTextureResidencyDiagnostic
+            EvaluateAtlasValueGateSourceTextureResidency(
             BatchState state,
+            string texturePath,
             AtlasValueGateSourceTexture sourceTexture,
             IReadOnlySet<AtlasValueGateSourceReference> existingRewrites,
-            IReadOnlySet<AtlasValueGateSourceReference>? proposedRewrites)
+            IReadOnlySet<AtlasValueGateSourceReference>? proposedRewrites,
+            int currentlyRewrittenReferenceCount,
+            int rewrittenReferenceCountAfterProposal)
         {
-            if (state.ArmyResidencyModel == null || sourceTexture.BcnBytes <= 0)
-                return 0;
+            var currentConsumerWsModels =
+                GetRemainingAtlasValueGateConsumerWsModels(
+                    sourceTexture.References,
+                    existingRewrites,
+                    proposedRewrites: null);
+            var proposedConsumerWsModels =
+                GetRemainingAtlasValueGateConsumerWsModels(
+                    sourceTexture.References,
+                    existingRewrites,
+                    proposedRewrites);
+
+            if (sourceTexture.BcnBytes <= 0)
+            {
+                return new AtlasValueGateSourceTextureResidencyDiagnostic(
+                    texturePath,
+                    sourceTexture.BcnBytes,
+                    sourceTexture.IsOwnedBySourcePack,
+                    sourceTexture.HasDirectVmdReference,
+                    sourceTexture.HasDirectSourcePackVmdReference,
+                    sourceTexture.References.Count,
+                    currentlyRewrittenReferenceCount,
+                    rewrittenReferenceCountAfterProposal,
+                    true,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    currentConsumerWsModels,
+                    proposedConsumerWsModels);
+            }
 
             // Direct VMD texture references (for example decal diffuse/normal) are not
             // rewritten by material atlasing. We do not currently model their exact army
@@ -11340,34 +11425,156 @@ namespace Editors.KitbasherEditor.Services
             // resident in both the current and proposed estimates. This guarantees that
             // such a reference can never create false scenario-estimated retirement credit.
             if (sourceTexture.HasDirectVmdReference)
-                return sourceTexture.BcnBytes;
+            {
+                return new AtlasValueGateSourceTextureResidencyDiagnostic(
+                    texturePath,
+                    sourceTexture.BcnBytes,
+                    sourceTexture.IsOwnedBySourcePack,
+                    sourceTexture.HasDirectVmdReference,
+                    sourceTexture.HasDirectSourcePackVmdReference,
+                    sourceTexture.References.Count,
+                    currentlyRewrittenReferenceCount,
+                    rewrittenReferenceCountAfterProposal,
+                    true,
+                    1.0,
+                    1.0,
+                    sourceTexture.BcnBytes,
+                    sourceTexture.BcnBytes,
+                    0,
+                    currentConsumerWsModels,
+                    proposedConsumerWsModels);
+            }
 
-            var remainingWsModels = sourceTexture.References
+            var currentProbability =
+                GetExpectedArmySourceTextureConsumerProbability(
+                    state,
+                    currentConsumerWsModels);
+            var proposedProbability =
+                GetExpectedArmySourceTextureConsumerProbability(
+                    state,
+                    proposedConsumerWsModels);
+            var consumerMappingResolved =
+                currentProbability.IsResolved && proposedProbability.IsResolved;
+            if (!consumerMappingResolved)
+            {
+                // If either side contains an unresolved consumer/culture mapping, do not
+                // infer that removing that reference retires any scenario residency. Keep
+                // both sides at full BCn residency until the complete mapping is known.
+                currentProbability = new AtlasValueGateSourceTextureConsumerProbability(
+                    1.0,
+                    false);
+                proposedProbability = new AtlasValueGateSourceTextureConsumerProbability(
+                    1.0,
+                    false);
+            }
+            var currentExpectedResidency =
+                sourceTexture.BcnBytes * currentProbability.Probability;
+            var proposedExpectedResidency =
+                sourceTexture.BcnBytes * proposedProbability.Probability;
+            var expectedRetirement = CalculateAtlasValueGateScenarioRetirement(
+                sourceTexture.BcnBytes,
+                currentProbability.Probability,
+                proposedProbability.Probability);
+
+            return new AtlasValueGateSourceTextureResidencyDiagnostic(
+                texturePath,
+                sourceTexture.BcnBytes,
+                sourceTexture.IsOwnedBySourcePack,
+                sourceTexture.HasDirectVmdReference,
+                sourceTexture.HasDirectSourcePackVmdReference,
+                sourceTexture.References.Count,
+                currentlyRewrittenReferenceCount,
+                rewrittenReferenceCountAfterProposal,
+                consumerMappingResolved,
+                currentProbability.Probability,
+                proposedProbability.Probability,
+                currentExpectedResidency,
+                proposedExpectedResidency,
+                expectedRetirement,
+                currentConsumerWsModels,
+                proposedConsumerWsModels);
+        }
+
+        private static string[] GetRemainingAtlasValueGateConsumerWsModels(
+            IEnumerable<AtlasValueGateSourceReference> references,
+            IReadOnlySet<AtlasValueGateSourceReference> existingRewrites,
+            IReadOnlySet<AtlasValueGateSourceReference>? proposedRewrites)
+            => references
                 .Where(reference =>
                     !existingRewrites.Contains(reference) &&
                     (proposedRewrites == null || !proposedRewrites.Contains(reference)))
-                .Select(reference => reference.WsModelPath)
+                .Select(reference => Normalize(reference.WsModelPath))
+                .Where(path => path.Length != 0)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            if (remainingWsModels.Length == 0)
-                return 0;
 
-            var fallbackRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var rootsByWsModel = state.AtlasValueGateRootsByWsModel;
-            if (rootsByWsModel != null)
+        private static AtlasValueGateSourceTextureConsumerProbability
+            GetExpectedArmySourceTextureConsumerProbability(
+                BatchState state,
+                IReadOnlyCollection<string> consumerWsModels)
+        {
+            if (consumerWsModels.Count == 0)
+                return new AtlasValueGateSourceTextureConsumerProbability(0, true);
+
+            var model = state.ArmyResidencyModel;
+            if (model == null)
+                return new AtlasValueGateSourceTextureConsumerProbability(0, false);
+
+            if (model.PlayerCultureWeights.Count == 0)
             {
-                foreach (var wsModel in remainingWsModels)
+                return new AtlasValueGateSourceTextureConsumerProbability(
+                    1.0,
+                    false);
+            }
+
+            // A WSModel already present in the roster asset index has an exact unit/culture
+            // mapping. Do not add roots here: rootsByWsModel also contains rewritten source
+            // roots and would incorrectly keep an Albion consumer alive after its reference
+            // was removed. An absent mapping is an unresolved consumer, so retain full
+            // residency rather than manufacturing scenario-retirement credit.
+            foreach (var wsModel in consumerWsModels)
+            {
+                if (!model.UnitIdsByAssetPath.TryGetValue(
+                        Normalize(wsModel),
+                        out var unitIds) ||
+                    unitIds.Count == 0 ||
+                    !unitIds.Any(unitId =>
+                        model.CulturesByUnit.TryGetValue(unitId, out var cultures) &&
+                        cultures.Count != 0))
                 {
-                    if (rootsByWsModel.TryGetValue(wsModel, out var roots))
-                        fallbackRoots.UnionWith(roots);
+                    return new AtlasValueGateSourceTextureConsumerProbability(
+                        1.0,
+                        false);
                 }
             }
 
-            var residentProbability = GetExpectedArmyResidentProbability(
+            var probability = GetExpectedArmyResidentProbability(
                 state,
-                remainingWsModels,
-                fallbackRoots);
-            return sourceTexture.BcnBytes * residentProbability;
+                consumerWsModels,
+                Array.Empty<string>());
+            return new AtlasValueGateSourceTextureConsumerProbability(
+                Math.Clamp(probability, 0.0, 1.0),
+                true);
+        }
+
+        private static double CalculateAtlasValueGateScenarioRetirement(
+            double bcnBytes,
+            double currentResidentProbability,
+            double proposedResidentProbability)
+        {
+            if (bcnBytes <= 0 ||
+                !double.IsFinite(bcnBytes) ||
+                !double.IsFinite(currentResidentProbability) ||
+                !double.IsFinite(proposedResidentProbability))
+            {
+                return 0;
+            }
+
+            return bcnBytes * Math.Max(
+                0.0,
+                Math.Clamp(currentResidentProbability, 0.0, 1.0) -
+                Math.Clamp(proposedResidentProbability, 0.0, 1.0));
         }
 
         private static bool TryGetWsModelConsumerEntry(
@@ -16550,6 +16757,78 @@ namespace Editors.KitbasherEditor.Services
         private static string FormatMiB(double bytes, int decimals = 1)
             => $"{(bytes / (1024.0 * 1024.0)).ToString($"N{decimals}")} MiB";
 
+        private static void AppendAtlasValueGateSourceTextureResidencyDiagnostics(
+            StringBuilder sb,
+            BatchState state)
+        {
+            var caOwnedDiagnostics = state
+                .AtlasValueGateSourceTextureResidencyDiagnostics
+                .Values
+                .Where(diagnostic => !diagnostic.IsOwnedBySourcePack)
+                .OrderBy(diagnostic => diagnostic.TexturePath, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            sb.AppendLine();
+            sb.AppendLine(
+                "Atlas value-gate accepted CA-owned source-texture residency diagnostics");
+            sb.AppendLine(
+                "--------------------------------------------------------------------------");
+            if (caOwnedDiagnostics.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+                return;
+            }
+
+            sb.AppendLine(
+                $"  textures={caOwnedDiagnostics.Length:N0}, " +
+                $"current={FormatMiB(caOwnedDiagnostics.Sum(
+                    diagnostic => diagnostic.CurrentExpectedResidentBcnBytes), 3)}, " +
+                $"after={FormatMiB(caOwnedDiagnostics.Sum(
+                    diagnostic => diagnostic.ProposedExpectedResidentBcnBytes), 3)}, " +
+                $"scenario-retired={FormatMiB(caOwnedDiagnostics.Sum(
+                    diagnostic => diagnostic.ExpectedRetiredBcnBytes), 3)}");
+            foreach (var diagnostic in caOwnedDiagnostics)
+            {
+                sb.AppendLine(
+                    $"  {diagnostic.TexturePath}: " +
+                    $"BCn={FormatMiB(diagnostic.BcnBytes, 3)}, " +
+                    $"refs={diagnostic.ReferenceCount:N0}, " +
+                    $"rewritten={diagnostic.RewrittenReferenceCountBefore:N0}->" +
+                    $"{diagnostic.RewrittenReferenceCountAfter:N0}, " +
+                    $"direct-vmd={(diagnostic.HasDirectVmdReference ? "YES" : "NO")}, " +
+                    $"direct-source-vmd={(diagnostic.HasDirectSourcePackVmdReference ? "YES" : "NO")}, " +
+                    $"mapping={(diagnostic.ConsumerMappingResolved ? "resolved" : "conservative")}");
+                sb.AppendLine(
+                    $"    residency: P={diagnostic.CurrentResidentProbability:0.000000}->" +
+                    $"{diagnostic.ProposedResidentProbability:0.000000}, " +
+                    $"expected={FormatMiB(diagnostic.CurrentExpectedResidentBcnBytes, 3)}->" +
+                    $"{FormatMiB(diagnostic.ProposedExpectedResidentBcnBytes, 3)}, " +
+                    $"retired={FormatMiB(diagnostic.ExpectedRetiredBcnBytes, 3)}");
+                sb.AppendLine(
+                    $"    consumers before: " +
+                    FormatAtlasValueGateConsumerPaths(diagnostic.CurrentConsumerWsModels));
+                sb.AppendLine(
+                    $"    consumers after: " +
+                    FormatAtlasValueGateConsumerPaths(diagnostic.ProposedConsumerWsModels));
+            }
+        }
+
+        private static string FormatAtlasValueGateConsumerPaths(
+            IReadOnlyList<string> paths)
+        {
+            if (paths.Count == 0)
+                return "<none>";
+
+            const int maxDisplayedPaths = 4;
+            var displayed = paths
+                .Take(maxDisplayedPaths)
+                .ToArray();
+            var suffix = paths.Count > maxDisplayedPaths
+                ? $", ... (+{paths.Count - maxDisplayedPaths:N0})"
+                : string.Empty;
+            return string.Join(", ", displayed) + suffix;
+        }
+
         private static double GetAtlasValueGateMiBPerDraw(
             double netBytes,
             double drawsEliminated)
@@ -18678,6 +18957,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Atlas value-gate scenario-estimated net BCn accepted: " +
                     $"{FormatMiB(state.AtlasValueGateExpectedArmyNetBcnBytesAccepted)}");
+                AppendAtlasValueGateSourceTextureResidencyDiagnostics(sb, state);
                 sb.AppendLine(
                     $"Atlas value-gate generated BCn rejected: " +
                     $"{FormatMiB(state.AtlasValueGateGeneratedBcnBytesRejected)}");
@@ -21223,6 +21503,9 @@ namespace Editors.KitbasherEditor.Services
             public double AtlasValueGateExpectedArmyNetBcnBytesAccepted { get; set; }
             public double AtlasValueGateExpectedArmyNetBcnBytesRejected { get; set; }
             public double AtlasValueGateExpectedDrawsAccepted { get; set; }
+            public Dictionary<string, AtlasValueGateSourceTextureResidencyDiagnostic>
+                AtlasValueGateSourceTextureResidencyDiagnostics { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public int AtlasValueGateCandidateAffectedUnitCount { get; set; }
             public int AtlasValueGateAcceptedAffectedUnitCount =>
                 AtlasValueGateAcceptedAffectedUnits.Count;
@@ -21585,6 +21868,10 @@ namespace Editors.KitbasherEditor.Services
             string TargetWsModels,
             string FallbackRoots);
 
+        private readonly record struct AtlasValueGateSourceTextureConsumerProbability(
+            double Probability,
+            bool IsResolved);
+
         private sealed record AtlasValueGateSourceTexture(
             long BcnBytes,
             bool IsOwnedBySourcePack,
@@ -21592,6 +21879,24 @@ namespace Editors.KitbasherEditor.Services
             bool HasDirectSourcePackVmdReference,
             HashSet<AtlasValueGateSourceReference> References,
             HashSet<AtlasValueGateSourceReference> PackReferences);
+
+        private sealed record AtlasValueGateSourceTextureResidencyDiagnostic(
+            string TexturePath,
+            long BcnBytes,
+            bool IsOwnedBySourcePack,
+            bool HasDirectVmdReference,
+            bool HasDirectSourcePackVmdReference,
+            int ReferenceCount,
+            int RewrittenReferenceCountBefore,
+            int RewrittenReferenceCountAfter,
+            bool ConsumerMappingResolved,
+            double CurrentResidentProbability,
+            double ProposedResidentProbability,
+            double CurrentExpectedResidentBcnBytes,
+            double ProposedExpectedResidentBcnBytes,
+            double ExpectedRetiredBcnBytes,
+            IReadOnlyList<string> CurrentConsumerWsModels,
+            IReadOnlyList<string> ProposedConsumerWsModels);
 
         private sealed record AtlasValueGateGroupPlan
         {
@@ -21713,7 +22018,9 @@ namespace Editors.KitbasherEditor.Services
             double ExpectedArmyGeneratedBcnBytes,
             double ExpectedArmyRetiredSourceBcnBytes,
             double ExpectedArmyNetBcnBytes,
-            HashSet<AtlasValueGateSourceReference> RewrittenReferences)
+            HashSet<AtlasValueGateSourceReference> RewrittenReferences,
+            IReadOnlyList<AtlasValueGateSourceTextureResidencyDiagnostic>
+                SourceTextureResidencyDiagnostics)
         {
             public static AtlasValueGateResidencyEstimate Empty { get; } = new(
                 0,
@@ -21726,6 +22033,7 @@ namespace Editors.KitbasherEditor.Services
                 0,
                 0,
                 0,
+                [],
                 []);
         }
 
