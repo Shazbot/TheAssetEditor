@@ -2404,18 +2404,19 @@ namespace Editors.KitbasherEditor.Services
                     slotConfigurations =
                         MergeEquivalentCrossRigidVisualConfigurations(
                             slotConfigurations);
-                    var currentConfigurations =
-                        result.TryGetValue(
-                            affectedAttachment,
-                            out var existing)
-                            ? existing
-                            :
-                            [
-                                new CrossRigidVisualConfiguration(
-                                    1.0,
-                                    affectedAttachment,
-                                    []),
-                            ];
+                    List<CrossRigidVisualConfiguration>
+                        currentConfigurations =
+                            result.TryGetValue(
+                                affectedAttachment,
+                                out var existing)
+                                ? existing
+                                :
+                                [
+                                    new CrossRigidVisualConfiguration(
+                                        1.0,
+                                        affectedAttachment,
+                                        []),
+                                ];
                     var combined =
                         CombineCrossRigidAttachmentLocalConfigurations(
                             currentConfigurations,
@@ -21149,6 +21150,8 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Shared or incompletely discovered structural consumers are duplication-cost diagnostics, not eligibility failures.");
                 sb.AppendLine(
+                    "Generated-geometry residency uses a conservative upper-bound union of attachment-local rewrite probabilities; displaced-source credit is a strict lower bound.");
+                sb.AppendLine(
                     $"VMD roots with multiple reachable WSModel paths analyzed: " +
                     $"{state.CrossRigidAnalysisVmdCount:N0}");
                 sb.AppendLine(
@@ -21172,17 +21175,38 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Scenario-expected battle draw calls eliminated: " +
                     $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.ExpectedArmyDrawCallsEliminated):0.###}");
+                var generatedVerticesBeforePayloadReuse =
+                    state.CrossRigidMergeAnalysisEntries.Sum(entry =>
+                        entry.SourceGeometry.Sum(source => source.VertexCount));
+                var generatedGeometryBytesBeforePayloadReuse =
+                    state.CrossRigidMergeAnalysisEntries.Sum(entry =>
+                        entry.SourceGeometry.Sum(source => source.GeometryBytes));
+                var generatedVerticesAfterPayloadReuse =
+                    state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(
+                        payload => payload.GeneratedVertexCount);
+                var generatedGeometryBytesAfterPayloadReuse =
+                    state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(
+                        payload => payload.GeneratedGeometryBytes);
+                sb.AppendLine(
+                    $"Generated structural vertices before cross-VMD payload reuse: " +
+                    $"{generatedVerticesBeforePayloadReuse:N0}");
                 sb.AppendLine(
                     $"Generated structural vertices after cross-VMD payload reuse: " +
-                    $"{state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.GeneratedVertexCount):N0}");
+                    $"{generatedVerticesAfterPayloadReuse:N0}");
+                sb.AppendLine(
+                    $"Generated geometry payload before cross-VMD reuse: " +
+                    $"{FormatMiB(generatedGeometryBytesBeforePayloadReuse)}");
                 sb.AppendLine(
                     $"Generated geometry payload after cross-VMD reuse: " +
-                    $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.GeneratedGeometryBytes))}");
+                    $"{FormatMiB(generatedGeometryBytesAfterPayloadReuse)}");
+                sb.AppendLine(
+                    $"Generated geometry payload eliminated by cross-VMD reuse: " +
+                    $"{FormatMiB(Math.Max(0, generatedGeometryBytesBeforePayloadReuse - generatedGeometryBytesAfterPayloadReuse))}");
                 sb.AppendLine(
                     $"Potentially duplicated geometry payload due to retained/unknown source consumers: " +
                     $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.PotentiallyDuplicatedGeometryBytes))}");
                 sb.AppendLine(
-                    $"Scenario-estimated resident generated geometry payload: " +
+                    $"Scenario-estimated resident generated geometry payload (conservative upper bound): " +
                     $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.ExpectedResidentGeneratedGeometryBytes))}");
                 sb.AppendLine(
                     $"Scenario-estimated displaced source geometry residency credit (strict lower bound): " +
