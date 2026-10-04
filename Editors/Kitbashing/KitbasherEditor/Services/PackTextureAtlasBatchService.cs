@@ -1602,6 +1602,9 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisBlockerExamples.Clear();
             state.CrossRigidAnalysisDiagnosticCounts.Clear();
             state.CrossRigidAnalysisDiagnosticExamples.Clear();
+            state.CrossRigidActivationRewriteOccurrenceSetCounts.Clear();
+            state.CrossRigidActivationRewritePlanCounts.Clear();
+            state.CrossRigidActivationRewriteExpectedDrawCalls.Clear();
             state.CrossRigidWsModelOccurrenceProbabilities.Clear();
             state.CrossRigidDisplacedSourceGeometryEntries.Clear();
             state.CrossRigidAnalysisVmdCount = 0;
@@ -1620,6 +1623,9 @@ namespace Editors.KitbasherEditor.Services
                 new Dictionary<string, CrossRigidMergePlanAccumulator>(
                     StringComparer.Ordinal);
             var rejectedPlanKeys = new HashSet<string>(StringComparer.Ordinal);
+            var activationClassificationVmdDocuments =
+                new Dictionary<string, XmlDocument>(
+                    StringComparer.OrdinalIgnoreCase);
 
             for (var vmdIndex = 0; vmdIndex < vmdRoots.Count; vmdIndex++)
             {
@@ -1871,16 +1877,86 @@ namespace Editors.KitbasherEditor.Services
                 var allRewriteOccurrenceSets =
                     MergeCrossRigidRewriteOccurrenceSets(
                         plan.RewriteOccurrenceSets);
+                var classifiedOccurrenceSets =
+                    new List<(
+                        CrossRigidRewriteOccurrenceSet OccurrenceSet,
+                        CrossRigidActivationRewriteClass RewriteClass,
+                        string Detail)>();
+                foreach (var occurrenceSet in allRewriteOccurrenceSets)
+                {
+                    var rewriteClass =
+                        ClassifyCrossRigidRewriteOccurrenceSet(
+                            state,
+                            occurrenceSet,
+                            activationClassificationVmdDocuments,
+                            out var classificationDetail);
+                    classifiedOccurrenceSets.Add(
+                        (occurrenceSet, rewriteClass, classificationDetail));
+                }
+
                 var rewriteableOccurrenceSets =
-                    allRewriteOccurrenceSets
-                        .Where(
-                            IsCrossRigidRewriteOccurrenceSetActivationSafe)
+                    classifiedOccurrenceSets
+                        .Where(item =>
+                            item.RewriteClass ==
+                            CrossRigidActivationRewriteClass.ExactActivationSafe)
+                        .Select(item => item.OccurrenceSet)
                         .ToArray();
                 var aggregatedProbability = Math.Clamp(
                     rewriteableOccurrenceSets.Sum(set =>
                         set.Probability),
                     0.0,
                     1.0);
+
+                foreach (var classificationGroup in
+                         classifiedOccurrenceSets.GroupBy(item =>
+                             item.RewriteClass))
+                {
+                    var rewriteClass = classificationGroup.Key;
+                    var classItems = classificationGroup.ToArray();
+                    var classProbability = Math.Clamp(
+                        classItems.Sum(item =>
+                            item.OccurrenceSet.Probability),
+                        0.0,
+                        1.0);
+                    state.CrossRigidActivationRewriteOccurrenceSetCounts[
+                        rewriteClass] =
+                        state.CrossRigidActivationRewriteOccurrenceSetCounts
+                            .GetValueOrDefault(rewriteClass) +
+                        classItems.Length;
+                    state.CrossRigidActivationRewritePlanCounts[
+                        rewriteClass] =
+                        state.CrossRigidActivationRewritePlanCounts
+                            .GetValueOrDefault(rewriteClass) +
+                        1;
+                    state.CrossRigidActivationRewriteExpectedDrawCalls[
+                        rewriteClass] =
+                        state.CrossRigidActivationRewriteExpectedDrawCalls
+                            .GetValueOrDefault(rewriteClass) +
+                        CalculateExpectedCrossRigidArmyDrawSavings(
+                            state,
+                            plan.VmdPath,
+                            classProbability,
+                            plan.Lods);
+
+                    if (rewriteClass !=
+                        CrossRigidActivationRewriteClass.ExactActivationSafe)
+                    {
+                        var detail = classItems
+                            .Select(item => item.Detail)
+                            .FirstOrDefault(value =>
+                                !string.IsNullOrWhiteSpace(value));
+                        RecordCrossRigidAnalysisDiagnostic(
+                            state,
+                            $"Activation rewrite class: " +
+                            $"{GetCrossRigidActivationRewriteClassLabel(rewriteClass)}",
+                            $"{plan.VmdPath} [{plan.AttachmentIdentity}]: " +
+                            $"{classItems.Length}/{allRewriteOccurrenceSets.Length} state(s), " +
+                            $"probability={classProbability:0.######}" +
+                            (string.IsNullOrWhiteSpace(detail)
+                                ? string.Empty
+                                : $"; {detail}"));
+                    }
+                }
 
                 var excludedOccurrenceSetCount =
                     allRewriteOccurrenceSets.Length -
@@ -1944,6 +2020,15 @@ namespace Editors.KitbasherEditor.Services
                             path => path,
                             StringComparer.OrdinalIgnoreCase)));
 
+        private enum CrossRigidActivationRewriteClass
+        {
+            ExactActivationSafe,
+            JointAlwaysPresentSlots,
+            JointOptionalSlots,
+            LocalModelModifiers,
+            Unclassifiable,
+        }
+
         private static bool
             IsCrossRigidRewriteOccurrenceSetActivationSafe(
                 CrossRigidRewriteOccurrenceSet occurrenceSet)
@@ -1954,6 +2039,191 @@ namespace Editors.KitbasherEditor.Services
                    .Count() == 1 &&
                occurrenceSet.SourceInstances.All(instance =>
                    !instance.HasLocalModelModifiers);
+
+        private static CrossRigidActivationRewriteClass
+            ClassifyCrossRigidRewriteOccurrenceSet(
+                BatchState state,
+                CrossRigidRewriteOccurrenceSet occurrenceSet,
+                Dictionary<string, XmlDocument> sourceVmdDocuments,
+                out string detail)
+        {
+            detail = string.Empty;
+            if (occurrenceSet.SourceInstances.Length < 2)
+            {
+                detail = "fewer than two source model occurrences";
+                return CrossRigidActivationRewriteClass.Unclassifiable;
+            }
+
+            if (occurrenceSet.SourceInstances.Any(instance =>
+                    instance.HasLocalModelModifiers))
+            {
+                detail =
+                    "one or more source occurrences has local decal, imposter, or metadata state";
+                return CrossRigidActivationRewriteClass.LocalModelModifiers;
+            }
+
+            if (IsCrossRigidRewriteOccurrenceSetActivationSafe(
+                    occurrenceSet))
+            {
+                return CrossRigidActivationRewriteClass.ExactActivationSafe;
+            }
+
+            var tokenSets = occurrenceSet.SourceInstances
+                .Select(instance =>
+                    instance.ActivationSignature.Equals(
+                        "<always>",
+                        StringComparison.Ordinal)
+                        ? new HashSet<string>(StringComparer.Ordinal)
+                        : instance.ActivationSignature
+                            .Split(
+                                '\u001f',
+                                StringSplitOptions.RemoveEmptyEntries)
+                            .ToHashSet(StringComparer.Ordinal))
+                .ToArray();
+            if (tokenSets.Length == 0)
+            {
+                detail = "activation signature set is empty";
+                return CrossRigidActivationRewriteClass.Unclassifiable;
+            }
+
+            var commonTokens = new HashSet<string>(
+                tokenSets[0],
+                StringComparer.Ordinal);
+            foreach (var tokenSet in tokenSets.Skip(1))
+                commonTokens.IntersectWith(tokenSet);
+
+            var differingTokens = tokenSets
+                .SelectMany(tokens => tokens)
+                .Where(token => !commonTokens.Contains(token))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (differingTokens.Length == 0)
+            {
+                detail =
+                    "activation signatures differ only by token ordering";
+                return CrossRigidActivationRewriteClass.Unclassifiable;
+            }
+
+            var hasOptionalSlot = false;
+            foreach (var token in differingTokens)
+            {
+                if (!TryClassifyCrossRigidActivationToken(
+                        state,
+                        token,
+                        sourceVmdDocuments,
+                        out var optionalSlot,
+                        out var tokenReason))
+                {
+                    detail = tokenReason;
+                    return CrossRigidActivationRewriteClass.Unclassifiable;
+                }
+
+                hasOptionalSlot |= optionalSlot;
+            }
+
+            detail =
+                $"{differingTokens.Length} differing activation token(s)";
+            return hasOptionalSlot
+                ? CrossRigidActivationRewriteClass.JointOptionalSlots
+                : CrossRigidActivationRewriteClass.JointAlwaysPresentSlots;
+        }
+
+        private static bool TryClassifyCrossRigidActivationToken(
+            BatchState state,
+            string token,
+            Dictionary<string, XmlDocument> sourceVmdDocuments,
+            out bool optionalSlot,
+            out string reason)
+        {
+            optionalSlot = false;
+            reason = string.Empty;
+
+            var ownerSeparator = token.IndexOf(
+                ':',
+                StringComparison.Ordinal);
+            var slotMarker = token.LastIndexOf(
+                "/slot=",
+                StringComparison.Ordinal);
+            var meshMarker = token.LastIndexOf(
+                "/mesh=",
+                StringComparison.Ordinal);
+            var referenceMarker = token.LastIndexOf(
+                "/ref=",
+                StringComparison.Ordinal);
+            var branchMarker = Math.Max(
+                meshMarker,
+                referenceMarker);
+            if (ownerSeparator <= 0 ||
+                slotMarker <= ownerSeparator ||
+                branchMarker <= slotMarker)
+            {
+                reason =
+                    $"activation token could not be parsed: {token}";
+                return false;
+            }
+
+            var slotIndexStart =
+                slotMarker + "/slot=".Length;
+            var slotIndexText = token[
+                slotIndexStart..branchMarker];
+            if (!int.TryParse(
+                    slotIndexText,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var slotIndex) ||
+                slotIndex <= 0)
+            {
+                reason =
+                    $"activation token has invalid slot index: {token}";
+                return false;
+            }
+
+            var ownerVmdPath = Normalize(
+                token[..ownerSeparator]);
+            var parentXmlPath = token[
+                (ownerSeparator + 1)..slotMarker];
+            if (!TryGetCrossRigidSourceVmdDocument(
+                    state,
+                    ownerVmdPath,
+                    sourceVmdDocuments,
+                    out var ownerDocument,
+                    out reason))
+            {
+                return false;
+            }
+
+            if (ownerDocument.SelectSingleNode(
+                    $"{parentXmlPath}/SLOT[{slotIndex}]") is
+                not XmlElement slotElement)
+            {
+                reason =
+                    $"activation token slot no longer resolves in source VMD: {token}";
+                return false;
+            }
+
+            var slotProbability =
+                ParseVmdSlotProbability(
+                    slotElement.GetAttribute("probability"));
+            optionalSlot =
+                slotProbability <
+                1.0 - AtlasValueGateExpectedDrawEpsilon;
+            return true;
+        }
+
+        private static string GetCrossRigidActivationRewriteClassLabel(
+            CrossRigidActivationRewriteClass rewriteClass)
+            => rewriteClass switch
+            {
+                CrossRigidActivationRewriteClass.ExactActivationSafe =>
+                    "exact activation (current writer)",
+                CrossRigidActivationRewriteClass.JointAlwaysPresentSlots =>
+                    "joint state across probability-1 slots/alternatives",
+                CrossRigidActivationRewriteClass.JointOptionalSlots =>
+                    "joint state involving an optional slot",
+                CrossRigidActivationRewriteClass.LocalModelModifiers =>
+                    "local model modifiers require preservation",
+                _ => "unclassifiable activation topology",
+            };
 
         private static IReadOnlyList<CrossRigidRewriteOccurrenceSet>
             BuildCrossRigidRewriteOccurrenceSets(
@@ -23243,6 +23513,26 @@ namespace Editors.KitbasherEditor.Services
                     $"Eligible configuration-group observations before rewrite-plan dedupe: " +
                     $"{state.CrossRigidAnalysisOpportunityObservationCount:N0}");
                 sb.AppendLine(
+                    "Activation rewrite-state classification " +
+                    "(plans may appear in more than one class):");
+                foreach (var rewriteClass in
+                         Enum.GetValues<CrossRigidActivationRewriteClass>())
+                {
+                    var occurrenceSetCount =
+                        state.CrossRigidActivationRewriteOccurrenceSetCounts
+                            .GetValueOrDefault(rewriteClass);
+                    var planCount =
+                        state.CrossRigidActivationRewritePlanCounts
+                            .GetValueOrDefault(rewriteClass);
+                    var expectedDraws =
+                        state.CrossRigidActivationRewriteExpectedDrawCalls
+                            .GetValueOrDefault(rewriteClass);
+                    sb.AppendLine(
+                        $"  {GetCrossRigidActivationRewriteClassLabel(rewriteClass)}: " +
+                        $"states={occurrenceSetCount:N0}, plans={planCount:N0}, " +
+                        $"scenario-expected draws={expectedDraws:0.###}");
+                }
+                sb.AppendLine(
                     $"Unique copy-on-write-safe VMD rewrite plans with real draw savings: " +
                     $"{state.CrossRigidMergeAnalysisEntries.Count:N0}");
                 sb.AppendLine(
@@ -26056,6 +26346,12 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.Ordinal);
             public Dictionary<string, List<string>> CrossRigidAnalysisDiagnosticExamples { get; } =
                 new(StringComparer.Ordinal);
+            public Dictionary<CrossRigidActivationRewriteClass, int>
+                CrossRigidActivationRewriteOccurrenceSetCounts { get; } = [];
+            public Dictionary<CrossRigidActivationRewriteClass, int>
+                CrossRigidActivationRewritePlanCounts { get; } = [];
+            public Dictionary<CrossRigidActivationRewriteClass, double>
+                CrossRigidActivationRewriteExpectedDrawCalls { get; } = [];
             public int CrossRigidAnalysisVmdCount { get; set; }
             public int CrossRigidAnalysisDirectWsModelCount { get; set; }
             public int CrossRigidAnalysisConfigurationCount { get; set; }
