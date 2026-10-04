@@ -841,6 +841,523 @@ namespace Test.KitbashEditor.Services
                     "IsMeshConsumerAssetPath returned null."));
         }
 
+        private static object CreateAtlasValueGateSourceReference(
+            string consumerAssetPath,
+            bool rigidEmbedded)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var referenceType = serviceType.GetNestedType(
+                "AtlasValueGateSourceReference",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateSourceReference was not found.");
+            var kindType = serviceType.GetNestedType(
+                "AtlasValueGateSourceReferenceKind",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateSourceReferenceKind was not found.");
+            var constructor = referenceType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single();
+            return constructor.Invoke(
+            [
+                null,
+                NormalizeTestPath(consumerAssetPath),
+                "t_xml_base_colour",
+                0,
+                Enum.Parse(
+                    kindType,
+                    rigidEmbedded ? "RigidEmbedded" : "WsModelMaterial"),
+            ]);
+        }
+
+        private static object BuildAtlasValueGateScenarioProjection(
+            object state,
+            params object[] references)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var referenceType = serviceType.GetNestedType(
+                "AtlasValueGateSourceReference",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateSourceReference was not found.");
+            var referenceListType = typeof(List<>).MakeGenericType(referenceType);
+            var referenceList = Activator.CreateInstance(referenceListType)
+                ?? throw new InvalidOperationException(
+                    "Could not create source-reference list.");
+            foreach (var reference in references)
+                ((IList)referenceList).Add(reference);
+
+            var referenceSetType = typeof(HashSet<>).MakeGenericType(referenceType);
+            var existingRewrites = Activator.CreateInstance(referenceSetType)
+                ?? throw new InvalidOperationException(
+                    "Could not create source-reference rewrite set.");
+            var method = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name ==
+                    "BuildAtlasValueGateScenarioConsumerProjection" &&
+                    candidate.GetParameters().Length == 4);
+            return method.Invoke(
+                       null,
+                       [state, referenceList, existingRewrites, null])
+                   ?? throw new InvalidOperationException(
+                       "Scenario consumer projection returned null.");
+        }
+
+        private static object EvaluateAtlasValueGateSourceTextureResidency(
+            object state,
+            string texturePath,
+            object sourceTexture,
+            int currentlyRewrittenReferenceCount = 0,
+            int rewrittenReferenceCountAfterProposal = 0)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var referenceType = serviceType.GetNestedType(
+                "AtlasValueGateSourceReference",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateSourceReference was not found.");
+            var referenceSetType = typeof(HashSet<>).MakeGenericType(referenceType);
+            var existingRewrites = Activator.CreateInstance(referenceSetType)
+                ?? throw new InvalidOperationException(
+                    "Could not create source-reference rewrite set.");
+            var method = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "EvaluateAtlasValueGateSourceTextureResidency" &&
+                    candidate.GetParameters().Length == 7);
+            return method.Invoke(
+                       null,
+                       [
+                           state,
+                           texturePath,
+                           sourceTexture,
+                           existingRewrites,
+                           null,
+                           currentlyRewrittenReferenceCount,
+                           rewrittenReferenceCountAfterProposal,
+                       ])
+                   ?? throw new InvalidOperationException(
+                       "Source texture residency diagnostic returned null.");
+        }
+
+        private static object CreateAtlasValueGateSourceTexture(
+            long bcnBytes,
+            params object[] references)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var referenceType = serviceType.GetNestedType(
+                "AtlasValueGateSourceReference",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateSourceReference was not found.");
+            var sourceTextureType = serviceType.GetNestedType(
+                "AtlasValueGateSourceTexture",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateSourceTexture was not found.");
+            var referenceSetType = typeof(HashSet<>).MakeGenericType(referenceType);
+            var sourceReferences = Activator.CreateInstance(referenceSetType)
+                ?? throw new InvalidOperationException(
+                    "Could not create source-reference set.");
+            foreach (var reference in references)
+            {
+                sourceReferences.GetType()
+                    .GetMethod("Add")
+                    ?.Invoke(sourceReferences, [reference]);
+            }
+            var packReferences = Activator.CreateInstance(referenceSetType)
+                ?? throw new InvalidOperationException(
+                    "Could not create pack-reference set.");
+            var constructor = sourceTextureType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(candidate => candidate.GetParameters().Length == 6);
+            return constructor.Invoke(
+            [
+                bcnBytes,
+                false,
+                false,
+                false,
+                sourceReferences,
+                packReferences,
+            ]);
+        }
+
+        private static string[] GetProjectionPaths(
+            object projection,
+            string propertyName)
+            => ((IEnumerable)(projection.GetType()
+                    .GetProperty(
+                        propertyName,
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    ?.GetValue(projection)
+                ?? throw new InvalidOperationException(
+                    $"Projection property {propertyName} was not found.")))
+                .Cast<object>()
+                .Select(value => value.ToString() ?? string.Empty)
+                .ToArray();
+
+        private static string GetProjectionSummary(object projection)
+        {
+            var reasons = GetProjectionPaths(projection, "UnresolvedReasons");
+            var summary =
+                $"targets={GetProjectionPaths(projection, "TargetAssetPaths").Length}, " +
+                $"fallback-vmd-roots={GetProjectionPaths(projection, "FallbackVmdRoots").Length}, " +
+                $"geometry-only-excluded={GetProjectionPaths(projection, "GeometryOnlyRigidPaths").Length}, " +
+                $"direct-rigid={GetProjectionPaths(projection, "DirectRigidPaths").Length}, " +
+                $"unknown={GetProjectionPaths(projection, "UnresolvedConsumers").Length}";
+            return reasons.Length == 0
+                ? summary
+                : summary + "; reasons=" + string.Join(" | ", reasons);
+        }
+
+        private static object CreateGameplayDependencyIndexForTest()
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var indexType = serviceType.GetNestedType(
+                "GameplayMeshDependencyIndex",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "GameplayMeshDependencyIndex was not found.");
+            var constructor = indexType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single();
+            return constructor.Invoke([true]);
+        }
+
+        private static void AddDependencyIndexRootReference(
+            object index,
+            string assetPath,
+            string rootPath)
+        {
+            index.GetType()
+                .GetMethod(
+                    "AddRootReference",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.Invoke(index, [assetPath, rootPath]);
+        }
+
+        private static void AddDependencyIndexDirectConsumer(
+            object index,
+            string rigidPath,
+            string rootPath)
+        {
+            index.GetType()
+                .GetMethod(
+                    "AddDirectConsumer",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.Invoke(index, [rigidPath, rootPath]);
+        }
+
+        private static void AddDependencyIndexBlockingFailure(
+            object index,
+            string rootPath,
+            string assetPath)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var failureKindType = serviceType.GetNestedType(
+                "GameplayMeshDependencyFailureKind",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "GameplayMeshDependencyFailureKind was not found.");
+            var scopeType = serviceType.GetNestedType(
+                "GameplayMeshDependencyAssetScope",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "GameplayMeshDependencyAssetScope was not found.");
+            index.GetType()
+                .GetMethod(
+                    "RecordFailure",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.Invoke(
+                    index,
+                    [
+                        rootPath,
+                        assetPath,
+                        "test incomplete traversal",
+                        Enum.Parse(failureKindType, "ParseFailure"),
+                        Enum.Parse(scopeType, "SourcePack"),
+                    ]);
+        }
+
+        private static object CreateScenarioProjectionTestState(
+            string rosterVmdPath)
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmd(rosterVmdPath));
+            SetStateProperty(
+                state,
+                "GameplayMeshDependencyIndex",
+                CreateGameplayDependencyIndexForTest());
+            SetStateProperty(state, "StructuralMergeConsumerDiscoveryComplete", true);
+            return state;
+        }
+
+        private static object CreateSyntheticArmyResidencyModelForFallbackTest()
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var categoryType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3ArmyUnitCategory",
+                throwOnError: true)!;
+            var roleType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitVisualRole",
+                throwOnError: true)!;
+            var scenarioType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3ArmyVisualScenario",
+                throwOnError: true)!;
+            var expectedOccurrencesType = serviceType.GetNestedType(
+                "ExpectedWsModelOccurrences",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "ExpectedWsModelOccurrences was not found.");
+            var unitConfigurationType = serviceType.GetNestedType(
+                "UnitVisualConfiguration",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "UnitVisualConfiguration was not found.");
+            var category = Enum.Parse(categoryType, "InfantryMissile");
+            var role = Enum.Parse(roleType, "Men");
+            const string unitId = "unit:fallback-test";
+            const string culture = "culture:fallback-test";
+            const string targetAssetPath = @"models\partial.wsmodel";
+            const string fallbackRoot =
+                @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition";
+
+            var categorySetType = typeof(HashSet<>).MakeGenericType(typeof(string));
+            var categoryDictionaryType = typeof(Dictionary<,>).MakeGenericType(
+                categoryType,
+                categorySetType);
+            var unitsByCategory = (IDictionary)Activator.CreateInstance(
+                categoryDictionaryType)!;
+            foreach (var value in Enum.GetValues(categoryType))
+            {
+                if (value.ToString() == "Unknown")
+                    continue;
+                unitsByCategory.Add(value, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            }
+            ((ISet<string>)unitsByCategory[category]!).Add(unitId);
+
+            var unitsByCultureAndCategoryValue = Activator.CreateInstance(
+                categoryDictionaryType)!;
+            foreach (var value in Enum.GetValues(categoryType))
+            {
+                if (value.ToString() == "Unknown")
+                    continue;
+                ((IDictionary)unitsByCultureAndCategoryValue).Add(
+                    value,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            }
+            ((ISet<string>)((IDictionary)unitsByCultureAndCategoryValue)[category]!)
+                .Add(unitId);
+
+            var unitsByCultureAndCategoryDictionaryType =
+                typeof(Dictionary<,>).MakeGenericType(
+                    typeof(string),
+                    categoryDictionaryType);
+            var unitsByCultureAndCategoryDictionary = (IDictionary)Activator.CreateInstance(
+                unitsByCultureAndCategoryDictionaryType)!;
+            unitsByCultureAndCategoryDictionary.Add(
+                culture,
+                unitsByCultureAndCategoryValue);
+
+            var unitsByVmdDictionaryType = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                categoryDictionaryType);
+            var unitsByVmd = (IDictionary)Activator.CreateInstance(
+                unitsByVmdDictionaryType)!;
+            var fallbackUnitsByCategory = Activator.CreateInstance(categoryDictionaryType)!;
+            foreach (var value in Enum.GetValues(categoryType))
+            {
+                if (value.ToString() == "Unknown")
+                    continue;
+                ((IDictionary)fallbackUnitsByCategory).Add(
+                    value,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            }
+            ((ISet<string>)((IDictionary)fallbackUnitsByCategory)[category]!).Add(unitId);
+            unitsByVmd.Add(fallbackRoot, fallbackUnitsByCategory);
+
+            var readOnlySetType = typeof(IReadOnlySet<>).MakeGenericType(typeof(string));
+            var culturesByUnitType = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                readOnlySetType);
+            var culturesByUnit = (IDictionary)Activator.CreateInstance(culturesByUnitType)!;
+            culturesByUnit.Add(
+                unitId,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { culture });
+
+            var unitIdsByAssetPathType = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                readOnlySetType);
+            var unitIdsByAssetPath = (IDictionary)Activator.CreateInstance(
+                unitIdsByAssetPathType)!;
+            unitIdsByAssetPath.Add(
+                targetAssetPath,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { unitId });
+
+            var culturesByAssetPath = (IDictionary)Activator.CreateInstance(
+                unitIdsByAssetPathType)!;
+            culturesByAssetPath.Add(
+                targetAssetPath,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { culture });
+
+            var stringDoubleDictionaryType = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                typeof(double));
+            var playerCultureWeights = Activator.CreateInstance(
+                stringDoubleDictionaryType) as IDictionary
+                ?? throw new InvalidOperationException();
+            playerCultureWeights.Add(culture, 1.0);
+            var opponentCultureWeights = Activator.CreateInstance(
+                stringDoubleDictionaryType) as IDictionary
+                ?? throw new InvalidOperationException();
+            opponentCultureWeights.Add(culture, 1.0);
+
+            var entityCountByUnit = new Dictionary<string, int>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                [unitId] = 1,
+            };
+            var roleCountDictionaryType = typeof(Dictionary<,>).MakeGenericType(
+                roleType,
+                typeof(int));
+            var roleCounts = (IDictionary)Activator.CreateInstance(
+                roleCountDictionaryType)!;
+            roleCounts.Add(role, 1);
+            var entityCountByUnitAndRoleType = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                roleCountDictionaryType);
+            var entityCountByUnitAndRole = (IDictionary)Activator.CreateInstance(
+                entityCountByUnitAndRoleType)!;
+            entityCountByUnitAndRole.Add(unitId, roleCounts);
+
+            var categoryByUnitTyped = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                categoryType);
+            var categoryByUnitDictionary = (IDictionary)Activator.CreateInstance(
+                categoryByUnitTyped)!;
+            categoryByUnitDictionary.Add(unitId, category);
+
+            var roleDoubleDictionaryType = typeof(Dictionary<,>).MakeGenericType(
+                roleType,
+                typeof(double));
+            var roleOccurrences = (IDictionary)Activator.CreateInstance(
+                roleDoubleDictionaryType)!;
+            roleOccurrences.Add(role, 0.25);
+            var readOnlyRoleDoubleDictionaryType = typeof(IReadOnlyDictionary<,>).MakeGenericType(
+                roleType,
+                typeof(double));
+            var occurrencesByWsModelType = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                readOnlyRoleDoubleDictionaryType);
+            var occurrencesByWsModel = (IDictionary)Activator.CreateInstance(
+                occurrencesByWsModelType)!;
+            occurrencesByWsModel.Add(targetAssetPath, roleOccurrences);
+            var expectedOccurrences = expectedOccurrencesType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor =>
+                    constructor.GetParameters().Length == 1 &&
+                    constructor.GetParameters()[0].ParameterType != expectedOccurrencesType)
+                .Invoke([occurrencesByWsModel]);
+            var expectedByUnitType = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                expectedOccurrencesType);
+            var expectedByUnit = (IDictionary)Activator.CreateInstance(
+                expectedByUnitType)!;
+            expectedByUnit.Add(unitId, expectedOccurrences);
+
+            var roleConfigurationListType = typeof(IReadOnlyList<>).MakeGenericType(
+                unitConfigurationType);
+            var roleConfigurationsType = typeof(Dictionary<,>).MakeGenericType(
+                roleType,
+                roleConfigurationListType);
+            var visualConfigurationsType = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                roleConfigurationsType);
+            var visualConfigurations = Activator.CreateInstance(visualConfigurationsType)!;
+            var armyModelType = serviceType.GetNestedType(
+                "ArmyResidencyModel",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "ArmyResidencyModel was not found.");
+            var scenario = scenarioType.GetProperty(
+                               "Default",
+                               BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+                           ?.GetValue(null)
+                       ?? throw new InvalidOperationException(
+                           "The default army visual scenario was not found.");
+            var constructor = armyModelType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(candidate => candidate.GetParameters().Length == 15);
+            return constructor.Invoke(
+            [
+                unitsByCategory,
+                unitsByCultureAndCategoryDictionary,
+                unitsByVmd,
+                culturesByUnit,
+                unitIdsByAssetPath,
+                culturesByAssetPath,
+                playerCultureWeights,
+                opponentCultureWeights,
+                entityCountByUnit,
+                entityCountByUnitAndRole,
+                categoryByUnitDictionary,
+                expectedByUnit,
+                visualConfigurations,
+                scenario,
+                true,
+            ]);
+        }
+
+        private static double GetExpectedArmyResidentProbabilityForTest(
+            object state,
+            IReadOnlyCollection<string> targetAssetPaths,
+            IReadOnlyCollection<string> fallbackRoots)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "GetExpectedArmyResidentProbability" &&
+                    candidate.GetParameters().Length == 3);
+            return (double)(method.Invoke(
+                               null,
+                               [state, targetAssetPaths, fallbackRoots])
+                           ?? throw new InvalidOperationException(
+                               "Expected army residency probability returned null."));
+        }
+
         private static object CreateTraversalBatchState(
             IPackFileContainer source,
             IReadOnlyList<IPackFileContainer> loadedContainers)
@@ -3563,6 +4080,238 @@ namespace Test.KitbashEditor.Services
             bool expected)
         {
             Assert.That(CanEarnMergeDrawCredit(embeddedRigidPath), Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void AtlasValueGateProjection_GeometryOnlyRigidIsExcludedFromScenarioTargets()
+        {
+            const string rootVmdPath =
+                @"variantmeshes\variantmeshdefinitions\unit.variantmeshdefinition";
+            const string rigidPath = @"models\body.rigid_model_v2";
+            var state = CreateScenarioProjectionTestState(rootVmdPath);
+            var index = GetGameplayDependencyIndex(state);
+            AddDependencyIndexRootReference(index, rigidPath, rootVmdPath);
+
+            var projection = BuildAtlasValueGateScenarioProjection(
+                state,
+                CreateAtlasValueGateSourceReference(rigidPath, rigidEmbedded: true));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetProjectionPaths(projection, "TargetAssetPaths"),
+                    Is.Empty);
+                Assert.That(
+                    GetProjectionPaths(projection, "FallbackVmdRoots"),
+                    Is.Empty);
+                Assert.That(
+                    GetProjectionPaths(projection, "GeometryOnlyRigidPaths"),
+                    Is.EqualTo([NormalizeTestPath(rigidPath)]));
+                Assert.That(
+                    GetProjectionPaths(projection, "UnresolvedConsumers"),
+                    Is.Empty);
+                Assert.That(
+                    GetProjectionSummary(projection),
+                    Does.Contain("geometry-only-excluded=1"));
+            });
+        }
+
+        [Test]
+        public void AtlasValueGateProjection_DirectRigidRootUsesTargetAssetPath()
+        {
+            const string rigidPath = @"models\direct.rigid_model_v2";
+            var state = CreateScenarioProjectionTestState(rigidPath);
+            var index = GetGameplayDependencyIndex(state);
+            AddDependencyIndexDirectConsumer(index, rigidPath, rigidPath);
+
+            var projection = BuildAtlasValueGateScenarioProjection(
+                state,
+                CreateAtlasValueGateSourceReference(rigidPath, rigidEmbedded: true));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetProjectionPaths(projection, "TargetAssetPaths"),
+                    Is.EqualTo([NormalizeTestPath(rigidPath)]));
+                Assert.That(
+                    GetProjectionPaths(projection, "FallbackVmdRoots"),
+                    Is.Empty);
+                Assert.That(
+                    GetProjectionPaths(projection, "DirectRigidPaths"),
+                    Is.EqualTo([NormalizeTestPath(rigidPath)]));
+                Assert.That(
+                    GetProjectionPaths(projection, "UnresolvedConsumers"),
+                    Is.Empty);
+            });
+        }
+
+        [Test]
+        public void AtlasValueGateProjection_DirectRigidNestedInVmdUsesFallbackRoot()
+        {
+            const string rootVmdPath =
+                @"variantmeshes\variantmeshdefinitions\unit.variantmeshdefinition";
+            const string rigidPath = @"models\direct.rigid_model_v2";
+            var state = CreateScenarioProjectionTestState(rootVmdPath);
+            var index = GetGameplayDependencyIndex(state);
+            AddDependencyIndexDirectConsumer(index, rigidPath, rootVmdPath);
+
+            var projection = BuildAtlasValueGateScenarioProjection(
+                state,
+                CreateAtlasValueGateSourceReference(rigidPath, rigidEmbedded: true));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetProjectionPaths(projection, "TargetAssetPaths"),
+                    Is.Empty);
+                Assert.That(
+                    GetProjectionPaths(projection, "FallbackVmdRoots"),
+                    Is.EqualTo([NormalizeTestPath(rootVmdPath)]));
+                Assert.That(
+                    GetProjectionPaths(projection, "UnresolvedConsumers"),
+                    Is.Empty);
+                Assert.That(
+                    GetProjectionSummary(projection),
+                    Does.Contain("fallback-vmd-roots=1"));
+            });
+        }
+
+        [Test]
+        public void AtlasValueGateProjection_MixedWsModelAndVmdFallbackUsesUnionWithoutDuplicates()
+        {
+            const string rootVmdPath =
+                @"variantmeshes\variantmeshdefinitions\unit.variantmeshdefinition";
+            const string rigidPath = @"models\direct.rigid_model_v2";
+            const string wsModelPath = @"models\body.wsmodel";
+            var state = CreateScenarioProjectionTestState(rootVmdPath);
+            var index = GetGameplayDependencyIndex(state);
+            AddDependencyIndexDirectConsumer(index, rigidPath, rootVmdPath);
+
+            var projection = BuildAtlasValueGateScenarioProjection(
+                state,
+                CreateAtlasValueGateSourceReference(wsModelPath, rigidEmbedded: false),
+                CreateAtlasValueGateSourceReference(rigidPath, rigidEmbedded: true),
+                CreateAtlasValueGateSourceReference(rigidPath, rigidEmbedded: true));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetProjectionPaths(projection, "TargetAssetPaths"),
+                    Is.EqualTo([NormalizeTestPath(wsModelPath)]));
+                Assert.That(
+                    GetProjectionPaths(projection, "FallbackVmdRoots"),
+                    Is.EqualTo([NormalizeTestPath(rootVmdPath)]));
+                Assert.That(
+                    GetProjectionPaths(projection, "DirectRigidPaths"),
+                    Is.EqualTo([NormalizeTestPath(rigidPath)]));
+                Assert.That(
+                    GetProjectionPaths(projection, "UnresolvedConsumers"),
+                    Is.Empty);
+            });
+        }
+
+        [Test]
+        public void AtlasValueGateProjection_IncompleteRigidTopologyIsUnknownAndConservative()
+        {
+            const string rootVmdPath =
+                @"variantmeshes\variantmeshdefinitions\broken.variantmeshdefinition";
+            const string rigidPath = @"models\uncertain.rigid_model_v2";
+            var state = CreateScenarioProjectionTestState(rootVmdPath);
+            var index = GetGameplayDependencyIndex(state);
+            AddDependencyIndexRootReference(index, rigidPath, rootVmdPath);
+            AddDependencyIndexBlockingFailure(index, rootVmdPath, rigidPath);
+
+            var projection = BuildAtlasValueGateScenarioProjection(
+                state,
+                CreateAtlasValueGateSourceReference(rigidPath, rigidEmbedded: true));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetProjectionPaths(projection, "TargetAssetPaths"),
+                    Is.Empty);
+                Assert.That(
+                    GetProjectionPaths(projection, "FallbackVmdRoots"),
+                    Is.Empty);
+                Assert.That(
+                    GetProjectionPaths(projection, "UnresolvedConsumers"),
+                    Is.EqualTo([NormalizeTestPath(rigidPath)]));
+                Assert.That(
+                    GetProjectionPaths(projection, "UnresolvedReasons"),
+                    Has.Some.Contains("DiscoveryIncomplete"));
+                Assert.That(
+                    GetProjectionSummary(projection),
+                    Does.Contain("unknown=1"));
+            });
+        }
+
+        [Test]
+        public void AtlasValueGateResidency_IncompleteRigidTopologyKeepsFullResidency()
+        {
+            const string rootVmdPath =
+                @"variantmeshes\variantmeshdefinitions\broken.variantmeshdefinition";
+            const string rigidPath = @"models\uncertain.rigid_model_v2";
+            var state = CreateScenarioProjectionTestState(rootVmdPath);
+            var index = GetGameplayDependencyIndex(state);
+            AddDependencyIndexRootReference(index, rigidPath, rootVmdPath);
+            AddDependencyIndexBlockingFailure(index, rootVmdPath, rigidPath);
+            var diagnostic = EvaluateAtlasValueGateSourceTextureResidency(
+                state,
+                @"textures\uncertain.dds",
+                CreateAtlasValueGateSourceTexture(
+                    100,
+                    CreateAtlasValueGateSourceReference(rigidPath, rigidEmbedded: true)));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetRecordProperty<bool>(diagnostic, "ConsumerMappingResolved"),
+                    Is.False);
+                Assert.That(
+                    GetRecordProperty<double>(diagnostic, "CurrentResidentProbability"),
+                    Is.EqualTo(1.0));
+                Assert.That(
+                    GetRecordProperty<double>(diagnostic, "ProposedResidentProbability"),
+                    Is.EqualTo(1.0));
+                Assert.That(
+                    GetRecordProperty<string>(diagnostic, "CurrentScenarioProjection"),
+                    Does.Contain("DiscoveryIncomplete"));
+            });
+        }
+
+        [Test]
+        public void AtlasValueGateResidency_UsesVmdFallbackMappingAndUnionsWithTargetAssets()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var model = CreateSyntheticArmyResidencyModelForFallbackTest();
+            SetStateProperty(state, "ArmyResidencyModel", model);
+
+            var targetOnly = GetExpectedArmyResidentProbabilityForTest(
+                state,
+                [@"models\partial.wsmodel"],
+                []);
+            var fallbackOnly = GetExpectedArmyResidentProbabilityForTest(
+                state,
+                [],
+                [
+                    @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition",
+                ]);
+            var combined = GetExpectedArmyResidentProbabilityForTest(
+                state,
+                [@"models\partial.wsmodel"],
+                [
+                    @"variantmeshes\variantmeshdefinitions\fallback.variantmeshdefinition",
+                ]);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(targetOnly, Is.LessThan(1.0));
+                Assert.That(fallbackOnly, Is.EqualTo(1.0).Within(0.000001));
+                Assert.That(combined, Is.EqualTo(1.0).Within(0.000001));
+            });
         }
 
         [TestCase(8.0 * 1024 * 1024, 4.0, 2.0)]

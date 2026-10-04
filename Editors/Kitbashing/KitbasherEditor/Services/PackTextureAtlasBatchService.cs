@@ -6033,12 +6033,12 @@ namespace Editors.KitbasherEditor.Services
 
         private static double GetExpectedArmyResidentProbability(
             BatchState state,
-            IReadOnlyCollection<string> targetWsModels,
+            IReadOnlyCollection<string> targetAssetPaths,
             IEnumerable<string> fallbackRoots)
         {
             state.CancellationToken.ThrowIfCancellationRequested();
             var cacheKey = new ArmyResidencyProbabilityCacheKey(
-                BuildCanonicalPathSetKey(targetWsModels),
+                BuildCanonicalPathSetKey(targetAssetPaths),
                 BuildCanonicalPathSetKey(fallbackRoots));
             if (state.AtlasValueGateArmyResidentProbabilityCache.TryGetValue(
                     cacheKey,
@@ -6051,7 +6051,7 @@ namespace Editors.KitbasherEditor.Services
             state.AtlasValueGateArmyResidentProbabilityCacheMisses++;
             var probability = GetExpectedArmyResidentProbability(
                 state.ArmyResidencyModel,
-                targetWsModels,
+                targetAssetPaths,
                 fallbackRoots,
                 state.CancellationToken);
             state.AtlasValueGateArmyResidentProbabilityCache[cacheKey] = probability;
@@ -6069,14 +6069,14 @@ namespace Editors.KitbasherEditor.Services
 
         private static double GetExpectedArmyResidentProbability(
             ArmyResidencyModel? model,
-            IReadOnlyCollection<string> targetWsModels,
+            IReadOnlyCollection<string> targetAssetPaths,
             IEnumerable<string> fallbackRoots,
             CancellationToken cancellationToken = default)
         {
             if (model == null || model.PlayerCultureWeights.Count == 0)
                 return 0;
 
-            var normalizedTargets = targetWsModels
+            var normalizedTargets = targetAssetPaths
                 .Select(Normalize)
                 .Where(path => path.Length != 0)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -6226,9 +6226,16 @@ namespace Editors.KitbasherEditor.Services
                         {
                             unitCardPresenceProbability = 1.0 - notPresentAcrossRoles;
                         }
-                        else if (fallbackCoveredByCategory[category].Contains(unitId))
+
+                        // A fallback VMD root is a category-level consumer. It is a union
+                        // with any exact WSModel/direct-asset evidence, not an alternate
+                        // branch that is ignored whenever the unit happens to have another
+                        // expected visual occurrence.
+                        if (fallbackCoveredByCategory[category].Contains(unitId))
                         {
-                            unitCardPresenceProbability = 1.0;
+                            unitCardPresenceProbability = Math.Max(
+                                unitCardPresenceProbability,
+                                1.0);
                         }
 
                         if (unitCardPresenceProbability <= 0)
@@ -6371,7 +6378,7 @@ namespace Editors.KitbasherEditor.Services
             IEnumerable<string> fallbackRoots)
         {
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var assetPathValue in assetPaths.Concat(fallbackRoots))
+            foreach (var assetPathValue in assetPaths)
             {
                 var assetPath = Normalize(assetPathValue);
                 if (assetPath.Length == 0 ||
@@ -6381,6 +6388,23 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 result.UnionWith(unitIds);
+            }
+
+            // VMD roots are a separate residency channel. They intentionally do not
+            // depend on UnitIdsByAssetPath: a fallback root is resolved through the
+            // scenario's VMD-to-unit mapping, even when the asset index did not retain a
+            // direct asset entry for that root.
+            foreach (var rootValue in fallbackRoots)
+            {
+                var root = Normalize(rootValue);
+                if (root.Length == 0 ||
+                    !model.UnitsByVmd.TryGetValue(root, out var unitsByCategory))
+                {
+                    continue;
+                }
+
+                result.UnionWith(
+                    unitsByCategory.Values.SelectMany(unitIds => unitIds));
             }
 
             return result;
@@ -6418,7 +6442,7 @@ namespace Editors.KitbasherEditor.Services
             IEnumerable<string> relevantUnitIds)
         {
             var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var assetPathValue in assetPaths.Concat(fallbackRoots))
+            foreach (var assetPathValue in assetPaths)
             {
                 var assetPath = Normalize(assetPathValue);
                 if (assetPath.Length == 0 ||
@@ -6428,6 +6452,22 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 result.UnionWith(cultures);
+            }
+
+            foreach (var rootValue in fallbackRoots)
+            {
+                var root = Normalize(rootValue);
+                if (root.Length == 0 ||
+                    !model.UnitsByVmd.TryGetValue(root, out var unitsByCategory))
+                {
+                    continue;
+                }
+
+                foreach (var unitId in unitsByCategory.Values.SelectMany(unitIds => unitIds))
+                {
+                    if (model.CulturesByUnit.TryGetValue(unitId, out var cultures))
+                        result.UnionWith(cultures);
+                }
             }
 
             // expectedEntitiesByMesh can provide a conservative unit fallback for an asset
@@ -9326,6 +9366,8 @@ namespace Editors.KitbasherEditor.Services
                             accumulatedExpectedRetirement,
                         ProposedConsumerWsModels =
                             diagnostic.ProposedConsumerWsModels,
+                        ProposedScenarioProjection =
+                            diagnostic.ProposedScenarioProjection,
                     };
             }
         }
@@ -11225,7 +11267,10 @@ namespace Editors.KitbasherEditor.Services
                             candidate.Key,
                             Normalize(usage.AssetPath).ToLowerInvariant(),
                             slot.ToLowerInvariant(),
-                            0);
+                            0,
+                            string.IsNullOrWhiteSpace(usage.EmbeddedRigidPath)
+                                ? AtlasValueGateSourceReferenceKind.WsModelMaterial
+                                : AtlasValueGateSourceReferenceKind.RigidEmbedded);
                         if (sourceTexture.References.Contains(reference))
                             proposedRewrites.Add(reference);
                     }
@@ -11481,24 +11526,34 @@ namespace Editors.KitbasherEditor.Services
 
         private static AtlasValueGateSourceTextureResidencyDiagnostic
             EvaluateAtlasValueGateSourceTextureResidency(
-            BatchState state,
-            string texturePath,
-            AtlasValueGateSourceTexture sourceTexture,
-            IReadOnlySet<AtlasValueGateSourceReference> existingRewrites,
-            IReadOnlySet<AtlasValueGateSourceReference>? proposedRewrites,
-            int currentlyRewrittenReferenceCount,
-            int rewrittenReferenceCountAfterProposal)
+                BatchState state,
+                string texturePath,
+                AtlasValueGateSourceTexture sourceTexture,
+                IReadOnlySet<AtlasValueGateSourceReference> existingRewrites,
+                IReadOnlySet<AtlasValueGateSourceReference>? proposedRewrites,
+                int currentlyRewrittenReferenceCount,
+                int rewrittenReferenceCountAfterProposal)
         {
-            var currentConsumerWsModels =
-                GetRemainingAtlasValueGateConsumerWsModels(
+            var currentProjection =
+                BuildAtlasValueGateScenarioConsumerProjection(
+                    state,
                     sourceTexture.References,
                     existingRewrites,
                     proposedRewrites: null);
-            var proposedConsumerWsModels =
-                GetRemainingAtlasValueGateConsumerWsModels(
+            var proposedProjection =
+                BuildAtlasValueGateScenarioConsumerProjection(
+                    state,
                     sourceTexture.References,
                     existingRewrites,
                     proposedRewrites);
+            var currentConsumerPaths =
+                GetAtlasValueGateScenarioConsumerDisplayPaths(currentProjection);
+            var proposedConsumerPaths =
+                GetAtlasValueGateScenarioConsumerDisplayPaths(proposedProjection);
+            var currentProjectionSummary =
+                FormatAtlasValueGateScenarioConsumerProjection(currentProjection);
+            var proposedProjectionSummary =
+                FormatAtlasValueGateScenarioConsumerProjection(proposedProjection);
 
             if (sourceTexture.BcnBytes <= 0)
             {
@@ -11517,8 +11572,12 @@ namespace Editors.KitbasherEditor.Services
                     0,
                     0,
                     0,
-                    currentConsumerWsModels,
-                    proposedConsumerWsModels);
+                    currentConsumerPaths,
+                    proposedConsumerPaths)
+                {
+                    CurrentScenarioProjection = currentProjectionSummary,
+                    ProposedScenarioProjection = proposedProjectionSummary,
+                };
             }
 
             // Direct VMD texture references (for example decal diffuse/normal) are not
@@ -11543,18 +11602,22 @@ namespace Editors.KitbasherEditor.Services
                     sourceTexture.BcnBytes,
                     sourceTexture.BcnBytes,
                     0,
-                    currentConsumerWsModels,
-                    proposedConsumerWsModels);
+                    currentConsumerPaths,
+                    proposedConsumerPaths)
+                {
+                    CurrentScenarioProjection = currentProjectionSummary,
+                    ProposedScenarioProjection = proposedProjectionSummary,
+                };
             }
 
             var currentProbability =
                 GetExpectedArmySourceTextureConsumerProbability(
                     state,
-                    currentConsumerWsModels);
+                    currentProjection);
             var proposedProbability =
                 GetExpectedArmySourceTextureConsumerProbability(
                     state,
-                    proposedConsumerWsModels);
+                    proposedProjection);
             var consumerMappingResolved =
                 currentProbability.IsResolved && proposedProbability.IsResolved;
             if (!consumerMappingResolved)
@@ -11593,52 +11656,250 @@ namespace Editors.KitbasherEditor.Services
                 currentExpectedResidency,
                 proposedExpectedResidency,
                 expectedRetirement,
-                currentConsumerWsModels,
-                proposedConsumerWsModels);
+                currentConsumerPaths,
+                proposedConsumerPaths)
+            {
+                CurrentScenarioProjection = currentProjectionSummary,
+                ProposedScenarioProjection = proposedProjectionSummary,
+            };
         }
 
-        private static string[] GetRemainingAtlasValueGateConsumerWsModels(
-            IEnumerable<AtlasValueGateSourceReference> references,
-            IReadOnlySet<AtlasValueGateSourceReference> existingRewrites,
-            IReadOnlySet<AtlasValueGateSourceReference>? proposedRewrites)
-            => references
-                .Where(reference =>
-                    !existingRewrites.Contains(reference) &&
-                    (proposedRewrites == null || !proposedRewrites.Contains(reference)))
-                .Select(reference => Normalize(reference.WsModelPath))
-                .Where(path => path.Length != 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+        private static AtlasValueGateScenarioConsumerProjection
+            BuildAtlasValueGateScenarioConsumerProjection(
+                BatchState state,
+                IEnumerable<AtlasValueGateSourceReference> references,
+                IReadOnlySet<AtlasValueGateSourceReference> existingRewrites,
+                IReadOnlySet<AtlasValueGateSourceReference>? proposedRewrites)
+        {
+            var targetAssetPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var fallbackVmdRoots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var geometryOnlyRigidPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var directRigidPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var unresolvedConsumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var unresolvedReasons = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var reference in references)
+            {
+                if (existingRewrites.Contains(reference) ||
+                    (proposedRewrites != null && proposedRewrites.Contains(reference)))
+                {
+                    continue;
+                }
+
+                var consumerPath = Normalize(reference.ConsumerAssetPath);
+                if (consumerPath.Length == 0)
+                {
+                    unresolvedConsumers.Add("<empty>");
+                    unresolvedReasons.Add("EmptyConsumerAssetPath");
+                    continue;
+                }
+
+                if (reference.Kind == AtlasValueGateSourceReferenceKind.WsModelMaterial)
+                {
+                    targetAssetPaths.Add(consumerPath);
+                    continue;
+                }
+
+                if (reference.Kind != AtlasValueGateSourceReferenceKind.RigidEmbedded)
+                {
+                    unresolvedConsumers.Add(consumerPath);
+                    unresolvedReasons.Add(
+                        $"UnknownReferenceKind:{reference.Kind}:{consumerPath}");
+                    continue;
+                }
+
+                var classification = ClassifyAtlasValueGateRigidConsumer(
+                    state,
+                    consumerPath,
+                    out var classificationReason);
+                switch (classification)
+                {
+                    case AtlasValueGateRigidConsumerClassification.GeometryOnlyProven:
+                        geometryOnlyRigidPaths.Add(consumerPath);
+                        break;
+
+                    case AtlasValueGateRigidConsumerClassification.DirectRigid:
+                        directRigidPaths.Add(consumerPath);
+                        if (state.GameplayMeshDependencyIndex == null ||
+                            !state.GameplayMeshDependencyIndex.DirectConsumersByRigid.TryGetValue(
+                                consumerPath,
+                                out var directRoots) ||
+                            directRoots.Count == 0)
+                        {
+                            unresolvedConsumers.Add(consumerPath);
+                            unresolvedReasons.Add(
+                                $"DirectConsumerRootsUnavailable:{consumerPath}");
+                            break;
+                        }
+
+                        foreach (var root in directRoots.OrderBy(
+                                     value => value,
+                                     StringComparer.OrdinalIgnoreCase))
+                        {
+                            var normalizedRoot = Normalize(root);
+                            var extension = Path.GetExtension(normalizedRoot);
+                            if (extension.Equals(
+                                    ".variantmeshdefinition",
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                fallbackVmdRoots.Add(normalizedRoot);
+                            }
+                            else if (extension.Equals(
+                                         ".wsmodel",
+                                         StringComparison.OrdinalIgnoreCase) ||
+                                     extension.Equals(
+                                         ".rigid_model_v2",
+                                         StringComparison.OrdinalIgnoreCase))
+                            {
+                                targetAssetPaths.Add(normalizedRoot);
+                            }
+                            else
+                            {
+                                unresolvedConsumers.Add(consumerPath);
+                                unresolvedReasons.Add(
+                                    $"UnsupportedDirectConsumerRoot:{consumerPath}->{normalizedRoot}");
+                            }
+                        }
+
+                        break;
+
+                    default:
+                        unresolvedConsumers.Add(consumerPath);
+                        unresolvedReasons.Add(
+                            classificationReason.Length == 0
+                                ? $"UnknownRigidConsumer:{consumerPath}"
+                                : classificationReason);
+                        break;
+                }
+            }
+
+            return new AtlasValueGateScenarioConsumerProjection(
+                targetAssetPaths
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                fallbackVmdRoots
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                geometryOnlyRigidPaths
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                directRigidPaths
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                unresolvedConsumers
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                unresolvedReasons
+                    .OrderBy(reason => reason, StringComparer.Ordinal)
+                    .ToArray());
+        }
+
+        private static AtlasValueGateRigidConsumerClassification
+            ClassifyAtlasValueGateRigidConsumer(
+                BatchState state,
+                string rigidPathValue,
+                out string reason)
+        {
+            var rigidPath = Normalize(rigidPathValue);
+            reason = string.Empty;
+            var dependencyIndex = state.GameplayMeshDependencyIndex;
+            if (dependencyIndex == null)
+            {
+                reason = $"GameplayDependencyIndexUnavailable:{rigidPath}";
+                return AtlasValueGateRigidConsumerClassification.Unknown;
+            }
+
+            if (state.UnitCategoryResolution?.IsGameplayResolutionHealthy != true)
+            {
+                reason = $"GameplayResolutionUnhealthy:{rigidPath}";
+                return AtlasValueGateRigidConsumerClassification.Unknown;
+            }
+
+            if (!dependencyIndex.IsComplete &&
+                dependencyIndex.IsAssetAffectedByIncompleteRoot(rigidPath))
+            {
+                var incompleteRoots = dependencyIndex
+                    .GetIncompleteRootsForAsset(rigidPath);
+                reason = incompleteRoots.Count == 0
+                    ? $"DiscoveryIncomplete:{rigidPath}"
+                    : $"DiscoveryIncomplete:{rigidPath}<-" +
+                      string.Join(",", incompleteRoots);
+                return AtlasValueGateRigidConsumerClassification.Unknown;
+            }
+
+            if (dependencyIndex.DirectConsumersByRigid.TryGetValue(
+                    rigidPath,
+                    out var directConsumers) &&
+                directConsumers.Count != 0)
+            {
+                return AtlasValueGateRigidConsumerClassification.DirectRigid;
+            }
+
+            return AtlasValueGateRigidConsumerClassification.GeometryOnlyProven;
+        }
+
+        private static string[] GetAtlasValueGateScenarioConsumerDisplayPaths(
+            AtlasValueGateScenarioConsumerProjection projection)
+            => projection.TargetAssetPaths
+                .Select(path => $"target:{path}")
+                .Concat(projection.FallbackVmdRoots.Select(path => $"fallback-vmd:{path}"))
+                .Concat(projection.GeometryOnlyRigidPaths.Select(
+                    path => $"geometry-only-excluded:{path}"))
+                .Concat(projection.DirectRigidPaths.Select(path => $"direct-rigid:{path}"))
+                .Concat(projection.UnresolvedConsumers.Select(path => $"unknown:{path}"))
                 .ToArray();
+
+        private static string FormatAtlasValueGateScenarioConsumerProjection(
+            AtlasValueGateScenarioConsumerProjection projection)
+        {
+            var summary =
+                $"targets={projection.TargetAssetPaths.Count}, " +
+                $"fallback-vmd-roots={projection.FallbackVmdRoots.Count}, " +
+                $"geometry-only-excluded={projection.GeometryOnlyRigidPaths.Count}, " +
+                $"direct-rigid={projection.DirectRigidPaths.Count}, " +
+                $"unknown={projection.UnresolvedConsumers.Count}";
+            if (projection.UnresolvedReasons.Count != 0)
+            {
+                summary += "; reasons=" + string.Join(
+                    " | ",
+                    projection.UnresolvedReasons.Take(4));
+                if (projection.UnresolvedReasons.Count > 4)
+                    summary += $" | ... (+{projection.UnresolvedReasons.Count - 4:N0})";
+            }
+
+            return summary;
+        }
 
         private static AtlasValueGateSourceTextureConsumerProbability
             GetExpectedArmySourceTextureConsumerProbability(
                 BatchState state,
-                IReadOnlyCollection<string> consumerWsModels)
+                AtlasValueGateScenarioConsumerProjection projection)
         {
-            if (consumerWsModels.Count == 0)
-                return new AtlasValueGateSourceTextureConsumerProbability(0, true);
-
-            var model = state.ArmyResidencyModel;
-            if (model == null)
-                return new AtlasValueGateSourceTextureConsumerProbability(0, false);
-
-            if (model.PlayerCultureWeights.Count == 0)
+            if (!projection.IsResolved)
             {
                 return new AtlasValueGateSourceTextureConsumerProbability(
                     1.0,
                     false);
             }
 
-            // A WSModel already present in the roster asset index has an exact unit/culture
-            // mapping. Do not add roots here: rootsByWsModel also contains rewritten source
-            // roots and would incorrectly keep an Albion consumer alive after its reference
-            // was removed. An absent mapping is an unresolved consumer, so retain full
-            // residency rather than manufacturing scenario-retirement credit.
-            foreach (var wsModel in consumerWsModels)
+            if (projection.TargetAssetPaths.Count == 0 &&
+                projection.FallbackVmdRoots.Count == 0)
+            {
+                return new AtlasValueGateSourceTextureConsumerProbability(0, true);
+            }
+
+            var model = state.ArmyResidencyModel;
+            if (model == null || model.PlayerCultureWeights.Count == 0)
+            {
+                return new AtlasValueGateSourceTextureConsumerProbability(
+                    1.0,
+                    false);
+            }
+
+            foreach (var targetAssetPath in projection.TargetAssetPaths)
             {
                 if (!model.UnitIdsByAssetPath.TryGetValue(
-                        Normalize(wsModel),
+                        Normalize(targetAssetPath),
                         out var unitIds) ||
                     unitIds.Count == 0 ||
                     !unitIds.Any(unitId =>
@@ -11651,10 +11912,30 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            foreach (var fallbackRoot in projection.FallbackVmdRoots)
+            {
+                if (!model.UnitsByVmd.TryGetValue(
+                        Normalize(fallbackRoot),
+                        out var unitsByCategory) ||
+                    unitsByCategory.Count == 0 ||
+                    !unitsByCategory.Values
+                        .SelectMany(unitIds => unitIds)
+                        .Any(unitId =>
+                            model.CulturesByUnit.TryGetValue(
+                                unitId,
+                                out var cultures) &&
+                            cultures.Count != 0))
+                {
+                    return new AtlasValueGateSourceTextureConsumerProbability(
+                        1.0,
+                        false);
+                }
+            }
+
             var probability = GetExpectedArmyResidentProbability(
                 state,
-                consumerWsModels,
-                Array.Empty<string>());
+                projection.TargetAssetPaths,
+                projection.FallbackVmdRoots);
             return new AtlasValueGateSourceTextureConsumerProbability(
                 Math.Clamp(probability, 0.0, 1.0),
                 true);
@@ -12000,7 +12281,7 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             AtlasValueGateSourceReference reference)
         {
-            var consumerPath = Normalize(reference.WsModelPath);
+            var consumerPath = Normalize(reference.ConsumerAssetPath);
             return consumerPath.Length != 0 && state.Source.ContainsFile(consumerPath);
         }
 
@@ -12231,7 +12512,8 @@ namespace Editors.KitbasherEditor.Services
                                 mesh,
                                 wsModelPath.ToLowerInvariant(),
                                 texture.Slot,
-                                texture.SlotOccurrence));
+                                texture.SlotOccurrence,
+                                AtlasValueGateSourceReferenceKind.WsModelMaterial));
                     }
                 }
             }
@@ -12419,7 +12701,8 @@ namespace Editors.KitbasherEditor.Services
                                 mesh,
                                 consumer.WsModelPath.ToLowerInvariant(),
                                 consumer.Slot,
-                                consumer.SlotOccurrence));
+                                consumer.SlotOccurrence,
+                                AtlasValueGateSourceReferenceKind.WsModelMaterial));
                     }
                 }
             }
@@ -12547,7 +12830,8 @@ namespace Editors.KitbasherEditor.Services
                                 texture.PartIndex),
                             rigidPath.ToLowerInvariant(),
                             texture.Slot,
-                            texture.SlotOccurrence));
+                            texture.SlotOccurrence,
+                            AtlasValueGateSourceReferenceKind.RigidEmbedded));
                 }
             }
 
@@ -16912,6 +17196,10 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"    consumers after: " +
                     FormatAtlasValueGateConsumerPaths(diagnostic.ProposedConsumerWsModels));
+                sb.AppendLine(
+                    $"    scenario before: {diagnostic.CurrentScenarioProjection}");
+                sb.AppendLine(
+                    $"    scenario after: {diagnostic.ProposedScenarioProjection}");
             }
         }
 
@@ -21954,11 +22242,39 @@ namespace Editors.KitbasherEditor.Services
                 : EmbeddedRigidPath;
         }
 
+        // Keep this identity structural. Direct-vs-geometry-only-vs-unknown is a
+        // scenario/topology conclusion and must be recomputed from the current dependency
+        // index rather than persisted on a physical texture reference.
+        private enum AtlasValueGateSourceReferenceKind
+        {
+            WsModelMaterial,
+            RigidEmbedded,
+        }
+
+        private enum AtlasValueGateRigidConsumerClassification
+        {
+            DirectRigid,
+            GeometryOnlyProven,
+            Unknown,
+        }
+
+        private sealed record AtlasValueGateScenarioConsumerProjection(
+            IReadOnlyList<string> TargetAssetPaths,
+            IReadOnlyList<string> FallbackVmdRoots,
+            IReadOnlyList<string> GeometryOnlyRigidPaths,
+            IReadOnlyList<string> DirectRigidPaths,
+            IReadOnlyList<string> UnresolvedConsumers,
+            IReadOnlyList<string> UnresolvedReasons)
+        {
+            public bool IsResolved => UnresolvedConsumers.Count == 0;
+        }
+
         private readonly record struct AtlasValueGateSourceReference(
             MeshKey? Mesh,
-            string WsModelPath,
+            string ConsumerAssetPath,
             string Slot,
-            int SlotOccurrence);
+            int SlotOccurrence,
+            AtlasValueGateSourceReferenceKind Kind);
 
         private readonly record struct GameplayTraversalContainerResolution(
             IPackFileContainer? Container)
@@ -21967,7 +22283,7 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private readonly record struct ArmyResidencyProbabilityCacheKey(
-            string TargetWsModels,
+            string TargetAssetPaths,
             string FallbackRoots);
 
         private readonly record struct AtlasValueGateSourceTextureConsumerProbability(
@@ -21998,7 +22314,11 @@ namespace Editors.KitbasherEditor.Services
             double ProposedExpectedResidentBcnBytes,
             double ExpectedRetiredBcnBytes,
             IReadOnlyList<string> CurrentConsumerWsModels,
-            IReadOnlyList<string> ProposedConsumerWsModels);
+            IReadOnlyList<string> ProposedConsumerWsModels)
+        {
+            public string CurrentScenarioProjection { get; init; } = string.Empty;
+            public string ProposedScenarioProjection { get; init; } = string.Empty;
+        }
 
         private sealed record AtlasValueGateGroupPlan
         {
