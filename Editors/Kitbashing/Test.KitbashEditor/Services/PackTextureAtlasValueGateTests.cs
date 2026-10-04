@@ -1284,6 +1284,21 @@ namespace Test.KitbashEditor.Services
                 categoryByUnitTyped)!;
             categoryByUnitDictionary.Add(unitId, category);
 
+            var directVmdsByRoleType = typeof(Dictionary<,>).MakeGenericType(
+                roleType,
+                typeof(HashSet<string>));
+            var directVmdsByUnitAndRoleType = typeof(Dictionary<,>).MakeGenericType(
+                typeof(string),
+                directVmdsByRoleType);
+            var directVmdsByUnitAndRole = (IDictionary)Activator.CreateInstance(
+                directVmdsByUnitAndRoleType)!;
+            var directVmdsByRole = (IDictionary)Activator.CreateInstance(
+                directVmdsByRoleType)!;
+            directVmdsByRole.Add(
+                role,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { fallbackRoot });
+            directVmdsByUnitAndRole.Add(unitId, directVmdsByRole);
+
             var roleDoubleDictionaryType = typeof(Dictionary<,>).MakeGenericType(
                 roleType,
                 typeof(double));
@@ -1334,7 +1349,7 @@ namespace Test.KitbashEditor.Services
                            "The default army visual scenario was not found.");
             var constructor = armyModelType.GetConstructors(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                .Single(candidate => candidate.GetParameters().Length == 15);
+                .Single(candidate => candidate.GetParameters().Length == 16);
             return constructor.Invoke(
             [
                 unitsByCategory,
@@ -1348,6 +1363,7 @@ namespace Test.KitbashEditor.Services
                 entityCountByUnit,
                 entityCountByUnitAndRole,
                 categoryByUnitDictionary,
+                directVmdsByUnitAndRole,
                 expectedByUnit,
                 visualConfigurations,
                 scenario,
