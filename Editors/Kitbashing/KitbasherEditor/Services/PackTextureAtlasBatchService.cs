@@ -1620,6 +1620,7 @@ namespace Editors.KitbasherEditor.Services
                     state,
                     models,
                     lodIndex,
+                    rigidPath,
                     wsModelPaths,
                     assignmentsByWsModel,
                     recordDiagnostics: false,
@@ -2947,6 +2948,7 @@ namespace Editors.KitbasherEditor.Services
                 state.GeneratedTextureDimensions[atlasPath] = outputDimensions;
             }
 
+            RecordAtlasPhysicalPageResidency(state, candidates, generatedPaths);
             state.AtlasPlacementDiagnostics.Add(
                 BuildAtlasPlacementDiagnosticSnapshot(
                     atlasStem,
@@ -2962,6 +2964,26 @@ namespace Editors.KitbasherEditor.Services
                 generatedPaths);
         }
 
+        private static void RecordAtlasPhysicalPageResidency(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> candidates,
+            IReadOnlyDictionary<string, string> generatedPaths)
+        {
+            long pixelCost = 0;
+            foreach (var atlasPath in generatedPaths.Values.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!state.GeneratedTextureDimensions.TryGetValue(atlasPath, out var dimensions))
+                    continue;
+
+                pixelCost = checked(
+                    pixelCost +
+                    (long)dimensions.Width * dimensions.Height);
+            }
+
+            state.AtlasPhysicalPageDiagnostics.Add(
+                new AtlasPhysicalPageDiagnostic(candidates.ToList(), pixelCost));
+        }
+
         private static bool FitsWithinLargestReplacedPage(
             IReadOnlyList<AtlasPageFootprint> originalPages,
             AtlasPageFootprint combinedPage)
@@ -2975,24 +2997,14 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var (channel, combinedDimensions) in combinedPage.OutputDimensionsByChannel)
             {
-                var largestWidth = 0;
-                var largestHeight = 0;
-                foreach (var originalPage in originalPages)
-                {
-                    if (!originalPage.OutputDimensionsByChannel.TryGetValue(
-                            channel,
-                            out var originalDimensions))
-                    {
-                        continue;
-                    }
+                var fitsWithinAnOriginalPage = originalPages.Any(originalPage =>
+                    originalPage.OutputDimensionsByChannel.TryGetValue(
+                        channel,
+                        out var originalDimensions) &&
+                    combinedDimensions.Width <= originalDimensions.Width &&
+                    combinedDimensions.Height <= originalDimensions.Height);
 
-                    largestWidth = Math.Max(largestWidth, originalDimensions.Width);
-                    largestHeight = Math.Max(largestHeight, originalDimensions.Height);
-                }
-
-                if (largestWidth == 0 ||
-                    combinedDimensions.Width > largestWidth ||
-                    combinedDimensions.Height > largestHeight)
+                if (!fitsWithinAnOriginalPage)
                 {
                     return false;
                 }
@@ -13350,6 +13362,7 @@ namespace Editors.KitbasherEditor.Services
                 state.GeneratedTextureDimensions[atlasPath] = outputDimensions;
             }
 
+            RecordAtlasPhysicalPageResidency(state, candidates, generatedPaths);
             state.AtlasPlacementDiagnostics.Add(
                 BuildAtlasPlacementDiagnosticSnapshot(
                     atlasStem,
@@ -13534,7 +13547,8 @@ namespace Editors.KitbasherEditor.Services
                 var groups = BuildDirectMeshMergeGroups(
                     originalModels,
                     lodIndex,
-                    rigidPath);
+                    rigidPath,
+                    state);
                 if (groups.All(group => group.PartIndices.Count == 1))
                     continue;
 
@@ -13618,12 +13632,18 @@ namespace Editors.KitbasherEditor.Services
         private static List<MeshMergeGroup> BuildDirectMeshMergeGroups(
             IReadOnlyList<RmvModel> models,
             int lodIndex,
-            string rigidPath)
+            string rigidPath,
+            BatchState? state = null)
         {
             var buckets = new Dictionary<string, List<int>>(StringComparer.Ordinal);
             for (var partIndex = 0; partIndex < models.Count; partIndex++)
             {
-                var identity = GetDirectRmvMergeIdentity(models[partIndex]);
+                var identity = string.Join(
+                    "\u001e",
+                    GetAtlasBatchMergeBoundaryIdentity(
+                        state,
+                        new MeshKey(rigidPath, lodIndex, partIndex)),
+                    GetDirectRmvMergeIdentity(models[partIndex]));
                 if (!buckets.TryGetValue(identity, out var parts))
                 {
                     parts = [];
@@ -13801,6 +13821,7 @@ namespace Editors.KitbasherEditor.Services
                         state,
                         originalModels,
                         lodIndex,
+                        rigidPath,
                         wsModels.Select(x => x.Key).ToList(),
                         assignmentsByWsModel,
                         includeEmbeddedMaterialIdentity:
@@ -15251,6 +15272,7 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             IReadOnlyList<RmvModel> models,
             int lodIndex,
+            string rigidPath,
             IReadOnlyList<string> wsModelPaths,
             IReadOnlyDictionary<string, string[][]> assignmentsByWsModel,
             bool recordDiagnostics = true,
@@ -15270,6 +15292,9 @@ namespace Editors.KitbasherEditor.Services
 
                 var identity = string.Join(
                     "\u001e",
+                    GetAtlasBatchMergeBoundaryIdentity(
+                        state,
+                        new MeshKey(rigidPath, lodIndex, partIndex)),
                     GetRmvMergeIdentityForMerge(
                         models[partIndex],
                         includeEmbeddedMaterialIdentity),
@@ -15418,6 +15443,19 @@ namespace Editors.KitbasherEditor.Services
                 Convert.ToHexString(materialBytes));
 
             return ContentHash(identity);
+        }
+
+        private static string GetAtlasBatchMergeBoundaryIdentity(
+            BatchState? state,
+            MeshKey meshKey)
+        {
+            if (state != null &&
+                state.AtlasBatchByMesh.TryGetValue(meshKey, out var atlasBatchId))
+            {
+                return $"atlas-batch:{atlasBatchId}";
+            }
+
+            return "atlas-batch:none";
         }
 
         private static MergeGeometryInvariantSnapshot CaptureMergeGroupInvariant(
@@ -18167,8 +18205,9 @@ namespace Editors.KitbasherEditor.Services
         private static AtlasResidencySummary BuildAtlasResidencySummary(
             BatchState state)
         {
-            var allCandidates = state.AtlasBatchDiagnostics.Values
-                .SelectMany(batch => batch.Candidates)
+            var physicalPages = state.AtlasPhysicalPageDiagnostics;
+            var allCandidates = physicalPages
+                .SelectMany(page => page.Candidates)
                 .GroupBy(candidate => candidate.Key)
                 .Select(group => group.First())
                 .ToList();
@@ -18187,15 +18226,15 @@ namespace Editors.KitbasherEditor.Services
             var pixelsByRoot = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
             long globalPixels = 0;
             long aggregateResidentPixels = 0;
-            var multiRootBatches = 0;
-            var maxRootsPerBatch = 0;
+            var multiRootPages = 0;
+            var maxRootsPerPage = 0;
 
-            foreach (var batch in state.AtlasBatchDiagnostics.Values)
+            foreach (var page in physicalPages)
             {
-                globalPixels = checked(globalPixels + batch.PixelCost);
+                globalPixels = checked(globalPixels + page.PixelCost);
 
                 var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var candidate in batch.Candidates)
+                foreach (var candidate in page.Candidates)
                 {
                     if (rootsByMesh.TryGetValue(candidate.Key, out var candidateRoots))
                         roots.UnionWith(candidateRoots);
@@ -18204,19 +18243,19 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var rootCount = Math.Max(1, roots.Count);
-                maxRootsPerBatch = Math.Max(maxRootsPerBatch, rootCount);
+                maxRootsPerPage = Math.Max(maxRootsPerPage, rootCount);
                 if (rootCount > 1)
-                    multiRootBatches++;
+                    multiRootPages++;
 
                 aggregateResidentPixels = checked(
                     aggregateResidentPixels +
-                    GetAtlasResidencyProxy(batch.PixelCost, rootCount));
+                    GetAtlasResidencyProxy(page.PixelCost, rootCount));
 
                 foreach (var root in roots)
                 {
                     pixelsByRoot[root] = checked(
                         pixelsByRoot.GetValueOrDefault(root) +
-                        batch.PixelCost);
+                        page.PixelCost);
                 }
             }
 
@@ -18228,8 +18267,8 @@ namespace Editors.KitbasherEditor.Services
             return new AtlasResidencySummary(
                 globalPixels,
                 aggregateResidentPixels,
-                multiRootBatches,
-                maxRootsPerBatch,
+                multiRootPages,
+                maxRootsPerPage,
                 worstRoot.Key ?? string.Empty,
                 worstRoot.Value);
         }
@@ -18718,8 +18757,12 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Merge-aware locality regressions rejected: {state.MergeAwareLocalityRegressionsRejected}");
             sb.AppendLine($"Final global atlas pixel cost: {residency.GlobalPixels:N0}");
             sb.AppendLine($"Estimated aggregate VMD-resident atlas pixel cost: {residency.AggregateResidentPixels:N0}");
-            sb.AppendLine($"Atlas batches spanning multiple actual VMD roots: {residency.MultiRootBatchCount}");
-            sb.AppendLine($"Maximum VMD roots sharing one atlas batch: {residency.MaxRootsPerBatch}");
+            sb.AppendLine(
+                $"Physical atlas pages spanning multiple actual VMD roots: " +
+                $"{residency.MultiRootPageCount}");
+            sb.AppendLine(
+                $"Maximum VMD roots sharing one physical atlas page: " +
+                $"{residency.MaxRootsPerPage}");
             if (!string.IsNullOrWhiteSpace(residency.WorstRootVmdPath))
             {
                 sb.AppendLine(
@@ -20919,6 +20962,10 @@ namespace Editors.KitbasherEditor.Services
             bool WrappedUvCanonicalized,
             bool ContentCanonicalized);
 
+        private sealed record AtlasPhysicalPageDiagnostic(
+            List<AtlasCandidate> Candidates,
+            long PixelCost);
+
         private sealed record BcnTextureResidencySummary(
             int ReachableDdsCount,
             int BcnTextureCount,
@@ -21064,6 +21111,7 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public List<GeneratedTextureTimingEntry> GeneratedTextureTimings { get; } = [];
             public List<AtlasPlacementBatchDiagnostic> AtlasPlacementDiagnostics { get; } = [];
+            public List<AtlasPhysicalPageDiagnostic> AtlasPhysicalPageDiagnostics { get; } = [];
             public HashSet<string> GeneratedMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, GeneratedMaterialEntry> GeneratedMaterialByContentHash { get; } = new(StringComparer.Ordinal);
             public int GeneratedMaterialReuses { get; set; }
@@ -21303,8 +21351,8 @@ namespace Editors.KitbasherEditor.Services
         private sealed record AtlasResidencySummary(
             long GlobalPixels,
             long AggregateResidentPixels,
-            int MultiRootBatchCount,
-            int MaxRootsPerBatch,
+            int MultiRootPageCount,
+            int MaxRootsPerPage,
             string WorstRootVmdPath,
             long WorstRootPixels);
 

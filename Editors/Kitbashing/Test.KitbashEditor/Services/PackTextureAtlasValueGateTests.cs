@@ -292,6 +292,199 @@ namespace Test.KitbashEditor.Services
                        "BuildSharedAtlasBatch returned null.");
         }
 
+        private static int GetWsMergeGroupCountForAtlasBatches(
+            int? leftAtlasBatchId,
+            int? rightAtlasBatchId)
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var meshKeyType = serviceType.GetNestedType(
+                "MeshKey",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("MeshKey was not found.");
+            var meshKeyConstructor = meshKeyType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single();
+            var meshKeys = new[]
+            {
+                meshKeyConstructor.Invoke(["models\\merge.rigid_model_v2", 0, 0]),
+                meshKeyConstructor.Invoke(["models\\merge.rigid_model_v2", 0, 1]),
+            };
+
+            var atlasBatchByMesh = (IDictionary)(GetStateProperty<object>(
+                    state,
+                    "AtlasBatchByMesh")
+                ?? throw new InvalidOperationException("AtlasBatchByMesh was missing."));
+            if (leftAtlasBatchId.HasValue)
+                atlasBatchByMesh.Add(meshKeys[0], leftAtlasBatchId.Value);
+            if (rightAtlasBatchId.HasValue)
+                atlasBatchByMesh.Add(meshKeys[1], rightAtlasBatchId.Value);
+
+            var method = serviceType.GetMethod(
+                    "BuildMeshMergeGroups",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "BuildMeshMergeGroups was not found.");
+            var groups = method.Invoke(
+                    null,
+                    [
+                        state,
+                        new[]
+                        {
+                            CreateIdentityTestModel("same"),
+                            CreateIdentityTestModel("same"),
+                        },
+                        0,
+                        "models\\merge.rigid_model_v2",
+                        Array.Empty<string>(),
+                        new Dictionary<string, string[][]>(),
+                        false,
+                        false,
+                    ]) as IEnumerable
+                ?? throw new InvalidOperationException(
+                    "BuildMeshMergeGroups returned null.");
+
+            return groups.Cast<object>().Count();
+        }
+
+        private static bool FitsWithinLargestReplacedPageForTest(
+            IReadOnlyList<(int Width, int Height)> originalPages,
+            (int Width, int Height) combinedPage)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var footprintType = serviceType.GetNestedType(
+                "AtlasPageFootprint",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasPageFootprint was not found.");
+            var footprintConstructor = footprintType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 2);
+
+            object CreateFootprint((int Width, int Height) dimensions)
+                => footprintConstructor.Invoke(
+                [
+                    new Dictionary<string, (int Width, int Height)>
+                    {
+                        ["t_xml_base_colour"] = dimensions,
+                    },
+                    (long)dimensions.Width * dimensions.Height,
+                ]);
+
+            var pageListType = typeof(List<>).MakeGenericType(footprintType);
+            var pages = Activator.CreateInstance(pageListType)
+                ?? throw new InvalidOperationException("Could not create footprint list.");
+            foreach (var originalPage in originalPages)
+                ((IList)pages).Add(CreateFootprint(originalPage));
+
+            var method = serviceType.GetMethod(
+                    "FitsWithinLargestReplacedPage",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "FitsWithinLargestReplacedPage was not found.");
+            return (bool)(method.Invoke(
+                    null,
+                    [pages, CreateFootprint(combinedPage)])
+                ?? throw new InvalidOperationException(
+                    "FitsWithinLargestReplacedPage returned null."));
+        }
+
+        private static void AddAtlasBatchDiagnosticForTest(
+            object state,
+            int batchId,
+            IReadOnlyList<object> candidates,
+            long pixelCost)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidateListType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var batchCandidates = Activator.CreateInstance(candidateListType)
+                ?? throw new InvalidOperationException("Could not create diagnostic candidates.");
+            foreach (var candidate in candidates)
+                ((IList)batchCandidates).Add(candidate);
+
+            var snapshotType = serviceType.GetNestedType(
+                "AtlasBatchDiagnosticSnapshot",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasBatchDiagnosticSnapshot was not found.");
+            var snapshot = snapshotType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 2)
+                .Invoke([batchCandidates, pixelCost]);
+            var diagnostics = (IDictionary)(GetStateProperty<object>(
+                    state,
+                    "AtlasBatchDiagnostics")
+                ?? throw new InvalidOperationException("AtlasBatchDiagnostics was missing."));
+            diagnostics.Add(batchId, snapshot);
+        }
+
+        private static void AddAtlasPhysicalPageForTest(
+            object state,
+            IReadOnlyList<object> candidates,
+            long pixelCost)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var atlasCandidateType = serviceType.GetNestedType(
+                "AtlasCandidate",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("AtlasCandidate was not found.");
+            var candidateListType = typeof(List<>).MakeGenericType(atlasCandidateType);
+            var pageCandidates = Activator.CreateInstance(candidateListType)
+                ?? throw new InvalidOperationException("Could not create page candidates.");
+            foreach (var candidate in candidates)
+                ((IList)pageCandidates).Add(candidate);
+
+            var pageType = serviceType.GetNestedType(
+                "AtlasPhysicalPageDiagnostic",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasPhysicalPageDiagnostic was not found.");
+            var page = pageType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(constructor => constructor.GetParameters().Length == 2)
+                .Invoke([pageCandidates, pixelCost]);
+            var pages = (IList)(GetStateProperty<object>(
+                    state,
+                    "AtlasPhysicalPageDiagnostics")
+                ?? throw new InvalidOperationException(
+                    "AtlasPhysicalPageDiagnostics was missing."));
+            pages.Add(page);
+        }
+
+        private static object BuildAtlasResidencySummaryForTest(object state)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                    "BuildAtlasResidencySummary",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "BuildAtlasResidencySummary was not found.");
+            return method.Invoke(null, [state])
+                ?? throw new InvalidOperationException(
+                    "BuildAtlasResidencySummary returned null.");
+        }
+
         private static int GetMergeAffinityScore(
             IReadOnlyCollection<string> preExistingPairs,
             params int[] partIndices)
@@ -407,6 +600,7 @@ namespace Test.KitbashEditor.Services
                         null,
                         models,
                         0,
+                        "test.rigid_model_v2",
                         Array.Empty<string>(),
                         new Dictionary<string, string[][]>(),
                         false,
@@ -959,6 +1153,15 @@ namespace Test.KitbashEditor.Services
                 ?.GetValue(state)
                 ?? throw new InvalidOperationException(
                     $"State property {propertyName} was not found."));
+
+        private static T GetRecordProperty<T>(
+            object record,
+            string propertyName)
+            => (T)(record.GetType()
+                .GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?.GetValue(record)
+                ?? throw new InvalidOperationException(
+                    $"Record property {propertyName} was not found."));
 
         private static string[] GetResolutionRosterVmdPaths(object state)
         {
@@ -5571,6 +5774,80 @@ namespace Test.KitbashEditor.Services
                 Assert.That(crop.GetType().GetProperty("Y")!.GetValue(crop), Is.EqualTo(0));
                 Assert.That(crop.GetType().GetProperty("Width")!.GetValue(crop), Is.EqualTo(64));
                 Assert.That(crop.GetType().GetProperty("Height")!.GetValue(crop), Is.EqualTo(64));
+            });
+        }
+
+        [Test]
+        public void StructuralMerge_DoesNotCrossLogicalAtlasBatchBoundaries()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetWsMergeGroupCountForAtlasBatches(7, 7),
+                    Is.EqualTo(1));
+                Assert.That(
+                    GetWsMergeGroupCountForAtlasBatches(7, 8),
+                    Is.EqualTo(2));
+            });
+        }
+
+        [Test]
+        public void SharedAtlasPages_RejectIndependentDimensionEnvelope()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    FitsWithinLargestReplacedPageForTest(
+                        [(4096, 1024), (1024, 4096)],
+                        (4096, 2048)),
+                    Is.False);
+                Assert.That(
+                    FitsWithinLargestReplacedPageForTest(
+                        [(4096, 4096), (1024, 1024)],
+                        (4096, 2048)),
+                    Is.True);
+            });
+        }
+
+        [Test]
+        public void AtlasResidencySummary_UsesPhysicalSharedPageOnce()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var first = CreateAtlasPlanningTestCandidate(
+                "models/first.rigid_model_v2",
+                0,
+                0,
+                "models\\first.variantmeshdefinition");
+            var second = CreateAtlasPlanningTestCandidate(
+                "models/second.rigid_model_v2",
+                0,
+                0,
+                "models\\second.variantmeshdefinition");
+
+            AddAtlasBatchDiagnosticForTest(state, 7, [first], 100);
+            AddAtlasBatchDiagnosticForTest(state, 8, [second], 100);
+            AddAtlasPhysicalPageForTest(state, [first, second], 150);
+
+            var summary = BuildAtlasResidencySummaryForTest(state);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetRecordProperty<long>(summary, "GlobalPixels"), Is.EqualTo(150));
+                Assert.That(
+                    GetRecordProperty<long>(summary, "AggregateResidentPixels"),
+                    Is.EqualTo(300));
+                Assert.That(
+                    GetRecordProperty<int>(summary, "MultiRootPageCount"),
+                    Is.EqualTo(1));
+                Assert.That(
+                    GetRecordProperty<int>(summary, "MaxRootsPerPage"),
+                    Is.EqualTo(2));
+                Assert.That(
+                    GetRecordProperty<long>(summary, "WorstRootPixels"),
+                    Is.EqualTo(150));
             });
         }
 
