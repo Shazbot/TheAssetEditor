@@ -9572,6 +9572,7 @@ namespace Editors.KitbasherEditor.Services
                 double expectedArmyDrawsEliminated,
                 double globalCostBytes,
                 double expectedCostBytes,
+                double packLocalRetirementCreditBytes,
                 double acceptedNetBcnBytes,
                 double proposedNetBcnBytes,
                 double sourceBcnBytes)
@@ -9585,11 +9586,19 @@ namespace Editors.KitbasherEditor.Services
 
             var structuralBudget = prospectiveTextureMergeDraws *
                                     (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
-            var scenarioBudget = expectedArmyDrawsEliminated *
-                                 MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
-            var effectiveGlobalBudget = Math.Max(structuralBudget, scenarioBudget);
+            var scenarioDrawBudget = expectedArmyDrawsEliminated *
+                                     MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
+            // Pack-local retirement of an external/vanilla source texture is not physical
+            // pack-byte retirement, so it must not increase the global growth budget.
+            // It does remove this pack's demand for that source texture, however, and the
+            // ordinary texture-only gate already treats that as a bounded value signal.
+            // Reuse the same per-retired-texture allowance here, while excluding physically
+            // retired textures because their bytes are already subtracted from the costs.
+            var effectiveScenarioBudget =
+                scenarioDrawBudget + Math.Max(0.0, packLocalRetirementCreditBytes);
+            var effectiveGlobalBudget = Math.Max(structuralBudget, scenarioDrawBudget);
             if (globalCostBytes > effectiveGlobalBudget ||
-                expectedCostBytes > scenarioBudget)
+                expectedCostBytes > effectiveScenarioBudget)
             {
                 return AtlasValueGateBudgetDecision.TextureOnlyMergeBudgetExceeded;
             }
@@ -9603,6 +9612,18 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return AtlasValueGateBudgetDecision.Accept;
+        }
+
+        private static double GetTextureOnlyMergePackLocalRetirementCreditBytes(
+            int packReferenceRetiredSourceTextureCount,
+            int physicallyRetiredSourceTextureCount)
+        {
+            var packLocalOnlyRetirements = Math.Max(
+                0,
+                packReferenceRetiredSourceTextureCount -
+                physicallyRetiredSourceTextureCount);
+            return packLocalOnlyRetirements *
+                   (double)MaxNetBcnBytesPerRetiredSourceTexture;
         }
 
         private static bool IsAtlasValueCandidateAllowedForMode(
@@ -9875,6 +9896,18 @@ namespace Editors.KitbasherEditor.Services
                 marginalExpectedRetired);
             var marginalNet =
                 combinedResidency.NetBcnBytes - baseResidency.NetBcnBytes;
+            var marginalPackReferenceRetiredSourceTextureCount = Math.Max(
+                0,
+                combinedResidency.PackReferenceRetiredSourceTextureCount -
+                baseResidency.PackReferenceRetiredSourceTextureCount);
+            var marginalPhysicallyRetiredSourceTextureCount = Math.Max(
+                0,
+                combinedResidency.RetiredSourceTextureCount -
+                baseResidency.RetiredSourceTextureCount);
+            var marginalPackLocalRetirementCreditBytes =
+                GetTextureOnlyMergePackLocalRetirementCreditBytes(
+                    marginalPackReferenceRetiredSourceTextureCount,
+                    marginalPhysicallyRetiredSourceTextureCount);
 
             evaluation = new TextureOnlyMergeMarginalEvaluation(
                 combinedCandidates,
@@ -9889,6 +9922,7 @@ namespace Editors.KitbasherEditor.Services
                 marginalExpectedDraws,
                 marginalGlobalCost,
                 marginalExpectedCost,
+                marginalPackLocalRetirementCreditBytes,
                 marginalNet);
 
             var scenarioResolved = IsAtlasValueBatchScenarioResolved(
@@ -9914,6 +9948,7 @@ namespace Editors.KitbasherEditor.Services
                 marginalExpectedDraws,
                 marginalGlobalCost,
                 marginalExpectedCost,
+                marginalPackLocalRetirementCreditBytes,
                 acceptedNetBcnBytes,
                 marginalNet,
                 sourceBcnBytes);
@@ -9923,9 +9958,9 @@ namespace Editors.KitbasherEditor.Services
             rejectionReason =
                 $"marginal texture-only economics rejected ({budgetDecision}); " +
                 $"incremental global cost {FormatMiB(marginalGlobalCost)}, " +
-                $"scenario cost {FormatMiB(marginalExpectedCost)}, raw draws " +
-                $"+{marginalRawDraws:N0}, scenario draws " +
-                $"+{marginalExpectedDraws:N3}.";
+                $"scenario cost {FormatMiB(marginalExpectedCost)}, pack-local retirement " +
+                $"credit {FormatMiB(marginalPackLocalRetirementCreditBytes)}, raw draws " +
+                $"+{marginalRawDraws:N0}, scenario draws +{marginalExpectedDraws:N3}.";
             return false;
         }
 
@@ -10308,14 +10343,16 @@ namespace Editors.KitbasherEditor.Services
 
             var structuralBudget = evaluation.MarginalProspectiveTextureMergeDraws *
                 (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
-            var scenarioBudget = evaluation.MarginalExpectedArmyDrawsEliminated *
-                                 MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
-            var effectiveGlobalBudget = Math.Max(structuralBudget, scenarioBudget);
+            var scenarioDrawBudget = evaluation.MarginalExpectedArmyDrawsEliminated *
+                                     MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
+            var effectiveScenarioBudget =
+                scenarioDrawBudget + evaluation.MarginalPackLocalRetirementCreditBytes;
+            var effectiveGlobalBudget = Math.Max(structuralBudget, scenarioDrawBudget);
             var globalPressure = effectiveGlobalBudget > 0
                 ? evaluation.MarginalGlobalCostBytes / effectiveGlobalBudget
                 : double.PositiveInfinity;
-            var scenarioPressure = scenarioBudget > 0
-                ? evaluation.MarginalExpectedCostBytes / scenarioBudget
+            var scenarioPressure = effectiveScenarioBudget > 0
+                ? evaluation.MarginalExpectedCostBytes / effectiveScenarioBudget
                 : double.PositiveInfinity;
             var budgetPressure = Math.Max(globalPressure, scenarioPressure);
             if (double.IsNaN(budgetPressure))
@@ -10361,10 +10398,16 @@ namespace Editors.KitbasherEditor.Services
             TextureOnlyMergeMarginalEvaluation incumbent)
         {
             var candidateExpectedCostPerDraw = GetAtlasValueGateMiBPerDraw(
-                candidate.MarginalExpectedCostBytes,
+                Math.Max(
+                    0.0,
+                    candidate.MarginalExpectedCostBytes -
+                    candidate.MarginalPackLocalRetirementCreditBytes),
                 candidate.MarginalExpectedArmyDrawsEliminated);
             var incumbentExpectedCostPerDraw = GetAtlasValueGateMiBPerDraw(
-                incumbent.MarginalExpectedCostBytes,
+                Math.Max(
+                    0.0,
+                    incumbent.MarginalExpectedCostBytes -
+                    incumbent.MarginalPackLocalRetirementCreditBytes),
                 incumbent.MarginalExpectedArmyDrawsEliminated);
             const double epsilon = 0.000001;
             if (candidateExpectedCostPerDraw <
@@ -10773,6 +10816,10 @@ namespace Editors.KitbasherEditor.Services
             var expectedCost = GetChargeableAtlasValueGateBytes(
                 residency.ExpectedArmyGeneratedBcnBytes,
                 residency.ExpectedArmyRetiredSourceBcnBytes);
+            var packLocalRetirementCreditBytes =
+                GetTextureOnlyMergePackLocalRetirementCreditBytes(
+                    residency.PackReferenceRetiredSourceTextureCount,
+                    residency.RetiredSourceTextureCount);
             var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
             var budgetDecision = EvaluateTextureOnlyMergeAtlasValueGateBudget(
                 scenarioResolved,
@@ -10780,6 +10827,7 @@ namespace Editors.KitbasherEditor.Services
                 expectedArmyDrawsEliminated,
                 globalCost,
                 expectedCost,
+                packLocalRetirementCreditBytes,
                 state.AtlasValueGateNetBcnBytesAccepted,
                 residency.NetBcnBytes,
                 sourceBcnBytes);
@@ -10794,11 +10842,13 @@ namespace Editors.KitbasherEditor.Services
                 case AtlasValueGateBudgetDecision.TextureOnlyMergeBudgetExceeded:
                     var structuralBudgetBytes = prospectiveTextureMergeDraws *
                                                 (double)MaxNetBcnBytesPerTextureOnlyMergeDraw;
-                    var scenarioBudgetBytes = expectedArmyDrawsEliminated *
-                                              MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
+                    var scenarioDrawBudgetBytes = expectedArmyDrawsEliminated *
+                                                  MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw;
+                    var effectiveScenarioBudgetBytes =
+                        scenarioDrawBudgetBytes + packLocalRetirementCreditBytes;
                     var effectiveGlobalBudgetBytes = Math.Max(
                         structuralBudgetBytes,
-                        scenarioBudgetBytes);
+                        scenarioDrawBudgetBytes);
                     rejectionReason =
                         $"texture-only merge credit exceeded: generated " +
                         $"{FormatMiB(residency.GeneratedBcnBytes)}, retires " +
@@ -10806,9 +10856,11 @@ namespace Editors.KitbasherEditor.Services
                         $"{FormatMiB(residency.NetBcnBytes)}; global chargeable cost is " +
                         $"{FormatMiB(globalCost)}, scenario chargeable cost is " +
                         $"{FormatMiB(expectedCost)}; structural credit is " +
-                        $"{FormatMiB(structuralBudgetBytes, 2)}, scenario credit is " +
-                        $"{FormatMiB(scenarioBudgetBytes, 2)}, and the effective global " +
-                        $"credit is {FormatMiB(effectiveGlobalBudgetBytes, 2)}.";
+                        $"{FormatMiB(structuralBudgetBytes, 2)}, scenario draw credit is " +
+                        $"{FormatMiB(scenarioDrawBudgetBytes, 2)}, pack-local retirement " +
+                        $"credit is {FormatMiB(packLocalRetirementCreditBytes, 2)}, effective " +
+                        $"scenario credit is {FormatMiB(effectiveScenarioBudgetBytes, 2)}, and " +
+                        $"the effective global credit is {FormatMiB(effectiveGlobalBudgetBytes, 2)}.";
                     return false;
 
                 case AtlasValueGateBudgetDecision.GlobalGrowthCapExceeded:
@@ -19288,9 +19340,10 @@ namespace Editors.KitbasherEditor.Services
                     $"{FormatMiB(MaxNetBcnBytesPerTextureOnlyMergeDraw, 2)} per structural " +
                     $"draw eliminated, or " +
                     $"{FormatMiB(MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw, 2)} " +
-                    "per scenario-estimated draw when larger; scenario chargeable cost must " +
-                    "fit that scenario budget; scenario-resolved benefit required; source " +
-                    "retirement not required");
+                    "per scenario-estimated draw when larger; the scenario budget also gets " +
+                    $"{FormatMiB(MaxNetBcnBytesPerRetiredSourceTexture, 2)} per pack-local-only " +
+                    "source texture whose references are fully retired; physical and runtime " +
+                    "retirement remain accounted separately; scenario-resolved benefit required");
                 sb.AppendLine(
                     $"Atlas value-gate texture-consolidation batches accepted: " +
                     $"{state.AtlasValueGateTextureConsolidationBatchesAccepted}");
@@ -22387,6 +22440,7 @@ namespace Editors.KitbasherEditor.Services
             double MarginalExpectedArmyDrawsEliminated,
             double MarginalGlobalCostBytes,
             double MarginalExpectedCostBytes,
+            double MarginalPackLocalRetirementCreditBytes,
             double MarginalNetBcnBytes);
 
         private sealed record AtlasValueGateTextureOnlyMergeNearMiss(
