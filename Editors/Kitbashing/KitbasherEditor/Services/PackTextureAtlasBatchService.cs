@@ -2261,6 +2261,12 @@ namespace Editors.KitbasherEditor.Services
                         materialAssignments[partIndex]);
                     var identity = string.Join(
                         "\u001e",
+                        GetAtlasBatchMergeBoundaryIdentity(
+                            state,
+                            new MeshKey(
+                                component.RigidPath,
+                                lodIndex,
+                                partIndex)),
                         GetRmvMergeIdentityForMerge(
                             models[partIndex],
                             includeEmbeddedMaterialIdentity: false),
@@ -20587,7 +20593,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Shared structural consumers are counted as generated-geometry duplication cost, not as an eligibility failure.");
                 sb.AppendLine(
-                    $"VMDs with multiple direct WSModel components analyzed: " +
+                    $"VMD roots with multiple reachable WSModel paths analyzed: " +
                     $"{state.CrossRigidAnalysisVmdCount:N0}");
                 sb.AppendLine(
                     $"Distinct WSModel paths inspected: " +
