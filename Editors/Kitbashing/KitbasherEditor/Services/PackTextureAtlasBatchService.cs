@@ -1789,6 +1789,26 @@ namespace Editors.KitbasherEditor.Services
                         if (rejectedPlanKeys.Contains(rewritePlanKey))
                             continue;
 
+                        var distinctComponents = group
+                            .Select(item => item.Component)
+                            .GroupBy(
+                                component => component.WsModelPath,
+                                StringComparer.OrdinalIgnoreCase)
+                            .Select(items => items.First())
+                            .ToArray();
+                        if (!AreCrossRigidRigidHeadersCompatible(
+                                distinctComponents,
+                                out var rigidHeaderReason))
+                        {
+                            rejectedPlanKeys.Add(rewritePlanKey);
+                            RecordCrossRigidAnalysisBlocker(
+                                state,
+                                "Cross-rigid source rigid headers are not merge-compatible",
+                                $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
+                                rigidHeaderReason);
+                            continue;
+                        }
+
                         var lodAnalyses = new List<CrossRigidLodAnalysis>();
                         var maxLodCount = group.Max(
                             item => item.Component.Rigid.ModelList.Length);
