@@ -2391,7 +2391,7 @@ namespace Editors.KitbasherEditor.Services
                         RecordCrossRigidEmissionSkip(
                             state,
                             "VMD is not writable in the source pack",
-                            $"${vmdPath}: ${plan.RewritePlanId}");
+                            $"{vmdPath}: {plan.RewritePlanId}");
                     }
 
                     continue;
@@ -2413,7 +2413,7 @@ namespace Editors.KitbasherEditor.Services
                         RecordCrossRigidEmissionSkip(
                             state,
                             "VMD could not be loaded for rewrite",
-                            $"${vmdPath}: ${ex.Message}");
+                            $"{vmdPath}: {ex.Message}");
                     }
 
                     continue;
@@ -2471,7 +2471,7 @@ namespace Editors.KitbasherEditor.Services
                         RecordCrossRigidEmissionSkip(
                             state,
                             "Selected components do not share a rewriteable inline activation state",
-                            $"${vmdPath} [${plan.AttachmentIdentity}] payload=${plan.GeneratedPayloadId}");
+                            $"{vmdPath} [{plan.AttachmentIdentity}] payload={plan.GeneratedPayloadId}");
                         continue;
                     }
 
@@ -2484,7 +2484,7 @@ namespace Editors.KitbasherEditor.Services
                         RecordCrossRigidEmissionSkip(
                             state,
                             "VMD model occurrence has local decal, imposter, or metadata state",
-                            $"${vmdPath} [${plan.AttachmentIdentity}] payload=${plan.GeneratedPayloadId}");
+                            $"{vmdPath} [{plan.AttachmentIdentity}] payload={plan.GeneratedPayloadId}");
                         continue;
                     }
 
@@ -2495,7 +2495,7 @@ namespace Editors.KitbasherEditor.Services
                         RecordCrossRigidEmissionSkip(
                             state,
                             "Rewrite plan overlaps an already emitted plan",
-                            $"${vmdPath} [${plan.AttachmentIdentity}] payload=${plan.GeneratedPayloadId}");
+                            $"{vmdPath} [{plan.AttachmentIdentity}] payload={plan.GeneratedPayloadId}");
                         continue;
                     }
 
@@ -2520,7 +2520,7 @@ namespace Editors.KitbasherEditor.Services
                         RecordCrossRigidEmissionSkip(
                             state,
                             "VMD XML occurrence no longer matches the analyzed source",
-                            $"${vmdPath} [${plan.AttachmentIdentity}] payload=${plan.GeneratedPayloadId}");
+                            $"{vmdPath} [{plan.AttachmentIdentity}] payload={plan.GeneratedPayloadId}");
                         continue;
                     }
 
@@ -2531,7 +2531,7 @@ namespace Editors.KitbasherEditor.Services
                         RecordCrossRigidEmissionSkip(
                             state,
                             "Generated payload could not be built",
-                            $"payload ${plan.GeneratedPayloadId}: ${priorPayloadFailure}");
+                            $"payload {plan.GeneratedPayloadId}: {priorPayloadFailure}");
                         continue;
                     }
 
@@ -2550,7 +2550,7 @@ namespace Editors.KitbasherEditor.Services
                             RecordCrossRigidEmissionSkip(
                                 state,
                                 "Generated payload could not be built",
-                                $"payload ${plan.GeneratedPayloadId}: ${payloadFailure}");
+                                $"payload {plan.GeneratedPayloadId}: {payloadFailure}");
                             continue;
                         }
                     }
@@ -2667,7 +2667,7 @@ namespace Editors.KitbasherEditor.Services
                             out var componentReason))
                     {
                         reason =
-                            $"${wsModelPath}: ${componentReason}";
+                            $"{wsModelPath}: {componentReason}";
                         return false;
                     }
 
@@ -2812,8 +2812,8 @@ namespace Editors.KitbasherEditor.Services
                         expectedLod.OutputDrawsAfterCrossRigidMerge)
                     {
                         reason =
-                            $"LOD ${lodIndex} emitted ${outputModels.Count} draw(s), " +
-                            $"but analysis selected ${expectedLod.OutputDrawsAfterCrossRigidMerge}";
+                            $"LOD {lodIndex} emitted {outputModels.Count} draw(s), " +
+                            $"but analysis selected {expectedLod.OutputDrawsAfterCrossRigidMerge}";
                         return false;
                     }
 
@@ -2868,7 +2868,7 @@ namespace Editors.KitbasherEditor.Services
                         out var assignmentReason))
                 {
                     reason =
-                        $"generated WSModel material table is invalid (${assignmentReason})";
+                        $"generated WSModel material table is invalid ({assignmentReason})";
                     return false;
                 }
 
@@ -2958,7 +2958,7 @@ namespace Editors.KitbasherEditor.Services
                         baseline.LodHeaders[lodIndex].QualityLvl)
                     {
                         reason =
-                            $"source rigid LOD ${lodIndex} thresholds/quality differ";
+                            $"source rigid LOD {lodIndex} thresholds/quality differ";
                         return false;
                     }
                 }
@@ -3098,13 +3098,13 @@ namespace Editors.KitbasherEditor.Services
                      childIndex++)
                 {
                     var childXmlPath =
-                        $"${xmlPath}/SLOT[${slotIndex + 1}]/VARIANT_MESH[${childIndex + 1}]";
+                        $"{xmlPath}/SLOT[{slotIndex + 1}]/VARIANT_MESH[{childIndex + 1}]";
                     var childActivationSignature =
                         isBranching
                             ? string.Join(
                                 "\u001f",
                                 activationSignature,
-                                $"${xmlPath}/slot=${slotIndex + 1}/mesh=${childIndex + 1}")
+                                $"{xmlPath}/slot={slotIndex + 1}/mesh={childIndex + 1}")
                             : activationSignature;
 
                     CollectCrossRigidInlineModelOccurrences(
@@ -3142,12 +3142,12 @@ namespace Editors.KitbasherEditor.Services
         private static string BuildCrossRigidGeneratedRigidPath(
             string payloadId)
             => Normalize(
-                $"variantmeshes\\wh_variantmodels\\asset_editor\\cross_rigid\\${payloadId.ToLowerInvariant()}.rigid_model_v2");
+                $"variantmeshes\\wh_variantmodels\\asset_editor\\cross_rigid\\{payloadId.ToLowerInvariant()}.rigid_model_v2");
 
         private static string BuildCrossRigidGeneratedWsModelPath(
             string payloadId)
             => Normalize(
-                $"variantmeshes\\wh_variantmodels\\asset_editor\\cross_rigid\\${payloadId.ToLowerInvariant()}.wsmodel");
+                $"variantmeshes\\wh_variantmodels\\asset_editor\\cross_rigid\\{payloadId.ToLowerInvariant()}.wsmodel");
 
         private static void RecordCrossRigidEmissionSkip(
             BatchState state,
