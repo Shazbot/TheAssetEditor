@@ -508,6 +508,14 @@ namespace Editors.KitbasherEditor.Services
                         phaseStopwatch.Elapsed;
 
                     phaseStopwatch.Restart();
+                    EmitSelectedCrossRigidMerges(
+                        state,
+                        cancellationToken,
+                        progress);
+                    state.PhaseDurations["Emit cross-rigid merges"] =
+                        phaseStopwatch.Elapsed;
+
+                    phaseStopwatch.Restart();
                     MergeCompatibleMeshes(state, cancellationToken, progress);
                     state.PhaseDurations["Merge compatible meshes"] = phaseStopwatch.Elapsed;
                 }
@@ -2313,6 +2321,857 @@ namespace Editors.KitbasherEditor.Services
                     candidate.GeneratedPayloadId);
                 state.CrossRigidPayloadSelectionEntries.Add(
                     candidate with { SelectionRank = rank });
+            }
+        }
+
+
+        private static void EmitSelectedCrossRigidMerges(
+            BatchState state,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            state.CrossRigidGeneratedPayloadIds.Clear();
+            state.CrossRigidGeneratedRigidPaths.Clear();
+            state.CrossRigidGeneratedWsModelPaths.Clear();
+            state.CrossRigidRetainedSourceAssetPaths.Clear();
+            state.CrossRigidEmissionSkipCounts.Clear();
+            state.CrossRigidEmissionSkipExamples.Clear();
+            state.CrossRigidRewritePlansApplied = 0;
+            state.CrossRigidExpectedArmyDrawCallsEmitted = 0;
+            state.CrossRigidRawLodDrawsBefore = 0;
+            state.CrossRigidRawLodDrawsAfter = 0;
+
+            var selectedPlans = state.CrossRigidMergeAnalysisEntries
+                .Where(plan =>
+                    state.CrossRigidSelectedPayloadIds.Contains(
+                        plan.GeneratedPayloadId))
+                .OrderByDescending(plan =>
+                    plan.ExpectedArmyDrawCallsEliminated)
+                .ThenBy(plan => plan.RewritePlanId, StringComparer.Ordinal)
+                .ToArray();
+            if (selectedPlans.Length == 0)
+                return;
+
+            var traversalContainers = GetGameplayTraversalContainers(state);
+            var rigidCache = new Dictionary<string, RmvFile>(
+                state.RigidModels,
+                StringComparer.OrdinalIgnoreCase);
+            var payloadBuildFailures = new Dictionary<string, string>(
+                StringComparer.Ordinal);
+
+            var planGroups = selectedPlans
+                .GroupBy(
+                    plan => Normalize(plan.VmdPath),
+                    StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            for (var vmdIndex = 0; vmdIndex < planGroups.Length; vmdIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var vmdPath = planGroups[vmdIndex].Key;
+                var plans = planGroups[vmdIndex]
+                    .OrderByDescending(plan =>
+                        plan.ExpectedArmyDrawCallsEliminated)
+                    .ThenBy(plan => plan.RewritePlanId, StringComparer.Ordinal)
+                    .ToArray();
+
+                ReportProgress(
+                    progress,
+                    "Emitting cross-rigid merges",
+                    vmdIndex + 1,
+                    planGroups.Length,
+                    vmdPath);
+
+                var vmdFile = state.Source.FindFile(vmdPath);
+                if (vmdFile == null)
+                {
+                    foreach (var plan in plans)
+                    {
+                        RecordCrossRigidEmissionSkip(
+                            state,
+                            "VMD is not writable in the source pack",
+                            $"${vmdPath}: ${plan.RewritePlanId}");
+                    }
+
+                    continue;
+                }
+
+                VariantMesh vmd;
+                try
+                {
+                    vmd = GetVmd(state, state.Source, vmdPath, vmdFile);
+                }
+                catch (Exception ex) when (
+                    ex is InvalidOperationException or
+                    XmlException or
+                    FormatException or
+                    ArgumentException)
+                {
+                    foreach (var plan in plans)
+                    {
+                        RecordCrossRigidEmissionSkip(
+                            state,
+                            "VMD could not be loaded for rewrite",
+                            $"${vmdPath}: ${ex.Message}");
+                    }
+
+                    continue;
+                }
+
+                var occurrences = new List<CrossRigidVmdModelOccurrence>();
+                var traversalOrder = 0;
+                CollectCrossRigidInlineModelOccurrences(
+                    vmd,
+                    "<root>",
+                    "<always>",
+                    "/VARIANT_MESH",
+                    occurrences,
+                    ref traversalOrder);
+
+                var consumedXmlPaths = new HashSet<string>(
+                    StringComparer.Ordinal);
+                XmlDocument? rewrittenDocument = null;
+
+                foreach (var plan in plans)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var expectedCounts = plan.SourceInstances
+                        .GroupBy(
+                            instance => Normalize(instance.WsModelPath),
+                            StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(
+                            group => group.Key,
+                            group => group.Count(),
+                            StringComparer.OrdinalIgnoreCase);
+
+                    var exactActivationGroups = occurrences
+                        .Where(occurrence =>
+                            occurrence.AttachmentIdentity.Equals(
+                                plan.AttachmentIdentity,
+                                StringComparison.Ordinal) &&
+                            expectedCounts.ContainsKey(
+                                occurrence.WsModelPath))
+                        .GroupBy(
+                            occurrence => occurrence.ActivationSignature,
+                            StringComparer.Ordinal)
+                        .Select(group => group
+                            .OrderBy(occurrence =>
+                                occurrence.TraversalOrder)
+                            .ToArray())
+                        .Where(group =>
+                            CrossRigidOccurrenceCountsMatch(
+                                group,
+                                expectedCounts))
+                        .ToArray();
+
+                    if (exactActivationGroups.Length == 0)
+                    {
+                        RecordCrossRigidEmissionSkip(
+                            state,
+                            "Selected components do not share a rewriteable inline activation state",
+                            $"${vmdPath} [${plan.AttachmentIdentity}] payload=${plan.GeneratedPayloadId}");
+                        continue;
+                    }
+
+                    var planOccurrences = exactActivationGroups
+                        .SelectMany(group => group)
+                        .ToArray();
+                    if (planOccurrences.Any(occurrence =>
+                            occurrence.HasLocalModelModifiers))
+                    {
+                        RecordCrossRigidEmissionSkip(
+                            state,
+                            "VMD model occurrence has local decal, imposter, or metadata state",
+                            $"${vmdPath} [${plan.AttachmentIdentity}] payload=${plan.GeneratedPayloadId}");
+                        continue;
+                    }
+
+                    if (planOccurrences.Any(occurrence =>
+                            consumedXmlPaths.Contains(
+                                occurrence.XmlPath)))
+                    {
+                        RecordCrossRigidEmissionSkip(
+                            state,
+                            "Rewrite plan overlaps an already emitted plan",
+                            $"${vmdPath} [${plan.AttachmentIdentity}] payload=${plan.GeneratedPayloadId}");
+                        continue;
+                    }
+
+                    rewrittenDocument ??= LoadXml(vmdFile);
+                    var xmlNodesValid = true;
+                    foreach (var occurrence in planOccurrences)
+                    {
+                        if (rewrittenDocument.SelectSingleNode(
+                                occurrence.XmlPath) is not XmlElement element ||
+                            !Normalize(element.GetAttribute("model"))
+                                .Equals(
+                                    occurrence.WsModelPath,
+                                    StringComparison.OrdinalIgnoreCase))
+                        {
+                            xmlNodesValid = false;
+                            break;
+                        }
+                    }
+
+                    if (!xmlNodesValid)
+                    {
+                        RecordCrossRigidEmissionSkip(
+                            state,
+                            "VMD XML occurrence no longer matches the analyzed source",
+                            $"${vmdPath} [${plan.AttachmentIdentity}] payload=${plan.GeneratedPayloadId}");
+                        continue;
+                    }
+
+                    if (payloadBuildFailures.TryGetValue(
+                            plan.GeneratedPayloadId,
+                            out var priorPayloadFailure))
+                    {
+                        RecordCrossRigidEmissionSkip(
+                            state,
+                            "Generated payload could not be built",
+                            $"payload ${plan.GeneratedPayloadId}: ${priorPayloadFailure}");
+                        continue;
+                    }
+
+                    if (!state.CrossRigidGeneratedPayloadIds.Contains(
+                            plan.GeneratedPayloadId))
+                    {
+                        if (!TryBuildCrossRigidGeneratedPayload(
+                                state,
+                                plan,
+                                traversalContainers,
+                                rigidCache,
+                                out var payloadFailure))
+                        {
+                            payloadBuildFailures[
+                                plan.GeneratedPayloadId] = payloadFailure;
+                            RecordCrossRigidEmissionSkip(
+                                state,
+                                "Generated payload could not be built",
+                                $"payload ${plan.GeneratedPayloadId}: ${payloadFailure}");
+                            continue;
+                        }
+                    }
+
+                    var generatedWsModelPath =
+                        BuildCrossRigidGeneratedWsModelPath(
+                            plan.GeneratedPayloadId);
+
+                    // A rewrite plan can aggregate the same component set across multiple
+                    // alternative branches. Emit one generated reference inside every exact
+                    // activation group rather than collapsing those branches together.
+                    foreach (var activationGroup in exactActivationGroups)
+                    {
+                        var ordered = activationGroup
+                            .OrderBy(occurrence =>
+                                occurrence.TraversalOrder)
+                            .ToArray();
+                        for (var occurrenceIndex = 0;
+                             occurrenceIndex < ordered.Length;
+                             occurrenceIndex++)
+                        {
+                            var occurrence = ordered[occurrenceIndex];
+                            var element = (XmlElement)rewrittenDocument
+                                .SelectSingleNode(occurrence.XmlPath)!;
+                            if (occurrenceIndex == 0)
+                            {
+                                element.SetAttribute(
+                                    "model",
+                                    generatedWsModelPath);
+                            }
+                            else
+                            {
+                                element.RemoveAttribute("model");
+                            }
+
+                            consumedXmlPaths.Add(occurrence.XmlPath);
+                        }
+                    }
+
+                    foreach (var instance in plan.SourceInstances)
+                    {
+                        state.CrossRigidRetainedSourceAssetPaths.Add(
+                            Normalize(instance.WsModelPath));
+                    }
+
+                    foreach (var source in plan.SourceGeometry)
+                    {
+                        state.CrossRigidRetainedSourceAssetPaths.Add(
+                            Normalize(source.RigidPath));
+                    }
+
+                    state.CrossRigidRewritePlansApplied++;
+                    state.CrossRigidExpectedArmyDrawCallsEmitted +=
+                        plan.ExpectedArmyDrawCallsEliminated;
+                    state.CrossRigidRawLodDrawsBefore +=
+                        plan.Lods.Sum(lod =>
+                            (long)lod.InputDrawsAfterSameRigidMerge);
+                    state.CrossRigidRawLodDrawsAfter +=
+                        plan.Lods.Sum(lod =>
+                            (long)lod.OutputDrawsAfterCrossRigidMerge);
+                }
+
+                if (rewrittenDocument != null &&
+                    consumedXmlPaths.Count != 0)
+                {
+                    state.ModifiedVmdDocuments[vmdPath] =
+                        rewrittenDocument;
+                }
+            }
+        }
+
+        private static bool TryBuildCrossRigidGeneratedPayload(
+            BatchState state,
+            CrossRigidMergeAnalysisEntry plan,
+            IReadOnlyList<IPackFileContainer> traversalContainers,
+            Dictionary<string, RmvFile> rigidCache,
+            out string reason)
+        {
+            reason = string.Empty;
+            var generatedRigidPath =
+                BuildCrossRigidGeneratedRigidPath(
+                    plan.GeneratedPayloadId);
+            var generatedWsModelPath =
+                BuildCrossRigidGeneratedWsModelPath(
+                    plan.GeneratedPayloadId);
+
+            if (state.Source.ContainsFile(generatedRigidPath) ||
+                state.Source.ContainsFile(generatedWsModelPath) ||
+                state.Output.ContainsFile(generatedRigidPath) ||
+                state.Output.ContainsFile(generatedWsModelPath))
+            {
+                reason =
+                    "deterministic generated asset path already exists in the input/output pack";
+                return false;
+            }
+
+            try
+            {
+                var componentsByWsModel =
+                    new Dictionary<string, CrossRigidAnalysisComponent>(
+                        StringComparer.OrdinalIgnoreCase);
+                foreach (var wsModelPathValue in plan.SourceInstances
+                             .Select(instance => instance.WsModelPath)
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    var wsModelPath = Normalize(wsModelPathValue);
+                    if (!TryBuildCrossRigidAnalysisComponent(
+                            state,
+                            plan.VmdPath,
+                            wsModelPath,
+                            traversalContainers,
+                            rigidCache,
+                            out var component,
+                            out var componentReason))
+                    {
+                        reason =
+                            $"${wsModelPath}: ${componentReason}";
+                        return false;
+                    }
+
+                    componentsByWsModel[wsModelPath] =
+                        component;
+                }
+
+                var components = componentsByWsModel.Values
+                    .OrderBy(
+                        component => component.WsModelPath,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (components.Length < 2)
+                {
+                    reason =
+                        "fewer than two distinct source WSModels remain";
+                    return false;
+                }
+
+                if (components
+                        .Select(component =>
+                            component.TopologyIdentity)
+                        .Distinct(StringComparer.Ordinal)
+                        .Count() != 1)
+                {
+                    reason =
+                        "source WSModel non-material topology is no longer identical";
+                    return false;
+                }
+
+                if (!AreCrossRigidRigidHeadersCompatible(
+                        components,
+                        out reason))
+                {
+                    return false;
+                }
+
+                var representative = components[0];
+                var lodCount = representative.Rigid.ModelList.Length;
+                var generatedModels = new RmvModel[lodCount][];
+                var generatedAssignments = new string[lodCount][];
+
+                for (var lodIndex = 0;
+                     lodIndex < lodCount;
+                     lodIndex++)
+                {
+                    var sourceParts =
+                        new List<CrossRigidGeneratedSourcePart>();
+                    for (var instanceIndex = 0;
+                         instanceIndex < plan.SourceInstances.Length;
+                         instanceIndex++)
+                    {
+                        var instance =
+                            plan.SourceInstances[instanceIndex];
+                        var wsModelPath =
+                            Normalize(instance.WsModelPath);
+                        var component =
+                            componentsByWsModel[wsModelPath];
+                        var models =
+                            component.Rigid.ModelList[lodIndex];
+                        var assignments =
+                            component.MaterialAssignments[lodIndex];
+
+                        for (var partIndex = 0;
+                             partIndex < models.Length;
+                             partIndex++)
+                        {
+                            var mergeIdentity = string.Join(
+                                "\u001e",
+                                GetAtlasBatchMergeBoundaryIdentity(
+                                    state,
+                                    new MeshKey(
+                                        component.RigidPath,
+                                        lodIndex,
+                                        partIndex)),
+                                GetRmvMergeIdentityForMerge(
+                                    models[partIndex],
+                                    includeEmbeddedMaterialIdentity:
+                                        false),
+                                GetMeshMergeMaterialIdentity(
+                                    state,
+                                    assignments[partIndex]));
+
+                            sourceParts.Add(
+                                new CrossRigidGeneratedSourcePart(
+                                    instanceIndex,
+                                    component.WsModelPath,
+                                    component.RigidPath,
+                                    partIndex,
+                                    models[partIndex],
+                                    assignments[partIndex],
+                                    mergeIdentity));
+                        }
+                    }
+
+                    var outputModels = new List<RmvModel>();
+                    var outputMaterials = new List<string>();
+                    foreach (var identityGroup in sourceParts
+                                 .GroupBy(
+                                     part => part.MergeIdentity,
+                                     StringComparer.Ordinal)
+                                 .OrderBy(
+                                     group => group.Key,
+                                     StringComparer.Ordinal))
+                    {
+                        foreach (var bin in
+                                 PartitionCrossRigidGeneratedParts(
+                                     identityGroup.ToArray()))
+                        {
+                            var orderedBin = bin
+                                .OrderBy(part =>
+                                    part.InstanceIndex)
+                                .ThenBy(
+                                    part => part.WsModelPath,
+                                    StringComparer.OrdinalIgnoreCase)
+                                .ThenBy(part =>
+                                    part.PartIndex)
+                                .ToArray();
+                            outputModels.Add(
+                                MergeRmvModels(
+                                    orderedBin
+                                        .Select(part => part.Model)
+                                        .ToArray()));
+                            outputMaterials.Add(
+                                orderedBin
+                                    .OrderBy(
+                                        part => Normalize(
+                                            part.MaterialPath),
+                                        StringComparer.OrdinalIgnoreCase)
+                                    .ThenBy(part =>
+                                        part.InstanceIndex)
+                                    .First()
+                                    .MaterialPath);
+                        }
+                    }
+
+                    var expectedLod = plan.Lods
+                        .FirstOrDefault(lod =>
+                            lod.LodIndex == lodIndex);
+                    if (expectedLod != null &&
+                        outputModels.Count !=
+                        expectedLod.OutputDrawsAfterCrossRigidMerge)
+                    {
+                        reason =
+                            $"LOD ${lodIndex} emitted ${outputModels.Count} draw(s), " +
+                            $"but analysis selected ${expectedLod.OutputDrawsAfterCrossRigidMerge}";
+                        return false;
+                    }
+
+                    generatedModels[lodIndex] =
+                        outputModels.ToArray();
+                    generatedAssignments[lodIndex] =
+                        outputMaterials.ToArray();
+                }
+
+                var header = representative.Rigid.Header;
+                var generatedRigid = new RmvFile
+                {
+                    Header = header,
+                    LodHeaders = representative.Rigid.LodHeaders
+                        .Select(lod => lod.Clone())
+                        .ToArray(),
+                    ModelList = generatedModels,
+                };
+                generatedRigid.RecalculateOffsets();
+
+                // Round-trip once before storing the generated RMV so the new asset owns
+                // independent model/material/vertex objects. The source rigids remain
+                // untouched by later geometry optimization.
+                var factory = ModelFactory.Create();
+                generatedRigid = factory.Load(
+                    factory.Save(
+                        generatedRigid,
+                        validateByReloading: false,
+                        logProgress: false));
+
+                var generatedWsDocument = new XmlDocument();
+                generatedWsDocument.LoadXml(
+                    representative.WsDocument.OuterXml);
+                var geometryNode =
+                    generatedWsDocument.SelectSingleNode(
+                        "/model/geometry");
+                if (geometryNode == null)
+                {
+                    reason =
+                        "representative WSModel has no geometry node";
+                    return false;
+                }
+
+                geometryNode.InnerText = generatedRigidPath;
+                RewriteWsMaterialAssignments(
+                    generatedWsDocument,
+                    generatedAssignments);
+                if (!TryReadWsMaterialAssignments(
+                        generatedWsDocument,
+                        generatedRigid,
+                        out _,
+                        out var assignmentReason))
+                {
+                    reason =
+                        $"generated WSModel material table is invalid (${assignmentReason})";
+                    return false;
+                }
+
+                state.RigidModels[generatedRigidPath] =
+                    generatedRigid;
+                state.WsDocuments[generatedWsModelPath] =
+                    generatedWsDocument;
+                state.ModifiedRigids.Add(
+                    generatedRigidPath);
+                state.ModifiedWsModels.Add(
+                    generatedWsModelPath);
+                state.CrossRigidGeneratedPayloadIds.Add(
+                    plan.GeneratedPayloadId);
+                state.CrossRigidGeneratedRigidPaths.Add(
+                    generatedRigidPath);
+                state.CrossRigidGeneratedWsModelPaths.Add(
+                    generatedWsModelPath);
+                return true;
+            }
+            catch (Exception ex) when (
+                ex is InvalidDataException or
+                InvalidOperationException or
+                ArgumentException or
+                FormatException or
+                OverflowException)
+            {
+                reason = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool AreCrossRigidRigidHeadersCompatible(
+            IReadOnlyList<CrossRigidAnalysisComponent> components,
+            out string reason)
+        {
+            reason = string.Empty;
+            if (components.Count == 0)
+            {
+                reason = "no rigid components were supplied";
+                return false;
+            }
+
+            var baseline = components[0].Rigid;
+            var baselineSkeleton =
+                baseline.Header.SkeletonName;
+            foreach (var component in components.Skip(1))
+            {
+                var rigid = component.Rigid;
+                if (rigid.Header.Version !=
+                    baseline.Header.Version)
+                {
+                    reason =
+                        "source rigid versions differ";
+                    return false;
+                }
+
+                if (!string.Equals(
+                        rigid.Header.SkeletonName,
+                        baselineSkeleton,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    reason =
+                        "source rigid skeletons differ";
+                    return false;
+                }
+
+                if (rigid.ModelList.Length !=
+                        baseline.ModelList.Length ||
+                    rigid.LodHeaders.Length !=
+                        baseline.LodHeaders.Length)
+                {
+                    reason =
+                        "source rigid LOD counts differ";
+                    return false;
+                }
+
+                for (var lodIndex = 0;
+                     lodIndex < baseline.LodHeaders.Length;
+                     lodIndex++)
+                {
+                    if (Math.Abs(
+                            rigid.LodHeaders[lodIndex]
+                                .LodCameraDistance -
+                            baseline.LodHeaders[lodIndex]
+                                .LodCameraDistance) > 0.01f ||
+                        rigid.LodHeaders[lodIndex].QualityLvl !=
+                        baseline.LodHeaders[lodIndex].QualityLvl)
+                    {
+                        reason =
+                            $"source rigid LOD ${lodIndex} thresholds/quality differ";
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static IReadOnlyList<
+                IReadOnlyList<CrossRigidGeneratedSourcePart>>
+            PartitionCrossRigidGeneratedParts(
+                IReadOnlyList<CrossRigidGeneratedSourcePart> parts)
+        {
+            var bins =
+                new List<List<CrossRigidGeneratedSourcePart>>();
+            var vertexCounts = new List<int>();
+
+            foreach (var part in parts
+                         .OrderByDescending(item =>
+                             item.Model.Mesh.VertexList.Length)
+                         .ThenBy(
+                             item => item.WsModelPath,
+                             StringComparer.OrdinalIgnoreCase)
+                         .ThenBy(item =>
+                             item.InstanceIndex)
+                         .ThenBy(item =>
+                             item.PartIndex))
+            {
+                var vertexCount =
+                    part.Model.Mesh.VertexList.Length;
+                if (vertexCount > ushort.MaxValue)
+                {
+                    bins.Add([part]);
+                    vertexCounts.Add(vertexCount);
+                    continue;
+                }
+
+                var placed = false;
+                for (var binIndex = 0;
+                     binIndex < bins.Count;
+                     binIndex++)
+                {
+                    if (vertexCounts[binIndex] >
+                            ushort.MaxValue ||
+                        vertexCounts[binIndex] +
+                            vertexCount >
+                            ushort.MaxValue)
+                    {
+                        continue;
+                    }
+
+                    bins[binIndex].Add(part);
+                    vertexCounts[binIndex] +=
+                        vertexCount;
+                    placed = true;
+                    break;
+                }
+
+                if (!placed)
+                {
+                    bins.Add([part]);
+                    vertexCounts.Add(vertexCount);
+                }
+            }
+
+            return bins;
+        }
+
+        private static void CollectCrossRigidInlineModelOccurrences(
+            VariantMesh mesh,
+            string attachmentIdentity,
+            string activationSignature,
+            string xmlPath,
+            List<CrossRigidVmdModelOccurrence> occurrences,
+            ref int traversalOrder)
+        {
+            if (!string.IsNullOrWhiteSpace(
+                    mesh.ModelReference))
+            {
+                var modelPath =
+                    Normalize(mesh.ModelReference);
+                if (Path.GetExtension(modelPath)
+                    .Equals(
+                        ".wsmodel",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    occurrences.Add(
+                        new CrossRigidVmdModelOccurrence(
+                            modelPath,
+                            attachmentIdentity,
+                            activationSignature,
+                            xmlPath,
+                            traversalOrder++,
+                            !string.IsNullOrWhiteSpace(
+                                mesh.ImposterModel) ||
+                            !string.IsNullOrWhiteSpace(
+                                mesh.DecalDiffuse) ||
+                            !string.IsNullOrWhiteSpace(
+                                mesh.DecalNormal) ||
+                            (mesh.MetaDataList?.Count ?? 0) != 0));
+                }
+            }
+
+            var slots = mesh.ChildSlots ?? [];
+            for (var slotIndex = 0;
+                 slotIndex < slots.Count;
+                 slotIndex++)
+            {
+                var slot = slots[slotIndex];
+                var slotProbability =
+                    ParseVmdSlotProbability(
+                        slot.Probability);
+                var childMeshes =
+                    slot.ChildMeshes ?? [];
+                var alternativeCount =
+                    childMeshes.Count +
+                    (slot.ChildReferences?.Count ?? 0);
+                if (slotProbability <= 0 ||
+                    alternativeCount == 0)
+                {
+                    continue;
+                }
+
+                var childAttachmentIdentity =
+                    BuildCrossRigidAttachmentIdentity(
+                        attachmentIdentity,
+                        mesh.use_different_attach_point_parts,
+                        slot);
+                var isBranching =
+                    slotProbability <
+                        1.0 -
+                        AtlasValueGateExpectedDrawEpsilon ||
+                    alternativeCount > 1;
+
+                for (var childIndex = 0;
+                     childIndex < childMeshes.Count;
+                     childIndex++)
+                {
+                    var childXmlPath =
+                        $"${xmlPath}/SLOT[${slotIndex + 1}]/VARIANT_MESH[${childIndex + 1}]";
+                    var childActivationSignature =
+                        isBranching
+                            ? string.Join(
+                                "\u001f",
+                                activationSignature,
+                                $"${xmlPath}/slot=${slotIndex + 1}/mesh=${childIndex + 1}")
+                            : activationSignature;
+
+                    CollectCrossRigidInlineModelOccurrences(
+                        childMeshes[childIndex],
+                        childAttachmentIdentity,
+                        childActivationSignature,
+                        childXmlPath,
+                        occurrences,
+                        ref traversalOrder);
+                }
+            }
+        }
+
+        private static bool CrossRigidOccurrenceCountsMatch(
+            IReadOnlyList<CrossRigidVmdModelOccurrence> occurrences,
+            IReadOnlyDictionary<string, int> expectedCounts)
+        {
+            var actualCounts = occurrences
+                .GroupBy(
+                    occurrence => occurrence.WsModelPath,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Count(),
+                    StringComparer.OrdinalIgnoreCase);
+            return actualCounts.Count ==
+                       expectedCounts.Count &&
+                   expectedCounts.All(entry =>
+                       actualCounts.TryGetValue(
+                           entry.Key,
+                           out var actualCount) &&
+                       actualCount == entry.Value);
+        }
+
+        private static string BuildCrossRigidGeneratedRigidPath(
+            string payloadId)
+            => Normalize(
+                $"variantmeshes\\wh_variantmodels\\asset_editor\\cross_rigid\\${payloadId.ToLowerInvariant()}.rigid_model_v2");
+
+        private static string BuildCrossRigidGeneratedWsModelPath(
+            string payloadId)
+            => Normalize(
+                $"variantmeshes\\wh_variantmodels\\asset_editor\\cross_rigid\\${payloadId.ToLowerInvariant()}.wsmodel");
+
+        private static void RecordCrossRigidEmissionSkip(
+            BatchState state,
+            string reason,
+            string example)
+        {
+            state.CrossRigidEmissionSkipCounts[reason] =
+                state.CrossRigidEmissionSkipCounts
+                    .GetValueOrDefault(reason) + 1;
+            if (!state.CrossRigidEmissionSkipExamples.TryGetValue(
+                    reason,
+                    out var examples))
+            {
+                examples = [];
+                state.CrossRigidEmissionSkipExamples[reason] =
+                    examples;
+            }
+
+            if (examples.Count < 12 &&
+                !examples.Contains(
+                    example,
+                    StringComparer.Ordinal))
+            {
+                examples.Add(example);
             }
         }
 
@@ -18449,7 +19308,10 @@ namespace Editors.KitbasherEditor.Services
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
         {
-            var total = state.ModifiedRigids.Count + state.ModifiedWsModels.Count;
+            var total =
+                state.ModifiedRigids.Count +
+                state.ModifiedWsModels.Count +
+                state.ModifiedVmdDocuments.Count;
             var current = 0;
             var replacements = new List<NewPackFileEntry>(total);
 
@@ -18552,6 +19414,31 @@ namespace Editors.KitbasherEditor.Services
             }
             AddPhaseDuration(state, "Serialize modified WSModels", serializeStopwatch.Elapsed);
 
+            serializeStopwatch.Restart();
+            foreach (var (vmdPath, document) in
+                     state.ModifiedVmdDocuments
+                         .OrderBy(
+                             entry => entry.Key,
+                             StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ReportProgress(
+                    progress,
+                    "Serializing modified VMDs",
+                    ++current,
+                    total,
+                    vmdPath);
+                replacements.Add(
+                    CreateReplacementEntry(
+                        vmdPath,
+                        Encoding.UTF8.GetBytes(
+                            document.OuterXml)));
+            }
+            AddPhaseDuration(
+                state,
+                "Serialize modified VMDs",
+                serializeStopwatch.Elapsed);
+
             cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(
                 progress,
@@ -18587,6 +19474,12 @@ namespace Editors.KitbasherEditor.Services
             var toRemove = new HashSet<string>(
                 originalReachable.Except(currentReachable, StringComparer.OrdinalIgnoreCase),
                 StringComparer.OrdinalIgnoreCase);
+
+            // The first cross-rigid writer deliberately duplicates source geometry instead
+            // of claiming source retirement. Keep every source WSModel/RMV participating in
+            // an emitted plan even when the rewritten VMD no longer reaches it.
+            toRemove.ExceptWith(
+                state.CrossRigidRetainedSourceAssetPaths);
 
             var outputPaths = state.Output.GetAllFiles().Keys.ToList();
             for (var outputIndex = 0; outputIndex < outputPaths.Count; outputIndex++)
@@ -20063,9 +20956,94 @@ namespace Editors.KitbasherEditor.Services
             ReportProgress(progress, "Validating output");
             var errors = new List<string>();
 
-            ValidateUnchangedModelPathSet(state, ".variantmeshdefinition", errors);
-            ValidateUnchangedModelPathSet(state, ".wsmodel", errors);
-            ValidateUnchangedModelPathSet(state, ".rigid_model_v2", errors);
+            ValidateUnchangedModelPathSet(
+                state,
+                ".variantmeshdefinition",
+                errors);
+            ValidateUnchangedModelPathSet(
+                state,
+                ".wsmodel",
+                errors,
+                state.CrossRigidGeneratedWsModelPaths);
+            ValidateUnchangedModelPathSet(
+                state,
+                ".rigid_model_v2",
+                errors,
+                state.CrossRigidGeneratedRigidPaths);
+
+            var validationVmds = state.ModifiedVmdDocuments.Keys
+                .OrderBy(
+                    path => path,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            for (var vmdIndex = 0;
+                 vmdIndex < validationVmds.Count;
+                 vmdIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var vmdPath = validationVmds[vmdIndex];
+                ReportProgress(
+                    progress,
+                    "Validating modified VMDs",
+                    vmdIndex + 1,
+                    validationVmds.Count,
+                    vmdPath);
+                var file = state.Output.FindFile(vmdPath);
+                if (file == null)
+                {
+                    errors.Add(
+                        $"Modified VMD is missing from output: {vmdPath}");
+                    continue;
+                }
+
+                try
+                {
+                    var vmd = VariantMeshDefinitionLoader.Load(file);
+                    var modelRefs = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+                    var childVmdRefs = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+                    var directTextures = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+                    CollectVmdReferences(
+                        vmd,
+                        modelRefs,
+                        childVmdRefs,
+                        directTextures);
+
+                    var generatedReferences = modelRefs
+                        .Select(Normalize)
+                        .Where(path =>
+                            state.CrossRigidGeneratedWsModelPaths
+                                .Contains(path))
+                        .Distinct(
+                            StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    if (generatedReferences.Length == 0)
+                    {
+                        errors.Add(
+                            $"Cross-rigid rewritten VMD has no generated WSModel reference: {vmdPath}");
+                    }
+
+                    foreach (var generatedReference in
+                             generatedReferences)
+                    {
+                        if (!CanResolveAfterRewrite(
+                                state,
+                                generatedReference))
+                        {
+                            errors.Add(
+                                $"Cross-rigid generated WSModel no longer resolves: " +
+                                $"{vmdPath} -> {generatedReference}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    errors.Add(
+                        $"Modified VMD failed to reload: {vmdPath} ({ex.Message})");
+                }
+            }
 
             var validationRigids = state.ModifiedRigids.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
             for (var rigidIndex = 0; rigidIndex < validationRigids.Count; rigidIndex++)
@@ -20291,12 +21269,15 @@ namespace Editors.KitbasherEditor.Services
             }
 
             state.ValidationMessages.Add(
-                $"PASS: {state.ModifiedRigids.Count} modified rigid(s), " +
-                $"{state.ModifiedWsModels.Count} modified WSModel(s), " +
+                $"PASS: {state.ModifiedVmdDocuments.Count} modified VMD(s), " +
+                $"{state.ModifiedRigids.Count} modified/generated rigid(s), " +
+                $"{state.ModifiedWsModels.Count} modified/generated WSModel(s), " +
                 $"{state.GeneratedMaterialPaths.Count} generated material(s), and " +
                 $"{state.GeneratedTexturePaths.Count} atlas texture(s) validated.");
             state.ValidationMessages.Add(
-                "PASS: VMD, WSModel, and rigid_model_v2 path sets are unchanged.");
+                $"PASS: source VMD/WSModel/RMV2 paths were preserved; " +
+                $"{state.CrossRigidGeneratedWsModelPaths.Count} generated cross-rigid WSModel(s) and " +
+                $"{state.CrossRigidGeneratedRigidPaths.Count} generated cross-rigid RMV2 file(s) were validated.");
             if (state.MergeCompatibleMeshesEnabled && state.MeshMergeInvariantGroupCount != 0)
             {
                 state.ValidationMessages.Add(
@@ -20397,7 +21378,8 @@ namespace Editors.KitbasherEditor.Services
         private static void ValidateUnchangedModelPathSet(
             BatchState state,
             string extension,
-            List<string> errors)
+            List<string> errors,
+            IReadOnlySet<string>? expectedAddedPaths = null)
         {
             var sourcePaths = state.Source.GetAllFiles().Keys
                 .Where(x => Path.GetExtension(x).Equals(extension, StringComparison.OrdinalIgnoreCase))
@@ -20407,11 +21389,29 @@ namespace Editors.KitbasherEditor.Services
                 .Where(x => Path.GetExtension(x).Equals(extension, StringComparison.OrdinalIgnoreCase))
                 .Select(Normalize)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var expectedAdditions = expectedAddedPaths == null
+                ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                : expectedAddedPaths
+                    .Select(Normalize)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             foreach (var missing in sourcePaths.Except(outputPaths, StringComparer.OrdinalIgnoreCase))
                 errors.Add($"{extension} path was removed instead of rewritten in place: {missing}");
-            foreach (var added in outputPaths.Except(sourcePaths, StringComparer.OrdinalIgnoreCase))
+
+            var actualAdditions = outputPaths
+                .Except(sourcePaths, StringComparer.OrdinalIgnoreCase)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var added in actualAdditions
+                         .Except(expectedAdditions, StringComparer.OrdinalIgnoreCase))
+            {
                 errors.Add($"Unexpected new {extension} path was created: {added}");
+            }
+
+            foreach (var expected in expectedAdditions
+                         .Except(actualAdditions, StringComparer.OrdinalIgnoreCase))
+            {
+                errors.Add($"Expected generated {extension} path is missing: {expected}");
+            }
         }
 
         private bool CanResolveAfterRewrite(BatchState state, string path)
@@ -21561,10 +22561,10 @@ namespace Editors.KitbasherEditor.Services
             if (state.MergeCompatibleMeshesEnabled)
             {
                 sb.AppendLine();
-                sb.AppendLine("Cross-rigid merge analysis (report-only)");
-                sb.AppendLine("----------------------------------------");
+                sb.AppendLine("Cross-rigid merge analysis and emission");
+                sb.AppendLine("---------------------------------------");
                 sb.AppendLine(
-                    "No VMD, WSModel, or RMV2 topology is rewritten by this analysis pass.");
+                    "Analysis is side-effect free; the following emission pass writes only value-gate-selected plans whose source-pack inline VMD occurrences share an exact activation signature.");
                 sb.AppendLine(
                     "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it.");
                 sb.AppendLine(
@@ -21676,7 +22676,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("Cross-rigid generated-payload value gate");
                 sb.AppendLine("----------------------------------------");
                 sb.AppendLine(
-                    "Selection remains report-only; accepted payload IDs are not written yet.");
+                    "The value gate defines the emission candidate set; topology-unsafe or non-inline rewrite plans remain unchanged and are reported separately.");
                 sb.AppendLine(
                     "The runtime gate charges gross expected generated-geometry residency; displaced-source credit is not spent by the gate.");
                 sb.AppendLine(
@@ -21736,6 +22736,70 @@ namespace Editors.KitbasherEditor.Services
                             $"  {group.Key}: {group.Count():N0} payload(s), " +
                             $"{group.Sum(entry => entry.ExpectedArmyDrawCallsEliminated):0.###} expected draw(s), " +
                             $"{FormatMiB(group.Sum(entry => entry.GeneratedGeometryBytes))} geometry");
+                    }
+                }
+
+                sb.AppendLine();
+                sb.AppendLine("Cross-rigid merge emission");
+                sb.AppendLine("--------------------------");
+                var selectedRewritePlanCount =
+                    state.CrossRigidMergeAnalysisEntries.Count(plan =>
+                        state.CrossRigidSelectedPayloadIds.Contains(
+                            plan.GeneratedPayloadId));
+                sb.AppendLine(
+                    $"Selected rewrite-plan references: " +
+                    $"{selectedRewritePlanCount:N0}");
+                sb.AppendLine(
+                    $"Rewrite plans emitted: " +
+                    $"{state.CrossRigidRewritePlansApplied:N0}");
+                sb.AppendLine(
+                    $"Selected rewrite plans left unchanged: " +
+                    $"{Math.Max(0, selectedRewritePlanCount - state.CrossRigidRewritePlansApplied):N0}");
+                sb.AppendLine(
+                    $"Generated payloads written: " +
+                    $"{state.CrossRigidGeneratedPayloadIds.Count:N0}");
+                sb.AppendLine(
+                    $"Generated RMV2 files: " +
+                    $"{state.CrossRigidGeneratedRigidPaths.Count:N0}");
+                sb.AppendLine(
+                    $"Generated WSModel files: " +
+                    $"{state.CrossRigidGeneratedWsModelPaths.Count:N0}");
+                sb.AppendLine(
+                    $"Source-pack VMD files rewritten: " +
+                    $"{state.ModifiedVmdDocuments.Count:N0}");
+                sb.AppendLine(
+                    $"Scenario-estimated battle draws emitted: " +
+                    $"{state.CrossRigidExpectedArmyDrawCallsEmitted:0.###}");
+                sb.AppendLine(
+                    $"Emitted rewrite-plan LOD draws: " +
+                    $"{state.CrossRigidRawLodDrawsBefore:N0} -> " +
+                    $"{state.CrossRigidRawLodDrawsAfter:N0} " +
+                    $"(-{Math.Max(0, state.CrossRigidRawLodDrawsBefore - state.CrossRigidRawLodDrawsAfter):N0})");
+                sb.AppendLine(
+                    $"Retained source WSModel/RMV2 paths protected from pruning: " +
+                    $"{state.CrossRigidRetainedSourceAssetPaths.Count:N0}");
+                sb.AppendLine(
+                    "Cross-rigid source-asset retirement: DISABLED; originals are retained in this first writer.");
+                if (state.CrossRigidEmissionSkipCounts.Count != 0)
+                {
+                    sb.AppendLine("Cross-rigid emission skip breakdown:");
+                    foreach (var (reason, count) in
+                             state.CrossRigidEmissionSkipCounts
+                                 .OrderByDescending(entry => entry.Value)
+                                 .ThenBy(
+                                     entry => entry.Key,
+                                     StringComparer.Ordinal))
+                    {
+                        sb.AppendLine($"  {reason}: {count:N0}");
+                        if (!state.CrossRigidEmissionSkipExamples.TryGetValue(
+                                reason,
+                                out var examples))
+                        {
+                            continue;
+                        }
+
+                        foreach (var example in examples)
+                            sb.AppendLine($"    - {example}");
                     }
                 }
 
@@ -24058,6 +25122,23 @@ namespace Editors.KitbasherEditor.Services
             long VertexCount,
             long GeometryBytes);
 
+        private sealed record CrossRigidVmdModelOccurrence(
+            string WsModelPath,
+            string AttachmentIdentity,
+            string ActivationSignature,
+            string XmlPath,
+            int TraversalOrder,
+            bool HasLocalModelModifiers);
+
+        private sealed record CrossRigidGeneratedSourcePart(
+            int InstanceIndex,
+            string WsModelPath,
+            string RigidPath,
+            int PartIndex,
+            RmvModel Model,
+            string MaterialPath,
+            string MergeIdentity);
+
         private sealed record CrossRigidWsModelOccurrenceKey(
             string VmdPath,
             string AttachmentIdentity,
@@ -24256,6 +25337,22 @@ namespace Editors.KitbasherEditor.Services
                 CrossRigidPayloadSelectionEntries { get; } = [];
             public HashSet<string> CrossRigidSelectedPayloadIds { get; } =
                 new(StringComparer.Ordinal);
+            public HashSet<string> CrossRigidGeneratedPayloadIds { get; } =
+                new(StringComparer.Ordinal);
+            public HashSet<string> CrossRigidGeneratedRigidPaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> CrossRigidGeneratedWsModelPaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> CrossRigidRetainedSourceAssetPaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, int> CrossRigidEmissionSkipCounts { get; } =
+                new(StringComparer.Ordinal);
+            public Dictionary<string, List<string>> CrossRigidEmissionSkipExamples { get; } =
+                new(StringComparer.Ordinal);
+            public int CrossRigidRewritePlansApplied { get; set; }
+            public double CrossRigidExpectedArmyDrawCallsEmitted { get; set; }
+            public long CrossRigidRawLodDrawsBefore { get; set; }
+            public long CrossRigidRawLodDrawsAfter { get; set; }
             public Dictionary<CrossRigidWsModelOccurrenceKey, double>
                 CrossRigidWsModelOccurrenceProbabilities { get; } = [];
             public List<CrossRigidDisplacedSourceGeometryEntry>
@@ -24286,6 +25383,8 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<MeshKey> ProcessedMeshes { get; } = [];
             public HashSet<string> ModifiedWsModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> ModifiedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, XmlDocument> ModifiedVmdDocuments { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public bool StructuralMergeConsumerDiscoveryComplete { get; set; }
             public Dictionary<string, HashSet<string>> ImmutableMeshMergeConsumersByRigid { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
