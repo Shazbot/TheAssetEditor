@@ -147,6 +147,7 @@ namespace Editors.KitbasherEditor.Services
                 optimizeGeometry,
                 atlasAllVmds,
                 scoreAllGameUnits,
+                crossRigidOnly,
                 cancellationToken,
                 progress) =>
             {
@@ -160,7 +161,8 @@ namespace Editors.KitbasherEditor.Services
                     shareAtlasesAcrossVmds: shareAtlasesAcrossVmds,
                     optimizeGeometry: optimizeGeometry,
                     atlasAllVmds: atlasAllVmds,
-                    scoreAllGameUnits: scoreAllGameUnits);
+                    scoreAllGameUnits: scoreAllGameUnits,
+                    crossRigidOnly: crossRigidOnly);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -202,7 +204,8 @@ namespace Editors.KitbasherEditor.Services
             bool optimizeGeometry = false,
             bool atlasAllVmds = false,
             bool scoreAllGameUnits = false,
-            bool lodAwareAtlasPlanning = true)
+            bool lodAwareAtlasPlanning = true,
+            bool crossRigidOnly = false)
         {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
@@ -244,6 +247,7 @@ namespace Editors.KitbasherEditor.Services
                     shareAtlasesAcrossVmds,
                     optimizeGeometry);
                 state.LodAwareAtlasPlanningEnabled = lodAwareAtlasPlanning;
+                state.CrossRigidOnly = crossRigidOnly;
                 state.CancellationToken = cancellationToken;
                 state.Progress = progress;
                 var gameplayContainerSnapshot =
@@ -407,97 +411,119 @@ namespace Editors.KitbasherEditor.Services
 
                 state.MalformedVmdRoots.AddRange(malformedVmdRoots);
                 phaseStopwatch.Restart();
-                BuildWsUsageIndex(state, cancellationToken, progress);
-                IndexTaintedGameplayWsModels(state, cancellationToken);
-                // Direct rigid consumers constrain atlas rewrites as well as structural
-                // mesh merging. Discover them before atlas candidates even when the
-                // optional structural merge pass is disabled.
-                IndexImmutableMeshMergeConsumers(
-                    state,
-                    vmdRoots,
-                    cancellationToken);
-                state.PhaseDurations["Index WSModels"] = phaseStopwatch.Elapsed;
-
-                phaseStopwatch.Restart();
-                ReportProgress(progress, "Estimating source BCn residency");
-                state.SourceBcnResidency = CalculateBcnTextureResidency(
-                    state,
-                    source,
-                    originalReachable,
-                    cancellationToken);
-                state.PhaseDurations["Estimate source BCn residency"] = phaseStopwatch.Elapsed;
-
-                phaseStopwatch.Restart();
-                var candidateDiscovery = DiscoverAtlasCandidates(
-                    state,
-                    atlasVmdRoots,
-                    shareAtlasesAcrossVmds,
-                    cancellationToken,
-                    progress);
-
-                // UV0 is shared by every material texture channel. If any real
-                // secondary texture is unresolved, remapping UV0 while preserving that old
-                // texture path would make it sample with atlas UVs and corrupt rendering.
-                // Such meshes are therefore always skipped. The only unresolved sentinel
-                // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
-                var discoveredCandidates = ApplyMissingTextureDecision(
-                    state,
-                    candidateDiscovery.Candidates);
-                state.AtlasValueGateCandidateTexturePaths.Clear();
-                state.AtlasValueGateCandidateTexturePaths.UnionWith(
-                    GetAtlasValueGateCandidateTexturePaths(discoveredCandidates));
-                state.AtlasValueGateCandidateTexturePathsInitialized = true;
-                state.PhaseDurations["Discover atlas candidates"] = phaseStopwatch.Elapsed;
-
-                if (mergeCompatibleMeshes)
+                if (crossRigidOnly)
                 {
-                    phaseStopwatch.Restart();
-                    AnalyzeCompatibleMeshMerges(
+                    ReportProgress(
+                        progress,
+                        "Indexing gameplay mesh consumers",
+                        item: "Cross-rigid-only mode");
+                    IndexImmutableMeshMergeConsumers(
                         state,
-                        cancellationToken,
-                        progress);
-                    state.PhaseDurations["Analyze structural mesh merges"] = phaseStopwatch.Elapsed;
-                }
-
-                phaseStopwatch.Restart();
-                if (shareAtlasesAcrossVmds)
-                {
-                    ProcessPackWideAtlases(
-                        state,
-                        discoveredCandidates,
-                        cancellationToken,
-                        progress);
+                        vmdRoots,
+                        cancellationToken);
+                    state.PhaseDurations["Index gameplay mesh consumers"] =
+                        phaseStopwatch.Elapsed;
                 }
                 else
                 {
-                    for (var i = 0; i < atlasVmdRoots.Count; i++)
+                    BuildWsUsageIndex(state, cancellationToken, progress);
+                    IndexTaintedGameplayWsModels(state, cancellationToken);
+                    // Direct rigid consumers constrain atlas rewrites as well as structural
+                    // mesh merging. Discover them before atlas candidates even when the
+                    // optional structural merge pass is disabled.
+                    IndexImmutableMeshMergeConsumers(
+                        state,
+                        vmdRoots,
+                        cancellationToken);
+                    state.PhaseDurations["Index WSModels"] =
+                        phaseStopwatch.Elapsed;
+
+                    phaseStopwatch.Restart();
+                    ReportProgress(progress, "Estimating source BCn residency");
+                    state.SourceBcnResidency = CalculateBcnTextureResidency(
+                        state,
+                        source,
+                        originalReachable,
+                        cancellationToken);
+                    state.PhaseDurations["Estimate source BCn residency"] =
+                        phaseStopwatch.Elapsed;
+
+                    phaseStopwatch.Restart();
+                    var candidateDiscovery = DiscoverAtlasCandidates(
+                        state,
+                        atlasVmdRoots,
+                        shareAtlasesAcrossVmds,
+                        cancellationToken,
+                        progress);
+
+                    // UV0 is shared by every material texture channel. If any real
+                    // secondary texture is unresolved, remapping UV0 while preserving that old
+                    // texture path would make it sample with atlas UVs and corrupt rendering.
+                    // Such meshes are therefore always skipped. The only unresolved sentinel
+                    // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
+                    var discoveredCandidates = ApplyMissingTextureDecision(
+                        state,
+                        candidateDiscovery.Candidates);
+                    state.AtlasValueGateCandidateTexturePaths.Clear();
+                    state.AtlasValueGateCandidateTexturePaths.UnionWith(
+                        GetAtlasValueGateCandidateTexturePaths(discoveredCandidates));
+                    state.AtlasValueGateCandidateTexturePathsInitialized = true;
+                    state.PhaseDurations["Discover atlas candidates"] =
+                        phaseStopwatch.Elapsed;
+
+                    if (mergeCompatibleMeshes)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        var rootCandidates = discoveredCandidates
-                            .Where(x =>
-                                x.RootVmdPath.Equals(
-                                    atlasVmdRoots[i],
-                                    StringComparison.OrdinalIgnoreCase))
-                            .ToList();
-                        ProcessVmd(
+                        phaseStopwatch.Restart();
+                        AnalyzeCompatibleMeshMerges(
                             state,
-                            atlasVmdRoots[i],
-                            rootCandidates,
+                            cancellationToken,
+                            progress);
+                        state.PhaseDurations["Analyze structural mesh merges"] =
+                            phaseStopwatch.Elapsed;
+                    }
+
+                    phaseStopwatch.Restart();
+                    if (shareAtlasesAcrossVmds)
+                    {
+                        ProcessPackWideAtlases(
+                            state,
+                            discoveredCandidates,
+                            cancellationToken,
+                            progress);
+                    }
+                    else
+                    {
+                        for (var i = 0; i < atlasVmdRoots.Count; i++)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            var rootCandidates = discoveredCandidates
+                                .Where(x =>
+                                    x.RootVmdPath.Equals(
+                                        atlasVmdRoots[i],
+                                        StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                            ProcessVmd(
+                                state,
+                                atlasVmdRoots[i],
+                                rootCandidates,
+                                cancellationToken,
+                                progress);
+                        }
+
+                        ProcessDirectAssetAtlases(
+                            state,
+                            discoveredCandidates
+                                .Where(IsDirectAssetCandidate)
+                                .ToList(),
                             cancellationToken,
                             progress);
                     }
 
-                    ProcessDirectAssetAtlases(
-                        state,
-                        discoveredCandidates
-                            .Where(IsDirectAssetCandidate)
-                            .ToList(),
-                        cancellationToken,
-                        progress);
+                    state.PhaseDurations["Plan and build atlases"] =
+                        phaseStopwatch.Elapsed;
                 }
-                state.PhaseDurations["Plan and build atlases"] = phaseStopwatch.Elapsed;
 
-                if (mergeCompatibleMeshes)
+                if (mergeCompatibleMeshes || crossRigidOnly)
                 {
                     phaseStopwatch.Restart();
                     AnalyzeCrossRigidMergeOpportunities(
@@ -516,12 +542,19 @@ namespace Editors.KitbasherEditor.Services
                     state.PhaseDurations["Emit cross-rigid merges"] =
                         phaseStopwatch.Elapsed;
 
-                    phaseStopwatch.Restart();
-                    MergeCompatibleMeshes(state, cancellationToken, progress);
-                    state.PhaseDurations["Merge compatible meshes"] = phaseStopwatch.Elapsed;
+                    if (!crossRigidOnly)
+                    {
+                        phaseStopwatch.Restart();
+                        MergeCompatibleMeshes(
+                            state,
+                            cancellationToken,
+                            progress);
+                        state.PhaseDurations["Merge compatible meshes"] =
+                            phaseStopwatch.Elapsed;
+                    }
                 }
 
-                if (optimizeGeometry)
+                if (optimizeGeometry && !crossRigidOnly)
                 {
                     phaseStopwatch.Restart();
                     OptimizeGeometry(state, cancellationToken, progress);
@@ -532,49 +565,56 @@ namespace Editors.KitbasherEditor.Services
                 SaveModifiedDocuments(state, cancellationToken, progress);
                 state.PhaseDurations["Write modified assets"] = phaseStopwatch.Elapsed;
 
-                ReportProgress(progress, "Scanning rewritten dependencies");
-                phaseStopwatch.Restart();
-                var currentReachable = CollectReachableAssetFiles(
-                    state,
-                    output,
-                    assetDependencyRoots,
-                    cancellationToken,
-                    progress,
-                    "Scanning rewritten dependencies");
-                state.PhaseDurations["Scan rewritten dependencies"] = phaseStopwatch.Elapsed;
+                if (!crossRigidOnly)
+                {
+                    ReportProgress(progress, "Scanning rewritten dependencies");
+                    phaseStopwatch.Restart();
+                    var currentReachable = CollectReachableAssetFiles(
+                        state,
+                        output,
+                        assetDependencyRoots,
+                        cancellationToken,
+                        progress,
+                        "Scanning rewritten dependencies");
+                    state.PhaseDurations["Scan rewritten dependencies"] =
+                        phaseStopwatch.Elapsed;
 
-                phaseStopwatch.Restart();
-                PruneUnusedAssetFiles(
-                    state,
-                    originalReachable,
-                    currentReachable,
-                    cancellationToken,
-                    progress);
-                state.PhaseDurations["Prune unused assets"] = phaseStopwatch.Elapsed;
+                    phaseStopwatch.Restart();
+                    PruneUnusedAssetFiles(
+                        state,
+                        originalReachable,
+                        currentReachable,
+                        cancellationToken,
+                        progress);
+                    state.PhaseDurations["Prune unused assets"] =
+                        phaseStopwatch.Elapsed;
 
-                // The pre-prune dependency scan is needed to decide what to remove, but it
-                // still contains superseded source textures. Re-scan after pruning so the
-                // reported output residency and source-retirement accounting describe the
-                // pack that will actually be saved.
-                ReportProgress(progress, "Scanning final dependencies");
-                phaseStopwatch.Restart();
-                var finalReachable = CollectReachableAssetFiles(
-                    state,
-                    output,
-                    assetDependencyRoots,
-                    cancellationToken,
-                    progress,
-                    "Scanning final dependencies");
-                state.PhaseDurations["Scan final dependencies"] = phaseStopwatch.Elapsed;
+                    // The pre-prune dependency scan is needed to decide what to remove, but it
+                    // still contains superseded source textures. Re-scan after pruning so the
+                    // reported output residency and source-retirement accounting describe the
+                    // pack that will actually be saved.
+                    ReportProgress(progress, "Scanning final dependencies");
+                    phaseStopwatch.Restart();
+                    var finalReachable = CollectReachableAssetFiles(
+                        state,
+                        output,
+                        assetDependencyRoots,
+                        cancellationToken,
+                        progress,
+                        "Scanning final dependencies");
+                    state.PhaseDurations["Scan final dependencies"] =
+                        phaseStopwatch.Elapsed;
 
-                phaseStopwatch.Restart();
-                ReportProgress(progress, "Estimating output BCn residency");
-                state.OutputBcnResidency = CalculateBcnTextureResidency(
-                    state,
-                    output,
-                    finalReachable,
-                    cancellationToken);
-                state.PhaseDurations["Estimate output BCn residency"] = phaseStopwatch.Elapsed;
+                    phaseStopwatch.Restart();
+                    ReportProgress(progress, "Estimating output BCn residency");
+                    state.OutputBcnResidency = CalculateBcnTextureResidency(
+                        state,
+                        output,
+                        finalReachable,
+                        cancellationToken);
+                    state.PhaseDurations["Estimate output BCn residency"] =
+                        phaseStopwatch.Elapsed;
+                }
 
                 phaseStopwatch.Restart();
                 ValidateOutput(state, vmdRoots, cancellationToken, progress);
@@ -24632,6 +24672,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Mesh references remapped by content dedupe: {state.ContentCanonicalizedMeshReferences}");
             sb.AppendLine($"Cropped-content hashes computed: {state.AtlasRegionContentHashes.Count}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
+            sb.AppendLine($"Cross-rigid-only mode: {(state.CrossRigidOnly ? "YES" : "NO")}");
             sb.AppendLine(
                 $"LOD-aware atlas family planning: " +
                 $"{(state.LodAwareAtlasPlanningEnabled ? "YES" : "NO")}");
@@ -28125,6 +28166,7 @@ namespace Editors.KitbasherEditor.Services
             public bool MergeCompatibleMeshesEnabled { get; }
             public bool ShareAtlasesAcrossVmdsEnabled { get; }
             public bool OptimizeGeometryEnabled { get; }
+            public bool CrossRigidOnly { get; set; }
             public bool ExistingAtlasOutputDetected { get; set; }
             public int ExistingGeneratedAtlasCandidateCount { get; set; }
             public bool AtlasAllVmdsEnabled { get; set; }

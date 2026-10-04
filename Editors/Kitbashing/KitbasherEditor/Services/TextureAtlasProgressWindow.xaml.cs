@@ -14,6 +14,7 @@ namespace Editors.KitbasherEditor.Services
             bool,
             bool,
             bool,
+            bool,
             CancellationToken,
             IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> _worker;
         private readonly CancellationTokenSource _cancellation = new();
@@ -30,7 +31,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
-            : this((mergeCompatibleMeshes, _, _, _, _, cancellationToken, progress) =>
+            : this((mergeCompatibleMeshes, _, _, _, _, _, cancellationToken, progress) =>
                 worker(mergeCompatibleMeshes, cancellationToken, progress))
         {
         }
@@ -41,7 +42,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
-            : this((mergeCompatibleMeshes, shareAcrossVmds, _, _, _, cancellationToken, progress) =>
+            : this((mergeCompatibleMeshes, shareAcrossVmds, _, _, _, _, cancellationToken, progress) =>
                 worker(mergeCompatibleMeshes, shareAcrossVmds, cancellationToken, progress))
         {
         }
@@ -53,7 +54,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
-            : this((mergeCompatibleMeshes, shareAcrossVmds, optimizeGeometry, _, _, cancellationToken, progress) =>
+            : this((mergeCompatibleMeshes, shareAcrossVmds, optimizeGeometry, _, _, _, cancellationToken, progress) =>
                 worker(
                     mergeCompatibleMeshes,
                     shareAcrossVmds,
@@ -71,7 +72,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
-            : this((mergeCompatibleMeshes, shareAcrossVmds, optimizeGeometry, atlasAllVmds, _, cancellationToken, progress) =>
+            : this((mergeCompatibleMeshes, shareAcrossVmds, optimizeGeometry, atlasAllVmds, _, _, cancellationToken, progress) =>
                 worker(
                     mergeCompatibleMeshes,
                     shareAcrossVmds,
@@ -91,9 +92,40 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+            : this((
+                mergeCompatibleMeshes,
+                shareAcrossVmds,
+                optimizeGeometry,
+                atlasAllVmds,
+                scoreAllGameUnits,
+                _,
+                cancellationToken,
+                progress) =>
+                worker(
+                    mergeCompatibleMeshes,
+                    shareAcrossVmds,
+                    optimizeGeometry,
+                    atlasAllVmds,
+                    scoreAllGameUnits,
+                    cancellationToken,
+                    progress))
+        {
+        }
+
+        public TextureAtlasProgressWindow(
+            Action<
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                CancellationToken,
+                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
         {
             InitializeComponent();
             _worker = worker;
+            UpdateOperationOptionAvailability();
         }
 
         private void StartButton_Click(object sender, RoutedEventArgs e)
@@ -108,7 +140,10 @@ namespace Editors.KitbasherEditor.Services
             OptimizeGeometryCheckBox.IsEnabled = false;
             AtlasAllVmdsCheckBox.IsEnabled = false;
             ScoreAllGameUnitsCheckBox.IsEnabled = false;
-            PhaseText.Text = "Preparing texture atlas pack...";
+            CrossRigidOnlyCheckBox.IsEnabled = false;
+            PhaseText.Text = CrossRigidOnlyCheckBox.IsChecked == true
+                ? "Preparing cross-rigid-only pack..."
+                : "Preparing texture atlas pack...";
             ProgressBar.IsIndeterminate = true;
 
             var progress = new PumpingProgress(this);
@@ -121,6 +156,7 @@ namespace Editors.KitbasherEditor.Services
                     OptimizeGeometryCheckBox.IsChecked == true,
                     AtlasAllVmdsCheckBox.IsChecked == true,
                     ScoreAllGameUnitsCheckBox.IsChecked == true,
+                    CrossRigidOnlyCheckBox.IsChecked == true,
                     _cancellation.Token,
                     progress);
                 _allowClose = true;
@@ -142,6 +178,31 @@ namespace Editors.KitbasherEditor.Services
             {
                 DisposeCancellation();
             }
+        }
+
+        private void CrossRigidOnlyCheckBox_OnChanged(
+            object sender,
+            RoutedEventArgs e)
+        {
+            UpdateOperationOptionAvailability();
+        }
+
+        private void UpdateOperationOptionAvailability()
+        {
+            if (MergeMeshesCheckBox == null ||
+                ShareAcrossVmdsCheckBox == null ||
+                OptimizeGeometryCheckBox == null ||
+                CrossRigidOnlyCheckBox == null)
+            {
+                return;
+            }
+
+            var atlasOptionsEnabled =
+                !_started &&
+                CrossRigidOnlyCheckBox.IsChecked != true;
+            MergeMeshesCheckBox.IsEnabled = atlasOptionsEnabled;
+            ShareAcrossVmdsCheckBox.IsEnabled = atlasOptionsEnabled;
+            OptimizeGeometryCheckBox.IsEnabled = atlasOptionsEnabled;
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)

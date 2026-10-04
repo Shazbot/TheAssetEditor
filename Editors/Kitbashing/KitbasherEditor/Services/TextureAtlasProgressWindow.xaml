@@ -27,6 +27,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
@@ -110,16 +112,33 @@
             TextWrapping="Wrap"
             Opacity="0.7" />
 
+        <CheckBox
+            x:Name="CrossRigidOnlyCheckBox"
+            Grid.Row="11"
+            Margin="0,12,0,0"
+            Content="Cross-rigid joining only (fast testing)"
+            IsChecked="False"
+            Checked="CrossRigidOnlyCheckBox_OnChanged"
+            Unchecked="CrossRigidOnlyCheckBox_OnChanged" />
+
+        <TextBlock
+            Grid.Row="12"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="Runs cross-rigid analysis and emission against the original pack state. Skips texture atlasing, same-rigid mesh merging, geometry optimization, BCn residency scans, and pruning. Gameplay VMD scope and scenario scoring options still apply; results can differ from a full run because atlasing may create additional merge compatibility."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
         <TextBlock
             x:Name="PhaseText"
-            Grid.Row="11"
+            Grid.Row="13"
             Margin="0,16,0,0"
             FontWeight="SemiBold"
             Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="12"
+            Grid.Row="14"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -129,7 +148,7 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="13"
+            Grid.Row="15"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
@@ -137,7 +156,7 @@
             IsIndeterminate="False"
             Value="0" />
 
-        <Grid Grid.Row="14" Margin="0,8,0,0">
+        <Grid Grid.Row="16" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
