@@ -23217,9 +23217,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("Cross-rigid merge analysis and emission");
                 sb.AppendLine("---------------------------------------");
                 sb.AppendLine(
-                    "Analysis is side-effect free; the following emission pass writes only value-gate-selected plans whose source-pack inline VMD occurrences share an exact activation signature.");
+                    "Analysis records exact model/reference provenance. The emission pass writes only value-gate-selected occurrence states that share an exact activation signature; referenced child VMDs are cloned copy-on-write instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. The value gate sees only occurrence states the writer can represent without restructuring the VMD probability tree.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
@@ -23241,7 +23241,7 @@ namespace Editors.KitbasherEditor.Services
                     $"Eligible configuration-group observations before rewrite-plan dedupe: " +
                     $"{state.CrossRigidAnalysisOpportunityObservationCount:N0}");
                 sb.AppendLine(
-                    $"Unique VMD rewrite plans with real draw savings: " +
+                    $"Unique copy-on-write-safe VMD rewrite plans with real draw savings: " +
                     $"{state.CrossRigidMergeAnalysisEntries.Count:N0}");
                 sb.AppendLine(
                     $"Unique VMD-independent generated payloads: " +
