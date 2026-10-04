@@ -23402,9 +23402,16 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Source-pack VMD files rewritten: " +
                     $"{state.CrossRigidRewrittenRootVmdPaths.Count:N0}");
+                var selectedRewriteOccurrenceSetCount =
+                    state.CrossRigidMergeAnalysisEntries
+                        .Where(plan =>
+                            state.CrossRigidSelectedPayloadIds.Contains(
+                                plan.GeneratedPayloadId))
+                        .Sum(plan =>
+                            plan.RewriteOccurrenceSets.Length);
                 sb.AppendLine(
                     $"Rewrite occurrence sets selected: " +
-                    $"{selectedPlans.Sum(plan => plan.RewriteOccurrenceSets.Length):N0}");
+                    $"{selectedRewriteOccurrenceSetCount:N0}");
                 sb.AppendLine(
                     $"Rewrite occurrence sets emitted: " +
                     $"{state.CrossRigidRewriteOccurrenceSetsApplied:N0}");
