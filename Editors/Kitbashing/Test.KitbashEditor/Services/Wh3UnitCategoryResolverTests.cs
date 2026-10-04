@@ -166,6 +166,25 @@ namespace Test.KitbashEditor.Services
                     "Wh3UnitCategoryResolver.ResolveEngineAssetPaths returned null."));
         }
 
+        private static bool IsExternalLodVariantReference(
+            string reference,
+            IReadOnlyDictionary<string, List<string>> animatedLodRowsByKey)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var resolverType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3UnitCategoryResolver",
+                throwOnError: true)!;
+            var method = resolverType.GetMethod(
+                "IsExternalLodVariantReference",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "Wh3UnitCategoryResolver.IsExternalLodVariantReference was not found.");
+
+            return (bool)(method.Invoke(null, [reference, animatedLodRowsByKey])
+                ?? throw new InvalidOperationException(
+                    "IsExternalLodVariantReference returned null."));
+        }
+
         private static byte[] BuildUiUnitGroupParentsRow(
             string icon,
             string key,
@@ -923,7 +942,7 @@ namespace Test.KitbashEditor.Services
             });
         }
 
-        [TestCase("model", 0.25)]
+        [TestCase("model", 1.0)]
         [TestCase("destroyed_model", 0.0)]
         [TestCase("destruct_model", 0.0)]
         [TestCase("destruction_animation", 0.0)]
@@ -934,6 +953,39 @@ namespace Test.KitbashEditor.Services
             Assert.That(
                 GetDirectEngineAssetExpectedLiveBattlePresence(field),
                 Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void DirectEngineAssetPresence_OnlyExternalAnimatedLodPartitionsAreLodWeighted()
+        {
+            var animatedLodRows = new Dictionary<string, List<string>>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["animated_engine"] =
+                [
+                    @"warmachines\engines\animated_engine\engine.rigid_model_v2",
+                    @"warmachines\engines\animated_engine\engine_lod2.rigid_model_v2",
+                ],
+                ["single_engine"] =
+                [
+                    @"warmachines\engines\single_engine\engine.rigid_model_v2",
+                ],
+            };
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    IsExternalLodVariantReference("animated_engine", animatedLodRows),
+                    Is.True);
+                Assert.That(
+                    IsExternalLodVariantReference("single_engine", animatedLodRows),
+                    Is.False);
+                Assert.That(
+                    IsExternalLodVariantReference(
+                        @"warmachines\engines\ordinary_engine_lod2.rigid_model_v2",
+                        animatedLodRows),
+                    Is.False);
+            });
         }
 
         [Test]

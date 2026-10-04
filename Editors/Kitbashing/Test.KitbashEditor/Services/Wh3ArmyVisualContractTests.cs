@@ -80,6 +80,45 @@ namespace Test.KitbashEditor.Services
                     "Wh3ArmyVisualScenario.GetLodWeightedDrawSavings was not found."));
         }
 
+        private static double GetLifecyclePresenceProbability(
+            object scenario,
+            string stateName)
+        {
+            var stateType = AssetEditorAssembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3VisualAssetState",
+                throwOnError: true)!;
+            var method = scenario.GetType().GetMethod(
+                    "GetLifecyclePresenceProbability",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException(
+                    "Wh3ArmyVisualScenario.GetLifecyclePresenceProbability was not found.");
+
+            return (double)(method.Invoke(scenario, [Enum.Parse(stateType, stateName)])
+                ?? throw new InvalidOperationException(
+                    "GetLifecyclePresenceProbability returned null."));
+        }
+
+        private static double GetExternalLodPresenceProbability(
+            object scenario,
+            string stateName,
+            int lod)
+        {
+            var stateType = AssetEditorAssembly.GetType(
+                "Editors.KitbasherEditor.Services.Wh3VisualAssetState",
+                throwOnError: true)!;
+            var method = scenario.GetType().GetMethod(
+                    "GetExternalLodPresenceProbability",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException(
+                    "Wh3ArmyVisualScenario.GetExternalLodPresenceProbability was not found.");
+
+            return (double)(method.Invoke(
+                    scenario,
+                    [Enum.Parse(stateType, stateName), lod])
+                ?? throw new InvalidOperationException(
+                    "GetExternalLodPresenceProbability returned null."));
+        }
+
         private static Exception GetInvocationException(Action action)
         {
             try
@@ -243,9 +282,17 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void AtlasScenario_MissingLodGetsNoCreditAndDrawSavingsAreWeighted()
+        public void AtlasScenario_DefaultProfileExcludesExtendedLodsUntilExplicitlyConfigured()
         {
             var scenario = GetDefaultScenario();
+            var explicitExtendedScenario = NormalizeScenario(
+                CreateScenarioWithLodDistribution(
+                    scenario,
+                    new Dictionary<int, double>
+                    {
+                        [0] = 1.0,
+                        [4] = 1.0,
+                    }));
             var weightedLodSavings = Enumerable.Range(0, 4)
                 .Sum(lod => GetLodWeightedDrawSavings(scenario, lod, 4.0));
 
@@ -253,7 +300,26 @@ namespace Test.KitbashEditor.Services
             {
                 Assert.That(GetLodWeightedDrawSavings(scenario, 2, 4.0), Is.EqualTo(1.0).Within(0.000000001));
                 Assert.That(GetLodWeightedDrawSavings(scenario, 4, 4.0), Is.EqualTo(0.0));
+                Assert.That(
+                    GetLodWeightedDrawSavings(explicitExtendedScenario, 4, 4.0),
+                    Is.EqualTo(2.0).Within(0.000000001));
                 Assert.That(weightedLodSavings, Is.EqualTo(4.0).Within(0.000000001));
+            });
+        }
+
+        [Test]
+        public void AtlasScenario_InternalRmvLodDoesNotReduceDirectAssetPresence()
+        {
+            var scenario = GetDefaultScenario();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetLifecyclePresenceProbability(scenario, "Live"),
+                    Is.EqualTo(1.0).Within(0.000000001));
+                Assert.That(
+                    GetExternalLodPresenceProbability(scenario, "Live", 2),
+                    Is.EqualTo(0.25).Within(0.000000001));
             });
         }
 

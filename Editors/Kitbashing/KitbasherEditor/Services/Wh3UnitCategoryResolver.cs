@@ -74,18 +74,16 @@ namespace Editors.KitbasherEditor.Services
         Wh3RosterScope RosterScope,
         string? RosterScopeKey)
     {
+        // Vanilla overwhelmingly uses LOD0-LOD3 for ordinary battle assets. LOD4/5 are
+        // exceptional extended or imposter levels, so they require an explicit scenario
+        // distribution instead of inheriting a global battle weight.
+        private static readonly int[] DefaultNormalBattleLods = [0, 1, 2, 3];
+
         public static Wh3ArmyVisualScenario Default { get; } = new(
             0.75,
             0.50,
             Wh3EntityRoundingPolicy.Ceiling,
-            NormalizeLodDistribution(
-                new Dictionary<int, double>
-                {
-                    [0] = 0.25,
-                    [1] = 0.25,
-                    [2] = 0.25,
-                    [3] = 0.25,
-                }),
+            CreateDefaultLodDistribution(),
             0.0,
             0.0,
             new Dictionary<Wh3ArmyUnitCategory, int>
@@ -106,6 +104,12 @@ namespace Editors.KitbasherEditor.Services
         public static Wh3ArmyVisualScenario PackAffected { get; } =
             Default with { RosterScope = Wh3RosterScope.ModAffectedUnits };
 
+        private static IReadOnlyDictionary<int, double> CreateDefaultLodDistribution()
+            => NormalizeLodDistribution(
+                DefaultNormalBattleLods.ToDictionary(
+                    lod => lod,
+                    _ => 1.0));
+
         // Scenario construction is intentionally kept compatible with the positional record
         // API used by callers and contract tests. Normalize at the resolver boundary so every
         // downstream calculation sees a mutually exclusive probability distribution, while
@@ -118,6 +122,36 @@ namespace Editors.KitbasherEditor.Services
 
         internal double GetLodProbability(int lod)
             => LodDistribution.GetValueOrDefault(Math.Max(0, lod));
+
+        internal double GetLifecyclePresenceProbability(Wh3VisualAssetState stateValue)
+        {
+            var destroyedProbability = Math.Clamp(
+                DestructionProbability,
+                0.0,
+                1.0);
+            var destructProbability = Math.Clamp(
+                DestructTransitionProbability,
+                0.0,
+                1.0 - destroyedProbability);
+            var stateProbability = stateValue switch
+            {
+                Wh3VisualAssetState.Live =>
+                    1.0 - destroyedProbability - destructProbability,
+                Wh3VisualAssetState.Destroyed => destroyedProbability,
+                Wh3VisualAssetState.Destruct => destructProbability,
+                _ => 0.0,
+            };
+
+            return Math.Clamp(stateProbability, 0.0, 1.0);
+        }
+
+        internal double GetExternalLodPresenceProbability(
+            Wh3VisualAssetState stateValue,
+            int lod)
+            => Math.Clamp(
+                GetLifecyclePresenceProbability(stateValue) * GetLodProbability(lod),
+                0.0,
+                1.0);
 
         internal double GetLodWeightedDrawSavings(
             int lod,
@@ -826,11 +860,20 @@ namespace Editors.KitbasherEditor.Services
                          })
                 {
                     var stateValue = GetDirectEngineAssetState(field);
+                    var reference = Get(engine, field);
+                    var isExternalLodVariantReference =
+                        IsExternalLodVariantReference(
+                            reference,
+                            animatedLodRowsByKey);
                     foreach (var assetPath in ResolveEngineAssetPaths(
-                                 Get(engine, field),
+                                 reference,
                                  animatedLodRowsByKey))
                     {
                         var lod = ResolveAssetLod(assetPath);
+                        var scenarioPresenceProbability =
+                            isExternalLodVariantReference
+                                ? activeScenario.GetExternalLodPresenceProbability(stateValue, lod)
+                                : activeScenario.GetLifecyclePresenceProbability(stateValue);
                         AddDirectAssetUsage(
                             assetPath,
                             mainUnitKey,
@@ -840,7 +883,7 @@ namespace Editors.KitbasherEditor.Services
                             visualCounts,
                             stateValue,
                             lod,
-                            GetScenarioPresenceProbability(activeScenario, stateValue, lod));
+                            scenarioPresenceProbability);
                     }
                 }
             }
@@ -2278,40 +2321,8 @@ namespace Editors.KitbasherEditor.Services
         private static double GetDirectEngineAssetExpectedLiveBattlePresence(string field)
         {
             var stateValue = GetDirectEngineAssetState(field);
-            return GetScenarioPresenceProbability(
-                Wh3ArmyVisualScenario.Default,
-                stateValue,
-                0);
-        }
-
-        private static double GetScenarioPresenceProbability(
-            Wh3ArmyVisualScenario scenario,
-            Wh3VisualAssetState stateValue,
-            int lod)
-        {
-            var destroyedProbability = Math.Clamp(
-                scenario.DestructionProbability,
-                0.0,
-                1.0);
-            var destructProbability = Math.Clamp(
-                scenario.DestructTransitionProbability,
-                0.0,
-                1.0 - destroyedProbability);
-            var stateProbability = stateValue switch
-            {
-                Wh3VisualAssetState.Live =>
-                    1.0 - destroyedProbability - destructProbability,
-                Wh3VisualAssetState.Destroyed => destroyedProbability,
-                Wh3VisualAssetState.Destruct => destructProbability,
-                _ => 0.0,
-            };
-            if (stateProbability <= 0)
-                return 0;
-
-            return Math.Clamp(
-                stateProbability * scenario.GetLodProbability(lod),
-                0.0,
-                1.0);
+            return Wh3ArmyVisualScenario.Default
+                .GetLifecyclePresenceProbability(stateValue);
         }
 
         private static int ResolveAssetLod(string assetPath)
@@ -2666,6 +2677,30 @@ namespace Editors.KitbasherEditor.Services
             return animatedLodRowsByKey.TryGetValue(reference, out var paths)
                 ? paths.Select(NormalizePath).Where(path => path.Length != 0).ToArray()
                 : [];
+        }
+
+        private static bool IsExternalLodVariantReference(
+            string reference,
+            IReadOnlyDictionary<string, List<string>> animatedLodRowsByKey)
+        {
+            reference = NormalizePath(reference);
+            if (reference.Length == 0 || Path.GetExtension(reference).Length != 0)
+                return false;
+
+            var paths = ResolveEngineAssetPaths(reference, animatedLodRowsByKey)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (paths.Length < 2)
+                return false;
+
+            // A DB animation key is only treated as an external LOD partition when its
+            // expanded files have distinct, parseable LOD identities. Ordinary direct
+            // rigid/WSModel paths, including names containing "_lodN", remain full-presence
+            // assets because their own RMV may contain internal LODs.
+            return paths
+                .Select(ResolveAssetLod)
+                .Distinct()
+                .Count() == paths.Length;
         }
 
         private static string GetGameplayResolutionHealthIssue(
