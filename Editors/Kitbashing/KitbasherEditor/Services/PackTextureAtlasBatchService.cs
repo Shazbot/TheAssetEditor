@@ -3287,6 +3287,12 @@ namespace Editors.KitbasherEditor.Services
                 new Dictionary<string, string>(StringComparer.Ordinal);
             var consumedModelOccurrences =
                 new HashSet<string>(StringComparer.Ordinal);
+            var jointRewriteContexts =
+                new Dictionary<string, CrossRigidJointRewriteContext>(
+                    StringComparer.Ordinal);
+            var jointContextKeyByParentLocation =
+                new Dictionary<string, string>(
+                    StringComparer.Ordinal);
 
             var planGroups = selectedPlans
                 .GroupBy(
@@ -3376,6 +3382,8 @@ namespace Editors.KitbasherEditor.Services
                                 sourceVmdDocuments,
                                 generatedClonePathByBranchKey,
                                 consumedModelOccurrences,
+                                jointRewriteContexts,
+                                jointContextKeyByParentLocation,
                                 out var validationReason))
                         {
                             RecordCrossRigidEmissionSkip(
@@ -3432,6 +3440,8 @@ namespace Editors.KitbasherEditor.Services
                                 sourceVmdDocuments,
                                 generatedClonePathByBranchKey,
                                 consumedModelOccurrences,
+                                jointRewriteContexts,
+                                jointContextKeyByParentLocation,
                                 out var applyReason))
                         {
                             RecordCrossRigidEmissionSkip(
@@ -3519,6 +3529,10 @@ namespace Editors.KitbasherEditor.Services
             Dictionary<string, XmlDocument> sourceVmdDocuments,
             IReadOnlyDictionary<string, string> generatedClonePathByBranchKey,
             IReadOnlySet<string> consumedModelOccurrences,
+            IReadOnlyDictionary<string, CrossRigidJointRewriteContext>
+                jointRewriteContexts,
+            IReadOnlyDictionary<string, string>
+                jointContextKeyByParentLocation,
             out string reason)
         {
             reason = string.Empty;
@@ -3532,11 +3546,74 @@ namespace Editors.KitbasherEditor.Services
                 .Select(instance => instance.ActivationSignature)
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
-            if (activationSignatures.Length != 1)
+            var exactActivation = activationSignatures.Length == 1;
+            CrossRigidJointAlwaysPresentRewriteDescriptor? jointDescriptor =
+                null;
+            if (!exactActivation)
             {
-                reason =
-                    "Selected components do not share an exact activation state";
-                return false;
+                if (!TryDescribeCrossRigidJointAlwaysPresentRewrite(
+                        state,
+                        occurrenceSet,
+                        sourceVmdDocuments,
+                        out jointDescriptor,
+                        out reason))
+                {
+                    return false;
+                }
+
+                var parentLocationKey =
+                    BuildCrossRigidJointParentLocationKey(
+                        rootVmdPath,
+                        jointDescriptor);
+                var contextKey =
+                    BuildCrossRigidJointContextKey(
+                        rootVmdPath,
+                        jointDescriptor);
+                if (jointContextKeyByParentLocation.TryGetValue(
+                        parentLocationKey,
+                        out var existingContextKey) &&
+                    !existingContextKey.Equals(
+                        contextKey,
+                        StringComparison.Ordinal))
+                {
+                    reason =
+                        "Joint writer already materialized a different slot set under this parent";
+                    return false;
+                }
+
+                if (jointRewriteContexts.TryGetValue(
+                        contextKey,
+                        out var existingContext))
+                {
+                    var combinationKey =
+                        BuildCrossRigidJointCombinationKey(
+                            jointDescriptor.SourceSelections.Select(
+                                selection =>
+                                    new CrossRigidJointAlternative(
+                                        selection.SlotIndex,
+                                        false,
+                                        selection.AlternativeIndex)));
+                    if (!existingContext.Combinations.TryGetValue(
+                            combinationKey,
+                            out var combination))
+                    {
+                        reason =
+                            "Joint writer could not locate the analyzed Cartesian combination";
+                        return false;
+                    }
+
+                    foreach (var selection in
+                             jointDescriptor.SourceSelections)
+                    {
+                        if (combination.ConsumedSlotIndices.Contains(
+                                selection.SlotIndex))
+                        {
+                            reason =
+                                "Rewrite occurrence overlaps an already emitted joint-state plan";
+                            return false;
+                        }
+                    }
+                }
             }
 
             if (occurrenceSet.SourceInstances.Any(instance =>
@@ -3558,16 +3635,19 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                var occurrenceKey =
-                    BuildCrossRigidConsumedOccurrenceKey(
-                        rootVmdPath,
-                        instance);
-                if (consumedModelOccurrences.Contains(
-                        occurrenceKey))
+                if (exactActivation)
                 {
-                    reason =
-                        "Rewrite occurrence overlaps an already emitted plan";
-                    return false;
+                    var occurrenceKey =
+                        BuildCrossRigidConsumedOccurrenceKey(
+                            rootVmdPath,
+                            instance);
+                    if (consumedModelOccurrences.Contains(
+                            occurrenceKey))
+                    {
+                        reason =
+                            "Rewrite occurrence overlaps an already emitted plan";
+                        return false;
+                    }
                 }
 
                 var currentSourceVmdPath =
@@ -3668,6 +3748,7 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
+
         private static bool TryApplyCrossRigidRewriteOccurrenceSet(
             BatchState state,
             string rootVmdPath,
@@ -3677,9 +3758,33 @@ namespace Editors.KitbasherEditor.Services
             Dictionary<string, XmlDocument> sourceVmdDocuments,
             Dictionary<string, string> generatedClonePathByBranchKey,
             HashSet<string> consumedModelOccurrences,
+            Dictionary<string, CrossRigidJointRewriteContext>
+                jointRewriteContexts,
+            Dictionary<string, string>
+                jointContextKeyByParentLocation,
             out string reason)
         {
             reason = string.Empty;
+            var exactActivation =
+                occurrenceSet.SourceInstances
+                    .Select(instance => instance.ActivationSignature)
+                    .Distinct(StringComparer.Ordinal)
+                    .Count() == 1;
+            if (!exactActivation)
+            {
+                return TryApplyCrossRigidJointAlwaysPresentRewriteOccurrenceSet(
+                    state,
+                    rootVmdPath,
+                    rootDocument,
+                    occurrenceSet,
+                    generatedWsModelPath,
+                    sourceVmdDocuments,
+                    generatedClonePathByBranchKey,
+                    jointRewriteContexts,
+                    jointContextKeyByParentLocation,
+                    out reason);
+            }
+
             var orderedInstances = occurrenceSet.SourceInstances
                 .OrderBy(
                     instance =>
@@ -3693,77 +3798,17 @@ namespace Editors.KitbasherEditor.Services
                  instanceIndex++)
             {
                 var instance = orderedInstances[instanceIndex];
-                var currentDocument = rootDocument;
-                var prefixHops =
-                    new List<CrossRigidVmdReferenceHop>();
-
-                foreach (var hop in instance.ReferenceChain)
+                if (!TryResolveCrossRigidMutableDefiningDocument(
+                        state,
+                        rootVmdPath,
+                        rootDocument,
+                        instance.ReferenceChain,
+                        sourceVmdDocuments,
+                        generatedClonePathByBranchKey,
+                        out var currentDocument,
+                        out reason))
                 {
-                    prefixHops.Add(hop);
-                    var branchKey =
-                        BuildCrossRigidGeneratedVmdBranchKey(
-                            rootVmdPath,
-                            prefixHops);
-                    if (!generatedClonePathByBranchKey.TryGetValue(
-                            branchKey,
-                            out var generatedVmdPath))
-                    {
-                        generatedVmdPath =
-                            BuildCrossRigidGeneratedVmdPath(
-                                branchKey);
-                        if (!TryGetCrossRigidSourceVmdDocument(
-                                state,
-                                hop.ReferencedVmdPath,
-                                sourceVmdDocuments,
-                                out var sourceChildDocument,
-                                out reason))
-                        {
-                            return false;
-                        }
-
-                        var generatedDocument =
-                            CloneXmlDocument(
-                                sourceChildDocument);
-                        state.ModifiedVmdDocuments[
-                            generatedVmdPath] =
-                            generatedDocument;
-                        state.CrossRigidGeneratedVmdPaths.Add(
-                            generatedVmdPath);
-                        generatedClonePathByBranchKey[
-                            branchKey] =
-                            generatedVmdPath;
-                    }
-
-                    if (currentDocument.SelectSingleNode(
-                            hop.ReferenceXmlPath) is
-                            not XmlElement referenceElement)
-                    {
-                        reason =
-                            $"Could not locate child VMD reference at " +
-                            hop.ReferenceXmlPath;
-                        return false;
-                    }
-
-                    referenceElement.SetAttribute(
-                        "definition",
-                        generatedVmdPath);
-                    currentDocument =
-                        state.ModifiedVmdDocuments[
-                            generatedVmdPath];
-
-                    if (state.Source.ContainsFile(
-                            Normalize(hop.OwnerVmdPath)))
-                    {
-                        state.CrossRigidRetainedSourceAssetPaths.Add(
-                            Normalize(hop.OwnerVmdPath));
-                    }
-
-                    if (state.Source.ContainsFile(
-                            Normalize(hop.ReferencedVmdPath)))
-                    {
-                        state.CrossRigidRetainedSourceAssetPaths.Add(
-                            Normalize(hop.ReferencedVmdPath));
-                    }
+                    return false;
                 }
 
                 if (currentDocument.SelectSingleNode(
@@ -3801,6 +3846,588 @@ namespace Editors.KitbasherEditor.Services
 
             return true;
         }
+
+        private static bool
+            TryApplyCrossRigidJointAlwaysPresentRewriteOccurrenceSet(
+                BatchState state,
+                string rootVmdPath,
+                XmlDocument rootDocument,
+                CrossRigidRewriteOccurrenceSet occurrenceSet,
+                string generatedWsModelPath,
+                Dictionary<string, XmlDocument> sourceVmdDocuments,
+                Dictionary<string, string> generatedClonePathByBranchKey,
+                Dictionary<string, CrossRigidJointRewriteContext>
+                    jointRewriteContexts,
+                Dictionary<string, string>
+                    jointContextKeyByParentLocation,
+                out string reason)
+        {
+            if (!TryDescribeCrossRigidJointAlwaysPresentRewrite(
+                    state,
+                    occurrenceSet,
+                    sourceVmdDocuments,
+                    out var descriptor,
+                    out reason))
+            {
+                return false;
+            }
+
+            var parentLocationKey =
+                BuildCrossRigidJointParentLocationKey(
+                    rootVmdPath,
+                    descriptor);
+            var contextKey =
+                BuildCrossRigidJointContextKey(
+                    rootVmdPath,
+                    descriptor);
+            if (jointContextKeyByParentLocation.TryGetValue(
+                    parentLocationKey,
+                    out var existingContextKey) &&
+                !existingContextKey.Equals(
+                    contextKey,
+                    StringComparison.Ordinal))
+            {
+                reason =
+                    "Joint writer already materialized a different slot set under this parent";
+                return false;
+            }
+
+            if (!jointRewriteContexts.TryGetValue(
+                    contextKey,
+                    out var context))
+            {
+                if (!TryResolveCrossRigidMutableDefiningDocument(
+                        state,
+                        rootVmdPath,
+                        rootDocument,
+                        descriptor.ReferenceChain,
+                        sourceVmdDocuments,
+                        generatedClonePathByBranchKey,
+                        out var definingDocument,
+                        out reason) ||
+                    !TryCreateCrossRigidJointRewriteContext(
+                        definingDocument,
+                        contextKey,
+                        parentLocationKey,
+                        descriptor,
+                        out context,
+                        out reason))
+                {
+                    return false;
+                }
+
+                jointRewriteContexts[contextKey] = context;
+                jointContextKeyByParentLocation[parentLocationKey] =
+                    contextKey;
+            }
+
+            var combinationKey =
+                BuildCrossRigidJointCombinationKey(
+                    descriptor.SourceSelections.Select(
+                        selection =>
+                            new CrossRigidJointAlternative(
+                                selection.SlotIndex,
+                                false,
+                                selection.AlternativeIndex)));
+            if (!context.Combinations.TryGetValue(
+                    combinationKey,
+                    out var combination))
+            {
+                reason =
+                    "Joint Cartesian combination no longer resolves";
+                return false;
+            }
+
+            var orderedSelections = descriptor.SourceSelections
+                .OrderBy(
+                    selection =>
+                        BuildCrossRigidOccurrenceProvenanceSignature(
+                            [selection.Instance]),
+                    StringComparer.Ordinal)
+                .ToArray();
+
+            foreach (var selection in orderedSelections)
+            {
+                if (combination.ConsumedSlotIndices.Contains(
+                        selection.SlotIndex))
+                {
+                    reason =
+                        "Joint Cartesian model occurrence was already consumed";
+                    return false;
+                }
+
+                if (!combination.ModelElementsBySlotIndex.TryGetValue(
+                        selection.SlotIndex,
+                        out var modelElement) ||
+                    !Normalize(modelElement.GetAttribute("model"))
+                        .Equals(
+                            Normalize(selection.Instance.WsModelPath),
+                            StringComparison.OrdinalIgnoreCase))
+                {
+                    reason =
+                        "Joint Cartesian model occurrence no longer matches the analyzed source";
+                    return false;
+                }
+            }
+
+            for (var selectionIndex = 0;
+                 selectionIndex < orderedSelections.Length;
+                 selectionIndex++)
+            {
+                var selection = orderedSelections[selectionIndex];
+                var modelElement =
+                    combination.ModelElementsBySlotIndex[
+                        selection.SlotIndex];
+                if (selectionIndex == 0)
+                {
+                    modelElement.SetAttribute(
+                        "model",
+                        generatedWsModelPath);
+                }
+                else
+                {
+                    // Keep META_DATA and all child slots on the selected branch.
+                    // Only geometry is displaced by the generated merged WSModel.
+                    modelElement.RemoveAttribute("model");
+                }
+
+                combination.ConsumedSlotIndices.Add(
+                    selection.SlotIndex);
+                if (state.Source.ContainsFile(
+                        Normalize(selection.Instance.DefiningVmdPath)))
+                {
+                    state.CrossRigidRetainedSourceAssetPaths.Add(
+                        Normalize(selection.Instance.DefiningVmdPath));
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryResolveCrossRigidMutableDefiningDocument(
+            BatchState state,
+            string rootVmdPath,
+            XmlDocument rootDocument,
+            IReadOnlyList<CrossRigidVmdReferenceHop> referenceChain,
+            Dictionary<string, XmlDocument> sourceVmdDocuments,
+            Dictionary<string, string> generatedClonePathByBranchKey,
+            out XmlDocument currentDocument,
+            out string reason)
+        {
+            reason = string.Empty;
+            currentDocument = rootDocument;
+            var prefixHops =
+                new List<CrossRigidVmdReferenceHop>();
+
+            foreach (var hop in referenceChain)
+            {
+                prefixHops.Add(hop);
+                var branchKey =
+                    BuildCrossRigidGeneratedVmdBranchKey(
+                        rootVmdPath,
+                        prefixHops);
+                if (!generatedClonePathByBranchKey.TryGetValue(
+                        branchKey,
+                        out var generatedVmdPath))
+                {
+                    generatedVmdPath =
+                        BuildCrossRigidGeneratedVmdPath(
+                            branchKey);
+                    if (state.Source.ContainsFile(generatedVmdPath) ||
+                        state.Output.ContainsFile(generatedVmdPath))
+                    {
+                        reason =
+                            "Deterministic generated VMD path already exists";
+                        return false;
+                    }
+
+                    if (!TryGetCrossRigidSourceVmdDocument(
+                            state,
+                            hop.ReferencedVmdPath,
+                            sourceVmdDocuments,
+                            out var sourceChildDocument,
+                            out reason))
+                    {
+                        return false;
+                    }
+
+                    var generatedDocument =
+                        CloneXmlDocument(
+                            sourceChildDocument);
+                    state.ModifiedVmdDocuments[
+                        generatedVmdPath] =
+                        generatedDocument;
+                    state.CrossRigidGeneratedVmdPaths.Add(
+                        generatedVmdPath);
+                    generatedClonePathByBranchKey[
+                        branchKey] =
+                        generatedVmdPath;
+                }
+
+                if (currentDocument.SelectSingleNode(
+                        hop.ReferenceXmlPath) is
+                    not XmlElement referenceElement)
+                {
+                    reason =
+                        $"Could not locate child VMD reference at " +
+                        hop.ReferenceXmlPath;
+                    return false;
+                }
+
+                referenceElement.SetAttribute(
+                    "definition",
+                    generatedVmdPath);
+                currentDocument =
+                    state.ModifiedVmdDocuments[
+                        generatedVmdPath];
+
+                if (state.Source.ContainsFile(
+                        Normalize(hop.OwnerVmdPath)))
+                {
+                    state.CrossRigidRetainedSourceAssetPaths.Add(
+                        Normalize(hop.OwnerVmdPath));
+                }
+
+                if (state.Source.ContainsFile(
+                        Normalize(hop.ReferencedVmdPath)))
+                {
+                    state.CrossRigidRetainedSourceAssetPaths.Add(
+                        Normalize(hop.ReferencedVmdPath));
+                }
+            }
+
+            return true;
+        }
+
+        private static bool TryCreateCrossRigidJointRewriteContext(
+            XmlDocument definingDocument,
+            string contextKey,
+            string parentLocationKey,
+            CrossRigidJointAlwaysPresentRewriteDescriptor descriptor,
+            out CrossRigidJointRewriteContext context,
+            out string reason)
+        {
+            context = null!;
+            reason = string.Empty;
+            if (definingDocument.SelectSingleNode(
+                    descriptor.ParentXmlPath) is
+                not XmlElement parentElement)
+            {
+                reason =
+                    "Joint parent VARIANT_MESH could not be resolved in mutable VMD";
+                return false;
+            }
+
+            var slotDefinitions =
+                new List<CrossRigidJointSlotDefinition>();
+            foreach (var slotIndex in descriptor.SlotIndices)
+            {
+                if (parentElement.SelectSingleNode(
+                        $"SLOT[{slotIndex}]") is
+                    not XmlElement slotElement)
+                {
+                    reason =
+                        $"Joint source slot {slotIndex} could not be resolved in mutable VMD";
+                    return false;
+                }
+
+                var probability =
+                    ParseVmdSlotProbability(
+                        slotElement.GetAttribute("probability"));
+                if (probability <
+                    1.0 - AtlasValueGateExpectedDrawEpsilon)
+                {
+                    reason =
+                        $"Joint source slot {slotIndex} became optional";
+                    return false;
+                }
+
+                var alternatives =
+                    GetCrossRigidJointAlternatives(
+                        slotElement,
+                        slotIndex);
+                if (alternatives.Length <= 1)
+                {
+                    reason =
+                        $"Joint source slot {slotIndex} no longer has alternatives";
+                    return false;
+                }
+
+                slotDefinitions.Add(
+                    new CrossRigidJointSlotDefinition(
+                        slotIndex,
+                        slotElement,
+                        alternatives));
+            }
+
+            var combinationAlternatives =
+                new List<CrossRigidJointAlternative[]>
+                {
+                    [],
+                };
+            foreach (var slotDefinition in slotDefinitions)
+            {
+                var expanded =
+                    new List<CrossRigidJointAlternative[]>();
+                foreach (var prefix in combinationAlternatives)
+                {
+                    foreach (var alternative in
+                             slotDefinition.Alternatives)
+                    {
+                        expanded.Add(
+                            prefix
+                                .Append(alternative)
+                                .ToArray());
+                        if (expanded.Count >
+                            MaxCrossRigidJointStateCombinations)
+                        {
+                            reason =
+                                $"Joint Cartesian product exceeds " +
+                                $"{MaxCrossRigidJointStateCombinations:N0} combinations";
+                            return false;
+                        }
+                    }
+                }
+
+                combinationAlternatives = expanded;
+            }
+
+            if (combinationAlternatives.Count !=
+                descriptor.CombinationCount)
+            {
+                reason =
+                    "Joint Cartesian product changed since analysis";
+                return false;
+            }
+
+            var jointSlot =
+                definingDocument.CreateElement("SLOT");
+            jointSlot.SetAttribute("probability", "1");
+            var combinations =
+                new Dictionary<
+                    string,
+                    CrossRigidJointCombinationRewriteState>(
+                    StringComparer.Ordinal);
+
+            foreach (var alternatives in combinationAlternatives)
+            {
+                var wrapper =
+                    definingDocument.CreateElement(
+                        "VARIANT_MESH");
+                if (parentElement.HasAttribute(
+                        "use_different_attach_point_parts"))
+                {
+                    wrapper.SetAttribute(
+                        "use_different_attach_point_parts",
+                        parentElement.GetAttribute(
+                            "use_different_attach_point_parts"));
+                }
+
+                var modelElementsBySlotIndex =
+                    new Dictionary<int, XmlElement>();
+                foreach (var alternative in alternatives)
+                {
+                    var slotDefinition =
+                        slotDefinitions.First(definition =>
+                            definition.SlotIndex ==
+                            alternative.SlotIndex);
+                    var deterministicSlot =
+                        (XmlElement)slotDefinition.SlotElement
+                            .CloneNode(deep: true);
+                    if (!TryReduceCrossRigidJointSlotToAlternative(
+                            deterministicSlot,
+                            alternative,
+                            out var selectedModelElement,
+                            out reason))
+                    {
+                        return false;
+                    }
+
+                    wrapper.AppendChild(
+                        deterministicSlot);
+                    if (selectedModelElement != null)
+                    {
+                        modelElementsBySlotIndex[
+                            alternative.SlotIndex] =
+                            selectedModelElement;
+                    }
+                }
+
+                jointSlot.AppendChild(wrapper);
+                var combinationKey =
+                    BuildCrossRigidJointCombinationKey(
+                        alternatives);
+                combinations[combinationKey] =
+                    new CrossRigidJointCombinationRewriteState(
+                        modelElementsBySlotIndex);
+            }
+
+            var firstSlot =
+                slotDefinitions
+                    .OrderBy(definition =>
+                        definition.SlotIndex)
+                    .First()
+                    .SlotElement;
+            parentElement.InsertBefore(
+                jointSlot,
+                firstSlot);
+            foreach (var slotDefinition in slotDefinitions)
+            {
+                parentElement.RemoveChild(
+                    slotDefinition.SlotElement);
+            }
+
+            context =
+                new CrossRigidJointRewriteContext(
+                    contextKey,
+                    parentLocationKey,
+                    combinations);
+            return true;
+        }
+
+        private static CrossRigidJointAlternative[]
+            GetCrossRigidJointAlternatives(
+                XmlElement slotElement,
+                int slotIndex)
+        {
+            var alternatives =
+                new List<CrossRigidJointAlternative>();
+            var meshCount =
+                slotElement.SelectNodes(
+                    "VARIANT_MESH")?.Count ?? 0;
+            for (var meshIndex = 1;
+                 meshIndex <= meshCount;
+                 meshIndex++)
+            {
+                alternatives.Add(
+                    new CrossRigidJointAlternative(
+                        slotIndex,
+                        false,
+                        meshIndex));
+            }
+
+            var referenceCount =
+                slotElement.SelectNodes(
+                    "VARIANT_MESH_REFERENCE")?.Count ?? 0;
+            for (var referenceIndex = 1;
+                 referenceIndex <= referenceCount;
+                 referenceIndex++)
+            {
+                alternatives.Add(
+                    new CrossRigidJointAlternative(
+                        slotIndex,
+                        true,
+                        referenceIndex));
+            }
+
+            return alternatives.ToArray();
+        }
+
+        private static bool TryReduceCrossRigidJointSlotToAlternative(
+            XmlElement slotElement,
+            CrossRigidJointAlternative alternative,
+            out XmlElement? selectedModelElement,
+            out string reason)
+        {
+            selectedModelElement = null;
+            reason = string.Empty;
+            var meshElements =
+                slotElement.SelectNodes(
+                        "VARIANT_MESH")
+                    ?.Cast<XmlElement>()
+                    .ToArray() ?? [];
+            var referenceElements =
+                slotElement.SelectNodes(
+                        "VARIANT_MESH_REFERENCE")
+                    ?.Cast<XmlElement>()
+                    .ToArray() ?? [];
+
+            XmlElement? selectedElement;
+            if (alternative.IsReference)
+            {
+                selectedElement =
+                    alternative.AlternativeIndex <=
+                    referenceElements.Length
+                        ? referenceElements[
+                            alternative.AlternativeIndex - 1]
+                        : null;
+            }
+            else
+            {
+                selectedElement =
+                    alternative.AlternativeIndex <=
+                    meshElements.Length
+                        ? meshElements[
+                            alternative.AlternativeIndex - 1]
+                        : null;
+                selectedModelElement =
+                    selectedElement;
+            }
+
+            if (selectedElement == null)
+            {
+                reason =
+                    "Joint selected alternative no longer exists";
+                return false;
+            }
+
+            foreach (var element in meshElements)
+            {
+                if (!ReferenceEquals(
+                        element,
+                        selectedElement))
+                {
+                    slotElement.RemoveChild(element);
+                }
+            }
+
+            foreach (var element in referenceElements)
+            {
+                if (!ReferenceEquals(
+                        element,
+                        selectedElement))
+                {
+                    slotElement.RemoveChild(element);
+                }
+            }
+
+            return true;
+        }
+
+        private static string BuildCrossRigidJointParentLocationKey(
+            string rootVmdPath,
+            CrossRigidJointAlwaysPresentRewriteDescriptor descriptor)
+            => string.Join(
+                "\u001f",
+                Normalize(rootVmdPath),
+                BuildCrossRigidReferenceChainSignature(
+                    descriptor.ReferenceChain),
+                descriptor.DefiningVmdPath,
+                descriptor.ParentXmlPath);
+
+        private static string BuildCrossRigidJointContextKey(
+            string rootVmdPath,
+            CrossRigidJointAlwaysPresentRewriteDescriptor descriptor)
+            => string.Join(
+                "\u001f",
+                BuildCrossRigidJointParentLocationKey(
+                    rootVmdPath,
+                    descriptor),
+                string.Join(
+                    ",",
+                    descriptor.SlotIndices));
+
+        private static string BuildCrossRigidJointCombinationKey(
+            IEnumerable<CrossRigidJointAlternative> alternatives)
+            => string.Join(
+                "|",
+                alternatives
+                    .OrderBy(alternative =>
+                        alternative.SlotIndex)
+                    .Select(alternative =>
+                        $"{alternative.SlotIndex}:" +
+                        $"{(alternative.IsReference ? "r" : "m")}" +
+                        $"{alternative.AlternativeIndex}"));
 
         private static bool TryGetCrossRigidSourceVmdDocument(
             BatchState state,
@@ -23987,9 +24614,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("Cross-rigid merge analysis and emission");
                 sb.AppendLine("---------------------------------------");
                 sb.AppendLine(
-                    "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass currently writes value-gate-selected exact-activation occurrence states; referenced child VMDs are cloned copy-on-write instead of modified globally.");
+                    "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative probability-1 sibling-slot joint states; referenced child VMDs are cloned copy-on-write instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. The value gate sees only occurrence states the writer can represent without restructuring the VMD probability tree.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 sibling alternatives are materialized as a bounded Cartesian slot with the same uniform product distribution; optional-slot restructuring remains excluded from the value gate.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
@@ -26653,6 +27280,53 @@ namespace Editors.KitbasherEditor.Services
             CrossRigidJointSourceSelection[] SourceSelections,
             int[] SlotIndices,
             int CombinationCount);
+
+        private sealed record CrossRigidJointAlternative(
+            int SlotIndex,
+            bool IsReference,
+            int AlternativeIndex);
+
+        private sealed record CrossRigidJointSlotDefinition(
+            int SlotIndex,
+            XmlElement SlotElement,
+            CrossRigidJointAlternative[] Alternatives);
+
+        private sealed class CrossRigidJointCombinationRewriteState
+        {
+            public CrossRigidJointCombinationRewriteState(
+                Dictionary<int, XmlElement> modelElementsBySlotIndex)
+            {
+                ModelElementsBySlotIndex =
+                    modelElementsBySlotIndex;
+            }
+
+            public Dictionary<int, XmlElement>
+                ModelElementsBySlotIndex { get; }
+            public HashSet<int> ConsumedSlotIndices { get; } = [];
+        }
+
+        private sealed class CrossRigidJointRewriteContext
+        {
+            public CrossRigidJointRewriteContext(
+                string contextKey,
+                string parentLocationKey,
+                Dictionary<
+                    string,
+                    CrossRigidJointCombinationRewriteState>
+                    combinations)
+            {
+                ContextKey = contextKey;
+                ParentLocationKey = parentLocationKey;
+                Combinations = combinations;
+            }
+
+            public string ContextKey { get; }
+            public string ParentLocationKey { get; }
+            public Dictionary<
+                string,
+                CrossRigidJointCombinationRewriteState>
+                Combinations { get; }
+        }
 
         private sealed record CrossRigidSourceGeometryComponent(
             string WsModelPath,
