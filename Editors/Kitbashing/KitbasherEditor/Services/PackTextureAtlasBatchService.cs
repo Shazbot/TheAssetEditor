@@ -1577,6 +1577,7 @@ namespace Editors.KitbasherEditor.Services
             IProgress<TextureAtlasPackProgress>? progress)
         {
             state.CrossRigidMergeAnalysisEntries.Clear();
+            state.CrossRigidGeneratedPayloadAnalysisEntries.Clear();
             state.CrossRigidAnalysisBlockerCounts.Clear();
             state.CrossRigidAnalysisBlockerExamples.Clear();
             state.CrossRigidAnalysisDiagnosticCounts.Clear();
@@ -1591,9 +1592,9 @@ namespace Editors.KitbasherEditor.Services
                 StringComparer.OrdinalIgnoreCase);
             var traversalContainers = GetGameplayTraversalContainers(state);
             var visualConfigurationCache =
-                new Dictionary<string, CrossRigidVisualExpansionResult>(
+                new Dictionary<string, CrossRigidAttachmentLocalExpansionResult>(
                     StringComparer.OrdinalIgnoreCase);
-            var planAccumulators =
+            var rewritePlanAccumulators =
                 new Dictionary<string, CrossRigidMergePlanAccumulator>(
                     StringComparer.Ordinal);
             var rejectedPlanKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -1609,7 +1610,7 @@ namespace Editors.KitbasherEditor.Services
                     vmdRoots.Count,
                     vmdPath);
 
-                var expansion = GetCrossRigidVisualConfigurationsForVmd(
+                var expansion = GetCrossRigidAttachmentLocalConfigurationsForVmd(
                     state,
                     vmdPath,
                     visualConfigurationCache,
@@ -1623,7 +1624,10 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                var configurations = expansion.Configurations;
+                var configurations = expansion.ConfigurationsByAttachment
+                    .Values
+                    .SelectMany(items => items)
+                    .ToArray();
                 var allWsModels = configurations
                     .SelectMany(configuration => configuration.Instances)
                     .Select(instance => instance.WsModelPath)
@@ -1636,7 +1640,7 @@ namespace Editors.KitbasherEditor.Services
 
                 state.CrossRigidAnalysisVmdCount++;
                 state.CrossRigidAnalysisDirectWsModelCount += allWsModels.Length;
-                state.CrossRigidAnalysisConfigurationCount += configurations.Count;
+                state.CrossRigidAnalysisConfigurationCount += configurations.Length;
 
                 var componentsByWsModel =
                     new Dictionary<string, CrossRigidAnalysisComponent>(
@@ -1663,17 +1667,14 @@ namespace Editors.KitbasherEditor.Services
                     componentsByWsModel[wsModelPath] = component;
                 }
 
-                var dependencyIndex = state.GameplayMeshDependencyIndex;
                 foreach (var configuration in configurations
-                             .Where(configuration => configuration.Probability > 0))
+                             .Where(configuration =>
+                                 configuration.Probability > 0 &&
+                                 configuration.Instances.Count >= 2))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-
-                    var attachmentGroups =
-                        new Dictionary<
-                            string,
-                            List<CrossRigidAnalysisInstanceComponent>>(
-                            StringComparer.Ordinal);
+                    var attachmentComponents =
+                        new List<CrossRigidAnalysisInstanceComponent>();
                     foreach (var instance in configuration.Instances)
                     {
                         if (!componentsByWsModel.TryGetValue(
@@ -1683,233 +1684,144 @@ namespace Editors.KitbasherEditor.Services
                             continue;
                         }
 
-                        if (!attachmentGroups.TryGetValue(
-                                instance.AttachmentIdentity,
-                                out var attachmentComponents))
-                        {
-                            attachmentComponents = [];
-                            attachmentGroups[instance.AttachmentIdentity] =
-                                attachmentComponents;
-                        }
-
                         attachmentComponents.Add(
                             new CrossRigidAnalysisInstanceComponent(
                                 instance,
                                 component));
                     }
 
-                    foreach (var (attachmentIdentity, attachmentComponents) in
-                             attachmentGroups)
+                    if (attachmentComponents
+                            .Select(item => item.Component.RigidPath)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count() < 2)
                     {
-                        if (attachmentComponents
-                                .Select(item => item.Component.RigidPath)
-                                .Distinct(StringComparer.OrdinalIgnoreCase)
-                                .Count() < 2)
+                        continue;
+                    }
+
+                    // A generated WSModel can be built explicitly, but keep non-material
+                    // WSModel state strict in the analysis. This prevents the report from
+                    // claiming opportunities that would require unrelated WSModel runtime
+                    // fields to be reconciled by the writer.
+                    var topologyGroups = attachmentComponents
+                        .GroupBy(
+                            item => item.Component.TopologyIdentity,
+                            StringComparer.Ordinal)
+                        .Select(group => group
+                            .OrderBy(
+                                item => item.Component.WsModelPath,
+                                StringComparer.OrdinalIgnoreCase)
+                            .ToArray())
+                        .Where(group => group
+                            .Select(item => item.Component.RigidPath)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count() >= 2)
+                        .ToArray();
+
+                    if (topologyGroups.Length == 0)
+                    {
+                        RecordCrossRigidAnalysisBlocker(
+                            state,
+                            "WSModel non-material topology differs",
+                            $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
+                            $"{attachmentComponents.Count} co-rendered component instance(s)");
+                        continue;
+                    }
+
+                    foreach (var group in topologyGroups)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var rewritePlanKey = BuildCrossRigidRewritePlanKey(
+                            vmdPath,
+                            configuration.AttachmentIdentity,
+                            group);
+
+                        if (rewritePlanAccumulators.TryGetValue(
+                                rewritePlanKey,
+                                out var existingPlan))
                         {
+                            existingPlan.AggregatedConfigurationProbability +=
+                                configuration.Probability;
+                            existingPlan.ContributingConfigurationCount++;
+                            state.CrossRigidAnalysisOpportunityObservationCount++;
                             continue;
                         }
 
-                        // A generated WSModel can be built explicitly, but keep non-material
-                        // WSModel state strict in the analysis. This prevents the report from
-                        // claiming opportunities that would require unrelated WSModel runtime
-                        // fields to be reconciled by the writer.
-                        var topologyGroups = attachmentComponents
-                            .GroupBy(
-                                item => item.Component.TopologyIdentity,
-                                StringComparer.Ordinal)
-                            .Select(group => group
-                                .OrderBy(
-                                    item => item.Component.WsModelPath,
-                                    StringComparer.OrdinalIgnoreCase)
-                                .ThenBy(
-                                    item => item.Instance.AttachmentIdentity,
-                                    StringComparer.Ordinal)
-                                .ToArray())
-                            .Where(group => group
-                                .Select(item => item.Component.RigidPath)
-                                .Distinct(StringComparer.OrdinalIgnoreCase)
-                                .Count() >= 2)
-                            .ToArray();
-
-                        if (topologyGroups.Length == 0)
-                        {
-                            RecordCrossRigidAnalysisBlocker(
-                                state,
-                                "WSModel non-material topology differs",
-                                $"{vmdPath} [{attachmentIdentity}]: " +
-                                $"{attachmentComponents.Count} co-rendered component instance(s)");
+                        if (rejectedPlanKeys.Contains(rewritePlanKey))
                             continue;
-                        }
 
-                        foreach (var group in topologyGroups)
+                        var lodAnalyses = new List<CrossRigidLodAnalysis>();
+                        var maxLodCount = group.Max(
+                            item => item.Component.Rigid.ModelList.Length);
+                        for (var lodIndex = 0;
+                             lodIndex < maxLodCount;
+                             lodIndex++)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
-                            var planKey = BuildCrossRigidPhysicalPlanKey(
-                                vmdPath,
-                                attachmentIdentity,
-                                group);
-
-                            if (planAccumulators.TryGetValue(
-                                    planKey,
-                                    out var existingPlan))
-                            {
-                                existingPlan.AggregatedConfigurationProbability +=
-                                    configuration.Probability;
-                                existingPlan.ContributingConfigurationCount++;
-                                state.CrossRigidAnalysisOpportunityObservationCount++;
-                                continue;
-                            }
-
-                            if (rejectedPlanKeys.Contains(planKey))
-                                continue;
-
-                            var lodAnalyses = new List<CrossRigidLodAnalysis>();
-                            var maxLodCount = group.Max(
-                                item => item.Component.Rigid.ModelList.Length);
-                            for (var lodIndex = 0;
-                                 lodIndex < maxLodCount;
-                                 lodIndex++)
-                            {
-                                cancellationToken.ThrowIfCancellationRequested();
-                                var lod = AnalyzeCrossRigidLod(
-                                    state,
-                                    group,
-                                    lodIndex);
-                                if (lod.ActiveRigidCount >= 2)
-                                    lodAnalyses.Add(lod);
-                            }
-
-                            if (lodAnalyses.Count == 0 ||
-                                lodAnalyses.All(lod => lod.DrawsSaved <= 0))
-                            {
-                                rejectedPlanKeys.Add(planKey);
-                                RecordCrossRigidAnalysisBlocker(
-                                    state,
-                                    "No actual cross-rigid draw saving",
-                                    $"{vmdPath} [{attachmentIdentity}]: " +
-                                    $"{string.Join(", ", group.Select(item => item.Component.RigidPath).Distinct(StringComparer.OrdinalIgnoreCase))}");
-                                continue;
-                            }
-
-                            var candidateWsModels = group
-                                .Select(item => item.Component.WsModelPath)
-                                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                            var consumerDiscoveryComplete =
-                                dependencyIndex != null &&
-                                !group.Any(item =>
-                                    dependencyIndex.IsAssetAffectedByIncompleteRoot(
-                                        item.Component.WsModelPath) ||
-                                    dependencyIndex.IsAssetAffectedByIncompleteRoot(
-                                        item.Component.RigidPath));
-                            if (!consumerDiscoveryComplete)
-                            {
-                                RecordCrossRigidAnalysisDiagnostic(
-                                    state,
-                                    "Incomplete gameplay consumer discovery (non-blocking)",
-                                    $"{vmdPath}: " +
-                                    $"{string.Join(", ", group.Select(item => item.Component.RigidPath).Distinct(StringComparer.OrdinalIgnoreCase))}");
-                            }
-
-                            long generatedVertices = 0;
-                            long potentiallyDuplicatedVertices = 0;
-                            var externalConsumers = new HashSet<string>(
-                                StringComparer.OrdinalIgnoreCase);
-
-                            foreach (var item in group)
-                            {
-                                var component = item.Component;
-                                var componentVertices = component.Rigid.ModelList
-                                    .SelectMany(lod => lod)
-                                    .Sum(model =>
-                                        (long)model.Mesh.VertexList.Length);
-                                generatedVertices += componentVertices;
-
-                                // If consumer discovery is incomplete, conservatively assume
-                                // this copied geometry remains duplicated. Generated outputs do
-                                // not mutate the source asset, so incompleteness is a cost-
-                                // accounting uncertainty rather than a safety blocker.
-                                var hasExternalConsumer =
-                                    !consumerDiscoveryComplete;
-                                if (dependencyIndex != null)
-                                {
-                                    if (dependencyIndex.WsModelConsumersByRigid
-                                        .TryGetValue(
-                                            component.RigidPath,
-                                            out var rigidWsConsumers))
-                                    {
-                                        foreach (var consumer in rigidWsConsumers)
-                                        {
-                                            if (candidateWsModels.Contains(consumer))
-                                                continue;
-
-                                            hasExternalConsumer = true;
-                                            externalConsumers.Add(consumer);
-                                        }
-                                    }
-
-                                    foreach (var root in
-                                             dependencyIndex.GetRootsForAsset(
-                                                 component.RigidPath))
-                                    {
-                                        if (root.Equals(
-                                                vmdPath,
-                                                StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            continue;
-                                        }
-
-                                        hasExternalConsumer = true;
-                                        externalConsumers.Add(root);
-                                    }
-                                }
-
-                                if (hasExternalConsumer)
-                                    potentiallyDuplicatedVertices += componentVertices;
-                            }
-
-                            var planId = ContentHash(string.Join(
-                                "\u001f",
-                                planKey,
-                                BuildCrossRigidLodLayoutSignature(lodAnalyses)));
-                            var sourceInstances = group
-                                .Select(item => item.Instance)
-                                .OrderBy(
-                                    instance => instance.WsModelPath,
-                                    StringComparer.OrdinalIgnoreCase)
-                                .ThenBy(
-                                    instance => instance.AttachmentIdentity,
-                                    StringComparer.Ordinal)
-                                .ToArray();
-                            planAccumulators[planKey] =
-                                new CrossRigidMergePlanAccumulator(
-                                    planId,
-                                    vmdPath,
-                                    attachmentIdentity,
-                                    sourceInstances,
-                                    group.Select(item => item.Component.RigidPath)
-                                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                                        .OrderBy(
-                                            path => path,
-                                            StringComparer.OrdinalIgnoreCase)
-                                        .ToArray(),
-                                    lodAnalyses.ToArray(),
-                                    configuration.Probability,
-                                    1,
-                                    generatedVertices,
-                                    potentiallyDuplicatedVertices,
-                                    externalConsumers
-                                        .OrderBy(
-                                            path => path,
-                                            StringComparer.OrdinalIgnoreCase)
-                                        .ToArray(),
-                                    consumerDiscoveryComplete);
-                            state.CrossRigidAnalysisOpportunityObservationCount++;
+                            var lod = AnalyzeCrossRigidLod(
+                                state,
+                                group,
+                                lodIndex);
+                            if (lod.ActiveRigidCount >= 2)
+                                lodAnalyses.Add(lod);
                         }
+
+                        if (lodAnalyses.Count == 0 ||
+                            lodAnalyses.All(lod => lod.DrawsSaved <= 0))
+                        {
+                            rejectedPlanKeys.Add(rewritePlanKey);
+                            RecordCrossRigidAnalysisBlocker(
+                                state,
+                                "No actual cross-rigid draw saving",
+                                $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
+                                $"{string.Join(", ", group.Select(item => item.Component.RigidPath).Distinct(StringComparer.OrdinalIgnoreCase))}");
+                            continue;
+                        }
+
+                        var sourceGeometry = group
+                            .Select(item =>
+                                BuildCrossRigidSourceGeometryComponent(item))
+                            .ToArray();
+                        var sourceInstances = group
+                            .Select(item => item.Instance)
+                            .OrderBy(
+                                instance => instance.WsModelPath,
+                                StringComparer.OrdinalIgnoreCase)
+                            .ToArray();
+                        var generatedPayloadKey =
+                            BuildCrossRigidGeneratedPayloadKey(
+                                sourceInstances,
+                                lodAnalyses);
+                        var rewritePlanId = ContentHash(string.Join(
+                            "\u001f",
+                            rewritePlanKey,
+                            generatedPayloadKey));
+                        var generatedPayloadId =
+                            ContentHash(generatedPayloadKey);
+
+                        rewritePlanAccumulators[rewritePlanKey] =
+                            new CrossRigidMergePlanAccumulator(
+                                rewritePlanId,
+                                generatedPayloadId,
+                                generatedPayloadKey,
+                                vmdPath,
+                                configuration.AttachmentIdentity,
+                                sourceInstances,
+                                sourceGeometry,
+                                group.Select(item => item.Component.RigidPath)
+                                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .OrderBy(
+                                        path => path,
+                                        StringComparer.OrdinalIgnoreCase)
+                                    .ToArray(),
+                                lodAnalyses.ToArray(),
+                                configuration.Probability,
+                                1);
+                        state.CrossRigidAnalysisOpportunityObservationCount++;
                     }
                 }
             }
 
-            foreach (var plan in planAccumulators.Values)
+            foreach (var plan in rewritePlanAccumulators.Values)
             {
                 var aggregatedProbability = Math.Clamp(
                     plan.AggregatedConfigurationProbability,
@@ -1917,27 +1829,27 @@ namespace Editors.KitbasherEditor.Services
                     1.0);
                 state.CrossRigidMergeAnalysisEntries.Add(
                     new CrossRigidMergeAnalysisEntry(
-                        plan.PlanId,
+                        plan.RewritePlanId,
+                        plan.GeneratedPayloadId,
                         plan.VmdPath,
                         aggregatedProbability,
                         plan.ContributingConfigurationCount,
                         plan.AttachmentIdentity,
                         plan.SourceInstances,
+                        plan.SourceGeometry,
                         plan.RigidPaths,
                         plan.Lods,
                         CalculateExpectedCrossRigidArmyDrawSavings(
                             state,
                             plan.VmdPath,
                             aggregatedProbability,
-                            plan.Lods),
-                        plan.GeneratedVertexCount,
-                        plan.PotentiallyDuplicatedVertexCount,
-                        plan.ExternalStructuralConsumers,
-                        plan.ConsumerDiscoveryComplete));
+                            plan.Lods)));
             }
+
+            BuildCrossRigidGeneratedPayloadAnalysis(state);
         }
 
-        private static string BuildCrossRigidPhysicalPlanKey(
+        private static string BuildCrossRigidRewritePlanKey(
             string vmdPath,
             string attachmentIdentity,
             IReadOnlyList<CrossRigidAnalysisInstanceComponent> group)
@@ -1949,7 +1861,23 @@ namespace Editors.KitbasherEditor.Services
                     "\u001e",
                     group
                         .Select(item => item.Instance.WsModelPath)
-                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)));
+                        .OrderBy(
+                            path => path,
+                            StringComparer.OrdinalIgnoreCase)));
+
+        private static string BuildCrossRigidGeneratedPayloadKey(
+            IReadOnlyList<CrossRigidVisualInstance> sourceInstances,
+            IReadOnlyList<CrossRigidLodAnalysis> lodAnalyses)
+            => string.Join(
+                "\u001f",
+                string.Join(
+                    "\u001e",
+                    sourceInstances
+                        .Select(instance => instance.WsModelPath)
+                        .OrderBy(
+                            path => path,
+                            StringComparer.OrdinalIgnoreCase)),
+                BuildCrossRigidLodLayoutSignature(lodAnalyses));
 
         private static string BuildCrossRigidLodLayoutSignature(
             IReadOnlyList<CrossRigidLodAnalysis> lodAnalyses)
@@ -1958,14 +1886,321 @@ namespace Editors.KitbasherEditor.Services
                 lodAnalyses
                     .OrderBy(lod => lod.LodIndex)
                     .Select(lod =>
-                        $"{lod.LodIndex}:{lod.InputDrawsAfterSameRigidMerge}>" +
-                        $"{lod.OutputDrawsAfterCrossRigidMerge}"));
+                        $"{lod.LodIndex}:{lod.OutputLayoutSignature}"));
 
-        private static CrossRigidVisualExpansionResult
-            GetCrossRigidVisualConfigurationsForVmd(
+        private static CrossRigidSourceGeometryComponent
+            BuildCrossRigidSourceGeometryComponent(
+                CrossRigidAnalysisInstanceComponent item)
+        {
+            long vertices = 0;
+            long geometryBytes = 0;
+            var vertexFactory = VertexFactory.Create();
+            foreach (var model in item.Component.Rigid.ModelList.SelectMany(
+                         lod => lod))
+            {
+                vertices += model.Mesh.VertexList.Length;
+                var vertexSize = vertexFactory.GetVertexSize(
+                    model.Material.BinaryVertexFormat,
+                    item.Component.Rigid.Header.Version);
+                geometryBytes +=
+                    checked((long)vertexSize *
+                            model.Mesh.VertexList.Length);
+                geometryBytes +=
+                    checked((long)sizeof(ushort) *
+                            model.Mesh.IndexList.Length);
+            }
+
+            return new CrossRigidSourceGeometryComponent(
+                item.Component.WsModelPath,
+                item.Component.RigidPath,
+                vertices,
+                geometryBytes);
+        }
+
+        private static void BuildCrossRigidGeneratedPayloadAnalysis(
+            BatchState state)
+        {
+            var dependencyIndex = state.GameplayMeshDependencyIndex;
+            foreach (var payloadGroup in state.CrossRigidMergeAnalysisEntries
+                         .GroupBy(
+                             entry => entry.GeneratedPayloadId,
+                             StringComparer.Ordinal))
+            {
+                var plans = payloadGroup.ToArray();
+                var representative = plans[0];
+                var sourceWsModels = representative.SourceInstances
+                    .Select(instance => instance.WsModelPath)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var rewriteVmds = plans
+                    .Select(plan => plan.VmdPath)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var externalConsumers = new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase);
+                var consumerDiscoveryComplete =
+                    dependencyIndex != null;
+                long potentiallyDuplicatedGeometryBytes = 0;
+
+                foreach (var source in representative.SourceGeometry)
+                {
+                    var hasExternalConsumer = dependencyIndex == null;
+                    if (dependencyIndex != null)
+                    {
+                        if (dependencyIndex.IsAssetAffectedByIncompleteRoot(
+                                source.WsModelPath) ||
+                            dependencyIndex.IsAssetAffectedByIncompleteRoot(
+                                source.RigidPath))
+                        {
+                            consumerDiscoveryComplete = false;
+                            hasExternalConsumer = true;
+                        }
+
+                        if (dependencyIndex.WsModelConsumersByRigid.TryGetValue(
+                                source.RigidPath,
+                                out var wsConsumers))
+                        {
+                            foreach (var consumer in wsConsumers)
+                            {
+                                if (sourceWsModels.Contains(consumer))
+                                    continue;
+
+                                hasExternalConsumer = true;
+                                externalConsumers.Add(consumer);
+                            }
+                        }
+
+                        foreach (var root in
+                                 dependencyIndex.GetRootsForAsset(
+                                     source.RigidPath))
+                        {
+                            if (rewriteVmds.Contains(root))
+                                continue;
+
+                            hasExternalConsumer = true;
+                            externalConsumers.Add(root);
+                        }
+                    }
+
+                    if (hasExternalConsumer)
+                    {
+                        potentiallyDuplicatedGeometryBytes +=
+                            source.GeometryBytes;
+                    }
+                }
+
+                var generatedVertices =
+                    representative.SourceGeometry.Sum(
+                        source => source.VertexCount);
+                var generatedGeometryBytes =
+                    representative.SourceGeometry.Sum(
+                        source => source.GeometryBytes);
+                var residentProbability =
+                    CalculateExpectedCrossRigidPayloadResidentProbability(
+                        state,
+                        plans);
+                var expectedResidentGeneratedBytes =
+                    generatedGeometryBytes * residentProbability;
+
+                // Retirement credit is intentionally a strict lower bound. A source
+                // component is credited only when every rewrite using this payload is
+                // unconditional and no other/unknown structural consumer remains.
+                var canClaimFullDisplacement =
+                    consumerDiscoveryComplete &&
+                    externalConsumers.Count == 0 &&
+                    plans.All(plan =>
+                        plan.AggregatedConfigurationProbability >=
+                        1.0 - AtlasValueGateExpectedDrawEpsilon);
+                var expectedResidentDisplacedBytes =
+                    canClaimFullDisplacement
+                        ? expectedResidentGeneratedBytes
+                        : 0.0;
+
+                if (!consumerDiscoveryComplete)
+                {
+                    RecordCrossRigidAnalysisDiagnostic(
+                        state,
+                        "Incomplete gameplay consumer discovery (non-blocking)",
+                        $"payload {representative.GeneratedPayloadId}: " +
+                        $"{string.Join(", ", representative.RigidPaths)}");
+                }
+
+                state.CrossRigidGeneratedPayloadAnalysisEntries.Add(
+                    new CrossRigidGeneratedPayloadAnalysisEntry(
+                        representative.GeneratedPayloadId,
+                        plans.Length,
+                        rewriteVmds.Count,
+                        representative.SourceInstances
+                            .Select(instance => instance.WsModelPath)
+                            .OrderBy(
+                                path => path,
+                                StringComparer.OrdinalIgnoreCase)
+                            .ToArray(),
+                        representative.RigidPaths,
+                        representative.Lods,
+                        generatedVertices,
+                        generatedGeometryBytes,
+                        potentiallyDuplicatedGeometryBytes,
+                        residentProbability,
+                        expectedResidentGeneratedBytes,
+                        expectedResidentDisplacedBytes,
+                        externalConsumers
+                            .OrderBy(
+                                path => path,
+                                StringComparer.OrdinalIgnoreCase)
+                            .ToArray(),
+                        consumerDiscoveryComplete));
+            }
+        }
+
+        private static double
+            CalculateExpectedCrossRigidPayloadResidentProbability(
+                BatchState state,
+                IReadOnlyList<CrossRigidMergeAnalysisEntry> rewritePlans)
+        {
+            var model = state.ArmyResidencyModel;
+            if (model == null || rewritePlans.Count == 0)
+                return 0;
+
+            var probabilityByVmd = rewritePlans
+                .GroupBy(
+                    plan => plan.VmdPath,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => Math.Clamp(
+                        group.Sum(plan =>
+                            plan.AggregatedConfigurationProbability),
+                        0.0,
+                        1.0),
+                    StringComparer.OrdinalIgnoreCase);
+            var roots = probabilityByVmd.Keys.ToArray();
+            var relevantUnitIds = GetRelevantArmyUnitIds(
+                model,
+                Array.Empty<string>(),
+                roots);
+            var relevantCultures = GetRelevantArmyCultures(
+                model,
+                Array.Empty<string>(),
+                roots,
+                relevantUnitIds);
+            if (relevantUnitIds.Count == 0 ||
+                relevantCultures.Count == 0)
+            {
+                return 0;
+            }
+
+            var probabilitiesByCulture =
+                new Dictionary<string, double>(
+                    StringComparer.OrdinalIgnoreCase);
+            foreach (var culture in relevantCultures)
+            {
+                if (!model.UnitsByCultureAndCategory.TryGetValue(
+                        culture,
+                        out var unitsByCategory))
+                {
+                    continue;
+                }
+
+                var notResidentProbability = 1.0;
+                foreach (var (category, slotCount) in
+                         model.Scenario.ArmySlotTemplate)
+                {
+                    if (!unitsByCategory.TryGetValue(
+                            category,
+                            out var cultureUnits) ||
+                        cultureUnits.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    double perSlotPresenceProbability = 0;
+                    foreach (var unitId in
+                             EnumerateRelevantArmyUnitIds(
+                                 cultureUnits,
+                                 relevantUnitIds))
+                    {
+                        if (!model.DirectVmdsByUnitAndRole.TryGetValue(
+                                unitId,
+                                out var vmdsByRole))
+                        {
+                            continue;
+                        }
+
+                        var notPresentAcrossRoles = 1.0;
+                        foreach (var (role, directVmds) in vmdsByRole)
+                        {
+                            if (directVmds.Count == 0)
+                                continue;
+
+                            double perEntityPresenceProbability = 0;
+                            foreach (var vmdPath in directVmds)
+                            {
+                                if (!probabilityByVmd.TryGetValue(
+                                        vmdPath,
+                                        out var configurationProbability))
+                                {
+                                    continue;
+                                }
+
+                                perEntityPresenceProbability +=
+                                    configurationProbability /
+                                    directVmds.Count;
+                            }
+
+                            perEntityPresenceProbability = Math.Clamp(
+                                perEntityPresenceProbability,
+                                0.0,
+                                1.0);
+                            if (perEntityPresenceProbability <= 0)
+                                continue;
+
+                            var entityCount = Math.Max(
+                                1,
+                                model.EntityCountByUnitAndRole
+                                    .GetValueOrDefault(unitId)?
+                                    .GetValueOrDefault(role, 1) ?? 1);
+                            notPresentAcrossRoles *= Math.Pow(
+                                1.0 - perEntityPresenceProbability,
+                                entityCount);
+                        }
+
+                        var unitCardPresenceProbability =
+                            1.0 - notPresentAcrossRoles;
+                        if (unitCardPresenceProbability <= 0)
+                            continue;
+
+                        perSlotPresenceProbability +=
+                            unitCardPresenceProbability /
+                            cultureUnits.Count;
+                    }
+
+                    perSlotPresenceProbability = Math.Clamp(
+                        perSlotPresenceProbability,
+                        0.0,
+                        1.0);
+                    notResidentProbability *= Math.Pow(
+                        1.0 - perSlotPresenceProbability,
+                        slotCount);
+                }
+
+                probabilitiesByCulture[culture] = Math.Clamp(
+                    1.0 - notResidentProbability,
+                    0.0,
+                    1.0);
+            }
+
+            return CombineBattleResidentProbabilities(
+                probabilitiesByCulture,
+                model.PlayerCultureWeights,
+                model.OpponentCultureWeights);
+        }
+
+        private static CrossRigidAttachmentLocalExpansionResult
+            GetCrossRigidAttachmentLocalConfigurationsForVmd(
                 BatchState state,
                 string vmdPathValue,
-                Dictionary<string, CrossRigidVisualExpansionResult> cache,
+                Dictionary<
+                    string,
+                    CrossRigidAttachmentLocalExpansionResult> cache,
                 HashSet<string> visiting)
         {
             var vmdPath = Normalize(vmdPathValue);
@@ -1973,8 +2208,7 @@ namespace Editors.KitbasherEditor.Services
                 return cached;
             if (!visiting.Add(vmdPath))
             {
-                return new CrossRigidVisualExpansionResult(
-                    [],
+                return CrossRigidAttachmentLocalExpansionResult.Failed(
                     $"Cross-rigid VMD reference cycle detected ({vmdPath})");
             }
 
@@ -1995,19 +2229,20 @@ namespace Editors.KitbasherEditor.Services
                         file,
                         out var vmd))
                 {
-                    var failure = new CrossRigidVisualExpansionResult(
-                        [],
-                        "Cross-rigid VMD could not be resolved");
+                    var failure =
+                        CrossRigidAttachmentLocalExpansionResult.Failed(
+                            "Cross-rigid VMD could not be resolved");
                     cache[vmdPath] = failure;
                     return failure;
                 }
 
-                var result = ExpandCrossRigidVisualConfigurations(
-                    state,
-                    vmd,
-                    "<root>",
-                    cache,
-                    visiting);
+                var result =
+                    ExpandCrossRigidAttachmentLocalConfigurations(
+                        state,
+                        vmd,
+                        "<root>",
+                        cache,
+                        visiting);
                 cache[vmdPath] = result;
                 return result;
             }
@@ -2017,15 +2252,21 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        private static CrossRigidVisualExpansionResult
-            ExpandCrossRigidVisualConfigurations(
+        private static CrossRigidAttachmentLocalExpansionResult
+            ExpandCrossRigidAttachmentLocalConfigurations(
                 BatchState state,
                 VariantMesh mesh,
                 string attachmentIdentity,
-                Dictionary<string, CrossRigidVisualExpansionResult> cache,
+                Dictionary<
+                    string,
+                    CrossRigidAttachmentLocalExpansionResult> cache,
                 HashSet<string> visiting)
         {
-            var baseInstances = new List<CrossRigidVisualInstance>();
+            var result = new Dictionary<
+                string,
+                List<CrossRigidVisualConfiguration>>(
+                StringComparer.Ordinal);
+
             if (!string.IsNullOrWhiteSpace(mesh.ModelReference))
             {
                 var modelPath = Normalize(mesh.ModelReference);
@@ -2037,74 +2278,70 @@ namespace Editors.KitbasherEditor.Services
                         GetGameplayTraversalContainers(state),
                         modelPath) != null)
                 {
-                    baseInstances.Add(
-                        new CrossRigidVisualInstance(
-                            modelPath,
-                            attachmentIdentity));
+                    result[attachmentIdentity] =
+                    [
+                        new CrossRigidVisualConfiguration(
+                            1.0,
+                            attachmentIdentity,
+                            [
+                                new CrossRigidVisualInstance(
+                                    modelPath,
+                                    attachmentIdentity),
+                            ]),
+                    ];
                 }
             }
 
-            var current = new List<CrossRigidVisualConfiguration>
-            {
-                new(1.0, baseInstances),
-            };
-
             foreach (var slot in mesh.ChildSlots ?? [])
             {
-                var slotProbability = ParseVmdSlotProbability(slot.Probability);
+                var slotProbability =
+                    ParseVmdSlotProbability(slot.Probability);
                 var childMeshCount = slot.ChildMeshes?.Count ?? 0;
-                var childReferenceCount = slot.ChildReferences?.Count ?? 0;
-                var alternativeCount = childMeshCount + childReferenceCount;
-                if (alternativeCount == 0 || slotProbability <= 0)
+                var childReferenceCount =
+                    slot.ChildReferences?.Count ?? 0;
+                var alternativeCount =
+                    childMeshCount + childReferenceCount;
+                if (alternativeCount == 0 ||
+                    slotProbability <= 0)
+                {
                     continue;
+                }
 
                 var childAttachmentIdentity =
                     BuildCrossRigidAttachmentIdentity(
                         attachmentIdentity,
                         mesh.use_different_attach_point_parts,
                         slot);
-                var alternatives = new List<CrossRigidVisualConfiguration>();
-                if (slotProbability < 1.0)
-                {
-                    alternatives.Add(
-                        new CrossRigidVisualConfiguration(
-                            1.0 - slotProbability,
-                            []));
-                }
+                var alternativeMaps = new List<
+                    IReadOnlyDictionary<
+                        string,
+                        IReadOnlyList<CrossRigidVisualConfiguration>>>();
 
-                var alternativeWeight = slotProbability / alternativeCount;
                 foreach (var child in slot.ChildMeshes ?? [])
                 {
-                    var childExpansion = ExpandCrossRigidVisualConfigurations(
-                        state,
-                        child,
-                        childAttachmentIdentity,
-                        cache,
-                        visiting);
+                    var childExpansion =
+                        ExpandCrossRigidAttachmentLocalConfigurations(
+                            state,
+                            child,
+                            childAttachmentIdentity,
+                            cache,
+                            visiting);
                     if (childExpansion.FailureReason != null)
                         return childExpansion;
-
-                    alternatives.AddRange(
-                        childExpansion.Configurations.Select(configuration =>
-                            configuration with
-                            {
-                                Probability =
-                                    configuration.Probability *
-                                    alternativeWeight,
-                            }));
+                    alternativeMaps.Add(
+                        childExpansion.ConfigurationsByAttachment);
                 }
 
                 foreach (var reference in slot.ChildReferences ?? [])
                 {
                     if (string.IsNullOrWhiteSpace(reference.Reference))
                     {
-                        return new CrossRigidVisualExpansionResult(
-                            [],
+                        return CrossRigidAttachmentLocalExpansionResult.Failed(
                             "Cross-rigid child VMD reference is empty");
                     }
 
                     var childExpansion =
-                        GetCrossRigidVisualConfigurationsForVmd(
+                        GetCrossRigidAttachmentLocalConfigurationsForVmd(
                             state,
                             reference.Reference,
                             cache,
@@ -2112,91 +2349,147 @@ namespace Editors.KitbasherEditor.Services
                     if (childExpansion.FailureReason != null)
                         return childExpansion;
 
-                    alternatives.AddRange(
-                        childExpansion.Configurations.Select(configuration =>
-                            RebaseCrossRigidVisualConfiguration(
-                                configuration,
-                                childAttachmentIdentity,
-                                alternativeWeight)));
+                    alternativeMaps.Add(
+                        RebaseCrossRigidAttachmentLocalConfigurations(
+                            childExpansion.ConfigurationsByAttachment,
+                            childAttachmentIdentity));
                 }
 
-                if (alternatives.Count == 0)
+                var affectedAttachments = alternativeMaps
+                    .SelectMany(map => map.Keys)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                foreach (var affectedAttachment in
+                         affectedAttachments)
                 {
-                    return new CrossRigidVisualExpansionResult(
-                        [],
-                        "Cross-rigid VMD slot has no resolvable alternatives");
-                }
+                    var slotConfigurations =
+                        new List<CrossRigidVisualConfiguration>();
+                    if (slotProbability < 1.0)
+                    {
+                        slotConfigurations.Add(
+                            new CrossRigidVisualConfiguration(
+                                1.0 - slotProbability,
+                                affectedAttachment,
+                                []));
+                    }
 
-                alternatives =
-                    MergeEquivalentCrossRigidVisualConfigurations(alternatives);
-                var combined =
-                    CombineCrossRigidVisualConfigurations(
-                        current,
-                        alternatives,
-                        out var uniqueConfigurationLimitExceeded);
-                if (uniqueConfigurationLimitExceeded)
-                {
-                    return new CrossRigidVisualExpansionResult(
-                        [],
-                        $"Cross-rigid visual configuration limit exceeded " +
-                        $"({MaxExactVisualConfigurations:N0} unique rendered configurations)");
-                }
+                    var alternativeWeight =
+                        slotProbability / alternativeCount;
+                    foreach (var alternativeMap in alternativeMaps)
+                    {
+                        if (alternativeMap.TryGetValue(
+                                affectedAttachment,
+                                out var alternativeConfigurations))
+                        {
+                            slotConfigurations.AddRange(
+                                alternativeConfigurations.Select(
+                                    configuration =>
+                                        configuration with
+                                        {
+                                            Probability =
+                                                configuration.Probability *
+                                                alternativeWeight,
+                                        }));
+                        }
+                        else
+                        {
+                            slotConfigurations.Add(
+                                new CrossRigidVisualConfiguration(
+                                    alternativeWeight,
+                                    affectedAttachment,
+                                    []));
+                        }
+                    }
 
-                current = combined;
+                    slotConfigurations =
+                        MergeEquivalentCrossRigidVisualConfigurations(
+                            slotConfigurations);
+                    var currentConfigurations =
+                        result.TryGetValue(
+                            affectedAttachment,
+                            out var existing)
+                            ? existing
+                            :
+                            [
+                                new CrossRigidVisualConfiguration(
+                                    1.0,
+                                    affectedAttachment,
+                                    []),
+                            ];
+                    var combined =
+                        CombineCrossRigidAttachmentLocalConfigurations(
+                            currentConfigurations,
+                            slotConfigurations,
+                            affectedAttachment,
+                            out var limitExceeded);
+                    if (limitExceeded)
+                    {
+                        return CrossRigidAttachmentLocalExpansionResult.Failed(
+                            $"Cross-rigid attachment-local configuration limit exceeded " +
+                            $"({MaxExactVisualConfigurations:N0} unique configurations at " +
+                            $"{affectedAttachment})");
+                    }
+
+                    result[affectedAttachment] = combined;
+                }
             }
 
-            return new CrossRigidVisualExpansionResult(
-                current,
+            return new CrossRigidAttachmentLocalExpansionResult(
+                result.ToDictionary(
+                    entry => entry.Key,
+                    entry => (IReadOnlyList<CrossRigidVisualConfiguration>)
+                        entry.Value,
+                    StringComparer.Ordinal),
                 null);
         }
 
-        private static CrossRigidVisualConfiguration
-            RebaseCrossRigidVisualConfiguration(
-                CrossRigidVisualConfiguration configuration,
-                string attachmentIdentity,
-                double probabilityScale)
-            => new(
-                configuration.Probability * probabilityScale,
-                configuration.Instances
-                    .Select(instance => instance with
-                    {
-                        AttachmentIdentity =
-                            RebaseCrossRigidAttachmentIdentity(
-                                instance.AttachmentIdentity,
-                                attachmentIdentity),
-                    })
-                    .ToArray());
-
-        private static string RebaseCrossRigidAttachmentIdentity(
-            string relativeIdentity,
-            string attachmentIdentity)
+        private static IReadOnlyDictionary<
+                string,
+                IReadOnlyList<CrossRigidVisualConfiguration>>
+            RebaseCrossRigidAttachmentLocalConfigurations(
+                IReadOnlyDictionary<
+                    string,
+                    IReadOnlyList<CrossRigidVisualConfiguration>>
+                    configurationsByAttachment,
+                string attachmentIdentity)
         {
-            const string rootIdentity = "<root>";
-            if (relativeIdentity.Equals(
-                    rootIdentity,
-                    StringComparison.Ordinal))
+            var rebased = new Dictionary<
+                string,
+                IReadOnlyList<CrossRigidVisualConfiguration>>(
+                StringComparer.Ordinal);
+            foreach (var (relativeAttachment, configurations) in
+                     configurationsByAttachment)
             {
-                return attachmentIdentity;
+                var rebasedAttachment =
+                    RebaseCrossRigidAttachmentIdentity(
+                        relativeAttachment,
+                        attachmentIdentity);
+                rebased[rebasedAttachment] = configurations
+                    .Select(configuration =>
+                        new CrossRigidVisualConfiguration(
+                            configuration.Probability,
+                            rebasedAttachment,
+                            configuration.Instances
+                                .Select(instance =>
+                                    instance with
+                                    {
+                                        AttachmentIdentity =
+                                            RebaseCrossRigidAttachmentIdentity(
+                                                instance.AttachmentIdentity,
+                                                attachmentIdentity),
+                                    })
+                                .ToArray()))
+                    .ToArray();
             }
 
-            if (relativeIdentity.StartsWith(
-                    rootIdentity + "/",
-                    StringComparison.Ordinal))
-            {
-                return attachmentIdentity +
-                       relativeIdentity[rootIdentity.Length..];
-            }
-
-            return string.Join(
-                "/",
-                attachmentIdentity,
-                relativeIdentity);
+            return rebased;
         }
 
         private static List<CrossRigidVisualConfiguration>
-            CombineCrossRigidVisualConfigurations(
+            CombineCrossRigidAttachmentLocalConfigurations(
                 IReadOnlyList<CrossRigidVisualConfiguration> leftConfigurations,
                 IReadOnlyList<CrossRigidVisualConfiguration> rightConfigurations,
+                string attachmentIdentity,
                 out bool uniqueConfigurationLimitExceeded)
         {
             uniqueConfigurationLimitExceeded = false;
@@ -2233,6 +2526,7 @@ namespace Editors.KitbasherEditor.Services
                         merged[key] =
                             new CrossRigidVisualConfiguration(
                                 probability,
+                                attachmentIdentity,
                                 instances);
                         if (merged.Count >
                             MaxExactVisualConfigurations)
@@ -2287,15 +2581,36 @@ namespace Editors.KitbasherEditor.Services
             => string.Join(
                 "\u001f",
                 instances
+                    .Select(instance => instance.WsModelPath)
                     .OrderBy(
-                        instance => instance.AttachmentIdentity,
-                        StringComparer.Ordinal)
-                    .ThenBy(
-                        instance => instance.WsModelPath,
-                        StringComparer.OrdinalIgnoreCase)
-                    .Select(instance =>
-                        $"{instance.AttachmentIdentity}\u001e" +
-                        $"{instance.WsModelPath}"));
+                        path => path,
+                        StringComparer.OrdinalIgnoreCase));
+
+        private static string RebaseCrossRigidAttachmentIdentity(
+            string relativeIdentity,
+            string attachmentIdentity)
+        {
+            const string rootIdentity = "<root>";
+            if (relativeIdentity.Equals(
+                    rootIdentity,
+                    StringComparison.Ordinal))
+            {
+                return attachmentIdentity;
+            }
+
+            if (relativeIdentity.StartsWith(
+                    rootIdentity + "/",
+                    StringComparison.Ordinal))
+            {
+                return attachmentIdentity +
+                       relativeIdentity[rootIdentity.Length..];
+            }
+
+            return string.Join(
+                "/",
+                attachmentIdentity,
+                relativeIdentity);
+        }
 
         private static string BuildCrossRigidAttachmentIdentity(
             string parentIdentity,
@@ -2321,6 +2636,7 @@ namespace Editors.KitbasherEditor.Services
                 $"slot_parts={slotPartsMode}");
         }
 
+        private static bool TryBuildCrossRigidAnalysisComponent(
         private static bool TryBuildCrossRigidAnalysisComponent(
             BatchState state,
             string vmdPath,
@@ -2447,7 +2763,8 @@ namespace Editors.KitbasherEditor.Services
                     0,
                     0,
                     state.ArmyResidencyModel?.Scenario
-                        .GetLodProbability(lodIndex) ?? 0);
+                        .GetLodProbability(lodIndex) ?? 0,
+                    "none");
             }
 
             var partsByIdentity =
@@ -2508,7 +2825,9 @@ namespace Editors.KitbasherEditor.Services
 
             var inputDraws = 0;
             var outputDraws = 0;
-            foreach (var parts in partsByIdentity.Values)
+            var outputLayoutParts = new List<string>();
+            foreach (var (identity, parts) in partsByIdentity
+                         .OrderBy(entry => entry.Key, StringComparer.Ordinal))
             {
                 // The existing same-rigid merge happens once per rendered component
                 // instance. If the same WSModel is referenced twice, both instances pay
@@ -2520,9 +2839,18 @@ namespace Editors.KitbasherEditor.Services
                     .Sum(group =>
                         CountCrossRigidVertexLimitedMergeBins(
                             group.Select(part => part.VertexCount)));
-                outputDraws +=
+                var outputBins =
                     CountCrossRigidVertexLimitedMergeBins(
                         parts.Select(part => part.VertexCount));
+                outputDraws += outputBins;
+                outputLayoutParts.Add(string.Join(
+                    ":",
+                    ContentHash(identity),
+                    outputBins,
+                    string.Join(
+                        ",",
+                        parts.Select(part => part.VertexCount)
+                            .OrderBy(count => count))));
             }
 
             return new CrossRigidLodAnalysis(
@@ -2533,7 +2861,8 @@ namespace Editors.KitbasherEditor.Services
                 outputDraws,
                 Math.Max(0, inputDraws - outputDraws),
                 state.ArmyResidencyModel?.Scenario
-                    .GetLodProbability(lodIndex) ?? 0);
+                    .GetLodProbability(lodIndex) ?? 0,
+                ContentHash(string.Join("\u001e", outputLayoutParts)));
         }
 
         private static int CountCrossRigidVertexLimitedMergeBins(
@@ -20815,7 +21144,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "No VMD, WSModel, or RMV2 topology is rewritten by this analysis pass.");
                 sb.AppendLine(
-                    "Generated-asset plans are deduplicated across mutually exclusive visual configurations before structural payload is charged.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it.");
+                sb.AppendLine(
+                    "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
                     "Shared or incompletely discovered structural consumers are duplication-cost diagnostics, not eligibility failures.");
                 sb.AppendLine(
@@ -20825,38 +21156,47 @@ namespace Editors.KitbasherEditor.Services
                     $"Distinct WSModel paths inspected: " +
                     $"{state.CrossRigidAnalysisDirectWsModelCount:N0}");
                 sb.AppendLine(
-                    $"Exact attachment-aware VMD visual configurations inspected: " +
+                    $"Attachment-local co-render configurations inspected: " +
                     $"{state.CrossRigidAnalysisConfigurationCount:N0}");
                 sb.AppendLine(
-                    $"Eligible configuration-group observations before physical-plan dedupe: " +
+                    $"Eligible configuration-group observations before rewrite-plan dedupe: " +
                     $"{state.CrossRigidAnalysisOpportunityObservationCount:N0}");
                 sb.AppendLine(
-                    $"Unique generated-asset physical plans with real draw savings: " +
+                    $"Unique VMD rewrite plans with real draw savings: " +
                     $"{state.CrossRigidMergeAnalysisEntries.Count:N0}");
                 sb.AppendLine(
-                    $"Configuration observations collapsed by physical-plan dedupe: " +
-                    $"{Math.Max(0, state.CrossRigidAnalysisOpportunityObservationCount - state.CrossRigidMergeAnalysisEntries.Count):N0}");
+                    $"Unique VMD-independent generated payloads: " +
+                    $"{state.CrossRigidGeneratedPayloadAnalysisEntries.Count:N0}");
                 sb.AppendLine(
-                    $"Raw cross-rigid draws saved across unique physical plans: " +
-                    $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.Lods.Sum(lod => lod.DrawsSaved)):N0}");
-                sb.AppendLine(
-                    $"LOD-weighted draws saved per fully co-rendered physical plan: " +
-                    $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.Lods.Sum(lod => lod.DrawsSaved * lod.LodProbability)):0.###}");
+                    $"Rewrite plans sharing a generated payload: " +
+                    $"{state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => Math.Max(0, payload.RewritePlanCount - 1)):N0}");
                 sb.AppendLine(
                     $"Scenario-expected battle draw calls eliminated: " +
                     $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.ExpectedArmyDrawCallsEliminated):0.###}");
                 sb.AppendLine(
-                    $"Generated structural vertex payload proxy (charged once per physical plan): " +
-                    $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.GeneratedVertexCount):N0} vertices");
+                    $"Generated structural vertices after cross-VMD payload reuse: " +
+                    $"{state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.GeneratedVertexCount):N0}");
                 sb.AppendLine(
-                    $"Potentially duplicated vertex payload due to retained/unknown source consumers: " +
-                    $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.PotentiallyDuplicatedVertexCount):N0} vertices");
+                    $"Generated geometry payload after cross-VMD reuse: " +
+                    $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.GeneratedGeometryBytes))}");
                 sb.AppendLine(
-                    $"Physical plans with known external structural consumers: " +
-                    $"{state.CrossRigidMergeAnalysisEntries.Count(entry => entry.ExternalStructuralConsumers.Length != 0):N0}");
+                    $"Potentially duplicated geometry payload due to retained/unknown source consumers: " +
+                    $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.PotentiallyDuplicatedGeometryBytes))}");
                 sb.AppendLine(
-                    $"Physical plans with incomplete consumer discovery: " +
-                    $"{state.CrossRigidMergeAnalysisEntries.Count(entry => !entry.ConsumerDiscoveryComplete):N0}");
+                    $"Scenario-estimated resident generated geometry payload: " +
+                    $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.ExpectedResidentGeneratedGeometryBytes))}");
+                sb.AppendLine(
+                    $"Scenario-estimated displaced source geometry residency credit (strict lower bound): " +
+                    $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.ExpectedResidentDisplacedSourceGeometryBytes))}");
+                sb.AppendLine(
+                    $"Scenario-estimated net generated geometry residency: " +
+                    $"{FormatMiB(state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(payload => payload.ExpectedResidentGeneratedGeometryBytes - payload.ExpectedResidentDisplacedSourceGeometryBytes))}");
+                sb.AppendLine(
+                    $"Generated payloads with known external structural consumers: " +
+                    $"{state.CrossRigidGeneratedPayloadAnalysisEntries.Count(payload => payload.ExternalStructuralConsumers.Length != 0):N0}");
+                sb.AppendLine(
+                    $"Generated payloads with incomplete consumer discovery: " +
+                    $"{state.CrossRigidGeneratedPayloadAnalysisEntries.Count(payload => !payload.ConsumerDiscoveryComplete):N0}");
                 sb.AppendLine(
                     $"Cross-rigid analysis blockers: " +
                     $"{state.CrossRigidAnalysisBlockerCounts.Values.Sum():N0}");
@@ -20908,46 +21248,49 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 const int maxCrossRigidReportEntries = 40;
-                if (state.CrossRigidMergeAnalysisEntries.Count != 0)
+                if (state.CrossRigidGeneratedPayloadAnalysisEntries.Count != 0)
                 {
-                    sb.AppendLine("Top cross-rigid physical plans:");
-                    foreach (var entry in state.CrossRigidMergeAnalysisEntries
-                                 .OrderByDescending(
-                                     item =>
-                                         item.ExpectedArmyDrawCallsEliminated)
-                                 .ThenByDescending(
-                                     item =>
-                                         item.Lods.Sum(lod => lod.DrawsSaved))
-                                 .ThenBy(
-                                     item => item.VmdPath,
-                                     StringComparer.OrdinalIgnoreCase)
+                    sb.AppendLine("Top cross-rigid generated payloads:");
+                    foreach (var payload in
+                             state.CrossRigidGeneratedPayloadAnalysisEntries
+                                 .OrderByDescending(item =>
+                                     state.CrossRigidMergeAnalysisEntries
+                                         .Where(plan =>
+                                             plan.GeneratedPayloadId.Equals(
+                                                 item.GeneratedPayloadId,
+                                                 StringComparison.Ordinal))
+                                         .Sum(plan =>
+                                             plan.ExpectedArmyDrawCallsEliminated))
+                                 .ThenByDescending(item =>
+                                     item.GeneratedGeometryBytes)
                                  .Take(maxCrossRigidReportEntries))
                     {
+                        var payloadPlans =
+                            state.CrossRigidMergeAnalysisEntries
+                                .Where(plan =>
+                                    plan.GeneratedPayloadId.Equals(
+                                        payload.GeneratedPayloadId,
+                                        StringComparison.Ordinal))
+                                .ToArray();
+                        var expectedDrawSavings = payloadPlans.Sum(
+                            plan =>
+                                plan.ExpectedArmyDrawCallsEliminated);
                         sb.AppendLine(
-                            $"  {entry.VmdPath}: plan={entry.PlanId}, " +
-                            $"aggregatedConfigurationProbability=" +
-                            $"{entry.AggregatedConfigurationProbability:0.######}, " +
-                            $"contributingConfigurations=" +
-                            $"{entry.ContributingConfigurationCount:N0}, " +
-                            $"attachment={entry.AttachmentIdentity}, " +
-                            $"instances={entry.SourceInstances.Length}, " +
-                            $"rigids={entry.RigidPaths.Length}, " +
-                            $"expectedBattleDrawsSaved=" +
-                            $"{entry.ExpectedArmyDrawCallsEliminated:0.###}, " +
-                            $"generatedVertices=" +
-                            $"{entry.GeneratedVertexCount:N0}, " +
-                            $"duplicatedVertices=" +
-                            $"{entry.PotentiallyDuplicatedVertexCount:N0}, " +
-                            $"externalConsumers=" +
-                            $"{entry.ExternalStructuralConsumers.Length}, " +
+                            $"  payload={payload.GeneratedPayloadId}: rewritePlans=" +
+                            $"{payload.RewritePlanCount:N0}, VMDs={payload.VmdCount:N0}, " +
+                            $"expectedBattleDrawsSaved={expectedDrawSavings:0.###}, " +
+                            $"generatedGeometry={FormatMiB(payload.GeneratedGeometryBytes)}, " +
+                            $"residentProbability={payload.ExpectedBattleResidentProbability:0.######}, " +
+                            $"expectedResidentGenerated={FormatMiB(payload.ExpectedResidentGeneratedGeometryBytes)}, " +
+                            $"expectedResidentDisplaced={FormatMiB(payload.ExpectedResidentDisplacedSourceGeometryBytes)}, " +
+                            $"externalConsumers={payload.ExternalStructuralConsumers.Length}, " +
                             $"consumerDiscovery=" +
-                            $"{(entry.ConsumerDiscoveryComplete ? "COMPLETE" : "PARTIAL")}");
+                            $"{(payload.ConsumerDiscoveryComplete ? "COMPLETE" : "PARTIAL")}");
                         sb.AppendLine(
-                            $"    WSModel instances: " +
-                            $"{string.Join(", ", entry.SourceInstances.Select(instance => $"{instance.WsModelPath} @ {instance.AttachmentIdentity}"))}");
+                            $"    WSModels: {string.Join(", ", payload.SourceWsModelPaths)}");
                         sb.AppendLine(
-                            $"    Rigids: {string.Join(", ", entry.RigidPaths)}");
-                        foreach (var lod in entry.Lods)
+                            $"    Rigids: {string.Join(", ", payload.RigidPaths)}");
+                        foreach (var lod in payload.Lods)
                         {
                             sb.AppendLine(
                                 $"    LOD {lod.LodIndex}: " +
@@ -20956,29 +21299,42 @@ namespace Editors.KitbasherEditor.Services
                                 $"{lod.InputDrawsAfterSameRigidMerge}->" +
                                 $"{lod.OutputDrawsAfterCrossRigidMerge}, " +
                                 $"saved={lod.DrawsSaved}, " +
-                                $"scenarioProbability=" +
-                                $"{lod.LodProbability:0.###}");
+                                $"scenarioProbability={lod.LodProbability:0.###}");
                         }
 
-                        if (entry.ExternalStructuralConsumers.Length != 0)
+                        foreach (var plan in payloadPlans
+                                     .OrderByDescending(item =>
+                                         item.ExpectedArmyDrawCallsEliminated)
+                                     .Take(8))
+                        {
+                            sb.AppendLine(
+                                $"    rewrite: {plan.VmdPath} @ " +
+                                $"{plan.AttachmentIdentity}, probability=" +
+                                $"{plan.AggregatedConfigurationProbability:0.######}, " +
+                                $"expectedDrawsSaved=" +
+                                $"{plan.ExpectedArmyDrawCallsEliminated:0.###}");
+                        }
+
+                        if (payload.ExternalStructuralConsumers.Length != 0)
                         {
                             sb.AppendLine(
                                 $"    External consumers: " +
-                                $"{string.Join(", ", entry.ExternalStructuralConsumers.Take(12))}" +
-                                $"{(entry.ExternalStructuralConsumers.Length > 12 ? ", ..." : string.Empty)}");
+                                $"{string.Join(", ", payload.ExternalStructuralConsumers.Take(12))}" +
+                                $"{(payload.ExternalStructuralConsumers.Length > 12 ? ", ..." : string.Empty)}");
                         }
                     }
 
-                    if (state.CrossRigidMergeAnalysisEntries.Count >
+                    if (state.CrossRigidGeneratedPayloadAnalysisEntries.Count >
                         maxCrossRigidReportEntries)
                     {
                         sb.AppendLine(
                             $"  ... " +
-                            $"{state.CrossRigidMergeAnalysisEntries.Count - maxCrossRigidReportEntries:N0} more physical plan(s)");
+                            $"{state.CrossRigidGeneratedPayloadAnalysisEntries.Count - maxCrossRigidReportEntries:N0} more generated payload(s)");
                     }
                 }
             }
 
+            if (state.SourceBcnResidency != null && state.OutputBcnResidency != null)
             if (state.SourceBcnResidency != null && state.OutputBcnResidency != null)
             {
                 var sourceBcn = state.SourceBcnResidency;
@@ -23093,11 +23449,25 @@ namespace Editors.KitbasherEditor.Services
 
         private sealed record CrossRigidVisualConfiguration(
             double Probability,
+            string AttachmentIdentity,
             IReadOnlyList<CrossRigidVisualInstance> Instances);
 
-        private sealed record CrossRigidVisualExpansionResult(
-            IReadOnlyList<CrossRigidVisualConfiguration> Configurations,
-            string? FailureReason);
+        private sealed record CrossRigidAttachmentLocalExpansionResult(
+            IReadOnlyDictionary<
+                string,
+                IReadOnlyList<CrossRigidVisualConfiguration>>
+                ConfigurationsByAttachment,
+            string? FailureReason)
+        {
+            public static CrossRigidAttachmentLocalExpansionResult Failed(
+                string reason)
+                => new(
+                    new Dictionary<
+                        string,
+                        IReadOnlyList<CrossRigidVisualConfiguration>>(
+                        StringComparer.Ordinal),
+                    reason);
+        }
 
         private sealed record CrossRigidAnalysisComponent(
             string VmdPath,
@@ -23127,72 +23497,88 @@ namespace Editors.KitbasherEditor.Services
             int InputDrawsAfterSameRigidMerge,
             int OutputDrawsAfterCrossRigidMerge,
             int DrawsSaved,
-            double LodProbability);
+            double LodProbability,
+            string OutputLayoutSignature);
+
+        private sealed record CrossRigidSourceGeometryComponent(
+            string WsModelPath,
+            string RigidPath,
+            long VertexCount,
+            long GeometryBytes);
 
         private sealed class CrossRigidMergePlanAccumulator
         {
             public CrossRigidMergePlanAccumulator(
-                string planId,
+                string rewritePlanId,
+                string generatedPayloadId,
+                string generatedPayloadKey,
                 string vmdPath,
                 string attachmentIdentity,
                 CrossRigidVisualInstance[] sourceInstances,
+                CrossRigidSourceGeometryComponent[] sourceGeometry,
                 string[] rigidPaths,
                 CrossRigidLodAnalysis[] lods,
                 double aggregatedConfigurationProbability,
-                int contributingConfigurationCount,
-                long generatedVertexCount,
-                long potentiallyDuplicatedVertexCount,
-                string[] externalStructuralConsumers,
-                bool consumerDiscoveryComplete)
+                int contributingConfigurationCount)
             {
-                PlanId = planId;
+                RewritePlanId = rewritePlanId;
+                GeneratedPayloadId = generatedPayloadId;
+                GeneratedPayloadKey = generatedPayloadKey;
                 VmdPath = vmdPath;
                 AttachmentIdentity = attachmentIdentity;
                 SourceInstances = sourceInstances;
+                SourceGeometry = sourceGeometry;
                 RigidPaths = rigidPaths;
                 Lods = lods;
                 AggregatedConfigurationProbability =
                     aggregatedConfigurationProbability;
                 ContributingConfigurationCount =
                     contributingConfigurationCount;
-                GeneratedVertexCount = generatedVertexCount;
-                PotentiallyDuplicatedVertexCount =
-                    potentiallyDuplicatedVertexCount;
-                ExternalStructuralConsumers =
-                    externalStructuralConsumers;
-                ConsumerDiscoveryComplete =
-                    consumerDiscoveryComplete;
             }
 
-            public string PlanId { get; }
+            public string RewritePlanId { get; }
+            public string GeneratedPayloadId { get; }
+            public string GeneratedPayloadKey { get; }
             public string VmdPath { get; }
             public string AttachmentIdentity { get; }
             public CrossRigidVisualInstance[] SourceInstances { get; }
+            public CrossRigidSourceGeometryComponent[] SourceGeometry { get; }
             public string[] RigidPaths { get; }
             public CrossRigidLodAnalysis[] Lods { get; }
             public double AggregatedConfigurationProbability { get; set; }
             public int ContributingConfigurationCount { get; set; }
-            public long GeneratedVertexCount { get; }
-            public long PotentiallyDuplicatedVertexCount { get; }
-            public string[] ExternalStructuralConsumers { get; }
-            public bool ConsumerDiscoveryComplete { get; }
         }
 
         private sealed record CrossRigidMergeAnalysisEntry(
-            string PlanId,
+            string RewritePlanId,
+            string GeneratedPayloadId,
             string VmdPath,
             double AggregatedConfigurationProbability,
             int ContributingConfigurationCount,
             string AttachmentIdentity,
             CrossRigidVisualInstance[] SourceInstances,
+            CrossRigidSourceGeometryComponent[] SourceGeometry,
             string[] RigidPaths,
             CrossRigidLodAnalysis[] Lods,
-            double ExpectedArmyDrawCallsEliminated,
+            double ExpectedArmyDrawCallsEliminated);
+
+        private sealed record CrossRigidGeneratedPayloadAnalysisEntry(
+            string GeneratedPayloadId,
+            int RewritePlanCount,
+            int VmdCount,
+            string[] SourceWsModelPaths,
+            string[] RigidPaths,
+            CrossRigidLodAnalysis[] Lods,
             long GeneratedVertexCount,
-            long PotentiallyDuplicatedVertexCount,
+            long GeneratedGeometryBytes,
+            long PotentiallyDuplicatedGeometryBytes,
+            double ExpectedBattleResidentProbability,
+            double ExpectedResidentGeneratedGeometryBytes,
+            double ExpectedResidentDisplacedSourceGeometryBytes,
             string[] ExternalStructuralConsumers,
             bool ConsumerDiscoveryComplete);
 
+        private sealed record ArmyResidencyModel(
         private sealed record ArmyResidencyModel(
             IReadOnlyDictionary<Wh3ArmyUnitCategory, HashSet<string>> UnitsByCategory,
             IReadOnlyDictionary<
@@ -23276,6 +23662,8 @@ namespace Editors.KitbasherEditor.Services
             public int GameplayTraversalContainerResolutionScans { get; set; }
             public GameplayMeshDependencyIndex? GameplayMeshDependencyIndex { get; set; }
             public List<CrossRigidMergeAnalysisEntry> CrossRigidMergeAnalysisEntries { get; } = [];
+            public List<CrossRigidGeneratedPayloadAnalysisEntry>
+                CrossRigidGeneratedPayloadAnalysisEntries { get; } = [];
             public Dictionary<string, int> CrossRigidAnalysisBlockerCounts { get; } =
                 new(StringComparer.Ordinal);
             public Dictionary<string, List<string>> CrossRigidAnalysisBlockerExamples { get; } =
