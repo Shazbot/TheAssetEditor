@@ -2139,7 +2139,7 @@ namespace Editors.KitbasherEditor.Services
             reason = string.Empty;
 
             var ownerSeparator = token.IndexOf(
-                ':',
+                ":",
                 StringComparison.Ordinal);
             var slotMarker = token.LastIndexOf(
                 "/slot=",
