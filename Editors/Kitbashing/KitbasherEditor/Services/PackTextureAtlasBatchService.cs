@@ -1768,6 +1768,10 @@ namespace Editors.KitbasherEditor.Services
                             existingPlan.AggregatedConfigurationProbability +=
                                 configuration.Probability;
                             existingPlan.ContributingConfigurationCount++;
+                            existingPlan.RewriteOccurrenceSets.AddRange(
+                                BuildCrossRigidRewriteOccurrenceSets(
+                                    configuration,
+                                    group));
                             state.CrossRigidAnalysisOpportunityObservationCount++;
                             continue;
                         }
@@ -1813,6 +1817,20 @@ namespace Editors.KitbasherEditor.Services
                                 instance => instance.WsModelPath,
                                 StringComparer.OrdinalIgnoreCase)
                             .ToArray();
+                        var rewriteOccurrenceSets =
+                            BuildCrossRigidRewriteOccurrenceSets(
+                                configuration,
+                                group);
+                        if (rewriteOccurrenceSets.Count == 0)
+                        {
+                            rejectedPlanKeys.Add(rewritePlanKey);
+                            RecordCrossRigidAnalysisBlocker(
+                                state,
+                                "Cross-rigid rewrite provenance could not be retained",
+                                $"{vmdPath} [{configuration.AttachmentIdentity}]");
+                            continue;
+                        }
+
                         var generatedPayloadKey =
                             BuildCrossRigidGeneratedPayloadKey(
                                 sourceInstances,
@@ -1840,6 +1858,7 @@ namespace Editors.KitbasherEditor.Services
                                         StringComparer.OrdinalIgnoreCase)
                                     .ToArray(),
                                 lodAnalyses.ToArray(),
+                                rewriteOccurrenceSets.ToList(),
                                 configuration.Probability,
                                 1);
                         state.CrossRigidAnalysisOpportunityObservationCount++;
@@ -1862,6 +1881,8 @@ namespace Editors.KitbasherEditor.Services
                         plan.ContributingConfigurationCount,
                         plan.AttachmentIdentity,
                         plan.SourceInstances,
+                        MergeCrossRigidRewriteOccurrenceSets(
+                            plan.RewriteOccurrenceSets),
                         plan.SourceGeometry,
                         plan.RigidPaths,
                         plan.Lods,
@@ -1891,6 +1912,97 @@ namespace Editors.KitbasherEditor.Services
                         .OrderBy(
                             path => path,
                             StringComparer.OrdinalIgnoreCase)));
+
+        private static IReadOnlyList<CrossRigidRewriteOccurrenceSet>
+            BuildCrossRigidRewriteOccurrenceSets(
+                CrossRigidVisualConfiguration configuration,
+                IReadOnlyList<CrossRigidAnalysisInstanceComponent> group)
+        {
+            var expectedCounts = group
+                .Select(item => Normalize(item.Instance.WsModelPath))
+                .GroupBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    paths => paths.Key,
+                    paths => paths.Count(),
+                    StringComparer.OrdinalIgnoreCase);
+            var result = new List<CrossRigidRewriteOccurrenceSet>();
+
+            foreach (var occurrenceSet in configuration.OccurrenceSets)
+            {
+                var selected = occurrenceSet.Instances
+                    .Where(instance =>
+                        expectedCounts.ContainsKey(
+                            Normalize(instance.WsModelPath)))
+                    .ToArray();
+                var actualCounts = selected
+                    .Select(instance =>
+                        Normalize(instance.WsModelPath))
+                    .GroupBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        paths => paths.Key,
+                        paths => paths.Count(),
+                        StringComparer.OrdinalIgnoreCase);
+                if (actualCounts.Count != expectedCounts.Count ||
+                    expectedCounts.Any(entry =>
+                        !actualCounts.TryGetValue(
+                            entry.Key,
+                            out var actualCount) ||
+                        actualCount != entry.Value))
+                {
+                    continue;
+                }
+
+                result.Add(
+                    new CrossRigidRewriteOccurrenceSet(
+                        occurrenceSet.Probability,
+                        selected
+                            .OrderBy(
+                                instance =>
+                                    BuildCrossRigidOccurrenceProvenanceSignature(
+                                        [instance]),
+                                StringComparer.Ordinal)
+                            .ToArray()));
+            }
+
+            return MergeCrossRigidRewriteOccurrenceSets(result);
+        }
+
+        private static CrossRigidRewriteOccurrenceSet[]
+            MergeCrossRigidRewriteOccurrenceSets(
+                IEnumerable<CrossRigidRewriteOccurrenceSet> occurrenceSets)
+        {
+            var merged = new Dictionary<
+                string,
+                CrossRigidRewriteOccurrenceSet>(
+                StringComparer.Ordinal);
+            foreach (var occurrenceSet in occurrenceSets)
+            {
+                if (occurrenceSet.Probability <= 0)
+                    continue;
+
+                var key =
+                    BuildCrossRigidOccurrenceProvenanceSignature(
+                        occurrenceSet.SourceInstances);
+                if (merged.TryGetValue(key, out var existing))
+                {
+                    merged[key] = existing with
+                    {
+                        Probability =
+                            existing.Probability +
+                            occurrenceSet.Probability,
+                    };
+                }
+                else
+                {
+                    merged[key] = occurrenceSet;
+                }
+            }
+
+            return merged
+                .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                .Select(entry => entry.Value)
+                .ToArray();
+        }
 
         private static string BuildCrossRigidGeneratedPayloadKey(
             IReadOnlyList<CrossRigidVisualInstance> sourceInstances,
@@ -3478,7 +3590,10 @@ namespace Editors.KitbasherEditor.Services
                     ExpandCrossRigidAttachmentLocalConfigurations(
                         state,
                         vmd,
+                        vmdPath,
                         "<root>",
+                        "<always>",
+                        "/VARIANT_MESH",
                         cache,
                         visiting);
                 cache[vmdPath] = result;
@@ -3494,7 +3609,10 @@ namespace Editors.KitbasherEditor.Services
             ExpandCrossRigidAttachmentLocalConfigurations(
                 BatchState state,
                 VariantMesh mesh,
+                string currentVmdPath,
                 string attachmentIdentity,
+                string activationSignature,
+                string xmlPath,
                 Dictionary<
                     string,
                     CrossRigidAttachmentLocalExpansionResult> cache,
@@ -3516,29 +3634,44 @@ namespace Editors.KitbasherEditor.Services
                         GetGameplayTraversalContainers(state),
                         modelPath) != null)
                 {
+                    var instance = new CrossRigidVisualInstance(
+                        modelPath,
+                        attachmentIdentity,
+                        Normalize(currentVmdPath),
+                        xmlPath,
+                        activationSignature,
+                        [],
+                        !string.IsNullOrWhiteSpace(mesh.ImposterModel) ||
+                        !string.IsNullOrWhiteSpace(mesh.DecalDiffuse) ||
+                        !string.IsNullOrWhiteSpace(mesh.DecalNormal) ||
+                        (mesh.MetaDataList?.Count ?? 0) != 0);
                     result[attachmentIdentity] =
                     [
                         new CrossRigidVisualConfiguration(
                             1.0,
                             attachmentIdentity,
+                            [instance],
                             [
-                                new CrossRigidVisualInstance(
-                                    modelPath,
-                                    attachmentIdentity),
+                                new CrossRigidVisualOccurrenceSet(
+                                    1.0,
+                                    [instance]),
                             ]),
                     ];
                 }
             }
 
-            foreach (var slot in mesh.ChildSlots ?? [])
+            var slots = mesh.ChildSlots ?? [];
+            for (var slotIndex = 0;
+                 slotIndex < slots.Count;
+                 slotIndex++)
             {
+                var slot = slots[slotIndex];
                 var slotProbability =
                     ParseVmdSlotProbability(slot.Probability);
-                var childMeshCount = slot.ChildMeshes?.Count ?? 0;
-                var childReferenceCount =
-                    slot.ChildReferences?.Count ?? 0;
+                var childMeshes = slot.ChildMeshes ?? [];
+                var childReferences = slot.ChildReferences ?? [];
                 var alternativeCount =
-                    childMeshCount + childReferenceCount;
+                    childMeshes.Count + childReferences.Count;
                 if (alternativeCount == 0 ||
                     slotProbability <= 0)
                 {
@@ -3550,18 +3683,36 @@ namespace Editors.KitbasherEditor.Services
                         attachmentIdentity,
                         mesh.use_different_attach_point_parts,
                         slot);
+                var isBranching =
+                    slotProbability <
+                        1.0 -
+                        AtlasValueGateExpectedDrawEpsilon ||
+                    alternativeCount > 1;
                 var alternativeMaps = new List<
                     IReadOnlyDictionary<
                         string,
                         IReadOnlyList<CrossRigidVisualConfiguration>>>();
 
-                foreach (var child in slot.ChildMeshes ?? [])
+                for (var childIndex = 0;
+                     childIndex < childMeshes.Count;
+                     childIndex++)
                 {
+                    var childXmlPath =
+                        $"{xmlPath}/SLOT[{slotIndex + 1}]/VARIANT_MESH[{childIndex + 1}]";
+                    var childActivationSignature =
+                        isBranching
+                            ? AppendCrossRigidActivationToken(
+                                activationSignature,
+                                $"{currentVmdPath}:{xmlPath}/slot={slotIndex + 1}/mesh={childIndex + 1}")
+                            : activationSignature;
                     var childExpansion =
                         ExpandCrossRigidAttachmentLocalConfigurations(
                             state,
-                            child,
+                            childMeshes[childIndex],
+                            currentVmdPath,
                             childAttachmentIdentity,
+                            childActivationSignature,
+                            childXmlPath,
                             cache,
                             visiting);
                     if (childExpansion.FailureReason != null)
@@ -3570,18 +3721,31 @@ namespace Editors.KitbasherEditor.Services
                         childExpansion.ConfigurationsByAttachment);
                 }
 
-                foreach (var reference in slot.ChildReferences ?? [])
+                for (var referenceIndex = 0;
+                     referenceIndex < childReferences.Count;
+                     referenceIndex++)
                 {
+                    var reference = childReferences[referenceIndex];
                     if (string.IsNullOrWhiteSpace(reference.Reference))
                     {
                         return CrossRigidAttachmentLocalExpansionResult.Failed(
                             "Cross-rigid child VMD reference is empty");
                     }
 
+                    var referencedVmdPath =
+                        Normalize(reference.Reference);
+                    var referenceXmlPath =
+                        $"{xmlPath}/SLOT[{slotIndex + 1}]/VARIANT_MESH_REFERENCE[{referenceIndex + 1}]";
+                    var childActivationSignature =
+                        isBranching
+                            ? AppendCrossRigidActivationToken(
+                                activationSignature,
+                                $"{currentVmdPath}:{xmlPath}/slot={slotIndex + 1}/ref={referenceIndex + 1}")
+                            : activationSignature;
                     var childExpansion =
                         GetCrossRigidAttachmentLocalConfigurationsForVmd(
                             state,
-                            reference.Reference,
+                            referencedVmdPath,
                             cache,
                             visiting);
                     if (childExpansion.FailureReason != null)
@@ -3590,7 +3754,12 @@ namespace Editors.KitbasherEditor.Services
                     alternativeMaps.Add(
                         RebaseCrossRigidAttachmentLocalConfigurations(
                             childExpansion.ConfigurationsByAttachment,
-                            childAttachmentIdentity));
+                            childAttachmentIdentity,
+                            childActivationSignature,
+                            new CrossRigidVmdReferenceHop(
+                                Normalize(currentVmdPath),
+                                referenceXmlPath,
+                                referencedVmdPath)));
                 }
 
                 var affectedAttachments = alternativeMaps
@@ -3604,11 +3773,18 @@ namespace Editors.KitbasherEditor.Services
                         new List<CrossRigidVisualConfiguration>();
                     if (slotProbability < 1.0)
                     {
+                        var absentProbability =
+                            1.0 - slotProbability;
                         slotConfigurations.Add(
                             new CrossRigidVisualConfiguration(
-                                1.0 - slotProbability,
+                                absentProbability,
                                 affectedAttachment,
-                                []));
+                                [],
+                                [
+                                    new CrossRigidVisualOccurrenceSet(
+                                        absentProbability,
+                                        []),
+                                ]));
                     }
 
                     var alternativeWeight =
@@ -3622,12 +3798,9 @@ namespace Editors.KitbasherEditor.Services
                             slotConfigurations.AddRange(
                                 alternativeConfigurations.Select(
                                     configuration =>
-                                        configuration with
-                                        {
-                                            Probability =
-                                                configuration.Probability *
-                                                alternativeWeight,
-                                        }));
+                                        ScaleCrossRigidVisualConfiguration(
+                                            configuration,
+                                            alternativeWeight)));
                         }
                         else
                         {
@@ -3635,7 +3808,12 @@ namespace Editors.KitbasherEditor.Services
                                 new CrossRigidVisualConfiguration(
                                     alternativeWeight,
                                     affectedAttachment,
-                                    []));
+                                    [],
+                                    [
+                                        new CrossRigidVisualOccurrenceSet(
+                                            alternativeWeight,
+                                            []),
+                                    ]));
                         }
                     }
 
@@ -3653,7 +3831,12 @@ namespace Editors.KitbasherEditor.Services
                                     new CrossRigidVisualConfiguration(
                                         1.0,
                                         affectedAttachment,
-                                        []),
+                                        [],
+                                        [
+                                            new CrossRigidVisualOccurrenceSet(
+                                                1.0,
+                                                []),
+                                        ]),
                                 ];
                     var combined =
                         CombineCrossRigidAttachmentLocalConfigurations(
@@ -3690,7 +3873,9 @@ namespace Editors.KitbasherEditor.Services
                     string,
                     IReadOnlyList<CrossRigidVisualConfiguration>>
                     configurationsByAttachment,
-                string attachmentIdentity)
+                string attachmentIdentity,
+                string activationSignaturePrefix,
+                CrossRigidVmdReferenceHop referenceHop)
         {
             var rebased = new Dictionary<
                 string,
@@ -3705,19 +3890,34 @@ namespace Editors.KitbasherEditor.Services
                         attachmentIdentity);
                 rebased[rebasedAttachment] = configurations
                     .Select(configuration =>
-                        new CrossRigidVisualConfiguration(
+                    {
+                        var instances = configuration.Instances
+                            .Select(instance =>
+                                RebaseCrossRigidVisualInstance(
+                                    instance,
+                                    attachmentIdentity,
+                                    activationSignaturePrefix,
+                                    referenceHop))
+                            .ToArray();
+                        var occurrenceSets = configuration.OccurrenceSets
+                            .Select(set =>
+                                new CrossRigidVisualOccurrenceSet(
+                                    set.Probability,
+                                    set.Instances
+                                        .Select(instance =>
+                                            RebaseCrossRigidVisualInstance(
+                                                instance,
+                                                attachmentIdentity,
+                                                activationSignaturePrefix,
+                                                referenceHop))
+                                        .ToArray()))
+                            .ToArray();
+                        return new CrossRigidVisualConfiguration(
                             configuration.Probability,
                             rebasedAttachment,
-                            configuration.Instances
-                                .Select(instance =>
-                                    instance with
-                                    {
-                                        AttachmentIdentity =
-                                            RebaseCrossRigidAttachmentIdentity(
-                                                instance.AttachmentIdentity,
-                                                attachmentIdentity),
-                                    })
-                                .ToArray()))
+                            instances,
+                            occurrenceSets);
+                    })
                     .ToArray();
             }
 
@@ -3749,6 +3949,27 @@ namespace Editors.KitbasherEditor.Services
                     var instances = left.Instances
                         .Concat(right.Instances)
                         .ToArray();
+                    var occurrenceSets = new List<
+                        CrossRigidVisualOccurrenceSet>();
+                    foreach (var leftSet in left.OccurrenceSets)
+                    {
+                        foreach (var rightSet in right.OccurrenceSets)
+                        {
+                            var occurrenceProbability =
+                                leftSet.Probability *
+                                rightSet.Probability;
+                            if (occurrenceProbability <= 0)
+                                continue;
+
+                            occurrenceSets.Add(
+                                new CrossRigidVisualOccurrenceSet(
+                                    occurrenceProbability,
+                                    leftSet.Instances
+                                        .Concat(rightSet.Instances)
+                                        .ToArray()));
+                        }
+                    }
+
                     var key =
                         BuildCrossRigidRenderedConfigurationSignature(
                             instances);
@@ -3758,6 +3979,10 @@ namespace Editors.KitbasherEditor.Services
                         {
                             Probability =
                                 existing.Probability + probability,
+                            OccurrenceSets =
+                                MergeCrossRigidVisualOccurrenceSets(
+                                    existing.OccurrenceSets
+                                        .Concat(occurrenceSets)),
                         };
                     }
                     else
@@ -3766,7 +3991,9 @@ namespace Editors.KitbasherEditor.Services
                             new CrossRigidVisualConfiguration(
                                 probability,
                                 attachmentIdentity,
-                                instances);
+                                instances,
+                                MergeCrossRigidVisualOccurrenceSets(
+                                    occurrenceSets));
                         if (merged.Count >
                             MaxExactVisualConfigurations)
                         {
@@ -3804,16 +4031,155 @@ namespace Editors.KitbasherEditor.Services
                         Probability =
                             existing.Probability +
                             configuration.Probability,
+                        OccurrenceSets =
+                            MergeCrossRigidVisualOccurrenceSets(
+                                existing.OccurrenceSets.Concat(
+                                    configuration.OccurrenceSets)),
                     };
                 }
                 else
                 {
-                    merged[key] = configuration;
+                    merged[key] = configuration with
+                    {
+                        OccurrenceSets =
+                            MergeCrossRigidVisualOccurrenceSets(
+                                configuration.OccurrenceSets),
+                    };
                 }
             }
 
             return merged.Values.ToList();
         }
+
+        private static CrossRigidVisualConfiguration
+            ScaleCrossRigidVisualConfiguration(
+                CrossRigidVisualConfiguration configuration,
+                double factor)
+            => new(
+                configuration.Probability * factor,
+                configuration.AttachmentIdentity,
+                configuration.Instances,
+                configuration.OccurrenceSets
+                    .Select(set =>
+                        new CrossRigidVisualOccurrenceSet(
+                            set.Probability * factor,
+                            set.Instances))
+                    .ToArray());
+
+        private static CrossRigidVisualInstance
+            RebaseCrossRigidVisualInstance(
+                CrossRigidVisualInstance instance,
+                string attachmentIdentity,
+                string activationSignaturePrefix,
+                CrossRigidVmdReferenceHop referenceHop)
+            => instance with
+            {
+                AttachmentIdentity =
+                    RebaseCrossRigidAttachmentIdentity(
+                        instance.AttachmentIdentity,
+                        attachmentIdentity),
+                ActivationSignature =
+                    RebaseCrossRigidActivationSignature(
+                        instance.ActivationSignature,
+                        activationSignaturePrefix),
+                ReferenceChain =
+                    new[] { referenceHop }
+                        .Concat(instance.ReferenceChain)
+                        .ToArray(),
+            };
+
+        private static string AppendCrossRigidActivationToken(
+            string activationSignature,
+            string token)
+            => activationSignature.Equals(
+                    "<always>",
+                    StringComparison.Ordinal)
+                ? token
+                : string.Join(
+                    "\u001f",
+                    activationSignature,
+                    token);
+
+        private static string RebaseCrossRigidActivationSignature(
+            string relativeSignature,
+            string activationSignaturePrefix)
+        {
+            if (relativeSignature.Equals(
+                    "<always>",
+                    StringComparison.Ordinal))
+            {
+                return activationSignaturePrefix;
+            }
+
+            if (activationSignaturePrefix.Equals(
+                    "<always>",
+                    StringComparison.Ordinal))
+            {
+                return relativeSignature;
+            }
+
+            return string.Join(
+                "\u001f",
+                activationSignaturePrefix,
+                relativeSignature);
+        }
+
+        private static IReadOnlyList<CrossRigidVisualOccurrenceSet>
+            MergeCrossRigidVisualOccurrenceSets(
+                IEnumerable<CrossRigidVisualOccurrenceSet> occurrenceSets)
+        {
+            var merged = new Dictionary<
+                string,
+                CrossRigidVisualOccurrenceSet>(
+                StringComparer.Ordinal);
+            foreach (var occurrenceSet in occurrenceSets)
+            {
+                if (occurrenceSet.Probability <= 0)
+                    continue;
+
+                var key =
+                    BuildCrossRigidOccurrenceProvenanceSignature(
+                        occurrenceSet.Instances);
+                if (merged.TryGetValue(key, out var existing))
+                {
+                    merged[key] = existing with
+                    {
+                        Probability =
+                            existing.Probability +
+                            occurrenceSet.Probability,
+                    };
+                }
+                else
+                {
+                    merged[key] = occurrenceSet;
+                }
+            }
+
+            return merged.Values
+                .OrderBy(
+                    set =>
+                        BuildCrossRigidOccurrenceProvenanceSignature(
+                            set.Instances),
+                    StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        private static string BuildCrossRigidOccurrenceProvenanceSignature(
+            IEnumerable<CrossRigidVisualInstance> instances)
+            => string.Join(
+                "\u001e",
+                instances
+                    .Select(instance => string.Join(
+                        "\u001f",
+                        instance.WsModelPath,
+                        instance.DefiningVmdPath,
+                        instance.ModelXmlPath,
+                        instance.ActivationSignature,
+                        string.Join(
+                            "\u001d",
+                            instance.ReferenceChain.Select(hop =>
+                                $"{hop.OwnerVmdPath}|{hop.ReferenceXmlPath}|{hop.ReferencedVmdPath}"))))
+                    .OrderBy(value => value, StringComparer.Ordinal));
 
         private static string BuildCrossRigidRenderedConfigurationSignature(
             IEnumerable<CrossRigidVisualInstance> instances)
@@ -25068,14 +25434,29 @@ namespace Editors.KitbasherEditor.Services
             double Probability,
             IReadOnlyDictionary<string, int> WsModelOccurrences);
 
+        private sealed record CrossRigidVmdReferenceHop(
+            string OwnerVmdPath,
+            string ReferenceXmlPath,
+            string ReferencedVmdPath);
+
         private sealed record CrossRigidVisualInstance(
             string WsModelPath,
-            string AttachmentIdentity);
+            string AttachmentIdentity,
+            string DefiningVmdPath,
+            string ModelXmlPath,
+            string ActivationSignature,
+            CrossRigidVmdReferenceHop[] ReferenceChain,
+            bool HasLocalModelModifiers);
+
+        private sealed record CrossRigidVisualOccurrenceSet(
+            double Probability,
+            CrossRigidVisualInstance[] Instances);
 
         private sealed record CrossRigidVisualConfiguration(
             double Probability,
             string AttachmentIdentity,
-            IReadOnlyList<CrossRigidVisualInstance> Instances);
+            IReadOnlyList<CrossRigidVisualInstance> Instances,
+            IReadOnlyList<CrossRigidVisualOccurrenceSet> OccurrenceSets);
 
         private sealed record CrossRigidAttachmentLocalExpansionResult(
             IReadOnlyDictionary<
@@ -25125,6 +25506,10 @@ namespace Editors.KitbasherEditor.Services
             double LodProbability,
             string OutputLayoutSignature);
 
+        private sealed record CrossRigidRewriteOccurrenceSet(
+            double Probability,
+            CrossRigidVisualInstance[] SourceInstances);
+
         private sealed record CrossRigidSourceGeometryComponent(
             string WsModelPath,
             string RigidPath,
@@ -25171,6 +25556,7 @@ namespace Editors.KitbasherEditor.Services
                 CrossRigidSourceGeometryComponent[] sourceGeometry,
                 string[] rigidPaths,
                 CrossRigidLodAnalysis[] lods,
+                List<CrossRigidRewriteOccurrenceSet> rewriteOccurrenceSets,
                 double aggregatedConfigurationProbability,
                 int contributingConfigurationCount)
             {
@@ -25183,6 +25569,7 @@ namespace Editors.KitbasherEditor.Services
                 SourceGeometry = sourceGeometry;
                 RigidPaths = rigidPaths;
                 Lods = lods;
+                RewriteOccurrenceSets = rewriteOccurrenceSets;
                 AggregatedConfigurationProbability =
                     aggregatedConfigurationProbability;
                 ContributingConfigurationCount =
@@ -25198,6 +25585,7 @@ namespace Editors.KitbasherEditor.Services
             public CrossRigidSourceGeometryComponent[] SourceGeometry { get; }
             public string[] RigidPaths { get; }
             public CrossRigidLodAnalysis[] Lods { get; }
+            public List<CrossRigidRewriteOccurrenceSet> RewriteOccurrenceSets { get; }
             public double AggregatedConfigurationProbability { get; set; }
             public int ContributingConfigurationCount { get; set; }
         }
@@ -25210,6 +25598,7 @@ namespace Editors.KitbasherEditor.Services
             int ContributingConfigurationCount,
             string AttachmentIdentity,
             CrossRigidVisualInstance[] SourceInstances,
+            CrossRigidRewriteOccurrenceSet[] RewriteOccurrenceSets,
             CrossRigidSourceGeometryComponent[] SourceGeometry,
             string[] RigidPaths,
             CrossRigidLodAnalysis[] Lods,
