@@ -9613,7 +9613,7 @@ namespace Editors.KitbasherEditor.Services
             return AtlasValueGateBudgetDecision.Accept;
         }
 
-        private static double GetTextureOnlyMergePackLocalRetirementCreditBytes(
+        private static double GetPackLocalOnlyRetirementCreditBytes(
             int packReferenceRetiredSourceTextureCount,
             int physicallyRetiredSourceTextureCount)
         {
@@ -9904,7 +9904,7 @@ namespace Editors.KitbasherEditor.Services
                 combinedResidency.RetiredSourceTextureCount -
                 baseResidency.RetiredSourceTextureCount);
             var marginalPackLocalRetirementCreditBytes =
-                GetTextureOnlyMergePackLocalRetirementCreditBytes(
+                GetPackLocalOnlyRetirementCreditBytes(
                     marginalPackReferenceRetiredSourceTextureCount,
                     marginalPhysicallyRetiredSourceTextureCount);
 
@@ -10816,7 +10816,7 @@ namespace Editors.KitbasherEditor.Services
                 residency.ExpectedArmyGeneratedBcnBytes,
                 residency.ExpectedArmyRetiredSourceBcnBytes);
             var packLocalRetirementCreditBytes =
-                GetTextureOnlyMergePackLocalRetirementCreditBytes(
+                GetPackLocalOnlyRetirementCreditBytes(
                     residency.PackReferenceRetiredSourceTextureCount,
                     residency.RetiredSourceTextureCount);
             var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
@@ -10939,9 +10939,14 @@ namespace Editors.KitbasherEditor.Services
             var globalBudget =
                 globalBudgetTextureEquivalent *
                 MaxNetBcnBytesPerRetiredSourceTexture;
+            var packLocalRetirementCreditBytes =
+                GetPackLocalOnlyRetirementCreditBytes(
+                    residency.PackReferenceRetiredSourceTextureCount,
+                    residency.RetiredSourceTextureCount);
             var expectedBudget =
                 residency.ExpectedArmyRetiredSourceTextureCount *
-                MaxNetBcnBytesPerRetiredSourceTexture;
+                    MaxNetBcnBytesPerRetiredSourceTexture +
+                packLocalRetirementCreditBytes;
 
             if (globalCost > globalBudget)
             {
@@ -10956,7 +10961,9 @@ namespace Editors.KitbasherEditor.Services
             {
                 rejectionReason =
                     $"scenario-estimated texture-only net cost {FormatMiB(expectedCost)} " +
-                    "exceeds the per-retired-texture budget.";
+                    $"exceeds the effective retirement budget {FormatMiB(expectedBudget)} " +
+                    $"(runtime displacement plus {FormatMiB(packLocalRetirementCreditBytes)} " +
+                    "pack-local-only retirement credit).";
                 return false;
             }
 
