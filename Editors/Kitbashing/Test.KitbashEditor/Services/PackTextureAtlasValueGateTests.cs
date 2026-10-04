@@ -1458,6 +1458,99 @@ namespace Test.KitbashEditor.Services
                     "CalculateAtlasValueGateScenarioRetirement returned null."));
         }
 
+        private static double AccumulateScenarioRetirement(
+            long bcnBytes,
+            double accumulatedRetiredBytes,
+            double incrementalRetiredBytes)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                "AccumulateAtlasValueGateScenarioRetirement",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "AccumulateAtlasValueGateScenarioRetirement was not found.");
+
+            return (double)(method.Invoke(
+                    null,
+                    [bcnBytes, accumulatedRetiredBytes, incrementalRetiredBytes])
+                ?? throw new InvalidOperationException(
+                    "AccumulateAtlasValueGateScenarioRetirement returned null."));
+        }
+
+        private static object CreateSourceTextureResidencyDiagnostic(
+            string texturePath,
+            long bcnBytes,
+            bool mappingResolved,
+            double currentResidentProbability,
+            double proposedResidentProbability,
+            double currentExpectedResidentBytes,
+            double proposedExpectedResidentBytes,
+            double expectedRetiredBytes)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var diagnosticType = serviceType.GetNestedType(
+                "AtlasValueGateSourceTextureResidencyDiagnostic",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateSourceTextureResidencyDiagnostic was not found.");
+            var constructor = diagnosticType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(candidate => candidate.GetParameters().Length == 16);
+            return constructor.Invoke(
+            [
+                texturePath,
+                bcnBytes,
+                false,
+                false,
+                false,
+                2,
+                0,
+                1,
+                mappingResolved,
+                currentResidentProbability,
+                proposedResidentProbability,
+                currentExpectedResidentBytes,
+                proposedExpectedResidentBytes,
+                expectedRetiredBytes,
+                new[] { "models\\before.wsmodel" },
+                new[] { "models\\after.wsmodel" },
+            ]);
+        }
+
+        private static void RecordSourceTextureResidencyDiagnostics(
+            object state,
+            params object[] diagnostics)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var diagnosticType = serviceType.GetNestedType(
+                "AtlasValueGateSourceTextureResidencyDiagnostic",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "AtlasValueGateSourceTextureResidencyDiagnostic was not found.");
+            var diagnosticsType = typeof(List<>).MakeGenericType(diagnosticType);
+            var diagnosticList = Activator.CreateInstance(diagnosticsType)
+                ?? throw new InvalidOperationException(
+                    "Could not create source-texture diagnostic list.");
+            foreach (var diagnostic in diagnostics)
+                ((IList)diagnosticList).Add(diagnostic);
+
+            var method = serviceType.GetMethod(
+                "RecordAtlasValueGateSourceTextureResidencyDiagnostics",
+                BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "RecordAtlasValueGateSourceTextureResidencyDiagnostics was not found.");
+            method.Invoke(null, [state, diagnosticList]);
+        }
+
 
         private static bool IsSourceTextureRetired(
             bool isOwnedBySourcePack,
@@ -3039,6 +3132,77 @@ namespace Test.KitbashEditor.Services
                 Assert.That(globalChargeableBytes, Is.EqualTo(8.0));
                 Assert.That(scenarioRetiredBytes, Is.EqualTo(8.0));
                 Assert.That(scenarioChargeableBytes, Is.EqualTo(8.0));
+            });
+        }
+
+        [TestCase(100L, 0.0, 0.0, 0.0)]
+        [TestCase(100L, 0.0, 10.0, 10.0)]
+        [TestCase(100L, 10.0, 0.0, 10.0)]
+        [TestCase(100L, 80.0, 50.0, 100.0)]
+        public void ScenarioRetirementAccumulation_UsesAcceptedIncrementalCreditOnly(
+            long bcnBytes,
+            double accumulatedRetiredBytes,
+            double incrementalRetiredBytes,
+            double expected)
+        {
+            Assert.That(
+                AccumulateScenarioRetirement(
+                    bcnBytes,
+                    accumulatedRetiredBytes,
+                    incrementalRetiredBytes),
+                Is.EqualTo(expected).Within(0.000001));
+        }
+
+        [Test]
+        public void SourceTextureDiagnostics_DoNotReconstructCreditAcrossUnresolvedTransition()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var firstTransition = CreateSourceTextureResidencyDiagnostic(
+                "textures\\shared.dds",
+                bcnBytes: 100,
+                mappingResolved: false,
+                currentResidentProbability: 1.0,
+                proposedResidentProbability: 1.0,
+                currentExpectedResidentBytes: 100.0,
+                proposedExpectedResidentBytes: 100.0,
+                expectedRetiredBytes: 0.0);
+            var laterTransition = CreateSourceTextureResidencyDiagnostic(
+                "textures\\shared.dds",
+                bcnBytes: 100,
+                mappingResolved: true,
+                currentResidentProbability: 0.1,
+                proposedResidentProbability: 0.0,
+                currentExpectedResidentBytes: 10.0,
+                proposedExpectedResidentBytes: 0.0,
+                expectedRetiredBytes: 10.0);
+
+            RecordSourceTextureResidencyDiagnostics(state, firstTransition);
+            RecordSourceTextureResidencyDiagnostics(state, laterTransition);
+
+            var diagnostics = (IDictionary)GetStateProperty<object>(
+                state,
+                "AtlasValueGateSourceTextureResidencyDiagnostics");
+            var diagnostic = diagnostics["textures\\shared.dds"]
+                ?? throw new InvalidOperationException(
+                    "The shared source-texture diagnostic was not recorded.");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    GetRecordProperty<double>(diagnostic, "ExpectedRetiredBcnBytes"),
+                    Is.EqualTo(10.0));
+                Assert.That(
+                    GetRecordProperty<double>(diagnostic, "CurrentExpectedResidentBcnBytes"),
+                    Is.EqualTo(100.0));
+                Assert.That(
+                    GetRecordProperty<double>(diagnostic, "ProposedExpectedResidentBcnBytes"),
+                    Is.EqualTo(0.0));
+                Assert.That(
+                    GetRecordProperty<bool>(diagnostic, "ConsumerMappingResolved"),
+                    Is.False);
             });
         }
 

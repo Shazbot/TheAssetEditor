@@ -8922,15 +8922,51 @@ namespace Editors.KitbasherEditor.Services
 
                     foreach (var accepted in standaloneAccepted)
                     {
-                        result.Add(accepted.Plan.Candidates);
-                        RecordAtlasValueGateAccepted(
-                            state,
-                            accepted.Plan.Candidates,
-                            accepted.Residency,
-                            accepted.RawDrawsEliminated,
-                            accepted.ExpectedArmyDrawsEliminated,
-                            expectedEntitiesByMesh,
-                            accepted.AcceptanceKind);
+                        state.CancellationToken.ThrowIfCancellationRequested();
+                        if (TryRecheckStandaloneAcceptedAtlasValueGateGroup(
+                                state,
+                                accepted,
+                                expectedEntitiesByMesh,
+                                out var sequentialResidency,
+                                out var sequentialRawDraws,
+                                out var sequentialExpectedDraws,
+                                out var sequentialRejectionReason))
+                        {
+                            result.Add(accepted.Plan.Candidates);
+                            RecordAtlasValueGateAccepted(
+                                state,
+                                accepted.Plan.Candidates,
+                                sequentialResidency,
+                                sequentialRawDraws,
+                                sequentialExpectedDraws,
+                                expectedEntitiesByMesh,
+                                accepted.AcceptanceKind);
+                            continue;
+                        }
+
+                        // The initial standalone estimates were all made against the same
+                        // pre-acceptance reference set. Rechecking here makes a later group
+                        // pay for the consumer union left after earlier groups were accepted.
+                        // A failed texture-only recheck remains eligible for the normal
+                        // cross-batch attachment pass; a draw merge is rejected outright.
+                        if (GetAtlasValueGatePlanProspectiveTextureMergeDraws(accepted.Plan) > 0)
+                        {
+                            pendingTextureMergeAttachments.Add(
+                                new AtlasValueGatePendingTextureMergeAttachment(
+                                    accepted.Plan,
+                                    sequentialResidency,
+                                    "sequential standalone recheck: " +
+                                    sequentialRejectionReason));
+                        }
+                        else
+                        {
+                            RejectAtlasValueGateGroup(
+                                state,
+                                accepted.Plan,
+                                sequentialResidency,
+                                "sequential standalone recheck: " +
+                                sequentialRejectionReason);
+                        }
                     }
 
                     foreach (var rejected in standaloneRejected)
@@ -9198,6 +9234,41 @@ namespace Editors.KitbasherEditor.Services
             return result;
         }
 
+        private static bool TryRecheckStandaloneAcceptedAtlasValueGateGroup(
+            BatchState state,
+            AtlasValueGateAcceptedGroup accepted,
+            IReadOnlyDictionary<
+                MeshKey,
+                Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                expectedEntitiesByMesh,
+            out AtlasValueGateResidencyEstimate residency,
+            out int rawDrawsEliminated,
+            out double expectedArmyDrawsEliminated,
+            out string rejectionReason)
+        {
+            if (accepted.AcceptanceKind == AtlasValueGateAcceptanceKind.TextureOnlyMerge)
+            {
+                return TryAcceptTextureOnlyMergeAtlasBatch(
+                    state,
+                    accepted.Plan,
+                    expectedEntitiesByMesh,
+                    out residency,
+                    out rawDrawsEliminated,
+                    out expectedArmyDrawsEliminated,
+                    out rejectionReason);
+            }
+
+            return TryAcceptAtlasValueBatch(
+                state,
+                accepted.Plan.Candidates,
+                accepted.Plan.AffinityGroups,
+                expectedEntitiesByMesh,
+                out residency,
+                out rawDrawsEliminated,
+                out expectedArmyDrawsEliminated,
+                out rejectionReason);
+        }
+
         private static void RejectAtlasValueGateGroup(
             BatchState state,
             AtlasValueGateGroupPlan plan,
@@ -9240,8 +9311,14 @@ namespace Editors.KitbasherEditor.Services
 
                 // A texture can participate in multiple accepted batches. Preserve the
                 // first accepted evaluation as Pbefore and advance only the post-rewrite
-                // side, so the report describes the cumulative accepted change rather than
-                // adding each batch's overlapping consumer delta.
+                // side, while accumulating only the actual incremental credit from each
+                // accepted transition. This keeps an earlier conservative/unresolved
+                // transition from being reconstructed as credit by a later resolved one.
+                var accumulatedExpectedRetirement =
+                    AccumulateAtlasValueGateScenarioRetirement(
+                        existing.BcnBytes,
+                        existing.ExpectedRetiredBcnBytes,
+                        diagnostic.ExpectedRetiredBcnBytes);
                 state.AtlasValueGateSourceTextureResidencyDiagnostics[texturePath] =
                     existing with
                     {
@@ -9255,14 +9332,28 @@ namespace Editors.KitbasherEditor.Services
                         ProposedExpectedResidentBcnBytes =
                             diagnostic.ProposedExpectedResidentBcnBytes,
                         ExpectedRetiredBcnBytes =
-                            Math.Max(
-                                0.0,
-                                existing.CurrentExpectedResidentBcnBytes -
-                                diagnostic.ProposedExpectedResidentBcnBytes),
+                            accumulatedExpectedRetirement,
                         ProposedConsumerWsModels =
                             diagnostic.ProposedConsumerWsModels,
                     };
             }
+        }
+
+        private static double AccumulateAtlasValueGateScenarioRetirement(
+            long bcnBytes,
+            double accumulatedRetiredBytes,
+            double incrementalRetiredBytes)
+        {
+            if (bcnBytes <= 0)
+                return 0;
+
+            var accumulated = double.IsFinite(accumulatedRetiredBytes)
+                ? Math.Max(0.0, accumulatedRetiredBytes)
+                : 0.0;
+            var incremental = double.IsFinite(incrementalRetiredBytes)
+                ? Math.Max(0.0, incrementalRetiredBytes)
+                : 0.0;
+            return Math.Min((double)bcnBytes, accumulated + incremental);
         }
 
         private static void RecordAtlasValueGateAccepted(
