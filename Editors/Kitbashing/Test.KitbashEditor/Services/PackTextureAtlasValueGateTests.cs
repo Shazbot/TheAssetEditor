@@ -4730,6 +4730,25 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void ValueGate_TextureOnlyMergeCreditAcceptsRepguardNearMissEconomics()
+        {
+            const double mib = 1024.0 * 1024.0;
+
+            var decision = GetTextureOnlyMergeValueGateBudgetDecision(
+                scenarioResolved: true,
+                prospectiveTextureMergeDraws: 6,
+                expectedArmyDrawsEliminated: 3.947,
+                globalCostBytes: 16 * mib,
+                expectedCostBytes: 2.4 * mib,
+                packLocalRetirementCreditBytes: 0,
+                acceptedNetBcnBytes: 0,
+                proposedNetBcnBytes: 16 * mib,
+                sourceBcnBytes: 394.4 * mib);
+
+            Assert.That(decision, Is.EqualTo("Accept"));
+        }
+
+        [Test]
         public void ValueGate_TextureOnlyMergeCreditIncludesPackLocalRetirement()
         {
             const double mib = 1024.0 * 1024.0;
@@ -4960,7 +4979,7 @@ namespace Test.KitbashEditor.Services
                     Is.EqualTo(4L * 1024 * 1024));
                 Assert.That(
                     GetConstant("MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw"),
-                    Is.EqualTo(512L * 1024));
+                    Is.EqualTo(768L * 1024));
                 Assert.That(
                     GetConstant("MinimumRetiredSourceTexturesForTextureOnlyAtlas"),
                     Is.EqualTo(2));

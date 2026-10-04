@@ -48,7 +48,7 @@ namespace Editors.KitbasherEditor.Services
         // the cumulative pack-growth cap below.
         private const long MaxNetBcnBytesPerTextureOnlyMergeDraw = 4L * 1024 * 1024; // 4 MiB
         private const long MaxNetBcnBytesPerTextureOnlyMergeExpectedArmyDraw =
-            512L * 1024; // 0.5 MiB
+            768L * 1024; // 0.75 MiB
         // A texture-consolidation atlas keeps geometry and draw credit unchanged. Permit it
         // only when it replaces multiple real texture assignments at a tighter payload cost.
         private const long MaxNetBcnBytesPerConsolidatedTextureAssignment = 256L * 1024; // 0.25 MiB
