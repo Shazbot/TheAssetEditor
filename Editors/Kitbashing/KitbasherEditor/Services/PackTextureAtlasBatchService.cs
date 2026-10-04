@@ -79,7 +79,7 @@ namespace Editors.KitbasherEditor.Services
             16L * 1024 * 1024; // 16 MiB
         private const long MaxCrossRigidGeneratedGeometryGrowthBytes =
             256L * 1024 * 1024; // 256 MiB
-        private const double MinimumCrossRigidSingleRewriteExpectedArmyDraw = 0.02;
+        private const double MinimumCrossRigidSingleVmdExpectedArmyDraw = 0.02;
         private static readonly bool AtlasProfilingEnabled =
             IsEnabledEnvironmentVariable(AtlasProfilingEnvironmentVariable);
 
@@ -2229,13 +2229,13 @@ namespace Editors.KitbasherEditor.Services
                         CrossRigidPayloadSelectionDecision
                             .ScenarioResolvedZeroBenefit;
                 }
-                else if (payload.RewritePlanCount == 1 &&
+                else if (payload.VmdCount == 1 &&
                          expectedDraws <
-                         MinimumCrossRigidSingleRewriteExpectedArmyDraw)
+                         MinimumCrossRigidSingleVmdExpectedArmyDraw)
                 {
                     decision =
                         CrossRigidPayloadSelectionDecision
-                            .SingleRewriteBenefitTooSmall;
+                            .SingleVmdBenefitTooSmall;
                 }
                 else if (expectedResidentBytes >
                          expectedDraws *
@@ -21637,8 +21637,8 @@ namespace Editors.KitbasherEditor.Services
                     $"Cumulative generated-geometry cap: " +
                     $"{FormatMiB(MaxCrossRigidGeneratedGeometryGrowthBytes, 0)}");
                 sb.AppendLine(
-                    $"Minimum one-rewrite payload benefit: " +
-                    $"{MinimumCrossRigidSingleRewriteExpectedArmyDraw:0.###} expected draws");
+                    $"Minimum one-VMD payload benefit: " +
+                    $"{MinimumCrossRigidSingleVmdExpectedArmyDraw:0.###} expected draws");
                 sb.AppendLine(
                     $"Payload candidates: " +
                     $"{state.CrossRigidPayloadSelectionEntries.Count:N0}");
@@ -21650,8 +21650,8 @@ namespace Editors.KitbasherEditor.Services
                     $"Accepted payloads reused by multiple rewrite plans: " +
                     $"{selectedPayloads.Count(entry => entry.RewritePlanCount > 1):N0}");
                 sb.AppendLine(
-                    $"Accepted single-rewrite payloads: " +
-                    $"{selectedPayloads.Count(entry => entry.RewritePlanCount == 1):N0}");
+                    $"Accepted one-VMD payloads: " +
+                    $"{selectedPayloads.Count(entry => entry.VmdCount == 1):N0}");
                 sb.AppendLine(
                     $"Accepted VMD rewrite-plan references: " +
                     $"{selectedPayloads.Sum(entry => entry.RewritePlanCount):N0}");
@@ -24093,7 +24093,7 @@ namespace Editors.KitbasherEditor.Services
         {
             Accept,
             ScenarioResolvedZeroBenefit,
-            SingleRewriteBenefitTooSmall,
+            SingleVmdBenefitTooSmall,
             ScenarioResidencyBudgetExceeded,
             PhysicalPerDrawBudgetExceeded,
             GlobalGrowthCapExceeded,
