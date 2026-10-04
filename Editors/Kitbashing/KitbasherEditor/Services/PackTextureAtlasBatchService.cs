@@ -2102,7 +2102,7 @@ namespace Editors.KitbasherEditor.Services
                    .Distinct(StringComparer.Ordinal)
                    .Count() == 1 &&
                occurrenceSet.SourceInstances.All(instance =>
-                   !instance.HasLocalModelModifiers);
+                   !instance.HasRewriteBlockingModifiers);
 
         private static CrossRigidActivationRewriteClass
             ClassifyCrossRigidRewriteOccurrenceSet(
@@ -2112,7 +2112,7 @@ namespace Editors.KitbasherEditor.Services
                 out string detail)
         {
             if (occurrenceSet.SourceInstances.Any(instance =>
-                    instance.HasLocalModelModifiers))
+                    instance.HasRewriteBlockingModifiers))
             {
                 detail =
                     BuildCrossRigidModifierProfile(
@@ -3209,10 +3209,10 @@ namespace Editors.KitbasherEditor.Services
             }
 
             if (occurrenceSet.SourceInstances.Any(instance =>
-                    instance.HasLocalModelModifiers))
+                    instance.HasRewriteBlockingModifiers))
             {
                 reason =
-                    "VMD model occurrence has local decal, imposter, or metadata state";
+                    "VMD model occurrence has local decal or imposter state";
                 return false;
             }
 
@@ -23656,7 +23656,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("Cross-rigid merge analysis and emission");
                 sb.AppendLine("---------------------------------------");
                 sb.AppendLine(
-                    "Analysis records exact model/reference provenance. The emission pass writes only value-gate-selected occurrence states that share an exact activation signature; referenced child VMDs are cloned copy-on-write instead of modified globally.");
+                    "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass currently writes value-gate-selected exact-activation occurrence states; referenced child VMDs are cloned copy-on-write instead of modified globally.");
                 sb.AppendLine(
                     "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. The value gate sees only occurrence states the writer can represent without restructuring the VMD probability tree.");
                 sb.AppendLine(
@@ -26230,10 +26230,13 @@ namespace Editors.KitbasherEditor.Services
             bool HasDecalNormal,
             bool HasMetadata)
         {
-            public bool HasLocalModelModifiers =>
+            public bool HasRewriteBlockingModifiers =>
                 !string.IsNullOrWhiteSpace(ImposterModelPath) ||
                 HasDecalDiffuse ||
-                HasDecalNormal ||
+                HasDecalNormal;
+
+            public bool HasLocalModelModifiers =>
+                HasRewriteBlockingModifiers ||
                 HasMetadata;
         }
 
