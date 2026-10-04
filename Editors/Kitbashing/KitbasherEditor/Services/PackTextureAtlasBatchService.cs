@@ -3311,26 +3311,14 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            var rewriteOccurrenceKeysByPayload =
-                state.CrossRigidMergeAnalysisEntries
-                    .GroupBy(
-                        plan => plan.GeneratedPayloadId,
-                        StringComparer.Ordinal)
-                    .ToDictionary(
-                        group => group.Key,
-                        group => group
-                            .SelectMany(plan =>
-                                plan.RewriteOccurrenceSets.SelectMany(
-                                    occurrenceSet =>
-                                        occurrenceSet.SourceInstances.Select(
-                                            instance =>
-                                                BuildCrossRigidConsumedOccurrenceKey(
-                                                    plan.VmdPath,
-                                                    instance))))
-                            .ToHashSet(StringComparer.Ordinal),
-                        StringComparer.Ordinal);
-            var selectedRewriteOccurrenceKeys =
+            var conflictProfileVmdDocuments =
+                new Dictionary<string, XmlDocument>(
+                    StringComparer.OrdinalIgnoreCase);
+            var selectedRewriteConflictKeys =
                 new HashSet<string>(StringComparer.Ordinal);
+            var selectedJointContextKeyByParentLocation =
+                new Dictionary<string, string>(
+                    StringComparer.Ordinal);
 
             var acceptedGeneratedGeometryBytes = 0L;
             var rank = 0;
@@ -3346,12 +3334,23 @@ namespace Editors.KitbasherEditor.Services
                              StringComparer.Ordinal))
             {
                 rank++;
-                var occurrenceKeys =
-                    rewriteOccurrenceKeysByPayload.GetValueOrDefault(
-                        candidate.GeneratedPayloadId) ??
-                    new HashSet<string>(StringComparer.Ordinal);
-                if (occurrenceKeys.Overlaps(
-                        selectedRewriteOccurrenceKeys))
+                if (!TryBuildCrossRigidPayloadRewriteConflictProfile(
+                        state,
+                        candidate.GeneratedPayloadId,
+                        conflictProfileVmdDocuments,
+                        out var conflictProfile,
+                        out _) ||
+                    conflictProfile.RewriteConflictKeys.Overlaps(
+                        selectedRewriteConflictKeys) ||
+                    conflictProfile.JointContextKeyByParentLocation.Any(
+                        pair =>
+                            selectedJointContextKeyByParentLocation
+                                .TryGetValue(
+                                    pair.Key,
+                                    out var selectedContextKey) &&
+                            !selectedContextKey.Equals(
+                                pair.Value,
+                                StringComparison.Ordinal)))
                 {
                     state.CrossRigidPayloadSelectionEntries.Add(
                         candidate with
@@ -3382,8 +3381,16 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 acceptedGeneratedGeometryBytes = projectedGrowth;
-                selectedRewriteOccurrenceKeys.UnionWith(
-                    occurrenceKeys);
+                selectedRewriteConflictKeys.UnionWith(
+                    conflictProfile.RewriteConflictKeys);
+                foreach (var pair in
+                         conflictProfile.JointContextKeyByParentLocation)
+                {
+                    selectedJointContextKeyByParentLocation[
+                        pair.Key] =
+                        pair.Value;
+                }
+
                 state.CrossRigidSelectedPayloadIds.Add(
                     candidate.GeneratedPayloadId);
                 state.CrossRigidPayloadSelectionEntries.Add(
@@ -3391,6 +3398,120 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
+
+        private static bool
+            TryBuildCrossRigidPayloadRewriteConflictProfile(
+                BatchState state,
+                string generatedPayloadId,
+                Dictionary<string, XmlDocument> sourceVmdDocuments,
+                out CrossRigidPayloadRewriteConflictProfile profile,
+                out string reason)
+        {
+            reason = string.Empty;
+            var rewriteConflictKeys =
+                new HashSet<string>(StringComparer.Ordinal);
+            var jointContextKeyByParentLocation =
+                new Dictionary<string, string>(
+                    StringComparer.Ordinal);
+
+            foreach (var plan in
+                     state.CrossRigidMergeAnalysisEntries.Where(
+                         entry =>
+                             entry.GeneratedPayloadId.Equals(
+                                 generatedPayloadId,
+                                 StringComparison.Ordinal)))
+            {
+                foreach (var occurrenceSet in
+                         plan.RewriteOccurrenceSets)
+                {
+                    var activationSignatureCount =
+                        occurrenceSet.SourceInstances
+                            .Select(instance =>
+                                instance.ActivationSignature)
+                            .Distinct(StringComparer.Ordinal)
+                            .Count();
+                    if (activationSignatureCount == 1)
+                    {
+                        foreach (var instance in
+                                 occurrenceSet.SourceInstances)
+                        {
+                            rewriteConflictKeys.Add(
+                                string.Join(
+                                    "\u001f",
+                                    "exact",
+                                    BuildCrossRigidConsumedOccurrenceKey(
+                                        plan.VmdPath,
+                                        instance)));
+                        }
+
+                        continue;
+                    }
+
+                    if (!TryDescribeCrossRigidJointAlwaysPresentRewrite(
+                            state,
+                            occurrenceSet,
+                            sourceVmdDocuments,
+                            out var descriptor,
+                            out reason))
+                    {
+                        profile = null!;
+                        return false;
+                    }
+
+                    var parentLocationKey =
+                        BuildCrossRigidJointParentLocationKey(
+                            plan.VmdPath,
+                            descriptor);
+                    var contextKey =
+                        BuildCrossRigidJointContextKey(
+                            plan.VmdPath,
+                            descriptor);
+                    if (jointContextKeyByParentLocation.TryGetValue(
+                            parentLocationKey,
+                            out var existingContextKey) &&
+                        !existingContextKey.Equals(
+                            contextKey,
+                            StringComparison.Ordinal))
+                    {
+                        reason =
+                            "Payload requires incompatible joint slot sets under one parent";
+                        profile = null!;
+                        return false;
+                    }
+
+                    jointContextKeyByParentLocation[
+                        parentLocationKey] =
+                        contextKey;
+
+                    var combinationKey =
+                        BuildCrossRigidJointCombinationKey(
+                            descriptor.SourceSelections.Select(
+                                selection =>
+                                    new CrossRigidJointAlternative(
+                                        selection.SlotIndex,
+                                        selection.IsReference,
+                                        selection.AlternativeIndex)));
+                    foreach (var selection in
+                             descriptor.SourceSelections)
+                    {
+                        rewriteConflictKeys.Add(
+                            string.Join(
+                                "\u001f",
+                                "joint",
+                                contextKey,
+                                combinationKey,
+                                selection.SlotIndex.ToString(
+                                    CultureInfo.InvariantCulture)));
+                    }
+                }
+            }
+
+            profile =
+                new CrossRigidPayloadRewriteConflictProfile(
+                    rewriteConflictKeys,
+                    jointContextKeyByParentLocation);
+            return true;
+        }
 
         private static void EmitSelectedCrossRigidMerges(
             BatchState state,
@@ -27756,6 +27877,11 @@ namespace Editors.KitbasherEditor.Services
             double ExpectedResidentDisplacedSourceGeometryBytes,
             string[] ExternalStructuralConsumers,
             bool ConsumerDiscoveryComplete);
+
+        private sealed record CrossRigidPayloadRewriteConflictProfile(
+            HashSet<string> RewriteConflictKeys,
+            Dictionary<string, string>
+                JointContextKeyByParentLocation);
 
         private enum CrossRigidPayloadSelectionDecision
         {
