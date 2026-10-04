@@ -2740,6 +2740,94 @@ namespace Test.KitbashEditor.Services
                 ]);
         }
 
+        private static long GetGeneratedAtlasBcnCostForTest(
+            object state,
+            IReadOnlyList<object> candidates)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethods(
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                .Single(candidate =>
+                    candidate.Name == "TryGetGeneratedAtlasBcnCost" &&
+                    candidate.GetParameters().Length == 4);
+            var arguments = new object?[]
+            {
+                state,
+                CreateAtlasCandidateBatch(candidates),
+                0L,
+                null,
+            };
+            if (!(bool)(method.Invoke(null, arguments)
+                ?? throw new InvalidOperationException(
+                    "TryGetGeneratedAtlasBcnCost returned null.")))
+            {
+                throw new InvalidOperationException(
+                    "The synthetic atlas candidates did not produce a BCn estimate.");
+            }
+
+            return Convert.ToInt64(arguments[2]);
+        }
+
+        private static object CreateBcnTextureResidencySummaryForTest(long bcnBytes)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var summaryType = serviceType.GetNestedType(
+                "BcnTextureResidencySummary",
+                BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "BcnTextureResidencySummary was not found.");
+            var constructor = summaryType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single(candidate => candidate.GetParameters().Length == 10);
+            return constructor.Invoke(
+            [
+                0,
+                0,
+                0,
+                0,
+                bcnBytes,
+                0.0,
+                0L,
+                0.0,
+                new Dictionary<string, int>(),
+                new Dictionary<string, long>(),
+            ]);
+        }
+
+        private static object[] SelectTextureConsolidationCohortsForTest(
+            object state,
+            IReadOnlyList<object> candidates,
+            object expectedEntitiesByMesh)
+        {
+            var assembly = Assembly.Load("Editors.KitbasherEditor");
+            var serviceType = assembly.GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(
+                    "SelectTextureConsolidationCohorts",
+                    BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "SelectTextureConsolidationCohorts was not found.");
+            var arguments = new object?[]
+            {
+                state,
+                CreateAtlasCandidateBatch(candidates),
+                expectedEntitiesByMesh,
+                null,
+            };
+            return ((IEnumerable)(method.Invoke(null, arguments)
+                    ?? throw new InvalidOperationException(
+                        "SelectTextureConsolidationCohorts returned null.")))
+                .Cast<object>()
+                .ToArray();
+        }
+
         private static void AttachPendingTextureOnlyMergeTestGroup(
             object state,
             object acceptedBatches,
@@ -4397,6 +4485,95 @@ namespace Test.KitbashEditor.Services
                     HasTextureOnlyMergeNearMiss(state, 3),
                     Is.True,
                     "The full triple should be recorded as an economic near miss.");
+            });
+        }
+
+        [Test]
+        public void TextureConsolidationCohorts_CommitSequentiallyBeforeNextCohort()
+        {
+            static string CreateMaterialXml(string texturePath)
+                => "<material><name>test</name>" +
+                   "<shader>shaders/weighted4_character.xml.shader</shader>" +
+                   "<textures><texture><slot>t_xml_base_colour</slot>" +
+                   $"<source>{texturePath}</source></texture></textures></material>";
+
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            SetStateProperty(
+                state,
+                "UnitCategoryResolution",
+                CreateHealthyResolutionWithRosterVmd(
+                    "models\\root.variantmeshdefinition"));
+            PopulateArmyResidencyModel(state);
+
+            var candidates = Enumerable
+                .Range(0, 16)
+                .Select(index => CreateAffinityTestCandidate(
+                    $"models\\cohort_{index}.rigid_model_v2",
+                    0,
+                    $"materials\\cohort_{index}.xml",
+                    CreateMaterialXml($"textures\\cohort_{index}.dds"),
+                    atlasWidth: 64,
+                    atlasHeight: 64))
+                .ToArray();
+            foreach (var candidate in candidates)
+                AddCandidateUsageToState(state, candidate);
+
+            var firstCohortCost = GetGeneratedAtlasBcnCostForTest(
+                state,
+                candidates.Take(8).ToArray());
+            Assert.That(firstCohortCost, Is.GreaterThan(0));
+
+            // The first eight-candidate cohort fits, but two such cohorts do not fit.
+            // With the old evaluate-all-then-record flow both cohorts passed against zero
+            // accepted growth and were recorded past this cap.
+            var sourceBcnBytes = checked(firstCohortCost * 3);
+            SetStateProperty(
+                state,
+                "SourceBcnResidency",
+                CreateBcnTextureResidencySummaryForTest(sourceBcnBytes));
+
+            var expectedEntitiesByMesh = CreateExpectedEntitiesByMesh(
+                candidates,
+                "main:main_roster_test_0");
+            var acceptances = SelectTextureConsolidationCohortsForTest(
+                state,
+                candidates,
+                expectedEntitiesByMesh);
+            var acceptedCandidates = acceptances
+                .SelectMany(acceptance => ((IEnumerable)(acceptance.GetType()
+                        .GetProperty("Candidates")
+                        ?.GetValue(acceptance)
+                    ?? throw new InvalidOperationException(
+                        "Texture-consolidation acceptance candidates were missing.")))
+                    .Cast<object>())
+                .ToArray();
+            var acceptedNetBcnBytes = GetStateProperty<long>(
+                state,
+                "AtlasValueGateNetBcnBytesAccepted");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(
+                    acceptedCandidates.Length,
+                    Is.GreaterThanOrEqualTo(8),
+                    "The first cohort should still be accepted.");
+                Assert.That(
+                    acceptedCandidates.Length,
+                    Is.LessThan(candidates.Length),
+                    "The second cohort must be re-evaluated against the first cohort's growth.");
+                Assert.That(
+                    acceptedNetBcnBytes,
+                    Is.LessThanOrEqualTo(sourceBcnBytes / 2.0),
+                    "Sequential cohort commits must enforce the cumulative growth cap.");
+                Assert.That(
+                    GetStateProperty<int>(
+                        state,
+                        "AtlasValueGateTextureConsolidationBatchesAccepted"),
+                    Is.EqualTo(acceptances.Length),
+                    "Each returned cohort should already have been committed exactly once.");
             });
         }
 

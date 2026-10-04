@@ -8760,21 +8760,12 @@ namespace Editors.KitbasherEditor.Services
                         SelectTextureConsolidationCohorts(
                             state,
                             textureOnlyCandidates,
+                            expectedEntitiesByMesh,
                             out var textureConsolidationRejectionReasons);
                     foreach (var acceptance in textureConsolidationAcceptances)
                     {
                         state.CancellationToken.ThrowIfCancellationRequested();
                         result.Add(acceptance.Candidates);
-                        RecordAtlasValueGateAccepted(
-                            state,
-                            acceptance.Candidates,
-                            acceptance.Residency,
-                            rawDrawsEliminated: 0,
-                            expectedArmyDrawsEliminated: 0,
-                            expectedEntitiesByMesh,
-                            acceptanceKind: AtlasValueGateAcceptanceKind.TextureConsolidation,
-                            consolidatedTextureAssignments:
-                                acceptance.ConsolidatedTextureAssignments);
                     }
 
                     var acceptedTextureConsolidationKeys =
@@ -10925,6 +10916,10 @@ namespace Editors.KitbasherEditor.Services
             SelectTextureConsolidationCohorts(
                 BatchState state,
                 IReadOnlyList<AtlasCandidate> candidates,
+                IReadOnlyDictionary<
+                    MeshKey,
+                    Dictionary<Wh3ArmyUnitCategory, Dictionary<string, double>>>
+                    expectedEntitiesByMesh,
                 out Dictionary<MeshKey, string> rejectionReasons)
         {
             state.CancellationToken.ThrowIfCancellationRequested();
@@ -10968,11 +10963,27 @@ namespace Editors.KitbasherEditor.Services
                         out var consolidatedTextureAssignments,
                         out var rejectionReason))
                 {
-                    accepted.Add(
-                        new TextureConsolidationCohortAcceptance(
-                            cohort,
-                            residency,
-                            consolidatedTextureAssignments));
+                    var acceptance = new TextureConsolidationCohortAcceptance(
+                        cohort,
+                        residency,
+                        consolidatedTextureAssignments);
+                    accepted.Add(acceptance);
+
+                    // Commit each winning cohort before evaluating the next one. The
+                    // consolidation gate depends on the accumulated generated BCn cost and
+                    // rewritten source references, so evaluating all cohorts first can let
+                    // independent cohorts jointly exceed the global growth cap or claim the
+                    // same source-texture retirement.
+                    RecordAtlasValueGateAccepted(
+                        state,
+                        acceptance.Candidates,
+                        acceptance.Residency,
+                        rawDrawsEliminated: 0,
+                        expectedArmyDrawsEliminated: 0,
+                        expectedEntitiesByMesh,
+                        acceptanceKind: AtlasValueGateAcceptanceKind.TextureConsolidation,
+                        consolidatedTextureAssignments:
+                            acceptance.ConsolidatedTextureAssignments);
                     continue;
                 }
 
