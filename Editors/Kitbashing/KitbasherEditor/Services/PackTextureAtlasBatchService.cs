@@ -3916,12 +3916,13 @@ namespace Editors.KitbasherEditor.Services
 
                     var combinationKey =
                         BuildCrossRigidJointCombinationKey(
-                            descriptor.SourceSelections.Select(
-                                selection =>
+                            descriptor.SourceSelections
+                                .Select(selection =>
                                     new CrossRigidJointAlternative(
                                         selection.SlotIndex,
                                         selection.IsReference,
-                                        selection.AlternativeIndex)));
+                                        selection.AlternativeIndex))
+                                .Distinct());
                     foreach (var selection in
                              descriptor.SourceSelections)
                     {
@@ -3931,8 +3932,8 @@ namespace Editors.KitbasherEditor.Services
                                 "joint",
                                 contextKey,
                                 combinationKey,
-                                selection.SlotIndex.ToString(
-                                    CultureInfo.InvariantCulture)));
+                                BuildCrossRigidOccurrenceProvenanceSignature(
+                                    [selection.Instance])));
                     }
                 }
             }
@@ -4310,8 +4311,11 @@ namespace Editors.KitbasherEditor.Services
                     foreach (var selection in
                              jointDescriptor.SourceSelections)
                     {
-                        if (combination.ConsumedSlotIndices.Contains(
-                                selection.SlotIndex))
+                        var occurrenceKey =
+                            BuildCrossRigidOccurrenceProvenanceSignature(
+                                [selection.Instance]);
+                        if (combination.ConsumedOccurrenceKeys.Contains(
+                                occurrenceKey))
                         {
                             reason =
                                 "Rewrite occurrence overlaps an already emitted joint-state plan";
@@ -4605,7 +4609,7 @@ namespace Editors.KitbasherEditor.Services
                         state,
                         rootVmdPath,
                         rootDocument,
-                        descriptor.CommonReferenceChain,
+                        descriptor.AnchorReferenceChain,
                         sourceVmdDocuments,
                         generatedClonePathByBranchKey,
                         out var definingDocument,
@@ -4628,12 +4632,13 @@ namespace Editors.KitbasherEditor.Services
 
             var combinationKey =
                 BuildCrossRigidJointCombinationKey(
-                    descriptor.SourceSelections.Select(
-                        selection =>
+                    descriptor.SourceSelections
+                        .Select(selection =>
                             new CrossRigidJointAlternative(
                                 selection.SlotIndex,
                                 selection.IsReference,
-                                selection.AlternativeIndex)));
+                                selection.AlternativeIndex))
+                        .Distinct());
             if (!context.Combinations.TryGetValue(
                     combinationKey,
                     out var combination))
@@ -4656,8 +4661,11 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var selection in orderedSelections)
             {
-                if (combination.ConsumedSlotIndices.Contains(
-                        selection.SlotIndex))
+                var occurrenceKey =
+                    BuildCrossRigidOccurrenceProvenanceSignature(
+                        [selection.Instance]);
+                if (combination.ConsumedOccurrenceKeys.Contains(
+                        occurrenceKey))
                 {
                     reason =
                         "Joint Cartesian model occurrence was already consumed";
@@ -4710,8 +4718,9 @@ namespace Editors.KitbasherEditor.Services
                     modelElement.RemoveAttribute("model");
                 }
 
-                combination.ConsumedSlotIndices.Add(
-                    selection.SlotIndex);
+                combination.ConsumedOccurrenceKeys.Add(
+                    BuildCrossRigidOccurrenceProvenanceSignature(
+                        [selection.Instance]));
                 if (state.Source.ContainsFile(
                         Normalize(selection.Instance.DefiningVmdPath)))
                 {
@@ -5323,7 +5332,7 @@ namespace Editors.KitbasherEditor.Services
                 "\u001f",
                 Normalize(rootVmdPath),
                 BuildCrossRigidReferenceChainSignature(
-                    descriptor.CommonReferenceChain),
+                    descriptor.AnchorReferenceChain),
                 descriptor.AnchorVmdPath,
                 descriptor.ParentXmlPath);
 
@@ -26155,9 +26164,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("Cross-rigid merge analysis and emission");
                 sb.AppendLine("---------------------------------------");
                 sb.AppendLine(
-                    "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative probability-1 sibling-slot joint states; joint alternatives may cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
+                    "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative probability-1 structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 sibling alternatives are materialized as a bounded Cartesian slot with the same uniform product distribution; optional-slot restructuring remains excluded from the value gate.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections are anchored at the shallowest shared structural VMD parent and materialized as a bounded Cartesian slot with the same uniform product distribution; multiple source models may live inside one selected branch, while optional-slot restructuring remains excluded from the value gate.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
@@ -28981,7 +28990,8 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, string>
                 GeneratedVmdPathByBranchKey { get; } =
                     new(StringComparer.Ordinal);
-            public HashSet<int> ConsumedSlotIndices { get; } = [];
+            public HashSet<string> ConsumedOccurrenceKeys { get; } =
+                new(StringComparer.Ordinal);
         }
 
         private sealed class CrossRigidJointRewriteContext
