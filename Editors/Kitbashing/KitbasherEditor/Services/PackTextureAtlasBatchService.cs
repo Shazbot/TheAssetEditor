@@ -1992,9 +1992,10 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            PropagateCrossRigidSubsetRewriteCoverage(
+            ExpandCrossRigidRewriteCoverageAcrossConfigurations(
                 state,
-                rewritePlanAccumulators.Values);
+                rewritePlanAccumulators.Values,
+                visualConfigurationCache);
 
             foreach (var plan in rewritePlanAccumulators.Values)
             {
@@ -2222,121 +2223,73 @@ namespace Editors.KitbasherEditor.Services
             SelectCrossRigidGeneratedPayloads(state);
         }
 
-        private static void PropagateCrossRigidSubsetRewriteCoverage(
-            BatchState state,
-            IEnumerable<CrossRigidMergePlanAccumulator> plans)
+        private static void
+            ExpandCrossRigidRewriteCoverageAcrossConfigurations(
+                BatchState state,
+                IEnumerable<CrossRigidMergePlanAccumulator> plans,
+                IReadOnlyDictionary<
+                    string,
+                    CrossRigidAttachmentLocalExpansionResult>
+                    visualConfigurationCache)
         {
-            var planArray = plans.ToArray();
-            var originalOccurrenceSets =
-                planArray.ToDictionary(
-                    plan => plan.RewritePlanId,
-                    plan => MergeCrossRigidRewriteOccurrenceSets(
-                        plan.RewriteOccurrenceSets),
-                    StringComparer.Ordinal);
-
-            foreach (var group in planArray.GroupBy(
-                         plan => string.Join(
-                             "\u001f",
-                             Normalize(plan.VmdPath),
-                             plan.AttachmentIdentity),
-                         StringComparer.OrdinalIgnoreCase))
+            foreach (var plan in plans)
             {
-                var groupPlans = group.ToArray();
-                foreach (var targetPlan in groupPlans)
+                if (!visualConfigurationCache.TryGetValue(
+                        Normalize(plan.VmdPath),
+                        out var expansion) ||
+                    expansion.FailureReason != null ||
+                    !expansion.ConfigurationsByAttachment.TryGetValue(
+                        plan.AttachmentIdentity,
+                        out var configurations))
                 {
-                    var targetCounts =
-                        BuildCrossRigidWsModelMultiplicity(
-                            targetPlan.SourceInstances);
-                    var projectedSets =
-                        new List<CrossRigidRewriteOccurrenceSet>();
+                    continue;
+                }
 
-                    foreach (var sourcePlan in groupPlans)
-                    {
-                        if (ReferenceEquals(targetPlan, sourcePlan) ||
-                            sourcePlan.SourceInstances.Length <=
-                            targetPlan.SourceInstances.Length)
-                        {
-                            continue;
-                        }
-
-                        var sourceCounts =
-                            BuildCrossRigidWsModelMultiplicity(
-                                sourcePlan.SourceInstances);
-                        if (!IsCrossRigidStrictDistinctPathSuperset(
-                                targetCounts,
-                                sourceCounts))
-                        {
-                            continue;
-                        }
-
-                        foreach (var occurrenceSet in
-                                 originalOccurrenceSets[
-                                     sourcePlan.RewritePlanId])
-                        {
-                            var selected = occurrenceSet.SourceInstances
-                                .Where(instance =>
-                                    targetCounts.ContainsKey(
-                                        Normalize(
-                                            instance.WsModelPath)))
-                                .OrderBy(
-                                    instance =>
-                                        BuildCrossRigidOccurrenceProvenanceSignature(
-                                            [instance]),
-                                    StringComparer.Ordinal)
-                                .ToArray();
-                            var selectedCounts =
-                                BuildCrossRigidWsModelMultiplicity(
-                                    selected);
-                            if (!AreCrossRigidWsModelMultiplicitiesEqual(
-                                    targetCounts,
-                                    selectedCounts))
-                            {
-                                continue;
-                            }
-
-                            projectedSets.Add(
-                                new CrossRigidRewriteOccurrenceSet(
-                                    occurrenceSet.Probability,
-                                    selected));
-                        }
-                    }
-
-                    if (projectedSets.Count == 0)
-                        continue;
-
-                    var beforeProbability =
-                        Math.Clamp(
-                            MergeCrossRigidRewriteOccurrenceSets(
-                                    targetPlan.RewriteOccurrenceSets)
-                                .Sum(set => set.Probability),
-                            0.0,
-                            1.0);
-                    targetPlan.RewriteOccurrenceSets.AddRange(
-                        projectedSets);
-                    var merged =
+                var beforeProbability =
+                    Math.Clamp(
                         MergeCrossRigidRewriteOccurrenceSets(
-                            targetPlan.RewriteOccurrenceSets);
-                    targetPlan.RewriteOccurrenceSets.Clear();
-                    targetPlan.RewriteOccurrenceSets.AddRange(merged);
-                    var afterProbability =
-                        Math.Clamp(
-                            merged.Sum(set => set.Probability),
-                            0.0,
-                            1.0);
+                                plan.RewriteOccurrenceSets)
+                            .Sum(set => set.Probability),
+                        0.0,
+                        1.0);
+                var expectedCounts =
+                    BuildCrossRigidWsModelMultiplicity(
+                        plan.SourceInstances);
+                var projectedSets =
+                    configurations
+                        .Where(configuration =>
+                            configuration.Probability > 0)
+                        .SelectMany(configuration =>
+                            BuildCrossRigidRewriteOccurrenceSets(
+                                configuration,
+                                expectedCounts))
+                        .ToArray();
+                if (projectedSets.Length == 0)
+                    continue;
 
-                    if (afterProbability >
-                        beforeProbability +
-                        AtlasValueGateExpectedDrawEpsilon)
-                    {
-                        RecordCrossRigidAnalysisDiagnostic(
-                            state,
-                            "Cross-rigid subset merge coverage propagated",
-                            $"{targetPlan.VmdPath} " +
-                            $"[{targetPlan.AttachmentIdentity}]: " +
-                            $"{targetPlan.SourceInstances.Length} source(s), " +
-                            $"probability {beforeProbability:0.######} -> " +
-                            $"{afterProbability:0.######}");
-                    }
+                var merged =
+                    MergeCrossRigidRewriteOccurrenceSets(
+                        projectedSets);
+                plan.RewriteOccurrenceSets.Clear();
+                plan.RewriteOccurrenceSets.AddRange(merged);
+
+                var afterProbability =
+                    Math.Clamp(
+                        merged.Sum(set => set.Probability),
+                        0.0,
+                        1.0);
+                if (afterProbability >
+                    beforeProbability +
+                    AtlasValueGateExpectedDrawEpsilon)
+                {
+                    RecordCrossRigidAnalysisDiagnostic(
+                        state,
+                        "Cross-rigid merge coverage expanded across co-render states",
+                        $"{plan.VmdPath} " +
+                        $"[{plan.AttachmentIdentity}]: " +
+                        $"{plan.SourceInstances.Length} source(s), " +
+                        $"probability {beforeProbability:0.######} -> " +
+                        $"{afterProbability:0.######}");
                 }
             }
         }
@@ -2354,37 +2307,6 @@ namespace Editors.KitbasherEditor.Services
                     group => group.Key,
                     group => group.Count(),
                     StringComparer.OrdinalIgnoreCase);
-
-        private static bool IsCrossRigidStrictDistinctPathSuperset(
-            IReadOnlyDictionary<string, int> subset,
-            IReadOnlyDictionary<string, int> superset)
-        {
-            if (superset.Count <= subset.Count)
-                return false;
-
-            foreach (var (path, count) in subset)
-            {
-                if (!superset.TryGetValue(
-                        path,
-                        out var supersetCount) ||
-                    supersetCount != count)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        private static bool AreCrossRigidWsModelMultiplicitiesEqual(
-            IReadOnlyDictionary<string, int> left,
-            IReadOnlyDictionary<string, int> right)
-            => left.Count == right.Count &&
-               left.All(entry =>
-                   right.TryGetValue(
-                       entry.Key,
-                       out var rightCount) &&
-                   rightCount == entry.Value);
 
         private static string BuildCrossRigidRewritePlanKey(
             string vmdPath,
@@ -3149,14 +3071,26 @@ namespace Editors.KitbasherEditor.Services
             BuildCrossRigidRewriteOccurrenceSets(
                 CrossRigidVisualConfiguration configuration,
                 IReadOnlyList<CrossRigidAnalysisInstanceComponent> group)
+            => BuildCrossRigidRewriteOccurrenceSets(
+                configuration,
+                group
+                    .Select(item => item.Instance)
+                    .ToArray());
+
+        private static IReadOnlyList<CrossRigidRewriteOccurrenceSet>
+            BuildCrossRigidRewriteOccurrenceSets(
+                CrossRigidVisualConfiguration configuration,
+                IReadOnlyList<CrossRigidVisualInstance> sourceInstances)
+            => BuildCrossRigidRewriteOccurrenceSets(
+                configuration,
+                BuildCrossRigidWsModelMultiplicity(
+                    sourceInstances));
+
+        private static IReadOnlyList<CrossRigidRewriteOccurrenceSet>
+            BuildCrossRigidRewriteOccurrenceSets(
+                CrossRigidVisualConfiguration configuration,
+                IReadOnlyDictionary<string, int> expectedCounts)
         {
-            var expectedCounts = group
-                .Select(item => Normalize(item.Instance.WsModelPath))
-                .GroupBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    paths => paths.Key,
-                    paths => paths.Count(),
-                    StringComparer.OrdinalIgnoreCase);
             var result = new List<CrossRigidRewriteOccurrenceSet>();
 
             foreach (var occurrenceSet in configuration.OccurrenceSets)
@@ -3166,14 +3100,9 @@ namespace Editors.KitbasherEditor.Services
                         expectedCounts.ContainsKey(
                             Normalize(instance.WsModelPath)))
                     .ToArray();
-                var actualCounts = selected
-                    .Select(instance =>
-                        Normalize(instance.WsModelPath))
-                    .GroupBy(path => path, StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(
-                        paths => paths.Key,
-                        paths => paths.Count(),
-                        StringComparer.OrdinalIgnoreCase);
+                var actualCounts =
+                    BuildCrossRigidWsModelMultiplicity(
+                        selected);
                 if (actualCounts.Count != expectedCounts.Count ||
                     expectedCounts.Any(entry =>
                         !actualCounts.TryGetValue(
