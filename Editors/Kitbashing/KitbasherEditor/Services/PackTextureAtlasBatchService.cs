@@ -1645,6 +1645,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidRigidHeaderBlockerCounts.Clear();
             state.CrossRigidRigidHeaderBlockerRigidCombinations.Clear();
             state.CrossRigidRigidHeaderBlockerVmdRoots.Clear();
+            state.CrossRigidRigidHeaderQualityProfiles.Clear();
+            state.CrossRigidRigidHeaderFullLodProfiles.Clear();
             state.CrossRigidAnalysisDiagnosticCounts.Clear();
             state.CrossRigidAnalysisDiagnosticExamples.Clear();
             state.CrossRigidActivationRewriteOccurrenceSetCounts.Clear();
@@ -6887,6 +6889,77 @@ namespace Editors.KitbasherEditor.Services
             var normalizedVmdPath = Normalize(vmdPath);
             if (normalizedVmdPath.Length != 0)
                 vmdRoots.Add(normalizedVmdPath);
+
+            var qualityProfiles = components
+                .Select(component =>
+                    BuildCrossRigidQualityProfile(component.Rigid))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(profile => profile, StringComparer.Ordinal)
+                .ToArray();
+            if (qualityProfiles.Length > 1)
+            {
+                RecordCrossRigidHeaderProfileAggregate(
+                    state.CrossRigidRigidHeaderQualityProfiles,
+                    string.Join(" <> ", qualityProfiles),
+                    rigidCombination,
+                    normalizedVmdPath);
+            }
+
+            var fullLodProfiles = components
+                .Select(component =>
+                    BuildCrossRigidFullLodProfile(component.Rigid))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(profile => profile, StringComparer.Ordinal)
+                .ToArray();
+            if (fullLodProfiles.Length > 1)
+            {
+                RecordCrossRigidHeaderProfileAggregate(
+                    state.CrossRigidRigidHeaderFullLodProfiles,
+                    string.Join(" <> ", fullLodProfiles),
+                    rigidCombination,
+                    normalizedVmdPath);
+            }
+        }
+
+        private static string BuildCrossRigidQualityProfile(RmvFile rigid)
+            => $"Q=[{string.Join(
+                ",",
+                rigid.LodHeaders.Select(header =>
+                    Convert.ToString(
+                        header.QualityLvl,
+                        CultureInfo.InvariantCulture)))}]";
+
+        private static string BuildCrossRigidFullLodProfile(RmvFile rigid)
+        {
+            var qualityProfile = BuildCrossRigidQualityProfile(rigid);
+            var distanceProfile = string.Join(
+                ",",
+                rigid.LodHeaders.Select(header =>
+                    header.LodCameraDistance.ToString(
+                        "0.###",
+                        CultureInfo.InvariantCulture)));
+            return $"{qualityProfile} D=[{distanceProfile}]";
+        }
+
+        private static void RecordCrossRigidHeaderProfileAggregate(
+            Dictionary<string, CrossRigidHeaderProfileAggregate> aggregates,
+            string profilePattern,
+            string rigidCombination,
+            string vmdPath)
+        {
+            if (!aggregates.TryGetValue(
+                    profilePattern,
+                    out var aggregate))
+            {
+                aggregate = new CrossRigidHeaderProfileAggregate();
+                aggregates[profilePattern] = aggregate;
+            }
+
+            aggregate.ObservationCount++;
+            if (rigidCombination.Length != 0)
+                aggregate.RigidCombinations.Add(rigidCombination);
+            if (vmdPath.Length != 0)
+                aggregate.VmdRoots.Add(vmdPath);
         }
 
         private static void RecordCrossRigidAnalysisDiagnostic(
@@ -25550,6 +25623,55 @@ namespace Editors.KitbasherEditor.Services
                                     $"{combinationCount:N0} / " +
                                     $"{vmdRootCount:N0}");
                             }
+
+                            const int maxCrossRigidHeaderProfilePatterns = 16;
+                            if (state.CrossRigidRigidHeaderQualityProfiles.Count != 0)
+                            {
+                                sb.AppendLine(
+                                    "    Top quality-level profile mismatch patterns " +
+                                    "(observations / unique rigid combinations / VMD roots):");
+                                foreach (var (profile, aggregate) in
+                                         state.CrossRigidRigidHeaderQualityProfiles
+                                             .OrderByDescending(entry =>
+                                                 entry.Value.RigidCombinations.Count)
+                                             .ThenByDescending(entry =>
+                                                 entry.Value.ObservationCount)
+                                             .ThenBy(
+                                                 entry => entry.Key,
+                                                 StringComparer.Ordinal)
+                                             .Take(maxCrossRigidHeaderProfilePatterns))
+                                {
+                                    sb.AppendLine(
+                                        $"      {profile}: " +
+                                        $"{aggregate.ObservationCount:N0} / " +
+                                        $"{aggregate.RigidCombinations.Count:N0} / " +
+                                        $"{aggregate.VmdRoots.Count:N0}");
+                                }
+                            }
+
+                            if (state.CrossRigidRigidHeaderFullLodProfiles.Count != 0)
+                            {
+                                sb.AppendLine(
+                                    "    Top full LOD profile mismatch patterns " +
+                                    "(observations / unique rigid combinations / VMD roots):");
+                                foreach (var (profile, aggregate) in
+                                         state.CrossRigidRigidHeaderFullLodProfiles
+                                             .OrderByDescending(entry =>
+                                                 entry.Value.RigidCombinations.Count)
+                                             .ThenByDescending(entry =>
+                                                 entry.Value.ObservationCount)
+                                             .ThenBy(
+                                                 entry => entry.Key,
+                                                 StringComparer.Ordinal)
+                                             .Take(maxCrossRigidHeaderProfilePatterns))
+                                {
+                                    sb.AppendLine(
+                                        $"      {profile}: " +
+                                        $"{aggregate.ObservationCount:N0} / " +
+                                        $"{aggregate.RigidCombinations.Count:N0} / " +
+                                        $"{aggregate.VmdRoots.Count:N0}");
+                                }
+                            }
                         }
 
                         if (!state.CrossRigidAnalysisBlockerExamples.TryGetValue(
@@ -28130,6 +28252,15 @@ namespace Editors.KitbasherEditor.Services
             double BaselineExpectedArmyResidentPixels,
             double ProposedExpectedArmyResidentPixels);
 
+        private sealed class CrossRigidHeaderProfileAggregate
+        {
+            public int ObservationCount { get; set; }
+            public HashSet<string> RigidCombinations { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> VmdRoots { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+        }
+
         private sealed class BatchState
         {
             public IPackFileContainer Source { get; }
@@ -28214,6 +28345,12 @@ namespace Editors.KitbasherEditor.Services
                     new(StringComparer.Ordinal);
             public Dictionary<string, HashSet<string>>
                 CrossRigidRigidHeaderBlockerVmdRoots { get; } =
+                    new(StringComparer.Ordinal);
+            public Dictionary<string, CrossRigidHeaderProfileAggregate>
+                CrossRigidRigidHeaderQualityProfiles { get; } =
+                    new(StringComparer.Ordinal);
+            public Dictionary<string, CrossRigidHeaderProfileAggregate>
+                CrossRigidRigidHeaderFullLodProfiles { get; } =
                     new(StringComparer.Ordinal);
             public Dictionary<string, int> CrossRigidAnalysisDiagnosticCounts { get; } =
                 new(StringComparer.Ordinal);
