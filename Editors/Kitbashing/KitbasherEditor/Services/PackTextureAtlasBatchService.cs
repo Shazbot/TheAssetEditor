@@ -25536,6 +25536,8 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Generated-geometry residency uses a conservative upper-bound union of attachment-local rewrite probabilities; displaced-source credit is a strict lower bound.");
                 sb.AppendLine(
+                    "Quality-aware cross-rigid LOD synthesis preserves source quality gating when source LOD counts and camera-distance schedules match. Synthesized fallback states are fully charged to generated geometry, while only the source-equivalent representative state consumes the existing scenario LOD probability so quality fallbacks do not double-count battle draw credit.");
+                sb.AppendLine(
                     "Geometry payload bytes are serialized vertex plus 16-bit index payload only; RMV headers and material metadata are excluded.");
                 sb.AppendLine(
                     $"VMD roots with multiple reachable WSModel paths analyzed: " +
