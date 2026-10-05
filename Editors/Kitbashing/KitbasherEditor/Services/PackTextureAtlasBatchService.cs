@@ -1890,7 +1890,7 @@ namespace Editors.KitbasherEditor.Services
                                 "Cross-rigid mixed source LOD quality levels normalized to Asset Editor defaults",
                                 $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
                                 $"{string.Join(" <> ", qualityProfiles)} -> " +
-                                $"Q=[2,{string.Join(",", Enumerable.Repeat("0", Math.Max(0, distinctComponents[0].Rigid.ModelList.Length - 1)))}], " +
+                                $"Q=[{string.Join(",", Enumerable.Range(0, distinctComponents[0].Rigid.ModelList.Length).Select(GetCrossRigidDefaultLodQualityLevel))}], " +
                                 $"D=[{string.Join(",", Enumerable.Range(0, distinctComponents[0].Rigid.ModelList.Length).Select(GetCrossRigidDefaultLodCameraDistance))}]");
                         }
 
