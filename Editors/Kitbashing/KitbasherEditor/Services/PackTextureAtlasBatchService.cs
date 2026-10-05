@@ -70,10 +70,11 @@ namespace Editors.KitbasherEditor.Services
         private const double AtlasValueGateExpectedDrawEpsilon = 0.000001;
         private const double MaxReachableBcnGrowthRatio = 0.50;
         // Cross-rigid generated assets are selected independently from atlas BCn. Runtime
-        // residency gets a tight scenario-aware budget, while physical pack growth gets a
-        // looser per-benefit budget plus a hard cumulative cap. Multi-VMD payload reuse is
-        // rewarded naturally because all rewrite-plan benefit is aggregated before geometry
-        // is charged once.
+        // residency and physical pack growth are constrained across the selected portfolio,
+        // so cheap payloads can create headroom for individually more expensive payloads
+        // without relaxing the final per-benefit limits. A hard cumulative growth cap still
+        // bounds absolute pack expansion. Multi-VMD payload reuse is rewarded naturally
+        // because all rewrite-plan benefit is aggregated before geometry is charged once.
         private const long MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw =
             512L * 1024; // 0.5 MiB
         private const long MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw =
@@ -4253,7 +4254,7 @@ namespace Editors.KitbasherEditor.Services
                             entry.ExpectedArmyDrawCallsEliminated),
                         StringComparer.Ordinal);
 
-            var hardAcceptedCandidates =
+            var selectionCandidates =
                 new List<CrossRigidPayloadSelectionEntry>();
 
             foreach (var payload in
@@ -4291,22 +4292,6 @@ namespace Editors.KitbasherEditor.Services
                         CrossRigidPayloadSelectionDecision
                             .SingleVmdBenefitTooSmall;
                 }
-                else if (expectedResidentBytes >
-                         expectedDraws *
-                         MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw)
-                {
-                    decision =
-                        CrossRigidPayloadSelectionDecision
-                            .ScenarioResidencyBudgetExceeded;
-                }
-                else if (generatedGeometryBytes >
-                         expectedDraws *
-                         MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw)
-                {
-                    decision =
-                        CrossRigidPayloadSelectionDecision
-                            .PhysicalPerDrawBudgetExceeded;
-                }
 
                 var entry = new CrossRigidPayloadSelectionEntry(
                     payload.GeneratedPayloadId,
@@ -4323,7 +4308,7 @@ namespace Editors.KitbasherEditor.Services
                 if (decision ==
                     CrossRigidPayloadSelectionDecision.Accept)
                 {
-                    hardAcceptedCandidates.Add(entry);
+                    selectionCandidates.Add(entry);
                 }
                 else
                 {
@@ -4331,9 +4316,41 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            var orderedCandidates =
+                selectionCandidates
+                    .OrderBy(entry =>
+                        Math.Max(
+                            entry.ResidentBytesPerExpectedDraw /
+                            MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw,
+                            entry.PhysicalBytesPerExpectedDraw /
+                            MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw))
+                    .ThenBy(entry =>
+                        entry.ResidentBytesPerExpectedDraw /
+                        MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw +
+                        entry.PhysicalBytesPerExpectedDraw /
+                        MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw)
+                    .ThenByDescending(entry =>
+                        entry.RewritePlanCount)
+                    .ThenByDescending(entry =>
+                        entry.ExpectedArmyDrawCallsEliminated)
+                    .ThenBy(
+                        entry => entry.GeneratedPayloadId,
+                        StringComparer.Ordinal)
+                    .Select((entry, index) =>
+                        entry with
+                        {
+                            SelectionRank = index + 1,
+                        })
+                    .ToList();
+
             var conflictProfileVmdDocuments =
                 new Dictionary<string, XmlDocument>(
                     StringComparer.OrdinalIgnoreCase);
+            var conflictProfiles =
+                new Dictionary<
+                    string,
+                    CrossRigidPayloadRewriteConflictProfile>(
+                    StringComparer.Ordinal);
             var selectedRewriteConflictKeys =
                 new HashSet<string>(StringComparer.Ordinal);
             var selectedJointContextKeyByParentLocation =
@@ -4341,83 +4358,178 @@ namespace Editors.KitbasherEditor.Services
                     StringComparer.Ordinal);
 
             var acceptedGeneratedGeometryBytes = 0L;
-            var rank = 0;
-            foreach (var candidate in hardAcceptedCandidates
-                         .OrderBy(entry =>
-                             entry.PhysicalBytesPerExpectedDraw)
-                         .ThenByDescending(entry =>
-                             entry.RewritePlanCount)
-                         .ThenByDescending(entry =>
-                             entry.ExpectedArmyDrawCallsEliminated)
-                         .ThenBy(
-                             entry => entry.GeneratedPayloadId,
-                             StringComparer.Ordinal))
+            var acceptedExpectedResidentGeometryBytes = 0.0;
+            var acceptedExpectedDraws = 0.0;
+            var pendingCandidates =
+                new List<CrossRigidPayloadSelectionEntry>(
+                    orderedCandidates);
+            var deferredBudgetDecisionByPayload =
+                new Dictionary<
+                    string,
+                    CrossRigidPayloadSelectionDecision>(
+                    StringComparer.Ordinal);
+
+            while (pendingCandidates.Count != 0)
             {
-                rank++;
-                if (!TryBuildCrossRigidPayloadRewriteConflictProfile(
-                        state,
-                        candidate.GeneratedPayloadId,
-                        conflictProfileVmdDocuments,
-                        out var conflictProfile,
-                        out _) ||
-                    conflictProfile.RewriteConflictKeys.Overlaps(
-                        selectedRewriteConflictKeys) ||
-                    conflictProfile.JointContextKeyByParentLocation.Any(
-                        pair =>
-                            selectedJointContextKeyByParentLocation
-                                .TryGetValue(
-                                    pair.Key,
-                                    out var selectedContextKey) &&
-                            !selectedContextKey.Equals(
-                                pair.Value,
-                                StringComparison.Ordinal)))
+                var acceptedThisPass = false;
+
+                for (var candidateIndex = 0;
+                     candidateIndex < pendingCandidates.Count;)
                 {
-                    state.CrossRigidPayloadSelectionEntries.Add(
-                        candidate with
+                    var candidate =
+                        pendingCandidates[candidateIndex];
+
+                    if (!conflictProfiles.TryGetValue(
+                            candidate.GeneratedPayloadId,
+                            out var conflictProfile))
+                    {
+                        if (!TryBuildCrossRigidPayloadRewriteConflictProfile(
+                                state,
+                                candidate.GeneratedPayloadId,
+                                conflictProfileVmdDocuments,
+                                out conflictProfile,
+                                out _))
                         {
-                            Decision =
-                                CrossRigidPayloadSelectionDecision
-                                    .RewriteOccurrenceConflict,
-                            SelectionRank = rank,
-                        });
-                    continue;
-                }
+                            state.CrossRigidPayloadSelectionEntries.Add(
+                                candidate with
+                                {
+                                    Decision =
+                                        CrossRigidPayloadSelectionDecision
+                                            .RewriteOccurrenceConflict,
+                                });
+                            pendingCandidates.RemoveAt(
+                                candidateIndex);
+                            deferredBudgetDecisionByPayload.Remove(
+                                candidate.GeneratedPayloadId);
+                            continue;
+                        }
 
-                var projectedGrowth =
-                    acceptedGeneratedGeometryBytes +
-                    candidate.GeneratedGeometryBytes;
-                if (projectedGrowth >
-                    MaxCrossRigidGeneratedGeometryGrowthBytes)
-                {
+                        conflictProfiles[
+                            candidate.GeneratedPayloadId] =
+                            conflictProfile;
+                    }
+
+                    if (conflictProfile.RewriteConflictKeys.Overlaps(
+                            selectedRewriteConflictKeys) ||
+                        conflictProfile.JointContextKeyByParentLocation.Any(
+                            pair =>
+                                selectedJointContextKeyByParentLocation
+                                    .TryGetValue(
+                                        pair.Key,
+                                        out var selectedContextKey) &&
+                                !selectedContextKey.Equals(
+                                    pair.Value,
+                                    StringComparison.Ordinal)))
+                    {
+                        state.CrossRigidPayloadSelectionEntries.Add(
+                            candidate with
+                            {
+                                Decision =
+                                    CrossRigidPayloadSelectionDecision
+                                        .RewriteOccurrenceConflict,
+                            });
+                        pendingCandidates.RemoveAt(
+                            candidateIndex);
+                        deferredBudgetDecisionByPayload.Remove(
+                            candidate.GeneratedPayloadId);
+                        continue;
+                    }
+
+                    var projectedExpectedDraws =
+                        acceptedExpectedDraws +
+                        candidate.ExpectedArmyDrawCallsEliminated;
+                    var projectedExpectedResidentGeometryBytes =
+                        acceptedExpectedResidentGeometryBytes +
+                        candidate.ExpectedResidentGeneratedGeometryBytes;
+                    if (projectedExpectedResidentGeometryBytes >
+                        projectedExpectedDraws *
+                        MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw)
+                    {
+                        deferredBudgetDecisionByPayload[
+                            candidate.GeneratedPayloadId] =
+                            CrossRigidPayloadSelectionDecision
+                                .ScenarioResidencyBudgetExceeded;
+                        candidateIndex++;
+                        continue;
+                    }
+
+                    var projectedGeneratedGeometryBytes =
+                        acceptedGeneratedGeometryBytes +
+                        candidate.GeneratedGeometryBytes;
+                    if (projectedGeneratedGeometryBytes >
+                        projectedExpectedDraws *
+                        MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw)
+                    {
+                        deferredBudgetDecisionByPayload[
+                            candidate.GeneratedPayloadId] =
+                            CrossRigidPayloadSelectionDecision
+                                .PhysicalPerDrawBudgetExceeded;
+                        candidateIndex++;
+                        continue;
+                    }
+
+                    if (projectedGeneratedGeometryBytes >
+                        MaxCrossRigidGeneratedGeometryGrowthBytes)
+                    {
+                        state.CrossRigidPayloadSelectionEntries.Add(
+                            candidate with
+                            {
+                                Decision =
+                                    CrossRigidPayloadSelectionDecision
+                                        .GlobalGrowthCapExceeded,
+                            });
+                        pendingCandidates.RemoveAt(
+                            candidateIndex);
+                        deferredBudgetDecisionByPayload.Remove(
+                            candidate.GeneratedPayloadId);
+                        continue;
+                    }
+
+                    acceptedGeneratedGeometryBytes =
+                        projectedGeneratedGeometryBytes;
+                    acceptedExpectedResidentGeometryBytes =
+                        projectedExpectedResidentGeometryBytes;
+                    acceptedExpectedDraws =
+                        projectedExpectedDraws;
+                    selectedRewriteConflictKeys.UnionWith(
+                        conflictProfile.RewriteConflictKeys);
+                    foreach (var pair in
+                             conflictProfile
+                                 .JointContextKeyByParentLocation)
+                    {
+                        selectedJointContextKeyByParentLocation[
+                            pair.Key] =
+                            pair.Value;
+                    }
+
+                    state.CrossRigidSelectedPayloadIds.Add(
+                        candidate.GeneratedPayloadId);
                     state.CrossRigidPayloadSelectionEntries.Add(
-                        candidate with
-                        {
-                            Decision =
-                                CrossRigidPayloadSelectionDecision
-                                    .GlobalGrowthCapExceeded,
-                            SelectionRank = rank,
-                        });
-                    continue;
+                        candidate);
+                    pendingCandidates.RemoveAt(
+                        candidateIndex);
+                    deferredBudgetDecisionByPayload.Remove(
+                        candidate.GeneratedPayloadId);
+                    acceptedThisPass = true;
                 }
 
-                acceptedGeneratedGeometryBytes = projectedGrowth;
-                selectedRewriteConflictKeys.UnionWith(
-                    conflictProfile.RewriteConflictKeys);
-                foreach (var pair in
-                         conflictProfile.JointContextKeyByParentLocation)
-                {
-                    selectedJointContextKeyByParentLocation[
-                        pair.Key] =
-                        pair.Value;
-                }
+                if (!acceptedThisPass)
+                    break;
+            }
 
-                state.CrossRigidSelectedPayloadIds.Add(
-                    candidate.GeneratedPayloadId);
+            foreach (var candidate in pendingCandidates)
+            {
                 state.CrossRigidPayloadSelectionEntries.Add(
-                    candidate with { SelectionRank = rank });
+                    candidate with
+                    {
+                        Decision =
+                            deferredBudgetDecisionByPayload.GetValueOrDefault(
+                                candidate.GeneratedPayloadId,
+                                CrossRigidPayloadSelectionDecision
+                                    .ScenarioResidencyBudgetExceeded),
+                    });
             }
         }
-
 
         private static bool
             TryBuildCrossRigidPayloadRewriteConflictProfile(
@@ -27372,6 +27484,8 @@ namespace Editors.KitbasherEditor.Services
                     "The value gate defines the emission candidate set; topology-unsafe or non-inline rewrite plans remain unchanged and are reported separately.");
                 sb.AppendLine(
                     "The runtime gate charges gross expected generated-geometry residency; displaced-source credit is not spent by the gate.");
+                sb.AppendLine(
+                    "Scenario-resident and physical-per-draw limits are selected-portfolio budgets rather than per-payload hard gates; budget-deferred candidates are retried after cheaper accepted payloads create headroom.");
                 sb.AppendLine(
                     $"Scenario-resident geometry budget: " +
                     $"{FormatMiB(MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw, 2)} per expected draw");
