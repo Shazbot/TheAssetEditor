@@ -1872,20 +1872,22 @@ namespace Editors.KitbasherEditor.Services
                                 $"{sourceVersions.Max()}");
                         }
 
-                        var lodAnalyses = new List<CrossRigidLodAnalysis>();
-                        var maxLodCount = group.Max(
-                            item => item.Component.Rigid.ModelList.Length);
-                        for (var lodIndex = 0;
-                             lodIndex < maxLodCount;
-                             lodIndex++)
-                        {
-                            cancellationToken.ThrowIfCancellationRequested();
-                            var lod = AnalyzeCrossRigidLod(
+                        var lodAnalyses =
+                            BuildCrossRigidLodAnalyses(
                                 state,
                                 group,
-                                lodIndex);
-                            if (lod.ActiveRigidCount >= 2)
-                                lodAnalyses.Add(lod);
+                                cancellationToken);
+                        var sourceLodCount =
+                            distinctComponents[0].Rigid.ModelList.Length;
+                        if (lodAnalyses.Count > sourceLodCount)
+                        {
+                            RecordCrossRigidAnalysisDiagnostic(
+                                state,
+                                "Cross-rigid source LOD quality levels synthesized",
+                                $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
+                                $"{sourceLodCount} source LOD(s) -> " +
+                                $"{lodAnalyses.Count} generated quality-aware LOD state(s); " +
+                                $"{string.Join(" <> ", distinctComponents.Select(component => BuildCrossRigidQualityProfile(component.Rigid)).Distinct(StringComparer.Ordinal).OrderBy(profile => profile, StringComparer.Ordinal))}");
                         }
 
                         if (lodAnalyses.Count == 0 ||
@@ -3002,7 +3004,24 @@ namespace Editors.KitbasherEditor.Services
                 lodAnalyses
                     .OrderBy(lod => lod.LodIndex)
                     .Select(lod =>
-                        $"{lod.LodIndex}:{lod.OutputLayoutSignature}"));
+                        string.Join(
+                            ":",
+                            lod.LodIndex,
+                            lod.ScenarioLodIndex,
+                            lod.QualityLevel,
+                            lod.CameraDistance.ToString(
+                                "R",
+                                CultureInfo.InvariantCulture),
+                            lod.IsScenarioRepresentativeState ? 1 : 0,
+                            string.Join(
+                                ",",
+                                lod.SourceLodSelections
+                                    .OrderBy(
+                                        selection => selection.WsModelPath,
+                                        StringComparer.OrdinalIgnoreCase)
+                                    .Select(selection =>
+                                        $"{Normalize(selection.WsModelPath)}={selection.SourceLodIndex}")),
+                            lod.OutputLayoutSignature)));
 
         private static CrossRigidSourceGeometryComponent
             BuildCrossRigidSourceGeometryComponent(
@@ -3209,11 +3228,11 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var generatedVertices =
-                    representative.SourceGeometry.Sum(
-                        source => source.VertexCount);
+                    representative.Lods.Sum(
+                        lod => lod.GeneratedVertexCount);
                 var generatedGeometryBytes =
-                    representative.SourceGeometry.Sum(
-                        source => source.GeometryBytes);
+                    representative.Lods.Sum(
+                        lod => lod.GeneratedGeometryBytes);
                 var residentProbability =
                     CalculateExpectedCrossRigidPayloadResidentProbability(
                         state,
@@ -3809,11 +3828,17 @@ namespace Editors.KitbasherEditor.Services
                         plan.ExpectedArmyDrawCallsEliminated *
                         emittedFraction;
                     state.CrossRigidRawLodDrawsBefore +=
-                        plan.Lods.Sum(lod =>
-                            (long)lod.InputDrawsAfterSameRigidMerge);
+                        plan.Lods
+                            .Where(lod =>
+                                lod.IsScenarioRepresentativeState)
+                            .Sum(lod =>
+                                (long)lod.InputDrawsAfterSameRigidMerge);
                     state.CrossRigidRawLodDrawsAfter +=
-                        plan.Lods.Sum(lod =>
-                            (long)lod.OutputDrawsAfterCrossRigidMerge);
+                        plan.Lods
+                            .Where(lod =>
+                                lod.IsScenarioRepresentativeState)
+                            .Sum(lod =>
+                                (long)lod.OutputDrawsAfterCrossRigidMerge);
 
                     foreach (var instance in plan.SourceInstances)
                     {
@@ -5105,14 +5130,28 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var representative = components[0];
-                var lodCount = representative.Rigid.ModelList.Length;
-                var generatedModels = new RmvModel[lodCount][];
-                var generatedAssignments = new string[lodCount][];
+                var generatedLodCount = plan.Lods.Length;
+                var generatedModels = new RmvModel[generatedLodCount][];
+                var generatedAssignments = new string[generatedLodCount][];
 
-                for (var lodIndex = 0;
-                     lodIndex < lodCount;
-                     lodIndex++)
+                for (var generatedLodIndex = 0;
+                     generatedLodIndex < generatedLodCount;
+                     generatedLodIndex++)
                 {
+                    var lodPlan = plan.Lods[generatedLodIndex];
+                    if (lodPlan.LodIndex != generatedLodIndex)
+                    {
+                        reason =
+                            $"generated LOD plan index mismatch: expected {generatedLodIndex}, " +
+                            $"found {lodPlan.LodIndex}";
+                        return false;
+                    }
+
+                    var sourceLodByWsModel =
+                        lodPlan.SourceLodSelections.ToDictionary(
+                            selection => Normalize(selection.WsModelPath),
+                            selection => selection.SourceLodIndex,
+                            StringComparer.OrdinalIgnoreCase);
                     var sourceParts =
                         new List<CrossRigidGeneratedSourcePart>();
                     for (var instanceIndex = 0;
@@ -5123,12 +5162,29 @@ namespace Editors.KitbasherEditor.Services
                             plan.SourceInstances[instanceIndex];
                         var wsModelPath =
                             Normalize(instance.WsModelPath);
+                        if (!sourceLodByWsModel.TryGetValue(
+                                wsModelPath,
+                                out var sourceLodIndex))
+                        {
+                            continue;
+                        }
+
                         var component =
                             componentsByWsModel[wsModelPath];
+                        if (sourceLodIndex < 0 ||
+                            sourceLodIndex >=
+                            component.Rigid.ModelList.Length)
+                        {
+                            reason =
+                                $"generated LOD {generatedLodIndex} has invalid source LOD " +
+                                $"{sourceLodIndex} for {wsModelPath}";
+                            return false;
+                        }
+
                         var models =
-                            component.Rigid.ModelList[lodIndex];
+                            component.Rigid.ModelList[sourceLodIndex];
                         var assignments =
-                            component.MaterialAssignments[lodIndex];
+                            component.MaterialAssignments[sourceLodIndex];
 
                         for (var partIndex = 0;
                              partIndex < models.Length;
@@ -5140,7 +5196,7 @@ namespace Editors.KitbasherEditor.Services
                                     state,
                                     new MeshKey(
                                         component.RigidPath,
-                                        lodIndex,
+                                        sourceLodIndex,
                                         partIndex)),
                                 GetRmvMergeIdentityForMerge(
                                     models[partIndex],
@@ -5203,22 +5259,18 @@ namespace Editors.KitbasherEditor.Services
                         }
                     }
 
-                    var expectedLod = plan.Lods
-                        .FirstOrDefault(lod =>
-                            lod.LodIndex == lodIndex);
-                    if (expectedLod != null &&
-                        outputModels.Count !=
-                        expectedLod.OutputDrawsAfterCrossRigidMerge)
+                    if (outputModels.Count !=
+                        lodPlan.OutputDrawsAfterCrossRigidMerge)
                     {
                         reason =
-                            $"LOD {lodIndex} emitted {outputModels.Count} draw(s), " +
-                            $"but analysis selected {expectedLod.OutputDrawsAfterCrossRigidMerge}";
+                            $"LOD {generatedLodIndex} emitted {outputModels.Count} draw(s), " +
+                            $"but analysis selected {lodPlan.OutputDrawsAfterCrossRigidMerge}";
                         return false;
                     }
 
-                    generatedModels[lodIndex] =
+                    generatedModels[generatedLodIndex] =
                         outputModels.ToArray();
-                    generatedAssignments[lodIndex] =
+                    generatedAssignments[generatedLodIndex] =
                         outputMaterials.ToArray();
                 }
 
@@ -5234,12 +5286,32 @@ namespace Editors.KitbasherEditor.Services
                 var generatedRigid = new RmvFile
                 {
                     Header = header,
-                    LodHeaders = representative.Rigid.LodHeaders
-                        .Select((lod, lodIndex) =>
-                            lodHeaderFactory.CreateFromBase(
-                                generatedVersion,
-                                lod,
-                                (uint)lodIndex))
+                    LodHeaders = plan.Lods
+                        .Select((lod, generatedLodIndex) =>
+                        {
+                            var representativeSelection =
+                                lod.SourceLodSelections.FirstOrDefault(
+                                    selection =>
+                                        selection.WsModelPath.Equals(
+                                            representative.WsModelPath,
+                                            StringComparison.OrdinalIgnoreCase));
+                            var sourceHeaderIndex =
+                                representativeSelection?.SourceLodIndex ??
+                                Math.Min(
+                                    lod.ScenarioLodIndex,
+                                    representative.Rigid.LodHeaders.Length - 1);
+                            var generatedLodHeader =
+                                lodHeaderFactory.CreateFromBase(
+                                    generatedVersion,
+                                    representative.Rigid.LodHeaders[
+                                        sourceHeaderIndex],
+                                    (uint)generatedLodIndex);
+                            generatedLodHeader.QualityLvl =
+                                lod.QualityLevel;
+                            generatedLodHeader.LodCameraDistance =
+                                lod.CameraDistance;
+                            return generatedLodHeader;
+                        })
                         .ToArray(),
                     ModelList = generatedModels,
                 };
@@ -5352,31 +5424,17 @@ namespace Editors.KitbasherEditor.Services
                      lodIndex < baseline.LodHeaders.Length;
                      lodIndex++)
                 {
-                    var cameraDistanceDiffers =
-                        Math.Abs(
+                    if (Math.Abs(
                             rigid.LodHeaders[lodIndex]
                                 .LodCameraDistance -
                             baseline.LodHeaders[lodIndex]
-                                .LodCameraDistance) > 0.01f;
-                    var qualityLevelDiffers =
-                        rigid.LodHeaders[lodIndex].QualityLvl !=
-                        baseline.LodHeaders[lodIndex].QualityLvl;
-                    if (!cameraDistanceDiffers &&
-                        !qualityLevelDiffers)
+                                .LodCameraDistance) <= 0.01f)
                     {
                         continue;
                     }
 
-                    reason = (cameraDistanceDiffers, qualityLevelDiffers) switch
-                    {
-                        (true, true) =>
-                            $"source rigid LOD {lodIndex} camera-distance thresholds and quality levels differ",
-                        (true, false) =>
-                            $"source rigid LOD {lodIndex} camera-distance thresholds differ",
-                        (false, true) =>
-                            $"source rigid LOD {lodIndex} quality levels differ",
-                        _ => string.Empty,
-                    };
+                    reason =
+                        $"source rigid LOD {lodIndex} camera-distance thresholds differ";
                     return false;
                 }
             }
@@ -6531,47 +6589,233 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
-        private static CrossRigidLodAnalysis AnalyzeCrossRigidLod(
+        private static List<CrossRigidLodAnalysis>
+            BuildCrossRigidLodAnalyses(
+                BatchState state,
+                IReadOnlyList<CrossRigidAnalysisInstanceComponent> instances,
+                CancellationToken cancellationToken)
+        {
+            var components = instances
+                .Select(item => item.Component)
+                .GroupBy(
+                    component => component.WsModelPath,
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(
+                    component => component.WsModelPath,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (components.Length == 0)
+                return [];
+
+            var lodCount = components[0].Rigid.ModelList.Length;
+            var qualityProfilesDiffer =
+                components
+                    .Select(component =>
+                        BuildCrossRigidQualityProfile(component.Rigid))
+                    .Distinct(StringComparer.Ordinal)
+                    .Skip(1)
+                    .Any();
+            var result = new List<CrossRigidLodAnalysis>();
+            var generatedLodIndex = 0;
+
+            for (var scenarioLodIndex = 0;
+                 scenarioLodIndex < lodCount;
+                 scenarioLodIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var cameraDistance =
+                    components[0].Rigid.LodHeaders[
+                        scenarioLodIndex].LodCameraDistance;
+
+                if (!qualityProfilesDiffer)
+                {
+                    var qualityLevel =
+                        components[0].Rigid.LodHeaders[
+                            scenarioLodIndex].QualityLvl;
+                    var selections = components
+                        .Select(component =>
+                            new CrossRigidSourceLodSelection(
+                                component.WsModelPath,
+                                scenarioLodIndex))
+                        .ToArray();
+                    result.Add(
+                        AnalyzeCrossRigidLodState(
+                            state,
+                            instances,
+                            generatedLodIndex++,
+                            scenarioLodIndex,
+                            qualityLevel,
+                            cameraDistance,
+                            selections,
+                            isScenarioRepresentativeState: true));
+                    continue;
+                }
+
+                var statesBySelection =
+                    new Dictionary<
+                        string,
+                        (byte QualityLevel,
+                         CrossRigidSourceLodSelection[] Selections)>(
+                        StringComparer.Ordinal);
+                var relevantQualityLevels = components
+                    .SelectMany(component =>
+                        component.Rigid.LodHeaders
+                            .Skip(scenarioLodIndex)
+                            .Select(header => header.QualityLvl))
+                    .Distinct()
+                    .OrderByDescending(level => level)
+                    .ToArray();
+
+                foreach (var qualityLevel in relevantQualityLevels)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var selections = components
+                        .Select(component =>
+                        {
+                            var sourceLodIndex =
+                                FindCrossRigidSourceLodForQuality(
+                                    component.Rigid,
+                                    scenarioLodIndex,
+                                    qualityLevel);
+                            return sourceLodIndex >= 0
+                                ? new CrossRigidSourceLodSelection(
+                                    component.WsModelPath,
+                                    sourceLodIndex)
+                                : null;
+                        })
+                        .Where(selection => selection != null)
+                        .Cast<CrossRigidSourceLodSelection>()
+                        .OrderBy(
+                            selection => selection.WsModelPath,
+                            StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    if (selections.Length == 0)
+                        continue;
+
+                    var selectionSignature = string.Join(
+                        "\u001e",
+                        selections.Select(selection =>
+                            $"{Normalize(selection.WsModelPath)}=" +
+                            $"{selection.SourceLodIndex}"));
+                    if (statesBySelection.TryGetValue(
+                            selectionSignature,
+                            out var existing))
+                    {
+                        if (qualityLevel < existing.QualityLevel)
+                        {
+                            statesBySelection[selectionSignature] =
+                                (qualityLevel, existing.Selections);
+                        }
+
+                        continue;
+                    }
+
+                    statesBySelection[selectionSignature] =
+                        (qualityLevel, selections);
+                }
+
+                foreach (var stateDefinition in statesBySelection.Values
+                             .OrderByDescending(stateDefinition =>
+                                 stateDefinition.QualityLevel)
+                             .ThenBy(
+                                 stateDefinition => string.Join(
+                                     "\u001e",
+                                     stateDefinition.Selections.Select(
+                                         selection =>
+                                             $"{Normalize(selection.WsModelPath)}=" +
+                                             $"{selection.SourceLodIndex}")),
+                                 StringComparer.Ordinal))
+                {
+                    var isScenarioRepresentativeState =
+                        stateDefinition.Selections.Length ==
+                            components.Length &&
+                        stateDefinition.Selections.All(selection =>
+                            selection.SourceLodIndex ==
+                            scenarioLodIndex);
+
+                    result.Add(
+                        AnalyzeCrossRigidLodState(
+                            state,
+                            instances,
+                            generatedLodIndex++,
+                            scenarioLodIndex,
+                            stateDefinition.QualityLevel,
+                            cameraDistance,
+                            stateDefinition.Selections,
+                            isScenarioRepresentativeState));
+                }
+            }
+
+            return result;
+        }
+
+        private static int FindCrossRigidSourceLodForQuality(
+            RmvFile rigid,
+            int scenarioLodIndex,
+            byte qualityLevel)
+        {
+            for (var sourceLodIndex = scenarioLodIndex;
+                 sourceLodIndex < rigid.LodHeaders.Length;
+                 sourceLodIndex++)
+            {
+                if (qualityLevel >=
+                    rigid.LodHeaders[sourceLodIndex].QualityLvl)
+                {
+                    return sourceLodIndex;
+                }
+            }
+
+            return -1;
+        }
+
+        private static CrossRigidLodAnalysis AnalyzeCrossRigidLodState(
             BatchState state,
             IReadOnlyList<CrossRigidAnalysisInstanceComponent> instances,
-            int lodIndex)
+            int generatedLodIndex,
+            int scenarioLodIndex,
+            byte qualityLevel,
+            float cameraDistance,
+            IReadOnlyList<CrossRigidSourceLodSelection> sourceLodSelections,
+            bool isScenarioRepresentativeState)
         {
+            var sourceLodByWsModel =
+                sourceLodSelections.ToDictionary(
+                    selection => Normalize(selection.WsModelPath),
+                    selection => selection.SourceLodIndex,
+                    StringComparer.OrdinalIgnoreCase);
             var activeInstances = instances
                 .Where(item =>
-                    lodIndex < item.Component.Rigid.ModelList.Length)
+                    sourceLodByWsModel.ContainsKey(
+                        Normalize(item.Component.WsModelPath)))
                 .ToArray();
             var activeRigidCount = activeInstances
                 .Select(item => item.Component.RigidPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count();
-            if (activeRigidCount < 2)
-            {
-                return new CrossRigidLodAnalysis(
-                    lodIndex,
-                    activeInstances.Length,
-                    activeRigidCount,
-                    0,
-                    0,
-                    0,
-                    state.ArmyResidencyModel?.Scenario
-                        .GetLodProbability(lodIndex) ?? 0,
-                    "none");
-            }
 
             var partsByIdentity =
                 new Dictionary<
                     string,
                     List<CrossRigidAnalysisMeshPart>>(
                     StringComparer.Ordinal);
+            var vertexFactory = VertexFactory.Create();
+            long generatedVertices = 0;
+            long generatedGeometryBytes = 0;
+
             for (var instanceIndex = 0;
                  instanceIndex < activeInstances.Length;
                  instanceIndex++)
             {
                 var item = activeInstances[instanceIndex];
                 var component = item.Component;
-                var models = component.Rigid.ModelList[lodIndex];
+                var sourceLodIndex =
+                    sourceLodByWsModel[
+                        Normalize(component.WsModelPath)];
+                var models =
+                    component.Rigid.ModelList[sourceLodIndex];
                 var materialAssignments =
-                    component.MaterialAssignments[lodIndex];
+                    component.MaterialAssignments[sourceLodIndex];
                 var instanceKey =
                     $"{instanceIndex}\u001f" +
                     $"{item.Instance.AttachmentIdentity}\u001f" +
@@ -6581,6 +6825,20 @@ namespace Editors.KitbasherEditor.Services
                      partIndex < models.Length;
                      partIndex++)
                 {
+                    var model = models[partIndex];
+                    generatedVertices +=
+                        model.Mesh.VertexList.Length;
+                    generatedGeometryBytes +=
+                        checked(
+                            (long)vertexFactory.GetVertexSize(
+                                model.Material.BinaryVertexFormat,
+                                component.Rigid.Header.Version) *
+                            model.Mesh.VertexList.Length);
+                    generatedGeometryBytes +=
+                        checked(
+                            (long)sizeof(ushort) *
+                            model.Mesh.IndexList.Length);
+
                     var materialIdentity =
                         GetMeshMergeMaterialIdentity(
                             state,
@@ -6591,10 +6849,10 @@ namespace Editors.KitbasherEditor.Services
                             state,
                             new MeshKey(
                                 component.RigidPath,
-                                lodIndex,
+                                sourceLodIndex,
                                 partIndex)),
                         GetRmvMergeIdentityForMerge(
-                            models[partIndex],
+                            model,
                             includeEmbeddedMaterialIdentity: false),
                         materialIdentity);
                     if (!partsByIdentity.TryGetValue(
@@ -6610,7 +6868,7 @@ namespace Editors.KitbasherEditor.Services
                             instanceKey,
                             component.WsModelPath,
                             component.RigidPath,
-                            models[partIndex].Mesh.VertexList.Length));
+                            model.Mesh.VertexList.Length));
                 }
             }
 
@@ -6620,9 +6878,6 @@ namespace Editors.KitbasherEditor.Services
             foreach (var (identity, parts) in partsByIdentity
                          .OrderBy(entry => entry.Key, StringComparer.Ordinal))
             {
-                // The existing same-rigid merge happens once per rendered component
-                // instance. If the same WSModel is referenced twice, both instances pay
-                // their own draw count before the generated cross-rigid asset exists.
                 inputDraws += parts
                     .GroupBy(
                         part => part.InstanceKey,
@@ -6645,14 +6900,23 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return new CrossRigidLodAnalysis(
-                lodIndex,
+                generatedLodIndex,
+                scenarioLodIndex,
+                qualityLevel,
+                cameraDistance,
+                sourceLodSelections.ToArray(),
+                isScenarioRepresentativeState,
                 activeInstances.Length,
                 activeRigidCount,
                 inputDraws,
                 outputDraws,
                 Math.Max(0, inputDraws - outputDraws),
-                state.ArmyResidencyModel?.Scenario
-                    .GetLodProbability(lodIndex) ?? 0,
+                isScenarioRepresentativeState
+                    ? state.ArmyResidencyModel?.Scenario
+                        .GetLodProbability(scenarioLodIndex) ?? 0
+                    : 0,
+                generatedVertices,
+                generatedGeometryBytes,
                 ContentHash(string.Join("\u001e", outputLayoutParts)));
         }
 
@@ -6780,11 +7044,10 @@ namespace Editors.KitbasherEditor.Services
                             continue;
 
                         drawsByCulture[culture] +=
-                            model.Scenario.GetLodWeightedDrawSavings(
-                                lod.LodIndex,
-                                slotCount *
-                                (eliminatedDrawsAcrossResolvedUnits /
-                                 cultureUnits.Count));
+                            lod.LodProbability *
+                            slotCount *
+                            (eliminatedDrawsAcrossResolvedUnits /
+                             cultureUnits.Count);
                     }
                 }
             }
@@ -25767,12 +26030,19 @@ namespace Editors.KitbasherEditor.Services
                         {
                             sb.AppendLine(
                                 $"    LOD {lod.LodIndex}: " +
+                                $"scenarioLOD={lod.ScenarioLodIndex}, " +
+                                $"quality={lod.QualityLevel}, " +
+                                $"distance={lod.CameraDistance:0.###}, " +
+                                $"sourceLODs=[" +
+                                $"{string.Join(", ", lod.SourceLodSelections.OrderBy(selection => selection.WsModelPath, StringComparer.OrdinalIgnoreCase).Select(selection => $"{Path.GetFileNameWithoutExtension(selection.WsModelPath)}={selection.SourceLodIndex}"))}], " +
                                 $"activeComponents={lod.ActiveComponentCount}, " +
                                 $"activeRigids={lod.ActiveRigidCount}, draws=" +
                                 $"{lod.InputDrawsAfterSameRigidMerge}->" +
                                 $"{lod.OutputDrawsAfterCrossRigidMerge}, " +
                                 $"saved={lod.DrawsSaved}, " +
-                                $"scenarioProbability={lod.LodProbability:0.###}");
+                                $"scenarioProbability={lod.LodProbability:0.###}" +
+                                $"{(lod.IsScenarioRepresentativeState ? string.Empty : " (quality fallback)")}");
+
                         }
 
                         foreach (var plan in payloadPlans
@@ -27990,14 +28260,25 @@ namespace Editors.KitbasherEditor.Services
             string RigidPath,
             int VertexCount);
 
+        private sealed record CrossRigidSourceLodSelection(
+            string WsModelPath,
+            int SourceLodIndex);
+
         private sealed record CrossRigidLodAnalysis(
             int LodIndex,
+            int ScenarioLodIndex,
+            byte QualityLevel,
+            float CameraDistance,
+            CrossRigidSourceLodSelection[] SourceLodSelections,
+            bool IsScenarioRepresentativeState,
             int ActiveComponentCount,
             int ActiveRigidCount,
             int InputDrawsAfterSameRigidMerge,
             int OutputDrawsAfterCrossRigidMerge,
             int DrawsSaved,
             double LodProbability,
+            long GeneratedVertexCount,
+            long GeneratedGeometryBytes,
             string OutputLayoutSignature);
 
         private sealed record CrossRigidRewriteOccurrenceSet(
