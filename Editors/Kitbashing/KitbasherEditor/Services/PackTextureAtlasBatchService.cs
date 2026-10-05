@@ -2580,271 +2580,438 @@ namespace Editors.KitbasherEditor.Services
             foreach (var tokenSet in tokenSets.Skip(1))
                 commonTokens.IntersectWith(tokenSet);
 
-            var commonReferenceChain =
-                GetCrossRigidCommonReferenceChainPrefix(
-                    occurrenceSet.SourceInstances);
-            string? anchorVmdPath = null;
-            string? parentXmlPath = null;
-            var sourceSelections =
-                new List<CrossRigidJointSourceSelection>();
+            var candidates =
+                new List<CrossRigidJointSourceSelectionCandidate>();
+            var candidateFailureReasons =
+                new List<string>();
+
             for (var instanceIndex = 0;
                  instanceIndex < occurrenceSet.SourceInstances.Length;
                  instanceIndex++)
             {
-                var instance = occurrenceSet.SourceInstances[instanceIndex];
+                var instance =
+                    occurrenceSet.SourceInstances[instanceIndex];
                 var differingTokens = tokenSets[instanceIndex]
                     .Where(token => !commonTokens.Contains(token))
                     .ToArray();
-                if (differingTokens.Length != 1)
-                {
-                    reason =
-                        "each source must differ by exactly one sibling-slot selection at the joint anchor";
-                    return false;
-                }
 
-                if (!TryParseCrossRigidActivationToken(
+                foreach (var token in differingTokens)
+                {
+                    if (!TryParseCrossRigidActivationToken(
+                            state,
+                            token,
+                            sourceVmdDocuments,
+                            out var tokenSelection,
+                            out var tokenReason))
+                    {
+                        candidateFailureReasons.Add(tokenReason);
+                        continue;
+                    }
+
+                    if (tokenSelection.OptionalSlot)
+                        continue;
+
+                    if (!TryGetCrossRigidReferenceChainPrefixToVmd(
+                            instance,
+                            tokenSelection.OwnerVmdPath,
+                            out var anchorReferenceChain))
+                    {
+                        candidateFailureReasons.Add(
+                            "selection owner is not on the source model VMD provenance chain");
+                        continue;
+                    }
+
+                    if (!TryBuildCrossRigidJointSourceSelection(
+                            instance,
+                            tokenSelection,
+                            anchorReferenceChain,
+                            out var sourceSelection,
+                            out var selectionReason))
+                    {
+                        candidateFailureReasons.Add(selectionReason);
+                        continue;
+                    }
+
+                    candidates.Add(
+                        new CrossRigidJointSourceSelectionCandidate(
+                            instanceIndex,
+                            tokenSelection.OwnerVmdPath,
+                            tokenSelection.ParentXmlPath,
+                            anchorReferenceChain,
+                            sourceSelection));
+                }
+            }
+
+            var candidateGroups = candidates
+                .GroupBy(candidate => string.Join(
+                    "\u001f",
+                    BuildCrossRigidReferenceChainSignature(
+                        candidate.AnchorReferenceChain),
+                    candidate.AnchorVmdPath,
+                    candidate.ParentXmlPath),
+                    StringComparer.Ordinal)
+                .Where(group =>
+                    group
+                        .Select(candidate =>
+                            candidate.InstanceIndex)
+                        .Distinct()
+                        .Count() ==
+                    occurrenceSet.SourceInstances.Length)
+                .Select(group =>
+                {
+                    var perInstance = group
+                        .GroupBy(candidate =>
+                            candidate.InstanceIndex)
+                        .OrderBy(instanceGroup =>
+                            instanceGroup.Key)
+                        .Select(instanceGroup =>
+                            instanceGroup
+                                .OrderBy(candidate =>
+                                    candidate.SourceSelection.SlotIndex)
+                                .ThenBy(candidate =>
+                                    candidate.SourceSelection.AlternativeIndex)
+                                .First())
+                        .ToArray();
+                    return new
+                    {
+                        Candidates = perInstance,
+                        AnchorDepth =
+                            perInstance[0].AnchorReferenceChain.Length,
+                        ParentDepth =
+                            perInstance[0].ParentXmlPath.Count(
+                                character => character == '/'),
+                    };
+                })
+                .OrderBy(group => group.AnchorDepth)
+                .ThenBy(group => group.ParentDepth)
+                .ThenBy(group =>
+                    group.Candidates[0].AnchorVmdPath,
+                    StringComparer.OrdinalIgnoreCase)
+                .ThenBy(group =>
+                    group.Candidates[0].ParentXmlPath,
+                    StringComparer.Ordinal)
+                .ToArray();
+
+            foreach (var candidateGroup in candidateGroups)
+            {
+                var selectedCandidates =
+                    candidateGroup.Candidates;
+                var sourceSelections =
+                    selectedCandidates
+                        .Select(candidate =>
+                            candidate.SourceSelection)
+                        .ToArray();
+
+                var incompatibleSharedSlot =
+                    sourceSelections
+                        .GroupBy(selection =>
+                            selection.SlotIndex)
+                        .Any(slotGroup =>
+                            slotGroup
+                                .Select(selection =>
+                                    string.Join(
+                                        ":",
+                                        selection.IsReference
+                                            ? "r"
+                                            : "m",
+                                        selection.AlternativeIndex))
+                                .Distinct(StringComparer.Ordinal)
+                                .Count() != 1);
+                if (incompatibleSharedSlot)
+                    continue;
+
+                var anchorVmdPath =
+                    selectedCandidates[0].AnchorVmdPath;
+                var parentXmlPath =
+                    selectedCandidates[0].ParentXmlPath;
+                var anchorReferenceChain =
+                    selectedCandidates[0].AnchorReferenceChain;
+
+                if (!TryGetCrossRigidSourceVmdDocument(
                         state,
-                        differingTokens[0],
-                        sourceVmdDocuments,
-                        out var tokenSelection,
-                        out reason))
-                {
-                    return false;
-                }
-
-                if (tokenSelection.OptionalSlot)
-                {
-                    reason =
-                        "joint writer does not support optional slots";
-                    return false;
-                }
-
-                anchorVmdPath ??= tokenSelection.OwnerVmdPath;
-                if (!tokenSelection.OwnerVmdPath.Equals(
                         anchorVmdPath,
+                        sourceVmdDocuments,
+                        out var anchorDocument,
+                        out var anchorReason) ||
+                    anchorDocument.SelectSingleNode(
+                        parentXmlPath) is not XmlElement parentElement)
+                {
+                    candidateFailureReasons.Add(
+                        string.IsNullOrWhiteSpace(anchorReason)
+                            ? "joint parent VARIANT_MESH could not be resolved"
+                            : anchorReason);
+                    continue;
+                }
+
+                var slotIndices =
+                    sourceSelections
+                        .Select(selection =>
+                            selection.SlotIndex)
+                        .Distinct()
+                        .OrderBy(index => index)
+                        .ToArray();
+                long combinationCount = 1;
+                var valid = true;
+                foreach (var slotIndex in slotIndices)
+                {
+                    if (parentElement.SelectSingleNode(
+                            $"SLOT[{slotIndex}]") is
+                        not XmlElement slotElement)
+                    {
+                        valid = false;
+                        candidateFailureReasons.Add(
+                            $"joint source slot {slotIndex} no longer resolves");
+                        break;
+                    }
+
+                    var probability =
+                        ParseVmdSlotProbability(
+                            slotElement.GetAttribute("probability"));
+                    if (probability <
+                        1.0 - AtlasValueGateExpectedDrawEpsilon)
+                    {
+                        valid = false;
+                        candidateFailureReasons.Add(
+                            $"joint source slot {slotIndex} is optional");
+                        break;
+                    }
+
+                    var alternativeCount =
+                        (slotElement.SelectNodes(
+                            "VARIANT_MESH")?.Count ?? 0) +
+                        (slotElement.SelectNodes(
+                            "VARIANT_MESH_REFERENCE")?.Count ?? 0);
+                    if (alternativeCount <= 1)
+                    {
+                        valid = false;
+                        candidateFailureReasons.Add(
+                            $"joint source slot {slotIndex} is not an alternative slot");
+                        break;
+                    }
+
+                    combinationCount *= alternativeCount;
+                    if (combinationCount >
+                        MaxCrossRigidJointStateCombinations)
+                    {
+                        valid = false;
+                        candidateFailureReasons.Add(
+                            $"joint Cartesian product exceeds " +
+                            $"{MaxCrossRigidJointStateCombinations:N0} combinations");
+                        break;
+                    }
+                }
+
+                if (!valid)
+                    continue;
+
+                descriptor =
+                    new CrossRigidJointAlwaysPresentRewriteDescriptor(
+                        anchorVmdPath,
+                        parentXmlPath,
+                        anchorReferenceChain,
+                        sourceSelections
+                            .OrderBy(selection =>
+                                selection.SlotIndex)
+                            .ThenBy(selection =>
+                                BuildCrossRigidOccurrenceProvenanceSignature(
+                                    [selection.Instance]),
+                                StringComparer.Ordinal)
+                            .ToArray(),
+                        slotIndices,
+                        (int)combinationCount);
+                return true;
+            }
+
+            reason =
+                candidateGroups.Length == 0
+                    ? "source selections have no shared structural VMD parent"
+                    : candidateFailureReasons
+                        .FirstOrDefault(value =>
+                            !string.IsNullOrWhiteSpace(value)) ??
+                      "shared structural parent could not be materialized safely";
+            return false;
+        }
+
+        private static bool TryGetCrossRigidReferenceChainPrefixToVmd(
+            CrossRigidVisualInstance instance,
+            string targetVmdPathValue,
+            out CrossRigidVmdReferenceHop[] prefix)
+        {
+            var targetVmdPath =
+                Normalize(targetVmdPathValue);
+            var referenceChain =
+                instance.ReferenceChain;
+            if (referenceChain.Length == 0)
+            {
+                prefix = [];
+                return Normalize(instance.DefiningVmdPath).Equals(
+                    targetVmdPath,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (Normalize(referenceChain[0].OwnerVmdPath).Equals(
+                    targetVmdPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                prefix = [];
+                return true;
+            }
+
+            for (var hopIndex = 0;
+                 hopIndex < referenceChain.Length;
+                 hopIndex++)
+            {
+                if (!Normalize(
+                        referenceChain[hopIndex].ReferencedVmdPath)
+                    .Equals(
+                        targetVmdPath,
                         StringComparison.OrdinalIgnoreCase))
                 {
+                    continue;
+                }
+
+                prefix =
+                    referenceChain
+                        .Take(hopIndex + 1)
+                        .ToArray();
+                return true;
+            }
+
+            prefix = [];
+            return false;
+        }
+
+        private static bool TryBuildCrossRigidJointSourceSelection(
+            CrossRigidVisualInstance instance,
+            CrossRigidActivationTokenSelection tokenSelection,
+            IReadOnlyList<CrossRigidVmdReferenceHop>
+                anchorReferenceChain,
+            out CrossRigidJointSourceSelection sourceSelection,
+            out string reason)
+        {
+            sourceSelection = null!;
+            reason = string.Empty;
+            var anchorReferenceHopIndex = -1;
+            string? directModelRelativeXmlPath = null;
+            string? directFirstReferenceRelativeXmlPath = null;
+            var parentXmlPath =
+                tokenSelection.ParentXmlPath;
+
+            if (instance.ReferenceChain.Length <
+                anchorReferenceChain.Count)
+            {
+                reason =
+                    "source reference chain is shorter than the structural anchor chain";
+                return false;
+            }
+
+            for (var hopIndex = 0;
+                 hopIndex < anchorReferenceChain.Count;
+                 hopIndex++)
+            {
+                if (!AreCrossRigidReferenceHopsEqual(
+                        instance.ReferenceChain[hopIndex],
+                        anchorReferenceChain[hopIndex]))
+                {
                     reason =
-                        "joint selections do not share one VMD anchor";
+                        "source reference chain no longer matches the structural anchor";
+                    return false;
+                }
+            }
+
+            if (tokenSelection.IsReference)
+            {
+                if (instance.ReferenceChain.Length <=
+                    anchorReferenceChain.Count)
+                {
+                    reason =
+                        "selected reference branch has no recorded child-VMD hop";
                     return false;
                 }
 
-                parentXmlPath ??= tokenSelection.ParentXmlPath;
-                if (!tokenSelection.ParentXmlPath.Equals(
-                        parentXmlPath,
+                var expectedReferenceXmlPath =
+                    $"{parentXmlPath}/SLOT[{tokenSelection.SlotIndex}]/" +
+                    $"VARIANT_MESH_REFERENCE[{tokenSelection.AlternativeIndex}]";
+                var anchorHop =
+                    instance.ReferenceChain[
+                        anchorReferenceChain.Count];
+                if (!Normalize(anchorHop.OwnerVmdPath).Equals(
+                        tokenSelection.OwnerVmdPath,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !anchorHop.ReferenceXmlPath.Equals(
+                        expectedReferenceXmlPath,
                         StringComparison.Ordinal))
                 {
                     reason =
-                        "joint selections do not share one VARIANT_MESH parent";
+                        "selected reference alternative does not contain the source provenance";
                     return false;
                 }
 
-                var referenceChain = instance.ReferenceChain;
-                if (referenceChain.Length <
-                    commonReferenceChain.Length)
-                {
-                    reason =
-                        "source reference chain is shorter than the common joint prefix";
-                    return false;
-                }
+                anchorReferenceHopIndex =
+                    anchorReferenceChain.Count;
+            }
+            else
+            {
+                var expectedModelXmlPath =
+                    $"{parentXmlPath}/SLOT[{tokenSelection.SlotIndex}]/" +
+                    $"VARIANT_MESH[{tokenSelection.AlternativeIndex}]";
 
-                for (var hopIndex = 0;
-                     hopIndex < commonReferenceChain.Length;
-                     hopIndex++)
+                if (instance.ReferenceChain.Length ==
+                    anchorReferenceChain.Count)
                 {
-                    if (!AreCrossRigidReferenceHopsEqual(
-                            referenceChain[hopIndex],
-                            commonReferenceChain[hopIndex]))
+                    if (!Normalize(instance.DefiningVmdPath).Equals(
+                            tokenSelection.OwnerVmdPath,
+                            StringComparison.OrdinalIgnoreCase))
                     {
                         reason =
-                            "source reference chain no longer matches the common joint prefix";
-                        return false;
-                    }
-                }
-
-                var anchorReferenceHopIndex = -1;
-                string? directModelRelativeXmlPath = null;
-                string? directFirstReferenceRelativeXmlPath = null;
-                if (tokenSelection.IsReference)
-                {
-                    if (referenceChain.Length <=
-                        commonReferenceChain.Length)
-                    {
-                        reason =
-                            "selected reference branch has no recorded child-VMD hop";
+                            "direct structural selection does not own the source model";
                         return false;
                     }
 
-                    var expectedReferenceXmlPath =
-                        $"{parentXmlPath}/SLOT[{tokenSelection.SlotIndex}]/" +
-                        $"VARIANT_MESH_REFERENCE[{tokenSelection.AlternativeIndex}]";
-                    var anchorHop =
-                        referenceChain[commonReferenceChain.Length];
-                    if (!Normalize(anchorHop.OwnerVmdPath).Equals(
-                            anchorVmdPath,
-                            StringComparison.OrdinalIgnoreCase) ||
-                        !anchorHop.ReferenceXmlPath.Equals(
-                            expectedReferenceXmlPath,
-                            StringComparison.Ordinal))
+                    if (!instance.ModelXmlPath.Equals(
+                            expectedModelXmlPath,
+                            StringComparison.Ordinal) &&
+                        !TryGetCrossRigidRelativeXmlPath(
+                            expectedModelXmlPath,
+                            instance.ModelXmlPath,
+                            out directModelRelativeXmlPath))
                     {
                         reason =
-                            "selected reference alternative does not match the recorded VMD provenance";
+                            "source model is outside the selected structural subtree";
                         return false;
                     }
-
-                    anchorReferenceHopIndex =
-                        commonReferenceChain.Length;
                 }
                 else
                 {
-                    var expectedModelXmlPath =
-                        $"{parentXmlPath}/SLOT[{tokenSelection.SlotIndex}]/" +
-                        $"VARIANT_MESH[{tokenSelection.AlternativeIndex}]";
-
-                    if (referenceChain.Length ==
-                        commonReferenceChain.Length)
+                    anchorReferenceHopIndex =
+                        anchorReferenceChain.Count;
+                    var firstNestedHop =
+                        instance.ReferenceChain[
+                            anchorReferenceHopIndex];
+                    if (!Normalize(firstNestedHop.OwnerVmdPath).Equals(
+                            tokenSelection.OwnerVmdPath,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        !TryGetCrossRigidRelativeXmlPath(
+                            expectedModelXmlPath,
+                            firstNestedHop.ReferenceXmlPath,
+                            out directFirstReferenceRelativeXmlPath))
                     {
-                        if (!Normalize(instance.DefiningVmdPath).Equals(
-                                anchorVmdPath,
-                                StringComparison.OrdinalIgnoreCase))
-                        {
-                            reason =
-                                "direct joint model defining VMD does not match the joint anchor";
-                            return false;
-                        }
-
-                        if (!instance.ModelXmlPath.Equals(
-                                expectedModelXmlPath,
-                                StringComparison.Ordinal))
-                        {
-                            if (!TryGetCrossRigidRelativeXmlPath(
-                                    expectedModelXmlPath,
-                                    instance.ModelXmlPath,
-                                    out directModelRelativeXmlPath))
-                            {
-                                reason =
-                                    "source model is outside the selected direct VARIANT_MESH subtree";
-                                return false;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        anchorReferenceHopIndex =
-                            commonReferenceChain.Length;
-                        var firstNestedHop =
-                            referenceChain[anchorReferenceHopIndex];
-                        if (!Normalize(firstNestedHop.OwnerVmdPath).Equals(
-                                anchorVmdPath,
-                                StringComparison.OrdinalIgnoreCase) ||
-                            !TryGetCrossRigidRelativeXmlPath(
-                                expectedModelXmlPath,
-                                firstNestedHop.ReferenceXmlPath,
-                                out directFirstReferenceRelativeXmlPath))
-                        {
-                            reason =
-                                "direct joint model child-VMD provenance is outside the selected VARIANT_MESH subtree";
-                            return false;
-                        }
+                        reason =
+                            "source child-VMD provenance is outside the selected structural subtree";
+                        return false;
                     }
                 }
-
-                sourceSelections.Add(
-                    new CrossRigidJointSourceSelection(
-                        instance,
-                        tokenSelection.SlotIndex,
-                        tokenSelection.IsReference,
-                        tokenSelection.AlternativeIndex,
-                        anchorReferenceHopIndex,
-                        directModelRelativeXmlPath,
-                        directFirstReferenceRelativeXmlPath));
             }
 
-            if (sourceSelections
-                    .Select(selection => selection.SlotIndex)
-                    .Distinct()
-                    .Count() != sourceSelections.Count)
-            {
-                reason =
-                    "multiple source models come from the same joint slot";
-                return false;
-            }
-
-            if (string.IsNullOrWhiteSpace(anchorVmdPath) ||
-                string.IsNullOrWhiteSpace(parentXmlPath) ||
-                !TryGetCrossRigidSourceVmdDocument(
-                    state,
-                    anchorVmdPath,
-                    sourceVmdDocuments,
-                    out var anchorDocument,
-                    out reason) ||
-                anchorDocument.SelectSingleNode(
-                    parentXmlPath) is not XmlElement parentElement)
-            {
-                if (string.IsNullOrWhiteSpace(reason))
-                    reason = "joint parent VARIANT_MESH could not be resolved";
-                return false;
-            }
-
-            long combinationCount = 1;
-            foreach (var slotIndex in sourceSelections
-                         .Select(selection => selection.SlotIndex)
-                         .OrderBy(index => index))
-            {
-                if (parentElement.SelectSingleNode(
-                        $"SLOT[{slotIndex}]") is not XmlElement slotElement)
-                {
-                    reason =
-                        $"joint source slot {slotIndex} no longer resolves";
-                    return false;
-                }
-
-                var probability =
-                    ParseVmdSlotProbability(
-                        slotElement.GetAttribute("probability"));
-                if (probability <
-                    1.0 - AtlasValueGateExpectedDrawEpsilon)
-                {
-                    reason =
-                        $"joint source slot {slotIndex} is optional";
-                    return false;
-                }
-
-                var alternativeCount =
-                    (slotElement.SelectNodes("VARIANT_MESH")?.Count ?? 0) +
-                    (slotElement.SelectNodes(
-                        "VARIANT_MESH_REFERENCE")?.Count ?? 0);
-                if (alternativeCount <= 1)
-                {
-                    reason =
-                        $"joint source slot {slotIndex} is not an alternative slot";
-                    return false;
-                }
-
-                combinationCount *= alternativeCount;
-                if (combinationCount >
-                    MaxCrossRigidJointStateCombinations)
-                {
-                    reason =
-                        $"joint Cartesian product exceeds " +
-                        $"{MaxCrossRigidJointStateCombinations:N0} combinations";
-                    return false;
-                }
-            }
-
-            descriptor =
-                new CrossRigidJointAlwaysPresentRewriteDescriptor(
-                    anchorVmdPath,
-                    parentXmlPath,
-                    commonReferenceChain,
-                    sourceSelections
-                        .OrderBy(selection => selection.SlotIndex)
-                        .ToArray(),
-                    sourceSelections
-                        .Select(selection => selection.SlotIndex)
-                        .OrderBy(index => index)
-                        .ToArray(),
-                    (int)combinationCount);
+            sourceSelection =
+                new CrossRigidJointSourceSelection(
+                    instance,
+                    tokenSelection.SlotIndex,
+                    tokenSelection.IsReference,
+                    tokenSelection.AlternativeIndex,
+                    anchorReferenceHopIndex,
+                    directModelRelativeXmlPath,
+                    directFirstReferenceRelativeXmlPath);
             return true;
         }
 
@@ -28775,10 +28942,17 @@ namespace Editors.KitbasherEditor.Services
             string? DirectModelRelativeXmlPath,
             string? DirectFirstReferenceRelativeXmlPath);
 
+        private sealed record CrossRigidJointSourceSelectionCandidate(
+            int InstanceIndex,
+            string AnchorVmdPath,
+            string ParentXmlPath,
+            CrossRigidVmdReferenceHop[] AnchorReferenceChain,
+            CrossRigidJointSourceSelection SourceSelection);
+
         private sealed record CrossRigidJointAlwaysPresentRewriteDescriptor(
             string AnchorVmdPath,
             string ParentXmlPath,
-            CrossRigidVmdReferenceHop[] CommonReferenceChain,
+            CrossRigidVmdReferenceHop[] AnchorReferenceChain,
             CrossRigidJointSourceSelection[] SourceSelections,
             int[] SlotIndices,
             int CombinationCount);
