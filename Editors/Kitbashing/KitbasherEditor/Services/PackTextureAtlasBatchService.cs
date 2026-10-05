@@ -4293,12 +4293,13 @@ namespace Editors.KitbasherEditor.Services
                 {
                     var combinationKey =
                         BuildCrossRigidJointCombinationKey(
-                            jointDescriptor.SourceSelections.Select(
-                                selection =>
+                            jointDescriptor.SourceSelections
+                                .Select(selection =>
                                     new CrossRigidJointAlternative(
                                         selection.SlotIndex,
                                         selection.IsReference,
-                                        selection.AlternativeIndex)));
+                                        selection.AlternativeIndex))
+                                .Distinct());
                     if (!existingContext.Combinations.TryGetValue(
                             combinationKey,
                             out var combination))
