@@ -2848,10 +2848,28 @@ namespace Editors.KitbasherEditor.Services
                 return true;
             }
 
+            if (TryDescribeCrossRigidFixedLocalCommonAncestorRewrite(
+                    state,
+                    occurrenceSet,
+                    sourceVmdDocuments,
+                    out descriptor,
+                    out var localCommonAncestorReason))
+            {
+                return true;
+            }
+
             reason =
                 candidateGroups.Length == 0
-                    ? commonAncestorReason
+                    ? new[]
+                        {
+                            localCommonAncestorReason,
+                            commonAncestorReason,
+                        }
+                        .FirstOrDefault(value =>
+                            !string.IsNullOrWhiteSpace(value)) ??
+                      "shared structural parent could not be materialized safely"
                     : candidateFailureReasons
+                        .Append(localCommonAncestorReason)
                         .Append(commonAncestorReason)
                         .FirstOrDefault(value =>
                             !string.IsNullOrWhiteSpace(value)) ??
@@ -3243,6 +3261,7 @@ namespace Editors.KitbasherEditor.Services
                         tokenSelection.ParentXmlPath,
                         tokenSelection.SlotIndex,
                         carrierSlotIndex,
+                        null,
                         relativeReferenceChain,
                         dimensionAlternatives);
 
@@ -3365,6 +3384,621 @@ namespace Editors.KitbasherEditor.Services
                                 dimension.DimensionKey,
                             StringComparer.Ordinal)
                         .ToArray());
+            return true;
+        }
+
+        private static bool
+            TryDescribeCrossRigidFixedLocalCommonAncestorRewrite(
+                BatchState state,
+                CrossRigidRewriteOccurrenceSet occurrenceSet,
+                Dictionary<string, XmlDocument> sourceVmdDocuments,
+                out CrossRigidJointAlwaysPresentRewriteDescriptor descriptor,
+                out string reason)
+        {
+            descriptor = null!;
+            reason = string.Empty;
+            var instances =
+                occurrenceSet.SourceInstances;
+            if (instances.Length < 2)
+            {
+                reason =
+                    "fixed-local common-ancestor joint has fewer than two source occurrences";
+                return false;
+            }
+
+            var anchorVmdPaths =
+                instances
+                    .Select(instance =>
+                        Normalize(instance.DefiningVmdPath))
+                    .Distinct(
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            if (anchorVmdPaths.Length != 1 ||
+                instances.Any(instance =>
+                    instance.ReferenceChain.Length != 0))
+            {
+                reason =
+                    "fixed-local common-ancestor writer only handles direct occurrences in one VMD";
+                return false;
+            }
+
+            var anchorVmdPath =
+                anchorVmdPaths[0];
+            if (!TryGetCrossRigidSourceVmdDocument(
+                    state,
+                    anchorVmdPath,
+                    sourceVmdDocuments,
+                    out var anchorDocument,
+                    out reason))
+            {
+                return false;
+            }
+
+            var tokenSets =
+                instances
+                    .Select(instance =>
+                        instance.ActivationSignature.Equals(
+                            "<always>",
+                            StringComparison.Ordinal)
+                            ? new HashSet<string>(
+                                StringComparer.Ordinal)
+                            : instance.ActivationSignature
+                                .Split(
+                                    '\u001f',
+                                    StringSplitOptions.RemoveEmptyEntries)
+                                .ToHashSet(
+                                    StringComparer.Ordinal))
+                    .ToArray();
+            var commonTokens =
+                new HashSet<string>(
+                    tokenSets[0],
+                    StringComparer.Ordinal);
+            foreach (var tokenSet in
+                     tokenSets.Skip(1))
+            {
+                commonTokens.IntersectWith(
+                    tokenSet);
+            }
+
+            var fixedSourceInstances =
+                new List<CrossRigidVisualInstance>();
+            var pendingDimensions =
+                new List<(
+                    CrossRigidActivationTokenSelection TokenSelection,
+                    CrossRigidJointSourceSelection SourceSelection)>();
+            var anchorParentCandidates =
+                new List<string>();
+
+            foreach (var instance in instances)
+            {
+                var orderedDifferingTokens =
+                    instance.ActivationSignature.Equals(
+                        "<always>",
+                        StringComparison.Ordinal)
+                        ? Array.Empty<string>()
+                        : instance.ActivationSignature
+                            .Split(
+                                '\u001f',
+                                StringSplitOptions.RemoveEmptyEntries)
+                            .Where(token =>
+                                !commonTokens.Contains(token))
+                            .ToArray();
+
+                if (orderedDifferingTokens.Length == 0)
+                {
+                    if (!TryValidateCrossRigidFixedCommonAncestorSourceInstance(
+                            state,
+                            instance,
+                            sourceVmdDocuments,
+                            out reason) ||
+                        !TryGetCrossRigidSelectionParentXmlPath(
+                            instance.ModelXmlPath,
+                            out var fixedParentXmlPath))
+                    {
+                        if (string.IsNullOrWhiteSpace(reason))
+                        {
+                            reason =
+                                "fixed-local source parent could not be identified";
+                        }
+
+                        return false;
+                    }
+
+                    fixedSourceInstances.Add(
+                        instance);
+                    anchorParentCandidates.Add(
+                        fixedParentXmlPath);
+                    continue;
+                }
+
+                var dependencySelections =
+                    new List<CrossRigidActivationTokenSelection>();
+                foreach (var differingToken in
+                         orderedDifferingTokens)
+                {
+                    if (!TryParseCrossRigidActivationToken(
+                            state,
+                            differingToken,
+                            sourceVmdDocuments,
+                            out var dependencySelection,
+                            out reason))
+                    {
+                        return false;
+                    }
+
+                    if (dependencySelection.OptionalSlot)
+                    {
+                        reason =
+                            "fixed-local common-ancestor writer does not restructure optional slots";
+                        return false;
+                    }
+
+                    if (!Normalize(
+                            dependencySelection.OwnerVmdPath)
+                        .Equals(
+                            anchorVmdPath,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        reason =
+                            "fixed-local dependency selection belongs to another VMD";
+                        return false;
+                    }
+
+                    dependencySelections.Add(
+                        dependencySelection);
+                }
+
+                var tokenSelection =
+                    dependencySelections[0];
+                if (!TryBuildCrossRigidJointSourceSelection(
+                        instance,
+                        tokenSelection,
+                        Array.Empty<
+                            CrossRigidVmdReferenceHop>(),
+                        out var sourceSelection,
+                        out reason))
+                {
+                    return false;
+                }
+
+                anchorParentCandidates.Add(
+                    tokenSelection.ParentXmlPath);
+                pendingDimensions.Add(
+                    (
+                        tokenSelection,
+                        sourceSelection));
+            }
+
+            if (pendingDimensions.Count == 0 ||
+                !TryGetDeepestCommonCrossRigidVariantMeshParentPath(
+                    anchorParentCandidates,
+                    out var anchorParentXmlPath) ||
+                anchorDocument.SelectSingleNode(
+                    anchorParentXmlPath) is
+                not XmlElement)
+            {
+                reason =
+                    "fixed-local common structural parent could not be identified";
+                return false;
+            }
+
+            var sourceSelections =
+                new List<CrossRigidJointSourceSelection>();
+            var fixedCarrierSlotIndices =
+                new HashSet<int>();
+            var dimensionsByKey =
+                new Dictionary<
+                    string,
+                    CrossRigidJointSelectionDimension>(
+                    StringComparer.Ordinal);
+
+            foreach (var pending in
+                     pendingDimensions)
+            {
+                var tokenSelection =
+                    pending.TokenSelection;
+                int carrierSlotIndex;
+                string? localDimensionSlotRelativeXmlPath =
+                    null;
+
+                if (tokenSelection.ParentXmlPath.Equals(
+                        anchorParentXmlPath,
+                        StringComparison.Ordinal))
+                {
+                    carrierSlotIndex =
+                        tokenSelection.SlotIndex;
+                }
+                else
+                {
+                    if (!TryParseCrossRigidImmediateSelectionLocation(
+                            anchorParentXmlPath,
+                            tokenSelection.ParentXmlPath,
+                            out carrierSlotIndex,
+                            out _,
+                            out _) ||
+                        !TryValidateCrossRigidFixedLocalCarrierPath(
+                            anchorDocument,
+                            anchorParentXmlPath,
+                            tokenSelection.ParentXmlPath,
+                            out reason))
+                    {
+                        if (string.IsNullOrWhiteSpace(reason))
+                        {
+                            reason =
+                                "fixed local wrapper could not be lifted to the common parent";
+                        }
+
+                        return false;
+                    }
+
+                    var carrierSlotXmlPath =
+                        $"{anchorParentXmlPath}/" +
+                        $"SLOT[{carrierSlotIndex}]";
+                    var dimensionSlotXmlPath =
+                        $"{tokenSelection.ParentXmlPath}/" +
+                        $"SLOT[{tokenSelection.SlotIndex}]";
+                    if (!TryGetCrossRigidRelativeXmlPath(
+                            carrierSlotXmlPath,
+                            dimensionSlotXmlPath,
+                            out localDimensionSlotRelativeXmlPath))
+                    {
+                        reason =
+                            "nested local dimension is outside its fixed carrier slot";
+                        return false;
+                    }
+                }
+
+                if (anchorDocument.SelectSingleNode(
+                        $"{anchorParentXmlPath}/SLOT[{carrierSlotIndex}]") is
+                    not XmlElement carrierSlotElement ||
+                    ParseVmdSlotProbability(
+                        carrierSlotElement.GetAttribute(
+                            "probability")) <
+                        1.0 -
+                        AtlasValueGateExpectedDrawEpsilon)
+                {
+                    reason =
+                        "fixed-local common-ancestor carrier slot is missing or optional";
+                    return false;
+                }
+
+                if (anchorDocument.SelectSingleNode(
+                        $"{tokenSelection.ParentXmlPath}/SLOT[{tokenSelection.SlotIndex}]") is
+                    not XmlElement dimensionSlotElement)
+                {
+                    reason =
+                        "fixed-local terminal dimension slot could not be resolved";
+                    return false;
+                }
+
+                var dimensionKey =
+                    BuildCrossRigidJointSelectionDimensionKey(
+                        tokenSelection.OwnerVmdPath,
+                        tokenSelection.ParentXmlPath,
+                        tokenSelection.SlotIndex);
+                var alternatives =
+                    GetCrossRigidJointAlternatives(
+                            dimensionSlotElement,
+                            tokenSelection.SlotIndex)
+                        .Select(alternative =>
+                            new CrossRigidJointDimensionAlternative(
+                                dimensionKey,
+                                alternative.IsReference,
+                                alternative.AlternativeIndex))
+                        .ToArray();
+                if (alternatives.Length <= 1)
+                {
+                    reason =
+                        "fixed-local terminal selection is not an alternative dimension";
+                    return false;
+                }
+
+                var dimension =
+                    new CrossRigidJointSelectionDimension(
+                        dimensionKey,
+                        tokenSelection.OwnerVmdPath,
+                        tokenSelection.ParentXmlPath,
+                        tokenSelection.SlotIndex,
+                        carrierSlotIndex,
+                        localDimensionSlotRelativeXmlPath,
+                        Array.Empty<
+                            CrossRigidVmdReferenceHop>(),
+                        alternatives);
+
+                if (dimensionsByKey.TryGetValue(
+                        dimensionKey,
+                        out var existingDimension))
+                {
+                    if (existingDimension.CarrierSlotIndex !=
+                            carrierSlotIndex ||
+                        !string.Equals(
+                            existingDimension
+                                .LocalDimensionSlotRelativeXmlPath,
+                            localDimensionSlotRelativeXmlPath,
+                            StringComparison.Ordinal))
+                    {
+                        reason =
+                            "one fixed-local dimension resolves through incompatible carriers";
+                        return false;
+                    }
+                }
+                else
+                {
+                    dimensionsByKey[
+                        dimensionKey] =
+                        dimension;
+                }
+
+                sourceSelections.Add(
+                    pending.SourceSelection);
+            }
+
+            foreach (var fixedSourceInstance in
+                     fixedSourceInstances)
+            {
+                if (!TryBuildCrossRigidFixedCommonAncestorSourceSelection(
+                        fixedSourceInstance,
+                        anchorVmdPath,
+                        anchorParentXmlPath,
+                        Array.Empty<
+                            CrossRigidVmdReferenceHop>(),
+                        anchorDocument,
+                        out var fixedSourceSelection,
+                        out var fixedCarrierSlotIndex,
+                        out reason))
+                {
+                    return false;
+                }
+
+                sourceSelections.Add(
+                    fixedSourceSelection);
+                fixedCarrierSlotIndices.Add(
+                    fixedCarrierSlotIndex);
+            }
+
+            foreach (var dimensionGroup in
+                     sourceSelections.GroupBy(
+                         BuildCrossRigidJointSourceSelectionDimensionKey,
+                         StringComparer.Ordinal))
+            {
+                if (dimensionGroup
+                        .Select(selection =>
+                            $"{(selection.IsReference ? "r" : "m")}:" +
+                            selection.AlternativeIndex)
+                        .Distinct(
+                            StringComparer.Ordinal)
+                        .Count() != 1)
+                {
+                    reason =
+                        "co-render state selects incompatible alternatives from one fixed-local dimension";
+                    return false;
+                }
+            }
+
+            long combinationCount = 1;
+            foreach (var dimension in
+                     dimensionsByKey.Values)
+            {
+                combinationCount *=
+                    dimension.Alternatives.Length;
+                if (combinationCount >
+                    MaxCrossRigidJointStateCombinations)
+                {
+                    reason =
+                        $"fixed-local Cartesian product exceeds " +
+                        $"{MaxCrossRigidJointStateCombinations:N0} combinations";
+                    return false;
+                }
+            }
+
+            descriptor =
+                new CrossRigidJointAlwaysPresentRewriteDescriptor(
+                    anchorVmdPath,
+                    anchorParentXmlPath,
+                    Array.Empty<
+                        CrossRigidVmdReferenceHop>(),
+                    sourceSelections
+                        .OrderBy(
+                            BuildCrossRigidJointSourceSelectionDimensionKey,
+                            StringComparer.Ordinal)
+                        .ThenBy(selection =>
+                            BuildCrossRigidOccurrenceProvenanceSignature(
+                                [selection.Instance]),
+                            StringComparer.Ordinal)
+                        .ToArray(),
+                    dimensionsByKey.Values
+                        .Select(dimension =>
+                            dimension.CarrierSlotIndex)
+                        .Concat(
+                            fixedCarrierSlotIndices)
+                        .Distinct()
+                        .OrderBy(index => index)
+                        .ToArray(),
+                    (int)combinationCount,
+                    dimensionsByKey.Values
+                        .OrderBy(
+                            dimension =>
+                                dimension.DimensionKey,
+                            StringComparer.Ordinal)
+                        .ToArray());
+            return true;
+        }
+
+        private static bool
+            TryGetCrossRigidSelectionParentXmlPath(
+                string selectionXmlPath,
+                out string parentXmlPath)
+        {
+            parentXmlPath =
+                string.Empty;
+            const string slotMarker =
+                "/SLOT[";
+            var slotMarkerIndex =
+                selectionXmlPath.LastIndexOf(
+                    slotMarker,
+                    StringComparison.Ordinal);
+            if (slotMarkerIndex <= 0)
+                return false;
+
+            parentXmlPath =
+                selectionXmlPath[
+                    ..slotMarkerIndex];
+            return parentXmlPath.Length != 0;
+        }
+
+        private static bool
+            TryGetDeepestCommonCrossRigidVariantMeshParentPath(
+                IReadOnlyList<string> parentXmlPaths,
+                out string commonParentXmlPath)
+        {
+            commonParentXmlPath =
+                string.Empty;
+            if (parentXmlPaths.Count == 0)
+                return false;
+
+            var splitPaths =
+                parentXmlPaths
+                    .Select(path =>
+                        path.Split(
+                            '/',
+                            StringSplitOptions
+                                .RemoveEmptyEntries))
+                    .ToArray();
+            var commonLength =
+                splitPaths.Min(parts =>
+                    parts.Length);
+
+            for (var partIndex = 0;
+                 partIndex < commonLength;
+                 partIndex++)
+            {
+                var candidate =
+                    splitPaths[0][partIndex];
+                if (splitPaths
+                    .Skip(1)
+                    .Any(parts =>
+                        !parts[partIndex].Equals(
+                            candidate,
+                            StringComparison.Ordinal)))
+                {
+                    commonLength =
+                        partIndex;
+                    break;
+                }
+            }
+
+            while (commonLength > 0 &&
+                   splitPaths[0][commonLength - 1]
+                       .StartsWith(
+                           "SLOT[",
+                           StringComparison.Ordinal))
+            {
+                commonLength--;
+            }
+
+            if (commonLength == 0)
+                return false;
+
+            var terminalPart =
+                splitPaths[0][commonLength - 1];
+            if (!terminalPart.Equals(
+                    "<root>",
+                    StringComparison.Ordinal) &&
+                !terminalPart.StartsWith(
+                    "VARIANT_MESH[",
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            commonParentXmlPath =
+                string.Join(
+                    "/",
+                    splitPaths[0]
+                        .Take(commonLength));
+            return commonParentXmlPath.Length !=
+                   0;
+        }
+
+        private static bool
+            TryValidateCrossRigidFixedLocalCarrierPath(
+                XmlDocument document,
+                string ancestorParentXmlPath,
+                string descendantXmlPath,
+                out string reason)
+        {
+            reason =
+                string.Empty;
+            if (document.SelectSingleNode(
+                    ancestorParentXmlPath) is
+                not XmlElement ancestorElement ||
+                document.SelectSingleNode(
+                    descendantXmlPath) is
+                not XmlElement descendantElement)
+            {
+                reason =
+                    "fixed local carrier path could not be resolved";
+                return false;
+            }
+
+            XmlElement? current =
+                descendantElement;
+            while (current != null &&
+                   !ReferenceEquals(
+                       current,
+                       ancestorElement))
+            {
+                if (current.ParentNode is
+                    XmlElement slotElement &&
+                    slotElement.Name.Equals(
+                        "SLOT",
+                        StringComparison.Ordinal))
+                {
+                    var probability =
+                        ParseVmdSlotProbability(
+                            slotElement.GetAttribute(
+                                "probability"));
+                    var meshCount =
+                        slotElement.SelectNodes(
+                            "VARIANT_MESH")?.Count ??
+                        0;
+                    var referenceCount =
+                        slotElement.SelectNodes(
+                            "VARIANT_MESH_REFERENCE")
+                            ?.Count ??
+                        0;
+                    if (probability <
+                            1.0 -
+                            AtlasValueGateExpectedDrawEpsilon ||
+                        meshCount +
+                            referenceCount !=
+                        1)
+                    {
+                        reason =
+                            "common-ancestor descendant selection crosses a non-fixed local carrier";
+                        return false;
+                    }
+
+                    current =
+                        slotElement.ParentNode as
+                            XmlElement;
+                    continue;
+                }
+
+                current =
+                    current.ParentNode as
+                        XmlElement;
+            }
+
+            if (!ReferenceEquals(
+                    current,
+                    ancestorElement))
+            {
+                reason =
+                    "fixed local carrier path does not descend from the common structural parent";
+                return false;
+            }
+
             return true;
         }
 
@@ -6409,10 +7043,31 @@ namespace Editors.KitbasherEditor.Services
 
             if (dimension.ReferenceChainFromAnchor.Length == 0)
             {
+                var dimensionSlotElement =
+                    carrierSlotElement;
+                if (!string.IsNullOrWhiteSpace(
+                        dimension.LocalDimensionSlotRelativeXmlPath))
+                {
+                    if (carrierSlotElement.SelectSingleNode(
+                            dimension.LocalDimensionSlotRelativeXmlPath) is
+                        not XmlElement nestedDimensionSlotElement ||
+                        !nestedDimensionSlotElement.Name.Equals(
+                            "SLOT",
+                            StringComparison.Ordinal))
+                    {
+                        reason =
+                            "Common-ancestor nested local dimension slot could not be located";
+                        return false;
+                    }
+
+                    dimensionSlotElement =
+                        nestedDimensionSlotElement;
+                }
+
                 return TryReduceCrossRigidJointSlotToAlternative(
-                    carrierSlotElement,
+                    dimensionSlotElement,
                     new CrossRigidJointAlternative(
-                        dimension.CarrierSlotIndex,
+                        dimension.SlotIndex,
                         alternative.IsReference,
                         alternative.AlternativeIndex),
                     out selectedElement,
@@ -27806,7 +28461,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative probability-1 structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots in separate child VMDs may be lifted through fixed probability-1 references to their common structural parent. Optional slots remain excluded.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through fixed probability-1 single-alternative local wrappers and through fixed child-VMD references to their common structural parent. Optional slots remain excluded.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
@@ -30635,6 +31290,7 @@ namespace Editors.KitbasherEditor.Services
             string ParentXmlPath,
             int SlotIndex,
             int CarrierSlotIndex,
+            string? LocalDimensionSlotRelativeXmlPath,
             CrossRigidVmdReferenceHop[] ReferenceChainFromAnchor,
             CrossRigidJointDimensionAlternative[] Alternatives);
 
