@@ -27951,10 +27951,21 @@ namespace Editors.KitbasherEditor.Services
                         .ToArray();
                 var selectedExpectedDraws =
                     selectedPayloads.Sum(entry =>
-                        entry.ExpectedArmyDrawCallsEliminated);
+                        entry.MarginalExpectedArmyDrawCallsEliminated);
                 var totalExpectedDraws =
                     state.CrossRigidPayloadSelectionEntries.Sum(entry =>
                         entry.ExpectedArmyDrawCallsEliminated);
+                var selectedRewritePlans =
+                    state.CrossRigidMergeAnalysisEntries
+                        .Where(plan =>
+                            plan.RewriteOccurrenceSets.Any(
+                                occurrenceSet =>
+                                    state.CrossRigidSelectedRewriteOccurrenceKeys
+                                        .Contains(
+                                            BuildCrossRigidSelectedRewriteOccurrenceKey(
+                                                plan,
+                                                occurrenceSet))))
+                        .ToArray();
                 var selectedGeneratedGeometryBytes =
                     selectedPayloads.Sum(entry =>
                         entry.GeneratedGeometryBytes);
@@ -27969,6 +27980,8 @@ namespace Editors.KitbasherEditor.Services
                     "The value gate defines the emission candidate set; topology-unsafe or non-inline rewrite plans remain unchanged and are reported separately.");
                 sb.AppendLine(
                     "The runtime gate charges gross expected generated-geometry residency; displaced-source credit is not spent by the gate.");
+                sb.AppendLine(
+                    "Rewrite conflicts are resolved at occurrence-set granularity. Payload economics use conflict-deduplicated marginal draw savings; partially selected payloads conservatively pay their full generated geometry and full estimated residency.");
                 sb.AppendLine(
                     "Scenario-resident and physical-per-draw limits are selected-portfolio budgets rather than per-payload hard gates; budget-deferred candidates are retried after cheaper accepted payloads create headroom.");
                 sb.AppendLine(
@@ -27991,18 +28004,25 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Payloads rejected: {rejectedPayloads.Length:N0}");
                 sb.AppendLine(
-                    $"Accepted payloads reused by multiple rewrite plans: " +
-                    $"{selectedPayloads.Count(entry => entry.RewritePlanCount > 1):N0}");
+                    $"Accepted payloads reused by multiple selected rewrite plans: " +
+                    $"{selectedRewritePlans
+                        .GroupBy(
+                            plan => plan.GeneratedPayloadId,
+                            StringComparer.Ordinal)
+                        .Count(group => group.Count() > 1):N0}");
                 sb.AppendLine(
                     $"Accepted one-VMD payloads: " +
                     $"{selectedPayloads.Count(entry => entry.VmdCount == 1):N0}");
                 sb.AppendLine(
-                    $"Accepted VMD rewrite-plan references: " +
-                    $"{selectedPayloads.Sum(entry => entry.RewritePlanCount):N0}");
+                    $"Selected VMD rewrite-plan references: " +
+                    $"{selectedRewritePlans.Length:N0}");
                 sb.AppendLine(
-                    $"Expected battle draws retained by value gate: " +
-                    $"{selectedExpectedDraws:0.###} / {totalExpectedDraws:0.###} " +
-                    $"({(totalExpectedDraws > AtlasValueGateExpectedDrawEpsilon ? selectedExpectedDraws / totalExpectedDraws : 0):P1})");
+                    $"Standalone candidate expected draws (overlap-inclusive): " +
+                    $"{totalExpectedDraws:0.###}");
+                sb.AppendLine(
+                    $"Conflict-deduplicated expected draws selected: " +
+                    $"{selectedExpectedDraws:0.###} " +
+                    $"({(totalExpectedDraws > AtlasValueGateExpectedDrawEpsilon ? selectedExpectedDraws / totalExpectedDraws : 0):P1} of overlap-inclusive candidate total)");
                 sb.AppendLine(
                     $"Selected generated geometry payload: " +
                     $"{FormatMiB(selectedGeneratedGeometryBytes)}");
@@ -28026,7 +28046,8 @@ namespace Editors.KitbasherEditor.Services
                     {
                         sb.AppendLine(
                             $"  {group.Key}: {group.Count():N0} payload(s), " +
-                            $"{group.Sum(entry => entry.ExpectedArmyDrawCallsEliminated):0.###} expected draw(s), " +
+                            $"standalone={group.Sum(entry => entry.ExpectedArmyDrawCallsEliminated):0.###} expected draw(s), " +
+                            $"marginal={group.Sum(entry => entry.MarginalExpectedArmyDrawCallsEliminated):0.###}, " +
                             $"{FormatMiB(group.Sum(entry => entry.GeneratedGeometryBytes))} geometry");
                     }
                 }
@@ -28035,9 +28056,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("Cross-rigid merge emission");
                 sb.AppendLine("--------------------------");
                 var selectedRewritePlanCount =
-                    state.CrossRigidMergeAnalysisEntries.Count(plan =>
-                        state.CrossRigidSelectedPayloadIds.Contains(
-                            plan.GeneratedPayloadId));
+                    selectedRewritePlans.Length;
                 sb.AppendLine(
                     $"Selected rewrite-plan references: " +
                     $"{selectedRewritePlanCount:N0}");
@@ -28063,12 +28082,7 @@ namespace Editors.KitbasherEditor.Services
                     $"Source-pack VMD files rewritten: " +
                     $"{state.CrossRigidRewrittenRootVmdPaths.Count:N0}");
                 var selectedRewriteOccurrenceSetCount =
-                    state.CrossRigidMergeAnalysisEntries
-                        .Where(plan =>
-                            state.CrossRigidSelectedPayloadIds.Contains(
-                                plan.GeneratedPayloadId))
-                        .Sum(plan =>
-                            plan.RewriteOccurrenceSets.Length);
+                    state.CrossRigidSelectedRewriteOccurrenceKeys.Count;
                 sb.AppendLine(
                     $"Rewrite occurrence sets selected: " +
                     $"{selectedRewriteOccurrenceSetCount:N0}");
@@ -28295,10 +28309,14 @@ namespace Editors.KitbasherEditor.Services
                             : selection.Accepted
                                 ? "ACCEPT"
                                 : selection.Decision.ToString();
+                        var marginalExpectedDrawSavings =
+                            selection?.MarginalExpectedArmyDrawCallsEliminated ??
+                            expectedDrawSavings;
                         sb.AppendLine(
                             $"  payload={payload.GeneratedPayloadId}: gate={gateStatus}, rewritePlans=" +
                             $"{payload.RewritePlanCount:N0}, VMDs={payload.VmdCount:N0}, " +
                             $"expectedBattleDrawsSaved={expectedDrawSavings:0.###}, " +
+                            $"marginalAtGate={marginalExpectedDrawSavings:0.###}, " +
                             $"generatedGeometry={FormatMiB(payload.GeneratedGeometryBytes)}, " +
                             $"residentProbability={payload.ExpectedBattleResidentProbability:0.######}, " +
                             $"expectedResidentGenerated={FormatMiB(payload.ExpectedResidentGeneratedGeometryBytes)}, " +
