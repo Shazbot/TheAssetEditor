@@ -1641,6 +1641,9 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidGeneratedPayloadAnalysisEntries.Clear();
             state.CrossRigidAnalysisBlockerCounts.Clear();
             state.CrossRigidAnalysisBlockerExamples.Clear();
+            state.CrossRigidRigidHeaderBlockerCounts.Clear();
+            state.CrossRigidRigidHeaderBlockerRigidCombinations.Clear();
+            state.CrossRigidRigidHeaderBlockerVmdRoots.Clear();
             state.CrossRigidAnalysisDiagnosticCounts.Clear();
             state.CrossRigidAnalysisDiagnosticExamples.Clear();
             state.CrossRigidActivationRewriteOccurrenceSetCounts.Clear();
@@ -1841,10 +1844,11 @@ namespace Editors.KitbasherEditor.Services
                                 out var rigidHeaderReason))
                         {
                             rejectedPlanKeys.Add(rewritePlanKey);
-                            RecordCrossRigidAnalysisBlocker(
+                            RecordCrossRigidRigidHeaderBlocker(
                                 state,
-                                "Cross-rigid source rigid headers are not merge-compatible",
-                                $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
+                                vmdPath,
+                                configuration.AttachmentIdentity,
+                                distinctComponents,
                                 rigidHeaderReason);
                             continue;
                         }
@@ -6815,6 +6819,59 @@ namespace Editors.KitbasherEditor.Services
             {
                 examples.Add(example);
             }
+        }
+
+        private static void RecordCrossRigidRigidHeaderBlocker(
+            BatchState state,
+            string vmdPath,
+            string attachmentIdentity,
+            IReadOnlyList<CrossRigidAnalysisComponent> components,
+            string reason)
+        {
+            const string blocker =
+                "Cross-rigid source rigid headers are not merge-compatible";
+            RecordCrossRigidAnalysisBlocker(
+                state,
+                blocker,
+                $"{vmdPath} [{attachmentIdentity}]: {reason}");
+
+            state.CrossRigidRigidHeaderBlockerCounts[reason] =
+                state.CrossRigidRigidHeaderBlockerCounts
+                    .GetValueOrDefault(reason) + 1;
+
+            if (!state.CrossRigidRigidHeaderBlockerRigidCombinations.TryGetValue(
+                    reason,
+                    out var rigidCombinations))
+            {
+                rigidCombinations =
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                state.CrossRigidRigidHeaderBlockerRigidCombinations[reason] =
+                    rigidCombinations;
+            }
+
+            var rigidCombination = string.Join(
+                "\u001e",
+                components
+                    .Select(component => Normalize(component.RigidPath))
+                    .Where(path => path.Length != 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
+            if (rigidCombination.Length != 0)
+                rigidCombinations.Add(rigidCombination);
+
+            if (!state.CrossRigidRigidHeaderBlockerVmdRoots.TryGetValue(
+                    reason,
+                    out var vmdRoots))
+            {
+                vmdRoots =
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                state.CrossRigidRigidHeaderBlockerVmdRoots[reason] =
+                    vmdRoots;
+            }
+
+            var normalizedVmdPath = Normalize(vmdPath);
+            if (normalizedVmdPath.Length != 0)
+                vmdRoots.Add(normalizedVmdPath);
         }
 
         private static void RecordCrossRigidAnalysisDiagnostic(
@@ -25434,6 +25491,52 @@ namespace Editors.KitbasherEditor.Services
                                      StringComparer.Ordinal))
                     {
                         sb.AppendLine($"  {reason}: {count:N0}");
+                        if (reason.Equals(
+                                "Cross-rigid source rigid headers are not merge-compatible",
+                                StringComparison.Ordinal) &&
+                            state.CrossRigidRigidHeaderBlockerCounts.Count != 0)
+                        {
+                            var uniqueRigidCombinations =
+                                state.CrossRigidRigidHeaderBlockerRigidCombinations
+                                    .Values
+                                    .SelectMany(items => items)
+                                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .Count();
+                            var affectedVmdRoots =
+                                state.CrossRigidRigidHeaderBlockerVmdRoots
+                                    .Values
+                                    .SelectMany(items => items)
+                                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .Count();
+                            sb.AppendLine(
+                                $"    Deduplicated: {uniqueRigidCombinations:N0} unique rigid combination(s), " +
+                                $"{affectedVmdRoots:N0} affected VMD root(s)");
+                            sb.AppendLine(
+                                "    Header incompatibility detail " +
+                                "(observations / unique rigid combinations / VMD roots):");
+                            foreach (var (headerReason, observationCount) in
+                                     state.CrossRigidRigidHeaderBlockerCounts
+                                         .OrderByDescending(entry => entry.Value)
+                                         .ThenBy(
+                                             entry => entry.Key,
+                                             StringComparer.Ordinal))
+                            {
+                                var combinationCount =
+                                    state.CrossRigidRigidHeaderBlockerRigidCombinations
+                                        .GetValueOrDefault(headerReason)?
+                                        .Count ?? 0;
+                                var vmdRootCount =
+                                    state.CrossRigidRigidHeaderBlockerVmdRoots
+                                        .GetValueOrDefault(headerReason)?
+                                        .Count ?? 0;
+                                sb.AppendLine(
+                                    $"      {headerReason}: " +
+                                    $"{observationCount:N0} / " +
+                                    $"{combinationCount:N0} / " +
+                                    $"{vmdRootCount:N0}");
+                            }
+                        }
+
                         if (!state.CrossRigidAnalysisBlockerExamples.TryGetValue(
                                 reason,
                                 out var examples))
@@ -28089,6 +28192,14 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.Ordinal);
             public Dictionary<string, List<string>> CrossRigidAnalysisBlockerExamples { get; } =
                 new(StringComparer.Ordinal);
+            public Dictionary<string, int> CrossRigidRigidHeaderBlockerCounts { get; } =
+                new(StringComparer.Ordinal);
+            public Dictionary<string, HashSet<string>>
+                CrossRigidRigidHeaderBlockerRigidCombinations { get; } =
+                    new(StringComparer.Ordinal);
+            public Dictionary<string, HashSet<string>>
+                CrossRigidRigidHeaderBlockerVmdRoots { get; } =
+                    new(StringComparer.Ordinal);
             public Dictionary<string, int> CrossRigidAnalysisDiagnosticCounts { get; } =
                 new(StringComparer.Ordinal);
             public Dictionary<string, List<string>> CrossRigidAnalysisDiagnosticExamples { get; } =
