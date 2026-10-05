@@ -1877,17 +1877,21 @@ namespace Editors.KitbasherEditor.Services
                                 state,
                                 group,
                                 cancellationToken);
-                        var sourceLodCount =
-                            distinctComponents[0].Rigid.ModelList.Length;
-                        if (lodAnalyses.Count > sourceLodCount)
+                        var qualityProfiles = distinctComponents
+                            .Select(component =>
+                                BuildCrossRigidQualityProfile(component.Rigid))
+                            .Distinct(StringComparer.Ordinal)
+                            .OrderBy(profile => profile, StringComparer.Ordinal)
+                            .ToArray();
+                        if (qualityProfiles.Length > 1)
                         {
                             RecordCrossRigidAnalysisDiagnostic(
                                 state,
-                                "Cross-rigid source LOD quality levels synthesized",
+                                "Cross-rigid mixed source LOD quality levels normalized to Asset Editor defaults",
                                 $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
-                                $"{sourceLodCount} source LOD(s) -> " +
-                                $"{lodAnalyses.Count} generated quality-aware LOD state(s); " +
-                                $"{string.Join(" <> ", distinctComponents.Select(component => BuildCrossRigidQualityProfile(component.Rigid)).Distinct(StringComparer.Ordinal).OrderBy(profile => profile, StringComparer.Ordinal))}");
+                                $"{string.Join(" <> ", qualityProfiles)} -> " +
+                                $"Q=[2,{string.Join(",", Enumerable.Repeat("0", Math.Max(0, distinctComponents[0].Rigid.ModelList.Length - 1)))}], " +
+                                $"D=[{string.Join(",", Enumerable.Range(0, distinctComponents[0].Rigid.ModelList.Length).Select(GetCrossRigidDefaultLodCameraDistance))}]");
                         }
 
                         if (lodAnalyses.Count == 0 ||
@@ -6616,158 +6620,56 @@ namespace Editors.KitbasherEditor.Services
                     .Distinct(StringComparer.Ordinal)
                     .Skip(1)
                     .Any();
-            var result = new List<CrossRigidLodAnalysis>();
-            var generatedLodIndex = 0;
+            var result = new List<CrossRigidLodAnalysis>(lodCount);
 
-            for (var scenarioLodIndex = 0;
-                 scenarioLodIndex < lodCount;
-                 scenarioLodIndex++)
+            for (var lodIndex = 0;
+                 lodIndex < lodCount;
+                 lodIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var cameraDistance =
-                    components[0].Rigid.LodHeaders[
-                        scenarioLodIndex].LodCameraDistance;
-
-                if (!qualityProfilesDiffer)
-                {
-                    var qualityLevel =
-                        components[0].Rigid.LodHeaders[
-                            scenarioLodIndex].QualityLvl;
-                    var selections = components
-                        .Select(component =>
-                            new CrossRigidSourceLodSelection(
-                                component.WsModelPath,
-                                scenarioLodIndex))
-                        .ToArray();
-                    result.Add(
-                        AnalyzeCrossRigidLodState(
-                            state,
-                            instances,
-                            generatedLodIndex++,
-                            scenarioLodIndex,
-                            qualityLevel,
-                            cameraDistance,
-                            selections,
-                            isScenarioRepresentativeState: true));
-                    continue;
-                }
-
-                var statesBySelection =
-                    new Dictionary<
-                        string,
-                        (byte QualityLevel,
-                         CrossRigidSourceLodSelection[] Selections)>(
-                        StringComparer.Ordinal);
-                var relevantQualityLevels = components
-                    .SelectMany(component =>
-                        component.Rigid.LodHeaders
-                            .Skip(scenarioLodIndex)
-                            .Select(header => header.QualityLvl))
-                    .Distinct()
-                    .OrderByDescending(level => level)
+                var selections = components
+                    .Select(component =>
+                        new CrossRigidSourceLodSelection(
+                            component.WsModelPath,
+                            lodIndex))
                     .ToArray();
 
-                foreach (var qualityLevel in relevantQualityLevels)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var selections = components
-                        .Select(component =>
-                        {
-                            var sourceLodIndex =
-                                FindCrossRigidSourceLodForQuality(
-                                    component.Rigid,
-                                    scenarioLodIndex,
-                                    qualityLevel);
-                            return sourceLodIndex >= 0
-                                ? new CrossRigidSourceLodSelection(
-                                    component.WsModelPath,
-                                    sourceLodIndex)
-                                : null;
-                        })
-                        .Where(selection => selection != null)
-                        .Cast<CrossRigidSourceLodSelection>()
-                        .OrderBy(
-                            selection => selection.WsModelPath,
-                            StringComparer.OrdinalIgnoreCase)
-                        .ToArray();
-                    if (selections.Length == 0)
-                        continue;
+                var qualityLevel = qualityProfilesDiffer
+                    ? GetCrossRigidDefaultLodQualityLevel(lodIndex)
+                    : components[0].Rigid.LodHeaders[lodIndex].QualityLvl;
+                var cameraDistance = qualityProfilesDiffer
+                    ? GetCrossRigidDefaultLodCameraDistance(lodIndex)
+                    : components[0].Rigid.LodHeaders[lodIndex]
+                        .LodCameraDistance;
 
-                    var selectionSignature = string.Join(
-                        "\u001e",
-                        selections.Select(selection =>
-                            $"{Normalize(selection.WsModelPath)}=" +
-                            $"{selection.SourceLodIndex}"));
-                    if (statesBySelection.TryGetValue(
-                            selectionSignature,
-                            out var existing))
-                    {
-                        if (qualityLevel < existing.QualityLevel)
-                        {
-                            statesBySelection[selectionSignature] =
-                                (qualityLevel, existing.Selections);
-                        }
-
-                        continue;
-                    }
-
-                    statesBySelection[selectionSignature] =
-                        (qualityLevel, selections);
-                }
-
-                foreach (var stateDefinition in statesBySelection.Values
-                             .OrderByDescending(stateDefinition =>
-                                 stateDefinition.QualityLevel)
-                             .ThenBy(
-                                 stateDefinition => string.Join(
-                                     "\u001e",
-                                     stateDefinition.Selections.Select(
-                                         selection =>
-                                             $"{Normalize(selection.WsModelPath)}=" +
-                                             $"{selection.SourceLodIndex}")),
-                                 StringComparer.Ordinal))
-                {
-                    var isScenarioRepresentativeState =
-                        stateDefinition.Selections.Length ==
-                            components.Length &&
-                        stateDefinition.Selections.All(selection =>
-                            selection.SourceLodIndex ==
-                            scenarioLodIndex);
-
-                    result.Add(
-                        AnalyzeCrossRigidLodState(
-                            state,
-                            instances,
-                            generatedLodIndex++,
-                            scenarioLodIndex,
-                            stateDefinition.QualityLevel,
-                            cameraDistance,
-                            stateDefinition.Selections,
-                            isScenarioRepresentativeState));
-                }
+                result.Add(
+                    AnalyzeCrossRigidLodState(
+                        state,
+                        instances,
+                        lodIndex,
+                        lodIndex,
+                        qualityLevel,
+                        cameraDistance,
+                        selections,
+                        isScenarioRepresentativeState: true));
             }
 
             return result;
         }
 
-        private static int FindCrossRigidSourceLodForQuality(
-            RmvFile rigid,
-            int scenarioLodIndex,
-            byte qualityLevel)
-        {
-            for (var sourceLodIndex = scenarioLodIndex;
-                 sourceLodIndex < rigid.LodHeaders.Length;
-                 sourceLodIndex++)
-            {
-                if (qualityLevel >=
-                    rigid.LodHeaders[sourceLodIndex].QualityLvl)
-                {
-                    return sourceLodIndex;
-                }
-            }
+        private static byte GetCrossRigidDefaultLodQualityLevel(
+            int lodIndex)
+            => lodIndex == 0 ? (byte)2 : (byte)0;
 
-            return -1;
-        }
+        private static float GetCrossRigidDefaultLodCameraDistance(
+            int lodIndex)
+            => lodIndex switch
+            {
+                0 => 20.0f,
+                1 => 80.0f,
+                2 => 100.0f,
+                _ => 10000.0f,
+            };
 
         private static CrossRigidLodAnalysis AnalyzeCrossRigidLodState(
             BatchState state,
@@ -25536,7 +25438,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Generated-geometry residency uses a conservative upper-bound union of attachment-local rewrite probabilities; displaced-source credit is a strict lower bound.");
                 sb.AppendLine(
-                    "Quality-aware cross-rigid LOD synthesis preserves source quality gating when source LOD counts and camera-distance schedules match. Synthesized fallback states are fully charged to generated geometry, while only the source-equivalent representative state consumes the existing scenario LOD probability so quality fallbacks do not double-count battle draw credit.");
+                    "When otherwise-compatible source rigids have mixed LOD quality profiles, the generated cross-rigid asset uses Asset Editor's normal LOD-generator defaults instead of emitting duplicate quality fallback states: LOD0 uses quality level 2, later LODs use quality level 0, and camera distances are 20, 80, 100, then 10000.");
                 sb.AppendLine(
                     "Geometry payload bytes are serialized vertex plus 16-bit index payload only; RMV headers and material metadata are excluded.");
                 sb.AppendLine(
@@ -26044,8 +25946,7 @@ namespace Editors.KitbasherEditor.Services
                                 $"{lod.InputDrawsAfterSameRigidMerge}->" +
                                 $"{lod.OutputDrawsAfterCrossRigidMerge}, " +
                                 $"saved={lod.DrawsSaved}, " +
-                                $"scenarioProbability={lod.LodProbability:0.###}" +
-                                $"{(lod.IsScenarioRepresentativeState ? string.Empty : " (quality fallback)")}");
+                                $"scenarioProbability={lod.LodProbability:0.###}");
 
                         }
 
