@@ -2573,6 +2573,8 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 var anchorReferenceHopIndex = -1;
+                string? directModelRelativeXmlPath = null;
+                string? directFirstReferenceRelativeXmlPath = null;
                 if (tokenSelection.IsReference)
                 {
                     if (referenceChain.Length <=
@@ -2605,27 +2607,55 @@ namespace Editors.KitbasherEditor.Services
                 }
                 else
                 {
-                    if (referenceChain.Length !=
-                        commonReferenceChain.Length)
-                    {
-                        reason =
-                            "direct joint model has additional child-VMD provenance";
-                        return false;
-                    }
-
                     var expectedModelXmlPath =
                         $"{parentXmlPath}/SLOT[{tokenSelection.SlotIndex}]/" +
                         $"VARIANT_MESH[{tokenSelection.AlternativeIndex}]";
-                    if (!Normalize(instance.DefiningVmdPath).Equals(
-                            anchorVmdPath,
-                            StringComparison.OrdinalIgnoreCase) ||
-                        !instance.ModelXmlPath.Equals(
-                            expectedModelXmlPath,
-                            StringComparison.Ordinal))
+
+                    if (referenceChain.Length ==
+                        commonReferenceChain.Length)
                     {
-                        reason =
-                            "source model is not the direct selected VARIANT_MESH alternative";
-                        return false;
+                        if (!Normalize(instance.DefiningVmdPath).Equals(
+                                anchorVmdPath,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            reason =
+                                "direct joint model defining VMD does not match the joint anchor";
+                            return false;
+                        }
+
+                        if (!instance.ModelXmlPath.Equals(
+                                expectedModelXmlPath,
+                                StringComparison.Ordinal))
+                        {
+                            if (!TryGetCrossRigidRelativeXmlPath(
+                                    expectedModelXmlPath,
+                                    instance.ModelXmlPath,
+                                    out directModelRelativeXmlPath))
+                            {
+                                reason =
+                                    "source model is outside the selected direct VARIANT_MESH subtree";
+                                return false;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        anchorReferenceHopIndex =
+                            commonReferenceChain.Length;
+                        var firstNestedHop =
+                            referenceChain[anchorReferenceHopIndex];
+                        if (!Normalize(firstNestedHop.OwnerVmdPath).Equals(
+                                anchorVmdPath,
+                                StringComparison.OrdinalIgnoreCase) ||
+                            !TryGetCrossRigidRelativeXmlPath(
+                                expectedModelXmlPath,
+                                firstNestedHop.ReferenceXmlPath,
+                                out directFirstReferenceRelativeXmlPath))
+                        {
+                            reason =
+                                "direct joint model child-VMD provenance is outside the selected VARIANT_MESH subtree";
+                            return false;
+                        }
                     }
                 }
 
@@ -2635,7 +2665,9 @@ namespace Editors.KitbasherEditor.Services
                         tokenSelection.SlotIndex,
                         tokenSelection.IsReference,
                         tokenSelection.AlternativeIndex,
-                        anchorReferenceHopIndex));
+                        anchorReferenceHopIndex,
+                        directModelRelativeXmlPath,
+                        directFirstReferenceRelativeXmlPath));
             }
 
             if (sourceSelections
@@ -2756,6 +2788,28 @@ namespace Editors.KitbasherEditor.Services
                 .ReferenceChain
                 .Take(commonLength)
                 .ToArray();
+        }
+
+        private static bool TryGetCrossRigidRelativeXmlPath(
+            string ancestorXmlPath,
+            string descendantXmlPath,
+            out string relativeXmlPath)
+        {
+            relativeXmlPath = string.Empty;
+            if (string.IsNullOrWhiteSpace(ancestorXmlPath) ||
+                string.IsNullOrWhiteSpace(descendantXmlPath) ||
+                descendantXmlPath.Length <= ancestorXmlPath.Length ||
+                !descendantXmlPath.StartsWith(
+                    ancestorXmlPath,
+                    StringComparison.Ordinal) ||
+                descendantXmlPath[ancestorXmlPath.Length] != '/')
+            {
+                return false;
+            }
+
+            relativeXmlPath =
+                descendantXmlPath[(ancestorXmlPath.Length + 1)..];
+            return relativeXmlPath.Length != 0;
         }
 
         private static bool AreCrossRigidReferenceHopsEqual(
@@ -4812,6 +4866,8 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
+            var instance = selection.Instance;
+            XmlElement currentReferenceElement;
             if (!selection.IsReference)
             {
                 if (selectedElement.Name != "VARIANT_MESH")
@@ -4821,23 +4877,63 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                modelElement = selectedElement;
-                return true;
-            }
+                if (selection.AnchorReferenceHopIndex < 0)
+                {
+                    if (string.IsNullOrWhiteSpace(
+                            selection.DirectModelRelativeXmlPath))
+                    {
+                        modelElement = selectedElement;
+                        return true;
+                    }
 
-            var instance = selection.Instance;
-            if (selection.AnchorReferenceHopIndex < 0 ||
-                selection.AnchorReferenceHopIndex >=
-                instance.ReferenceChain.Length ||
-                selectedElement.Name != "VARIANT_MESH_REFERENCE")
+                    if (selectedElement.SelectSingleNode(
+                            selection.DirectModelRelativeXmlPath) is
+                        not XmlElement nestedModelElement)
+                    {
+                        reason =
+                            "Joint direct model subtree occurrence could not be located";
+                        return false;
+                    }
+
+                    modelElement = nestedModelElement;
+                    return true;
+                }
+
+                if (selection.AnchorReferenceHopIndex >=
+                        instance.ReferenceChain.Length ||
+                    string.IsNullOrWhiteSpace(
+                        selection.DirectFirstReferenceRelativeXmlPath) ||
+                    selectedElement.SelectSingleNode(
+                        selection.DirectFirstReferenceRelativeXmlPath) is
+                    not XmlElement nestedReferenceElement ||
+                    nestedReferenceElement.Name !=
+                        "VARIANT_MESH_REFERENCE")
+                {
+                    reason =
+                        "Joint direct-selection child-VMD provenance is invalid";
+                    return false;
+                }
+
+                currentReferenceElement =
+                    nestedReferenceElement;
+            }
+            else
             {
-                reason =
-                    "Joint reference selection provenance is invalid";
-                return false;
+                if (selection.AnchorReferenceHopIndex < 0 ||
+                    selection.AnchorReferenceHopIndex >=
+                        instance.ReferenceChain.Length ||
+                    selectedElement.Name !=
+                        "VARIANT_MESH_REFERENCE")
+                {
+                    reason =
+                        "Joint reference selection provenance is invalid";
+                    return false;
+                }
+
+                currentReferenceElement =
+                    selectedElement;
             }
 
-            XmlElement currentReferenceElement =
-                selectedElement;
             XmlDocument? currentDocument = null;
             var localPrefix =
                 new List<CrossRigidVmdReferenceHop>();
@@ -28578,7 +28674,9 @@ namespace Editors.KitbasherEditor.Services
             int SlotIndex,
             bool IsReference,
             int AlternativeIndex,
-            int AnchorReferenceHopIndex);
+            int AnchorReferenceHopIndex,
+            string? DirectModelRelativeXmlPath,
+            string? DirectFirstReferenceRelativeXmlPath);
 
         private sealed record CrossRigidJointAlwaysPresentRewriteDescriptor(
             string AnchorVmdPath,
