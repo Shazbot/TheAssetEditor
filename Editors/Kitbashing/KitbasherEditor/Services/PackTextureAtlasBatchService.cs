@@ -25609,10 +25609,12 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidMergeAnalysisEntries.Sum(entry => entry.ExpectedArmyDrawCallsEliminated):0.###}");
                 var generatedVerticesBeforePayloadReuse =
                     state.CrossRigidMergeAnalysisEntries.Sum(entry =>
-                        entry.SourceGeometry.Sum(source => source.VertexCount));
+                        entry.Lods.Sum(lod =>
+                            lod.GeneratedVertexCount));
                 var generatedGeometryBytesBeforePayloadReuse =
                     state.CrossRigidMergeAnalysisEntries.Sum(entry =>
-                        entry.SourceGeometry.Sum(source => source.GeometryBytes));
+                        entry.Lods.Sum(lod =>
+                            lod.GeneratedGeometryBytes));
                 var generatedVerticesAfterPayloadReuse =
                     state.CrossRigidGeneratedPayloadAnalysisEntries.Sum(
                         payload => payload.GeneratedVertexCount);
