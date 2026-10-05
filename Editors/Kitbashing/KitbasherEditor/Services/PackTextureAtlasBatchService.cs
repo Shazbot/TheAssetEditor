@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -15,6 +15,7 @@ using Shared.Core.Services;
 using Shared.Core.Settings;
 using Shared.GameFormats;
 using Shared.GameFormats.RigidModel;
+using Shared.GameFormats.RigidModel.LodHeader;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
 using Shared.GameFormats.RigidModel.Types;
 using Shared.GameFormats.RigidModel.Vertex;
