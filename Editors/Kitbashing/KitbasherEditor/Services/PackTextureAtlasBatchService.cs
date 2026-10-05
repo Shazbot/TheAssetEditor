@@ -2960,31 +2960,66 @@ namespace Editors.KitbasherEditor.Services
                             .Where(token =>
                                 !commonTokens.Contains(token))
                             .ToArray();
-                if (orderedDifferingTokens.Length != 1)
+                if (orderedDifferingTokens.Length == 0)
                 {
                     reason =
-                        "common-ancestor writer requires exactly one varying probability-1 terminal selection per source occurrence";
+                        "common-ancestor writer requires at least one varying probability-1 selection per source occurrence";
                     return false;
                 }
 
-                var terminalToken =
-                    orderedDifferingTokens[^1];
-                if (!TryParseCrossRigidActivationToken(
-                        state,
-                        terminalToken,
-                        sourceVmdDocuments,
-                        out var tokenSelection,
-                        out reason))
+                var dependencySelections =
+                    new List<CrossRigidActivationTokenSelection>();
+                foreach (var differingToken in
+                         orderedDifferingTokens)
                 {
-                    return false;
+                    if (!TryParseCrossRigidActivationToken(
+                            state,
+                            differingToken,
+                            sourceVmdDocuments,
+                            out var dependencySelection,
+                            out reason))
+                    {
+                        return false;
+                    }
+
+                    if (dependencySelection.OptionalSlot)
+                    {
+                        reason =
+                            "common-ancestor writer does not restructure optional slots";
+                        return false;
+                    }
+
+                    if (!TryGetCrossRigidReferenceChainPrefixToVmd(
+                            instance,
+                            dependencySelection.OwnerVmdPath,
+                            out var dependencyReferenceChain) ||
+                        !TryBuildCrossRigidJointSourceSelection(
+                            instance,
+                            dependencySelection,
+                            dependencyReferenceChain,
+                            out _,
+                            out reason))
+                    {
+                        if (string.IsNullOrWhiteSpace(reason))
+                        {
+                            reason =
+                                "probability-1 dependency selection is not on the source provenance chain";
+                        }
+
+                        return false;
+                    }
+
+                    dependencySelections.Add(
+                        dependencySelection);
                 }
 
-                if (tokenSelection.OptionalSlot)
-                {
-                    reason =
-                        "common-ancestor writer does not restructure optional slots";
-                    return false;
-                }
+                // Activation signatures are recorded in traversal order.
+                // The first differing token is therefore the highest
+                // probability-1 branch that distinguishes this source.
+                // Keep deeper selections inside that branch rather than
+                // flattening them into independent Cartesian dimensions.
+                var tokenSelection =
+                    dependencySelections[0];
 
                 if (!TryGetCrossRigidReferenceChainPrefixToVmd(
                         instance,
@@ -2992,7 +3027,7 @@ namespace Editors.KitbasherEditor.Services
                         out var ownerReferenceChain))
                 {
                     reason =
-                        "terminal selection owner is not on the source provenance chain";
+                        "dependency-root selection owner is not on the source provenance chain";
                     return false;
                 }
 
@@ -3228,10 +3263,10 @@ namespace Editors.KitbasherEditor.Services
 
             if (string.IsNullOrWhiteSpace(
                     anchorParentXmlPath) ||
-                dimensionsByKey.Count < 2)
+                dimensionsByKey.Count == 0)
             {
                 reason =
-                    "common-ancestor writer requires at least two independent descendant selection dimensions";
+                    "common-ancestor writer could not identify a probability-1 dependency-root dimension";
                 return false;
             }
 
@@ -27174,7 +27209,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative probability-1 structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Terminal probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. When terminal selections live in separate child VMDs reached only through fixed probability-1 references, the writer lifts those descendant dimensions to their common structural parent, clones the fixed carrier branches per combination, and determinizes the child selections there; optional or conditionally reached descendant dimensions remain excluded.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Dependency roots in separate child VMDs may be lifted through fixed probability-1 references to their common structural parent. Optional slots remain excluded.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
