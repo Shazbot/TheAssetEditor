@@ -2591,55 +2591,69 @@ namespace Editors.KitbasherEditor.Services
             {
                 var instance =
                     occurrenceSet.SourceInstances[instanceIndex];
-                var differingTokens = tokenSets[instanceIndex]
-                    .Where(token => !commonTokens.Contains(token))
-                    .ToArray();
+                var orderedDifferingTokens =
+                    instance.ActivationSignature.Equals(
+                        "<always>",
+                        StringComparison.Ordinal)
+                        ? Array.Empty<string>()
+                        : instance.ActivationSignature
+                            .Split(
+                                '\u001f',
+                                StringSplitOptions.RemoveEmptyEntries)
+                            .Where(token =>
+                                !commonTokens.Contains(token))
+                            .ToArray();
+                if (orderedDifferingTokens.Length == 0)
+                    continue;
 
-                foreach (var token in differingTokens)
+                // Only the terminal varying selection fully determines this
+                // source occurrence. Anchoring at an outer token while a
+                // deeper alternative still varies would remove geometry from
+                // sibling descendant states that are not part of this merge.
+                var token =
+                    orderedDifferingTokens[^1];
+                if (!TryParseCrossRigidActivationToken(
+                        state,
+                        token,
+                        sourceVmdDocuments,
+                        out var tokenSelection,
+                        out var tokenReason))
                 {
-                    if (!TryParseCrossRigidActivationToken(
-                            state,
-                            token,
-                            sourceVmdDocuments,
-                            out var tokenSelection,
-                            out var tokenReason))
-                    {
-                        candidateFailureReasons.Add(tokenReason);
-                        continue;
-                    }
-
-                    if (tokenSelection.OptionalSlot)
-                        continue;
-
-                    if (!TryGetCrossRigidReferenceChainPrefixToVmd(
-                            instance,
-                            tokenSelection.OwnerVmdPath,
-                            out var anchorReferenceChain))
-                    {
-                        candidateFailureReasons.Add(
-                            "selection owner is not on the source model VMD provenance chain");
-                        continue;
-                    }
-
-                    if (!TryBuildCrossRigidJointSourceSelection(
-                            instance,
-                            tokenSelection,
-                            anchorReferenceChain,
-                            out var sourceSelection,
-                            out var selectionReason))
-                    {
-                        candidateFailureReasons.Add(selectionReason);
-                        continue;
-                    }
-
-                    candidates.Add(
-                        new CrossRigidJointSourceSelectionCandidate(
-                            instanceIndex,
-                            tokenSelection.OwnerVmdPath,
-                            tokenSelection.ParentXmlPath,
-                            anchorReferenceChain,
-                            sourceSelection));
+                    candidateFailureReasons.Add(tokenReason);
+                    continue;
                 }
+
+                if (tokenSelection.OptionalSlot)
+                    continue;
+
+                if (!TryGetCrossRigidReferenceChainPrefixToVmd(
+                        instance,
+                        tokenSelection.OwnerVmdPath,
+                        out var anchorReferenceChain))
+                {
+                    candidateFailureReasons.Add(
+                        "selection owner is not on the source model VMD provenance chain");
+                    continue;
+                }
+
+                if (!TryBuildCrossRigidJointSourceSelection(
+                        instance,
+                        tokenSelection,
+                        anchorReferenceChain,
+                        out var sourceSelection,
+                        out var selectionReason))
+                {
+                    candidateFailureReasons.Add(selectionReason);
+                    continue;
+                }
+
+                candidates.Add(
+                    new CrossRigidJointSourceSelectionCandidate(
+                        instanceIndex,
+                        tokenSelection.OwnerVmdPath,
+                        tokenSelection.ParentXmlPath,
+                        anchorReferenceChain,
+                        sourceSelection));
             }
 
             var candidateGroups = candidates
