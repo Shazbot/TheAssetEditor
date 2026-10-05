@@ -1,0 +1,16 @@
+key	expression	display_only_active_effects	always_show_display_text
+#building_effect_context_expressions_tables;2;db/building_effect_context_expressions_tables/ak_teb			
+IsTEB	Owner.CultureKey == "mixer_teb_southern_realms"	true	false
+IsTEBmainfactions	Owner.CultureKey == "mixer_teb_southern_realms" && Owner.RecordKeyIsOneOf("mixer_teb_new_world_colonies", "mixer_teb_colombo") == false	true	false
+IsTEB_Tileans_bak	Owner.RecordKeyIsOneOf("mixer_teb_catrazza", "mixer_teb_tilea", "cr_teb_luccini", "cr_teb_miragliano", "cr_teb_monte_castello", "cr_teb_pavona", "cr_teb_remas", "cr_teb_tobaro", "cr_teb_trantio", "cr_teb_verezzo")	true	false
+IsTEB_Tileans	Owner.IsInFactionSet("teb_context_tilea")	true	false
+IsTEB_Tileans_visible	Owner.IsInFactionSet("teb_context_tilea")	false	false
+IsTEB_Border_bak	Owner.RecordKeyIsOneOf("mixer_teb_border_princes", "mixer_teb_gashnag")	true	false
+IsTEB_Border	Owner.IsInFactionSet("teb_context_borders")	true	false
+IsTEB_Estalians_bak	Owner.RecordKeyIsOneOf("mixer_teb_estalia", "mixer_teb_bilbali")	true	false
+IsTEB_Estalians	Owner.IsInFactionSet("teb_context_estalia")	true	false
+IsTEB_Colonies	Owner.RecordKeyIsOneOf("mixer_teb_new_world_colonies", "mixer_teb_colombo", "cr_teb_order_of_the_blazing_sun")	true	false
+IsTEB_Catrazza	Owner.RecordKeyIsOneOf("mixer_teb_catrazza")	true	false
+IsTEB_Tylos	Owner.CultureKey == "mixer_teb_southern_realms" && Owner.RecordKeyIsOneOf("mixer_teb_gashnag") == false	true	false
+IsTEB_CatrazzaTOW	CampaignModelRoot.CampaignKey == "cr_oldworld" && Owner.RecordKeyIsOneOf("mixer_teb_catrazza")	true	false
+IsNotCampaignTOW	CampaignModelRoot.CampaignKey != "cr_oldworld" && CampaignModelRoot.CampaignKey != "cr_oldworldclassic"	true	false

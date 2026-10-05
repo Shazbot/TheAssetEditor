@@ -1,0 +1,10 @@
+<model version="1">
+  <geometry>variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/neu_pavise_shield_hand_01.rigid_model_v2</geometry>
+  <materials>
+    <material part_index="0" lod_index="0">variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/materials/AK_robie_pavise_generic_hand_03.xml.material</material>
+    <material part_index="0" lod_index="1">variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/materials/AK_robie_pavise_generic_hand_03.xml.material</material>
+    <material part_index="0" lod_index="2">variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/materials/AK_robie_pavise_generic_hand_03.xml.material</material>
+    <material part_index="0" lod_index="3">variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/materials/AK_robie_pavise_generic_hand_03.xml.material</material>
+    <material part_index="0" lod_index="4">variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/materials/AK_robie_pavise_generic_hand_03.xml.material</material>
+  </materials>
+</model>

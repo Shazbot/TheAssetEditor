@@ -1,0 +1,98 @@
+id	duration	effect_type	requested_stance	cant_move	freeze_fatigue	fatigue_change_ratio	inspiration_aura_range_mod	ability_recharge_change	hp_change_frequency	damage_amount	max_damaged_entities	resurrect	mana_regen_mod	mana_max_depletion_mod	imbue_magical	imbue_ignition	imbue_contact	phase_display	phase_audio	is_hidden_in_ui	affects_allies	affects_enemies	replenish_ammo	composite_scene_group	spreading	freeze_recharge	heal_amount	barrier_heal_amount	remove_magical	execute_ratio
+#special_ability_phases_tables;44;db/special_ability_phases_tables/ak_teb																														
+teb_priestess_spear	24.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	true	0		wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_priestess_legion	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_priestess_shield	24.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_paymaster_motivated	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_paymaster_grab	45.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_paymaster_pay	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+est_inquisitor_judgement	20.0000	negative		false	false	0.0000	0.0000	15.0000	1.0000	70	1	false	0.0000	0.0000	false	0		wh_main_generic_debuff_attack	wh_ability_negative	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+til_merchant_protect	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+til_merchant_pecunia	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+til_merchant_double_dummy	5.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+til_merchant_double	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+bor_ranger_lord_stalk	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+bor_ranger_lord_blind	20.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_generic_debuff_attack	wh_ability_negative	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+bor_ranger_lord_stalk2	15.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+bor_ranger_lord_fakenerf	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0				true	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_borgio_difficult	3.0000	positive		false	false	0.0000	0.0000	0.0000	2.0000	0	0	false	0.0000	0.0000	false	0		wh_main_generic_hp_regen	wh_main_item_abilities_potion_of_healing	false	true	true	0.0000			false	0.1500	0.0000	false	0.0000
+teb_borgio_beloved	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_borgio_mask	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_borgio_mace	4.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	true	0	wh2_dlc17_unit_contact_dazed			false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_borgio_armour	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_gashnag_beguile	20.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_shadow_buff_attack_passive	wh_dlc05_spell_shadow_okkams_mindrazor	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_gashnag_strigoi	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_shadow_buff_attack_passive		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_gashnag_staff	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_shadow_buff_attack_passive		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lucrezzia_stunning	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lucrezzia_poison	3.0000	negative		false	false	3.0000	0.0000	60.0000	2.0000	1000	2	false	0.0000	0.0000	false	0		wh_main_generic_hp_damage_passive	wh_ability_negative	false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lucrezzia_potion	2.0000	positive		false	false	0.0000	0.0000	0.0000	1.0000	180	1	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lucrezzia_potion2	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.1000
+teb_lucrezzia_kiss	-1.0000	positive		false	false	0.0000	0.0000	-30.0000	0.0000	0	0	false	0.0000	0.0000	false	0	wh_main_unit_contact_poison			false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lucrezzia_stiletto	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0	wh3_dlc27_unit_contact_eroding_poison			false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_pikeline	15.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_dirty_fighting	10.0000	negative		false	false	0.1000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_catrazza_ring	5.0000	positive		false	false	-0.3000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_catrazza_sword	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	true	0	wh_dlc06_unit_contact_sundered_armour			false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lupio_cloak	22.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_spell_metal_glittering_robe	wh_main_spell_metal_glittering_robe	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_gausser_axe	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	true	10				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_gausser_scarf	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.5000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0020	0.0000	false	0.0000
+teb_asarnil	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_colombo_telescope	30.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_shadow_buff_attack_passive		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_colombo_gem	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_colombo_wine	30.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_shadow_buff_attack_passive		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_colombo_scroll	30.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_shadow_buff_attack_passive		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_cadavo_lucky	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_cadavo_talisman	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_cadavo_talisman_self	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	false	0.0000			false	0.0000	0.0000	false	0.0000
+teb_cadavo_dirty	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0	teb_dirty_fighting			false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_contact_null	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				true	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_contact_blind	5.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_counterbonus	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_venators	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_muktar	15.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0	wh_main_unit_contact_overhead_morale			false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_cursed_richter	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_cursed	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.5000	0	0	true	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0030	0.0000	false	0.0000
+teb_cursed_winning	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.5000	0	0	true	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0060	0.0000	false	0.0000
+teb_manflayers_kalad	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_manflayers_flayin	15.0000	positive		false	false	-0.1000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_manflayers_hatin	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_tichi	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_roc_gunn_lasso	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_roc_kotss_aura	-1.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_roc_organ_contact	10.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_roc_dieterfist	15.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_passive		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_birdmen	15.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_passive		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_sisters_dismay	30.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0	wh_dlc06_unit_contact_discouraged	wh_main_generic_buff_attack_passive		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_sisters_wrath	30.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_banner		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_sisters_wrath_miscast	10.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_eldaddio_contact	10.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_eldaddio_curse	15.0000	negative		false	false	0.0000	0.0000	0.0000	1.0000	6	18	false	0.0000	0.0000	false	0	wh_main_spell_metal_final_transmutation	wh_main_spell_metal_final_transmutation		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_eldaddio_weapon	20.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_generic_debuff_attack	wh_ability_negative	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_feint_riposte	28.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack	wh_ability_positive	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_duellist_hero_disarm	10.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_generic_debuff_attack	wh_ability_negative	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_duellist_hero_duel	24.0000	negative		false	false	0.0000	0.0000	10.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_debuff_defence_passive	wh_ability_negative	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_duellist_hero_epicwin	10.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_spirit_drain	20.0000	negative		false	false	0.1000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_main_spell_death_spirit_leech	wh_main_spell_death_spirit_leech	false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_tank_ror	10.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack	wh_ability_positive	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_bwatch	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_roc_strygos_contact	10.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_merc_captain_aura	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_borgio_siege_storm	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lorenzo_lupo_aura	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lorenzo_lupo_shield	24.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0	wh_dlc06_unit_contact_blinded	wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lorenzo_lupo_sword_self	24.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0	wh2_dlc12_unit_contact_sundered_armour	wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lorenzo_lupo_sword	24.0000	negative		false	false	0.0000	0.0000	15.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_banner	wh_ability_negative_banner	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lorenzo_lupo_runner	900.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lorenzo_lupo_wrestler	900.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lorenzo_lupo_strongman	900.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_guard_kossars_drink	-1.0000	positive		false	false	0.0000	0.0000	0.0000	1.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0005	0.0000	false	0.0000
+teb_lucy_lore_passive	8.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_lucy_hex_boost	10.0000	positive		false	false	0.0000	0.0000	-5.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_crossbow_rocket_contact	10.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_billmen_contact	10.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_half_pikes_contact	10.0000	negative		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0				false	false	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_golden_lion_aura	15.0000	negative		true	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh2_dlc15_unit_abilities_mighty_roar	wh_ability_negative_aoe	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_golden_lion_aura_good	15.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0			wh_ability_positive_aoe	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_piggolo_enrage	24.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	0	false	0.0000	0.0000	false	0		wh_dlc03_spell_beasts_wyssans_wildform	wh_dlc03_spell_beasts_wyssans_wildform	false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_montante_passive	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack_passive		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000
+teb_irrana_passive	-1.0000	positive		false	false	0.0000	0.0000	0.0000	0.0000	0	-1	false	0.0000	0.0000	false	0		wh_main_generic_buff_attack		false	true	true	0.0000			false	0.0000	0.0000	false	0.0000

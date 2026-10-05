@@ -1,0 +1,7 @@
+key	order	icon_file_path	show_in_recruitment	counts_towards_caps_when_off_the_map
+#agent_recruitment_categories_tables;2;db/agent_recruitment_categories_tables/ak_teb				
+teb_merc_general	1	UI\Common UI\unit_category_icons\infantry_sword.png	true	true
+bor_ranger_lord	2	UI\Common UI\unit_category_icons\hybrid_weapon.png	true	true
+til_merchant	3	UI\Common UI\unit_category_icons\commander.png	true	true
+est_inquisitor	4	UI\Common UI\unit_category_icons\commander.png	true	true
+teb_templar_lord	5	UI\Common UI\unit_category_icons\commander.png	true	true

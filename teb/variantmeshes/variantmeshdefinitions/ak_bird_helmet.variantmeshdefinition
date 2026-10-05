@@ -1,0 +1,8 @@
+<VARIANT_MESH>
+			<SLOT name="head" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_young_nobles\head\AK_teb_bird_helmet_01.rigid_model_v2" />
+			</SLOT>
+			<SLOT name="plumes" probability ="0.9" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_barbute2_crest.variantmeshdefinition" />
+			</SLOT>
+</VARIANT_MESH>

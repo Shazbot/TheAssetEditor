@@ -1,0 +1,6 @@
+unit	unit_list
+#unit_to_unit_list_junctions_tables;0;db/unit_to_unit_list_junctions_tables/ak_teb_camp	
+teb_half_pikes	teb_camp
+teb_militia_spearmen	teb_camp
+teb_billmen	teb_camp
+teb_xbowmen	teb_camp

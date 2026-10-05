@@ -1,0 +1,4 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_campaign_effect_scopes.loc		
+campaign_effect_scopes_localised_text_faction_to_character_own_lords_only	\\n(all Lords)	true
+campaign_effect_scopes_localised_text_character_to_province_own_when_on_map	(factionwide when on map)	false

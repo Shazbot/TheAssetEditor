@@ -1,0 +1,10 @@
+	<VARIANT_MESH>
+		<SLOT name="cheekguards" probability ="0.7" >
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\teb\morion\lost_morion_cheekguards_brass.wsmodel" />
+		</SLOT>
+			<SLOT name="helmet" >
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\teb\morion\lost_morion_01_brass.wsmodel" />
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\teb\morion\lost_morion_02_brass.wsmodel" />
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\teb\morion\lost_morion_03_brass.wsmodel" />
+			</SLOT>
+	</VARIANT_MESH>

@@ -1,0 +1,15 @@
+id	incident_key	payload_key	value	target_key
+#cdir_events_incident_payloads_tables;2;db/cdir_events_incident_payloads_tables/ak_teb_dilemmas				
+3011990	teb_spawn_dignitary	SPAWN_AGENT	AGENT[dignitary];AGENT_SUBTYPE[teb_priestess];AP_FACTOR[1.0]	default
+3011993	teb_dilemma_recipe	EFFECT_BUNDLE	KEY[wh_main_payload_public_order_negative_province];DURATION[2]	default
+3011994	teb_incident_vespero	TREASURY	AMOUNT[2000]	default
+3011995	teb_incident_candle	EFFECT_BUNDLE	KEY[wh2_main_effect_force_unit_stat_morale_versus_skaven];DURATION[10]	default
+3011996	teb_dilemma_hedge_no	EFFECT_BUNDLE	KEY[wh_main_payload_untainted];DURATION[4]	default
+3011997	teb_dilemma_hedge_yes	SPAWN_AGENT	AGENT[wizard];AP_FACTOR[1.0]	default
+3011999	teb_dilemma_hedge_yes	EFFECT_BUNDLE	KEY[wh_main_payload_chaos_corruption];DURATION[2]	default
+3012000	teb_dilemma_darkmaiden_censor	EFFECT_BUNDLE	KEY[wh_main_payload_untainted];DURATION[4]	default
+3012001	teb_dilemma_darkmaiden_censor	EFFECT_BUNDLE	KEY[teb_dilemma_darkmaiden_censor];DURATION[5]	default
+3012003	teb_dilemma_darkmaiden_ok	EFFECT_BUNDLE	KEY[wh2_main_payload_public_order_negative_all_provinces_factionwide];DURATION[1]	default
+3012004	teb_dilemma_darkmaiden_ok	EFFECT_BUNDLE	KEY[teb_dilemma_darkmaiden_ok];DURATION[15]	default
+3012005	teb_incident_shepherds	TREASURY	AMOUNT[1000]	default
+3012006	teb_incident_shepherds	DIPLOMATIC_STANDING	AMOUNT[1]	default

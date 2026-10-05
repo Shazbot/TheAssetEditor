@@ -1,0 +1,12 @@
+<VARIANT_MESH>
+	<SLOT name="weapon_1" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/teb/props/AK_teb_demihalb_masked_01.wsmodel" >
+			<META_DATA>audio_melee_weapon_type:halberd</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/teb/props/AK_teb_demihalb_masked_02.wsmodel" >
+			<META_DATA>audio_melee_weapon_type:halberd</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/teb/props/AK_teb_demihalb_masked_03.wsmodel" >
+			<META_DATA>audio_melee_weapon_type:halberd</META_DATA></VARIANT_MESH>
+	</SLOT>
+</VARIANT_MESH>
+
+currently unused CBA

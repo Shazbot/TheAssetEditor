@@ -1,0 +1,7 @@
+id	art_set_id	level	age	portrait	season	uniform	card	info	sea_uniform	navy_uniform	land_animation	sea_animation	navy_animation	land_animation_vfx_filter	sea_animation_vfx_filter	navy_animation_vfx_filter
+#campaign_character_arts_tables;0;db/campaign_character_arts_tables/ak_teb_camp																
+3012025	teb_merc_general_01_camp	0	0		none	teb_merc_general_01			teb_ship_generic_lord	teb_ship_generic_lord	cam_hu1_empire_sword_and_shield	cam_transport_ship_05	cam_transport_ship_05	0	0	0
+3012026	teb_merc_general_02_camp	0	0		none	teb_merc_general_02			teb_ship_generic_lord	teb_ship_generic_lord	cam_hu1_empire_sword_and_shield	cam_transport_ship_05	cam_transport_ship_05	0	0	0
+3012027	teb_merc_general_03_camp	0	0		none	teb_merc_general_03			teb_ship_generic_lord	teb_ship_generic_lord	cam_hu1_empire_sword_and_shield	cam_transport_ship_05	cam_transport_ship_05	0	0	0
+3012028	teb_merc_general_04_camp	0	0		none	teb_merc_general_04			teb_ship_generic_lord	teb_ship_generic_lord	cam_hu1_empire_sword_and_shield	cam_transport_ship_05	cam_transport_ship_05	0	0	0
+3012029	teb_merc_general_05_camp	0	0		none	teb_merc_general_05			teb_ship_generic_lord	teb_ship_generic_lord	cam_hu1_empire_sword_and_shield	cam_transport_ship_05	cam_transport_ship_05	0	0	0

@@ -1,0 +1,23 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_land_units_ror.loc		
+land_units_onscreen_name_teb_ricco	Ricco's Republican Guard (Pikemen)	true
+land_units_onscreen_name_teb_alcatani	Alcatani Fellowship (Pikemen)	true
+land_units_onscreen_name_teb_pirazzo	Pirazzo's Lost Legion (Pikemen)	true
+land_units_onscreen_name_teb_pirazzo_xbows	Pirazzo's Lost Legion (Detachment)	true
+land_units_onscreen_name_teb_leopard	Leopard Company (Pikemen)	true
+land_units_onscreen_name_teb_venators	Voland's Venators	true
+land_units_onscreen_name_teb_vespero	Vespero's Vendetta (Duellists)	true
+land_units_onscreen_name_teb_marksmen	Marksmen of Miragliano (Crossbowmen)	true
+land_units_onscreen_name_teb_besiegers	Braganza's Besiegers (Pavise Crossbowmen)	true
+land_units_onscreen_name_teb_amazons	Anakonda's Amazons	true
+land_units_onscreen_name_teb_origo	Knights of Origo	true
+land_units_onscreen_name_teb_muktar	Al Muktar's Desert Dogs	true
+land_units_onscreen_name_teb_cursed	Cursed Company	true
+land_units_onscreen_name_teb_manflayers	Mengil Manhide's Manflayers	true
+land_units_onscreen_name_teb_asarnil	Asarnil the Dragonlord	true
+land_units_onscreen_name_teb_tichi	Tichi-Huichi's Raiders	true
+land_units_onscreen_name_teb_bronzino_limbered	Bronzino's Galloper Guns	true
+land_units_onscreen_name_teb_bronzino	Bronzino's Galloper Guns	true
+land_units_onscreen_name_teb_birdmen	Birdmen of Catrazza	true
+land_units_onscreen_name_teb_tank	Tortoise Tank	true
+land_units_onscreen_name_teb_tank_ror	Ugoletti's Floating Ordnance \\n(Tortoise Tank)	true

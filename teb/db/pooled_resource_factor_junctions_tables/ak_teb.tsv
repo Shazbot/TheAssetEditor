@@ -1,0 +1,8 @@
+unique_id	factor	resource	minimum	maximum	specific_faction_set	sort_order
+#pooled_resource_factor_junctions_tables;3;db/pooled_resource_factor_junctions_tables/ak_teb						
+teb_duellist_hero_PR	buildings	teb_duellist_hero_PR	-2147483647	2147483647		0
+teb_templar_lord_PR	buildings	teb_templar_lord_PR	-2147483647	2147483647		0
+teb_lorenzo_lupo_PR	buildings	teb_lorenzo_lupo_PR	-2147483647	2147483647		0
+wh3_dlc25_dwf_grudge_points_enemy_armies_TEB_actions	cataph_teb_actions	wh3_dlc25_dwf_grudge_points_enemy_armies	0	2147483647		0
+wh3_dlc25_dwf_grudge_points_enemy_settlements_TEB_actions	cataph_teb_actions	wh3_dlc25_dwf_grudge_points_enemy_settlements	-2147483647	2147483647		0
+teb_piggolo_PR	buildings	teb_piggolo_PR	-2147483647	2147483647		0

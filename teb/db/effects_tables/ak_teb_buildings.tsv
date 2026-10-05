@@ -1,0 +1,31 @@
+effect	icon	priority	icon_negative	category	is_positive_value_good
+#effects_tables;0;db/effects_tables/ak_teb_buildings					
+teb_cap_dorfs	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+teb_cap_bwatch+encarmine	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+teb_cap_dorfs_art	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+teb_cap_bwatch	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+teb_conquistadores_xp	experience.png	61	experience.png	campaign	true
+teb_cap_teb_paymaster	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+teb_homeland_req_dummy	construction.png	0	construction.png	campaign	true
+teb_ritual_lock_dummy	construction.png	1	construction.png	campaign	true
+hidden_construction_time	replenishment.png	0	replenishment.png	campaign	true
+hidden_recruitment_time	replenishment.png	0	replenishment.png	campaign	true
+hidden_construction_cost	replenishment.png	0	replenishment.png	campaign	true
+hidden_income_all	replenishment.png	0	replenishment.png	campaign	true
+hidden_replenishment	experience.png	0	experience.png	campaign	true
+hidden_growth	replenishment.png	0	replenishment.png	campaign	true
+hidden_order	construction.png	0	construction.png	campaign	true
+teb_tylos_1_dummy	construction.png	666	construction.png	campaign	true
+teb_tylos_2_dummy	construction.png	666	construction.png	campaign	true
+teb_cap_ror_hide_origo	construction.png	0	construction.png	campaign	true
+teb_port_homeland_discount	HIDDEN	0	construction.png	campaign	false
+teb_port_homeland_discount_dummy	construction.png	666	construction.png	campaign	false
+teb_KOM_unlock_dummy	wound_time.png	0	construction.png	campaign	true
+teb_cap_sisters	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+teb_duellist_hero_PR	produces the hidden PR for master duellists	0		campaign	true
+teb_templar_lord_PR	produces the hidden PR for high eagles	0		campaign	true
+teb_terraform_dummy	edict_masters_of_steel_and_stone.png	2	edict_masters_of_steel_and_stone.png	campaign	true
+teb_mil_swap_dummy	construction.png	666	construction.png	campaign	true
+teb_lorenzo_lupo_PR	produces the hidden PR for Lorenzo	0		campaign	true
+teb_cap_golden_lions	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+teb_piggolo_PR	produces the hidden PR for Piggolo	0		campaign	true

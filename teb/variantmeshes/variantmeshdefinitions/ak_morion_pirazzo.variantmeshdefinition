@@ -1,0 +1,31 @@
+	<VARIANT_MESH>
+
+			<SLOT name="helmet" >
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\ak_morion_lost_helmet_brass.variantmeshdefinition" />
+			</SLOT>
+        <SLOT name="LIZARD TRINKETS" probability ="0.3" >
+            <VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/brt/brt_questing_knights/torso/ak_lzd_trinket_morion.rigid_model_v2" />
+        </SLOT>
+<SLOT name="head" >
+	<VARIANT_MESH>
+        <SLOT name="head" >
+            <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\morion\pirazzo\ak_teb_pirazzo_head_01.wsmodel" />
+        </SLOT>
+	</VARIANT_MESH>
+	<VARIANT_MESH>
+			<SLOT name="bighead" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_02.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_04.wsmodel" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_undermorion_head_02.wsmodel"/>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_undermorion_head_03.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_undermorion_head_04.wsmodel"  />
+			</SLOT>
+        <SLOT name="hair" probability ="0.5" >
+            <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\morion\pirazzo\ak_teb_pirazzo_hair_streltsi.wsmodel" />
+        </SLOT>
+
+	</VARIANT_MESH>
+
+</SLOT>
+	</VARIANT_MESH>

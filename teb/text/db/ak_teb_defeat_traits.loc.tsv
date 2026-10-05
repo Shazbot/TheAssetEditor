@@ -1,0 +1,47 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_defeat_traits.loc		
+character_trait_levels_onscreen_name_	onscreen name	false
+character_trait_levels_explanation_text_	Defeated X	false
+character_trait_levels_colour_text_	text	false
+character_trait_levels_onscreen_name_teb_trait_defeated_catrazza	The Honey Jar	false
+character_trait_levels_explanation_text_teb_trait_defeated_catrazza	Defeated Leonardo Catrazza	false
+character_trait_levels_colour_text_teb_trait_defeated_catrazza	We know exactly where their money is, lads.	false
+character_trait_levels_onscreen_name_teb_trait_defeated_borgio	Borgio is Forked	false
+character_trait_levels_explanation_text_teb_trait_defeated_borgio	Defeated Borgio the Besieger	false
+character_trait_levels_colour_text_teb_trait_defeated_borgio	The Besieger is defeated, they say falling on a toasting fork in shame. Hopefully, this time it sticks.	false
+character_trait_levels_onscreen_name_teb_trait_defeated_lucy	Femme Fatality	false
+character_trait_levels_explanation_text_teb_trait_defeated_lucy	Defeated Lucrezzia Belladonna	false
+character_trait_levels_colour_text_teb_trait_defeated_lucy	They say there is no rose without a thorn, but this was somewhat excessive.	false
+character_trait_levels_onscreen_name_teb_trait_defeated_lupio	Infectious Greed	false
+character_trait_levels_explanation_text_teb_trait_defeated_lupio	Defeated Lupio Sunscryer	false
+character_trait_levels_colour_text_teb_trait_defeated_lupio	Now farm this, cabron.	false
+character_trait_levels_onscreen_name_teb_trait_defeated_eldaddio	Rant Silenced	false
+character_trait_levels_explanation_text_teb_trait_defeated_eldaddio	Defeated Eustaquio Sunscryer	false
+character_trait_levels_colour_text_teb_trait_defeated_eldaddio	Fighting him felt like being sixteen all over again.	false
+character_trait_levels_onscreen_name_teb_trait_defeated_colombo	Skink-Shamed	false
+character_trait_levels_explanation_text_teb_trait_defeated_colombo	Defeated Marco Colombo	false
+character_trait_levels_colour_text_teb_trait_defeated_colombo	For all his contacts in Lustria, maybe he should have gone to Ind.	false
+character_trait_levels_onscreen_name_teb_trait_defeated_cadavo	More Like Cadaver	false
+character_trait_levels_explanation_text_teb_trait_defeated_cadavo	Defeated El Cadavo	false
+character_trait_levels_colour_text_teb_trait_defeated_cadavo	Finally, the mercenary commander has stopped being a nuisance and is headed towards greener pastures, or whatever he believ-what do you mean he’s back?	false
+character_trait_levels_onscreen_name_teb_trait_defeated_cadavo2	And Stay Down	false
+character_trait_levels_explanation_text_teb_trait_defeated_cadavo2	Defeated El Cadavo, again	false
+character_trait_levels_colour_text_teb_trait_defeated_cadavo2	How many times do we have to teach you this lesson, you suspiciously middle-aged man?	false
+character_trait_levels_onscreen_name_teb_trait_defeated_cadavo3	Third Time's the Charm	false
+character_trait_levels_explanation_text_teb_trait_defeated_cadavo3	Defeated El Cadavo, thrice	false
+character_trait_levels_colour_text_teb_trait_defeated_cadavo3	This time he's gone. Definitely.	false
+character_trait_levels_onscreen_name_teb_trait_defeated_gashnag	Black Prince Unmasked	false
+character_trait_levels_explanation_text_teb_trait_defeated_gashnag	Defeated Gashnag the Black Prince	false
+character_trait_levels_colour_text_teb_trait_defeated_gashnag	So, how many vampires are there, exactly?	false
+character_trait_levels_onscreen_name_teb_trait_defeated_gausser	Unfriended	false
+character_trait_levels_explanation_text_teb_trait_defeated_gausser	Defeated Valmir Gausser	false
+character_trait_levels_colour_text_teb_trait_defeated_gausser	Maybe you should have gathered your Dwarf friends to go steal a dragon's treasure, eh?	false
+character_trait_levels_onscreen_name_teb_trait_defeated_mazdamundi_as_cadavo	Defrogmented	false
+character_trait_levels_explanation_text_teb_trait_defeated_mazdamundi_as_cadavo	El Cadavo defeated Lord Mazdamundi	false
+character_trait_levels_colour_text_teb_trait_defeated_mazdamundi_as_cadavo	"See if this was in those plaques of yours. Which I'm taking."	false
+character_trait_levels_onscreen_name_teb_trait_alejandro	Summon of Duty	false
+character_trait_levels_explanation_text_teb_trait_alejandro	Unique Trait	false
+character_trait_levels_colour_text_teb_trait_alejandro	"Alejandro, do this, Alejandro, do that. Alejandro, man the cannon. The worst is, I'm even going to do it."	false
+character_trait_levels_onscreen_name_teb_trait_defeated_lorenzo_lupo	Who's Laughing Now?	false
+character_trait_levels_explanation_text_teb_trait_defeated_lorenzo_lupo	Defeated Lorenzo Lupo	false
+character_trait_levels_colour_text_teb_trait_defeated_lorenzo_lupo	"Curse? What curse, you meowling idiot, hah! Heh. Forget the dead meathead and start looting, heee heee. Hah, hrumph. Hahahahha. Ye gods, what is th-hahahahhahahah!"	false

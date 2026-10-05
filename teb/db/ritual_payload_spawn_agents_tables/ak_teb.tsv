@@ -1,0 +1,5 @@
+agent_type	payload	agent_subtype	spawn_to_pool	use_recruit_rank_bonuses
+#ritual_payload_spawn_agents_tables;1;db/ritual_payload_spawn_agents_tables/ak_teb				
+general	tebuary_1_teb_templar_lord	teb_templar_lord	true	true
+spy	tebuary_placeholder	teb_duellist_hero	false	true
+general	tebuary_placeholder	wh_main_brt_lord	false	false

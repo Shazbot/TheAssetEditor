@@ -1,0 +1,33 @@
+<VARIANT_MESH>
+    <SLOT name="head" >
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_young_nobles\head\emp_young_nobles_head_01.wsmodel"   />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_young_nobles\head\ak_teb_birdmen_head_01.wsmodel"   />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_young_nobles\head\ak_teb_birdmen_head_02.wsmodel"   />
+    </SLOT>
+	<SLOT name="body">
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_huntsman\ak_teb_birdmen_body_01.wsmodel" >
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>	<META_DATA>audio_armour_type:leather</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_huntsman\ak_teb_birdmen_body_02.wsmodel" >
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>	<META_DATA>audio_armour_type:leather</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="knee pads" probability ="0.8" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_huntsman\ak_teb_birdmen_knees_01.wsmodel"   />
+	</SLOT>
+	<SLOT attach_point="be_prop_0" name="weapon_1">
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_props/emp_state_troops_crossbow_2h_rigid_01.rigid_model_v2" />
+	</SLOT>
+	<SLOT attach_point="be_prop_1" name="weapon_2">
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/emp_state_troops_swords_set1.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT attach_point="be_prop_2" name="shield" />
+	<SLOT attach_point="be_prop_3" name="weapon_3" />
+	<SLOT attach_point="be_prop_4" name="weapon_4">
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_props\emp_crossbow_bolt_01.rigid_model_v2" />
+	</SLOT>
+	<SLOT attach_point="be_prop_5" name="weapon_5">
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\teb\teb_vesperos_vendetta\teb_parrying_dagger_01.wsmodel" >
+			<META_DATA>audio_melee_weapon_type:sword</META_DATA>		</VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\teb\teb_vesperos_vendetta\teb_parrying_dagger_02.wsmodel" >
+			<META_DATA>audio_melee_weapon_type:sword</META_DATA>		</VARIANT_MESH>
+	</SLOT>
+</VARIANT_MESH>

@@ -1,0 +1,3 @@
+key	ammo_caisson_entity	ammo_caisson_destruction	ammo_caisson_model	ammo_caisson_destroyed_model	articulated_entity	head_offset	engine_articulation_node_index	draughts_articulation_node_index	is_train
+#land_unit_articulated_vehicles_tables;6;db/land_unit_articulated_vehicles_tables/ak_teb_crobie									
+wh_main_emp_galloper_gun		vmp_black_coach_01			teb_galloper_horse_articulation	2.2000	2	0	false

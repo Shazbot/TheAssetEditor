@@ -1,0 +1,23 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_missions.loc		
+missions_localised_title_		true
+missions_localised_description_		true
+missions_localised_title_teb_mission_borgio_besiege_1	Besiege!	true
+missions_localised_description_teb_mission_borgio_besiege_1	teb_mission_borgio_besiege_1	true
+missions_localised_title_teb_mission_take_tylos	Skavenblight is Tilean clay	true
+missions_localised_description_teb_mission_take_tylos		true
+mission_issuers_on_screen_name_TEB_ELDADDIO	Eustaquio Sunscryer	true
+missions_localised_title_teb_eldaddio_req_01	Come Here, Son	true
+missions_localised_description_teb_eldaddio_req_01	A voice in your sleep, awkwardly familiar. A hint that you should investigate this region and make light.	true
+missions_localised_title_teb_eldaddio_req_02	Search the Desert	true
+missions_localised_description_teb_eldaddio_req_02	Your spies and scholars find a subtle tread. A former king of Magritta, Eustaquio Sunscryer, disappeared in an expedition into the Land of the Dead, and yet there are rumours of something seething there. Furthermore, you weren't the only one hearing the resonating command.	true
+missions_OBJ_teb_eldaddio_req_02	Occupy, loot, sack or raze three settlements belonging to Tomb Kings.	true
+missions_localised_title_teb_eldaddio_req_03	Day of the Dead	true
+missions_localised_description_teb_eldaddio_req_03	The expedition is successful, but astonished. You have found Eustaquio. Dead, yet alive. Silenced, yet as arrogant and demanding as his worst depictions. You understand, from his disconcerting and looping explanation, that the local undead punished him for breaking into their sacred monuments, took his still beating heart and dipped the gold he coveted onto his body, till but a golden skeleton remained. \\n\\nThe Cult of Myrmidia is unsure on how to proceed, as Eustaquio seems to be possessed by nothing but himself.	true
+missions_OBJ_teb_eldaddio_req_03	Have at least 5000 in your treasury to fund the completely voluntary but compulsory restoration efforts.	true
+missions_localised_title_teb_eldaddio_boomer_owneverything	Show Thine Mettle	true
+missions_localised_description_teb_eldaddio_boomer_owneverything	ph	true
+missions_localised_title_teb_eldaddio_boomer_gift	A Token	true
+missions_localised_description_teb_eldaddio_boomer_gift	ph	true
+missions_localised_title_teb_eldaddio_boomer_handshake	A Firm Handshake	true
+missions_localised_description_teb_eldaddio_boomer_handshake	ph	true

@@ -1,0 +1,7 @@
+ancillary_lock	character_skill_node
+#character_skill_node_ancillary_locks_tables;0;db/character_skill_node_ancillary_locks_tables/ak_teb	
+teb_gausser_axe	teb_gausser_unique_friend
+teb_gausser_axe	teb_gausser_unique_stats
+teb_gausser_axe	teb_gausser_unique_shieldwall
+teb_gausser_axe	teb_gausser_unique_trade
+teb_gausser_axe	teb_gausser_unique_rangers

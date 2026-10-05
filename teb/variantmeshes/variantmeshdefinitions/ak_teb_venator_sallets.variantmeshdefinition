@@ -1,0 +1,18 @@
+<VARIANT_MESH>
+
+	<SLOT name="head" >
+
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\teb_demi_sallet_head_brass.wsmodel"  />
+        <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\teb_demi_sallet_empty_brass.wsmodel"  >
+        			<SLOT name="face" >
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\ak_pilgrim_head_04.rigid_model_v2" />
+                    </SLOT>				</VARIANT_MESH>
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\teb_demi_sallet_head_plumed_brass.wsmodel"  />
+
+
+
+	</SLOT>
+
+
+</VARIANT_MESH>
+

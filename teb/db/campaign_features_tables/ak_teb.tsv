@@ -1,0 +1,4 @@
+feature	group	available
+#campaign_features_tables;0;db/campaign_features_tables/ak_teb		
+politics	feature_teb	false
+food	feature_teb	false

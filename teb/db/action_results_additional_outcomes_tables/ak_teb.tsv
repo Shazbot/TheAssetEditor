@@ -1,0 +1,3 @@
+key	outcome	action_result_key	value	effect_record	effect_scope_record	FIXME	opportune_failure_weighting	affects_target	advancement_stage	create_foreign_slot_set	sort_order
+#action_results_additional_outcomes_tables;6;db/action_results_additional_outcomes_tables/ak_teb											
+teb_piggolo_action_success_colonise_ruins	target_ruined_settlement_occupied	wh2_dlc09_agent_action_engineer_hinder_settlement_success_necrotect_ritual	0.0000			true	0	true	start_round_completed		0

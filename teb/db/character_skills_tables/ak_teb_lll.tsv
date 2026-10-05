@@ -1,0 +1,61 @@
+key	image_path	localised_description	localised_name	unlocked_at_rank	is_background_skill	is_female_only_background_skill	is_male_only_background_skill	background_weighting	influence_cost
+#character_skills_tables;5;db/character_skills_tables/ak_teb_lll									
+teb_cadavo_innate	trait_human.png	bonus constr + diplo penalty LZD		0	true	false	false	5.0000	0
+teb_cadavo_story1	teb_cadavo_story.png			1	false	false	false	0.0000	0
+teb_cadavo_story2	teb_cadavo_story.png			4	false	false	false	0.0000	0
+teb_cadavo_story3	teb_cadavo_story.png			9	false	false	false	0.0000	0
+teb_cadavo_story4	teb_cadavo_story.png			14	false	false	false	0.0000	0
+teb_cadavo_story5a	teb_cadavo_story.png			19	false	false	false	0.0000	0
+teb_cadavo_story5b	teb_cadavo_story.png			19	false	false	false	0.0000	0
+teb_cadavo_story5c	teb_cadavo_story.png			19	false	false	false	0.0000	0
+teb_cadavo_unique_warhorse	mount_barded_warhorse.png			1	false	false	false	0.0000	0
+teb_cadavo_buff_pirates	battle_military_spending.png	yarr		1	false	false	false	0.0000	0
+teb_cadavo_buff_pirates2	battle_military_spending.png	yarr		1	false	false	false	0.0000	0
+teb_cadavo_buff_dirty	teb_cadavo_dirty.png	yarr		1	false	false	false	0.0000	0
+teb_cadavo_talisman	item_talisman.png			9	false	false	false	0.0000	0
+teb_cadavo_unique_lucky	character_ward_save.png			4	false	false	false	0.0000	0
+teb_cadavo_unique_founder	campaign_growth.png			1	false	false	false	0.0000	0
+teb_colombo_innate	trait_human.png			0	true	false	false	5.0000	0
+teb_colombo_unique_warhorse	teb_colombo_steed.png			1	false	false	false	0.0000	0
+teb_colombo_vsBST	wh2_liz_kill_beastmen.png			1	false	false	false	0.0000	0
+teb_colombo_vsSKV	wh2_liz_kill_skaven.png			1	false	false	false	0.0000	0
+teb_colombo_vsDELF	wh2_liz_kill_dark_elves.png			1	false	false	false	0.0000	0
+teb_colombo_vsGRN	wh2_liz_kill_greenskins.png			1	false	false	false	0.0000	0
+teb_colombo_vsCHS	wh2_liz_kill_chaos.png			1	false	false	false	0.0000	0
+teb_colombo_vsUND	wh2_liz_kill_undead.png			1	false	false	false	0.0000	0
+teb_colombo_contact	character_diplomacy.png			1	false	false	false	0.0000	0
+teb_colombo_befriend1	character_diplomacy.png			1	false	false	false	0.0000	0
+teb_colombo_befriend2	character_diplomacy.png			1	false	false	false	0.0000	0
+teb_colombo_befriend3	wh2_liz_blessing_of_itzl.png			1	false	false	false	0.0000	0
+teb_colombo_unique_marksmen	battle_ranged_damage.png			1	false	false	false	0.0000	0
+teb_colombo_unique_antirogue	campaign_wound_time.png			1	false	false	false	0.0000	0
+teb_colombo_gem	item_talisman.png			11	false	false	false	0.0000	0
+teb_colombo_wine	potion_green.png			9	false	false	false	0.0000	0
+teb_colombo_scroll	item_enchanted_item.png			2	false	false	false	0.0000	0
+teb_colombo_unique_trantio	campaign_experience.png			13	false	false	false	0.0000	0
+teb_cadavo_ultimate	character_defence.png			24	false	false	false	0.0000	0
+teb_eldaddio_innate	trait_human.png			0	true	false	false	5.0000	0
+teb_eldaddio_cantankerous	icon_stat_morale_vs_human.png			1	false	false	false	0.0000	0
+teb_eldaddio_contact	wh_main_spell_metal_final_transmutation.png			1	false	false	false	0.0000	0
+teb_eldaddio_weapon	item_weapon.png	hurr		5	false	false	false	0.0000	0
+teb_eldaddio_armour	item_armour.png	durr		3	false	false	false	0.0000	0
+teb_eldaddio_okboomer	character_ward_save.png			19	false	false	false	0.0000	0
+teb_eldaddio_oldstyle	battle_defence.png			7	false	false	false	0.0000	0
+teb_piggolo_innate	trait_human.png			0	true	false	false	5.0000	0
+teb_piggolo_warpig	mount_war_bear.png	mount		2	false	false	false	0.0000	0
+teb_piggolo_wagon	mount_skeleton_chariot.png	mount		6	false	false	false	0.0000	0
+teb_piggolo_tank	teb_tortoise_tank.png	mount		17	false	false	false	0.0000	0
+teb_piggolo_unique_01	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_unique_02	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_unique_03	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_unique_04	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_unique_05	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_unique_06	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_self_01	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_self_02	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_self_03	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_self_04	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_self_05	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_self_06	teb_piggolo_unique.png			0	false	false	false	0.0000	0
+teb_piggolo_actions	battle_attack.png			0	false	false	false	0.0000	0
+teb_piggolo_enrage	ph.png	enables self buff ability		11	false	false	false	0.0000	0

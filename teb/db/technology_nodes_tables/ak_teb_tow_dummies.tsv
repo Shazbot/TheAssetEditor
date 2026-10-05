@@ -1,0 +1,45 @@
+key	campaign_key	faction_key	indent	technology_key	technology_node_set	tier	research_points_required	cost_per_round	food_cost	optional_ui_group	resource_cost	required_parents	pixel_offset_x	pixel_offset_y
+#technology_nodes_tables;0;db/technology_nodes_tables/ak_teb_tow_dummies														
+cr_tech_emp_diplomacy_1_a	wh3_main_prologue		7	wh2_dlc13_tech_emp_diplomacy_1_a	teb_tech	0	100	7000	0			0	0	0
+cr_tech_emp_economy_1	wh3_main_prologue		4	wh2_dlc13_tech_emp_economy_1	teb_tech	0	500	0	0			0	0	0
+cr_tech_emp_economy_1_a	wh3_main_prologue		3	wh2_dlc13_tech_emp_economy_1_a	teb_tech	0	700	0	0			0	0	0
+cr_tech_emp_economy_2_b	wh3_main_prologue		5	wh2_dlc13_tech_emp_economy_2_b	teb_tech	0	700	0	0			0	0	0
+cr_tech_emp_infantry_1	wh3_main_prologue		0	wh2_dlc13_tech_emp_infantry_1	teb_tech	0	500	0	0			0	0	0
+cr_tech_emp_infantry_1_c	wh3_main_prologue		1	wh2_dlc13_tech_emp_infantry_1_c	teb_tech	0	700	0	0			0	0	0
+cr_tech_emp_purge_1	wh3_main_prologue		8	wh2_dlc13_tech_emp_purge_1	teb_tech	0	100	7000	0			0	0	0
+cr_tech_emp_diplomacy_1_b	wh3_main_prologue		7	wh2_dlc13_tech_emp_diplomacy_1_b	teb_tech	1	100	7000	0			0	7	0
+cr_tech_emp_economy_2	wh3_main_prologue		4	wh2_dlc13_tech_emp_economy_2	teb_tech	1	500	0	0			0	7	0
+cr_tech_emp_infantry_1_a	wh3_main_prologue		0	wh2_dlc13_tech_emp_infantry_1_a	teb_tech	1	700	0	0			0	0	0
+cr_tech_emp_infantry_1_b	wh3_main_prologue		1	wh2_dlc13_tech_emp_infantry_1_b	teb_tech	1	700	0	0			0	0	0
+cr_tech_emp_purge_2	wh3_main_prologue		8	wh2_dlc13_tech_emp_purge_2	teb_tech	1	100	7000	0			0	7	0
+cr_tech_emp_cav_1	wh3_main_prologue		0	wh2_dlc13_tech_emp_cav_1	teb_tech	2	500	0	0			0	21	0
+cr_tech_emp_cav_1_a	wh3_main_prologue		1	wh2_dlc13_tech_emp_cav_1_a	teb_tech	2	700	0	0			0	21	0
+cr_tech_emp_diplomacy_1_c	wh3_main_prologue		7	wh2_dlc13_tech_emp_diplomacy_1_c	teb_tech	2	100	7000	0			0	14	0
+cr_tech_emp_economy_1_b	wh3_main_prologue		5	wh2_dlc13_tech_emp_economy_1_b	teb_tech	2	700	0	0			0	14	0
+cr_tech_emp_economy_2_a	wh3_main_prologue		4	wh2_dlc13_tech_emp_economy_2_a	teb_tech	2	700	0	0			0	14	0
+cr_tech_emp_economy_3_b	wh3_main_prologue		3	wh2_dlc13_tech_emp_economy_3_b	teb_tech	2	700	0	0			0	14	0
+cr_tech_emp_purge_3	wh3_main_prologue		8	wh2_dlc13_tech_emp_purge_3	teb_tech	2	100	7000	0			0	14	0
+cr_tech_emp_cav_1_b	wh3_main_prologue		0	wh2_dlc13_tech_emp_cav_1_b	teb_tech	3	700	0	0			0	21	0
+cr_tech_emp_cav_1_c	wh3_main_prologue		1	wh2_dlc13_tech_emp_cav_1_c	teb_tech	3	700	0	0			0	21	0
+cr_tech_emp_diplomacy_1_d	wh3_main_prologue		7	wh2_dlc13_tech_emp_diplomacy_1_d	teb_tech	3	100	7000	0			0	21	0
+cr_tech_emp_economy_3	wh3_main_prologue		3	wh2_dlc13_tech_emp_economy_3	teb_tech	3	500	0	0			0	21	0
+cr_tech_emp_economy_3_a	wh3_main_prologue		5	wh2_dlc13_tech_emp_economy_3_a	teb_tech	3	700	0	0			0	21	0
+cr_tech_emp_purge_4	wh3_main_prologue		8	wh2_dlc13_tech_emp_purge_4	teb_tech	3	100	7000	0			0	21	0
+cr_tech_emp_academia_1	wh3_main_prologue		4	wh2_dlc13_tech_emp_academia_1	teb_tech	4	500	0	0			0	42	0
+cr_tech_emp_academia_1_a	wh3_main_prologue		3	wh2_dlc13_tech_emp_academia_1_a	teb_tech	4	700	0	0			0	42	0
+cr_tech_emp_academia_1_b	wh3_main_prologue		5	wh2_dlc13_tech_emp_academia_1_b	teb_tech	4	700	0	0			0	42	0
+cr_tech_emp_machine_1	wh3_main_prologue		0	wh2_dlc13_tech_emp_machine_1	teb_tech	4	500	0	0			0	42	0
+cr_tech_emp_machine_1_b	wh3_main_prologue		1	wh2_dlc13_tech_emp_machine_1_b	teb_tech	4	700	0	0			0	42	0
+cr_tech_emp_academia_2	wh3_main_prologue		3	wh2_dlc13_tech_emp_academia_2	teb_tech	5	500	0	0			0	49	0
+cr_tech_emp_academia_2_b	wh3_main_prologue		5	wh2_dlc13_tech_emp_academia_2_b	teb_tech	5	700	0	0			0	49	0
+cr_tech_emp_machine_1_a	wh3_main_prologue		1	wh2_dlc13_tech_emp_machine_1_a	teb_tech	5	700	0	0			0	42	0
+cr_tech_emp_machine_1_c	wh3_main_prologue		0	wh2_dlc13_tech_emp_machine_1_c	teb_tech	5	700	0	0			0	42	0
+cr_tech_emp_academia_2_a	wh3_main_prologue		3	wh2_dlc13_tech_emp_academia_2_a	teb_tech	6	700	0	0			0	56	0
+cr_tech_emp_academia_3_b	wh3_main_prologue		5	wh2_dlc13_tech_emp_academia_3_b	teb_tech	6	700	0	0			0	56	0
+cr_tech_emp_missile_1	wh3_main_prologue		0	wh2_dlc13_tech_emp_missile_1	teb_tech	6	500	0	0			0	63	0
+cr_tech_emp_missile_1_c	wh3_main_prologue		1	wh2_dlc13_tech_emp_missile_1_c	teb_tech	6	700	0	0			0	63	0
+cr_tech_emp_academia_3	wh3_main_prologue		3	wh2_dlc13_tech_emp_academia_3	teb_tech	7	500	0	0			0	63	0
+cr_tech_emp_academia_3_a	wh3_main_prologue		5	wh2_dlc13_tech_emp_academia_3_a	teb_tech	7	700	0	0			0	63	0
+cr_tech_emp_missile_1_a	wh3_main_prologue		0	wh2_dlc13_tech_emp_missile_1_a	teb_tech	7	700	0	0			0	63	0
+cr_tech_emp_missile_1_b	wh3_main_prologue		1	wh2_dlc13_tech_emp_missile_1_b	teb_tech	7	700	0	0			0	63	0
+mixer_teb_dummy	wh3_main_prologue	wh2_main_skv_grey_seer_clan	18	wh_main_tech_dwf_civ_0_2	teb_tech	1	999999	0	0			0	0	0

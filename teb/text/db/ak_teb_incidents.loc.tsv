@@ -1,0 +1,23 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_incidents.loc		
+incidents_localised_title_teb_spawn_dignitary	Favoured of the Cult 	true
+incidents_localised_description_teb_spawn_dignitary	The Cult of Myrmidia is watching your actions with benevolence, and templars are eager to fight at your side.	true
+incidents_localised_title_teb_dilemma_recipe	Schools of Thought	true
+incidents_localised_description_teb_dilemma_recipe	Let's face it, Tileans enjoy these squabbles too much to let go. We're better off ignoring them until they settle down again.	true
+incidents_localised_title_teb_incident_vespero	Grimacing Death	true
+incidents_localised_description_teb_incident_vespero	One of your rivals has been found dead, one neat sword jab wound in his chest and the rictus of someone who’s seen the visage of death itself. Nearby, a scrap of paper with a ‘V’ jotted in refined penmanship and the drawing of a wasp. Parts of his assets could be claimed for your use.	true
+incidents_localised_title_teb_incident_candle	Candle-lit Surgery	true
+incidents_localised_description_teb_incident_candle	One of your Captains has been struck by one of those wretched rats' guns. The field surgeon was quick to realize the leg had to be amputated, and called for a dozen assistants to keep the big man down while he operated. The Captain refused and grabbed a candle to make light for the surgeon himself. The warrior is recovering, but the tale of his steely resolve spread like the smell of ale around the country, inebriating soldiers with similar bravery.	true
+incidents_localised_title_teb_dilemma_hedge_no	Send a Templar	true
+incidents_localised_description_teb_dilemma_hedge_no	A Knight of the Order of the Eagle offered to personally check on the subject and take action if needed. As it turns out, the man was only a scholar gone-hermit that occasionally felt like helping a neighbour. However, the Templar claims to have actually found a distinct but deranged person on the way back to the capital. The man bore clear signs of ruinous temptation and was skewered while busy eating snails. 	true
+incidents_localised_title_teb_dilemma_hedge_yes	Recruit Him	true
+incidents_localised_description_teb_dilemma_hedge_yes	The man was offered to join your services on probation. He was also proven to be a stable and promising wizard and is awaiting your orders.	true
+incidents_localised_title_teb_dilemma_darkmaiden_censor	Censor Everything	true
+incidents_localised_description_teb_dilemma_darkmaiden_censor	Most informed parts have been silenced, one way or another. The resolution didn't go unnoticed, and some groups have become more grim and less enthusiastic.	true
+incidents_localised_title_teb_dilemma_darkmaiden_ok	Nothing to Hide	true
+incidents_localised_description_teb_dilemma_darkmaiden_ok	We have proven to be the better person compared to the sigmarite northeners, who would torch a city down at the merest hint of discussion. A vocal minority in the populace was outraged by the notion that Myrmidia could be nothing but a pureblooded Estalian (or Tilean, depending on whom you ask), which may cause some noise. \\nHowever, part of the Court of Lothern was pleasantly surprised by our transparence, which may mean trade.	true
+incidents_localised_title_teb_dilemma_darkmaiden_ignore	Ignore the Rumours	true
+incidents_localised_description_teb_dilemma_darkmaiden_ignore	Rumours of this kind are mostly part of a healthy and chatty society. The noisiest reaction came from two Magrittan priests, whose flaming row was eventually settled by their colleagues, with a club.	true
+incidents_localised_title_teb_incident_shepherds	A Flock to Tend	true
+incidents_localised_description_teb_incident_shepherds	Bretonnians formally despise mercenaries and everything that goes with them. However, they are human like anybody else and even they will dance loops around holes in their chivalric codes. \\nAn emissary from a Dukedom absolutely *didn't* ask us for good soldiers to pose as shepherds, and we *didn't* get a nice cut over the contract for a company headed north, positively *not* to watch the border against greenskin incursions. We *didn't* have to provide the one sheep they will legally protect, either. \\n\\nSheesh.	true
+event_feed_strings_text_teb_how_they_play	{{tr:teb_howtheyplay1}}\\n\\n{{tr:teb_howtheyplay2}}\\n\\n{{tr:teb_howtheyplay3}}	false

@@ -1,0 +1,27 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_uitr_ui_text_replacements.loc		
+ui_text_replacements_localised_text_button_mortuary_cult_mixer_teb_southern_realms	Plutocracy||Hit contacts and allies for maneuvres, items, commanders and mercenary companies.	true
+ui_text_replacements_localised_text_button_mortuary_cult	Mortuary Cult||Craft powerful magic items and awaken Legions of Legend.	true
+ui_text_replacements_localised_text_button_mortuary_cult_title_mixer_teb_southern_realms	Plutocracy	true
+ui_text_replacements_localised_text_button_mortuary_cult_title	Mortuary Cult	true
+ui_text_replacements_localised_text_crafting_mixer_teb_southern_realms	Plutocracy	true
+ui_text_replacements_localised_text_crafting_button_tooltip_mixer_teb_southern_realms	Plutocracy||Hit contacts and allies for maneuvres, items, commanders and mercenary companies.	true
+ui_text_replacements_localised_text_crafting_counter_tooltip_mixer_teb_southern_realms	Number of available initiatives and purchases	true
+ui_text_replacements_localised_text_teb_pools_dummybase	of the following units in the Renown pool, replenishing randomly across 15 turns:	true
+effect_bundles_localised_title_wh_main_edict_emp_host_festag	{{tr:wh_main_edict_emp_host_festag}}	true
+provincial_initiative_records_localised_name_wh_main_edict_emp_host_festag	{{tr:wh_main_edict_emp_host_festag}}	true
+ui_text_replacements_localised_text_wh_main_edict_emp_host_festag	Host Festag	true
+ui_text_replacements_localised_text_wh_main_edict_emp_host_festag_mixer_teb_southern_realms	Hold Fairs	true
+kislev	is in zzz loc for compatibility	false
+ui_text_replacements_localised_text_rank4	([[img:rank4]][[/img]]Rank 4 and above)	true
+ui_text_replacements_localised_text_frontend_bullet_tilea	[[img:bullet_armies]][[/img]]Armies of Tilea: reliable and heavily-armoured roster, with better artillery and cavalry than their neighbours.	true
+ui_text_replacements_localised_text_frontend_bullet_estalia	[[img:bullet_armies]][[/img]]Armies of Estalia: reliable and heavily-armoured roster, with versatile Conquistador units.	true
+ui_text_replacements_localised_text_frontend_bullet_border	[[img:bullet_armies]][[/img]]Armies of the Borderlands: jack-of-all-trades roster of skirmishers, specialists and cost-effective compromises.	true
+ui_text_replacements_localised_text_frontend_bullet_colonies	[[img:bullet_armies]][[/img]]Colonial Armies: jack-of-all-trades roster that combines many of the individual strengths of the homeland with fewer of their elites.	true
+{{tr:frontend_bullet_tilea}}		true
+{{tr:frontend_bullet_estalia}}		true
+{{tr:frontend_bullet_border}}		true
+{{tr:frontend_bullet_colonies}}		true
+ui_text_replacements_localised_text_teb_howtheyplay1	[[img:plutocracy]][[/img]] [[col:white]]Plutocracy[[/col]]\\n[[col:green]]Use your {{tr:icon_treasury}}treasury, when strategically viable, to fund [[img:ui/skins/default/browser_spell_tab_character.png]][[/img]]specific agents or even unique characters, hire special [[img:ui/skins/default/icon_effect_ror.png]][[/img]]Regiments of Renown, purchase [[img:icon_prologue_character]][[/img]]character items, and [[img:ui/skins/default/icon_factions.png]][[/img]]initiate temporary factionwide bonuses. \\n\\nSouthern Realms have few ways of reducing expenses but many to increase income, particularly from ports buildings and province capitals.[[/col]]	false
+ui_text_replacements_localised_text_teb_howtheyplay2	[[img:bullet_armies]][[/img]] [[col:white]]Rosters of the Southern Realms[[/col]]\\n[[col:green]]The Southern Realms are not only politically divided, but also split into four subgroups: [[img:tilea]][[/img]]Tileans, [[img:estalia]][[/img]]Estalians, [[img:border]][[/img]]Border Princes and [[img:nwc]][[/img]]Colonies. Each of these has access to different variations and combinations of different units, down to where exactly they are recruitable. A province may focus more on city levies or mercenary camps, and you may swap between their two [[img:ui/skins/default/icon_recruit_without_border.png]][[/img]]recruitment chains.\\n\\nSouthern Realms rosters benefit particularly from [[img:ui/skins/default/experience_9.png]][[/img]]experience, including the wide offer of [[img:ui/skins/default/icon_effect_ror.png]][[/img]]Regiments of Renown.[[/col]]	false
+ui_text_replacements_localised_text_teb_howtheyplay3		false

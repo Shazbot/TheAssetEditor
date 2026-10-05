@@ -1,0 +1,15 @@
+bonus_value_id	effect	unit_set
+#effect_bonus_value_ids_unit_sets_tables;0;db/effect_bonus_value_ids_unit_sets_tables/ak_teb_tebuary		
+unit_xp_mod	tebuary_xp_hidden	all_units
+global_recruit_time_mod	tebuary_roc_global_time	teb_roc
+unit_cap	teb_roc_dieterfist	teb_roc_dieterfist
+unit_cap	teb_roc_estragon	teb_roc_estragon
+unit_cap	teb_roc_verena	teb_roc_verena
+unit_cap	teb_roc_strygos	teb_roc_strygos
+unit_cap	teb_roc_broswords	teb_roc_broswords
+unit_cap	teb_roc_gwatch	teb_roc_gwatch
+unit_cap	teb_roc_kotss	teb_roc_kotss
+unit_cap	teb_roc_organ	teb_roc_organ
+unit_cap	teb_roc_gunn	teb_roc_gunn
+unit_cap	teb_roc_montecastello	teb_roc_montecastello
+unit_cap	tebuary_roc_allcap	teb_roc

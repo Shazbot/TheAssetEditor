@@ -1,0 +1,16 @@
+id	payload	spawnable_unit	add_mercenaries_to_performing_faction
+#ritual_payload_spawn_mercenaries_tables;0;db/ritual_payload_spawn_mercenaries_tables/ak_teb			
+3011990	tebuary_2_roc_dieterfist	teb_roc_dieterfist	false
+3011991	tebuary_2_roc_estragon	teb_roc_estragon	false
+3011992	tebuary_2_roc_verena	teb_roc_verena	false
+3011993	tebuary_2_roc_strygos	teb_roc_strygos	false
+3011994	tebuary_2_roc_broswords	teb_roc_broswords	false
+3011995	tebuary_2_roc_gwatch	teb_roc_gwatch	false
+3011996	tebuary_2_roc_kotss	teb_roc_kotss	false
+3011997	tebuary_2_roc_organ	teb_roc_organ	false
+3011998	tebuary_2_roc_gunn	teb_roc_gunn	false
+3011999	tebuary_2_roc_montecastello	teb_roc_montecastello	false
+3012000	tebuary_1_teb_lorenzo	teb_lorenzo_lupo	false
+3012001	tebuary_1_teb_templar_lord	teb_templar_lord	false
+3012002	tebuary_1_teb_wizards	wh_dlc05_emp_cha_wizard_shadows_0	false
+3012003	tebuary_1_teb_piggolo	teb_piggolo	false

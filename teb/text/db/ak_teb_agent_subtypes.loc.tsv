@@ -1,0 +1,32 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_agent_subtypes.loc		
+agent_subtypes_onscreen_name_override_est_inquisitor	Inquisitor Lord	true
+agent_subtypes_onscreen_name_override_bor_ranger_lord	Pathfinder	true
+agent_subtypes_onscreen_name_override_til_merchant	Merchant Prince	true
+agent_subtypes_onscreen_name_override_teb_lucrezzia_belladonna	Legendary Princess	true
+agent_subtypes_onscreen_name_override_teb_gashnag	Legendary Lord	true
+agent_subtypes_onscreen_name_override_teb_templar_lord	High Eagle	true
+agent_subtypes_onscreen_name_override_teb_eldaddio	Revenant Legendary Lord	true
+agent_subtypes_onscreen_name_override_teb_borgio_the_besieger	Legendary Prince of Miragliano	true
+agent_subtypes_onscreen_name_override_teb_catrazza	Legendary Merchant Prince	true
+agent_subtypes_onscreen_name_override_teb_lupio	Legendary Prince	true
+agent_subtypes_onscreen_name_override_teb_gausser	Legendary Border Prince	true
+agent_subtypes_onscreen_name_override_teb_colombo	Legendary Explorer Prince	true
+agent_subtypes_onscreen_name_override_teb_cadavo	Legendary Adventurer	true
+agent_subtypes_onscreen_name_override_teb_priestess	Priestess of Myrmidia	true
+agent_subtypes_description_text_override_teb_priestess	Priestesses and Knights at once, the high-ranking officers of the Order of the Eagle are expert fighters and unrivalled tacticians.	true
+agent_subtypes_onscreen_name_override_teb_duellist_hero	Master Duellist	true
+agent_subtypes_description_text_override_teb_duellist_hero	Duellists, also known as Diestros in Estalia, are agents, swashbucklers and rascals who'd produce their rapiers at the drop of a penny. Among the best of them, swordsmanship is as legendary as their boasts!	true
+agent_subtypes_onscreen_name_override_teb_merc_captain	Mercenary Captain	true
+agent_subtypes_description_text_override_teb_merc_captain	Mercenary captains are usually found leading companies of local troops or mercenaries, generally trying to make sure they get paid and not maimed too much.	true
+agent_subtypes_onscreen_name_override_teb_merc_general	Mercenary General	true
+agent_subtypes_description_text_override_teb_merc_general	Mercenary generals are powerful individuals of various origins, from Princes to former soldiers, with the wealth and usually the know-how to employ armies of militias and mercenaries. 	true
+agent_actions_localised_action_description_teb_agent_action_dignitary_assist_army_training	[[col:yellow]]Grants %n experience per turn to units serving in the parent army.[[/col]]	false
+agent_actions_localised_action_name_teb_agent_action_dignitary_assist_army_training	{{tr:agent_action_name_training}}	false
+agent_subtypes_onscreen_name_override_teb_lorenzo_lupo	Legendary Merchant Prince	true
+agent_subtypes_onscreen_name_override_teb_colombo_TOW	[this is a dummy that only exists for frontend bundle effect shenanigans]	true
+agent_subtypes_onscreen_name_override_teb_lucrezzia_belladonna_TOW	[this is a dummy that only exists for frontend bundle effect shenanigans]	true
+agent_subtypes_onscreen_name_override_teb_piggolo	Legendary Prince	true
+agent_subtypes_description_text_override_teb_piggolo	{{tr:character_skills_localised_description_teb_piggolo_innate}}	true
+agent_actions_localised_action_name_teb_piggolo_action_success_colonise_ruins	{{tr:agent_action_name_colonise_ruins}}	false
+agent_actions_localised_action_description_teb_piggolo_action_success_colonise_ruins	[[col:yellow]]Colonises the ruined settlement at level 3.[[/col]]\\n[[col:red]]This action will wound Piggolo II![[/col]]	false

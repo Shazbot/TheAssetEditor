@@ -1,0 +1,7 @@
+campaign_group	resource	initial_amount
+#campaign_group_pooled_resources_tables;1;db/campaign_group_pooled_resources_tables/ak_teb		
+tebuary_cult	tmb_canopic_jars	0
+tebuary_cult	teb_duellist_hero_PR	0
+tebuary_cult	teb_templar_lord_PR	0
+tebuary_cult	teb_lorenzo_lupo_PR	0
+tebuary_cult	teb_piggolo_PR	0

@@ -1,0 +1,14 @@
+key	no_going_back_level	hidden	precedence	icon	ui_priority	pre_battle_speech_parameter	remove_on_skill_reset
+#character_traits_tables;3;db/character_traits_tables/ak_teb							
+teb_trait_defeated_catrazza	1	false	1	human	1		false
+teb_trait_defeated_borgio	1	false	1	human	1		false
+teb_trait_defeated_lucy	1	false	1	human	1		false
+teb_trait_defeated_lupio	1	false	1	human	1		false
+teb_trait_defeated_eldaddio	1	false	1	human	1		false
+teb_trait_defeated_colombo	1	false	1	human	1		false
+teb_trait_defeated_cadavo	1	false	1	human	1		false
+teb_trait_defeated_gashnag	1	false	1	human	1		false
+teb_trait_defeated_gausser	1	false	1	human	1		false
+teb_trait_defeated_mazdamundi_as_cadavo	1	false	1	lizardmen	1		false
+teb_trait_alejandro	1	false	1	human	1		false
+teb_trait_defeated_lorenzo_lupo	1	false	1	human	1		false

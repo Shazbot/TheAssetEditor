@@ -1,0 +1,158 @@
+key	campaign_key	character_skill_key	faction_key	indent	tier	subculture	points_on_creation	required_num_parents	visible_in_ui
+#character_skill_nodes_tables;6;db/character_skill_nodes_tables/ak_teb_lords_general									
+teb_merc_general_barded_horse		teb_merc_general_barded_horse		0	1		0	0	true
+teb_merc_general_lion		teb_merc_general_lion		0	2		0	0	true
+teb_merc_general_unique_02		teb_lord_unique_ward		0	8		0	0	true
+teb_merc_general_hold_the_line		wh_main_skill_emp_lord_battle_hold_the_line		0	3		0	0	true
+teb_merc_general_battle_00		wh_main_skill_all_lord_battle_inspiring_presence		4	0		0	0	true
+teb_merc_general_battle_01		teb_army_buff_melee_A		4	1		0	0	true
+teb_merc_general_battle_02		teb_army_buff_melee_B		4	2		0	0	true
+teb_merc_general_battle_03		teb_army_buff_charge		4	3		0	0	true
+teb_merc_general_battle_04		teb_army_buff_missile		4	4		0	0	true
+teb_merc_general_battle_05		teb_army_buff_speed		4	5		0	0	true
+teb_merc_general_battle_06		teb_army_buff_stones		4	6		0	0	true
+teb_merc_general_battle_07		wh_main_skill_all_lord_battle_rally		4	7		0	6	true
+teb_merc_general_battle_08		teb_army_buff_chevrons_MA		4	8		0	0	true
+teb_merc_general_battle_09		teb_army_buff_chevrons_MD		4	9		0	0	true
+teb_merc_general_battle_10		teb_army_buff_chevrons_dmg		4	10		0	0	true
+teb_merc_general_battle_11		teb_army_buff_chevrons_charge		4	11		0	0	true
+teb_merc_general_battle_12		teb_army_buff_chevrons_ammo_phys_res		4	12		0	0	true
+teb_merc_general_battle_13		wh_main_skill_all_lord_battle_stand_your_ground		4	13		0	3	true
+teb_merc_general_exc_noble		teb_lord_exc_noble	mixer_teb_tilea	3	6		0	0	true
+teb_merc_general_exc_merc		teb_lord_exc_merc	mixer_teb_tilea	3	5		0	0	true
+teb_merc_general_exc_noble_catrazza		teb_lord_exc_noble	mixer_teb_catrazza	3	6		0	0	true
+teb_merc_general_exc_merc_catrazza		teb_lord_exc_merc	mixer_teb_catrazza	3	5		0	0	true
+teb_merc_general_exc_prince		teb_lord_exc_prince	mixer_teb_border_princes	3	6		0	0	true
+teb_merc_general_exc_ranger		teb_lord_exc_ranger	mixer_teb_border_princes	3	5		0	0	true
+teb_merc_general_exc_prince_gash		teb_lord_exc_prince	mixer_teb_gashnag	3	6		0	0	true
+teb_merc_general_exc_ranger_gash		teb_lord_exc_ranger	mixer_teb_gashnag	3	5		0	0	true
+teb_lord_exc_noble_est		teb_lord_exc_noble	mixer_teb_estalia	3	6		0	0	true
+teb_lord_exc_merc_est		teb_lord_exc_merc	mixer_teb_estalia	3	5		0	0	true
+teb_lord_exc_noble_bilbali		teb_lord_exc_noble	mixer_teb_bilbali	3	6		0	0	true
+teb_lord_exc_merc_bilbali		teb_lord_exc_merc	mixer_teb_bilbali	3	5		0	0	true
+teb_merc_general_exc_noble_nwc		teb_lord_exc_noble	mixer_teb_new_world_colonies	3	6		0	0	true
+teb_merc_general_exc_merc_nwc		teb_lord_exc_merc	mixer_teb_new_world_colonies	3	5		0	0	true
+teb_merc_general_exc_noble_colombo		teb_lord_exc_noble	mixer_teb_colombo	3	6		0	0	true
+teb_merc_general_exc_merc_colombo		teb_lord_exc_merc	mixer_teb_colombo	3	5		0	0	true
+teb_merc_general_self_01		wh_main_skill_all_all_self_hard_to_hit_starter		2	0		0	0	true
+teb_merc_general_self_02		wh2_dlc11_skill_all_lord_self_devastating_charge		2	1		0	0	true
+teb_merc_general_self_03		wh2_dlc11_skill_all_lord_self_full_plate_armour		2	2		0	0	true
+teb_merc_general_self_04		wh2_dlc11_skill_all_lord_self_scarred_veteran		2	3		0	0	true
+teb_merc_general_self_05		wh2_dlc11_skill_all_lord_self_deadly_blade		2	4		0	0	true
+teb_merc_general_self_06		wh_main_skill_all_all_self_foe-seeker		2	5		0	4	true
+teb_merc_general_self_07		wh2_dlc11_skill_all_lord_self_wound-maker		2	6		0	0	true
+teb_merc_general_self_08		wh2_dlc11_skill_all_lord_self_blade_master		2	7		0	0	true
+teb_merc_general_self_09		wh2_dlc11_skill_all_lord_self_self_indomitable		2	8		0	0	true
+teb_merc_general_self_10		wh2_dlc11_skill_all_lord_self_blade_shield		2	9		0	0	true
+teb_merc_general_self_11		wh_main_skill_all_all_self_deadly_onslaught		2	10		0	4	true
+teb_lord_villanos		teb_lord_villanos	mixer_teb_estalia	3	11		0	0	true
+teb_lord_villanos_bilbali		teb_lord_villanos	mixer_teb_bilbali	3	11		0	0	true
+teb_lord_bordermen		teb_lord_bordermen	mixer_teb_border_princes	3	10		0	0	true
+teb_lord_bordermen_gash		teb_lord_bordermen	mixer_teb_gashnag	3	10		0	0	true
+teb_lord_tileaguy		teb_lord_tileaguy	mixer_teb_tilea	3	12		0	0	true
+teb_lord_tileaguy_eastind		teb_lord_tileaguy	mixer_teb_catrazza	3	12		0	0	true
+teb_lord_villanos_nwc		teb_lord_villanos	mixer_teb_new_world_colonies	3	11		0	0	true
+teb_lord_bordermen_nwc		teb_lord_bordermen	mixer_teb_new_world_colonies	3	10		0	0	true
+teb_lord_tileaguy_nwc		teb_lord_tileaguy	mixer_teb_new_world_colonies	3	12		0	0	true
+teb_lord_villanos_westind		teb_lord_villanos	mixer_teb_colombo	3	11		0	0	true
+teb_lord_bordermen_westind		teb_lord_bordermen	mixer_teb_colombo	3	10		0	0	true
+teb_lord_tileaguy_westind		teb_lord_tileaguy	mixer_teb_colombo	3	12		0	0	true
+wh3_main_agent_action_scaling_teb_merc_general		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_merc_general_immortality		wh2_main_skill_all_immortality_lord		0	7		0	0	true
+teb_merc_general_innate_01		wh2_main_skill_innate_emp_regal		6	0		0	0	false
+teb_merc_general_innate_02		wh2_main_skill_innate_emp_noble		6	1		0	0	false
+teb_merc_general_innate_03		wh2_main_skill_innate_emp_imperious		6	2		0	0	false
+teb_merc_general_innate_04		wh2_main_skill_innate_emp_monster_tracker		6	3		0	0	false
+teb_merc_general_innate_05		wh2_main_skill_innate_emp_monster_hunter		6	4		0	0	false
+teb_merc_general_innate_06		wh2_main_skill_innate_all_fleet_footed		6	5		0	0	false
+teb_merc_general_innate_07		wh2_main_skill_innate_all_cunning		6	6		0	0	false
+teb_merc_general_innate_08		wh2_main_skill_innate_all_determined		6	7		0	0	false
+teb_merc_general_innate_09		wh2_main_skill_innate_all_confident		6	8		0	0	false
+teb_merc_general_innate_10		wh2_main_skill_innate_all_disciplined		6	9		0	0	false
+teb_merc_general_innate_11		wh2_main_skill_innate_all_perceptive		6	10		0	0	false
+teb_merc_general_innate_12		wh2_main_skill_innate_all_aggressive		6	11		0	0	false
+teb_merc_general_innate_13		wh2_main_skill_innate_all_tough		6	12		0	0	false
+teb_merc_general_innate_14		wh2_main_skill_innate_all_strong		6	13		0	0	false
+teb_merc_general_innate_15		wh2_main_skill_innate_all_weapon_master		6	14		0	0	false
+teb_merc_general_innate_16		wh2_main_skill_innate_all_strategist		6	15		0	0	false
+teb_merc_general_innate_17		wh2_main_skill_innate_all_tactician		6	16		0	0	false
+teb_merc_general_campaign_01		wh_main_skill_all_lord_campaign_route_marcher		5	0		0	0	true
+teb_merc_general_campaign_02		wh_main_skill_emp_lord_campaign_iron_disciplinarian		5	1		0	0	true
+teb_merc_general_campaign_03		wh_main_skill_emp_lord_campaign_leader_of_renown		5	2		0	0	true
+teb_merc_general_campaign_04		wh_main_skill_lord_all_campaign_reassuring_presence		5	3		0	0	true
+teb_merc_general_campaign_05		wh_main_skill_emp_lord_campaign_fervent		5	4		0	0	true
+teb_merc_general_campaign_06		wh_main_skill_all_lord_campaign_irrepressible		5	5		0	4	true
+teb_merc_general_campaign_07		wh_main_skill_all_lord_campaign_lightning_strike		5	6		0	0	true
+teb_merc_general_campaign_08		wh_main_skill_emp_lord_campaign_quartermaster		5	7		0	0	true
+teb_merc_general_campaign_09		wh_main_skill_emp_lord_campaign_logistician		5	8		0	0	true
+teb_merc_general_campaign_10		wh_main_skill_all_lord_campaign_alert		5	9		0	0	true
+teb_merc_general_campaign_11		wh_main_skill_emp_lord_campaign_headhunter		5	10		0	4	true
+teb_merc_general_exc_noble_cr_teb_luccini		teb_lord_exc_noble	cr_teb_luccini	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_miragliano		teb_lord_exc_noble	cr_teb_miragliano	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_monte_castello		teb_lord_exc_noble	cr_teb_monte_castello	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_pavona		teb_lord_exc_noble	cr_teb_pavona	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_remas		teb_lord_exc_noble	cr_teb_remas	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_trantio		teb_lord_exc_noble	cr_teb_trantio	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_verezzo		teb_lord_exc_noble	cr_teb_verezzo	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_order_of_the_blazing_sun		teb_lord_exc_noble	cr_teb_order_of_the_blazing_sun	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_tobaro		teb_lord_exc_noble	cr_teb_tobaro	3	6		0	0	true
+teb_merc_general_exc_merc_cr_teb_luccini		teb_lord_exc_merc	cr_teb_luccini	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_miragliano		teb_lord_exc_merc	cr_teb_miragliano	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_monte_castello		teb_lord_exc_merc	cr_teb_monte_castello	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_pavona		teb_lord_exc_merc	cr_teb_pavona	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_remas		teb_lord_exc_merc	cr_teb_remas	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_trantio		teb_lord_exc_merc	cr_teb_trantio	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_verezzo		teb_lord_exc_merc	cr_teb_verezzo	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_order_of_the_blazing_sun		teb_lord_exc_merc	cr_teb_order_of_the_blazing_sun	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_tobaro		teb_lord_exc_merc	cr_teb_tobaro	3	5		0	0	true
+teb_lord_tileaguy_cr_teb_luccini		teb_lord_tileaguy	cr_teb_luccini	3	12		0	0	true
+teb_lord_tileaguy_cr_teb_miragliano		teb_lord_tileaguy	cr_teb_miragliano	3	12		0	0	true
+teb_lord_tileaguy_cr_teb_monte_castello		teb_lord_tileaguy	cr_teb_monte_castello	3	12		0	0	true
+teb_lord_tileaguy_cr_teb_pavona		teb_lord_tileaguy	cr_teb_pavona	3	12		0	0	true
+teb_lord_tileaguy_cr_teb_remas		teb_lord_tileaguy	cr_teb_remas	3	12		0	0	true
+teb_lord_tileaguy_cr_teb_trantio		teb_lord_tileaguy	cr_teb_trantio	3	12		0	0	true
+teb_lord_tileaguy_cr_teb_verezzo		teb_lord_tileaguy	cr_teb_verezzo	3	12		0	0	true
+teb_lord_tileaguy_cr_teb_order_of_the_blazing_sun		teb_lord_tileaguy	cr_teb_order_of_the_blazing_sun	3	12		0	0	true
+teb_lord_tileaguy_cr_teb_tobaro		teb_lord_tileaguy	cr_teb_tobaro	3	12		0	0	true
+teb_merc_general_exc_prince_cr_teb_central_confederacy		teb_lord_exc_prince	cr_teb_central_confederacy	3	6		0	0	true
+teb_merc_general_exc_prince_cr_teb_north_confederacy		teb_lord_exc_prince	cr_teb_north_confederacy	3	6		0	0	true
+teb_merc_general_exc_prince_cr_teb_south_confederacy		teb_lord_exc_prince	cr_teb_south_confederacy	3	6		0	0	true
+teb_merc_general_exc_ranger_cr_teb_central_confederacy		teb_lord_exc_ranger	cr_teb_central_confederacy	3	5		0	0	true
+teb_merc_general_exc_ranger_cr_teb_north_confederacy		teb_lord_exc_ranger	cr_teb_north_confederacy	3	5		0	0	true
+teb_merc_general_exc_ranger_cr_teb_south_confederacy		teb_lord_exc_ranger	cr_teb_south_confederacy	3	5		0	0	true
+teb_lord_villanos_cr_teb_almagora		teb_lord_villanos	cr_teb_almagora	3	11		0	0	true
+teb_lord_villanos_cr_teb_bilbali		teb_lord_villanos	cr_teb_bilbali	3	11		0	0	true
+teb_lord_villanos_cr_teb_gualcazar		teb_lord_villanos	cr_teb_gualcazar	3	11		0	0	true
+teb_lord_villanos_cr_teb_magritta		teb_lord_villanos	cr_teb_magritta	3	11		0	0	true
+teb_lord_villanos_cr_teb_nuja		teb_lord_villanos	cr_teb_nuja	3	11		0	0	true
+teb_lord_villanos_cr_teb_reinos_pobres		teb_lord_villanos	cr_teb_reinos_pobres	3	11		0	0	true
+teb_lord_villanos_cr_teb_vizeaya		teb_lord_villanos	cr_teb_vizeaya	3	11		0	0	true
+teb_lord_bordermen_cr_teb_central_confederacy		teb_lord_bordermen	cr_teb_central_confederacy	3	10		0	0	true
+teb_lord_bordermen_cr_teb_north_confederacy		teb_lord_bordermen	cr_teb_north_confederacy	3	10		0	0	true
+teb_lord_bordermen_cr_teb_south_confederacy		teb_lord_bordermen	cr_teb_south_confederacy	3	10		0	0	true
+teb_merc_general_camp_campaign_01		wh2_dlc13_skill_lzd_campaign_draftmaster_horde		5	0		0	0	true
+teb_merc_general_camp_campaign_02		wh_main_skill_emp_lord_campaign_iron_disciplinarian		5	1		0	0	true
+teb_merc_general_camp_campaign_03		wh_main_skill_emp_lord_campaign_leader_of_renown		5	2		0	0	true
+teb_merc_general_camp_campaign_04		wh_main_skill_lord_all_campaign_reassuring_presence		5	3		0	0	true
+teb_merc_general_camp_campaign_05		wh_main_skill_emp_lord_campaign_fervent		5	4		0	0	true
+teb_merc_general_camp_campaign_06		wh_main_skill_all_lord_campaign_irrepressible		5	5		0	0	true
+teb_merc_general_camp_campaign_07		wh_main_skill_all_lord_campaign_lightning_strike		5	6		0	0	false
+teb_merc_general_camp_campaign_08		wh_main_skill_emp_lord_campaign_quartermaster		5	7		0	0	false
+teb_merc_general_camp_campaign_09		wh_main_skill_emp_lord_campaign_logistician		5	8		0	0	true
+teb_merc_general_camp_campaign_10		wh_main_skill_all_lord_campaign_alert		5	9		0	0	false
+teb_merc_general_camp_campaign_11		wh_main_skill_emp_lord_campaign_headhunter		5	10		0	0	false
+teb_merc_general_camp_hidden		teb_merc_general_camp_hidden		8	0		1	0	false
+teb_merc_general_exc_noble_cr_teb_almagora		teb_lord_exc_noble	cr_teb_almagora	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_bilbali		teb_lord_exc_noble	cr_teb_bilbali	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_gualcazar		teb_lord_exc_noble	cr_teb_gualcazar	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_magritta		teb_lord_exc_noble	cr_teb_magritta	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_nuja		teb_lord_exc_noble	cr_teb_nuja	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_reinos_pobres		teb_lord_exc_noble	cr_teb_reinos_pobres	3	6		0	0	true
+teb_merc_general_exc_noble_cr_teb_vizeaya		teb_lord_exc_noble	cr_teb_vizeaya	3	6		0	0	true
+teb_merc_general_exc_merc_cr_teb_almagora		teb_lord_exc_merc	cr_teb_almagora	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_bilbali		teb_lord_exc_merc	cr_teb_bilbali	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_gualcazar		teb_lord_exc_merc	cr_teb_gualcazar	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_magritta		teb_lord_exc_merc	cr_teb_magritta	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_nuja		teb_lord_exc_merc	cr_teb_nuja	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_reinos_pobres		teb_lord_exc_merc	cr_teb_reinos_pobres	3	5		0	0	true
+teb_merc_general_exc_merc_cr_teb_vizeaya		teb_lord_exc_merc	cr_teb_vizeaya	3	5		0	0	true

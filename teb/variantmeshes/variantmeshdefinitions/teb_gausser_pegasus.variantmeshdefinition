@@ -1,0 +1,12 @@
+<VARIANT_MESH>
+	<SLOT name="body" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hr1/emp/emp_pegasus/ak_teb_gausser_pegasus_body.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>			<META_DATA>audio_entity_type:wh_horse_pegasus_LH</META_DATA></VARIANT_MESH>	
+    </SLOT>
+	<SLOT name="bridle" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hr1/emp/emp_pegasus/emp_pegasus_bridle_01.wsmodel" />
+	</SLOT>
+	<SLOT name="wings" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hr1/emp/emp_pegasus/ak_teb_gausser_pegasus_wings.wsmodel" />
+	</SLOT>
+</VARIANT_MESH>

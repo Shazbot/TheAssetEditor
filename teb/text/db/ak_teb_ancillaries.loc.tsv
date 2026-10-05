@@ -1,0 +1,32 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_ancillaries.loc		
+ancillaries_onscreen_name_teb_merc_general_griffon	Griffon	true
+ancillaries_colour_text_teb_merc_general_griffon	Nothing beats a Griffon mount to make everyone respect your authoritah. 	true
+ancillaries_onscreen_name_wh_main_anc_mount_emp_bright_wizard_imperial_pegasus	Pegasus	true
+ancillaries_colour_text_wh_main_anc_mount_teb_bright_wizard_imperial_pegasus	Imperial pegasi are found in Grey Mountains where Bretonnian and Empire hunters fight over capturing the foals.	true
+ancillaries_onscreen_name_wh_main_anc_mount_teb_bright_wizard_barded_warhorse	Barded Warhorse	true
+ancillaries_colour_text_wh_main_anc_mount_teb_bright_wizard_barded_warhorse	Battle Wizards are rarely armoured for it interferes with their casting, yet a steed can and should be barded to add a level of protection.	true
+ancillaries_onscreen_name_tebuary_ser_generic	Duke Alberic's Look-Alike	true
+ancillaries_colour_text_tebuary_ser_generic	A jester who is the split image of the Duke of Bordeleaux, highly liked in courts for all sorts of parodies and shenanigans.	true
+ancillaries_onscreen_name_tebuary_renegade_crown	The Renegade Crown	true
+ancillaries_colour_text_tebuary_renegade_crown	This simple circlet is the symbol of unification dreams for the Borderlands, and anybody wearing it would be the leader of the squabbling Princes, or their worst enemy, or just a puppet...	true
+ancillaries_onscreen_name_tebuary_jewel_sword	Jewel-Encrusted Sword	true
+ancillaries_colour_text_tebuary_jewel_sword	This marvellous and shiny weapon is so skillfully done that a trained leader can lead an army to victory in a rainbow of sun glares. It is absolutely worthless in actual combat, though. 	true
+ancillaries_onscreen_name_tebuary_idol_myrmidia	Idol of Myrmidia	true
+ancillaries_colour_text_tebuary_idol_myrmidia	A delicate statuette of the Goddess, beautiful and useful to show off religious piety. Sometimes it also whispers of tactics in the owner's mind.	true
+ancillaries_onscreen_name_tebuary_secrets	Warded List of Secrets	true
+ancillaries_colour_text_tebuary_secrets	A pain-stakingly compiled registry of awkward and dangerous secrets of the owner's enemies. For good measure, it is said to be enchanted to fly away and replicate should something happen to the possessor...	true
+ancillaries_onscreen_name_tebuary_shield_myrmidia	Shield of Myrmidia	true
+ancillaries_colour_text_tebuary_shield_myrmidia	An ancient-looking shield found in the Acropolis of Luccini, capable of blinding foes. Presumably a copy.	true
+ancillaries_onscreen_name_tebuary_retractable_fistblade	Retractable Wristblade	true
+ancillaries_colour_text_tebuary_retractable_fistblade	The perfect weapon if you want complex, ineffective, concealed and showy at the same time and if you ask the right customer.	true
+ancillaries_onscreen_name_tebuary_duellist_cloak	Duellist's Cloak	true
+ancillaries_colour_text_tebuary_duellist_cloak	In Tilea, a cloak could hide a deadly dagger, or it could just show off ermine and velvet. Sometimes it's both.	true
+ancillaries_onscreen_name_tebuary_conspi_hood	Conspicuous Hood	true
+ancillaries_colour_text_tebuary_conspi_hood	"Sir, I dare say you should stop intruding in public conversations and pretending to be part of them. No, sir, the white hood doesn't make you look enigmatic or dashing at all. Merely runny."	true
+ancillaries_onscreen_name_tebuary_spear_heartseeker	Heartseeker Spear	true
+ancillaries_colour_text_tebuary_spear_heartseeker	A spear said to have been in the possession of holy Sister Fury, hungry for a foe's demise.	true
+ancillaries_onscreen_name_tebuary_ugoletti	Polymath Ugoletti	true
+ancillaries_colour_text_tebuary_ugoletti	The engineer responsible for the rework of Da Miragliano's tank design and their maintenance. Technobabble guaranteed, sanity optional.	true
+ancillaries_onscreen_name_til_merchant_bear	Kislevite War Bear	true
+ancillaries_colour_text_til_merchant_bear	"Why so surprised? Anybody can get one of these! I just bought it off some Gryphon Legion fellow."	true

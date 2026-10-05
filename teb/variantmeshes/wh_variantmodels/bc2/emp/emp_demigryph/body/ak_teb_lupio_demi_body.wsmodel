@@ -1,0 +1,37 @@
+<model version="1">
+	<geometry>variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\ak_teb_lupio_demi_body.rigid_model_v2</geometry>
+		<materials>
+			<material lod_index="0" part_index="0">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\ak_teb_lupio_demi_body_weighted4_alpha_on.xml.material</material>
+			<material lod_index="0" part_index="1">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\ak_teb_lupio_demi_access_weighted4_alpha_on.xml.material</material>
+			<material lod_index="0" part_index="2">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\lost_morion_02_guard_black_weighted4_alpha_off.xml.material</material>
+			<material lod_index="0" part_index="3">variantmeshes\wh_variantmodels\hu1\emp\emp_karl_franz\materials\emp_karl_franz_head_01_weighted2_alpha_on.xml.material</material>
+			<material lod_index="0" part_index="4">variantmeshes\wh_variantmodels\hu1\emp\emp_knights_reiksguard\materials\emp_reiksguard_morr_torso_01_weighted4_alpha_off.xml.material</material>
+			<material lod_index="0" part_index="5">variantmeshes\wh_variantmodels\hu1\emp\emp_knights_reiksguard\materials\emp_reiksguard_morr_legs_01_weighted4_alpha_off.xml.material</material>
+			<material lod_index="0" part_index="6">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\brt_fay_enchantress_body_01_weighted4_alpha_on.xml.material</material>
+
+			<material lod_index="1" part_index="0">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\ak_teb_lupio_demi_body_weighted4_alpha_on.xml.material</material>
+			<material lod_index="1" part_index="1">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\ak_teb_lupio_demi_access_weighted4_alpha_on.xml.material</material>
+			<material lod_index="1" part_index="2">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\lost_morion_02_guard_black_weighted4_alpha_off.xml.material</material>
+			<material lod_index="1" part_index="3">variantmeshes\wh_variantmodels\hu1\emp\emp_karl_franz\materials\emp_karl_franz_head_01_weighted2_alpha_on.xml.material</material>
+			<material lod_index="1" part_index="4">variantmeshes\wh_variantmodels\hu1\emp\emp_knights_reiksguard\materials\emp_reiksguard_morr_torso_01_weighted4_alpha_off.xml.material</material>
+			<material lod_index="1" part_index="5">variantmeshes\wh_variantmodels\hu1\emp\emp_knights_reiksguard\materials\emp_reiksguard_morr_legs_01_weighted4_alpha_off.xml.material</material>
+			<material lod_index="1" part_index="6">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\brt_fay_enchantress_body_01_weighted4_alpha_on.xml.material</material>
+
+			<material lod_index="2" part_index="0">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\ak_teb_lupio_demi_body_weighted2_alpha_off.xml.material</material>
+			<material lod_index="2" part_index="1">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\ak_teb_lupio_demi_access_weighted2_alpha_off.xml.material</material>
+			<material lod_index="2" part_index="2">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\lost_morion_02_guard_black_weighted2_alpha_off.xml.material</material>
+			<material lod_index="2" part_index="3">variantmeshes\wh_variantmodels\hu1\emp\emp_karl_franz\materials\emp_karl_franz_head_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="2" part_index="4">variantmeshes\wh_variantmodels\hu1\emp\emp_knights_reiksguard\materials\emp_reiksguard_morr_torso_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="2" part_index="5">variantmeshes\wh_variantmodels\hu1\emp\emp_knights_reiksguard\materials\emp_reiksguard_morr_legs_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="2" part_index="6">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\brt_fay_enchantress_body_01_weighted2_alpha_off.xml.material</material>
+
+			<material lod_index="3" part_index="0">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\ak_teb_lupio_demi_body_weighted2_alpha_off.xml.material</material>
+			<material lod_index="3" part_index="1">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\ak_teb_lupio_demi_access_weighted2_alpha_off.xml.material</material>
+			<material lod_index="3" part_index="2">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\lost_morion_02_guard_black_weighted2_alpha_off.xml.material</material>
+			<material lod_index="3" part_index="3">variantmeshes\wh_variantmodels\hu1\emp\emp_karl_franz\materials\emp_karl_franz_head_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="3" part_index="4">variantmeshes\wh_variantmodels\hu1\emp\emp_knights_reiksguard\materials\emp_reiksguard_morr_torso_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="3" part_index="5">variantmeshes\wh_variantmodels\hu1\emp\emp_knights_reiksguard\materials\emp_reiksguard_morr_legs_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="3" part_index="6">variantmeshes\wh_variantmodels\bc2\emp\emp_demigryph\body\materials\brt_fay_enchantress_body_01_weighted2_alpha_off.xml.material</material>
+
+	</materials>
+</model>

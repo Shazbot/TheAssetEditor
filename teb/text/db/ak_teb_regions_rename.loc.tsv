@@ -1,0 +1,18 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_regions_rename.loc		
+regions_battle_name_wh3_main_combi_region_riffraffa	Verezzo	false
+regions_onscreen_wh3_main_combi_region_riffraffa	Verezzo	false
+start_pos_settlements_onscreen_name_settlement:wh3_main_combi_region_riffraffa1583140285	Verezzo	false
+could be Pavona for plot reasons, TBD		false
+regions_battle_name_wh3_main_combi_region_verdanos	Vardanos	false
+regions_onscreen_wh3_main_combi_region_verdanos	Vardanos	false
+start_pos_settlements_onscreen_name_settlement:wh3_main_combi_region_verdanos1298907923	Vardanos	false
+typo fix from Verdanos (as per latest TOW map too)		false
+regions_battle_name_wh3_main_combi_region_argalis	Argalis	false
+regions_onscreen_wh3_main_combi_region_argalis	Argalis	false
+start_pos_settlements_onscreen_name_settlement:wh3_main_combi_region_argalis1917763729	Argalis	false
+TBD could become Monte Castello for a tilean fortress landmark, Argalis was supposed to be a port		false
+regions_battle_name_wh3_main_combi_region_nuja	Nerja	false
+regions_onscreen_wh3_main_combi_region_nuja	Nerja	false
+start_pos_settlements_onscreen_name_settlement:wh3_main_combi_region_nuja2021129831	Nerja	false
+odd misspelling compared to any manowar map		true

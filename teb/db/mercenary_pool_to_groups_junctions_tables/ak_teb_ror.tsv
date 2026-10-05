@@ -1,0 +1,50 @@
+key	group	initial_unit_count	pool	faction_requirement	subculture_requirement	tech_requirement
+#mercenary_pool_to_groups_junctions_tables;3;db/mercenary_pool_to_groups_junctions_tables/ak_teb_ror						
+3011990	teb_ricco	1	teb_renown_pool		mixer_teb_southern_realms	
+3011991	teb_alcatani	1	teb_renown_pool		mixer_teb_southern_realms	
+3011992	teb_pirazzo	1	teb_renown_pool		mixer_teb_southern_realms	
+3011993	teb_leopard	1	teb_renown_pool		mixer_teb_southern_realms	
+3011994	teb_venators	1	teb_renown_pool		mixer_teb_southern_realms	
+3011995	teb_vespero	1	teb_renown_pool		mixer_teb_southern_realms	
+3011996	teb_marksmen	1	teb_renown_pool		mixer_teb_southern_realms	
+3011997	teb_muktar	1	teb_renown_pool		mixer_teb_southern_realms	
+3011998	teb_amazons	1	teb_renown_pool		mixer_teb_southern_realms	
+3011999	teb_cursed	1	teb_renown_pool		mixer_teb_southern_realms	
+3012000	teb_manflayers	1	teb_renown_pool		mixer_teb_southern_realms	
+3012001	teb_origo	1	teb_renown_pool		mixer_teb_southern_realms	
+3012002	teb_besiegers	1	teb_renown_pool		mixer_teb_southern_realms	
+3012003	teb_asarnil	1	teb_renown_pool		mixer_teb_southern_realms	
+3012004	teb_roc_dieterfist	0	teb_renown_pool		mixer_teb_southern_realms	
+3012005	teb_roc_estragon	0	teb_renown_pool		mixer_teb_southern_realms	
+3012006	teb_roc_verena	0	teb_renown_pool		mixer_teb_southern_realms	
+3012007	teb_roc_strygos	0	teb_renown_pool		mixer_teb_southern_realms	
+3012008	teb_roc_broswords	0	teb_renown_pool		mixer_teb_southern_realms	
+3012009	teb_roc_gwatch	0	teb_renown_pool		mixer_teb_southern_realms	
+3012010	teb_tichi	1	teb_renown_pool		mixer_teb_southern_realms	
+3012011	teb_roc_kotss	0	teb_renown_pool		mixer_teb_southern_realms	
+3012012	teb_roc_organ	0	teb_renown_pool		mixer_teb_southern_realms	
+3012013	teb_roc_gunn	0	teb_renown_pool		mixer_teb_southern_realms	
+3012014	teb_roc_montecastello	0	teb_renown_pool		mixer_teb_southern_realms	
+3012015	teb_bronzino_limbered	1	teb_renown_pool		mixer_teb_southern_realms	
+3012016	teb_bronzino	1	teb_renown_pool		mixer_teb_southern_realms	
+3012017	teb_birdmen	1	teb_renown_pool		mixer_teb_southern_realms	
+3012018	teb_tank_ror	1	teb_renown_pool		mixer_teb_southern_realms	
+3012019	teb_pikemen	1	wh3_main_ogr_merc_pool			
+3012020	teb_xbowmen	1	wh3_main_ogr_merc_pool			
+3012021	teb_pavisiers	1	wh3_main_ogr_merc_pool			
+3012022	teb_broken_lances	1	wh3_main_ogr_merc_pool			
+3012023	teb_carabiniers	1	wh3_main_ogr_merc_pool			
+3012024	teb_light_cannon	1	wh3_main_ogr_merc_pool			
+3012025	teb_conqui_royal_guard	1	wh3_main_ogr_merc_pool			
+3012026	teb_conqui_adventurers	1	wh3_main_ogr_merc_pool			
+3012027	teb_conqui_riders	1	wh3_main_ogr_merc_pool			
+3012028	teb_conqui_lancers	1	wh3_main_ogr_merc_pool			
+3012029	teb_enforcers	1	wh3_main_ogr_merc_pool			
+3012030	teb_freelance_knights	1	wh3_main_ogr_merc_pool			
+3012031	teb_militia_knights	1	wh3_main_ogr_merc_pool			
+3012032	teb_border_rangers	1	wh3_main_ogr_merc_pool			
+3012033	teb_swash	1	wh3_main_ogr_merc_pool			
+3012034	teb_duellists	1	wh3_main_ogr_merc_pool			
+3012035	teb_xbow_cav	1	wh3_main_ogr_merc_pool			
+3012036	teb_guard_kossars	1	wh3_main_ogr_merc_pool			
+3012037	teb_galloper	1	wh3_main_ogr_merc_pool			

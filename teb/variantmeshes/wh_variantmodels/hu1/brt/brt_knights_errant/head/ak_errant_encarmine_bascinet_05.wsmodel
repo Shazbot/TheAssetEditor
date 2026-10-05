@@ -1,0 +1,19 @@
+<model version="1">
+	<geometry>variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\ak_errant_encarmine_bascinet_05.rigid_model_v2</geometry>
+		<materials>
+			<material lod_index="0" part_index="0">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_errant_encarmine_bascinet_1_weighted4_alpha_on.xml.material</material>
+			<material lod_index="0" part_index="1">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_errant_encarmine_bascinet_1_weighted4_alpha_on.xml.material</material>
+			<material lod_index="0" part_index="2">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_knight_head_encarmine_weighted4_alpha_on.xml.material</material>
+
+			<material lod_index="1" part_index="0">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_errant_encarmine_bascinet_1_weighted4_alpha_on.xml.material</material>
+			<material lod_index="1" part_index="1">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_errant_encarmine_bascinet_1_weighted4_alpha_on.xml.material</material>
+			<material lod_index="1" part_index="2">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_knight_head_encarmine_weighted4_alpha_on.xml.material</material>
+
+			<material lod_index="2" part_index="0">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_errant_encarmine_bascinet_weighted2_alpha_off.xml.material</material>
+			<material lod_index="2" part_index="1">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_knight_head_encarmine_weighted2_alpha_off.xml.material</material>
+
+			<material lod_index="3" part_index="0">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_errant_encarmine_bascinet_weighted2_alpha_off.xml.material</material>
+			<material lod_index="3" part_index="1">variantmeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\materials\ak_teb_knight_head_encarmine_weighted2_alpha_off.xml.material</material>
+
+	</materials>
+</model>

@@ -1,0 +1,8 @@
+issuer_key	mission_key
+#cdir_events_mission_issuer_junctions_tables;1;db/cdir_events_mission_issuer_junctions_tables/ak_teb_dilemmas	
+TEB_ELDADDIO	teb_eldaddio_req_01
+TEB_ELDADDIO	teb_eldaddio_req_02
+TEB_ELDADDIO	teb_eldaddio_req_03
+TEB_ELDADDIO	teb_eldaddio_boomer_owneverything
+TEB_ELDADDIO	teb_eldaddio_boomer_gift
+TEB_ELDADDIO	teb_eldaddio_boomer_handshake

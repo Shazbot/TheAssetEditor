@@ -1,0 +1,12 @@
+<VARIANT_MESH>
+	<SLOT name="subhead" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\head\emp_artillery_crew_head_02.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\head\emp_artillery_crew_head_01.rigid_model_v2" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\head\emp_artillery_crew_head_03.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\head\emp_artillery_crew_head_01.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="helmet" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_men_at_arms\head\brt_men_at_arms_helmet_02.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\brt\brt_men_at_arms\head\brt_men_at_arms_helmet_01.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="coif" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_paladin\head\AK_brt_paladin_coif_01.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\brt\brt_paladin\head\brt_paladin_head_01.rigid_model_v2" />
+	</SLOT>
+</VARIANT_MESH>

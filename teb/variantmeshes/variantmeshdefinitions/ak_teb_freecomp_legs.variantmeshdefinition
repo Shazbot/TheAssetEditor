@@ -1,0 +1,8 @@
+<VARIANT_MESH>
+	<SLOT name="legs" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_teb_freecomp_legs_04.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_teb_freecomp_legs_06.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_teb_freecomp_legs_04_bis.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_teb_freecomp_legs_06_bis.wsmodel" />
+			</SLOT>
+</VARIANT_MESH>

@@ -1,0 +1,12 @@
+key	max_indent	min_indent	order	agent_subtype_override	col_hex
+#character_skill_categories_tables;2;db/character_skill_categories_tables/ak_teb					
+battle_til_merchant	2	2	1	til_merchant	F1413D
+campaign_til_merchant	5	4	2	til_merchant	43DDF8
+character_til_merchant	1	0	0	til_merchant	FFB62F
+battle_teb_borgio	3	3	1	teb_borgio_the_besieger	F1413D
+campaign_teb_borgio	5	4	2	teb_borgio_the_besieger	43DDF8
+character_teb_borgio	2	0	0	teb_borgio_the_besieger	FFB62F
+battle_teb_lucrezzia	3	3	1	teb_lucrezzia_belladonna	F1413D
+campaign_teb_lucrezzia	5	4	2	teb_lucrezzia_belladonna	43DDF8
+character_teb_lucrezzia	2	0	0	teb_lucrezzia_belladonna	FFB62F
+campaign_teb_piggolo	5	4	2	teb_piggolo	43DDF8

@@ -1,0 +1,8 @@
+invalid_target	special_ability
+#special_ability_to_invalid_target_flags_tables;0;db/special_ability_to_invalid_target_flags_tables/ak_teb_ror	
+unit_is_commander_class	teb_manflayers_hatin
+unit_is_commander_class	teb_manflayers_flayin
+ground_unit	teb_asarnil
+morale_is_wavering_or_lower	teb_tichi
+health_above_50%_base	teb_roc_gunn_lasso
+unit_is_commander_class	teb_roc_kotss_aura

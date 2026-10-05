@@ -1,0 +1,36 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_effect_bundles_tebuary.loc		
+effect_bundles_localised_title_tebuary_3_sellmercs	Military Strategy: Lease Mercenary Contracts	true
+effect_bundles_localised_description_tebuary_3_sellmercs	With no visible threat or opportunities allegedly in sight, the Princes cut the costs and allow most of their captains to be hired elsewhere en masse. This brings huge savings, but until the lease and the gamble is over, the City-States are vulnerable...	true
+effect_bundles_localised_title_tebuary_3_bestmercs	Military Strategy: Only the Best	true
+effect_bundles_localised_description_tebuary_3_bestmercs	The conflicts ahead require that the only troops fielded are going to be the very best the treasury can afford. 	true
+effect_bundles_localised_title_tebuary_3_allin	Military Strategy: Southern All In	true
+effect_bundles_localised_description_tebuary_3_allin	The upcoming enterprises require masses. The Princes have agreed that drowning the common enemy in bodies is the reasonable strategy here, no matter the drop in average troop quality.	true
+effect_bundles_localised_title_tebuary_3_diplo_dwf	Diplomatic Initiative: Honour the Neighbours	false
+effect_bundles_localised_description_tebuary_3_diplo_dwf		false
+effect_bundles_localised_title_tebuary_3_diplo_hef	Diplomatic Initiative: The Former Colonists	false
+effect_bundles_localised_description_tebuary_3_diplo_hef		false
+effect_bundles_localised_title_tebuary_3_diplo_emp	Diplomatic Initiative: Offer Support	false
+effect_bundles_localised_description_tebuary_3_diplo_emp		false
+effect_bundles_localised_title_tebuary_3_diplo_marburg	Diplomatic Initiative: Commercial Entente	false
+effect_bundles_localised_description_tebuary_3_diplo_marburg		false
+effect_bundles_localised_title_tebuary_3_diplo_brt	Diplomatic Initiative: Seal the Feuds	false
+effect_bundles_localised_description_tebuary_3_diplo_brt		false
+effect_bundles_localised_title_tebuary_3_socio_subt	Great Surge: Stiletto Politics (Unique)	false
+effect_bundles_localised_description_tebuary_3_socio_subt		false
+effect_bundles_localised_title_tebuary_3_socio_war	Great Surge: Mercenary Wars (Unique)	false
+effect_bundles_localised_description_tebuary_3_socio_war		false
+effect_bundles_localised_title_tebuary_3_socio_grandeur	Great Surge: Delusions of Grandeur (Unique)	false
+effect_bundles_localised_description_tebuary_3_socio_grandeur		false
+effect_bundles_localised_title_tebuary_3_socio_arts	Great Surge: Patronage Trend (Unique)	false
+effect_bundles_localised_description_tebuary_3_socio_arts		false
+effect_bundles_localised_title_tebuary_1_teb_templar_lord_disable	High Eagle Turnover	false
+effect_bundles_localised_description_tebuary_1_teb_templar_lord_disable	High Eagles cannot be recruited.	false
+effect_bundles_localised_title_tebuary_1_teb_duellist_hero_disable	Master Duellists Turnover	false
+effect_bundles_localised_description_tebuary_1_teb_duellist_hero_disable	Master Duellist Contract cannot be renewed.	false
+effect_bundles_localised_title_tebuary_1_teb_duellist_hero	Master Duellist Contract	false
+effect_bundles_localised_description_tebuary_1_teb_duellist_hero	Master Duellists can be recruited factionwide and with increased rank.	false
+effect_bundles_localised_title_tebuary_1_teb_wizards_disable	Hireling Battle Wizards Turnover	false
+effect_bundles_localised_description_tebuary_1_teb_wizards_disable	Hireling Battle Wizard Contract cannot be renewed.	false
+effect_bundles_localised_title_tebuary_1_teb_wizards	Hireling Battle Wizard Contract	false
+effect_bundles_localised_description_tebuary_1_teb_wizards	Hireling Battle Wizards can be recruited factionwide and with increased rank.	false

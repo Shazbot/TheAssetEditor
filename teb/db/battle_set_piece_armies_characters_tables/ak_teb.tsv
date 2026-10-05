@@ -1,0 +1,25 @@
+character_name	character_level	forename	magic_lore	num_men	surname	unit_type	agent_type	agent_subtype	portrait	character_model	skillset	male
+#battle_set_piece_armies_characters_tables;8;db/battle_set_piece_armies_characters_tables/ak_teb												
+teb_priestess	1	2147345130		100	2147343895	teb_priestess	dignitary	teb_priestess	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+bor_ranger_lord	1	2147345130		100	2147343895	bor_ranger_lord	general	bor_ranger_lord	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+til_merchant	1	2147345130		100	2147343895	til_merchant	general	til_merchant	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+est_inquisitor	1	2147345130		100	2147343895	est_inquisitor	general	est_inquisitor	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_borgio_the_besieger	1	2147345130		100	2147343895	teb_borgio_the_besieger	general	teb_borgio_the_besieger	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_gashnag	1	2147345130		100	2147343895	teb_gashnag	general	teb_gashnag	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_lucrezzia_belladonna	1	2147345130		100	2147343895	teb_lucrezzia_belladonna	general	teb_lucrezzia_belladonna	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_catrazza	1	2147345130		100	2147343895	teb_catrazza	general	teb_catrazza	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_lupio	1	2147345130		100	2147343895	teb_lupio	general	teb_lupio	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_gausser	1	2147345130		100	2147343895	teb_gausser	general	teb_gausser	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_colombo	1	2147345130		100	2147343895	teb_colombo	general	teb_colombo	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_cadavo	1	2147345130		100	2147343895	teb_cadavo	general	teb_cadavo	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_templar_lord	1	2147345130		100	2147343895	teb_templar_lord	general	teb_templar_lord	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_eldaddio	1	2147345130		100	2147343895	teb_eldaddio	general	teb_eldaddio	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_duellist_hero	1	2147345130		100	2147343895	teb_duellist_hero	spy	teb_duellist_hero	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_merc_general	1	2147345130		100	2147343895	teb_merc_general	general	teb_merc_general	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_merc_captain	1	2147345130		100	2147343895	teb_merc_captain	champion	teb_merc_captain	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_lorenzo_lupo	1	2147345130		100	2147343895	teb_lorenzo_lupo	general	teb_lorenzo_lupo	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_piggolo	1	2147345130		100	2147343895	teb_piggolo	engineer	teb_piggolo	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_merc_general_tilea	1	2147345130		100	2147343895	teb_merc_general	general	teb_merc_general	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_merc_general_estalia	1	2147345130		100	2147343895	teb_merc_general	general	teb_merc_general	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_merc_general_border	1	2147345130		100	2147343895	teb_merc_general	general	teb_merc_general	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true
+teb_merc_general_colonies	1	2147345130		100	2147343895	teb_merc_general	general	teb_merc_general	ui/portraits/portholes/wh_main_vmp_vampire_counts/vmp_ch_vlad_0.png	3012001		true

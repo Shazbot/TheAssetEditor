@@ -1,0 +1,5 @@
+key	distance	fov	phi	theta	target_x	target_y	target_z	environment_file
+#unit_porthole_camera_settings_tables;2;db/unit_porthole_camera_settings_tables/ak_teb								
+emp_galloper_gun_limbered	8.0000	28.0000	150.0000	230.0000	0.0000	1.0000	0.0000	Porthole/advisor/default_porthole.lighting
+teb_birdmen	4.0000	28.0000	0.0000	190.0000	1.2000	1.5500	0.0000	Porthole/advisor/default_porthole.lighting
+teb_piggolo	4.1000	20.0000	180.0000	180.0000	0.0000	0.8500	0.0000	Porthole/advisor/default_porthole.lighting

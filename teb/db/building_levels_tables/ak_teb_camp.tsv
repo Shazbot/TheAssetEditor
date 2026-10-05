@@ -1,0 +1,58 @@
+level_name	chain	level	create_time	create_cost	upkeep_cost	commodity	only_in_capital	faction_unique	first_in_world_bundle	resource_requirement	can_convert	building_instance_key	should_show_building_level_in_ui_for_technology	health_override	development_point_cost	can_be_damaged	primary_slot_building_building_level_requirement	audio_building_type	visible_in_ui	food_cost	slave_cap_contribution	resource_cost	additional_loot_value	resource_transaction_on_complete	split_chain_sort_order	override_startpos_settlement_display_building
+#building_levels_tables;3;db/building_levels_tables/ak_teb_camp																										
+teb_camp_main_1	teb_camp_main	0	0	1500	0		false	false			true	wh3_main_ogr_camp_town_centre	false	0.0000	0	true	0	wh_cam_settlement_minor_empire	true	0	0		0		-1	false
+teb_camp_main_2	teb_camp_main	1	2	3000	0		false	false			true	wh3_main_ogr_camp_town_centre	false	0.0000	1	true	1	wh_cam_settlement_minor_empire	true	0	0		0		-1	false
+teb_camp_main_3	teb_camp_main	2	4	4500	0		false	false			true	wh3_main_ogr_camp_town_centre	false	0.0000	2	true	2	wh_cam_settlement_minor_empire	true	0	0		0		-1	false
+teb_camp_main_4	teb_camp_main	3	6	6000	0		false	false			true	wh3_main_ogr_camp_town_centre	false	0.0000	3	true	3	wh_cam_settlement_minor_empire	true	0	0		0		-1	false
+teb_camp_main_5	teb_camp_main	4	8	7500	0		false	false			true	wh3_main_ogr_camp_town_centre	false	0.0000	4	true	4	wh_cam_settlement_minor_empire	true	0	0		0		-1	false
+teb_camp_inf_1	teb_camp_inf	0	1	1000	0		false	false			true	teb_camp_inf1	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_inf_2	teb_camp_inf	1	2	2000	0		false	false			true	teb_camp_inf1	false	0.0000	1	true	1		true	0	0		0		-1	false
+teb_camp_inf_3	teb_camp_inf	2	3	3000	0		false	false			true	teb_camp_inf1	false	0.0000	0	true	2		true	0	0		0		-1	false
+teb_camp_inf_4	teb_camp_inf	3	4	4000	0		false	false			true	teb_camp_inf1	false	0.0000	1	true	3		true	0	0		0		-1	false
+teb_camp_inf_5	teb_camp_inf	4	5	5000	0		false	false			true	teb_camp_inf1	false	0.0000	0	true	4		true	0	0		0		-1	false
+teb_camp_inf2_1	teb_camp_inf2	0	1	1000	0		false	false			true	teb_camp_inf2	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_inf2_2	teb_camp_inf2	1	2	2000	0		false	false			true	teb_camp_inf2	false	0.0000	1	true	1		true	0	0		0		-1	false
+teb_camp_inf2_3	teb_camp_inf2	2	3	3000	0		false	false			true	teb_camp_inf2	false	0.0000	0	true	2		true	0	0		0		-1	false
+teb_camp_inf2_4	teb_camp_inf2	3	4	4000	0		false	false			true	teb_camp_inf2	false	0.0000	0	true	3		true	0	0		0		-1	false
+teb_camp_inf2_5	teb_camp_inf2	4	5	5000	0		false	false			true	teb_camp_inf2	false	0.0000	0	true	4		true	0	0		0		-1	false
+teb_camp_missile_1	teb_camp_missile	0	1	1000	0		false	false			true	teb_camp_missile	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_missile_2	teb_camp_missile	1	2	2000	0		false	false			true	teb_camp_missile	false	0.0000	1	true	1		true	0	0		0		-1	false
+teb_camp_missile_3	teb_camp_missile	2	3	3000	0		false	false			true	teb_camp_missile	false	0.0000	1	true	2		true	0	0		0		-1	false
+teb_camp_missile_4	teb_camp_missile	3	4	4000	0		false	false			true	teb_camp_missile	false	0.0000	0	true	3		true	0	0		0		-1	false
+teb_camp_missile_5	teb_camp_missile	4	5	5000	0		false	false			true	teb_camp_missile	false	0.0000	0	true	4		true	0	0		0		-1	false
+teb_camp_cavalry_1	teb_camp_cavalry	0	1	1000	0		false	false			true	teb_camp_cavalry	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_cavalry_2	teb_camp_cavalry	1	2	2000	0		false	false			true	teb_camp_cavalry	false	0.0000	1	true	1		true	0	0		0		-1	false
+teb_camp_cavalry_3	teb_camp_cavalry	2	3	3000	0		false	false			true	teb_camp_cavalry	false	0.0000	1	true	2		true	0	0		0		-1	false
+teb_camp_cavalry_4	teb_camp_cavalry	3	4	4000	0		false	false			true	teb_camp_cavalry	false	0.0000	0	true	4		true	0	0		0		-1	false
+teb_camp_cavalry_5	teb_camp_cavalry	4	5	5000	0		false	false			true	teb_camp_cavalry	false	0.0000	0	true	4		true	0	0		0		-1	false
+teb_camp_artillery_1	teb_camp_artillery	0	1	1000	0		false	false			true	teb_camp_artillery	false	0.0000	2	true	2		true	0	0		0		-1	false
+teb_camp_artillery_2	teb_camp_artillery	1	2	2000	0		false	false			true	teb_camp_artillery	false	0.0000	0	true	4		true	0	0		0		-1	false
+teb_camp_artillery_3	teb_camp_artillery	2	3	3000	0		false	false			true	teb_camp_artillery	false	0.0000	0	true	4		true	0	0		0		-1	false
+teb_camp_artillery_4	teb_camp_artillery	3	4	4000	0		false	false			true	teb_camp_artillery	false	0.0000	0	true	4		true	0	0		0		-1	false
+teb_camp_artillery_5	teb_camp_artillery	4	5	5000	0		false	false			true	teb_camp_artillery	false	0.0000	0	true	4		true	0	0		0		-1	false
+teb_camp_replenish_1	teb_camp_replenish	0	1	1000	0		false	false			true	teb_camp_replenish	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_replenish_2	teb_camp_replenish	1	2	2000	0		false	false			true	teb_camp_replenish	false	0.0000	1	true	1		true	0	0		0		-1	false
+teb_camp_replenish_3	teb_camp_replenish	2	3	3000	0		false	false			true	teb_camp_replenish	false	0.0000	0	true	2		true	0	0		0		-1	false
+teb_camp_replenish_4	teb_camp_replenish	3	4	4000	0		false	false			true	teb_camp_replenish	false	0.0000	0	true	3		true	0	0		0		-1	false
+teb_camp_replenish_5	teb_camp_replenish	4	5	5000	0		false	false			true	teb_camp_replenish	false	0.0000	1	true	4		true	0	0		0		-1	false
+teb_camp_growth_1	teb_camp_growth	0	1	1000	0		false	false			true	teb_camp_growth	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_growth_2	teb_camp_growth	1	2	2000	0		false	false			true	teb_camp_growth	false	0.0000	1	true	1		true	0	0		0		-1	false
+teb_camp_growth_3	teb_camp_growth	2	3	3000	0		false	false			true	teb_camp_growth	false	0.0000	0	true	2		true	0	0		0		-1	false
+teb_camp_growth_4	teb_camp_growth	3	4	4000	0		false	false			true	teb_camp_growth	false	0.0000	0	true	3		true	0	0		0		-1	false
+teb_camp_growth_5	teb_camp_growth	4	5	5000	0		false	false			true	teb_camp_growth	false	0.0000	1	true	4		true	0	0		0		-1	false
+teb_camp_recr_1	teb_camp_recr	0	1	1000	0		false	false			true	teb_camp_recr	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_recr_2	teb_camp_recr	1	2	2000	0		false	false			true	teb_camp_recr	false	0.0000	1	true	1		true	0	0		0		-1	false
+teb_camp_recr_3	teb_camp_recr	2	3	3000	0		false	false			true	teb_camp_recr	false	0.0000	0	true	2		true	0	0		0		-1	false
+teb_camp_recr_4	teb_camp_recr	3	4	4000	0		false	false			true	teb_camp_recr	false	0.0000	0	true	3		true	0	0		0		-1	false
+teb_camp_recr_5	teb_camp_recr	4	5	5000	0		false	false			true	teb_camp_recr	false	0.0000	1	true	4		true	0	0		0		-1	false
+teb_camp_upk_1	teb_camp_upk	0	1	1000	0		false	false			true	teb_camp_upk	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_upk_2	teb_camp_upk	1	2	2000	0		false	false			true	teb_camp_upk	false	0.0000	1	true	1		true	0	0		0		-1	false
+teb_camp_upk_3	teb_camp_upk	2	3	3000	0		false	false			true	teb_camp_upk	false	0.0000	0	true	2		true	0	0		0		-1	false
+teb_camp_upk_4	teb_camp_upk	3	4	4000	0		false	false			true	teb_camp_upk	false	0.0000	0	true	3		true	0	0		0		-1	false
+teb_camp_upk_5	teb_camp_upk	4	5	5000	0		false	false			true	teb_camp_upk	false	0.0000	1	true	4		true	0	0		0		-1	false
+teb_camp_port	teb_camp_port	0	1	1000	0		false	false			true	teb_camp_region	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_foreign_1	teb_camp_foreign	0	1	3000	0		false	false			true	teb_camp_foreign	false	0.0000	2	true	2		true	0	0		0		-1	false
+teb_camp_foreign_2	teb_camp_foreign	1	2	4000	0		false	false			true	teb_camp_foreign	false	0.0000	0	true	3		true	0	0		0		-1	false
+teb_camp_mountain	teb_camp_mountain	0	1	1000	0		false	false			true	teb_camp_region	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_jungle	teb_camp_jungle	0	1	1000	0		false	false			true	teb_camp_region	false	0.0000	0	true	0		true	0	0		0		-1	false
+teb_camp_scavenge	teb_camp_scavenge	0	1	1000	0		false	false			true	teb_camp_region	false	0.0000	0	true	0		true	0	0		0		-1	false

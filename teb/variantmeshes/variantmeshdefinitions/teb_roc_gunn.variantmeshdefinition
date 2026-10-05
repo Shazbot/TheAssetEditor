@@ -1,0 +1,83 @@
+
+<VARIANT_MESH>
+	<SLOT name="body+heads" >
+
+
+<VARIANT_MESH>
+	<SLOT name="hoodless heads" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/brt_battle_pilgrims_head_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/brt_battle_pilgrims_head_03.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/brt_battle_pilgrims_head_04.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/brt_battle_pilgrims_head_05.wsmodel" />
+	</SLOT>
+	<SLOT name="all body models" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/torso/teb_roc_gunn_torso_01.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>					<META_DATA>audio_entity_type:wh_human_male_bret_west_country</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/torso/teb_roc_gunn_torso_02.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>					<META_DATA>audio_entity_type:wh_human_male_bret_west_country</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/torso/teb_roc_gunn_torso_03.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>					<META_DATA>audio_entity_type:wh_human_male_bret_west_country</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/torso/teb_roc_gunn_torso_04.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>					<META_DATA>audio_entity_type:wh_human_male_bret_west_country</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/torso/teb_roc_gunn_torso_05.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>					<META_DATA>audio_entity_type:wh_human_male_bret_west_country</META_DATA></VARIANT_MESH>
+	</SLOT>
+</VARIANT_MESH>
+<VARIANT_MESH>
+	<SLOT name="heads plus hood variant" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/brt_battle_pilgrims_head_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/brt_battle_pilgrims_head_02.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/brt_battle_pilgrims_head_03.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/brt_battle_pilgrims_head_04.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/brt_battle_pilgrims_head_05.wsmodel" />
+	</SLOT>
+	<SLOT name="less clippy torsos" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/torso/teb_roc_gunn_torso_02.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>					<META_DATA>audio_entity_type:wh_human_male_bret_west_country</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/torso/teb_roc_gunn_torso_05.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>					<META_DATA>audio_entity_type:wh_human_male_bret_west_country</META_DATA></VARIANT_MESH>
+	</SLOT>			
+</VARIANT_MESH>
+<VARIANT_MESH>
+	<SLOT name="flagellants" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_flagellants/head/AK_teb_bandit_head_03.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_flagellants/head/AK_teb_bandit_head_05.wsmodel" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_flagellants/head/AK_teb_bandit_head_06.wsmodel" />
+
+	</SLOT>
+	<SLOT name="body" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_flagellants/torso/emp_flagellants_torso_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_flagellants/torso/emp_flagellants_torso_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_flagellants/torso/emp_flagellants_torso_03.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/torso/teb_roc_gunn_torso_03.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>					<META_DATA>audio_entity_type:wh_human_male_bret_west_country</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/torso/teb_roc_gunn_torso_04.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>					<META_DATA>audio_entity_type:wh_human_male_bret_west_country</META_DATA></VARIANT_MESH>
+	</SLOT>
+</VARIANT_MESH>
+			
+	</SLOT>
+
+
+	<SLOT name="noose" probability ="0.7" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\vmp\vmp_helman_ghorst\ak_teb_literallywho_noose.wsmodel" />
+	</SLOT>
+	<SLOT name="legs" >
+		<VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/ak_brt_battle_pilgrims_legs_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/ak_brt_battle_pilgrims_legs_02.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/ak_brt_battle_pilgrims_legs_03.wsmodel" />
+	</SLOT>
+
+	<SLOT name="weapon_1" attach_point="be_prop_0"  />
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/brt_men_at_arms_swords_set1.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" />
+	<SLOT name="weapon_3" attach_point="be_prop_3"  />
+	<SLOT name="weapon_4" attach_point="be_prop_4" />
+
+	<SLOT name="weapon_5" attach_point="be_prop_2" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_props\ak_teb_buckler_centigor.wsmodel" >
+			<META_DATA>audio_shield_type:metal</META_DATA></VARIANT_MESH>
+	</SLOT>
+</VARIANT_MESH>

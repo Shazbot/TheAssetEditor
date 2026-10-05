@@ -1,0 +1,34 @@
+<VARIANT_MESH>
+
+
+	<SLOT name="head" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_battle_pilgrims/head/AK_teb_bandaged_pilgrim.rigid_model_v2"   />
+			<SLOT name="bandages" >
+				<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/cst/cst_zombie_gunnery/AK_teb_bandana_bandages2.rigid_model_v2" />
+			</SLOT>		
+
+			<SLOT name="gorget" probability="0.5" >
+				<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\ak_demi_gorget_brass.wsmodel" />
+			</SLOT>
+			<SLOT name="bandages" >
+				<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/cst/cst_zombie_gunnery/AK_teb_bandana_bandages2.rigid_model_v2" />
+			</SLOT>
+
+
+
+
+
+
+	</SLOT>
+
+</VARIANT_MESH>
+
+
+
+		<VARIANT_BREAAAAAAAAAAAAAAK MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_warrior_priest\head\AK_teb_bandaged_baldy.rigid_model_v2" >
+			<SLOT name="gorget" >
+				<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\ak_demi_gorget_brass.wsmodel" />
+			</SLOT>
+			<SLOT name="bandages" >
+				<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/cst/cst_zombie_gunnery/AK_teb_bandana_bandages.rigid_model_v2" />
+			</SLOT>				</VARIANT_MESH>

@@ -1,0 +1,9 @@
+
+<VARIANT_MESH>
+    <SLOT name="head" >
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\ak_morion_heads.variantmeshdefinition" />
+    </SLOT>
+    <SLOT name="helmet" >
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_morion_lost_helmet.variantmeshdefinition" />
+    </SLOT>
+</VARIANT_MESH>

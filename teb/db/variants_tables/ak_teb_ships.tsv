@@ -1,0 +1,6 @@
+variant_name	tech_folder	variant_filename	low_poly_filename	mount_scale	scale	scale_variation	super_low_poly_filename
+#variants_tables;6;db/variants_tables/ak_teb_ships							
+teb_ship_unique_teb_borgio		teb_ship_unique_teb_borgio		1.0000	0.9000	0.0000	
+teb_ship_unique_teb_lorenzo_lupo		teb_ship_unique_teb_lorenzo_lupo		1.0000	0.6000	0.0000	
+teb_ship_generic_lord		teb_ship_generic_lord		1.0000	1.0000	0.0000	
+teb_ship_generic_hero		teb_ship_generic_hero		1.0000	1.0000	0.0000	

@@ -1,0 +1,20 @@
+- Mixu's unlocker, without which you wouldn't be able to play this crap in campaign and I probably wouldn't bother
+- Mixu, Groove Wizard, Rhox and OVN team for scripts and related help
+- ChaosRobie for the tanks, galloper guns, birdmen, pavise shields, adaptation of Loqual's war hammer, hu1 jav animsets, Cadavo's pistol animations; and for the predisposition to help TEB work in the TOW campaign
+- Shawmuscle for Lorenzo Lupo's assets
+- Wolfremio for other animsets (mounted xbow, captain, lance, sitting pig), fix for a banner colour mask, banner pole tops
+- Wolfremio/OVN Team for the pig base assets
+- Lost2Insanity for the new morion helmet
+- Partypus for adapting TOW faction flags to my custom shape and all that, plus some custom UI bits
+- Skorne for porting the corsair cloak
+- Loqual on sketchfab for the war hammer, Adventurers unit icon adapted from (Perun Tworek[perun-tworek.deviantart.com]; cover image adapted from Rocroi, El ultimo tercio by A. Ferrer-Dalmau
+- Marthenil and Wolfremio for the now-retired old model of morion helmet
+- Dontfearme22 for his custom textures for tilean and estalian shields (unused at the moment)
+- the afecionados for screenshots and dedication, e.g. ColdWinter for Lupio's loading pic, Colin and Matthias39 for some gallery pics.
+- and finally, the trusted beta testers who hugely helped me iron out the kinks.
+TOOLS
+- Frodo and supporting crowd for RPFM
+- h3ro/Ole for the asset editor tool
+- Marthenil for updating selfiehammer
+- DrunkFlamingo and Lorghul for the frontend model viewer
+- CA for mod support

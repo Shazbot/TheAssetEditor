@@ -1,0 +1,21 @@
+<model version="1">
+	<geometry>variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\ak_teb_strigany_head_02.rigid_model_v2</geometry>
+		<materials>
+			<material lod_index="0" part_index="0">variantmeshes\wh_variantmodels\hu1\emp\emp_wizard\grey\materials\emp_grey_wizard_head_01_weighted4_alpha_on.xml.material</material>
+			<material lod_index="0" part_index="1">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\ksl_archer_head_01_weighted4_alpha_off.xml.material</material>
+			<material lod_index="0" part_index="2">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\ksl_archer_head_01_weighted2_alpha_on.xml.material</material>
+
+			<material lod_index="1" part_index="0">variantmeshes\wh_variantmodels\hu1\emp\emp_wizard\grey\materials\emp_grey_wizard_head_01_weighted4_alpha_on.xml.material</material>
+			<material lod_index="1" part_index="1">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\ksl_archer_head_01_weighted4_alpha_off.xml.material</material>
+			<material lod_index="1" part_index="2">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\ksl_archer_head_01_weighted2_alpha_on.xml.material</material>
+
+			<material lod_index="2" part_index="0">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\emp_grey_wizard_head_01_weighted2_alpha_on.xml.material</material>
+			<material lod_index="2" part_index="1">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\ksl_archer_head_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="2" part_index="2">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\ksl_archer_head_01_weighted2_alpha_on.xml.material</material>
+
+			<material lod_index="3" part_index="0">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\emp_grey_wizard_head_01_weighted2_alpha_on.xml.material</material>
+			<material lod_index="3" part_index="1">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\ksl_archer_head_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="3" part_index="2">variantmeshes\wh_variantmodels\hu1\ksl\ksl_archer\materials\ksl_archer_head_01_weighted2_alpha_on.xml.material</material>
+
+	</materials>
+</model>

@@ -1,0 +1,64 @@
+key	type	applies_to	transferrable	unique_to_world	unique_to_faction	precedence	start_date	end_date	avatar_skill	avatar_special_ability	legendary_item	mp_exclusive	is_wife_ancillary	category	min_starting_age	max_starting_age	min_expiry_age	max_expiry_age	immortal	provided_bodyguard_unit	provided_banner	uniqueness_score	turns_before_swap_allowed	subcategory	randomly_dropped	can_be_stolen	can_be_destroyed	faction_set
+#ancillaries_tables;0;db/ancillaries_tables/ak_teb_lords																												
+mount_bor_ranger_lord_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	bor_ranger_lord_horse		1	0		false	false	false	all
+mount_bor_ranger_lord_warhorse2	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	bor_ranger_lord_horse2		1	0		false	false	false	all
+mount_til_merchant_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	til_merchant_horse		1	0		false	false	false	all
+mount_til_merchant_bwarhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	til_merchant_bhorse		1	0		false	false	false	all
+mount_est_inquisitor_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	est_inquisitor_horse		1	0		false	false	false	all
+mount_est_inquisitor_bwarhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	est_inquisitor_bhorse		1	0		false	false	false	all
+mount_est_inquisitor_beaky	wh_main_anc_mount_hippogryph	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	est_inquisitor_grif		1	0		false	false	false	all
+mount_teb_borgio_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_borgio_the_besieger_horse		1	0		false	false	false	all
+mount_teb_borgio_bwarhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_borgio_the_besieger_bhorse		1	0		false	false	false	all
+teb_borgio_mace	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_borgio_mask	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	enchanted_item	16	30	30	50	true			200	0		false	false	false	all
+teb_borgio_armour	wh_main_anc_armour	.	false	false	false	1	0	9999			false	false	false	armour	16	30	30	50	true			200	0		false	false	false	all
+teb_gashnag_book	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	enchanted_item	16	30	30	50	true			200	0		false	false	false	all
+teb_gashnag_staff	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+mount_teb_lucrezzia_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_lucrezzia_belladonna_horse		1	0		false	false	false	all
+mount_teb_lucrezzia_bwarhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_lucrezzia_belladonna_bhorse		1	0		false	false	false	all
+teb_lucrezzia_stiletto	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_lucrezzia_stiletto_dummy	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_lucrezzia_potion_dummy	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_lucrezzia_poison_dummy	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+mount_teb_catrazza_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_catrazza_warhorse		1	0		false	false	false	all
+mount_teb_catrazza_bwarhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_catrazza_barded_warhorse		1	0		false	false	false	all
+mount_teb_catrazza_grif	wh_main_anc_mount_imperial_griffon	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_catrazza_grif		1	0		false	false	false	all
+teb_catrazza_sword	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_catrazza_ring	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	enchanted_item	16	30	30	50	true			200	0		false	false	false	all
+mount_teb_lupio_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_lupio_warhorse		1	0		false	false	false	all
+mount_teb_lupio_bwarhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_lupio_barded_warhorse		1	0		false	false	false	all
+mount_teb_lupio_grif	wh_main_anc_mount_imperial_griffon	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_lupio_grif		1	0		false	false	false	all
+teb_lupio_cloak	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	enchanted_item	16	30	30	50	true			200	0		false	false	false	all
+teb_lupio_ring	wh_main_anc_talisman	.	false	false	false	1	0	9999			false	false	false	talisman	16	30	30	50	true			200	0		false	false	false	all
+mount_teb_gausser_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_gausser_warhorse		1	0		false	false	false	all
+mount_teb_gausser_bwarhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_gausser_barded_warhorse		1	0		false	false	false	all
+mount_teb_gausser_pegasus	wh_main_anc_mount_imperial_pegasus	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_gausser_pegasus		1	0		false	false	false	all
+teb_gausser_axe	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_gausser_scarf	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	enchanted_item	16	30	30	50	true			200	0		false	false	false	all
+mount_teb_cadavo_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_cadavo_horse		1	0		false	false	false	all
+mount_teb_cadavo_bwarhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_cadavo_bhorse		1	0		false	false	false	all
+teb_cadavo_talisman	wh_main_anc_talisman	.	false	false	false	1	0	9999			false	false	false	talisman	16	30	30	50	true			200	0		false	false	false	all
+mount_teb_colombo_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_colombo_horse		100	0		false	false	false	all
+mount_teb_colombo_steed	wh2_main_anc_mount_barded_ithilmar_steed	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_colombo_steed		100	0		false	false	false	all
+teb_colombo_gem	wh_main_anc_talisman	.	false	false	false	1	0	9999			false	false	false	talisman	16	30	30	50	true			200	0		false	false	false	all
+teb_colombo_scroll	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	enchanted_item	16	30	30	50	true			200	0		false	false	false	all
+mount_teb_templar_lord_bhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_templar_lord_bhorse		1	0		false	false	false	all
+mount_teb_templar_lord_pegasus	wh_main_anc_mount_pegasus	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_templar_lord_pegasus		1	0		false	false	false	all
+mount_teb_templar_lord_griff	wh_main_anc_mount_imperial_griffon	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_templar_lord_griff		1	0		false	false	false	all
+mount_teb_templar_lord_champ	teb_tank	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_templar_lord_champ		150	0		false	false	false	all
+teb_lupio_foot_alt	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_lupio_foot_alt		1	0		false	false	false	all
+teb_eldaddio_weapon	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	-1		false	false	false	all
+teb_eldaddio_armour	wh_main_anc_armour	.	false	false	false	1	0	9999			false	false	false	armour	16	30	30	50	true			200	-1		false	false	false	all
+teb_lorenzo_lupo_shield	wh_main_anc_armour	.	false	false	false	1	0	9999			false	false	false	armour	16	30	30	50	true			200	-1		false	false	false	all
+teb_lorenzo_lupo_sword	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	-1		false	false	false	all
+teb_lorenzo_lupo_ring	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	enchanted_item	16	30	30	50	true			200	0		false	false	false	all
+teb_piggolo_warpig	teb_piggolo_warpig	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_piggolo_warpig		1	0		false	false	false	all
+teb_piggolo_wagon	teb_piggolo_wagon	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_piggolo_wagon		1	0		false	false	false	all
+teb_piggolo_tank	teb_piggolo_tank	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_piggolo_tank		1	0		false	false	false	all
+teb_colombo_gem_dummy	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_colombo_telescope_dummy	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_colombo_wine_dummy	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_borgio_mask_dummy	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_borgio_armour_dummy	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all
+teb_catrazza_sword_dummy	wh_main_anc_enchanted_item	.	false	false	false	1	0	9999			false	false	false	enchanted_item	16	30	30	50	true			200	0		false	false	false	all
+teb_gausser_axe_dummy	wh_main_anc_weapon	.	false	false	false	1	0	9999			false	false	false	weapon	16	30	30	50	true			200	0		false	false	false	all

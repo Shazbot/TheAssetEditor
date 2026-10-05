@@ -1,0 +1,4 @@
+key	table_name	patch_key
+#twad_key_patches_tables;0;db/twad_key_patches_tables/ak_teb		
+AK_encourage_guerrilla_hideForestScrub_fatigue	land_units	bor_ranger_lord
+AK_encourage_guerrilla_hideForest_firemounted_fatigue	land_units	bor_ranger_lord_horse

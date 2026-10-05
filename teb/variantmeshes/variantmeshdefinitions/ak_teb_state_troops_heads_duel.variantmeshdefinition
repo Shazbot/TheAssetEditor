@@ -1,0 +1,14 @@
+
+<VARIANT_MESH>
+	<SLOT name="subhead" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_01.wsmodel"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_02.wsmodel"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_04.wsmodel"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_05.wsmodel"   />
+	</SLOT>
+
+
+			<SLOT name="plumes" probability="0.5">
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_emp_plumes.variantmeshdefinition" />
+			</SLOT>
+</VARIANT_MESH>

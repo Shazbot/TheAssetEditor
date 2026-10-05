@@ -1,0 +1,69 @@
+<VARIANT_MESH>
+   
+    <SLOT name="heds" >
+        <VARIANT_MESH>
+            <SLOT name="head" >
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_knights_errant\brt_knights_errant_head_01.wsmodel"  />
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_knights_errant\brt_knights_errant_head_02.wsmodel"  />
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_knights_errant\brt_knights_errant_head_03.wsmodel"  />
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_knights_errant\brt_knights_errant_head_04.wsmodel"  />
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_knights_errant\brt_knights_errant_head_05.wsmodel"  />
+            </SLOT>
+        </VARIANT_MESH>
+        <VARIANT_MESH>
+            <SLOT name="head" >
+                <VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/emp/emp_empire_knights/head/ak_teb_knights_head_partial_01.wsmodel"  />
+                <VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/emp/emp_empire_knights/head/ak_teb_knights_head_partial_02.wsmodel"  />
+                <VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/brt/brt_grail_knights/head/ak_teb_bucket_01.wsmodel"  />
+                <VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/brt/brt_grail_knights/head/ak_teb_bucket_02.wsmodel"  />
+            </SLOT>
+            <SLOT name="gorget" >
+				<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_demigryph_knight/head/AK_demi_gorget.wsmodel" />
+            </SLOT>
+        </VARIANT_MESH>
+    </SLOT>
+    <SLOT name="bodies" >
+        <VARIANT_MESH>
+            <SLOT name="torso" >
+                <VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/brt/brt_grail_knights/torso/ak_teb_freelance_torso_01.wsmodel" >
+                    <META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+                <VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/brt/brt_grail_knights/torso/ak_teb_freelance_torso_02.wsmodel" >
+                    <META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+                <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\brt\brt_grail_knights\torso\ak_teb_kotrs_torso_01.wsmodel" >
+                    <META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+                <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\brt\brt_grail_knights\torso\ak_teb_kotrs_torso_02.wsmodel" >
+                    <META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+            </SLOT>
+            <SLOT name="legs" >
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_knights_errant\legs\ak_brt_knights_errant_legs_01.wsmodel"  />
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_knights_errant\legs\ak_brt_knights_errant_legs_02.wsmodel"  />
+            </SLOT>
+        </VARIANT_MESH>  
+        <VARIANT_MESH>
+            <SLOT name="body" >
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_questing_knights\brt_questing_knights_body_01.wsmodel"  >
+                    <META_DATA>audio_entity_type:wh_human_male_bret_french</META_DATA>			<META_DATA>audio_armour_type:chainmail</META_DATA></VARIANT_MESH>
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_questing_knights\brt_questing_knights_body_02.wsmodel"  >
+                    <META_DATA>audio_entity_type:wh_human_male_bret_french</META_DATA>			<META_DATA>audio_armour_type:chainmail</META_DATA></VARIANT_MESH>
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_questing_knights\brt_questing_knights_body_03.wsmodel"  >
+                    <META_DATA>audio_entity_type:wh_human_male_bret_french</META_DATA>			<META_DATA>audio_armour_type:chainmail</META_DATA></VARIANT_MESH>
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_questing_knights\brt_questing_knights_body_04.wsmodel"  >
+                    <META_DATA>audio_entity_type:wh_human_male_bret_french</META_DATA>			<META_DATA>audio_armour_type:chainmail</META_DATA></VARIANT_MESH>
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_questing_knights\brt_questing_knights_body_05.wsmodel"  >
+                    <META_DATA>audio_entity_type:wh_human_male_bret_french</META_DATA>			<META_DATA>audio_armour_type:chainmail</META_DATA></VARIANT_MESH>
+            </SLOT>
+        </VARIANT_MESH>
+    </SLOT>
+
+
+	<SLOT name="weapon_1" attach_point="be_prop_0" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\brt_knights_lance_1h_set1.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/brt_knights_shield_set1.VariantMeshDefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/emp_state_troops_shields_set1.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="weapon_3" attach_point="be_prop_3" />
+	<SLOT name="weapon_4" attach_point="be_prop_4" />
+	<SLOT name="weapon_5" attach_point="be_prop_5" />
+</VARIANT_MESH>

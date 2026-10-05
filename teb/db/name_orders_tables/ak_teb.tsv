@@ -1,0 +1,10 @@
+order	type	name_group	optional_language
+#name_orders_tables;0;db/name_orders_tables/ak_teb			
+0	clan_name	names_teb_estalia	
+2	family_name	names_teb_estalia	
+1	forename	names_teb_estalia	
+3	other	names_teb_estalia	
+0	clan_name	names_teb_nwc	
+2	family_name	names_teb_nwc	
+1	forename	names_teb_nwc	
+3	other	names_teb_nwc	

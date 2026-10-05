@@ -1,0 +1,3 @@
+campaign_group	conditionally_spawnable_force
+#campaign_group_spawnable_forces_tables;0;db/campaign_group_spawnable_forces_tables/ak_teb_camp	
+feature_teb	teb_camp

@@ -1,0 +1,10 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_character_skills_exc.loc		
+character_skills_localised_description_teb_lord_exc_noble	With roots and allies among the most powerful and upright nobility, this Lord doesn't often meddle with unstable mercs. Who heard that.	true
+character_skills_localised_name_teb_lord_exc_noble	Noble Commander	false
+character_skills_localised_description_teb_lord_exc_merc	Perhaps risen from the lowest ranks, this commander is in his own environment when leading mercenary companies, just as a dolphin plays on the waves.	true
+character_skills_localised_name_teb_lord_exc_merc	Commander of Fortune	false
+character_skills_localised_description_teb_lord_exc_prince	Master of one of those small domains that make the Border Princes, this Lord can rely on his citizens and local supporters.	true
+character_skills_localised_name_teb_lord_exc_prince	Prince	false
+character_skills_localised_description_teb_lord_exc_ranger	Well-used to fierce struggles against countless invaders, this Lord has earned the trust of the Rangers.	true
+character_skills_localised_name_teb_lord_exc_ranger	Frontier Commander	false

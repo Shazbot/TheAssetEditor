@@ -1,0 +1,162 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_unit_abilities.loc		
+unit_abilities_onscreen_name_teb_priestess_spear	Spear of Myrmidia	true
+unit_abilities_tooltip_text_teb_priestess_spear	The Priestess calls upon Myrmidia to bless her and her allies' weapons.	true
+unit_abilities_onscreen_name_teb_priestess_legion	Legion's Courage	true
+unit_abilities_tooltip_text_teb_priestess_legion	Guidance by Myrmidia and Her Templars inspire feats of bravery in the face of the most terrifying foes.	true
+unit_abilities_onscreen_name_teb_priestess_blessing	Blessing of the Goddess	true
+unit_abilities_tooltip_text_teb_priestess_blessing	Skilled warriors, Priests and Templars of Myrmidia know how to strike fast and accurately.	true
+unit_abilities_onscreen_name_teb_priestess_shield	Shield of Myrmidia	true
+unit_abilities_tooltip_text_teb_priestess_shield	By the commands of a master tactician, the frontline is a solid anvil.	true
+unit_abilities_onscreen_name_teb_paymaster_motivated	Motivated Heroism	true
+unit_abilities_tooltip_text_teb_paymaster_motivated	When the company's money chest is, so to speak, a capital at risk, everyone is driven to 'selfless' acts of bravery to protect it from the wrong hands.	true
+unit_abilities_onscreen_name_teb_paymaster_grab	Grab What You Can	true
+unit_abilities_tooltip_text_teb_paymaster_grab	"Oi, get yer hands offa ma pay!" may not be a warcry for the history books, yet many attackers may be repelled when the Paymaster is down and the chest is unprotected.	true
+unit_abilities_onscreen_name_teb_paymaster_pay	No Pay No Gain	true
+unit_abilities_tooltip_text_teb_paymaster_pay	Once the Paymaster's chest is lost and reasonably out of reach, there is little point for mercenaries to hang around the battlefield after the immediate opponents have been dispatched.	true
+unit_abilities_onscreen_name_est_inquisitor_judgement	Judgement	true
+unit_abilities_tooltip_text_est_inquisitor_judgement	With unfailing accuracy, the Inquisitor declares his target a sinner and heretic beyond repentance.	true
+unit_abilities_onscreen_name_til_merchant_protect	Protect Me!	true
+unit_abilities_tooltip_text_til_merchant_protect	"Get them! Ten per cent bonus for every confirmed kill! Halved pay if they touch me!"	true
+unit_abilities_onscreen_name_til_merchant_pecunia	Pecunia Non Olet	true
+unit_abilities_tooltip_text_til_merchant_pecunia	Nothing like "Betrayal Incentives" to weaken the enemy's resolve. 	true
+unit_abilities_onscreen_name_til_merchant_double	Duplicarii	true
+unit_abilities_tooltip_text_til_merchant_double	"Fine! Double pay! Now go out there and take that position!"	true
+unit_abilities_onscreen_name_bor_ranger_lord_stalk	The White of Their Eyes	true
+unit_abilities_tooltip_text_bor_ranger_lord_stalk	The commander personally leads the ambush against the enemy, noiselessly following the best path.	true
+unit_abilities_onscreen_name_bor_ranger_lord_blind	Deception	true
+unit_abilities_tooltip_text_bor_ranger_lord_blind	The enemy might expect the old "What is that?!" trick, but there are other ways to distract them.	true
+unit_abilities_onscreen_name_bor_ranger_lord_fakenerf	Gonna Shoot Them	true
+unit_abilities_tooltip_text_bor_ranger_lord_fakenerf	This is for the AI. Nothing to see here. Move along, sir. Also completely obsolete, will remove at some point.	true
+unit_abilities_onscreen_name_teb_borgio_difficult	Difficult To Slay	true
+unit_abilities_tooltip_text_teb_borgio_difficult	Borgio is notoriously one for defying death in multiple occasions, which fed to his fame.	true
+unit_abilities_onscreen_name_teb_borgio_beloved	Beloved General	true
+unit_abilities_tooltip_text_teb_borgio_beloved	Troops easily followed Borgio not only because of his victory streaks, but also because he seemingly cared for the well-being of his troops.	true
+unit_abilities_onscreen_name_teb_borgio_mask	Monstrous Mask Helm	true
+unit_abilities_tooltip_text_teb_borgio_mask	Together with his imposing appearance - and the approaching of a huge mace - Borgio's grotesque mask-helm may scare the opponent.	true
+unit_abilities_onscreen_name_teb_borgio_mace	Mace of Might	true
+unit_abilities_tooltip_text_teb_borgio_mace	A cannonball - the very same that failed to kill Borgio - turned into a talisman and weapon. Unsubtle but very powerful.	true
+unit_abilities_onscreen_name_teb_borgio_armour	Armour of Brazen Brass	true
+unit_abilities_tooltip_text_teb_borgio_armour	An imposing plate forged from melted-down statues from the marshes. Very thick and quite probably magical.	true
+unit_abilities_onscreen_name_teb_gashnag_beguile	Illusory Shadows	true
+unit_abilities_tooltip_text_teb_gashnag_beguile	Drawing upon Ulgu and Ushoran's teachings, Gashnag covers himself and his allies in a protective deception.	true
+unit_abilities_onscreen_name_teb_gashnag_strigoi	Wrath of the Strigoi Prince	true
+unit_abilities_tooltip_text_teb_gashnag_strigoi	Gashnag is known for single-handedly defeating marauding parties. In order to protect his subjects, he can unleash the strength of his bloodline upon the aggressors.	true
+unit_abilities_onscreen_name_teb_gashnag_staff	Staff of Strygos	true
+unit_abilities_tooltip_text_teb_gashnag_staff	One of Ushoran's own artefacts, this polestaff supposedly allowed the original Strigoi patriarch to hold out the Lahmians' aggression for so long.	true
+unit_abilities_onscreen_name_teb_lucrezzia_stunning	Stunning Beauty	true
+unit_abilities_tooltip_text_teb_lucrezzia_stunning	Most men will find it difficult to waver under the glare of the most beautiful woman in the Old World.	true
+unit_abilities_onscreen_name_teb_lucrezzia_poison	Phial of Poison	true
+unit_abilities_tooltip_text_teb_lucrezzia_poison	Discreetly poisoning the enemy commanders the night before battle is... well, just another continuation of diplomacy, like war itself.	true
+unit_abilities_onscreen_name_teb_lucrezzia_potion	Potion of Pavona	true
+unit_abilities_tooltip_text_teb_lucrezzia_potion	Another secret recipe of Lucrezzia's, this concoction will greatly improve the imbiber's strength and resilience. Maybe, just maybe, also poison them. A bit.	true
+unit_abilities_onscreen_name_teb_lucrezzia_kiss	Lucrezzia's Kiss	true
+unit_abilities_tooltip_text_teb_lucrezzia_kiss	The Lady of Pavona is famous, among other things, for kissing the weapon of today's champion before his duel or battle. Of course, her lipstick is terribly poisonous.	true
+unit_abilities_onscreen_name_teb_lucrezzia_stiletto	Poisoned Stiletto	true
+unit_abilities_tooltip_text_teb_lucrezzia_stiletto	Lucrezzia always wears, somewhere on her person, a dagger coated with another of her brews. Can't blame someone for being prepared for a midnight stab.	true
+unit_abilities_onscreen_name_teb_pikeline	Push of Pikes	true
+unit_abilities_tooltip_text_teb_pikeline	A solid pikeline attacked on the front is virtually unassailable, and it quickly tranforms in a spiky caterpillar of death.	true
+unit_abilities_onscreen_name_teb_catrazza_ring	Ring of Myrmidian Glory	true
+unit_abilities_tooltip_text_teb_catrazza_ring	Catrazza is an excellent duelist and he wouldn't have known the hidden properties of his ring without being almost defeated by a Warboss.	true
+unit_abilities_onscreen_name_teb_lupio_ring	Ring of Desire	true
+unit_abilities_tooltip_text_teb_lupio_ring	This ring bears an eerie and intriguing aura over it. Inquisitors never managed to get it off Lupio for investigation.	true
+unit_abilities_onscreen_name_teb_gausser_pegasus	Radiant Discharge	true
+unit_abilities_tooltip_text_teb_gausser_pegasus	Radiant Pegasi are a living siphon of light and magic. When threatened, they can discharge those shimmering forces against aggressors.	true
+unit_abilities_onscreen_name_teb_lupio_cloak	Cloak of Visibility	true
+unit_abilities_tooltip_text_teb_lupio_cloak	A cloak made of Lustrian gold, with uncertain magic properties. Its known feature is to give Lupio immense satisfaction.	true
+unit_abilities_onscreen_name_teb_gausser_axe	Axe of the Dwarf-Friend	true
+unit_abilities_tooltip_text_teb_gausser_axe	This powerful runic axe is cumbersome but surprisingly agile. 	true
+unit_abilities_onscreen_name_teb_catrazza_sword	Relic Sword of Sea Gold	true
+unit_abilities_tooltip_text_teb_catrazza_sword	An ancient elven blade, relic of a time when Tilea was an Asur colony. Its wielder's attacks leave a glowing and elegant trail of light and molten armour.	true
+unit_abilities_onscreen_name_teb_gausser_scarf	Scarf of the Crusader	true
+unit_abilities_tooltip_text_teb_gausser_scarf	Formerly a magic and fluttering arabyan turban, this souvenir bears energetic enchantments. The cadre of Myrmidian priests who prodded it for a week have testified that the scarf won't strangle Gausser of its own initiative anytime soon, which is oddly specific.	true
+unit_abilities_onscreen_name_teb_colombo_telescope	Navigator's Telescope	true
+unit_abilities_tooltip_text_teb_colombo_telescope	A high-power spyglass and Colombo's skills make finding stealthy enemies that much easier.	true
+unit_abilities_onscreen_name_teb_colombo_gem	Gem of Lustria	true
+unit_abilities_tooltip_text_teb_colombo_gem	A reward from the Slann, this amulet in the shape of Sotek's tongue feels oddly alive and protected the wearer more times than he recalls.	true
+unit_abilities_onscreen_name_teb_colombo_wine	Gourd of Lustrian Wine	true
+unit_abilities_tooltip_text_teb_colombo_wine	About as potent as orange juice to the Lizardmen, this precious lustrian wine is strong indeed for a human!	true
+unit_abilities_onscreen_name_teb_colombo_scroll	Scroll of Araby	true
+unit_abilities_tooltip_text_teb_colombo_scroll	Used by someone to write an otherwise uninteresting map, this scroll bears potent enchantments of Nehekharan protective magic. However, it tends to crumble a bit with each use.	true
+unit_abilities_onscreen_name_teb_cadavo_lucky	Lucky	true
+unit_abilities_tooltip_text_teb_cadavo_lucky	Cadavo seems to leave any catastrophe unscathed, by luck, either of the many amulets he carries, or just a quirk of destiny.	true
+unit_abilities_onscreen_name_teb_cadavo_talisman	Starbrass Talisman	true
+unit_abilities_tooltip_text_teb_cadavo_talisman	An amulet made of a weird alloy, capable of neutralizing poisons and many of the magical properties for weapons that would injure the bearer.	true
+unit_abilities_onscreen_name_teb_cadavo_dirty	Dirty Tactics	true
+unit_abilities_tooltip_text_teb_cadavo_dirty	Whatever the enemy, Cadavo is unsubtle in his subtlety and will exploit any possibly trick to vex the enemy. His troops are veteran harriers and have learned from the best.	true
+unit_abilities_onscreen_name_teb_counterbonus	Discombobulate	true
+unit_abilities_tooltip_text_teb_counterbonus	"I love the face dem Bretonnians do when you slash their precious horses' hocks from under them. I mean, you can't see because of the buckets, but I bet it's hilarious."	true
+unit_abilities_onscreen_name_teb_cannon_barrage	Cannon Barrage	true
+unit_abilities_tooltip_text_teb_cannon_barrage	These bastions aren't just very pretty. 	true
+unit_abilities_onscreen_name_teb_gashnag_summon_ghouls	Summon Crypt Ghouls	true
+unit_abilities_tooltip_text_teb_gashnag_summon_ghouls		true
+unit_abilities_onscreen_name_teb_gashnag_summon_wolves	Summon Dire Wolves	true
+unit_abilities_tooltip_text_teb_gashnag_summon_wolves		true
+unit_abilities_onscreen_name_teb_roc_gunn_lasso	Lassos	true
+unit_abilities_tooltip_text_teb_roc_gunn_lasso	In the end, routing foes are just different cattle to steal.	true
+unit_abilities_onscreen_name_teb_roc_kotss_aura	Bellona's Radiance	true
+unit_abilities_tooltip_text_teb_roc_kotss_aura	A cry of "Lo' and behold, the rising sun in the east!" bears more meaning while battling undead in the dusk.	true
+unit_abilities_onscreen_name_teb_roc_organ_immolation	Rune of Immolation	true
+unit_abilities_tooltip_text_teb_roc_organ_immolation	"One way or another we're going out with a bang, lads!"	true
+unit_abilities_onscreen_name_teb_sisters_dismay	Dismay Foes	true
+unit_abilities_tooltip_text_teb_sisters_dismay	Let the enemy gaze upon the divine form of a woman scorned.	true
+unit_abilities_onscreen_name_teb_sisters_wrath	Vengeful Wrath	true
+unit_abilities_tooltip_text_teb_sisters_wrath	Break thine spears on thine enemy with the wrath of Sister Fury!	true
+unit_abilities_onscreen_name_teb_eldaddio_curse	Curse of Sokth	true
+unit_abilities_tooltip_text_teb_eldaddio_curse	The Nehekharans placed a curse of the gods of thieves upon Eustaquio, one that has particular meaning against graverobbers. Nevertheless, he thinks his current state of unlife and golden skeleton are some sort of boon, and will not be convinced otherwise.	true
+unit_abilities_onscreen_name_teb_eldaddio_weapon	Morr's Requiem	true
+unit_abilities_tooltip_text_teb_eldaddio_weapon	The spear hums with a dull vibration and finally rings like a deathly bell. Whatever divine or magic power resides within, it attemps to restore balance of life and death.	true
+unit_abilities_onscreen_name_teb_feint_riposte	Feint and Riposte	true
+unit_abilities_tooltip_text_teb_feint_riposte	There is an undeniable grace in the art of swordsmanship. 	true
+unit_abilities_onscreen_name_teb_duellist_hero_duel	En Garde!	true
+unit_abilities_tooltip_text_teb_duellist_hero_duel	The Duellist's challenge is undeniable and verbose.	true
+unit_abilities_onscreen_name_teb_duellist_hero_disarm	Disarm	true
+unit_abilities_tooltip_text_teb_duellist_hero_disarm	"You are so ugly that even your sword runs away from you!"	true
+unit_abilities_onscreen_name_teb_duellist_hero_epicwin	Protagonist's Sass	true
+unit_abilities_tooltip_text_teb_duellist_hero_epicwin	Fear the duellist who won't give in, but woe unto his foe if the diestro knows victory is in his expensive pocket!	true
+unit_abilities_onscreen_name_teb_spirit_drain	Spirit Drain	true
+unit_abilities_tooltip_text_teb_spirit_drain	"I tell ya, the necromancer was all "nyeeeh!", and then he was "nyeeh?". Then the boss took 'is head orf, just like that."	true
+unit_abilities_onscreen_name_teb_tank_ror	Zip Override	true
+unit_abilities_tooltip_text_teb_tank_ror	Diverting power from artillery to propulsion, the vehicle can enjoy a sudden burst of mobility while the crew tries their best not to release their breakfasts.	true
+unit_abilities_onscreen_name_teb_bwatch	In Her Name	true
+unit_abilities_tooltip_text_teb_bwatch	The Black Watch may lack the technique or the toughness of some veterans accompanying them, but there is untapped savagery in certain minds.	true
+unit_abilities_onscreen_name_teb_cadavo_pistolshot	Concealed Pistol	true
+unit_abilities_tooltip_text_teb_cadavo_pistolshot	He's got a gun!	true
+unit_abilities_onscreen_name_teb_cadavo_pistolshot2	Second Concealed Pistol	true
+unit_abilities_tooltip_text_teb_cadavo_pistolshot2	He's got another gun!	true
+unit_abilities_onscreen_name_teb_merc_captain_aura	Combined Arms	true
+unit_abilities_tooltip_text_teb_merc_captain_aura	"You think you're tough? And what do you do when Giants come a-knocking? That's right, you call for the shooters. We help each other on the field, because that's all there is. Keep that in mind."	true
+unit_abilities_onscreen_name_teb_borgio_siege_storm	Wall Fighters	true
+unit_abilities_tooltip_text_teb_borgio_siege_storm	Incessant drilling and unconventional tactics can turn a bloody melee for the walls into... a more successful bloody melee.	true
+unit_abilities_onscreen_name_teb_lorenzo_lupo_aura	Exemplary Warrior	true
+unit_abilities_tooltip_text_teb_lorenzo_lupo_aura	"Where is the Prince, you ask? Just follow the laughter and the thickest melee."	true
+unit_abilities_onscreen_name_teb_lorenzo_lupo_shield	Shield of Myrmidia	true
+unit_abilities_tooltip_text_teb_lorenzo_lupo_shield	This ancient shield might predate the city of Luccini, and still embodies the power of the sun.	true
+unit_abilities_onscreen_name_teb_lorenzo_lupo_sword	Sword of Lucan	true
+unit_abilities_tooltip_text_teb_lorenzo_lupo_sword	This blade is believed to be the actual sword used by his remote ancestor, Lucan, one of the twin divine founders of Luccini.	true
+unit_abilities_onscreen_name_teb_lorenzo_lupo_runner	Mighty Athlete	false
+unit_abilities_tooltip_text_teb_lorenzo_lupo_runner	Lorenzo is obsessive in practicing one of his training pursuits, and he will always at least do a hearty warm-up before battle. 	false
+unit_abilities_onscreen_name_teb_lorenzo_lupo_wrestler	PLACEHOLDER	false
+unit_abilities_tooltip_text_teb_lorenzo_lupo_wrestler	PLACEHOLDER	false
+unit_abilities_onscreen_name_teb_lorenzo_lupo_strongman	PLACEHOLDER	false
+unit_abilities_tooltip_text_teb_lorenzo_lupo_strongman	PLACEHOLDER	false
+unit_abilities_onscreen_name_teb_guard_kossars_drink	Liquid Fortification	true
+unit_abilities_tooltip_text_teb_guard_kossars_drink	If there is one glorious tradition the kossar guard will keep up, it's vodka.	true
+unit_abilities_onscreen_name_teb_lucy_lore_passive	The Spiderqueen's Web	true
+unit_abilities_tooltip_text_teb_lucy_lore_passive	"You know, I'm something of a sorceress myself."	true
+unit_abilities_onscreen_name_teb_lucy_hex_boost	Femme Fatale	true
+unit_abilities_tooltip_text_teb_lucy_hex_boost	Lucrezzia is somewhat rumoured to be a Lahmian vampire, though that merely suggests lack of imagination over what one clever woman can do.	true
+unit_abilities_onscreen_name_teb_golden_lion_aura	Puissant Roar	true
+unit_abilities_tooltip_text_teb_golden_lion_aura	There is only one king.	true
+unit_abilities_onscreen_name_teb_golden_lion_spell_metal_final_transmutation	Final Transmutation	false
+unit_abilities_tooltip_text_teb_golden_lion_spell_metal_final_transmutation	The Golden Lion unleashes wild Chamon at his foes, watching with contempt as they transmute into Unliving golden statues.	false
+unit_abilities_onscreen_name_teb_golden_lion_spell_metal_glittering_robe	Glittering Robe	false
+unit_abilities_tooltip_text_teb_golden_lion_spell_metal_glittering_robe	The Golden Lion focuses the winds around itself and his allies, turning fur and scale in resplendent and dazzling armour.	false
+unit_abilities_onscreen_name_		true
+unit_abilities_tooltip_text_		true
+unit_abilities_onscreen_name_teb_piggolo_enrage	Full Ham	true
+unit_abilities_tooltip_text_teb_piggolo_enrage	That's it. They squealed their last oink. 	true
+unit_abilities_onscreen_name_teb_montante_passive	The Challenge	true
+unit_abilities_tooltip_text_teb_montante_passive	Someone, somewhere in that army, is doubting the valour of the duellists or their compatriots'.	true
+unit_abilities_onscreen_name_teb_irrana_passive	Opportunist Raider	false
+unit_abilities_tooltip_text_teb_irrana_passive	These irregulars will hardly ever attack a foe from the front, but they can punch up something wicked on their own terms.	false

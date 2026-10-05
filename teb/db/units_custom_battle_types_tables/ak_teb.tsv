@@ -1,0 +1,7 @@
+alternate_unit	base_unit	type_category	type_icon	show_base_in_unit_list	id	colour	sort_order
+#units_custom_battle_types_tables;3;db/units_custom_battle_types_tables/ak_teb							
+teb_merc_general	teb_merc_general	type_teb_nationality	ui/skins/default/dlc29_nag_mortarchs/icon_legendary_lord.png	true	3011990	FFFFFF	0
+teb_merc_general_CB_tilea	teb_merc_general	type_teb_nationality	ui/flags/mixer_teb_tilea/mon_64.png	false	3011991	00AA00	1
+teb_merc_general_CB_estalia	teb_merc_general	type_teb_nationality	ui/flags/mixer_teb_estalia/mon_64.png	false	3011992	FF5500	2
+teb_merc_general_CB_border	teb_merc_general	type_teb_nationality	ui/flags/mixer_teb_border_princes/mon_64.png	false	3011993	565656	3
+teb_merc_general_CB_colonies	teb_merc_general	type_teb_nationality	ui/flags/mixer_teb_new_world_colonies/mon_64.png	false	3011994	FF8635	4

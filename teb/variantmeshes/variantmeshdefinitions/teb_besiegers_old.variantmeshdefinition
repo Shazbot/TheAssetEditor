@@ -1,0 +1,145 @@
+
+<VARIANT_MESH>
+
+	<SLOT name="body" >
+
+		<VARIANT_MESH>====heavy brass
+	<SLOT name="heavy heads" >
+
+		<VARIANT_MESH>====with kettle
+		<SLOT name="subhead" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_faces.variantmeshdefinition" />
+		</SLOT>
+			<SLOT name="gorget" >
+				<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_demigryph_knight/head/ak_demi_gorget_brass.wsmodel" />
+			</SLOT>
+		<SLOT name="kettle" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_men_at_arms\head\AK_maa_helmet_burnbr_01.rigid_model_v2"   />
+								</SLOT></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\teb_demi_sallet_head_brass.wsmodel"  />
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\teb_demi_sallet_head_plumed_brass.wsmodel"  />
+		<VARIANT_MESH>===with open sallet
+			<SLOT name="subhead" >
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\head\emp_artillery_crew_head_03.rigid_model_v2"   />
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\teb_state_troops_head_03.rigid_model_v2"     />
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\teb_state_troops_head_05.rigid_model_v2"     />
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\AK_witch_hunter_face_02.rigid_model_v2"  />
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\AK_witch_hunter_face_03.rigid_model_v2"  />
+			</SLOT>
+				<SLOT name="helmet" >
+					<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_captains/head/AK_burnbr_open_sallet_01.rigid_model_v2" />
+				</SLOT>
+				<SLOT name="gorget" >
+					<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_demigryph_knight/head/ak_demi_gorget_brass.wsmodel" />
+				</SLOT>
+		</VARIANT_MESH>
+	</SLOT>
+	<SLOT name="torso_BRASS" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_freecomp_noclippy_brass.wsmodel" >
+			<SLOT name="pavise" >
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/AK_robie_pavises_braganza.variantmeshdefinition" />
+            </SLOT>
+            <SLOT name="shoulder pads" >
+                <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_felix\ak_teb_shoulders_left_brass.wsmodel"   />
+            </SLOT>
+            <SLOT name="shoulder pads" >
+                <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_felix\ak_teb_shoulders_right_brass.wsmodel"   />
+            </SLOT>
+        </VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\torso\ak_teb_demi_torso_brass.wsmodel"   >
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA>
+			<SLOT name="shield" attach_point="spine_1" >
+				<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_pavises.variantmeshdefinition" />
+			</SLOT>	</VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\torso\ak_teb_demi_torso_brass.wsmodel"   >
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA>
+			<SLOT name="shield" attach_point="spine_1" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_pavises_braganza.variantmeshdefinition" />
+			</SLOT>	</VARIANT_MESH>
+		
+            
+	</SLOT>
+
+	<SLOT name="legs_BRASS" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_empire_knights\legs\ak_teb_knight_legs_brass.wsmodel"   />
+	</SLOT>
+</VARIANT_MESH>
+<VARIANT_MESH> ===medium brass
+
+    			<SLOT name="pavise" >
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/AK_robie_pavises_braganza.variantmeshdefinition" />
+            </SLOT>
+
+	<SLOT name="heads with coif" >
+
+		<VARIANT_MESH>
+		<SLOT name="subhead" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_faces.variantmeshdefinition" />
+		</SLOT>
+		<SLOT name="coif" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_paladin\head\AK_brt_paladin_coif_01.rigid_model_v2"   />
+		</SLOT>
+		<SLOT name="helmet" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_men_at_arms\head\AK_maa_helmet_burnbr_01.rigid_model_v2"   />
+								</SLOT></VARIANT_MESH>
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_barbutes_coif_brass.variantmeshdefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_open_sallet_burnbrass.variantmeshdefinition" />
+	</SLOT>
+	<SLOT name="torso_BRASS" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_freecomp_noclippy_brass.wsmodel" />
+<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_young_nobles\torso\AK_noble_torso_burnbro.rigid_model_v2"   >
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_young_nobles\torso\AK_noble_torso_burnbro.rigid_model_v2"   >
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+		
+	</SLOT>
+    <SLOT name="shoulder pads" >
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_felix\ak_teb_shoulders_left_brass.wsmodel"   />
+    </SLOT>
+    <SLOT name="shoulder pads" >
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_felix\ak_teb_shoulders_right_brass.wsmodel"   />
+    </SLOT>
+	<SLOT name="legs" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/emp_free_company_legs_06.rigid_model_v2" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/emp_free_company_legs_04.rigid_model_v2"/>
+	</SLOT>
+	
+</VARIANT_MESH>
+	</SLOT>
+
+
+
+	<SLOT name="weapon_1" attach_point="be_prop_0" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_props/emp_state_troops_crossbow_2h_rigid_01.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/emp_state_troops_swords_set1.VariantMeshDefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\brt_men_at_arms_swords_set1.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" />
+	<SLOT name="weapon_3" attach_point="be_prop_3" />
+	<SLOT name="weapon_4" attach_point="be_prop_4" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_props\emp_crossbow_bolt_01.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\emp\emp_props\emp_crossbow_bolt_01.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="weapon_5" attach_point="be_prop_5" />
+	<SLOT name="stump_neck" attach_point="spine_2" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/dlc02_blood_pack/dlc02_stump_neck_hu1_1.rigid_model_v2" >
+		<META_DATA>is_stump</META_DATA>	<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="stump_left_arm" attach_point="clav_left" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/dlc02_blood_pack/dlc02_stump_left_arm_hu1_3.rigid_model_v2" >
+		<META_DATA>is_stump</META_DATA>	<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="stump_right_arm" attach_point="clav_right" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/dlc02_blood_pack/dlc02_stump_right_arm_hu1_3.rigid_model_v2" >
+		<META_DATA>is_stump</META_DATA>	<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="stump_waist" attach_point="root" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/dlc02_blood_pack/dlc02_stump_waist_hu1_1.rigid_model_v2" >
+		<META_DATA>is_stump</META_DATA>	<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="stump_severed_head" attach_point="head" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/dlc02_blood_pack/dlc02_stump_head_hu1_3.rigid_model_v2" >
+		<META_DATA>is_stump</META_DATA>	<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+</VARIANT_MESH>

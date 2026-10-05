@@ -1,0 +1,24 @@
+type	ui_icon
+#ancillary_types_tables;0;db/ancillary_types_tables/ak_teb	
+tebuary_ser_generic	UI\skins\AK_TEB_lily\tebuary_ser_generic_small.png
+tebuary_ugoletti	UI\skins\AK_TEB_lily\tebuary_ugoletti_small.png
+tebuary_3_sellmercs	UI\skins\AK_TEB_lily\tebuary_sellmercs_small.png
+tebuary_3_bestmercs	UI\skins\AK_TEB_lily\tebuary_bestmercs_small.png
+tebuary_3_allin	UI\skins\AK_TEB_lily\tebuary_allin_small.png
+tebuary_2_roc_gwatch	UI\skins\AK_TEB_lily\tebuary_gwatch_mockup.png
+tebuary_3_diplo_dwf	UI\skins\AK_TEB_lily\tebuary_3_diplo_dwf.png
+tebuary_3_diplo_hef	UI\skins\AK_TEB_lily\tebuary_3_diplo_hef.png
+tebuary_3_diplo_emp	UI\skins\AK_TEB_lily\tebuary_3_diplo_emp.png
+tebuary_3_diplo_marburg	UI\skins\AK_TEB_lily\tebuary_3_diplo_marburg.png
+tebuary_3_diplo_brt	UI\skins\AK_TEB_lily\tebuary_3_diplo_brt.png
+tebuary_3_socio_subt	UI\skins\AK_TEB_lily\tebuary_3_socio_subt.png
+tebuary_3_socio_war	UI\skins\AK_TEB_lily\tebuary_3_socio_war.png
+tebuary_3_socio_grandeur	UI\skins\AK_TEB_lily\tebuary_3_socio_grandeur.png
+tebuary_3_socio_arts	UI\skins\AK_TEB_lily\tebuary_3_socio_arts.png
+tebuary_1_teb_templar_lord	UI\skins\AK_TEB_lily\tebuary_1_teb_templar_lord.png
+tebuary_1_teb_duellist_hero	UI\skins\AK_TEB_lily\tebuary_1_teb_duellist_hero.png
+tebuary_placeholder	UI\skins\AK_TEB_lily\tebuary_placeholder.png
+teb_tank	UI\campaign ui\mounts\teb_tank.png
+teb_piggolo_warpig	ui/campaign ui/mounts/mount_war_bear.png
+teb_piggolo_wagon	ui/campaign ui/mounts/mount_war_boar_chariot.png
+teb_piggolo_tank	ui/campaign ui/mounts/mount_steam_tank.png

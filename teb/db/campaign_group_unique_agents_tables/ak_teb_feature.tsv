@@ -1,0 +1,4 @@
+campaign_group	unique_agent	base_charges
+#campaign_group_unique_agents_tables;0;db/campaign_group_unique_agents_tables/ak_teb_feature		
+feature_teb	wh2_pro08_neu_felix	1
+feature_teb	teb_piggolo	1

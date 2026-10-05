@@ -1,0 +1,6 @@
+key	location	ownership	source	target	territory
+#campaign_effect_scopes_tables;2;db/campaign_effect_scopes_tables/ak_teb_camp					
+force_building_to_force_in_sphere_of_influence_blue	force_sphere_of_influencewide	allied	force_building	force	any
+force_building_to_force_in_sphere_of_influence_any	force_sphere_of_influencewide	any	force_building	force	any
+force_building_to_force_in_sphere_of_influence_enemy	force_sphere_of_influencewide	enemy	force_building	force	any
+force_to_region_any_owner	regionwide	any	force	region	any

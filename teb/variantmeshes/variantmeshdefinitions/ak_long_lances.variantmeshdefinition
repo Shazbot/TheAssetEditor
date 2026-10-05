@@ -1,0 +1,13 @@
+<VARIANT_MESH>
+	<SLOT name="pikes" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_props\ak_teb_long_lance_01.wsmodel" >
+			<META_DATA>audio_melee_weapon_type:spear</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_props\ak_teb_long_lance_02.wsmodel" >
+			<META_DATA>audio_melee_weapon_type:spear</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_props\ak_teb_long_lance_03.wsmodel" >
+			<META_DATA>audio_melee_weapon_type:spear</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="ribbon" >
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_props\ak_teb_long_lance_ribbon.rigid_model_v2" />
+	</SLOT>
+</VARIANT_MESH>

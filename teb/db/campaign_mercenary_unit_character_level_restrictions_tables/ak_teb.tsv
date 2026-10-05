@@ -1,0 +1,66 @@
+unit	faction_override	character_level
+#campaign_mercenary_unit_character_level_restrictions_tables;1;db/campaign_mercenary_unit_character_level_restrictions_tables/ak_teb		
+teb_ricco		20
+teb_alcatani		7
+teb_pirazzo		10
+teb_leopard		13
+teb_venators		20
+teb_vespero		13
+teb_marksmen		13
+teb_besiegers		20
+teb_muktar		99
+teb_amazons		99
+teb_cursed		16
+teb_bronzino		16
+teb_bronzino_limbered		16
+teb_origo		99
+teb_manflayers		26
+teb_tichi		24
+teb_asarnil		30
+teb_roc_dieterfist		0
+teb_roc_estragon		0
+teb_roc_verena		0
+teb_roc_strygos		0
+teb_roc_broswords		0
+teb_roc_gwatch		0
+teb_roc_kotss		0
+teb_roc_organ		0
+teb_roc_gunn		0
+teb_roc_montecastello		0
+teb_amazons	mixer_teb_new_world_colonies	99
+teb_marksmen	mixer_teb_new_world_colonies	0
+teb_besiegers	mixer_teb_new_world_colonies	0
+teb_pirazzo	mixer_teb_new_world_colonies	0
+teb_vespero	mixer_teb_new_world_colonies	0
+teb_ricco	mixer_teb_new_world_colonies	0
+teb_muktar	mixer_teb_new_world_colonies	99
+teb_leopard	mixer_teb_new_world_colonies	0
+teb_venators	mixer_teb_new_world_colonies	0
+teb_origo	mixer_teb_new_world_colonies	0
+teb_bronzino	mixer_teb_new_world_colonies	0
+teb_bronzino_limbered	mixer_teb_new_world_colonies	0
+teb_alcatani	mixer_teb_new_world_colonies	99
+teb_cursed	mixer_teb_new_world_colonies	0
+teb_manflayers	mixer_teb_new_world_colonies	99
+teb_tichi	mixer_teb_new_world_colonies	99
+teb_asarnil	mixer_teb_new_world_colonies	99
+teb_birdmen		16
+teb_birdmen	mixer_teb_new_world_colonies	99
+teb_amazons	mixer_teb_colombo	99
+teb_marksmen	mixer_teb_colombo	0
+teb_besiegers	mixer_teb_colombo	0
+teb_pirazzo	mixer_teb_colombo	0
+teb_vespero	mixer_teb_colombo	0
+teb_ricco	mixer_teb_colombo	0
+teb_muktar	mixer_teb_colombo	99
+teb_leopard	mixer_teb_colombo	0
+teb_venators	mixer_teb_colombo	0
+teb_origo	mixer_teb_colombo	0
+teb_bronzino	mixer_teb_colombo	0
+teb_bronzino_limbered	mixer_teb_colombo	0
+teb_alcatani	mixer_teb_colombo	99
+teb_cursed	mixer_teb_colombo	0
+teb_manflayers	mixer_teb_colombo	99
+teb_tichi	mixer_teb_colombo	99
+teb_asarnil	mixer_teb_colombo	99
+teb_birdmen	mixer_teb_colombo	99

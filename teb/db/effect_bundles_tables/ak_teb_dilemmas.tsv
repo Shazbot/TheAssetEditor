@@ -1,0 +1,11 @@
+key	localised_description	localised_title	bundle_target	priority	ui_icon	is_global_effect	show_in_3d_space	owner_only
+#effect_bundles_tables;4;db/effect_bundles_tables/ak_teb_dilemmas								
+teb_dilemma_trade_diplo			faction	1	diplomacy.png	true	false	false
+teb_dilemma_trade_delegate			faction	1	experience.png	true	false	false
+teb_dilemma_sketches_engi			faction	1	treasury.png	true	false	false
+teb_dilemma_sketches_research			faction	1	technology.png	true	false	false
+teb_dilemma_darkmaiden_censor			faction	1	technology.png	true	false	false
+teb_dilemma_darkmaiden_ok			faction	1	technology.png	true	false	false
+teb_eldaddio_req_01_dummyreward			faction	1	diplomacy.png	false	false	false
+teb_eldaddio_req_02_dummyreward			faction	1	diplomacy.png	false	false	false
+teb_eldaddio_req_03_dummyreward			faction	1	diplomacy.png	false	false	false

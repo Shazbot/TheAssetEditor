@@ -1,0 +1,4 @@
+key	unit	trade_value	icon_filepath	strategic_value	in_encyclopedia	show_on_city_infobar
+#resources_tables;5;db/resources_tables/ak_teb						
+res_location_skv_teb		0	ui\campaign ui\effect_bundles\strategic_location.png	0	false	true
+res_location_skavenblight		0	ui\campaign ui\effect_bundles\climate_change.png	0	false	true

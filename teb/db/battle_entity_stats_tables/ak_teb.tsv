@@ -1,0 +1,8 @@
+key	primary_melee_weapon	primary_missile_weapon
+#battle_entity_stats_tables;2;db/battle_entity_stats_tables/ak_teb		
+teb_paymaster	wh_main_emp_hammer_hero	
+bor_ranger_lord_horse	wh_main_emp_sword_hero	bor_ranger_lord
+bor_ranger_lord_horse2	wh_main_emp_sword_hero	bor_ranger_lord_horse2
+teb_duellist_hero_horse	wh_main_emp_sword_hero	bor_ranger_lord
+teb_paymaster_crew		teb_paymaster_wagon
+teb_paymaster_crew_piggolo		teb_paymaster_wagon_grenade

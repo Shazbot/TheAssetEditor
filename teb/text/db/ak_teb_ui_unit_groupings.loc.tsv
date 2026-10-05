@@ -1,0 +1,12 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_ui_unit_groupings.loc		
+ui_unit_groupings_onscreen_teb_priestess	Melee Specialist	true
+ui_unit_groupings_tooltip_teb_priestess	Priests and Knights from the Cult of Myrmidia are well-trained warriors and amazing tacticians.	true
+ui_unit_groupings_onscreen_infantry_pike	Pike Infantry	true
+ui_unit_groupings_tooltip_infantry_pike	Long pikes usually prevent the use of shields, but compensate with both offensive and defensive potential.	true
+ui_unit_groupings_onscreen_flying_missile_infantry	Flying Missile Infantry	true
+ui_unit_groupings_onscreen_teb_duellist_hero	Duel Specialist	true
+ui_unit_groupings_onscreen_teb_duellist_hero_horse	Pistol Specialist	true
+ui_unit_groupings_onscreen_teb_merc_captain	Hybrid Support Specialist	true
+ui_unit_groupings_onscreen_teb_paymaster	Support Chariot	true
+ui_unit_groupings_onscreen_lord_monstrous_cavalry	Monstrous Cavalry	true

@@ -1,0 +1,11 @@
+key	faction	allowed
+#units_to_exclusive_faction_permissions_tables;0;db/units_to_exclusive_faction_permissions_tables/ak_teb_umgak		
+wh_dlc06_dwf_inf_rangers_0	mixer_teb_border_princes	true
+wh_main_vmp_inf_crypt_ghouls	mixer_teb_gashnag	true
+wh_main_vmp_mon_dire_wolves	mixer_teb_gashnag	true
+teb_kotrs	cr_teb_order_of_the_blazing_sun	true
+teb_sisters	cr_teb_order_of_the_blazing_sun	true
+teb_bwatch	cr_teb_order_of_the_blazing_sun	true
+teb_kotrs	cr_teb_tobaro	true
+teb_sisters	cr_teb_tobaro	true
+wh_dlc06_dwf_inf_rangers_0	cr_teb_central_confederacy	true

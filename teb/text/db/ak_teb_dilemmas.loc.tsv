@@ -1,0 +1,14 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_dilemmas.loc		
+dilemmas_localised_title_		true
+dilemmas_localised_description_		true
+dilemmas_localised_title_teb_dilemma_trade	Trade Must Flow	true
+dilemmas_localised_description_teb_dilemma_trade	We have estabilished a satisfactory trade network with our neighbours. What matters now is how we continue handling our trade markets.	true
+dilemmas_localised_title_teb_dilemma_recipe	Schools of Thought	true
+dilemmas_localised_description_teb_dilemma_recipe	One of the local pasta recipes is a traditional staple. However, it is just as traditional for people, from the family mother to the renowned cook, to squabble over one particular ingredient being used, replaced or not. The issue has come up again and there have been fights from street to mansion level. What would you tell people to settle this down, at least for the moment?	true
+dilemmas_localised_title_teb_dilemma_sketches	The Over-Detailed Sketches	true
+dilemmas_localised_description_teb_dilemma_sketches	One of the artists under your patronage found a handful of sketches that look distinctly Leonardo da Miragliano-esque. If anything, they are written in a thick spidery and mirrored script, every page full to the edge of further notes and sketches. An emissary from Altdorf has heard of the rumours and seems eager to get the notes to his Emperor.	true
+dilemmas_localised_title_teb_dilemma_hedge	The Hedge Wizard	true
+dilemmas_localised_description_teb_dilemma_hedge	We have reports of a hedge wizard operating in the area. He seems to be keeping to himself, and yet is known to help the local populace in everyday issues. He could be a useful asset for our troops, but the northeners often execute these untrained mages on sight for fear of them turning into some horror or the other. What would you choose?	true
+dilemmas_localised_title_teb_dilemma_darkmaiden	Scrolls of the Dark Maiden	true
+dilemmas_localised_description_teb_dilemma_darkmaiden	Centuries ago, the Order of Nahmud retrieved scrolls that could have been important texts concerning the Dark Maiden or her friend, Holy Myrmidia herself. Allegedly, any attempt to translate the texts was in vain until an elven guest managed the deed and suffered a deadly and unlikely accident for it. The issue has resurfaced and rumours are already circulating about the alleged secrets of the scrolls. Reports mention whispers musing the concept that Holy Myrmidia was actually an Elf, or even worse, an Arabyan! \\n\\n What would you have us do about the matter?	true

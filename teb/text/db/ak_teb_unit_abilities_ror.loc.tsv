@@ -1,0 +1,36 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_unit_abilities_ror.loc		
+unit_abilities_onscreen_name_teb_venators	Last One To Die's a Sissy!	true
+unit_abilities_tooltip_text_teb_venators	With a hangover-defying cry, the Venators throw themselves into the melee, before heroically liberating the enemy baggage.	true
+unit_abilities_onscreen_name_teb_pirazzo	Death or Riches!	true
+unit_abilities_tooltip_text_teb_pirazzo	The company halts to fire a crossbow volley at the enemy. If there isn't anybody alive to call it unfair, it ain't.	true
+unit_abilities_onscreen_name_teb_muktar	Daemons on Horseback	true
+unit_abilities_tooltip_text_teb_muktar	The combination of the Desert Dogs' surprise attacks and chilling warcries is enough to unnerve most enemies.	true
+unit_abilities_onscreen_name_teb_cursed_richter	Leader: Richter Kreugar	true
+unit_abilities_tooltip_text_teb_cursed_richter	The Cursed Company is bound to Kreugar's will, not by an active necromantic spell but by a much more intricate malediction and a parody of his former mercenary career. They will march with him until he himself is dust.	true
+unit_abilities_onscreen_name_teb_cursed	Join Us in Damnation...	true
+unit_abilities_tooltip_text_teb_cursed	As Kreugar and his undead companions cut down their opponents, the victim's flesh decays in an instant and is bound by the Curse, rising again and joining the silent company.	true
+unit_abilities_onscreen_name_teb_cursed_winning	Join Us in Damnation... (Slaughter)	true
+unit_abilities_tooltip_text_teb_cursed_winning	The terrorized foe is silently cut down while the many slain rise up and turn against their former comrades. The Cursed Company will leave the battlefield larger than it was.	true
+unit_abilities_onscreen_name_teb_manflayers_kalad	Banner of Kalad	true
+unit_abilities_tooltip_text_teb_manflayers_kalad	The company's standard bearer carries the skin of Mengil's own brother, that Manhide had flayed alive by Naggaroth's law. Such was the power of the act and of the slain sorcerer, that the banner is still imbued of dark magic.	true
+unit_abilities_onscreen_name_teb_manflayers_flayin	Flayers	true
+unit_abilities_tooltip_text_teb_manflayers_flayin	Mengil's Manflayers rarely pursue those who flee, or at least not immediately. They most often start flaying and consuming their victims on the spot, with a revolting glee.	true
+unit_abilities_onscreen_name_teb_manflayers_hatin	Flayers (Disgust)	true
+unit_abilities_tooltip_text_teb_manflayers_hatin	While already not a sight for anyone before breakfast with their cloaks of skin, the Manflayers are of course downright disturbing even to their 'allies' when they start flaying and eating their fresh victims.	true
+unit_abilities_onscreen_name_teb_asarnil	Dragon Tamer	true
+unit_abilities_tooltip_text_teb_asarnil	Even amongst Caledorians, Asarnil has a special connection to dragons of any kind. Atop Deathfang, he might achieve air superiority with a single glare or dragon breath.	true
+unit_abilities_onscreen_name_teb_tichi	Blessing of Enxilada	true
+unit_abilities_tooltip_text_teb_tichi	The Raiders are from a special and rare spawning. When their task is verging on the impossible, a torpor seems to fall on the attacking enemies.	true
+unit_abilities_onscreen_name_teb_roc_dieterfist	Press On!	true
+unit_abilities_tooltip_text_teb_roc_dieterfist	Crush the enemies as they falter! Press on, for your fathers, for your families, for victory and the baggage train!	true
+unit_abilities_onscreen_name_teb_bronzino_horse_unlimber	Unlimber Artillery	true
+unit_abilities_tooltip_text_teb_bronzino_horse_unlimber	"It ain't right, that's what. Guns are suppose to stay put, not gallop off whenever you get anywhere near them. And firing while they're doing it is outrageous! I'm gonna file a complaint, that's what. It ain't right."	true
+unit_abilities_onscreen_name_teb_bronzino_limber	Limber Artillery	true
+unit_abilities_tooltip_text_teb_bronzino_limber	"That ain't good. Up we go, lads."	true
+unit_abilities_onscreen_name_teb_birdmen	Up and Under	true
+unit_abilities_tooltip_text_teb_birdmen	"'Tis simple, my lord. I have a cunning plan! First we buzz in low, hedge-hopping for good measure. Then it's up and under and in from the sun. Keeping an eye out for Archie, of course. Corkscrew and pull out, trying not to prang. Then the wingies will strafe. My number two is in and out and we're away!"\\n\\n"Can you say that again, more slowly?"	true
+unit_abilities_onscreen_name_teb_galloper_horse_unlimber	Unlimber Artillery	true
+unit_abilities_tooltip_text_teb_galloper_horse_unlimber	"It ain't right, that's what. Guns are suppose to stay put, not gallop off whenever you get anywhere near them. And firing while they're doing it is outrageous! I'm gonna file a complaint, that's what. It ain't right."	true
+unit_abilities_onscreen_name_teb_galloper_limber	Limber Artillery	true
+unit_abilities_tooltip_text_teb_galloper_limber	"That ain't good. Up we go, lads."	true

@@ -1,0 +1,8 @@
+<VARIANT_MESH>
+	<SLOT name="subhead" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\AK_simple_plumes_01.rigid_model_v2"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\AK_simple_plumes_02.rigid_model_v2"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\AK_simple_plumes_04.rigid_model_v2"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\AK_simple_plumes_05.rigid_model_v2"   />
+	</SLOT>
+</VARIANT_MESH>

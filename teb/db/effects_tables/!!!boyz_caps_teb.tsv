@@ -1,0 +1,18 @@
+effect	icon	priority	icon_negative	category	is_positive_value_good
+#effects_tables;0;db/effects_tables/!!!boyz_caps_teb					
+CTT_CAP_teb_light_cannon	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_republican_guard	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_noble_retinue	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_carabiniers	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_conqui_royal_guard	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_conqui_adventurers	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_conqui_riders	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_kotrs	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_shieldbearers	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_militia_knights	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_freelance_knights	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_bwatch	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_swash	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_swash_col	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_enforcers	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true
+CTT_CAP_teb_xbow_cav	edict_state_troop_levy.png	1	edict_state_troop_levy.png	campaign	true

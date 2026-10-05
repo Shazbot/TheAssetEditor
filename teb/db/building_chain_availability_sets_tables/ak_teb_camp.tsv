@@ -1,0 +1,17 @@
+building_chain	id
+#building_chain_availability_sets_tables;0;db/building_chain_availability_sets_tables/ak_teb_camp	
+teb_camp_main	ak_new_bas_teb
+teb_camp_inf	ak_new_bas_teb
+teb_camp_inf2	ak_new_bas_teb
+teb_camp_missile	ak_new_bas_teb
+teb_camp_cavalry	ak_new_bas_teb
+teb_camp_artillery	ak_new_bas_teb
+teb_camp_replenish	ak_new_bas_teb
+teb_camp_growth	ak_new_bas_teb
+teb_camp_recr	ak_new_bas_teb
+teb_camp_upk	ak_new_bas_teb
+teb_camp_port	ak_new_bas_teb
+teb_camp_foreign	ak_new_bas_teb
+teb_camp_mountain	ak_new_bas_teb
+teb_camp_jungle	ak_new_bas_teb
+teb_camp_scavenge	ak_new_bas_teb

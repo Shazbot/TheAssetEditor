@@ -1,0 +1,3 @@
+army_special_ability	unit_special_ability	unique_id	enables_siege_assault
+#army_special_abilities_tables;2;db/army_special_abilities_tables/ak_teb			
+teb_cannon_barrage	teb_cannon_barrage	3011990	false

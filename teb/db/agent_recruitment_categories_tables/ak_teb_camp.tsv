@@ -1,0 +1,3 @@
+key	order	icon_file_path	show_in_recruitment	counts_towards_caps_when_off_the_map
+#agent_recruitment_categories_tables;2;db/agent_recruitment_categories_tables/ak_teb_camp				
+teb_merc_general_camp	4	UI\Common UI\unit_category_icons\commander.png	false	false

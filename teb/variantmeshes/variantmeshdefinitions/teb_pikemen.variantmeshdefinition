@@ -1,0 +1,10 @@
+<VARIANT_MESH>
+	<SLOT name="head">
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_state_troops_heads.variantmeshdefinition" />
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\ak_teb_barbutes.variantmeshdefinition" />
+	</SLOT>
+	<SLOT name="body" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/teb_pikemen_base.VariantMeshDefinition" />
+	</SLOT>
+
+</VARIANT_MESH>

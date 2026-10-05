@@ -1,0 +1,68 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_effects_abilities.loc		
+effects_description_enable_teb_priestess_spear	Ability: "Spear of Myrmidia"	true
+effects_description_enable_teb_priestess_legion	Passive ability: "Legion's Courage"	true
+effects_description_enable_teb_priestess_blessing	Ability: "Blessing of the Goddess"	true
+effects_description_enable_teb_priestess_shield	Ability: "Shield of Myrmidia"	true
+effects_description_enable_bor_ranger_lord_stalk	Passive ability: "{{tr:unit_abilities_onscreen_name_bor_ranger_lord_stalk}}"	true
+effects_description_enable_bor_ranger_lord_blind	Ability: "Deception"	true
+effects_description_enable_til_merchant_pecunia	Passive ability: "Pecunia non Olet"	true
+effects_description_enable_til_merchant_double	Ability: "Duplicarii"	true
+effects_description_enable_est_inquisitor_judgement	Ability: "Judgement"	true
+effects_description_enable_teb_borgio_beloved	Passive ability: "Beloved General"	true
+effects_description_enable_teb_borgio_siege_storm	Passive ability: "Wall Fighters"	true
+effects_description_enable_teb_borgio_difficult	Passive ability: "{{tr:unit_abilities_onscreen_name_teb_borgio_difficult}}"	true
+effects_description_enable_teb_borgio_mace	Passive ability: "Mace of Might"	true
+effects_description_enable_teb_borgio_mask	Passive ability: "Monstrous Mask Helm"	true
+effects_description_enable_teb_borgio_armour	Passive ability: "Armour of Brazen Brass"	true
+effects_description_disable_teb_gashnag_crumble2	Disables: "Disintegrating"	true
+effects_description_enable_teb_gashnag_staff	Passive ability: "Staff of Strygos"	true
+effects_description_enable_teb_gashnag_wrath	Passive ability: "Wrath of the Strigoi Prince"	true
+effects_description_enable_teb_lucrezzia_poison	Ability: "Phial of Poison"	true
+effects_description_enable_teb_lucrezzia_potion	Ability: "Potion of Pavona"	true
+effects_description_enable_teb_lucrezzia_kiss	Ability: "Lucrezzia's Kiss"	true
+effects_description_enable_teb_lucrezzia_stiletto	Passive ability: "Poisoned Stiletto"	true
+effects_description_enable_teb_catrazza_sword	Passive ability: "Relic Sword of Sea Gold"	true
+effects_description_enable_teb_catrazza_ring	Passive ability: "Ring of Myrmidian Glory"	true
+effects_description_enable_teb_lupio_cloak	Ability: "Cloak of Visibility"	true
+effects_description_enable_teb_lupio_ring	Passive ability: "Ring of Desire"	true
+effects_description_enable_teb_gausser_axe	Passive ability: "Axe of the Dwarf-Friend"	true
+effects_description_enable_teb_gausser_scarf	Passive ability: "Scarf of the Crusader"	true
+effects_description_enable_teb_gausser_pegasus	Ability: "Radiant Discharge"	true
+effects_description_enable_teb_lanceform	Enables Lance Formation for melee cavalry units	true
+effects_description_enable_teb_cadavo_dirty	Enables Dirty Fighting attacks for melee infantry units	true
+effects_description_enable_teb_cadavo_talisman	Passive ability: "Starbrass Talisman"	true
+effects_description_enable_teb_colombo_wine	Ability: "Gourd of Lustrian Wine"	true
+effects_description_enable_teb_colombo_scroll	Ability: "Scroll of Araby"	true
+effects_description_teb_templar_lord_griff	Mount: Demigryph	true
+effects_description_teb_templar_lord_incarnate	Enables Champion stance, with shield, ward save and blinding attacks	true
+effects_description_teb_gashnag_summon_ghouls	Passive ability: "Summon Crypt Ghouls"	true
+effects_description_teb_gashnag_summon_wolves	Passive ability: "Summon Dire Wolves"	true
+effects_description_teb_lupio_foot_alt	Stance: Show Off (halberd)	true
+effects_description_teb_eldaddio_contact	Enables cursed attacks	true
+effects_description_teb_eldaddio_weapon	Ability: "Morr's Requiem"	true
+effects_description_teb_feint_riposte	Ability: "Feint & Riposte"	true
+effects_description_teb_feint_riposte_cd	Cooldown: %+n% to "Feint & Riposte"	true
+effects_description_teb_duellist_hero_duel	Ability: "En Garde!"	true
+effects_description_teb_duellist_hero_disarm	Ability: "Disarm"	true
+effects_description_teb_duellist_hero_epicwin	Passive ability: "Protagonist's Sass"	true
+effects_description_teb_feint_riposte_duellists_montante	Ability: "Feint & Riposte" for Duellists and Montante Swordsmen	true
+effects_description_teb_enable_burnt	Enables burning attacks	true
+effects_description_teb_spirit_drain	Ability: "Spirit Drain"	true
+effects_description_teb_cadavo_pistolshot2	Ability: "Second Concealed Pistol"	true
+effects_description_teb_merc_captain_aura	Passive ability: "Combined Arms"	true
+effects_description_teb_guardian_duellists	Passive ability: "Guardian" for Duellists and Montante Swordsmen	true
+effects_description_teb_lorenzo_lupo_aura	Passive ability: "Exemplary Warrior"	true
+effects_description_teb_lorenzo_lupo_shield	Ability: "Shield of Myrmidia"	true
+effects_description_teb_lorenzo_lupo_sword	Ability: "Sword of Lucan"	true
+effects_description_teb_lorenzo_lupo_runner	Passive ability: "Mighty Athlete"	true
+effects_description_teb_xbows_blazing_fire	Enables flaming attacks for Crossbowmen and Pavise Crossbowmen	true
+effects_description_teb_lucy_lore_passive	Passive ability: "{{tr:unit_abilities_onscreen_name_teb_lucy_lore_passive}}"	false
+effects_description_teb_paymaster_restock	Ability "Restock!" for Paymaster Chest Wagons	false
+effects_description_teb_paymaster_HTL	Passive ability "Hold the Line!" for Paymaster Chest Wagons	false
+effects_description_teb_crooked_dice	Ability: "{{tr:unit_abilities_onscreen_name_wh3_dlc23_hero_abilities_crooked_dice}}"	false
+effects_description_teb_crossbow_rocket	Enables rocket bolts for Crossbowmen and Pavise Crossbowmen (adds explosion and debilitating effect)	true
+effects_description_teb_merc_general_lion	Mount: {{tr:character_skills_localised_name_teb_merc_general_lion}}	true
+effects_description_teb_piggolo_beasts_spellcasters	Passive ability: "{{tr:unit_abilities_onscreen_name_wh_dlc03_lore_passive_wild_heart}}" for all spellcasters	true
+effects_description_teb_piggolo_enrage	Ability: "{{tr:unit_abilities_onscreen_name_teb_piggolo_enrage}}" (when Piggolo II is dismounted)	false
+effects_description_teb_montante_passive	Passive ability: "{{tr:unit_abilities_onscreen_name_teb_montante_passive}}"	true

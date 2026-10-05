@@ -1,0 +1,93 @@
+<VARIANT_MESH>
+<SLOT name="skins" >
+
+
+<VARIANT_MESH> ==SPOOKY SKELETONS==
+	<SLOT name="body" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/vmp_skeleton_base.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/chs/chs_props/chs_marauder_shaman_axe_1h_01.wsmodel">
+			<META_DATA>audio_melee_weapon_type:axe</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/chs/chs_props/chs_marauder_shaman_axe_1h_02.wsmodel">
+			<META_DATA>audio_melee_weapon_type:axe</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/vmp_skeleton_warriors_shield_set1.VariantMeshDefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/bst_gor_shield_set1.VariantMeshDefinition" />
+	</SLOT>
+</VARIANT_MESH>
+
+<VARIANT_MESH> ==BRET PEASANT== 
+	<SLOT name="underskelly" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/teb_cursed_base_skeleton.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="differently alive peasant body" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\vmp\vmp_skeleton_warriors\torso\ak_teb_curscompany_peasant_body_01.wsmodel"  >
+			<META_DATA>audio_entity_type:wh_skeleton</META_DATA>			<META_DATA>audio_armour_type:leather</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\vmp\vmp_skeleton_warriors\torso\ak_teb_curscompany_peasant_body_02.wsmodel"  >
+			<META_DATA>audio_entity_type:wh_skeleton</META_DATA>			<META_DATA>audio_armour_type:leather</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\brt_men_at_arms_swords_set1.VariantMeshDefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/emp_state_troops_spears_1h_set1.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\brt_men_at_arms_shield_set1.VariantMeshDefinition" />
+	</SLOT>
+</VARIANT_MESH>
+
+<VARIANT_MESH> ==STATE TROOPERS==
+	<SLOT name="underskelly" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/teb_cursed_base_skeleton.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="luckless strooper body" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\vmp\vmp_skeleton_warriors\torso\ak_teb_curscompany_strooper_body_01.wsmodel"  >
+			<META_DATA>audio_entity_type:wh_skeleton</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\vmp\vmp_skeleton_warriors\torso\ak_teb_curscompany_strooper_body_02.wsmodel"  >
+			<META_DATA>audio_entity_type:wh_skeleton</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\vmp\vmp_skeleton_warriors\torso\ak_teb_curscompany_strooper_body_03.wsmodel"  >
+			<META_DATA>audio_entity_type:wh_skeleton</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\brt_men_at_arms_swords_set1.VariantMeshDefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/emp_state_troops_spears_1h_set1.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/emp_state_troops_shields_set1.VariantMeshDefinition" />
+	</SLOT>
+</VARIANT_MESH>
+
+<VARIANT_MESH> ==DEF CORSAIRS==
+	<SLOT name="skull" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/vmp/vmp_skeleton_warriors/head/skeleton_head_01.wsmodel"  />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/vmp/vmp_skeleton_warriors/head/skeleton_head_03.wsmodel"  />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/vmp/vmp_skeleton_warriors/head/skeleton_head_05.wsmodel"  />
+	</SLOT>
+	<SLOT name="bones torso" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\vmp\vmp_skeleton_warriors\torso\ak_teb_curscompany_skeleton_torso_noribs.wsmodel"  >
+			<META_DATA>audio_entity_type:wh_skeleton</META_DATA>			<META_DATA>audio_armour_type:bone</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="corsair done right body" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\vmp\vmp_skeleton_warriors\torso\ak_teb_curscompany_corsair_body_01.wsmodel"  >
+			<META_DATA>audio_entity_type:wh_skeleton</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\vmp\vmp_skeleton_warriors\torso\ak_teb_curscompany_corsair_body_02.wsmodel"  >
+			<META_DATA>audio_entity_type:wh_skeleton</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\def\def_props\def_corsair_sword_1h_01.rigid_model_v2"  >
+			<META_DATA>equipment</META_DATA>			<META_DATA>audio_melee_weapon_type:sword</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\def\def_props\def_corsair_sword_1h_02.rigid_model_v2"  >
+			<META_DATA>equipment</META_DATA>			<META_DATA>audio_melee_weapon_type:sword</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\def\def_props\def_corsair_sword_1h_03.rigid_model_v2"  >
+			<META_DATA>equipment</META_DATA>			<META_DATA>audio_melee_weapon_type:sword</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" probability ="0.3" >
+		<VARIANT_MESH_REFERENCE definition="variantmeshes/variantmeshdefinitions/def_core_shield_set.VariantMeshDefinition" />
+	</SLOT>
+</VARIANT_MESH>
+
+
+
+</SLOT>
+</VARIANT_MESH>

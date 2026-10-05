@@ -1,0 +1,16 @@
+<VARIANT_MESH>
+			<SLOT name="helmet" >
+				<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\ak_morion_lost_helmet_guard.variantmeshdefinition" />
+			</SLOT>
+<SLOT name="head" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\ak_teb_wh_undermorion_head_02.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\ak_teb_wh_undermorion_head_03.wsmodel"  />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_02.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_04.wsmodel" />
+</SLOT>
+			<SLOT name="plumes" probability ="0.5" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_simple_plumes.variantmeshdefinition" />
+			</SLOT>
+</VARIANT_MESH>
+

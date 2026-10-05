@@ -1,0 +1,26 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_effect_bundles.loc		
+effect_bundles_localised_title_teb_captive_kill	Humiliated Captives	true
+effect_bundles_localised_description_teb_captive_kill	Each company has decided the fate of their respective prisoners. The troops seem happy with the results and the extra loot acquired. An enemy noble has been seen running clothed in nothing but a ragged sack.	true
+effect_bundles_localised_title_teb_lord_trait_teb_catrazza	Grand Embassy to the Grand Cathay	true
+effect_bundles_localised_description_teb_lord_trait_teb_catrazza	A commercial and mercenary foothold in Cathay that would make Ricco and Robbio proud and jealous.	true
+effect_bundles_localised_title_teb_lord_trait_teb_gausser	Master of Hope	true
+effect_bundles_localised_description_teb_lord_trait_teb_gausser	The Prince of Akendorf is a strong guide with many challenges around and ahead of him.	true
+effect_bundles_localised_title_teb_lord_trait_teb_lucrezzia_belladonna	Mistress of Diplomacy	true
+effect_bundles_localised_description_teb_lord_trait_teb_lucrezzia_belladonna	The forced exile from the razed homecity of Pavona determines that Lucrezzia's qualities and abilities must ensure new possibilities.	true
+effect_bundles_localised_title_teb_lord_trait_teb_lupio	Magritta's Golden Regency	true
+effect_bundles_localised_description_teb_lord_trait_teb_lupio	Commoners of Estalia who are far away from the king's collectors consider themselves lucky.	true
+effect_bundles_localised_title_teb_lord_trait_teb_borgio_the_besieger	The Besieger	true
+effect_bundles_localised_description_teb_lord_trait_teb_borgio_the_besieger	Through innovative tactics and personal hard work, any fortification will be in Borgio's hands by snack time. Dinner, tops.	true
+effect_bundles_localised_title_teb_lord_trait_teb_gashnag	The Black Prince	true
+effect_bundles_localised_description_teb_lord_trait_teb_gashnag	Gashnag's benevolent rule encourages a stable kingdom, but his own nature is a tricky matter.	true
+effect_bundles_localised_title_teb_lord_trait_teb_cadavo	Explorers & Rascals	true
+effect_bundles_localised_description_teb_lord_trait_teb_cadavo	Driven by greed, spirit of adventure, debts or all of the above, southerner colonists and warriors are eager to face the New World.	true
+effect_bundles_localised_title_teb_lord_trait_teb_colombo	Navigators & Entrepeneurs	true
+effect_bundles_localised_description_teb_lord_trait_teb_colombo	Led by the best navigator in the Southern Realms, Colombo's men will savour the New World virtually unimpended, potentially with the unique friendship of the local Lizardmen.	true
+effect_bundles_localised_title_teb_lord_trait_teb_lorenzo_lupo	Legacy of the Twins	true
+effect_bundles_localised_description_teb_lord_trait_teb_lorenzo_lupo	Luccini may be traditionally led by eccentric and slightly-inbred Princes, but it prides itself with what is likely the best army of Tilea, a famed fleet and a luxurious lifestyle.	true
+effect_bundles_localised_title_teb_lord_trait_teb_colombo_TOW	Blazing Adventure	true
+effect_bundles_localised_description_teb_lord_trait_teb_colombo_TOW	Colombo's new enterprise puts together the experience of his Trantian entrepreneurs, Lizardmen contacts and the heavily-armed support of Myrmidian cults.	true
+effect_bundles_localised_title_teb_lord_trait_teb_lucrezzia_belladonna_TOW	Mistress of Diplomacy	true
+effect_bundles_localised_description_teb_lord_trait_teb_lucrezzia_belladonna_TOW		true

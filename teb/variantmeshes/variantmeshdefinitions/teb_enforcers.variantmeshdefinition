@@ -1,0 +1,42 @@
+
+<VARIANT_MESH>
+	<SLOT name="head" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_huntsmarshal\ak_teb_border_pilgrim_01.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_huntsmarshal\ak_teb_border_pilgrim_02.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_huntsmarshal\ak_teb_border_pilgrim_03.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_huntsmarshal\ak_teb_border_pilgrim_04.wsmodel" />
+    </SLOT>
+	<SLOT name="cape" probability ="0.8" >
+		<VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/ak_teb_border_cape_01.wsmodel" />
+        <VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/ak_teb_border_cape_02.wsmodel" />
+    </SLOT>
+	<SLOT name="body">
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_archer/emp_archer_body_01.wsmodel">
+			<META_DATA>audio_armour_type:chainmail</META_DATA>			<META_DATA>audio_entity_type:wh_human_male</META_DATA>
+		</VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_archer/emp_archer_body_02.wsmodel">
+			<META_DATA>audio_armour_type:chainmail</META_DATA>			<META_DATA>audio_entity_type:wh_human_male</META_DATA>
+		</VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_archer/emp_archer_body_03.wsmodel">
+			<META_DATA>audio_armour_type:chainmail</META_DATA>			<META_DATA>audio_entity_type:wh_human_male</META_DATA>
+		</VARIANT_MESH>
+	</SLOT>
+
+	<SLOT name="weapon_1" attach_point="be_prop_0" />
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_props/emp_flagellants_mace_1h_03.rigid_model_v2" >
+			<META_DATA>audio_melee_weapon_type:club</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\neu\neu_hammerers\weapons\neu_hammer_1h_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\neu\neu_hammerers\weapons\neu_hammer_1h_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\neu\neu_hammerers\weapons\neu_hammer_1h_02.wsmodel" />
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" />
+	<SLOT name="weapon_3" attach_point="be_prop_3" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/ksl/ksl_props/ksl_archer_bow_01_rigid.wsmodel" >
+			<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="weapon_4" attach_point="be_prop_4" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/ksl/ksl_props/ksl_archer_bow_01_projectile.wsmodel" />
+	</SLOT>
+	<SLOT name="weapon_5" attach_point="be_prop_5" />
+</VARIANT_MESH>

@@ -1,0 +1,14 @@
+faction_key	sort_order	culture_sort_order
+#custom_battle_factions_tables;1;db/custom_battle_factions_tables/ak_teb		
+mixer_teb_border_princes	4	165
+mixer_teb_gashnag	5	165
+mixer_teb_estalia	2	165
+mixer_teb_tilea	0	165
+mixer_teb_catrazza	1	165
+mixer_teb_new_world_colonies	6	165
+mixer_teb_colombo	7	165
+mixer_teb_bilbali	3	165
+wh_main_teb_tobaro	10	165
+cr_teb_luccini	11	165
+cr_teb_order_of_the_blazing_sun	12	165
+cr_teb_pavona	13	165

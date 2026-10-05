@@ -1,0 +1,3 @@
+agent_subtype	clan_name	forename	other_name	surname	agent_type	spawn_behaviour	spawn_via_ui
+#unique_agents_tables;3;db/unique_agents_tables/ak_teb							
+teb_piggolo		30119800		2147358938	engineer	FACTION_LEADER	false

@@ -1,0 +1,7 @@
+campaign_key	faction	faction_difficulty_level	player_faction	player_subculture	faction_potential_bonus
+#faction_potential_difficulty_overrides_tables;0;db/faction_potential_difficulty_overrides_tables/ak_teb					
+	cr_teb_trantio	AI_VS_EASY	cr_teb_pavona		100
+	cr_teb_trantio	AI_VS_HARD	cr_teb_pavona		100
+	cr_teb_trantio	AI_VS_LEGENDARY	cr_teb_pavona		100
+	cr_teb_trantio	AI_VS_NORMAL	cr_teb_pavona		100
+	cr_teb_trantio	AI_VS_VERY_HARD	cr_teb_pavona		100

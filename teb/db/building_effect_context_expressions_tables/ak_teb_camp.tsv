@@ -1,0 +1,6 @@
+key	expression	display_only_active_effects	always_show_display_text
+#building_effect_context_expressions_tables;2;db/building_effect_context_expressions_tables/ak_teb_camp			
+IsTEBcamppresent	Region.IsAgentSubtypePresent("teb_merc_general_camp")	false	false
+IsTEBMountainClimate	Region.IsEffectBundleActive("wh3_dlc20_climate_suitable_mountain") == true || Region.IsEffectBundleActive("wh3_dlc20_climate_unsuitable_mountain") == true	false	false
+IsTEBJungleClimate	Region.IsEffectBundleActive("wh3_dlc20_climate_suitable_jungle") == true	false	false
+teb_IsRegionAbandoned	Region.IsAbandoned == true	false	false

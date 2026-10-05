@@ -1,0 +1,5 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_uied_component_texts__.loc		
+uied_component_texts_localised_string_tx_enables_default_Text_370007	[[col:dark_r]]Buildings Required in Settlement:[[/col]]	true
+uied_component_texts_localised_string_button_mortuary_cult_Tooltip_650039	{{tr:button_mortuary_cult}}	true
+uied_component_texts_localised_string_tx_NewState_Text_2c0019	{{tr:button_mortuary_cult_title}}	true

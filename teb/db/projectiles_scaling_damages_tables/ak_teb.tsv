@@ -1,0 +1,4 @@
+key	max_damage_multiplier	max_health_ratio	min_damage_multiplier	min_health_ratio
+#projectiles_scaling_damages_tables;0;db/projectiles_scaling_damages_tables/ak_teb				
+teb_shieldbearers	1.0000	1.0000	1.5000	0.3300
+teb_conqui_adventurers	1.0000	1.0000	1.3300	0.2000

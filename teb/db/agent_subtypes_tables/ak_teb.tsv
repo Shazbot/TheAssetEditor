@@ -1,0 +1,23 @@
+key	auto_generate	is_caster	small_icon	associated_unit_override	audio_voiceover_actor_group	show_in_ui	cap	has_female_name	can_gain_xp	loyalty_is_applicable	contributes_to_agent_cap	recruitment_category	magic_lore	names_group	can_be_loaned	recruitable	saving_settings	audio_vo_culture_override	spam_click_vo_enabled	can_equip_ancillaries	cost	recruitment_button_active_icon_path	recruitment_button_background_icon_path	audio_force_contextual_vo
+#agent_subtypes_tables;3;db/agent_subtypes_tables/ak_teb																								
+teb_priestess	true	false	ui/campaign ui/agents/wh_main_lore_stupidprefix_teb_priestess.png	teb_priestess	wh_dlc03_vo_actor_Bretonnian_Damsel	true	-1	true	true	false	true				true	true	can_be_saved_loaded		false	true	500			false
+bor_ranger_lord	true	false		bor_ranger_lord	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	bor_ranger_lord			true	true	can_be_saved_loaded		false	true	800			false
+til_merchant	true	false		til_merchant	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	til_merchant			true	true	can_be_saved_loaded		false	true	650			false
+est_inquisitor	true	false		est_inquisitor	wh_main_vo_actor_Empire_WitchHunter	true	-1	false	true	false	true	est_inquisitor			true	true	can_be_saved_loaded		false	true	650			false
+teb_borgio_the_besieger	false	false		teb_borgio_the_besieger	wh_main_vo_actor_Empire_Captain	true	-1	false	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	1000			false
+teb_gashnag	false	true		teb_gashnag	wh_dlc04_vo_actor_Vampire_dlc04_Strigoi_Ghoul_King	true	-1	false	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	1100			false
+teb_lucrezzia_belladonna	false	true		teb_lucrezzia_belladonna	wh_dlc03_vo_actor_Bretonnian_Damsel	true	-1	true	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	450			false
+teb_catrazza	false	false		teb_catrazza	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	900			false
+teb_lupio	false	false		teb_lupio	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	900			false
+teb_gausser	false	false		teb_gausser	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	900			false
+teb_colombo	false	false		teb_colombo	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	900			false
+teb_cadavo	false	false		teb_cadavo	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	900			false
+teb_templar_lord	false	false		teb_templar_lord	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	teb_templar_lord			true	true	can_be_saved_loaded		false	true	800			false
+teb_eldaddio	false	false		teb_eldaddio	wh2_dlc09_vo_actor_Tomb_Kings_Tomb_King	true	-1	false	true	false	true	legendary_lords			true	false	cannot_be_loaded_in_campaign		false	true	1000			false
+teb_duellist_hero	true	false	ui/campaign ui/agents/wh_main_lore_stupidprefix_teb_duellist_hero.png	teb_duellist_hero	wh_main_vo_actor_Empire_WitchHunter	true	-1	false	true	false	true				true	true	can_be_saved_loaded		false	true	600			false
+teb_merc_general	true	false		teb_merc_general	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	teb_merc_general			true	true	can_be_saved_loaded		false	true	630			false
+teb_merc_captain	true	false	ui/campaign ui/agents/wh_main_lore_stupidprefix_teb_merc_captain.png	teb_merc_captain	wh_main_vo_actor_Empire_Captain	true	-1	false	true	false	true				true	true	can_be_saved_loaded		false	true	400			false
+teb_lorenzo_lupo	false	false		teb_lorenzo_lupo	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	1000			false
+teb_colombo_TOW	false	false		teb_colombo	wh_main_vo_actor_Empire_General	true	-1	false	true	false	true	legendary_lords			true	false	cannot_be_loaded_in_campaign		false	true	900			false
+teb_lucrezzia_belladonna_TOW	false	true		teb_lucrezzia_belladonna	wh_dlc03_vo_actor_Bretonnian_Damsel	true	-1	true	true	false	true	legendary_lords			true	true	cannot_be_loaded_in_campaign		false	true	450			false
+teb_piggolo	false	false	ui/campaign ui/agents/teb_piggolo.png	teb_piggolo	wh_main_vo_actor_group_sound	false	1	false	true	false	false				true	true	cannot_be_loaded_in_campaign		false	true	900			false

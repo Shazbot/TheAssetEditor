@@ -1,0 +1,11 @@
+id	missile_weapon	unit	battle_entity_stats_override
+#unit_missile_weapon_junctions_tables;1;db/unit_missile_weapon_junctions_tables/ak_teb			
+3011990	teb_militia_archers_fire	teb_militia_archers	
+3011991	teb_militia_archers_fire	teb_border_rangers	
+3011992	teb_militia_archers_fire	teb_roc_verena	
+3011993	teb_crossbow_flaming	teb_xbowmen	
+3011994	teb_crossbow_flaming	teb_pavisiers	
+3011995	teb_crossbow_flaming	teb_besiegers	
+3011996	teb_crossbow_rocket	teb_xbowmen	
+3011997	teb_crossbow_rocket	teb_pavisiers	
+3011998	teb_crossbow_rocket	teb_besiegers	

@@ -1,0 +1,7 @@
+art_set_id	agent_type	culture	subculture	faction	is_custom	is_male	agent_subtype	campaign_map_scale	prebattle_separation_offset
+#campaign_character_art_sets_tables;7;db/campaign_character_art_sets_tables/ak_teb_camp									
+teb_merc_general_01_camp	general				false	true	teb_merc_general_camp	1.0000	0.0000
+teb_merc_general_02_camp	general				false	true	teb_merc_general_camp	1.0000	0.0000
+teb_merc_general_03_camp	general				false	true	teb_merc_general_camp	1.0000	0.0000
+teb_merc_general_04_camp	general				false	true	teb_merc_general_camp	1.0000	0.0000
+teb_merc_general_05_camp	general				false	true	teb_merc_general_camp	1.0000	0.0000

@@ -1,0 +1,15 @@
+<model version="1">
+	<geometry>warmachines\engines\emp_galloper_gun\ak_teb_galloper_gun_destroyed.rigid_model_v2</geometry>
+		<materials>
+			<material lod_index="0" part_index="0">warmachines\engines\emp_galloper_gun\materials\ak_teb_galloper_gun_ror_destroyed_rigid_alpha_off.xml.material</material>
+
+			<material lod_index="1" part_index="0">warmachines\engines\emp_galloper_gun\materials\ak_teb_galloper_gun_ror_destroyed_rigid_alpha_off.xml.material</material>
+
+			<material lod_index="2" part_index="0">warmachines\engines\emp_galloper_gun\materials\ak_teb_galloper_gun_ror_destroyed_rigid_alpha_off.xml.material</material>
+
+			<material lod_index="3" part_index="0">warmachines\engines\emp_galloper_gun\materials\ak_teb_galloper_gun_ror_destroyed_rigid_alpha_off.xml.material</material>
+
+			<material lod_index="4" part_index="0">warmachines\engines\emp_galloper_gun\materials\ak_teb_galloper_gun_ror_destroyed_rigid_alpha_off.xml.material</material>
+
+	</materials>
+</model>

@@ -1,0 +1,10 @@
+<VARIANT_MESH>
+	
+	<SLOT name="shield">
+		<VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/AK_robie_pavise_generic_01.wsmodel" />
+		<VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/AK_robie_pavise_generic_02.wsmodel" />
+		<VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/AK_robie_pavise_generic_03.wsmodel" />
+		<VARIANT_MESH model="variantmeshes/wh_variantmodels/hu1/neu/neu_pavise_crossbowmen/shield/neu_pavise_shield_04.wsmodel" />
+	</SLOT>
+
+</VARIANT_MESH>

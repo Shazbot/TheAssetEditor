@@ -1,0 +1,12 @@
+key	generate	ui_image	prioritised	event_category	override_icon	is_large_incident	additional_sound_event	sepia_fade	use_revealing_text
+#incidents_tables;7;db/incidents_tables/ak_teb_dilemmas									
+teb_spawn_dignitary	true	generic	false	Religious		false		1.0000	false
+teb_dilemma_recipe	false	civilisation_up	false	Setback		false		1.0000	false
+teb_incident_vespero	true	celebration	false	Domestic		false		1.0000	false
+teb_incident_candle	true	army_morale_up	false	Military		false		1.0000	false
+teb_dilemma_hedge_no	false	carnage_magic	false	Event		false		1.0000	false
+teb_dilemma_hedge_yes	false	carnage_magic	false	Event		false		1.0000	false
+teb_dilemma_darkmaiden_censor	false	politics	false	Event		false		1.0000	false
+teb_dilemma_darkmaiden_ok	false	politics	false	Event		false		1.0000	false
+teb_dilemma_darkmaiden_ignore	false	civilisation_up	false	Event		false		1.0000	false
+teb_incident_shepherds	true	carnage_charge	false	Military		false		1.0000	false

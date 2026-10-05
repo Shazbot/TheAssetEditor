@@ -1,0 +1,3 @@
+id	treasury_cost	expenditure_type	income_type	expenditure_type_when_regular	income_type_when_regular
+#resource_costs_tables;0;db/resource_costs_tables/ak_teb_camp					
+teb_camp	-1000	RECRUITMENT	OTHER	ARMY_UPKEEP	BACKGROUND_INCOME

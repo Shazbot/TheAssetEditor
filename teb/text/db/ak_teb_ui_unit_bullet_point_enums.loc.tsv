@@ -1,0 +1,36 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_ui_unit_bullet_point_enums.loc		
+ui_unit_bullet_point_enums_tooltip_teb_paymaster	With promises of victory and money, this unit can motivate nearby allies - until things go very very wrong.	true
+ui_unit_bullet_point_enums_onscreen_name_teb_paymaster	Paymaster	true
+ui_unit_bullet_point_enums_tooltip_lord_battle_support	While not the most adept at directly fighting the enemy, this character will motivate allies and hinder enemies.	true
+ui_unit_bullet_point_enums_onscreen_name_lord_battle_support	Battle Support	true
+ui_unit_bullet_point_enums_tooltip_lord_skirmish	Someone may call it cowardice, skirmishing tactics, support from the rear; be as it may, this character can actively avoid melee combat.	true
+ui_unit_bullet_point_enums_onscreen_name_lord_skirmish	Skirmish	true
+ui_unit_bullet_point_enums_tooltip_teb_dirty_fighting	A life in the gutters or worse teaches that dust, spit and generally unsporting moves are all fair weapons in war and... war.	true
+ui_unit_bullet_point_enums_onscreen_name_teb_dirty_fighting	Dirty Fighters	true
+ui_unit_bullet_point_enums_tooltip_teb_irrana	This unit is mobile and can cause substantial damage, but can rarely win a fair fight. As such, they are better employed when they aren't the focus of the enemy's attention.	true
+ui_unit_bullet_point_enums_onscreen_name_teb_irrana	Guerrilla	true
+ui_unit_bullet_point_enums_onscreen_name_teb_blades_ancient	Blades of the Ancients	true
+ui_unit_bullet_point_enums_tooltip_teb_blades_ancient	The Amazons wield sacred blades from the High Age. Their power grants mystic protection, as well as increased weapon damage and charge bonus.	true
+ui_unit_bullet_point_enums_onscreen_name_teb_cloak&dagger	Cloak and Dagger	true
+ui_unit_bullet_point_enums_tooltip_teb_cloak&dagger	The peculiar dual wielding technique native to Tilea is used to perfection by Vespero's men. The dagger-hand beguiles and distracts the foe with a strip of cloak until one of the blades strikes home.	true
+ui_unit_bullet_point_enums_onscreen_name_teb_renown_officer	Leader of Renown	true
+ui_unit_bullet_point_enums_tooltip_teb_renown_officer	The commander of this troop is a famous leader. They may be much more resilient and powerful than the rest of the unit, and may confer special abilities.	true
+ui_unit_bullet_point_enums_onscreen_name_teb_disgusting	Disgusting	true
+ui_unit_bullet_point_enums_tooltip_teb_disgusting	This unit, although not monstrous by nature, will still make both allies and foes in the proximities quite uncomfortable.	true
+ui_unit_bullet_point_enums_onscreen_name_teb_pirazzo_xbows	[[img:ui/common ui/unit_category_icons/missile_infantry_bow.png]][[/img]]Death or Riches!	true
+ui_unit_bullet_point_enums_tooltip_teb_pirazzo_xbows	Lost Legion troopers are skilled in both pike and crossbow, and both weapons will be present in the regiment. \\nThe main pike unit comes with a squad of legionnaires armed with crossbows. 	true
+ui_unit_bullet_point_enums_onscreen_name_teb_galloper	Calibre Isn't Everything	true
+ui_unit_bullet_point_enums_tooltip_teb_galloper	With the breakthrough of Bronzino's techniques, small and light cannons like these can be limbered up and move across the battlefield at the speed of horse. \\n\\nHowever, the reduced crew makes the unit even more vulnerable than normal.	true
+ui_unit_bullet_point_enums_onscreen_name_teb_tank	Target-Rich Environment	true
+ui_unit_bullet_point_enums_tooltip_teb_tank	This experimental vehicle may be slow, ugly, and unpleasant for the crew. But it doesn't know the meaning of 'surrounded', especially when it comes to infantry.	true
+ui_unit_bullet_point_enums_onscreen_name_quick_learner	Quick Learner	true
+ui_unit_bullet_point_enums_tooltip_quick_learner	This unit requires less experience to rank up than its peers.	true
+ui_unit_bullet_point_enums_onscreen_name_teb_long_lances	Long Lances	true
+ui_unit_bullet_point_enums_tooltip_teb_long_lances	To the more-or-less coarse jokes among the ranks, Tilean knights often wield cavalry lances that are longer than average. These have proven to be effective [[img:ui/skins/default/modifier_icon_bonus_vs_large.png]][[/img]] against enemy cavalry, even against Bretonnian jousters!	true
+ui_unit_bullet_point_enums_onscreen_name_teb_roc_estragon	Curse of Estragon's Island	true
+ui_unit_bullet_point_enums_tooltip_teb_roc_estragon	Cathayan weaponry and years of conquests are not the only things that make the Pariahs worthy of notice. What appears to be luck that protects them from lethal blows may be driven by a sinister fate, and many Pariahs suspect that their souls are forfeit.	true
+ui_unit_bullet_point_enums_onscreen_name_		true
+ui_unit_bullet_point_enums_tooltip_		true
+ui_unit_bullet_point_enums_onscreen_name_teb_generalist_antilarge	Generalist Anti-Large	true
+ui_unit_bullet_point_enums_tooltip_teb_generalist_antilarge	Compared to similar units, this unit has a smaller [[img:ui/skins/default/modifier_icon_bonus_vs_large.png]][[/img]]damage bonus against large entities but compromises through having better baseline stats, dealing better against smaller targets.	true

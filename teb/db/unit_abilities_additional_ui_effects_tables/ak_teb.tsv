@@ -1,0 +1,17 @@
+key	sort_order	effect_state
+#unit_abilities_additional_ui_effects_tables;3;db/unit_abilities_additional_ui_effects_tables/ak_teb		
+remains_in_play	200	positive
+ap_average	100	positive
+ap_good	100	positive
+damage_bad	100	positive
+flat_angle	100	positive
+inaccurate	100	positive
+teb_colombo_telescope	100	positive
+teb_roc_organ_immolation	400	positive
+teb_galloper_horse_unlimber	103	positive
+teb_galloper_limber	103	positive
+teb_causes_rampage	100	positive
+teb_causes_terror	101	positive
+teb_spirit_drain	101	positive
+self_damage_chance_start	400	positive
+teb_lucrezzia_potion	100	negative

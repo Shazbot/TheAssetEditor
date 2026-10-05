@@ -1,0 +1,22 @@
+agent_subtype	ancillary	rank	instant	is_quest_battle
+#character_ancillary_quest_ui_details_tables;2;db/character_ancillary_quest_ui_details_tables/ak_teb				
+teb_catrazza	teb_catrazza_sword	9	true	false
+teb_catrazza	teb_catrazza_ring	14	true	false
+teb_lupio	teb_lupio_cloak	14	true	false
+teb_lupio	teb_lupio_ring	9	true	false
+teb_gausser	teb_gausser_axe	9	true	false
+teb_gausser	teb_gausser_scarf	14	true	false
+teb_cadavo	teb_cadavo_talisman	9	true	false
+teb_colombo	teb_colombo_gem	12	true	false
+teb_colombo	teb_colombo_scroll	5	true	false
+teb_eldaddio	teb_eldaddio_weapon	5	true	false
+teb_eldaddio	teb_eldaddio_armour	3	true	false
+teb_borgio_the_besieger	teb_borgio_armour	9	true	false
+teb_borgio_the_besieger	teb_borgio_mace	12	true	false
+teb_borgio_the_besieger	teb_borgio_mask	14	true	false
+teb_gashnag	teb_gashnag_book	17	true	false
+teb_gashnag	teb_gashnag_staff	9	true	false
+teb_lucrezzia_belladonna	teb_lucrezzia_stiletto	11	true	false
+teb_lorenzo_lupo	teb_lorenzo_lupo_shield	8	true	false
+teb_lorenzo_lupo	teb_lorenzo_lupo_sword	11	true	false
+teb_lorenzo_lupo	teb_lorenzo_lupo_ring	14	true	false

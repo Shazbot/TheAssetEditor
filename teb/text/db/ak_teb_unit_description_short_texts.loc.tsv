@@ -1,0 +1,40 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_unit_description_short_texts.loc		
+unit_description_short_texts_text_teb_pikemen	A formation of these armour-clad pikemen is a deadly hedgehog pointed at the enemy.	true
+unit_description_short_texts_text_teb_montante_greatswords	Greatswords are uncommon in the south, and the accomplished duellists who wield them can be found challenging entire regiments on bridges for sport.	true
+unit_description_short_texts_text_teb_republican_guard	Generals - and treasurers - need the best protection possible.	true
+unit_description_short_texts_text_teb_light_cannon	Smaller, mobile cannons can be instrumental in advanced tactics.	true
+unit_description_short_texts_text_teb_pavisiers	Protected by huge wooden shields, these crossbowmen can return fire with relative impunity.	true
+unit_description_short_texts_text_teb_sartosan_pirates	Why is the rum always gone?	true
+unit_description_short_texts_text_teb_broken_lances	Tilean knights would often fight in 'broken' or unaffiliated groups and assemble for daring charges.	true
+unit_description_short_texts_text_teb_noble_retinue	The Condottieri's own relatives, heirs to the Tilean Knights who bested the Bretonnians at Ravola.	true
+unit_description_short_texts_text_teb_encarmine	Ostentatious and lethal with their red enamelled armour and peculiar dual-wielding techniques, the Knights Encarmine are a spoiled fury on the battlefield.	true
+unit_description_short_texts_text_teb_carabiniers	Experienced and well-protected, the Carabiniers have their muskets always pointed in the most dangerous blindside of the enemy.	true
+unit_description_short_texts_text_teb_conqui_royal_guard	A reliable force of veterans in heavy armour and the best handguns.	true
+unit_description_short_texts_text_teb_conqui_adventurers	The fellow human is hardly worrisome when one has faced murderous lizardmen in Lustria.	true
+unit_description_short_texts_text_teb_conqui_riders	These hardy mercenaries have learned how to best deal harm unpunished.	true
+unit_description_short_texts_text_teb_conqui_lancers	Good horses and fine steel moving fast on the battlefield.	true
+unit_description_short_texts_text_teb_kotrs	The Order of the Eagle is the armed protector of Myrmidia on the battlefield.	true
+unit_description_short_texts_text_teb_shieldbearers	Dwarf-crafted gear and proud hearts bring forth the legacy of Khypris.	true
+unit_description_short_texts_text_teb_enforcers	In the lawless lands of the Borderlands, these men are the self-appointed judges, juries and executioners of those they consider villains.	true
+unit_description_short_texts_text_teb_militia_archers	Commoners armed with bows have many chances to help against incursions from the Badlands.	true
+unit_description_short_texts_text_teb_freelance_knights	Lance formations of Bretonnians who got mired in the Borderlands, mixed with distant heirs, squires and emulators. Fairly well-equipped and trained, but distinctly delusional.	true
+unit_description_short_texts_text_teb_militia_knights	A solid force trained after the template of Sven Carlsson's regiment, often even hand-picked by the mercenary prince himself.	true
+unit_description_short_texts_text_teb_light_scouts	Hardy riders accustomed to borderlands warfare might be able to run down the smaller incursions on their own.	true
+unit_description_short_texts_text_teb_border_rangers	To the sufficiently shrewd and tough, an Orc is just another prey.	true
+unit_description_short_texts_text_teb_bwatch	Sitting in a shade of grey between Order of the Eagle and Estalian Inquisition, the Black Watch is made of the most fanatical and stubborn among knightly aristocracy.	true
+unit_description_short_texts_text_teb_swash	There's a kind of mercenary and generic armed rascal for whom "fairplay" is just another one of those funny bretonnian cheeses.	true
+unit_description_short_texts_text_teb_paymaster	Shouting words of encouragement and promises of higher salary, the Paymaster makes sure the hired fighters don't get too hesitant.	true
+unit_description_short_texts_text_teb_duellists	The contentious duellists of the south are famous for their skill and eccentricity. This is twice as true for those who eschew the protection of both armour and shield.	true
+unit_description_short_texts_text_teb_sisters	The Order of Fury embodies the most vengeful aspect of their goddess and the martial wrath of Myrmidia's first Sister. These shieldmaidens fight in a controlled whirlwind of righteous wrath.	true
+unit_description_short_texts_text_teb_xbow_cav	A crossbow is an old friend to the Tileans and other southerners, useful in capable hands even on horseback.	false
+unit_description_short_texts_text_teb_irrana	The highlanders from the Irrana Mountains are tough yet unruly people, an odd sight in the mercenary hosts.	false
+unit_description_short_texts_text_teb_half_pikes	The diminutive name is less about the length of their polearms and more what better troops call these militias for their salary and worth.	true
+unit_description_short_texts_text_teb_militia_spearmen	Emergency levies and cheap mercenaries can be assembled to make up a shield wall. 	true
+unit_description_short_texts_text_teb_billmen	With pike infantry being the queen of battle in the south, these halberdiers are less trained at counter-cavalry than they'd sometimes wish, but a long stick is a long stick.	true
+unit_description_short_texts_text_teb_guard_kossars	Formed by centuries-old kislevite minorities, this Kossar guard is a mixture of Kislev and the south, a solid archer guard for wealthy princes.	true
+unit_description_short_texts_text_teb_xbowmen	We may not be the Empire... but everybody knows the best crossbowmen come from Tilea!	true
+unit_description_short_texts_text_teb_handgunners	Southerners are more awkward around gunpowder than Imperials, but their handguns are acceptable and pack a punch.	true
+unit_description_short_texts_text_teb_galloper	Little more than flimsy falconets according to engineers from Nuln, but as maneuverable as pistols compared to bigger cannons.	true
+unit_description_short_texts_text_teb_golden_lion	These Chamon-touched apex predators ferociously watch over their coastal mountains and cliffs, but will approve of the right amount of greed and moral fiber in select humans.	true
+unit_description_historical_texts_text_teb_golden_lion	The secrets of dealing with Golden Lions were for a short time a monopoly of the city of Miragliano: in the highly 'dynamic' Southern Realms, such knowledge and techniques spread fast.\\n\\nGolden Lions prefer to nest on cliffs and rocky grounds with a good view of their territories, especially by the coast. As predictable, they are highly territorial and protective of their pride of wingless lionesses and cubs, and they are ferociously hostile particularly towards any Manticore or Ratman who intends on infesting their domains.\\n\\nWhen it comes to humans, females do not trust them and male Golden Lions do not form lasting bonds, but they respect what they innately perceive as the right balance of greed, valour and justice. When approached by a human leader who might want to secure the services of such a beast, Golden Lions are quick judges and executioners of character: the aspirant is either torn to bloody ribbons, or manages to secure a temporary pact with the lion in exchange for precious metals for its hoard, and 'leading' the beast towards enterprises it approves of. Dominant lions will invariably remain with their pride, and instead let younger and secondary males go with the petitioner.\\n\\nOutside of emulating one of the few Condottieri who successfully befriended a Golden Lion, there is little one can foresee in advance of their own chances of success, for the lions' inclinations are known only as rough guidelines. \\nMany have tried and failed, such as Lupio Sunscryer of Magritta, who self-assuredly approached a lion's den and narrowly escaped with his life.	true

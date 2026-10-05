@@ -1,0 +1,22 @@
+key	text	tooltip
+#Loc;1;text/db/ak_tebuary_cult_categories__.loc		
+mortuary_cult_categories_localised_name_tebuary_category_1	Leadership	true
+mortuary_cult_categories_localised_name_tebuary_category_2	Companies of Renown	true
+mortuary_cult_categories_localised_name_tebuary_category_3	Strategy	true
+mortuary_cult_categories_localised_name_tebuary_category_4	Curios - Weaponry	true
+mortuary_cult_categories_localised_name_tebuary_category_5	Curios - Enchanted	true
+mortuary_cult_categories_craft_button_text_tebuary_category_1	Request	true
+mortuary_cult_categories_craft_button_text_tebuary_category_2	Hire	true
+mortuary_cult_categories_craft_button_text_tebuary_category_3	Enact	true
+mortuary_cult_categories_craft_button_text_tebuary_category_4	Purchase	true
+mortuary_cult_categories_craft_button_text_tebuary_category_5	Purchase	true
+mortuary_cult_categories_localised_description_tebuary_category_1	Character Recruited	true
+mortuary_cult_categories_localised_description_tebuary_category_2	Regiment Unlocked	true
+mortuary_cult_categories_localised_description_tebuary_category_3	Strategy Enacted	true
+mortuary_cult_categories_localised_description_tebuary_category_4	Item Acquired	true
+mortuary_cult_categories_localised_description_tebuary_category_5	Item Acquired	true
+mortuary_cult_categories_localised_button_description_tebuary_category_1	Request or hire the aid of Lords and Heroes for your faction. Their rarity is counterbalanced by unique skills and potential.	true
+mortuary_cult_categories_localised_button_description_tebuary_category_2	Recruit emerging companies that have acquired fame in recent exploits.||Once unlocked, these units can be recruited like Regiments of Renown.||Note: these units originate from player stories and are informally known as Regiments of Community.	true
+mortuary_cult_categories_localised_button_description_tebuary_category_3	Use your economical, military and political leverage to enact maneuvres and start initiatives.||Each type of Strategy will also lock analogous initiatives for the duration.||For maximum efficiency, timing is of the essence, especially around Great Surge strategies that can only be enacted once each!	true
+mortuary_cult_categories_localised_button_description_tebuary_category_4	Send emissaries to 'acquire' precious items. All items purchased will be added to your Magical Items pool to be equipped by a character from their Character Details panel.||Certain items are expensive to be acquired, one way or another, others are so delightfully unique there is no chance of finding another specimen!	true
+mortuary_cult_categories_localised_button_description_tebuary_category_5	Send emissaries to 'acquire' precious items. All items purchased will be added to your Magical Items pool to be equipped by a character from their Character Details panel.||Certain items are expensive to be acquired, one way or another, others are so delightfully unique there is no chance of finding another specimen!	true

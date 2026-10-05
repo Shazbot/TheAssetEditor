@@ -1,0 +1,21 @@
+key	chance_to_replenish	max_count	unit_record	use_partial_replenishment	max_replenish_per_turn	ui_order
+#mercenary_unit_groups_tables;3;db/mercenary_unit_groups_tables/ak_teb_camp						
+teb_pikemen	100.0000	0	teb_pikemen	true	0.3400	0
+teb_xbowmen	100.0000	0	teb_xbowmen	true	0.3400	0
+teb_pavisiers	100.0000	0	teb_pavisiers	true	0.2000	0
+teb_broken_lances	100.0000	0	teb_broken_lances	true	0.2000	0
+teb_carabiniers	100.0000	0	teb_carabiniers	true	0.2000	0
+teb_light_cannon	100.0000	0	teb_light_cannon	true	0.2000	0
+teb_conqui_royal_guard	100.0000	0	teb_conqui_royal_guard	true	0.2000	0
+teb_conqui_adventurers	100.0000	0	teb_conqui_adventurers	true	0.2000	0
+teb_conqui_riders	100.0000	0	teb_conqui_riders	true	0.2000	0
+teb_conqui_lancers	100.0000	0	teb_conqui_lancers	true	0.2000	0
+teb_enforcers	100.0000	0	teb_enforcers	true	0.2000	0
+teb_freelance_knights	100.0000	0	teb_freelance_knights	true	0.2000	0
+teb_militia_knights	100.0000	0	teb_militia_knights	true	0.2000	0
+teb_border_rangers	100.0000	0	teb_border_rangers	true	0.2000	0
+teb_swash	100.0000	0	teb_swash	true	0.2000	0
+teb_duellists	100.0000	0	teb_duellists	true	0.2000	0
+teb_xbow_cav	100.0000	0	teb_xbow_cav	true	0.2000	0
+teb_guard_kossars	100.0000	0	teb_guard_kossars	true	0.2000	0
+teb_galloper	100.0000	0	teb_galloper	true	0.2000	0

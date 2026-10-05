@@ -1,0 +1,14 @@
+<VARIANT_MESH>
+
+
+
+	<SLOT name="variants" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\teb_duellist_hero_horse_01.variantmeshdefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\teb_duellist_hero_horse_02.variantmeshdefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\teb_duellist_hero_horse_03.variantmeshdefinition" />
+	</SLOT>
+
+
+
+
+</VARIANT_MESH>

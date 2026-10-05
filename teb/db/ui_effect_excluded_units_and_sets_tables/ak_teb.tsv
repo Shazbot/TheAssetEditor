@@ -1,0 +1,32 @@
+key	unit	unit_set
+#ui_effect_excluded_units_and_sets_tables;0;db/ui_effect_excluded_units_and_sets_tables/ak_teb		
+3011990	teb_billmen_garri	
+3011991		teb_all_units
+3011992		teb_all_units_xp7plus_fatigue_ror
+3011993		teb_all_units_xp7+
+3011994		teb_all_units_xp7plus_attribute
+3011995		teb_all_units_xp4plus
+3011996		teb_army_buff_chevrons_1
+3011997		teb_army_buff_chevrons_2
+3011998		teb_army_buff_chevrons_3
+3011999		teb_army_buff_chevrons_4
+3012000		teb_army_buff_chevrons_5
+3012001		teb_army_buff_chevrons_6
+3012002		teb_army_buff_chevrons_7
+3012003		teb_army_buff_chevrons_8
+3012004		teb_army_buff_chevrons_9
+3012005		teb_ror
+3012006		teb_all_units_xp7plus_fatigue_ror
+3012007		teb_cap_ror_hide_origo
+3012008		teb_roc
+3012009	teb_muktar	
+3012010	teb_amazons	
+3012011	teb_pirazzo_xbows	
+3012012		teb_battle_stick_units
+3012013		teb_battle_not_stick_units
+3012014		teb_battle_spears
+3012015		teb_battle_pikes
+3012016		teb_battle_halberds
+3012017		teb_battle_hand_and_dual
+3012018		teb_battle_great_weapon
+3012019		teb_battle_lance

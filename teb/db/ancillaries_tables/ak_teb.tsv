@@ -1,0 +1,41 @@
+key	type	applies_to	transferrable	unique_to_world	unique_to_faction	precedence	start_date	end_date	avatar_skill	avatar_special_ability	legendary_item	mp_exclusive	is_wife_ancillary	category	min_starting_age	max_starting_age	min_expiry_age	max_expiry_age	immortal	provided_bodyguard_unit	provided_banner	uniqueness_score	turns_before_swap_allowed	subcategory	randomly_dropped	can_be_stolen	can_be_destroyed	faction_set
+#ancillaries_tables;0;db/ancillaries_tables/ak_teb																												
+wh_main_anc_mount_teb_bright_wizard_barded_warhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	wh_main_teb_cha_wizard_fire_3		1	0		false	false	true	all
+wh_main_anc_mount_teb_bright_wizard_imperial_pegasus	wh_main_anc_mount_imperial_pegasus	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	wh_main_teb_cha_wizard_fire_2		1	0		false	false	true	all
+mount_teb_priestess_barded_warhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_priestess_bhorse		1	0		false	false	true	all
+mount_teb_priestess_warhorse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_priestess_horse		1	0		false	false	true	all
+tebuary_ser_generic	tebuary_ser_generic	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			1	0	follower	false	true	true	anc_set_exclusive_mixer_teb
+tebuary_ugoletti	tebuary_ugoletti	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			1	0	follower	false	true	true	anc_set_exclusive_mixer_teb
+tebuary_renegade_crown	wh_main_anc_enchanted_item	.	true	false	false	1	0	9999			false	false	false	enchanted_item	1	1	50	75	true			200	0		false	true	true	anc_set_exclusive_mixer_teb
+tebuary_jewel_sword	wh_main_anc_weapon	.	true	false	false	1	0	9999			false	false	false	weapon	1	1	50	75	true			80	0		true	true	true	anc_set_exclusive_mixer_teb
+tebuary_idol_myrmidia	wh_main_anc_enchanted_item	.	true	false	false	1	0	9999			false	false	false	enchanted_item	1	1	50	75	true			130	0		false	true	true	anc_set_exclusive_mixer_teb
+tebuary_secrets	wh_main_anc_weapon	.	true	false	false	1	0	9999			false	false	false	weapon	1	1	50	75	true			130	0		true	true	true	anc_set_exclusive_mixer_teb
+tebuary_3_sellmercs	tebuary_3_sellmercs	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_3_bestmercs	tebuary_3_bestmercs	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_3_allin	tebuary_3_allin	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_2_roc_gwatch	tebuary_2_roc_gwatch	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_3_diplo_dwf	tebuary_3_diplo_dwf	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_3_diplo_hef	tebuary_3_diplo_hef	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_3_diplo_emp	tebuary_3_diplo_emp	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_3_diplo_marburg	tebuary_3_diplo_marburg	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_3_diplo_brt	tebuary_3_diplo_brt	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_3_socio_subt	tebuary_3_socio_subt	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			151	0	follower	false	false	false	belakor
+tebuary_3_socio_war	tebuary_3_socio_war	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			151	0	follower	false	false	false	belakor
+tebuary_3_socio_grandeur	tebuary_3_socio_grandeur	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			151	0	follower	false	false	false	belakor
+tebuary_3_socio_arts	tebuary_3_socio_arts	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			151	0	follower	false	false	false	belakor
+tebuary_1_teb_templar_lord	tebuary_1_teb_templar_lord	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_1_teb_duellist_hero	tebuary_1_teb_duellist_hero	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			51	0	follower	false	false	false	belakor
+tebuary_placeholder	tebuary_placeholder	.	true	false	false	1	0	9999			false	false	false	general	1	1	50	75	true			152	0	follower	false	false	false	belakor
+tebuary_shield_myrmidia	wh_main_anc_armour	.	true	false	false	1	0	9999			false	false	false	armour	1	1	50	75	true			130	0		false	true	true	all
+teb_duellist_hero_horse	wh_main_anc_mount_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_duellist_hero_horse		1	0		false	false	false	all
+teb_duellist_hero_bhorse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_duellist_hero_bhorse		1	0		false	false	false	all
+teb_duellist_hero_encarmine	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_duellist_hero_encarmine		1	0		false	false	false	all
+tebuary_retractable_fistblade	wh_main_anc_weapon	.	true	false	false	1	0	9999			false	false	false	weapon	1	1	50	75	true			130	0		false	true	true	anc_set_exclusive_mixer_teb
+tebuary_conspi_hood	wh_main_anc_enchanted_item	.	true	false	false	1	0	9999			false	false	false	enchanted_item	1	1	50	75	true			130	0		false	true	true	anc_set_exclusive_mixer_teb
+tebuary_duellist_cloak	wh_main_anc_armour	.	true	false	false	1	0	9999			false	false	false	armour	1	1	50	75	true			130	0		false	true	true	anc_set_exclusive_mixer_teb
+tebuary_spear_heartseeker	wh_main_anc_weapon	.	true	false	false	1	0	9999			false	false	false	weapon	1	1	50	75	true			130	0		false	true	true	anc_set_exclusive_mixer_teb
+teb_merc_general_barded_horse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_merc_general_barded_horse		1	0		false	false	true	all
+teb_merc_general_griffon	wh_main_anc_mount_imperial_griffon	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_merc_general_grif		1	10		false	false	true	all
+teb_merc_general_lion	wh3_dlc24_anc_mount_celestial_lion	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_merc_general_lion		1	0		false	false	true	all
+teb_merc_captain_barded_horse	wh_main_anc_mount_barded_warhorse	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	teb_merc_captain_barded_horse		1	0		false	false	true	all
+til_merchant_bear	wh3_main_anc_mount_war_bear	.	false	false	false	1	0	9999			false	false	false	mount	16	30	30	50	true	til_merchant_bear		1	10		false	false	true	all

@@ -1,0 +1,11 @@
+key	image_path
+#ui_tagged_images_tables;0;db/ui_tagged_images_tables/ak_teb	
+bullet_treasury	UI/Frontend UI/faction_bullets/bullet_treasury.png
+bullet_armies	UI/Frontend UI/faction_bullets/bullet_armies.png
+bullet_tactics	UI/Frontend UI/faction_bullets/bullet_tactics.png
+tilea	ui\flags\mixer_teb_tilea\mon_24.png
+estalia	ui\flags\mixer_teb_estalia\mon_24.png
+border	ui\flags\mixer_teb_border_princes\mon_24.png
+nwc	ui\flags\mixer_teb_new_world_colonies\mon_24.png
+rank4	ui/campaign ui/effect_bundles/experience_4.png
+plutocracy	ui/skins/AK_TEB_lily/icon_mortuary_cult.png

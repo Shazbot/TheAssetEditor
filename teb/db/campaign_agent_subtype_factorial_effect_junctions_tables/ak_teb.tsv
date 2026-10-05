@@ -1,0 +1,6 @@
+key	agent_subtype	factorial_effect	value	scope
+#campaign_agent_subtype_factorial_effect_junctions_tables;0;db/campaign_agent_subtype_factorial_effect_junctions_tables/ak_teb				
+3011990	teb_priestess	skaven_discoverability_characters	15	EFS_ONLY_OTHERS
+3011991	teb_duellist_hero	skaven_discoverability_characters	15	EFS_ONLY_OTHERS
+3011992	teb_merc_captain	skaven_discoverability_characters	15	EFS_ONLY_OTHERS
+3011993	teb_piggolo	skaven_discoverability_characters	15	EFS_ONLY_OTHERS

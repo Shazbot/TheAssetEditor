@@ -1,0 +1,9 @@
+<VARIANT_MESH>
+
+	<SLOT name="bodies" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\teb_catrazza.VariantMeshDefinition" />
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\teb_cadavo.VariantMeshDefinition" />
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\teb_colombo.VariantMeshDefinition" />
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\teb_gausser.VariantMeshDefinition" />
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\teb_lupio.VariantMeshDefinition" />
+</VARIANT_MESH>

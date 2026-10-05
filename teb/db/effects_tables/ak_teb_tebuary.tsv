@@ -1,0 +1,54 @@
+effect	icon	priority	icon_negative	category	is_positive_value_good
+#effects_tables;0;db/effects_tables/ak_teb_tebuary					
+tebuary_recr_slots_hidden	null.png	999	null.png	campaign	true
+tebuary_recr_slots_hidden2	null.png	999	null.png	campaign	true
+tebuary_recr_slots_both_dummy	army.png	1	army.png	campaign	true
+tebuary_xp_both_dummy	experience.png	2	experience.png	campaign	true
+tebuary_xp_both_bad_dummy	experience.png	2	experience.png	campaign	true
+tebuary_xp_hidden	null.png	999	null.png	campaign	true
+tebuary_xp_turn_hidden	null.png	999	null.png	campaign	true
+tebuary_disable_strategy1	null.png	999	null.png	campaign	true
+tebuary_roc_global_time		0	HIDDEN	campaign	true
+teb_roc_dieterfist	variable_upkeep.png	65	DUMMY	campaign	true
+teb_roc_estragon	variable_upkeep.png	65	DUMMY	campaign	true
+teb_roc_verena	variable_upkeep.png	65	DUMMY	campaign	true
+teb_roc_strygos	variable_upkeep.png	65	DUMMY	campaign	true
+teb_roc_broswords	variable_upkeep.png	65	DUMMY	campaign	true
+teb_roc_gwatch	variable_upkeep.png	65	DUMMY	campaign	true
+teb_roc_kotss	variable_upkeep.png	65	DUMMY	campaign	true
+teb_roc_organ	variable_upkeep.png	65	DUMMY	campaign	true
+teb_roc_gunn	variable_upkeep.png	65	DUMMY	campaign	true
+teb_roc_montecastello	variable_upkeep.png	65	DUMMY	campaign	true
+tebuary_disable_diplo	null.png	999	null.png	campaign	true
+tebuary_enable_diplo_marburg		0	HIDDEN	campaign	true
+tebuary_roc_allcap		0		campaign	true
+tebuary_1_teb_templar_lord	character.png	1	DUMMY	campaign	true
+tebuary_1_teb_templar_lord_bis	character.png	3	DUMMY	campaign	true
+tebuary_1_teb_templar_lord_req	admin_good.png	2	admin_good.png	campaign	true
+teb_templar_lord_griff	mount.png	50	mount.png	both	true
+teb_templar_lord_incarnate	resistance_ward_save.png	50	mount.png	both	true
+tebuary_disable_socio	null.png	999	null.png	campaign	true
+tebuary_3_sellmercs_disable	null.png	999	null.png	campaign	false
+tebuary_3_bestmercs_disable	null.png	999	null.png	campaign	false
+tebuary_3_allin_disable	null.png	999	null.png	campaign	false
+tebuary_3_diplo_dwf_disable	null.png	999	null.png	campaign	false
+tebuary_3_diplo_hef_disable	null.png	999	null.png	campaign	false
+tebuary_3_diplo_emp_disable	null.png	999	null.png	campaign	false
+tebuary_3_diplo_marburg_disable	null.png	999	null.png	campaign	false
+tebuary_3_diplo_brt_disable	null.png	999	null.png	campaign	false
+tebuary_1_teb_templar_lord_disable	null.png	999	null.png	campaign	false
+tebuary_1_teb_duellist_hero_disable	null.png	999	null.png	campaign	false
+tebuary_1_teb_wizards_disable	null.png	999	null.png	campaign	false
+tebuary_1_teb_lorenzo_disable	null.png	999	null.png	campaign	false
+tebuary_1_teb_duellist_hero	character.png	1	DUMMY	campaign	true
+tebuary_1_teb_duellist_hero_bis	character.png	3	DUMMY	campaign	true
+tebuary_1_teb_duellist_hero_req	admin_good.png	2	admin_good.png	campaign	true
+tebuary_1_teb_lorenzo	character.png	1	DUMMY	campaign	true
+tebuary_1_teb_lorenzo_bis	character.png	3	DUMMY	campaign	true
+tebuary_1_teb_lorenzo_req	admin_good.png	2	admin_good.png	campaign	true
+teb_merc_general_griffon_tip	character.png	51	DUMMY	campaign	true
+til_merchant_bear_tip	character.png	51	DUMMY	campaign	true
+tebuary_1_teb_piggolo	character.png	1	DUMMY	campaign	true
+tebuary_1_teb_piggolo_bis	character.png	3	DUMMY	campaign	true
+tebuary_1_teb_piggolo_req	admin_good.png	2	admin_good.png	campaign	true
+teb_force_loot_all	variable_upkeep.png	65		campaign	true

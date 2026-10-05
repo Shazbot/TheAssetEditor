@@ -1,0 +1,26 @@
+<VARIANT_MESH>
+	<SLOT name="head" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsman/teb_gausser_head.wsmodel" />
+	</SLOT>
+	<SLOT name="head" >	
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_knights_errant\head\ak_errant_bascinet_noface_01.rigid_model_v2"  />
+	</SLOT>
+	<SLOT name="body" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/grey/body/teb_gausser_scarf.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="torso" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_captains\body\emp_captains_body_01.wsmodel">
+			<META_DATA>audio_entity_type:wh_human_male_LH</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="weapon_1" attach_point="be_prop_0" />
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu3/dwf/dwf_props/dwf_lord_axe_1h_03.wsmodel"  >
+			<META_DATA>audio_melee_weapon_type:axe</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu3\dwf\dwf_props\dwf_ironbreakers_shield_04.wsmodel"   >
+			<META_DATA>audio_shield_type:metal</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="weapon_4" attach_point="be_prop_4" />
+	<SLOT name="weapon_5" attach_point="be_prop_5" />
+</VARIANT_MESH>

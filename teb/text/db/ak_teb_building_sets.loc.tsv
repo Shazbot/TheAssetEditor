@@ -1,0 +1,10 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_building_sets.loc		
+building_sets_onscreen_description_teb_economy	Even in times of war, industry and infrastructure will always be required.	false
+building_sets_onscreen_name_teb_economy	Infrastructure	false
+building_sets_onscreen_description_teb_military_recruitment	{{tr:building_set_military_recruitment}}	false
+building_sets_onscreen_name_teb_military_recruitment	Military Recruitment	false
+building_sets_onscreen_description_teb_military_support	Improve the quality of your units and recruit mighty [[img:icon_hero]][[/img]]Heroes to bolster your armies.	false
+building_sets_onscreen_name_teb_military_support	Military Support	false
+building_sets_onscreen_description_teb_defence	Towers and garrisons to defend the city against invaders.	true
+building_sets_onscreen_name_teb_defence	Defence	true

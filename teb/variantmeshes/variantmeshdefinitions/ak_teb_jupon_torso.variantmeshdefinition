@@ -1,0 +1,9 @@
+<VARIANT_MESH>
+	<SLOT name="body" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_wizard\bright\body\ak_teb_bright_jupon.wsmodel" />
+	</SLOT>
+	<SLOT name="arms" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\torso\ak_teb_puffy_sleeves_duellist.wsmodel"  >
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:leather</META_DATA></VARIANT_MESH>
+	</SLOT>
+</VARIANT_MESH>

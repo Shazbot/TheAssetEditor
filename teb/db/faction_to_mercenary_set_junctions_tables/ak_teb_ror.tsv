@@ -1,0 +1,8 @@
+faction	mercenary_set
+#faction_to_mercenary_set_junctions_tables;0;db/faction_to_mercenary_set_junctions_tables/ak_teb_ror	
+wh_main_teb_tilea	teb_renown_pool
+wh_main_teb_border_princes	teb_renown_pool
+wh_main_teb_estalia	teb_renown_pool
+wh_main_teb_tilea	tebuary_roc
+wh_main_teb_border_princes	tebuary_roc
+wh_main_teb_estalia	tebuary_roc

@@ -1,0 +1,154 @@
+key	campaign_key	faction_key	indent	technology_key	technology_node_set	tier	research_points_required	cost_per_round	food_cost	optional_ui_group	resource_cost	required_parents	pixel_offset_x	pixel_offset_y
+#technology_nodes_tables;0;db/technology_nodes_tables/ak_teb														
+teb_tech_exped_vets			0	teb_tech_exped_vets	teb_tech	0	1500	0	0			0	0	0
+teb_tech_recr_vets			0	teb_tech_recr_vets	teb_tech	1	1500	0	0			0	0	0
+teb_tech_steel			3	teb_tech_steel	teb_tech	0	1500	0	0			0	0	0
+teb_tech_immune_psy			0	teb_tech_immune_psy	teb_tech	2	1500	0	0			0	0	0
+teb_tech_trade			6	teb_tech_trade	teb_tech	1	1500	0	0			0	0	0
+teb_tech_classical			3	teb_tech_classical	teb_tech	1	1500	0	0			0	0	0
+teb_tech_classical_sub_BP		mixer_teb_border_princes	4	teb_tech_classical_sub_BP	teb_tech	1	5	2000	0			0	0	0
+teb_tech_classical_sub_gashnag		mixer_teb_gashnag	4	teb_tech_classical_sub_BP	teb_tech	1	5	2000	0			0	0	0
+teb_tech_tactics			3	teb_tech_tactics	teb_tech	2	1500	0	0			0	0	0
+teb_tech_lucrezia			6	teb_tech_lucrezia	teb_tech	2	1500	0	0			0	0	0
+teb_tech_leaders			3	teb_tech_leaders	teb_tech	3	1500	0	0			0	0	0
+teb_tech_mercs			0	teb_tech_mercs	teb_tech	3	1500	0	0			0	0	0
+teb_tech_mercs_sub_estalia		mixer_teb_estalia	1	teb_tech_mercs_sub_estalia	teb_tech	3	5	2000	0			0	0	0
+teb_tech_mercs_sub_bilbali		mixer_teb_bilbali	1	teb_tech_mercs_sub_estalia	teb_tech	3	5	2000	0			0	0	0
+teb_tech_myrmidia			6	teb_tech_myrmidia	teb_tech	3	1500	0	0			0	0	0
+teb_tech_myrmidia_sub_BP		mixer_teb_border_princes	7	teb_tech_myrmidia_sub_BP	teb_tech	3	5	2000	0			0	0	0
+teb_tech_myrmidia_sub_gashnag		mixer_teb_gashnag	7	teb_tech_myrmidia_sub_BP	teb_tech	3	5	2000	0			0	0	0
+teb_tech_tercio		mixer_teb_estalia	0	teb_tech_tercio	teb_tech	4	1800	0	0			2	0	0
+teb_tech_tilean		mixer_teb_tilea	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_borderlands		mixer_teb_border_princes	0	teb_tech_borderlands	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores		mixer_teb_estalia	3	teb_tech_conquistadores	teb_tech	4	1800	0	0			2	0	0
+teb_tech_inquisition		mixer_teb_estalia	6	teb_tech_inquisition	teb_tech	4	1800	0	0			2	0	0
+teb_tech_unsung		mixer_teb_border_princes	3	teb_tech_unsung	teb_tech	4	1800	0	0			2	0	0
+teb_tech_rebuild		mixer_teb_border_princes	6	teb_tech_rebuild	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy		mixer_teb_tilea	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire		mixer_teb_tilea	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores_col		mixer_teb_new_world_colonies	3	teb_tech_conquistadores_col	teb_tech	4	1800	0	0			2	0	0
+teb_tech_bestofworst		mixer_teb_new_world_colonies	0	teb_tech_bestofworst	teb_tech	4	1800	0	0			2	0	0
+teb_tech_oldones		mixer_teb_new_world_colonies	6	teb_tech_oldones	teb_tech	0	1500	0	0			0	0	0
+teb_tech_bravenewworld		mixer_teb_new_world_colonies	6	teb_tech_bravenewworld	teb_tech	4	1800	0	0			2	0	0
+teb_tech_dorf			6	teb_tech_dorf	teb_tech	0	1500	0	0			0	0	0
+teb_tech_ROR_outland		mixer_teb_new_world_colonies	8	teb_tech_ROR_outland	teb_tech	0	5	2000	0			0	0	0
+teb_tech_ROR_pro		mixer_teb_new_world_colonies	8	teb_tech_ROR_pro	teb_tech	1	5	3000	0			0	0	0
+teb_tech_ROR_brass		mixer_teb_new_world_colonies	8	teb_tech_ROR_brass	teb_tech	2	5	5000	0			0	0	0
+teb_tech_tilean_tobaro		wh_main_teb_tobaro	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_tobaro		wh_main_teb_tobaro	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_tobaro		wh_main_teb_tobaro	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_pools_BP_brets	wh3_main_prologue	mixer_teb_border_princes	2	teb_pools_BP_brets	teb_tech	6	1	3000	0	teb_pools_BP		0	0	0
+teb_pools_BP_empire	wh3_main_prologue	mixer_teb_border_princes	1	teb_pools_BP_empire	teb_tech	6	1	2000	0	teb_pools_BP		0	0	0
+teb_pools_BP_teb	wh3_main_prologue	mixer_teb_border_princes	0	teb_pools_BP_teb	teb_tech	6	1	1000	0	teb_pools_BP		0	0	0
+teb_pools_til_mix	wh3_main_prologue	mixer_teb_tilea	0	teb_pools_til_mix	teb_tech	6	1	1000	0	teb_pools_til		0	0	0
+teb_pools_tob_mix	wh3_main_prologue	wh_main_teb_tobaro	0	teb_pools_tob_mix	teb_tech	6	1	1000	0	teb_pools_tob		0	0	0
+teb_pools_nwc_emp	wh3_main_prologue	mixer_teb_new_world_colonies	0	teb_pools_nwc_emp	teb_tech	6	1	1000	0	teb_pools_nwc		0	0	0
+teb_pools_nwc_brets	wh3_main_prologue	mixer_teb_new_world_colonies	1	teb_pools_nwc_brets	teb_tech	6	1	2000	0	teb_pools_nwc		0	0	0
+teb_pools_est_emp	wh3_main_prologue	mixer_teb_estalia	1	teb_pools_est_emp	teb_tech	6	1	2000	0	teb_pools_est		0	0	0
+teb_pools_til_kislev	wh3_main_prologue	mixer_teb_tilea	1	teb_pools_kislev	teb_tech	6	1	3000	0	teb_pools_til		0	0	0
+teb_pools_est_kislev	wh3_main_prologue	mixer_teb_estalia	2	teb_pools_kislev	teb_tech	6	1	3000	0	teb_pools_est		0	0	0
+teb_pools_BP_kislev	wh3_main_prologue	mixer_teb_border_princes	3	teb_pools_kislev	teb_tech	6	1	3000	0	teb_pools_BP		0	0	0
+teb_pools_tob_kislev	wh3_main_prologue	wh_main_teb_tobaro	1	teb_pools_kislev	teb_tech	6	1	3000	0	teb_pools_tob		0	0	0
+teb_tank_1			8	teb_tank_1	teb_tech	4	5	1000	0	teb_tech_tank_stuff		0	0	0
+teb_tank_2			8	teb_tank_2	teb_tech	5	5	2000	0	teb_tech_tank_stuff		0	0	0
+teb_tank_3			8	teb_tank_3	teb_tech	6	5	3000	0	teb_tech_tank_stuff		0	0	0
+mixer_teb_dummy		wh_main_teb_tobaro	18	wh_main_tech_dwf_civ_0_2	teb_tech	1	999999	0	0			0	0	0
+teb_tech_conquistadores_col_colombo		mixer_teb_colombo	3	teb_tech_conquistadores_col	teb_tech	4	1800	0	0			2	0	0
+teb_tech_bestofworst_colombo		mixer_teb_colombo	0	teb_tech_bestofworst	teb_tech	4	1800	0	0			2	0	0
+teb_tech_oldones_colombo		mixer_teb_colombo	6	teb_tech_oldones	teb_tech	0	1500	0	0			0	0	0
+teb_tech_bravenewworld_colombo		mixer_teb_colombo	6	teb_tech_bravenewworld	teb_tech	4	1800	0	0			2	0	0
+teb_tech_ROR_outland_colombo		mixer_teb_colombo	8	teb_tech_ROR_outland	teb_tech	0	5	2000	0			0	0	0
+teb_tech_ROR_pro_colombo		mixer_teb_colombo	8	teb_tech_ROR_pro	teb_tech	1	5	3000	0			0	0	0
+teb_tech_ROR_brass_colombo		mixer_teb_colombo	8	teb_tech_ROR_brass	teb_tech	2	5	5000	0			0	0	0
+teb_pools_nwc_emp_colombo	wh3_main_prologue	mixer_teb_colombo	0	teb_pools_nwc_emp	teb_tech	6	1	1000	0	teb_pools_nwc		0	0	0
+teb_pools_nwc_brets_colombo	wh3_main_prologue	mixer_teb_colombo	1	teb_pools_nwc_brets	teb_tech	6	1	2000	0	teb_pools_nwc		0	0	0
+teb_tech_borderlands_gashnag		mixer_teb_gashnag	0	teb_tech_borderlands	teb_tech	4	1800	0	0			2	0	0
+teb_tech_unsung_gashnag		mixer_teb_gashnag	3	teb_tech_unsung	teb_tech	4	1800	0	0			2	0	0
+teb_tech_rebuild_gashnag		mixer_teb_gashnag	6	teb_tech_rebuild	teb_tech	4	1800	0	0			2	0	0
+teb_pools_BP_brets_gashnag	wh3_main_prologue	mixer_teb_gashnag	2	teb_pools_BP_brets	teb_tech	6	1	3000	0	teb_pools_BP		0	0	0
+teb_pools_BP_empire_gashnag	wh3_main_prologue	mixer_teb_gashnag	1	teb_pools_BP_empire	teb_tech	6	1	2000	0	teb_pools_BP		0	0	0
+teb_pools_BP_teb_gashnag	wh3_main_prologue	mixer_teb_gashnag	0	teb_pools_BP_teb	teb_tech	6	1	1000	0	teb_pools_BP		0	0	0
+teb_pools_BP_kislev_gashnag	wh3_main_prologue	mixer_teb_gashnag	3	teb_pools_kislev	teb_tech	6	1	3000	0	teb_pools_BP		0	0	0
+teb_tech_tercio_bilbali		mixer_teb_bilbali	0	teb_tech_tercio	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores_bilbali		mixer_teb_bilbali	3	teb_tech_conquistadores	teb_tech	4	1800	0	0			2	0	0
+teb_tech_inquisition_bilbali		mixer_teb_bilbali	6	teb_tech_inquisition	teb_tech	4	1800	0	0			2	0	0
+teb_pools_est_emp_bilbali	wh3_main_prologue	mixer_teb_bilbali	1	teb_pools_est_emp	teb_tech	6	1	2000	0	teb_pools_est		0	0	0
+teb_pools_est_kislev_bilbali	wh3_main_prologue	mixer_teb_bilbali	2	teb_pools_kislev	teb_tech	6	1	3000	0	teb_pools_est		0	0	0
+teb_tech_tilean_catrazza		mixer_teb_catrazza	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_catrazza		mixer_teb_catrazza	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_catrazza		mixer_teb_catrazza	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_pools_til_mix_catrazza	wh3_main_prologue	mixer_teb_catrazza	0	teb_pools_til_mix	teb_tech	6	1	1000	0	teb_pools_til		0	0	0
+teb_pools_til_kislev_catrazza	wh3_main_prologue	mixer_teb_catrazza	1	teb_pools_kislev	teb_tech	6	1	3000	0	teb_pools_til		0	0	0
+teb_tech_mercs_sub_cr_teb_almagora		cr_teb_almagora	1	teb_tech_mercs_sub_estalia	teb_tech	3	5	2000	0			0	0	0
+teb_tech_tercio_cr_teb_almagora		cr_teb_almagora	0	teb_tech_tercio	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores_cr_teb_almagora		cr_teb_almagora	3	teb_tech_conquistadores	teb_tech	4	1800	0	0			2	0	0
+teb_tech_inquisition_cr_teb_almagora		cr_teb_almagora	6	teb_tech_inquisition	teb_tech	4	1800	0	0			2	0	0
+teb_tech_mercs_sub_cr_teb_bilbali		cr_teb_bilbali	1	teb_tech_mercs_sub_estalia	teb_tech	3	5	2000	0			0	0	0
+teb_tech_tercio_cr_teb_bilbali		cr_teb_bilbali	0	teb_tech_tercio	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores_cr_teb_bilbali		cr_teb_bilbali	3	teb_tech_conquistadores	teb_tech	4	1800	0	0			2	0	0
+teb_tech_inquisition_cr_teb_bilbali		cr_teb_bilbali	6	teb_tech_inquisition	teb_tech	4	1800	0	0			2	0	0
+teb_tech_mercs_sub_cr_teb_gualcazar		cr_teb_gualcazar	1	teb_tech_mercs_sub_estalia	teb_tech	3	5	2000	0			0	0	0
+teb_tech_tercio_cr_teb_gualcazar		cr_teb_gualcazar	0	teb_tech_tercio	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores_cr_teb_gualcazar		cr_teb_gualcazar	3	teb_tech_conquistadores	teb_tech	4	1800	0	0			2	0	0
+teb_tech_inquisition_cr_teb_gualcazar		cr_teb_gualcazar	6	teb_tech_inquisition	teb_tech	4	1800	0	0			2	0	0
+teb_tech_mercs_sub_cr_teb_magritta		cr_teb_magritta	1	teb_tech_mercs_sub_estalia	teb_tech	3	5	2000	0			0	0	0
+teb_tech_tercio_cr_teb_magritta		cr_teb_magritta	0	teb_tech_tercio	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores_cr_teb_magritta		cr_teb_magritta	3	teb_tech_conquistadores	teb_tech	4	1800	0	0			2	0	0
+teb_tech_inquisition_cr_teb_magritta		cr_teb_magritta	6	teb_tech_inquisition	teb_tech	4	1800	0	0			2	0	0
+teb_tech_mercs_sub_cr_teb_nuja		cr_teb_nuja	1	teb_tech_mercs_sub_estalia	teb_tech	3	5	2000	0			0	0	0
+teb_tech_tercio_cr_teb_nuja		cr_teb_nuja	0	teb_tech_tercio	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores_cr_teb_nuja		cr_teb_nuja	3	teb_tech_conquistadores	teb_tech	4	1800	0	0			2	0	0
+teb_tech_inquisition_cr_teb_nuja		cr_teb_nuja	6	teb_tech_inquisition	teb_tech	4	1800	0	0			2	0	0
+teb_tech_mercs_sub_cr_teb_reinos_pobres		cr_teb_reinos_pobres	1	teb_tech_mercs_sub_estalia	teb_tech	3	5	2000	0			0	0	0
+teb_tech_tercio_cr_teb_reinos_pobres		cr_teb_reinos_pobres	0	teb_tech_tercio	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores_cr_teb_reinos_pobres		cr_teb_reinos_pobres	3	teb_tech_conquistadores	teb_tech	4	1800	0	0			2	0	0
+teb_tech_inquisition_cr_teb_reinos_pobres		cr_teb_reinos_pobres	6	teb_tech_inquisition	teb_tech	4	1800	0	0			2	0	0
+teb_tech_mercs_sub_cr_teb_vizeaya		cr_teb_vizeaya	1	teb_tech_mercs_sub_estalia	teb_tech	3	5	2000	0			0	0	0
+teb_tech_tercio_cr_teb_vizeaya		cr_teb_vizeaya	0	teb_tech_tercio	teb_tech	4	1800	0	0			2	0	0
+teb_tech_conquistadores_cr_teb_vizeaya		cr_teb_vizeaya	3	teb_tech_conquistadores	teb_tech	4	1800	0	0			2	0	0
+teb_tech_inquisition_cr_teb_vizeaya		cr_teb_vizeaya	6	teb_tech_inquisition	teb_tech	4	1800	0	0			2	0	0
+teb_tech_classical_sub_cr_teb_central_confederacy		cr_teb_central_confederacy	4	teb_tech_classical_sub_BP	teb_tech	1	5	2000	0			0	0	0
+teb_tech_myrmidia_sub_cr_teb_central_confederacy		cr_teb_central_confederacy	7	teb_tech_myrmidia_sub_BP	teb_tech	3	5	2000	0			0	0	0
+teb_tech_borderlands_cr_teb_central_confederacy		cr_teb_central_confederacy	0	teb_tech_borderlands	teb_tech	4	1800	0	0			2	0	0
+teb_tech_unsung_cr_teb_central_confederacy		cr_teb_central_confederacy	3	teb_tech_unsung	teb_tech	4	1800	0	0			2	0	0
+teb_tech_rebuild_cr_teb_central_confederacy		cr_teb_central_confederacy	6	teb_tech_rebuild	teb_tech	4	1800	0	0			2	0	0
+teb_tech_classical_sub_cr_teb_north_confederacy		cr_teb_north_confederacy	4	teb_tech_classical_sub_BP	teb_tech	1	5	2000	0			0	0	0
+teb_tech_myrmidia_sub_cr_teb_north_confederacy		cr_teb_north_confederacy	7	teb_tech_myrmidia_sub_BP	teb_tech	3	5	2000	0			0	0	0
+teb_tech_borderlands_cr_teb_north_confederacy		cr_teb_north_confederacy	0	teb_tech_borderlands	teb_tech	4	1800	0	0			2	0	0
+teb_tech_unsung_cr_teb_north_confederacy		cr_teb_north_confederacy	3	teb_tech_unsung	teb_tech	4	1800	0	0			2	0	0
+teb_tech_rebuild_cr_teb_north_confederacy		cr_teb_north_confederacy	6	teb_tech_rebuild	teb_tech	4	1800	0	0			2	0	0
+teb_tech_classical_sub_cr_teb_south_confederacy		cr_teb_south_confederacy	4	teb_tech_classical_sub_BP	teb_tech	1	5	2000	0			0	0	0
+teb_tech_myrmidia_sub_cr_teb_south_confederacy		cr_teb_south_confederacy	7	teb_tech_myrmidia_sub_BP	teb_tech	3	5	2000	0			0	0	0
+teb_tech_borderlands_cr_teb_south_confederacy		cr_teb_south_confederacy	0	teb_tech_borderlands	teb_tech	4	1800	0	0			2	0	0
+teb_tech_unsung_cr_teb_south_confederacy		cr_teb_south_confederacy	3	teb_tech_unsung	teb_tech	4	1800	0	0			2	0	0
+teb_tech_rebuild_cr_teb_south_confederacy		cr_teb_south_confederacy	6	teb_tech_rebuild	teb_tech	4	1800	0	0			2	0	0
+teb_tech_tilean_cr_teb_luccini		cr_teb_luccini	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_tilean_cr_teb_miragliano		cr_teb_miragliano	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_tilean_cr_teb_monte_castello		cr_teb_monte_castello	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_tilean_cr_teb_pavona		cr_teb_pavona	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_tilean_cr_teb_remas		cr_teb_remas	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_tilean_cr_teb_trantio		cr_teb_trantio	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_tilean_cr_teb_verezzo		cr_teb_verezzo	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_cr_teb_luccini		cr_teb_luccini	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_cr_teb_miragliano		cr_teb_miragliano	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_cr_teb_monte_castello		cr_teb_monte_castello	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_cr_teb_pavona		cr_teb_pavona	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_cr_teb_remas		cr_teb_remas	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_cr_teb_trantio		cr_teb_trantio	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_cr_teb_verezzo		cr_teb_verezzo	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_cr_teb_luccini		cr_teb_luccini	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_cr_teb_miragliano		cr_teb_miragliano	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_cr_teb_monte_castello		cr_teb_monte_castello	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_cr_teb_pavona		cr_teb_pavona	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_cr_teb_remas		cr_teb_remas	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_cr_teb_trantio		cr_teb_trantio	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_cr_teb_verezzo		cr_teb_verezzo	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_tilean_blazing		cr_teb_order_of_the_blazing_sun	0	teb_tech_tilean	teb_tech	4	1800	0	0			2	0	0
+teb_tech_supremacy_blazing		cr_teb_order_of_the_blazing_sun	3	teb_tech_supremacy	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_blazing		cr_teb_order_of_the_blazing_sun	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_nwc	cr_oldworld	mixer_teb_new_world_colonies	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_empire_nwc_towc	cr_oldworldclassic	mixer_teb_new_world_colonies	6	teb_tech_empire	teb_tech	4	1800	0	0			2	0	0
+teb_tech_recr_vets_sub			1	teb_tech_recr_vets_sub	teb_tech	1	5	2000	0			0	0	0
+teb_tech_exped_vets_sub			1	teb_tech_exped_vets_sub	teb_tech	0	5	2000	0			0	0	0
+teb_crossbow_rocket			8	teb_crossbow_rocket	teb_tech	3	5	3000	0	teb_tech_tank_stuff		0	0	10
+teb_tech_trade_sub_lions			7	teb_tech_trade_sub_lions	teb_tech	1	1	2000	0			0	0	0

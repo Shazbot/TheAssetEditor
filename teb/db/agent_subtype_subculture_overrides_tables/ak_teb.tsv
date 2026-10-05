@@ -1,0 +1,6 @@
+subculture	subtype	agent	associated_unit_override	small_icon
+#agent_subtype_subculture_overrides_tables;5;db/agent_subtype_subculture_overrides_tables/ak_teb				
+mixer_teb_southern_realms	teb_priestess	dignitary		ui/campaign ui/agents/wh_main_brt_champion.png
+mixer_teb_southern_realms	teb_merc_captain	champion		ui/campaign ui/agents/wh_main_emp_champion.png
+mixer_teb_southern_realms	wh_main_emp_bright_wizard	wizard		ui/campaign ui/agents/wh_main_wizard.png
+mixer_teb_southern_realms	teb_duellist_hero	spy		ui/campaign ui/agents/wh2_main_def_spy.png

@@ -1,0 +1,14 @@
+<VARIANT_MESH>
+	<SLOT name="head">
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_state_troops_heads.variantmeshdefinition" />
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\ak_morion_all.variantmeshdefinition" />
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\ak_militia_cavalier_hats.variantmeshdefinition" />
+	</SLOT>
+	<SLOT name="body" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/teb_militia_base.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="torso accessories" probability ="0.5" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\brt\brt_peasants_bowmen\body\ak_teb_militia_torso_sash.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\brt\brt_peasants_bowmen\body\ak_teb_militia_torso_sash2.wsmodel" />
+	</SLOT>
+</VARIANT_MESH>

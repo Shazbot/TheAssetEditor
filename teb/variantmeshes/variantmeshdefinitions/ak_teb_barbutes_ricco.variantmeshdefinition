@@ -1,0 +1,24 @@
+<VARIANT_MESH>
+			<SLOT name="helmet" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_nonasal_ricco.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_nasal_ricco.wsmodel" />
+        
+			</SLOT>
+			<SLOT name="plumes" probability ="1" >
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_barbute2_crest.variantmeshdefinition" />
+			</SLOT>
+                    <SLOT name="gorget" >   
+                        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_demigryph_knight/head/ak_demi_gorget_ricco.wsmodel" />
+                    </SLOT>
+                <SLOT name="cloth" probability ="0.6" >
+                    <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\ak_teb_ricco_cloth_helmet_01.rigid_model_v2"  />
+                    <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\ak_teb_ricco_bandage_helmet_01.wsmodel"  />
+                </SLOT> 
+	<SLOT name="head" >
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_01.wsmodel" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_02.wsmodel" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_04.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_02.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_04.wsmodel" />
+	</SLOT>
+</VARIANT_MESH>

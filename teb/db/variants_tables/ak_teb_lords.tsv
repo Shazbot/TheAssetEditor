@@ -1,0 +1,35 @@
+variant_name	tech_folder	variant_filename	low_poly_filename	mount_scale	scale	scale_variation	super_low_poly_filename
+#variants_tables;6;db/variants_tables/ak_teb_lords							
+bor_ranger_lord		bor_ranger_lord		1.0000	1.1500	0.0500	
+bor_ranger_lord_horse		bor_ranger_lord_horse		1.0000	1.1500	0.0500	
+bor_ranger_lord_horse2		bor_ranger_lord_horse2		1.0000	1.1500	0.0500	
+bor_ranger_lord_01		bor_ranger_lord_01		1.0000	1.1500	0.0500	
+bor_ranger_lord_horse_01		bor_ranger_lord_horse_01		1.0000	1.1500	0.0500	
+bor_ranger_lord_horse2_01		bor_ranger_lord_horse2_01		1.0000	1.1500	0.0500	
+bor_ranger_lord_02		bor_ranger_lord_02		1.0000	1.1500	0.0500	
+bor_ranger_lord_horse_02		bor_ranger_lord_horse_02		1.0000	1.1500	0.0500	
+bor_ranger_lord_horse2_02		bor_ranger_lord_horse2_02		1.0000	1.1500	0.0500	
+bor_ranger_lord_03		bor_ranger_lord_03		1.0000	1.1500	0.0500	
+bor_ranger_lord_horse_03		bor_ranger_lord_horse_03		1.0000	1.1500	0.0500	
+bor_ranger_lord_horse2_03		bor_ranger_lord_horse2_03		1.0000	1.1500	0.0500	
+til_merchant		til_merchant		1.0000	1.1500	0.0500	
+til_merchant_01		til_merchant_01		1.0000	1.1500	0.0500	
+til_merchant_02		til_merchant_02		1.0000	1.1500	0.0500	
+til_merchant_03		til_merchant_03		1.0000	1.1500	0.0500	
+est_inquisitor_01		est_inquisitor_01		1.0000	1.1500	0.0500	
+est_inquisitor_02		est_inquisitor_02		1.0000	1.1500	0.0500	
+est_inquisitor_03		est_inquisitor_03		1.0000	1.1500	0.0500	
+est_inquisitor		est_inquisitor		1.0000	1.1500	0.0500	
+teb_merc_general		teb_merc_general		1.0000	1.1500	0.0500	
+teb_merc_general_01		teb_merc_general_01		1.0000	1.1500	0.0500	
+teb_merc_general_02		teb_merc_general_02		1.0000	1.1500	0.0500	
+teb_merc_general_03		teb_merc_general_03		1.0000	1.1500	0.0500	
+teb_merc_general_04		teb_merc_general_04		1.0000	1.1500	0.0500	
+teb_merc_general_05		teb_merc_general_05		1.0000	1.1500	0.0500	
+teb_templar_lord		teb_templar_lord		1.0000	1.1500	0.0500	
+teb_templar_lord_01		teb_templar_lord_01		1.0000	1.1500	0.0500	
+teb_templar_lord_02		teb_templar_lord_02		1.0000	1.1500	0.0500	
+teb_templar_demi	VariantMeshes\wh_variantmodels\hr1\emp\emp_warbeast_horse\tech	teb_templar_demi		1.0000	1.0000	0.0000	
+teb_templar_lord_champ		teb_templar_lord_champ		1.0000	1.1500	0.0500	
+teb_templar_lord_01_champ		teb_templar_lord_01_champ		1.0000	1.1500	0.0500	
+teb_templar_lord_02_champ		teb_templar_lord_02_champ		1.0000	1.1500	0.0500	

@@ -1,0 +1,57 @@
+key	localised_description	localised_title	bundle_target	priority	ui_icon	is_global_effect	show_in_3d_space	owner_only
+#effect_bundles_tables;4;db/effect_bundles_tables/ak_teb								
+tebuary_3_sellmercs	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_3_bestmercs	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_3_allin	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_disable_strategy1	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_dieterfist	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_estragon	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_verena	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_strygos	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_broswords	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_gwatch	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_kotss	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_organ	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_gunn	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+teb_roc_montecastello	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_diplo_dwf	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_3_diplo_hef	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_3_diplo_emp	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_3_diplo_marburg	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_3_diplo_brt	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_disable_diplo	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_socio_subt	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_3_socio_war	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_3_socio_grandeur	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_3_socio_arts	<-Placeholder->	<-Placeholder->	faction	1	edict_council_of_burgomeisters.png	true	false	false
+tebuary_disable_socio	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_sellmercs_disable	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_bestmercs_disable	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_allin_disable	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_diplo_dwf_disable	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_diplo_hef_disable	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_diplo_emp_disable	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_diplo_marburg_disable	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_3_diplo_brt_disable	<-Placeholder->	<-Placeholder->	faction	0		true	false	false
+tebuary_1_teb_templar_lord_disable	<-Placeholder->	<-Placeholder->	faction	1	paladin.png	true	false	false
+tebuary_1_teb_duellist_hero_disable	<-Placeholder->	<-Placeholder->	faction	1	khainite_assassin.png	true	false	false
+tebuary_1_teb_wizards_disable	<-Placeholder->	<-Placeholder->	faction	1	wizard.png	true	false	false
+teb_lord_trait_teb_borgio_the_besieger	<-Placeholder->	<-Placeholder->	faction	1	character.png	false	false	false
+teb_lord_trait_teb_gashnag	<-Placeholder->	<-Placeholder->	faction	1	character.png	false	false	false
+teb_lord_trait_teb_lucrezzia_belladonna	<-Placeholder->	<-Placeholder->	faction	1	character.png	false	false	false
+teb_lord_trait_teb_lucrezzia_belladonna_TOW	<-Placeholder->	<-Placeholder->	faction	1	character.png	false	false	false
+teb_lord_trait_teb_gausser	fff	Master of Hope	faction	1	character.png	false	false	false
+teb_lord_trait_teb_lupio	<-Placeholder->	<-Placeholder->	faction	1	character.png	false	false	false
+teb_lord_trait_teb_catrazza	fff	Tilean Renaissance	faction	1	character.png	false	false	false
+teb_lord_trait_teb_colombo	<-Placeholder->	<-Placeholder->	faction	1	character.png	false	false	false
+teb_lord_trait_teb_colombo_TOW	<-Placeholder->	<-Placeholder->	faction	1	character.png	false	false	false
+teb_lord_trait_teb_cadavo	<-Placeholder->	<-Placeholder->	faction	1	character.png	false	false	false
+teb_lord_trait_teb_lorenzo_lupo	<-Placeholder->	<-Placeholder->	faction	1	character.png	false	false	false
+teb_da_bundle	subculture overtrait		faction	1	character.png	false	false	true
+tebuary_1_teb_duellist_hero	<-Placeholder->	<-Placeholder->	faction	1	khainite_assassin.png	true	false	false
+tebuary_1_teb_wizards	<-Placeholder->	<-Placeholder->	faction	1	wizard.png	true	false	false
+tebuary_1_teb_templar_lord	<-Placeholder->	<-Placeholder->	faction	1	khainite_assassin.png	false	false	false
+tebuary_1_teb_lorenzo	<-Placeholder->	<-Placeholder->	faction	1	khainite_assassin.png	false	false	false
+teb_merc_general_griffon_tip	<-Placeholder->	<-Placeholder->	faction	1	khainite_assassin.png	false	false	false
+til_merchant_bear_tip	<-Placeholder->	<-Placeholder->	faction	1	khainite_assassin.png	false	false	false
+tebuary_1_teb_piggolo	<-Placeholder->	<-Placeholder->	faction	1	khainite_assassin.png	false	false	false

@@ -1,0 +1,23 @@
+<VARIANT_MESH>
+    <SLOT name="helmet" >
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_nonasal.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_nonasal.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_nasal.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_nonasal_brassband.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_nasal_brassband.wsmodel" />
+
+    </SLOT>
+    <SLOT name="plumes" probability ="0.5" >
+        <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_barbute2_crest.variantmeshdefinition" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/brt/brt_knights_errant/head/ak_errant_torse_barbute.rigid_model_v2" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/teb/barbutes/ak_teb_horsehair_01_double.wsmodel" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/teb/barbutes/ak_teb_horsehair_02_double.wsmodel" />
+    </SLOT>
+	<SLOT name="head" >
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_01.wsmodel" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_02.wsmodel" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_04.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_02.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_04.wsmodel" />
+	</SLOT>
+</VARIANT_MESH>

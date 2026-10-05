@@ -1,0 +1,6 @@
+<VARIANT_MESH>
+			<SLOT name="crest" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\teb\barbute2\ak_teb_krelly_barbute_crest_red.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\teb\barbute2\ak_teb_krelly_barbute_crest_black.wsmodel" />
+			</SLOT>
+</VARIANT_MESH>

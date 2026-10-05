@@ -1,0 +1,8 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_campaign_post_battle_captive_options.loc		
+campaign_post_battle_captive_options_onscreen_name_3011990	A Merc's Mercy	true
+campaign_post_battle_captive_options_description_3011990	Let the captains decide. You can expect captives to be executed, humiliated and sent running, or sold as slaves. The foe may not appreciate it, but the troops will.	true
+campaign_post_battle_captive_options_onscreen_name_3011991	Hire Back and Share Loot	true
+campaign_post_battle_captive_options_description_3011991	We are not here for unnecessary bloodshed. It’s the civil thing to do, and hired mercenaries don’t like bad blood.	true
+campaign_post_battle_captive_options_onscreen_name_3011992	Parade Prisoners	true
+campaign_post_battle_captive_options_description_3011992	Show the shackled creatures around and even send back them home for a parade! Everybody likes seeing humiliated evil.	true

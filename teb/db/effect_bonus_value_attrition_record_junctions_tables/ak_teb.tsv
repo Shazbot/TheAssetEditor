@@ -1,0 +1,5 @@
+attrition_record	bonus_value_id	effect
+#effect_bonus_value_attrition_record_junctions_tables;0;db/effect_bonus_value_attrition_record_junctions_tables/ak_teb		
+non_vampire_territory	damage_mod	teb_gashnag_attrition_others
+wasteland	damage_mod	teb_attrition_res_wasteland
+mountain	damage_mod	teb_attrition_res_mountain

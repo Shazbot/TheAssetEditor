@@ -1,0 +1,19 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_special_ability_phases.loc		
+special_ability_phases_onscreen_name_teb_priestess_spear		true
+special_ability_phases_onscreen_name_bor_ranger_lord_stalk		true
+special_ability_phases_onscreen_name_bor_ranger_lord_stalk2	Throat-cutting Time	true
+special_ability_phases_onscreen_name_teb_dirty_fighting	[[col:red]]Dirty Fighting[[/col]]	true
+special_ability_phases_onscreen_name_teb_catrazza_ring	[[img:stage_one]][[/img]]Effects on self	true
+special_ability_phases_onscreen_name_teb_contact_null	[[col:red]]No Effect[[/col]]	true
+special_ability_phases_onscreen_name_teb_contact_blind	[[col:red]][[img:ui/battle ui/ability_icons/teb_contact_blind.png]][[/img]]Blinding Light[[/col]]	true
+special_ability_phases_onscreen_name_teb_roc_organ_contact	[[col:red]][[img:ui/skins/default/modifier_icon_overhead_morale.png]][[/img]]What's That Smell?[[/col]]	true
+special_ability_phases_onscreen_name_teb_eldaddio_contact	[[col:red]][[img:ui/battle ui/ability_icons/teb_eldaddio_contact.png]][[/img]]Cursed by Sokth[[/col]]	true
+special_ability_phases_onscreen_name_teb_roc_strygos_contact	[[img:ui/skins/default/dlc16_modifier_icon_cursed.png]][[/img]][[col:red]]Cursed![[/col]]	false
+special_ability_invalid_usage_flags_alt_description_army_is_full	Army is not full	false
+special_ability_phases_onscreen_name_teb_lorenzo_lupo_runner	[[img:ui/battle ui/ability_icons/replenishment_fatigue.png]][[/img]]Running Practice	true
+special_ability_phases_onscreen_name_teb_lorenzo_lupo_wrestler	[[img:ui/battle ui/ability_icons/replenishment_fatigue.png]][[/img]]Wrestling Practice	true
+special_ability_phases_onscreen_name_teb_lorenzo_lupo_strongman	[[img:ui/battle ui/ability_icons/replenishment_fatigue.png]][[/img]]Rowing Practice	true
+special_ability_phases_onscreen_name_teb_crossbow_rocket_contact	[[col:red]][[img:ui/battle ui/ability_icons/teb_crossbow_rocket_contact.png]][[/img]]Fireworks![[/col]]	true
+special_ability_phases_onscreen_name_teb_billmen_contact	[[img:ui/battle ui/ability_icons/teb_billmen_contact.png]][[/img]][[col:red]]Hooked[[/col]]	false
+special_ability_phases_onscreen_name_teb_half_pikes_contact	[[img:ui/battle ui/ability_icons/teb_half_pikes_contact.png]][[/img]][[col:red]]Contained[[/col]]	false

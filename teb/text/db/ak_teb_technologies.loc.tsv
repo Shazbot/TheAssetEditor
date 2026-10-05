@@ -1,0 +1,98 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_technologies.loc		
+technologies_short_description_teb_tech_exped_vets	A soldier that has faced many a defeat is less likely to just run away at the first sign of trouble.	true
+technologies_onscreen_name_teb_tech_exped_vets	Expeditionary Veterans	true
+technologies_short_description_teb_tech_recr_vets	"See the scruffy one with the bandage and the limp? Pick that one. Just do it."	true
+technologies_onscreen_name_teb_tech_recr_vets	Recruit the Veterans	true
+technologies_short_description_teb_tech_steel	"Nothing but tha best armour here-a! Quarrel tested! Money back guaranteed if it breaks!"	true
+technologies_onscreen_name_teb_tech_steel	Local Steel	true
+technologies_short_description_teb_tech_immune_psy	"You think that's scary? Wake me up when it starts spitting fire all over the pl-Alright, alright, bloody Myrmidia, I'm coming."	true
+technologies_onscreen_name_teb_tech_immune_psy	Unfazed Survivors	true
+technologies_short_description_teb_tech_dorf	"Keep 'em payments to the little buggers regular and they won't raze your city to the ground because you filed a couple of coins. Oh, Master Dwarf, what a lovely surprise!"	true
+technologies_onscreen_name_teb_tech_dorf	Dwarfen Allies	true
+technologies_short_description_teb_tech_trade	The wealth of the Southern Realms flows through sea and land, into chests and pockets, and back again.	true
+technologies_onscreen_name_teb_tech_trade	Flourishing Southern Trade	true
+technologies_short_description_teb_tech_classical	"See here, we have to form up the troops into curved arrows and drive them deep into the enemy oblongs. What? Diagrams are clear."	true
+technologies_onscreen_name_teb_tech_classical	Classical Military Studies	true
+technologies_short_description_teb_tech_tactics	In a heterogeneous mercenary army, coordination is key to victory. And a well-cooperating host is like an unstoppable grinder.	true
+technologies_onscreen_name_teb_tech_tactics	Tactical Superiority	true
+technologies_short_description_teb_tech_lucrezia	Actual war is only the last resort in the art of diplomacy, and leverage is just another kind of artillery.	true
+technologies_onscreen_name_teb_tech_lucrezia	Lucrezzian Diplomacy	true
+technologies_short_description_teb_tech_leaders	When you are the one holding the lit candle for the surgeon to amputate your own leg, you got your troops full respect until the day you die.	true
+technologies_onscreen_name_teb_tech_leaders	Self-made Leaders	true
+technologies_short_description_teb_tech_mercs	Mercenaries know how to make their risky lives a little bit more sustainable. Surely not for the others.	true
+technologies_onscreen_name_teb_tech_mercs	Mercenary Hosts	true
+technologies_short_description_teb_tech_myrmidia	The Cult of Myrmidia abhors Chaos in all its forms, and when it draws near, the Order of the Eagle must take arms.	true
+technologies_onscreen_name_teb_tech_myrmidia	Greater Rites of Myrmidia	true
+technologies_onscreen_name_teb_tech_tercio	Expeditionary Tercios	true
+technologies_short_description_teb_tech_tercio	By superior training - if not superior looks - the tercio can melt away any opposition by sheer efficiency of combined arms.	true
+technologies_onscreen_name_teb_tech_tilean	Tilean Renown	true
+technologies_short_description_teb_tech_tilean	It can't be ignored - Tilea is the land of art, wealth and continuous warfare. Tilean mercenaries are highly valued for reasons beyond their funny accent.	true
+technologies_onscreen_name_teb_tech_borderlands	Defiant Borderlands	true
+technologies_short_description_teb_tech_borderlands	The Border Confederacy is far from alien to aggressions. Countless greenskin and beastmen invasions tried to break them, unsuccessfully.	true
+technologies_onscreen_name_teb_tech_conquistadores	Conquistador Lords	true
+technologies_short_description_teb_tech_conquistadores	Those that come back from Lustria have plenty to tell about exotic beasts, incredible treasures and amazing scars. And know how to kill and plunder quickly and efficiently.	true
+technologies_onscreen_name_teb_tech_inquisition	Grand Estalian Inquisition	true
+technologies_short_description_teb_tech_inquisition	The inquisitorial Tribunals have little patience for petty concepts such as 'mercy', 'proof' and 'innocence'.	true
+technologies_onscreen_name_teb_tech_unsung	Unsung Heroes	true
+technologies_short_description_teb_tech_unsung	Devoid of flashy armour and banners of more famed regiments, the hardened border scouts fight a humble and endless struggle of their own.	true
+technologies_onscreen_name_teb_tech_rebuild	Frontier No More	true
+technologies_short_description_teb_tech_rebuild	After years of hardship, the Borderlands can finally prosper, their fighters defending not fearful towns but proud capitals.	true
+technologies_onscreen_name_teb_tech_supremacy	Tilean Supremacy	true
+technologies_short_description_teb_tech_supremacy	By the union of impenetrable pike formations, daring cavalry actions and, of course, substantial economical support, Tilean warfare can reign supreme.	true
+technologies_onscreen_name_teb_tech_empire	Dreams of Empire	true
+technologies_short_description_teb_tech_empire	Inspired by the fabled might of Tylos, by the elven legacy and driven by the pent-up potential in the wealthy Tilea of nowadays, one might think of ways to overcome the usual tilean rivalry for something greater...	true
+technologies_onscreen_name_teb_tech_bestofworst	The Best of the Worst	true
+technologies_short_description_teb_tech_bestofworst	The jungle polishes the refugees, the brigands, the generic scallywags and even the honest (until proven otherwise) entrepreneurs into shrewd tough nuts. Or merciless despoilers.	true
+technologies_onscreen_name_teb_tech_oldones	Legacy of the Old Ones	true
+technologies_short_description_teb_tech_oldones	The New World is a shrine of dangers and secrets, expensive ones. The most common trinket a bait to destruction or an unthinkable tool of power.	true
+technologies_onscreen_name_teb_tech_bravenewworld	Brave New World	true
+technologies_short_description_teb_tech_bravenewworld	Following the unmistakable act of throwing crates of imported pasta (and the former Viceroy) in the harbour's waters, the thriving colonies start a new adventure entirely of their own.	true
+technologies_onscreen_name_teb_tech_ROR_outland	Renown: The Outlanders	true
+technologies_short_description_teb_tech_ROR_outland	Even as far as the New World, famous mercenaries can be persuaded to come, or even found locally.	true
+technologies_onscreen_name_teb_tech_ROR_pro	Renown: The Professionals	true
+technologies_short_description_teb_tech_ROR_pro	Most Condottieri won't leave home without a company or two of toughened veterans. Others will want a jewel to their hat in the way of a famous regiment.	true
+technologies_onscreen_name_teb_tech_ROR_brass	Renown: The Brass of Tilea	true
+technologies_short_description_teb_tech_ROR_brass	When the conditions and prospects of profit are right, even the expense behind recruiting and convincing the very best mercenaries in the Southern Realms can be justified...	true
+technologies_onscreen_name_teb_pools_BP_brets	Abroad: \\nFund a Crusade	true
+technologies_short_description_teb_pools_BP_brets	The Borderlands have been Errantry War grounds for the Bretonnians. The bolsterous knights can definitely have uses if their wedges were pointed in the right direction.	true
+technologies_onscreen_name_teb_pools_BP_empire	Abroad: \\nGreetings from the Empire	true
+technologies_short_description_teb_pools_BP_empire	Elector Counts can be persuaded to send a few regiments upon guarantees of protecting the southern borders for them, or to be conniving with their own politicking. Otherwise, you can always find a captain willing to volunteer for profit...	true
+technologies_onscreen_name_teb_pools_BP_teb	Abroad: \\nHeavily-armed Neighbours	true
+technologies_short_description_teb_pools_BP_teb	"What do you mean you can't find troops? Look around, there's mercs everywhere! We're swimming in the buggers! You can't bloody walk around without sauntering into those wine-breaths!"	true
+technologies_onscreen_name_teb_pools_til_mix	Abroad: \\nAuxiliaries	true
+technologies_short_description_teb_pools_til_mix	Anybody can wash up in Tilea as a mercenary, and anybody with a talent for warfare can be put to use.	true
+technologies_onscreen_name_teb_pools_tob_mix	Abroad: \\nDown to Earth	true
+technologies_short_description_teb_pools_tob_mix	There may be an infinite resource in Tobaro and that is Ratmen in the deeps. Expanding the Deepwatch by using the tunnels as merciless training ground is exactly what Prince Piggalo would have done! Maybe.	true
+technologies_onscreen_name_teb_pools_nwc_emp	Abroad: \\nBeast Hunters	true
+technologies_short_description_teb_pools_nwc_emp	With a few favours, the imperial expedition will certainly share some of their resources. We're all on the same side, aren't we?	true
+technologies_onscreen_name_teb_pools_nwc_brets	Abroad: \\nBygones of Bregonne	true
+technologies_short_description_teb_pools_nwc_brets	Their attempt at a lustrian foothold didn't go particularly well, but just wave a few challenges and glories at a group of Bretonnians and you might soon have a lance with you.	true
+technologies_onscreen_name_teb_pools_est_emp	Abroad: \\nThe Long Hand of Myrmidia	true
+technologies_short_description_teb_pools_est_emp	We shouldn't let the imperial orders get ideas of independence. They were born here, they will return here. And know who's in charge.	true
+technologies_onscreen_name_teb_pools_kislev	Abroad: \\nKislev	true
+technologies_short_description_teb_pools_kislev	Kislev	true
+technologies_onscreen_name_		true
+technologies_short_description_		true
+technologies_onscreen_name_teb_tank_1	Doodles of Mass Destruction	true
+technologies_short_description_teb_tank_1	If one could stack Leonardo da Miragliano's sketches in a pile, they'd probably reach Morrslieb. Upstart polymath Ugoletti has expressed interest in trying to make sense in one of these, so far kept secret. A wooden vehicle of bizarre shape, but the crank design looks all wrong...	true
+technologies_onscreen_name_teb_tank_2	Cranking it Up	true
+technologies_short_description_teb_tank_2	The prototype seems to be somewhat working after bypassing Leonardo's puzzles, but Ugoletti needs more funding to improve the construction process and design. Your treasurers are murmuring.	true
+technologies_onscreen_name_teb_tank_3	The Saucer	true
+technologies_short_description_teb_tank_3	Ugoletti claims that he can perfect the design, if only he could get his hands on an efficient power source; however, his sauce-splattered notes are exceedingly nebulous and he seems to be falling prey to hyperactive paranoia. If only one would fund an expedition to the jungles, for one of those things he calls Solar Engines...	true
+technologies_onscreen_name_teb_tech_conquistadores_col	Fear the Reaver	true
+technologies_short_description_teb_tech_conquistadores_col	Elves and Lizards don't know all monsters, and Man is one that is relentless.	true
+technologies_onscreen_name_teb_tech_mercs_sub_estalia	Irregulars	true
+technologies_short_description_teb_tech_mercs_sub_estalia	The highlanders of the Irrana Mountains are renowned for their odd drinks and effective skirmishers.	true
+technologies_onscreen_name_teb_tech_classical_sub_BP	Phalanxes	true
+technologies_short_description_teb_tech_classical_sub_BP	These soldiers may appear out of touch and out of the loop with modern warfare, but they're far from ineffective.	true
+technologies_onscreen_name_teb_tech_myrmidia_sub_BP	Importing the Orders	true
+technologies_short_description_teb_tech_myrmidia_sub_BP	We need to encourage the building of new chapterhouses in our territories if we want the support of the Myrmidian Orders, who so far considered the Border Princes not quite important enough. \\nThey weren't wrong, mind you.	true
+technologies_onscreen_name_teb_tech_recr_vets_sub	Men with No Names	true
+technologies_short_description_teb_tech_recr_vets_sub	Many are the tales of those lone riders, the somewhat-anti-heroes who head into the deep countryside to exact some sort of justice. Steel-eyed and quick-firing, often announced by the music of a carillon.	true
+technologies_onscreen_name_teb_tech_exped_vets_sub	Militia Reforms	true
+technologies_short_description_teb_tech_exped_vets_sub	It's only natural for the South to invest money (albeit begrudgingly) in garrisons, considering the average neighbour is a scheming prince or a greenskin warband.	true
+technologies_onscreen_name_teb_crossbow_rocket	Weaponized Fireworks	true
+technologies_short_description_teb_crossbow_rocket	As noted in one of Leonardo's sketchbooks cryptically titled "!MOOB", it is a common misconception that fireworks only need go up. Of course, lighting them up on the crossbow is a bit of a thrill.	true
+technologies_onscreen_name_teb_tech_trade_sub_lions	Tribute to the Lions	true
+technologies_short_description_teb_tech_trade_sub_lions	Sometimes you have to respectfully bow, break a casket of gold, and maybe bring a big golden scratching rake. \\nCall it an investment.	true

@@ -1,0 +1,30 @@
+key	cast_time	completion_payload	cooldown_time	category	slave_cost	global_cooldown_time	start_payload	icon	failure_cooldown_time	required_resources	expended_resources	target	target_expended_resources	target_required_resources	target_cooldown	target_category_cooldown	effects_while_performing	custom_cost_id	on_trigger_vo_event	flags	self_payload	percentage_cost_increase_per_use	sort_order	influence_cost	max_times_cost_can_increase
+#rituals_tables;4;db/rituals_tables/ak_teb																									
+tebuary_3_1	0	tebuary_3_sellmercs	0	CRAFTING_RITUAL	0	0	tebuary_3_sellmercs_disable		0		res_rom_iron				0	0				default		0.0000	0	0	0
+tebuary_3_2	0	tebuary_3_bestmercs	0	CRAFTING_RITUAL	0	0	tebuary_3_bestmercs_disable		0		res_rom_iron				0	0				default		0.0000	0	0	0
+tebuary_3_3	0	tebuary_3_allin	0	CRAFTING_RITUAL	0	0	tebuary_3_allin_disable		0		res_rom_iron				0	0				default		0.0000	0	0	0
+tebuary_3_4	0	tebuary_3_diplo_dwf	0	CRAFTING_RITUAL	0	0	tebuary_3_diplo_dwf_disable		0		tebuary_2000				0	0				default		0.0000	0	0	0
+tebuary_3_5	0	tebuary_3_diplo_hef	0	CRAFTING_RITUAL	0	0	tebuary_3_diplo_hef_disable		0		tebuary_2000				0	0				default		0.0000	0	0	0
+tebuary_3_6	0	tebuary_3_diplo_emp	0	CRAFTING_RITUAL	0	0	tebuary_3_diplo_emp_disable		0		tebuary_2000				0	0				default		0.0000	0	0	0
+tebuary_3_7	0	tebuary_3_diplo_marburg	0	CRAFTING_RITUAL	0	0	tebuary_3_diplo_marburg_disable		0		tebuary_2000				0	0				default		0.0000	0	0	0
+tebuary_3_8	0	tebuary_3_diplo_brt	0	CRAFTING_RITUAL	0	0	tebuary_3_diplo_brt_disable		0		tebuary_2000				0	0				default		0.0000	0	0	0
+tebuary_3_17	0	tebuary_3_socio_subt	9999	CRAFTING_RITUAL	0	0	tebuary_disable_socio		0		tebuary_5000				0	0				default		0.0000	0	0	0
+tebuary_3_18	0	tebuary_3_socio_war	9999	CRAFTING_RITUAL	0	0	tebuary_disable_socio		0		tebuary_5000				0	0				default		0.0000	0	0	0
+tebuary_3_19	0	tebuary_3_socio_grandeur	9999	CRAFTING_RITUAL	0	0	tebuary_disable_socio		0		tebuary_3_socio_grandeur				0	0				default		0.0000	0	0	0
+tebuary_3_20	0	tebuary_3_socio_arts	9999	CRAFTING_RITUAL	0	0	tebuary_disable_socio		0		tebuary_3_socio_arts				0	0				default		0.0000	0	0	0
+tebuary_2_1	0	tebuary_2_roc_dieterfist	9999	CRAFTING_RITUAL	0	0			0		fur+iron				0	0				default		0.0000	0	0	0
+tebuary_2_2	0	tebuary_2_roc_estragon	9999	CRAFTING_RITUAL	0	0			0		spices+exotic				0	0				default		0.0000	0	0	0
+tebuary_2_3	0	tebuary_2_roc_verena	9999	CRAFTING_RITUAL	0	0			0		res_rom_textiles				0	0				default		0.0000	0	0	0
+tebuary_2_4	0	tebuary_2_roc_strygos	9999	CRAFTING_RITUAL	0	0			0		res_rom_lead				0	0				default		0.0000	0	0	0
+tebuary_2_5	0	tebuary_2_roc_broswords	9999	CRAFTING_RITUAL	0	0			0		iron+timber				0	0				default		0.0000	0	0	0
+tebuary_2_6	0	tebuary_2_roc_gwatch	9999	CRAFTING_RITUAL	0	0			0		dyes+iron				0	0				default		0.0000	0	0	0
+tebuary_2_7	0	tebuary_2_roc_kotss	9999	CRAFTING_RITUAL	0	0			0		idols+iron				0	0				default		0.0000	0	0	0
+tebuary_2_8	0	tebuary_2_roc_organ	9999	CRAFTING_RITUAL	0	0			0		res_rom_glass				0	0				default		0.0000	0	0	0
+tebuary_2_9	0	tebuary_2_roc_gunn	9999	CRAFTING_RITUAL	0	0			0		res_rom_furs				0	0				default		0.0000	0	0	0
+tebuary_2_10	0	tebuary_2_roc_montecastello	9999	CRAFTING_RITUAL	0	0			0		pottery+timber				0	0				default		0.0000	0	0	0
+tebuary_1_1	0	tebuary_1_teb_templar_lord	0	CRAFTING_RITUAL	0	0	tebuary_1_teb_templar_lord_disable		0		teb_templar_lord_PR				0	0				default		0.0000	0	0	0
+tebuary_1_2	0	tebuary_1_teb_duellist_hero	0	CRAFTING_RITUAL	0	0	tebuary_1_teb_duellist_hero_disable		0		teb_duellist_hero_PR				0	0				default		0.0000	0	0	0
+tebuary_1_3	0	tebuary_1_teb_wizards	0	CRAFTING_RITUAL	0	0	tebuary_1_teb_wizards_disable		0		tebuary_4000				0	0				default		0.0000	0	0	0
+tebuary_1_4	0	tebuary_1_teb_lorenzo	9999	CRAFTING_RITUAL	0	0			0		teb_lorenzo_lupo_PR				0	0				default		0.0000	0	0	0
+tebuary_1_5	0	tebuary_1_teb_piggolo	9999	CRAFTING_RITUAL	0	0			0		teb_piggolo_PR				0	0				default		0.0000	0	0	0
+tebuary_3_140	0	tebuary_placeholder	99999	CRAFTING_RITUAL	0	0			0		res_gold				0	0				default		0.0000	0	0	0

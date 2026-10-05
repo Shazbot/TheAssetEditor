@@ -1,0 +1,4 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_unit_attributes.loc		
+unit_attributes_removed_effect_text_undead	Removes Undead	true
+unit_attributes_removed_effect_text_hide_forest	Can't Hide	true

@@ -1,0 +1,4 @@
+key	location	ownership	source	target	territory
+#campaign_effect_scopes_tables;2;db/campaign_effect_scopes_tables/ak_teb					
+faction_to_character_own_lords_only	factionwide	yours	faction	character	any
+character_to_province_own_when_on_map	factionwide_when_on_map	yours	character	province	any

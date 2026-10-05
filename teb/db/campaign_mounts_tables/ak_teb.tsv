@@ -1,0 +1,19 @@
+model	animation_set	variant	scale	actor	ignore_rider_variant_scale	vfx_filter	banner_relative_to_mount	prebattle_separation_offset
+#campaign_mounts_tables;9;db/campaign_mounts_tables/ak_teb								
+warhorse_barded_borgio_campaign	cam_hr1_warhorse	warhorse_barded_borgio_campaign	1.0000	wh_main_vo_culture_Horse	true	0	false	0.0000
+teb_gausser_pegasus	cam_hr1_pegasus	teb_gausser_pegasus	1.0000	wh_main_vo_culture_Pegasus	false	0	false	0.0000
+jade_griffon_campaign	cam_bc2_griffon	wh_dlc03_emp_amber_wizard_griffon	0.7500	wh_main_vo_culture_Griffin_DemiGryph_Hippogryph	false	0	false	0.0000
+teb_catrazza_griffon	cam_bc2_griffon	teb_catrazza_griffon	0.7500	wh_main_vo_culture_Griffin_DemiGryph_Hippogryph	false	0	false	0.0000
+teb_templar_demi	cam_bc2_reaper	teb_templar_demi	1.0000	wh_main_vo_culture_Griffin_DemiGryph_Hippogryph	false	0	false	0.0000
+teb_templar_lord_champ	cam_hu1_leoncoeur_sword_and_shield	teb_templar_lord_02_champ	1.0000	wh_main_vo_culture_Empire	false	0	true	0.0000
+teb_lupio_foot_alt	cam_lord_hu1_cst_noctilus_2handed_axe	teb_lupio_mounted_horse	1.0000	wh_main_vo_culture_Empire	false	0	true	0.0000
+teb_warhorse_ducale_campaign	cam_hr1_warhorse	teb_warhorse_ducale_campaign	1.0000	wh_main_vo_culture_Horse	true	0	false	0.0000
+teb_barded_lupio_campaign	cam_hr1_warhorse	teb_barded_lupio_campaign	1.0000	wh_main_vo_culture_Horse	true	0	false	0.0000
+teb_cadavo_horse_camp	cam_hr1_warhorse	teb_cadavo_horse_camp	1.0000	wh_main_vo_culture_Horse	true	0	false	0.0000
+teb_cadavo_barded_horse_camp	cam_hr1_warhorse	teb_cadavo_barded_horse_camp	1.0000	wh_main_vo_culture_Horse	true	0	false	0.0000
+teb_lucrezzia_steed_camp	cam_hr1_warhorse	teb_lucrezzia_steed_camp	1.0000	wh_main_vo_culture_Horse	true	0	false	0.0000
+teb_inq_hippo_camp	cam_bc2b_hippogryph	wh_brt_hippogryphs	0.6000	wh_main_vo_culture_Griffin_DemiGryph_Hippogryph	false	0	false	0.0000
+teb_lupio_demi	cam_bc2_reaper	teb_lupio_demi	1.0000	wh_main_vo_culture_Griffin_DemiGryph_Hippogryph	false	0	false	0.0000
+teb_golden_lion_mount	cam_bc2_celestial_lion	teb_golden_lion_mount	0.5000	wh3_dlc24_vo_culture_celestial_lion	false	0	false	0.0000
+teb_piggolo_wagon_camp	cam_wm_marauder_chariot	teb_piggolo_wagon_camp	1.0000	wh_main_vo_culture_Horse	false	0	false	0.0000
+teb_piggolo_tank_camp	cam_wm_steam_tank01	teb_piggolo_tank_camp	1.0000	vo_culture_None	false	0	false	0.0000

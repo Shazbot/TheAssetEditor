@@ -1,0 +1,24 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_effect_bundles_dilemmas.loc		
+effect_bundles_localised_title_teb_dilemma_trade_delegate	Empowered Merchant Princes	true
+effect_bundles_localised_description_teb_dilemma_trade_delegate	Princes and Lords will keep the wheel rolling for you, while they also line their own pockets. Their assets may however be at your disposal, should you need them.	true
+effect_bundles_localised_title_teb_dilemma_trade_diplo	Expanding the Network	true
+effect_bundles_localised_description_teb_dilemma_trade_diplo	The neighbours will be happy that we're pointing our goods at them and not our troops. Besides, nobody's deaf to the clinking of money.	true
+effect_bundles_localised_title_teb_dilemma_sketches_engi	Experimental Techniques	true
+effect_bundles_localised_description_teb_dilemma_sketches_engi	"I mean, sir, have you ever seen pulleys being used like this? There are fourteen vectors all contributing to an upward surge plus the- yes sir, I shall shut up immediately."	true
+effect_bundles_localised_title_teb_dilemma_sketches_research	Visionary Innovation	true
+effect_bundles_localised_description_teb_dilemma_sketches_research	There could be so much to learn from someone who could design a breath-taking portrait in the same page as a new ballista prototype and... an automated fork?	true
+effect_bundles_localised_title_teb_dilemma_darkmaiden_censor	Discouraged Elites	true
+effect_bundles_localised_description_teb_dilemma_darkmaiden_censor	Recent events made the elites of our nation less enthusiastic. 	true
+effect_bundles_localised_title_teb_dilemma_darkmaiden_ok	Much to Learn	true
+effect_bundles_localised_description_teb_dilemma_darkmaiden_ok		true
+effect_bundles_localised_title_teb_eldaddio_req_01_dummyreward	Proceed unto next mission	true
+effect_bundles_localised_description_teb_eldaddio_req_01_dummyreward		true
+effect_bundles_localised_title_teb_eldaddio_req_02_dummyreward	Proceed unto next mission	true
+effect_bundles_localised_description_teb_eldaddio_req_02_dummyreward		true
+effect_bundles_localised_title_teb_eldaddio_req_03_dummyreward	Legendary Lord unlocked	true
+effect_bundles_localised_description_teb_eldaddio_req_03_dummyreward	You have successfully found, willingly or not, the living and muttering remains of a former king of Magritta. Rejoice!	true
+effects_description_teb_eldaddio_req_01_dummyreward	You have information to continue your vague search	true
+effects_description_teb_eldaddio_req_02_dummyreward	You have information to continue your vague search	true
+effects_description_teb_eldaddio_req_03_dummyreward	Legendary Lord: Eustaquio Sunscryer	true
+effects_description_teb_eldaddio_req_03_dummyreward_money	Treasury: %+n	true

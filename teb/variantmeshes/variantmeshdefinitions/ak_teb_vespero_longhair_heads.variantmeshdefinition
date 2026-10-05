@@ -1,0 +1,31 @@
+<VARIANT_MESH>
+
+
+	<SLOT name="head" >
+	
+		<VARIANT_MESH>
+			<SLOT name="subhead" >
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\head\emp_artillery_crew_head_03.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\head\emp_artillery_crew_head_01.rigid_model_v2" />
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\teb_state_troops_head_03.rigid_model_v2"     imposter_model="VariantMeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\head\emp_artillery_crew_head_01.rigid_model_v2" />
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\teb_state_troops_head_05.rigid_model_v2"     imposter_model="VariantMeshes\wh_variantmodels\hu1\emp\emp_artillery_crew\head\emp_artillery_crew_head_01.rigid_model_v2" />
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\AK_witch_hunter_face_02.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\emp_witch_hunter_head_01.rigid_model_v2" />
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\AK_witch_hunter_face_03.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\emp_witch_hunter_head_01.rigid_model_v2" />
+			</SLOT>	
+			<SLOT name="hair" >
+				<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/jade/head/AK_longhair_01_full.rigid_model_v2"  imposter_model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/jade/head/emp_jade_wizard_head_02.rigid_model_v2" />
+				<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/jade/head/AK_longhair_02_full.rigid_model_v2"  imposter_model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/jade/head/emp_jade_wizard_head_02.rigid_model_v2" />
+			</SLOT>
+		</VARIANT_MESH>
+		
+		
+		<VARIANT_MESH>
+			<SLOT name="subhead_wp" >
+				<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_warrior_priest\head\AK_merchant_wp_head_01.rigid_model_v2" />
+			</SLOT>
+			<SLOT name="hair" >
+				<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/jade/head/AK_longhair_02_full.rigid_model_v2"  imposter_model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/jade/head/emp_jade_wizard_head_02.rigid_model_v2" />
+			</SLOT>
+		</VARIANT_MESH>
+
+	</SLOT>
+</VARIANT_MESH>

@@ -1,0 +1,6 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_resources.loc		
+resources_onscreen_text_res_location_skv_teb	Strategic Location	true
+resources_description_res_location_skv_teb	This location is of special importance to the Skaven and the Southern Realms.	true
+resources_onscreen_text_res_location_skavenblight	Doom of Kavzar Avenged?	true
+resources_description_res_location_skavenblight	This region's climate penalties can be countered by an occupying Southern Realm with great effort.	true

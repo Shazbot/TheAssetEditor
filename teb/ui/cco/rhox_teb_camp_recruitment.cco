@@ -1,0 +1,9 @@
+rhox_teb_camp_recruitment
+{
+    CanRespawn(CcoCampaignMilitaryForce parent_force, CcoCampaignCharacter general_to_respawn)
+    {
+        general_to_respawn.IsWounded == false
+        && general_to_respawn.TurnsLockedInLimbo == 0
+        && parent_force.CanSpawnForce("teb_camp", true)
+    }
+}

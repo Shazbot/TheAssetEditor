@@ -1,0 +1,69 @@
+key	image_path	localised_description	localised_name	unlocked_at_rank	is_background_skill	is_female_only_background_skill	is_male_only_background_skill	background_weighting	influence_cost
+#character_skills_tables;5;db/character_skills_tables/ak_teb									
+teb_lord_battle_dozen	teb_mercs.png	cnsidnvdnv	Emperor's Finest	0	false	false	false	0.0000	0
+teb_lord_battle_picked_vets	battle_defence.png	cnsidnvdnv	Honest Steel	0	false	false	false	0.0000	0
+teb_lord_battle_honour	teb_nobles.png	cnsidnvdnv	Imperial Gunnery	0	false	false	false	0.0000	0
+teb_lord_battle_dorfs	battle_armour.png	cnsidnvdnv	Mighty Forge	0	false	false	false	0.0000	0
+teb_lord_battle_siege	battle_ammo.png	cnsidnvdnv	Pistolkorps	0	false	false	false	0.0000	0
+teb_lord_battle_lightcav	battle_charge.png	cnsidnvdnv	Speed of Horse	0	false	false	false	0.0000	0
+teb_lord_unique_ward	character_ward_save.png	cnsidnvdnv	Sigmar’s Ward	7	false	false	false	0.0000	0
+wh_main_skill_teb_wizard_unique_bright_wizard_imperial_pegasus	mount_imperial_pegasus.png	cnsidnvdnv	Imperial Pegasus	20	false	false	false	0.0000	0
+teb_rangers_removal	trait_personality.png	removes rangers without Gausser	Scarred Veteran	0	false	false	false	5.0000	0
+teb_lord_exc_noble	teb_nobles.png	noble commander	noble commander	0	false	false	false	0.0000	0
+teb_lord_exc_merc	teb_mercs.png	commander of fortune	commander of fortune	0	false	false	false	0.0000	0
+teb_lord_exc_prince	teb_nobles.png	prince	prince	0	false	false	false	0.0000	0
+teb_lord_exc_ranger	teb_rangers.png	frontier commander	frontier commander	0	false	false	false	0.0000	0
+teb_priestess_unique_warhorse	mount_barded_warhorse.png	sad	Warhorse	1	false	false	false	0.0000	0
+teb_priestess_spear	teb_priestess_spear.png	sad	Warhorse	4	false	false	false	0.0000	0
+teb_priestess_legion	teb_priestess_legion.png	sad	Warhorse	7	false	false	false	0.0000	0
+teb_priestess_blessing	character_charge.png	sad	Warhorse	9	false	false	false	0.0000	0
+teb_priestess_shield	teb_priestess_shield.png	sad	Warhorse	13	false	false	false	0.0000	0
+teb_priestess_unique_fear	causes_fear.png	sad	Warhorse	9	false	false	false	0.0000	0
+teb_priestess_unique_tank	character_defence.png	sad	Warhorse	9	false	false	false	0.0000	0
+teb_priestess_unique_vlarge	character_attack.png	sad	Warhorse	9	false	false	false	0.0000	0
+teb_priestess_unique_flaming	character_damage.png	sad	Warhorse	9	false	false	false	0.0000	0
+teb_priestess_unique_drill	campaign_experience.png	sad	Warhorse	9	false	false	false	0.0000	0
+teb_priestess_actions	battle_attack.png		Actions [HIDDEN]	0	false	false	false	0.0000	0
+teb_priestess_actions2	battle_attack.png		Actions [HIDDEN]	0	false	false	false	0.0000	0
+teb_duellist_hero_horse	mount_warhorse.png	sad	Warhorse	3	false	false	false	0.0000	0
+teb_duellist_hero_encarmine	mount_barded_warhorse.png	sad	Warhorse	3	false	false	false	0.0000	0
+teb_duellist_hero_innate_figuera	trait_personality.png			0	true	false	false	5.0000	0
+teb_duellist_hero_innate_estevan	trait_personality.png			0	true	false	false	5.0000	0
+teb_duellist_hero_innate_casanova	trait_personality.png			0	true	false	false	5.0000	0
+teb_duellist_hero_figuera_chargedef	character_ward_save.png	sad		9	false	false	false	0.0000	0
+teb_duellist_hero_estevan_parry	character_defence.png			0	false	false	false	0.0000	0
+teb_duellist_hero_casanova_disarm	character_attack.png	ability		0	false	false	false	0.0000	0
+teb_duellist_hero_bodyguard	wh2_dlc10_guardian.png	ability		9	false	false	false	0.0000	0
+teb_duellist_hero_ranged_caracole	character_charge.png			0	false	false	false	0.0000	0
+teb_duellist_hero_ranged_dmg	character_ranged_damage.png			0	false	false	false	0.0000	0
+teb_duellist_hero_ranged_ammo	character_ranged_damage.png			0	false	false	false	0.0000	0
+teb_duellist_hero_words_intro	character_morale.png	LD		0	false	false	false	0.0000	0
+teb_duellist_hero_words_metodo	character_attack.png	fatigue		0	false	false	false	0.0000	0
+teb_duellist_hero_words_critica	character_morale.png	discourage?		0	false	false	false	0.0000	0
+teb_duellist_hero_words_floreo	character_general_ability.png	aura morale		0	false	false	false	0.0000	0
+teb_duellist_hero_dummy			dum dum dum dum	0	false	false	false	0.0000	0
+teb_duellist_hero_actions			Actions [HIDDEN]	0	false	false	false	0.0000	0
+teb_duellist_hero_duel	character_attack.png		Actions [HIDDEN]	0	false	false	false	0.0000	0
+teb_duellist_hero_epicwin	character_general_ability.png			7	false	false	false	0.0000	0
+teb_duellist_hero_duellists	character_general_ability.png			14	false	false	false	0.0000	0
+teb_duellist_hero_montante	character_attack.png			16	false	false	false	0.0000	0
+teb_spirit_drain	wh_main_spell_death_spirit_leech.png			9	false	false	false	0.0000	0
+teb_lord_villanos	teb_lord_villanos.png			9	false	false	false	0.0000	0
+teb_lord_bordermen	battle_ward_save.png			7	false	false	false	0.0000	0
+teb_lord_tileaguy	teb_lord_tileaguy.png			11	false	false	false	0.0000	0
+teb_militia_archers_fire	wh_main_spell_fire_piercing_bolts_of_burning.png	 		0	false	false	false	0.0000	0
+teb_merc_captain_actions	battle_attack.png		Actions [HIDDEN]	0	false	false	false	0.0000	0
+teb_merc_captain_combined_arms	wh2_hef_volley_of_arrows.png	sad	enables combined arms aura	0	false	false	false	0.0000	0
+teb_merc_general_barded_horse	mount_barded_warhorse.png	sad	Warhorse	1	false	false	false	0.0000	0
+teb_merc_general_lion	mount_celestial_lion.png	sad	Warhorse	1	false	false	false	0.0000	0
+teb_merc_captain_barded_horse	mount_barded_warhorse.png	sad	Warhorse	1	false	false	false	0.0000	0
+teb_placeholder	character_ward_save.png	used to plug on unwanted vanilla nodes		99	false	false	false	0.0000	0
+teb_dedicated_myrmidia	teb_dedicated_myrmidia.png	mov after battle if lord		9	false	false	false	0.0000	0
+teb_dedicated_nahmud	teb_dedicated_nahmud.png	stalk stance??? if lord, ambush buffs? faster xp?	nahmud dark maiden	9	false	false	false	0.0000	0
+teb_dedicated_fury	teb_dedicated_fury.png	frenzy and/or guardian?	Fury slew and slew and slew, until eventually, once all her enemies were gone, she collapsed, weeping.	9	false	false	false	0.0000	0
+teb_dedicated_solkan	teb_dedicated_solkan.png	agent stuff, tools of judgment passive	nahmud dark maiden	9	false	false	false	0.0000	0
+teb_dedicated_morr	teb_dedicated_morr.png	???		9	false	false	false	0.0000	0
+teb_dedicated_shallya	teb_dedicated_shallya.png	replenishment & co		9	false	false	false	0.0000	0
+teb_dedicated_verena	teb_dedicated_verena.png	xp?		9	false	false	false	0.0000	0
+teb_dedicated_ranald	teb_dedicated_ranald.png	a debuff+crooked dice ability		9	false	false	false	0.0000	0
+teb_dedicated_required_dumbdumbdummy	wh2_dlc10_guardian.png			0	false	false	false	0.0000	0

@@ -1,0 +1,22 @@
+id	mission_key	option_key	value	target
+#cdir_events_mission_option_junctions_tables;2;db/cdir_events_mission_option_junctions_tables/ak_teb_dilemmas				
+3012009	teb_eldaddio_req_01	VAR_CHANCE	100	default
+3012010	teb_eldaddio_req_01	VAR_MISSION_LENGTH_INFINITE		default
+3012011	teb_eldaddio_req_01	GEN_CND_REGION	wh3_main_combi_region_magritta;cr_oldworld_region_magritta	default
+3012012	teb_eldaddio_req_01	GEN_CND_ALLOW_REBELS		default
+3012013	teb_eldaddio_req_01	GEN_TARGET_REGION		default
+3012014	teb_eldaddio_req_02	VAR_CHANCE	100	default
+3012015	teb_eldaddio_req_02	VAR_MISSION_LENGTH_INFINITE		default
+3012016	teb_eldaddio_req_02	GEN_TARGET_NONE		default
+3012017	teb_eldaddio_req_03	VAR_MISSION_LENGTH_INFINITE		default
+3012018	teb_eldaddio_req_03	VAR_CHANCE	100	default
+3012019	teb_eldaddio_req_03	GEN_TARGET_NONE		default
+3012020	teb_eldaddio_boomer_owneverything	VAR_CHANCE	100	default
+3012021	teb_eldaddio_boomer_owneverything	VAR_MISSION_LENGTH_MIN	1	default
+3012022	teb_eldaddio_boomer_owneverything	VAR_MISSION_LENGTH_MAX	1	default
+3012023	teb_eldaddio_boomer_gift	VAR_CHANCE	100	default
+3012024	teb_eldaddio_boomer_gift	VAR_MISSION_LENGTH_MIN	4	default
+3012025	teb_eldaddio_boomer_gift	VAR_MISSION_LENGTH_MAX	8	default
+3012026	teb_eldaddio_boomer_handshake	VAR_CHANCE	100	default
+3012027	teb_eldaddio_boomer_handshake	VAR_MISSION_LENGTH_MIN	4	default
+3012028	teb_eldaddio_boomer_handshake	VAR_MISSION_LENGTH_MAX	8	default

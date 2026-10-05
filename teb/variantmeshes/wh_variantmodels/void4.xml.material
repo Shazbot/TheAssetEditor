@@ -1,0 +1,20 @@
+<material>
+  <name>emp_reiksguard_zintler_helmet_weighted2_alpha_off.xml</name>
+  <shader>shaders/weighted4_default_alpha.xml.shader</shader>
+  <sort_override>255</sort_override>
+  <textures>
+    <texture>
+   <slot version="2">t_xml_blood_map</slot>
+
+      <source>commontextures/default_black_alpha.dds</source>
+    </texture>
+
+    <texture>
+      <slot version="2">t_xml_base_colour</slot>
+
+      <source>VariantMeshes/wh_variantmodels/void.dds</source>
+    </texture>
+
+  </textures>
+  <params />
+</material>

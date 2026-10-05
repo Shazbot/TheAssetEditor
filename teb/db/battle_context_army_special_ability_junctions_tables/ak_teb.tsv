@@ -1,0 +1,3 @@
+key	army_special_ability	battle_context
+#battle_context_army_special_ability_junctions_tables;0;db/battle_context_army_special_ability_junctions_tables/ak_teb		
+teb_cannon_barrage	teb_cannon_barrage	fighting_battle_type_siege

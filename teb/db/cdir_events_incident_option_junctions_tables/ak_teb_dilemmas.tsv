@@ -1,0 +1,37 @@
+id	incident_key	option_key	value	target
+#cdir_events_incident_option_junctions_tables;1;db/cdir_events_incident_option_junctions_tables/ak_teb_dilemmas				
+3011990	teb_spawn_dignitary	GEN_TARGET_REGION		default
+3011991	teb_spawn_dignitary	CND_NOT_HAS_AGENT	dignitary	default
+3011992	teb_spawn_dignitary	GEN_CND_OWNS		default
+3011993	teb_spawn_dignitary	VAR_CHANCE	50	default
+3011994	teb_spawn_dignitary	CND_CULTURE	mixer_teb_southern_realms	default
+3011995	teb_spawn_dignitary	CND_UNIQUE		default
+3011996	teb_spawn_dignitary	CND_NOT_ENEMY_ARMY_IN_REGION		default
+3011997	teb_spawn_dignitary	CND_FIRST_ROUND	5	default
+3011998	teb_dilemma_recipe	GEN_TARGET_PARENT		default
+3011999	teb_dilemma_recipe	VAR_CHANCE	100	default
+3012000	teb_incident_vespero	GEN_TARGET_NONE		default
+3012001	teb_incident_vespero	VAR_CHANCE	10	default
+3012002	teb_incident_vespero	CND_ROUNDS_UNTIL_NEXT	30	default
+3012003	teb_incident_vespero	CND_CULTURE	mixer_teb_southern_realms	default
+3012011	teb_incident_candle	VAR_CHANCE	100	default
+3012012	teb_incident_candle	GEN_TARGET_NONE		default
+3012013	teb_incident_candle	CND_AT_WAR_SUBCULTURE	wh2_main_sc_skv_skaven	default
+3012014	teb_incident_candle	CND_ROUNDS_UNTIL_NEXT	30	default
+3012015	teb_incident_candle	CND_CULTURE	mixer_teb_southern_realms	default
+3012023	teb_dilemma_hedge_no	GEN_TARGET_PARENT		default
+3012024	teb_dilemma_hedge_no	VAR_CHANCE	100	default
+3012025	teb_dilemma_hedge_yes	GEN_TARGET_PARENT		default
+3012026	teb_dilemma_hedge_yes	VAR_CHANCE	100	default
+3012027	teb_dilemma_darkmaiden_censor	GEN_TARGET_PARENT		default
+3012028	teb_dilemma_darkmaiden_censor	VAR_CHANCE	100	default
+3012029	teb_dilemma_darkmaiden_ok	VAR_CHANCE	100	default
+3012030	teb_dilemma_darkmaiden_ok	GEN_TARGET_PARENT		default
+3012031	teb_dilemma_darkmaiden_ignore	GEN_TARGET_PARENT		default
+3012032	teb_dilemma_darkmaiden_ignore	VAR_CHANCE	100	default
+3012033	teb_incident_shepherds	GEN_TARGET_FACTION		default
+3012034	teb_incident_shepherds	VAR_CHANCE	10	default
+3012035	teb_incident_shepherds	CND_ROUNDS_UNTIL_NEXT	20	default
+3012036	teb_incident_shepherds	GEN_CND_SUBCULTURE	wh_main_sc_brt_bretonnia	default
+3012037	teb_incident_shepherds	GEN_CND_DIPLOMACY_AVAILABLE		default
+3012038	teb_incident_shepherds	CND_CULTURE	mixer_teb_southern_realms	default

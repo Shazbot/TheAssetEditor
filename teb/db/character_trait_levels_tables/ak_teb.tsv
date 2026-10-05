@@ -1,0 +1,16 @@
+key	level	trait	threshold_points
+#character_trait_levels_tables;0;db/character_trait_levels_tables/ak_teb			
+teb_trait_defeated_catrazza	1	teb_trait_defeated_catrazza	1
+teb_trait_defeated_borgio	1	teb_trait_defeated_borgio	1
+teb_trait_defeated_lucy	1	teb_trait_defeated_lucy	1
+teb_trait_defeated_lupio	1	teb_trait_defeated_lupio	1
+teb_trait_defeated_eldaddio	1	teb_trait_defeated_eldaddio	1
+teb_trait_defeated_colombo	1	teb_trait_defeated_colombo	1
+teb_trait_defeated_cadavo	1	teb_trait_defeated_cadavo	1
+teb_trait_defeated_cadavo2	2	teb_trait_defeated_cadavo	2
+teb_trait_defeated_cadavo3	3	teb_trait_defeated_cadavo	3
+teb_trait_defeated_gashnag	1	teb_trait_defeated_gashnag	1
+teb_trait_defeated_gausser	1	teb_trait_defeated_gausser	1
+teb_trait_defeated_mazdamundi_as_cadavo	1	teb_trait_defeated_mazdamundi_as_cadavo	1
+teb_trait_alejandro	1	teb_trait_alejandro	1
+teb_trait_defeated_lorenzo_lupo	1	teb_trait_defeated_lorenzo_lupo	1

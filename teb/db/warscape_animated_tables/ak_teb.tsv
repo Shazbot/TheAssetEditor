@@ -1,0 +1,24 @@
+key	texture_filename_base	category
+#warscape_animated_tables;2;db/warscape_animated_tables/ak_teb		
+emp_galloper_gun_limbered	warmachines\tex	animation
+emp_galloper_gun_limbered_destruct	warmachines\tex	animation
+emp_galloper_gun	warmachines\tex	animation
+emp_galloper_gun_destruct	warmachines\tex	animation
+til_tortoise_tank	warmachines\tex	animation
+til_tortoise_tank_destruct	warmachines\tex	animation
+til_tortoise_tank_ror	warmachines\tex	animation
+til_tortoise_tank_ror_destruct	warmachines\tex	animation
+teb_paymaster_wagon	warmachines\tex	animation
+ak_teb_galloper_gun_ror_limbered	warmachines\tex	animation
+ak_teb_galloper_gun_ror_limbered_destruct	warmachines\tex	animation
+ak_teb_galloper_gun_ror	warmachines\tex	animation
+ak_teb_galloper_gun_ror_destruct	warmachines\tex	animation
+ak_teb_light_cannon_limbered	warmachines\tex	animation
+ak_teb_light_cannon_limbered_destruct	warmachines\tex	animation
+ak_teb_light_cannon	warmachines\tex	animation
+ak_teb_light_cannon_destruct	warmachines\tex	animation
+ak_teb_galloper_gun_limbered	warmachines\tex	animation
+ak_teb_galloper_gun_limbered_destruct	warmachines\tex	animation
+ak_teb_galloper_gun	warmachines\tex	animation
+ak_teb_galloper_gun_destruct	warmachines\tex	animation
+teb_paymaster_wagon_piggolo	warmachines\tex	animation

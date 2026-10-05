@@ -1,0 +1,27 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_effects_tebuary.loc		
+effects_description_tebuary_recr_slots_both_dummy	Global and Local recruitment capacity: %+n	true
+effects_description_tebuary_xp_both_dummy	Unit experience: %+n for all unit recruits and +50 per turn for all units	true
+effects_description_tebuary_xp_both_bad_dummy	Unit experience: %+n for all unit recruits and -50 per turn for all units	true
+effects_description_teb_roc_dieterfist	[[col:white]]Unlocks Dietershafen's Fist via Renown panel[[/col]]	true
+effects_description_teb_roc_estragon	[[col:white]]Unlocks Estragon's Pariahs via Renown panel[[/col]]	true
+effects_description_teb_roc_verena	[[col:white]]Unlocks Verena's Owls via Renown panel[[/col]]	true
+effects_description_teb_roc_strygos	[[col:white]]Unlocks Sons of Strygos via Renown panel[[/col]]	true
+effects_description_teb_roc_broswords	[[col:white]]Unlocks Ussingen Challengers via Renown panel[[/col]]	true
+effects_description_teb_roc_gwatch	[[col:white]]Unlocks the Prince's Own via Renown panel[[/col]]	true
+effects_description_teb_roc_kotss	[[col:white]]Unlocks Knights of the Starry Shield via Renown panel[[/col]]	true
+effects_description_teb_roc_organ	[[col:white]]Unlocks Otho's Unlucky Organ via Renown panel[[/col]]	true
+effects_description_teb_roc_gunn	[[col:white]]Unlocks Gunnslieb's Rustlers via Renown panel[[/col]]	true
+effects_description_teb_roc_montecastello	[[col:white]]Unlocks Knights Forlorn of Monte Castello via Renown panel[[/col]]	true
+effects_description_tebuary_1_teb_templar_lord	[[col:white]]A master strategist and provincial commander from the Order of the Eagle[[/col]]	true
+effects_description_tebuary_1_teb_templar_lord_bis	[[col:yellow]]Available in the Lord pool (usable once every 100[[img:icon_turns]][[/img]])[[/col]]	true
+effects_description_tebuary_1_teb_templar_lord_req	[[col:yellow]]Requires a Myrmidian Fortress[[/col]]	true
+effects_description_tebuary_1_teb_duellist_hero	[[col:white]]A mercenary combat specialist and spy at your service[[/col]]	true
+effects_description_tebuary_1_teb_duellist_hero_bis	[[col:yellow]]The agent will spawn at your capital settlement (usable once every 20[[img:icon_turns]][[/img]])[[/col]]	true
+effects_description_tebuary_1_teb_duellist_hero_req	[[col:yellow]]Requires a City (growing primary settlements)[[/col]]	true
+effects_description_tebuary_1_teb_lorenzo	[[col:white]]Prince of Luccini, mighty athlete and commander[[/col]]	true
+effects_description_tebuary_1_teb_lorenzo_bis	[[col:yellow]]Will spawn nearby Luccini with a small army[[/col]]	true
+effects_description_tebuary_1_teb_lorenzo_req	[[col:yellow]]Requires the Fortified Acropolis in Luccini[[/col]]	true
+effects_description_tebuary_1_teb_piggolo	[[col:white]]Prince, support genius and hog extraordinaire[[/col]]	true
+effects_description_tebuary_1_teb_piggolo_bis	[[col:yellow]]Will spawn by the faction leader[[/col]]	true
+effects_description_tebuary_1_teb_piggolo_req	[[col:yellow]]Requires any three of a list of buildings[[/col]]	true

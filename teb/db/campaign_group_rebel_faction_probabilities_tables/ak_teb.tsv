@@ -1,0 +1,6 @@
+campaign_group	rebel_faction	weight
+#campaign_group_rebel_faction_probabilities_tables;1;db/campaign_group_rebel_faction_probabilities_tables/ak_teb		
+feature_teb	wh2_main_skv_skaven_rebels	3.0000
+feature_teb	wh_dlc03_bst_beastmen_rebels	2.0000
+feature_teb	wh_main_grn_greenskins_rebels	4.0000
+feature_teb	wh_main_vmp_vampire_rebels	1.0000

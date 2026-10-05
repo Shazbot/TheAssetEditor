@@ -1,0 +1,5 @@
+<VARIANT_MESH>
+	<SLOT name="body" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu10b\teb\teb_birdmen_wings\teb_birdmen_wings_01.wsmodel" />
+	</SLOT>
+</VARIANT_MESH>

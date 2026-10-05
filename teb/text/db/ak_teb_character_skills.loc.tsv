@@ -1,0 +1,50 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_character_skills.loc		
+character_skills_localised_description_wh_main_skill_teb_lord_unique_general_imperial_griffon	Nothing beats a trusted Griffon mount to make everyone respect your authoritah. 	true
+character_skills_localised_name_wh_main_skill_teb_lord_unique_general_imperial_griffon	Griffon	false
+character_skills_localised_description_teb_lord_battle_picked_vets	All generals need their trusted regiments.	true
+character_skills_localised_name_teb_lord_battle_picked_vets	Picked Veterans	false
+character_skills_localised_description_teb_lord_battle_siege	Solid palisades, trenches, pavises, cannons, food, wine. The perfect ingredients for a successful siege, by Myrmidia!	true
+character_skills_localised_name_teb_lord_battle_siege	Siege Warfare	false
+character_skills_localised_description_teb_lord_battle_dorfs	Personal friendships with the Dwarfs from the Holds are worth the general's weight in gold, armour or cannons.	true
+character_skills_localised_name_teb_lord_battle_dorfs	Dwarf-Friend	false
+character_skills_localised_description_teb_lord_battle_honour	The Knightly Orders of the Southern Realms and their emulators are proud and fierce fighters, especially in service to the worthy.	true
+character_skills_localised_name_teb_lord_battle_honour	Steel and Honour	false
+character_skills_localised_description_teb_lord_battle_dozen	Behind the most abominable grime, there could be hidden the true military gem.	true
+character_skills_localised_name_teb_lord_battle_dozen	Dirty Dozen	false
+character_skills_localised_description_teb_lord_unique_ward	The Goddess of Battle protects Her own.	true
+character_skills_localised_name_teb_lord_unique_ward	Myrmidia's Ward	false
+character_skills_localised_description_teb_lord_battle_lightcav	Swift and decisive maneuvers on the flanks are the trademark of an ambitious general.	true
+character_skills_localised_name_teb_lord_battle_lightcav	Speed of Horse	false
+character_skills_localised_name_wh_main_skill_teb_wizard_unique_bright_wizard_imperial_pegasus	Pegasus	false
+character_skills_localised_description_wh_main_skill_emp_wizard_unique_bright_wizard_imperial_pegasus	A pegasus is a noble, winged steed, intelligent and loyal, that few Hedge Wizards can afford or be rewarded with.	true
+character_skills_localised_name_teb_spirit_drain	Spirit Drain	true
+character_skills_localised_description_teb_spirit_drain		true
+character_skills_localised_name_teb_lord_villanos	Hombres Villanos	true
+character_skills_localised_description_teb_lord_villanos	A commoner was once asked by a foreign recruiter about a band of Estalian mercenaries. Shrugging, he replied that they were "evil men", which was misunderstood as being 'local' for tough troops. Like many mistranslations, it stuck.	true
+character_skills_localised_name_teb_lord_bordermen	Frontiersmen	true
+character_skills_localised_description_teb_lord_bordermen	Don't ask them about living on the edge. Or huge green things with teeth.	true
+character_skills_localised_name_teb_lord_tileaguy	Mercenaries of Tilea	true
+character_skills_localised_description_teb_lord_tileaguy	Tileans are an odd bunch, known to fight to the last for the most disparate reasons: their ideals, their captain, their regiment, their purse, a painting. 	true
+character_skills_localised_name_teb_militia_archers_fire	Rain Fire	true
+character_skills_localised_description_teb_militia_archers_fire	There are few things that cannot be solved by excessive use of fire.	true
+character_skills_localised_name_		true
+character_skills_localised_description_		true
+character_skills_localised_name_teb_templar_lord_immortality	Shiny and Brass	true
+character_skills_localised_description_teb_templar_lord_immortality	A brilliant mind in a brilliant body, and both seem impossible to destroy.	true
+character_skills_localised_name_teb_dedicated_myrmidia	Dedicated to Holy Myrmidia	false
+character_skills_localised_description_teb_dedicated_myrmidia	By a combination of inclination, faith and training, this character is aligned with the cults of the goddess Myrmidia, if not a member outright. Myrmidia is an ascended mortal and the chief deity in the south, and the vast influence of her cults teach tactical acumen, mercy, and civilization.	false
+character_skills_localised_name_teb_dedicated_nahmud	Dedicated to the Dark Maiden	false
+character_skills_localised_description_teb_dedicated_nahmud	By a combination of inclination, faith and training, this character is aligned with the cults of Nahmud, if not a member outright. Although part of the vaster Myrmidian cults, the various sects of Nahmud favour equality and special education, and are somewhat too fond of secrecy.	false
+character_skills_localised_name_teb_dedicated_fury	Dedicated to Sister Fury	false
+character_skills_localised_description_teb_dedicated_fury	By a combination of inclination, faith and training, this character is aligned with the cults of Sister Fury, if not a member outright. One of Myrmidia's companions in life, Fury's legacy is one of intense, violent, but controlled rage and violence against injustice and destruction.	false
+character_skills_localised_name_teb_dedicated_solkan	Dedicated to Vengeful Solkan	false
+character_skills_localised_description_teb_dedicated_solkan	By a combination of inclination, faith and training, this character is aligned with the cults of the god Solkan, if not a member outright. The merciless god is one of the most ancient, and just as timeless is his unbridled retribution against the corrupted. His is currently a relatively awkward presence, strongest in Remas.	false
+character_skills_localised_name_teb_dedicated_morr	Dedicated to Grim Morr	false
+character_skills_localised_description_teb_dedicated_morr	By a combination of inclination, faith and training, this character is aligned with the cults of the god Morr, if not a member outright. The old god of the dead's legacy is one of fatalism and certainty, and finds its largest seat in Luccini. 	false
+character_skills_localised_name_teb_dedicated_shallya	Dedicated to White Shallya	false
+character_skills_localised_description_teb_dedicated_shallya	By a combination of inclination, faith and training, this character is aligned with the cults of the goddess Shallya, if not a member outright. Her teachings of healing and compassion feel at odds with the world's grimness and darkness, which is also why many flock to her.	false
+character_skills_localised_name_teb_dedicated_verena	Dedicated to Wise Verena	false
+character_skills_localised_description_teb_dedicated_verena	By a combination of inclination, faith and training, this character is aligned with the cults of the goddess Verena, if not a member outright. Like her husband Morr, the blind deity's legacy is not only one of learning and justice, but also one of detached impartiality.	false
+character_skills_localised_name_teb_dedicated_ranald	Dedicated to Smiling Ranald	true
+character_skills_localised_description_teb_dedicated_ranald	By a combination of inclination, faith and training, this character is aligned with the cults of the god Ranald, if not a member outright. He is one of many and sometimes darker aspects, but the lord of fortune was also the only one who could make Morr smile. Somewhat.	true

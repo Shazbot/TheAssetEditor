@@ -1,0 +1,18 @@
+choice_key	dilemma_key	audio_event_hover	audio_choice_vo
+#cdir_events_dilemma_choice_details_tables;4;db/cdir_events_dilemma_choice_details_tables/ak_teb_dilemmas			
+FIRST	teb_dilemma_trade		
+SECOND	teb_dilemma_trade		
+THIRD	teb_dilemma_trade		
+FOURTH	teb_dilemma_trade		
+FIRST	teb_dilemma_recipe		
+SECOND	teb_dilemma_recipe		
+THIRD	teb_dilemma_recipe		
+FOURTH	teb_dilemma_recipe		
+FIRST	teb_dilemma_sketches		
+SECOND	teb_dilemma_sketches		
+THIRD	teb_dilemma_sketches		
+FIRST	teb_dilemma_hedge		
+SECOND	teb_dilemma_hedge		
+FIRST	teb_dilemma_darkmaiden		
+SECOND	teb_dilemma_darkmaiden		
+THIRD	teb_dilemma_darkmaiden		

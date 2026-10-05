@@ -1,0 +1,4 @@
+variant_name	tech_folder	variant_filename	low_poly_filename	mount_scale	scale	scale_variation	super_low_poly_filename
+#variants_tables;6;db/variants_tables/ak_teb_reskinz							
+emp_pistoliers_til		emp_pistoliers_til	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+emp_pistoliers_est		emp_pistoliers_est	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter

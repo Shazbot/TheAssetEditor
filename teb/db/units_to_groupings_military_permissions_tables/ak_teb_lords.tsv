@@ -1,0 +1,12 @@
+unit	military_group
+#units_to_groupings_military_permissions_tables;0;db/units_to_groupings_military_permissions_tables/ak_teb_lords	
+est_inquisitor	estalia
+est_inquisitor_bhorse	estalia
+est_inquisitor_grif	estalia
+est_inquisitor_horse	estalia
+til_merchant	tilea
+til_merchant_horse	tilea
+til_merchant_bhorse	tilea
+bor_ranger_lord	borders
+bor_ranger_lord_horse	borders
+bor_ranger_lord_horse2	borders

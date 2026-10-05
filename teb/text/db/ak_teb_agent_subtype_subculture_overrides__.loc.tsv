@@ -1,0 +1,10 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_agent_subtype_subculture_overrides__.loc		
+agent_subtype_subculture_overrides_onscreen_name_teb_priestessmixer_teb_southern_realmsdignitary	Priestess of Myrmidia	true
+agent_subtype_subculture_overrides_description_teb_priestessmixer_teb_southern_realmsdignitary	By prayer, training and tactics, the templars of Myrmidia will strive to crush the unholy and the unclean.	true
+agent_subtype_subculture_overrides_onscreen_name_teb_merc_captainmixer_teb_southern_realmschampion	Mercenary Captain	true
+agent_subtype_subculture_overrides_description_teb_merc_captainmixer_teb_southern_realmschampion	Captains have risen through the ranks, having first stood amongst the rank and file with a bloody sword in their hands.	true
+agent_subtype_subculture_overrides_onscreen_name_wh_main_emp_bright_wizardmixer_teb_southern_realmswizard	Hireling Wizard	true
+agent_subtype_subculture_overrides_description_wh_main_emp_bright_wizardmixer_teb_southern_realmswizard	Away from institutional colleges and watery cults, generals have to make do by hiring hedge wizards that look moderately reliable.\\nBuy a contract in the Plutocracy panel to hire wizards.	true
+agent_subtype_subculture_overrides_onscreen_name_teb_duellist_heromixer_teb_southern_realmsspy	Master Duellist	true
+agent_subtype_subculture_overrides_description_teb_duellist_heromixer_teb_southern_realmsspy	Duellists and Dietros will fight anybody for the right price, favour or well, any reason they may think of.\\nBuy a contract in the Plutocracy panel to improve Master Duellist recruitment.	true

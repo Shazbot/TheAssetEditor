@@ -1,0 +1,297 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_character_skills_lls.loc		
+character_skills_localised_name_teb_borgio_unique_warhorse	Barded Warhorse	false
+character_skills_localised_name_teb_borgio_unique_bwarhorse	Barded Warhorse	false
+character_skills_localised_description_teb_borgio_unique_warhorse	A horse! A horse! An acceptable amount of florins for a horse!	true
+character_skills_localised_description_teb_borgio_unique_bwarhorse	Steel barding adds that certain something to your mount. A pity they didn't have it in red.	true
+character_skills_localised_name_teb_borgio_unique_mace	Mace of Might	false
+character_skills_localised_description_teb_borgio_unique_mace	During the Siege of Remas, a cannonball flew straight at Borgio. Instead of rather influential smithereens, bystanders witnessed that the projectile was stuck right into the Prince's armour, who was barely wounded. Melted and reshaped as a mace, the cannonball makes for a terrifying and symbolic weapon.	true
+character_skills_localised_name_teb_borgio_unique_mask	Monstrous Mask Helm	false
+character_skills_localised_description_teb_borgio_unique_mask	During the most furious melees, Borgio wears his frightening mask, a grotesque grimace of malice. Coupled with the wearer's bulk and might, the effect is scary indeed.	true
+character_skills_localised_name_teb_borgio_unique_armour	Armour of Brazen Brass	false
+character_skills_localised_description_teb_borgio_unique_armour	Only some scholars might know what those statues were about, but once melted and used to forge this huge brazen armour, they might have brought over whatever enchantment they used to bear...	true
+character_skills_localised_name_teb_borgio_beloved	Beloved General	false
+character_skills_localised_description_teb_borgio_beloved	Borgio has always cared for the needs of his troops, even the lowest mercs, and minded where they deployed them. Trust goes both ways.	true
+character_skills_localised_name_teb_borgio_pick	Borgio's Pick	false
+character_skills_localised_description_teb_borgio_pick	Battles are a matter of applying force to the weakest point. The tougher the force, the louder the crack.	true
+character_skills_localised_name_teb_gashnag_antipillagers	Punishment	false
+character_skills_localised_description_teb_gashnag_antipillagers	Ogres, Greenskins, Chaos Worshippers, all shall be punished for the destruction they perpetrate against Gashnagia.	true
+character_skills_localised_name_teb_gashnag_antivampires	Lessons of Strygos	false
+character_skills_localised_description_teb_gashnag_antivampires	The fall of Ushoran's empire burns vivid in Gashnag's cultivated memories. The other bloodlines are not to be trusted, not even fellow Strigoi.	true
+character_skills_localised_name_teb_gashnag_gashnagia_melee	Fighters of Gashnagia	false
+character_skills_localised_description_teb_gashnag_gashnagia_melee	Led from the front by their powerful and selfless Prince, the citizens of Gashnagia fight like one.	true
+character_skills_localised_name_teb_gashnag_gashnagia_skirmish	Rangers of Gashnagia	false
+character_skills_localised_description_teb_gashnag_gashnagia_skirmish	Promoting conservative tactics, Gashnag preserves his subject's safety until melee is inevitable.	true
+character_skills_localised_name_teb_gashnag_protection	Gashnag's Veil	false
+character_skills_localised_description_teb_gashnag_protection	Seeding constant confusion among the opponents, the Black Prince protects his subjects from harm.	true
+character_skills_localised_name_teb_gashnag_attrition	Gashnag's Ward	false
+character_skills_localised_description_teb_gashnag_attrition	Know thy enemy, and fight it with its own tools.	true
+character_skills_localised_name_teb_gashnag_ushoran	Ushoran's Benevolence	false
+character_skills_localised_description_teb_gashnag_ushoran	Divine worship aside, Ushoran's empire was still fundamentally happy and loyal, which is fairly uncommon on its own right. 	true
+character_skills_localised_name_teb_gashnag_peace	Peace of Gashnagia	false
+character_skills_localised_description_teb_gashnag_peace	Even in his delusions, Gashnag knows that he doesn't need to conquer more lands to keep his own happy. Even if the neighbours don't know what they're talking to.	true
+character_skills_localised_name_teb_gashnag_mages	Gashnag's Cloak	false
+character_skills_localised_description_teb_gashnag_mages	Everything stands on Gashnag not being recognized for what he is. As such, mages and agents have to be kept at a safe distance.	true
+character_skills_localised_name_teb_gashnag_unique_book	Tome of Ushoran	false
+character_skills_localised_description_teb_gashnag_unique_book	Knowledge is power, and this learning comes from the Strigoi patriarch's secrets and mistakes.	true
+character_skills_localised_name_teb_gashnag_unique_staff	Staff of Strygos	false
+character_skills_localised_description_teb_gashnag_unique_staff	One of Ushoran's own artefacts, this polestaff supposedly allowed the original Strigoi patriarch to hold out the Lahmians' aggression for so long.	true
+character_skills_localised_name_teb_gashnag_unique_wrath	Wrath of the Strigoi Prince	false
+character_skills_localised_description_teb_gashnag_unique_wrath	It is said that a town ruled by Gashnag was being harassed by a group of Ogres. The Black Prince set out on his own, beneath his black cloak, and came back with the pillagers' heads, to be put on pikes.	true
+character_skills_localised_name_teb_lucrezzia_unique_warhorse	Barded Warhorse	false
+character_skills_localised_description_teb_lucrezzia_unique_warhorse	"Ride with me? In broad daylight? Dear, you are far too unimportant for that."	true
+character_skills_localised_name_teb_lucrezzia_vanguard	Intrigue and Discombobulation	false
+character_skills_localised_description_teb_lucrezzia_vanguard	A false promise here, a shift of alliances there, and the enemy has no idea it's not an ally anymore.	true
+character_skills_localised_name_teb_lucrezzia_unique_poison	Phial of Poison	false
+character_skills_localised_description_teb_lucrezzia_unique_poison	Discreetly poisoning the enemy commanders the night before battle is... well, just another continuation of diplomacy, like war itself.	true
+character_skills_localised_name_teb_lucrezzia_unique_potion	Potion of Pavona	false
+character_skills_localised_description_teb_lucrezzia_unique_potion	Another secret recipe of Lucrezzia's, this concoction will greatly improve the imbiber's strength and resilience. Maybe, just maybe, also poison them. A bit.	true
+character_skills_localised_name_teb_lucrezzia_unique_kiss	Lucrezzia's Kiss	false
+character_skills_localised_description_teb_lucrezzia_unique_kiss	The Lady of Pavona is famous, among other things, for kissing the weapon of today's champion before his duel or battle. Of course, her lipstick is terribly poisonous.	true
+character_skills_localised_name_teb_lucrezzia_unique_stiletto	Poisoned Stiletto	false
+character_skills_localised_description_teb_lucrezzia_unique_stiletto	Lucrezzia always wears, somewhere on her person, a dagger coated with another of her brews. Can't blame someone for being prepared for a midnight stab.	true
+character_skills_localised_name_teb_lucrezzia_embedded	Of Duels and Favours	false
+character_skills_localised_description_teb_lucrezzia_embedded	Lucrezzia's manipulation over military champions and leaders leads to survival of the fittest.	true
+character_skills_localised_name_teb_lucrezzia_marriage_dummy	The Eighth Husband	false
+character_skills_localised_description_teb_lucrezzia_marriage_dummy	The previous seven husbands of Lucrezzia's have always been useful and influential men, until they stopped being such. During these dire circumstances of exile, the new consort must be especially... supportive.	true
+character_skills_localised_name_teb_lucrezzia_marriage_tobaro	Prince of Tobaro	false
+character_skills_localised_description_teb_lucrezzia_marriage_tobaro	Tibaldus Marsarius de Vela, current Prince of Tobaro and powerful banker. His city is a safe port and cosmopolitan center that is certainly very promising in the right hands. However, Magritta's rulers would feel threatened.	true
+character_skills_localised_name_teb_lucrezzia_marriage_magritta	Prince of Magritta	false
+character_skills_localised_description_teb_lucrezzia_marriage_magritta	Marrying the eccentric ruler of Magritta would make for an interesting life and a hand on the wheel of the powerful city, but it would also antagonize Lucrezzia's Tilean compatriots.	true
+character_skills_localised_name_teb_lucrezzia_marriage_free	Free Market	false
+character_skills_localised_description_teb_lucrezzia_marriage_free	...Or maybe not. Having a lot of suitors, especially the influential ones, may open a lot more doors than only one.	true
+character_skills_localised_name_teb_borgio_innate	The Besieger	false
+character_skills_localised_description_teb_borgio_innate	Most things simply do not stand for long when Borgio is set to conquer them.	true
+character_skills_localised_name_teb_gashnag_innate	Strigoi Prince	false
+character_skills_localised_description_teb_gashnag_innate	Very personal aggressors find out too late that it is not easy to stab a powerful Strigoi cloaked in illusions.	true
+character_skills_localised_name_teb_lucrezzia_innate	Inured	false
+character_skills_localised_description_teb_lucrezzia_innate	Every rose has its thorn. This one in particular, a handy dagger and several hired guardians as well.	true
+character_skills_localised_name_teb_lucrezzia_marriage_bilbali	Prince of Bilbali	false
+character_skills_localised_description_teb_lucrezzia_marriage_bilbali	Lucrezzia may consolidate her relationship with Xavier Rothemuur, current ruler of the northern port and expatriate member of House Rothemuur of Marienburg. Lucrezzia would secure the support of not one, but two wealthy City-States, but the other rulers of Estalia may definitely perceive her as a threat.	true
+character_skills_localised_name_teb_gausser_unique_pegasus	Radiant Pegasus	false
+character_skills_localised_description_teb_gausser_unique_pegasus	A rare arabyan Pegasus, gifted by Crusaders. A living and swift siphon of light and magic, ready to unleash their energy on aggressors.	true
+character_skills_localised_name_teb_gausser_unique_axe	Axe of the Dwarf-Friend	false
+character_skills_localised_description_teb_gausser_unique_axe	A Dwarf's grudge is forever, but so is his gratitude for many lives saved. The unexpected gift of a family runic axe is to be remembered for just as long.	true
+character_skills_localised_name_teb_gausser_unique_scarf	Scarf of the Crusader	false
+character_skills_localised_description_teb_gausser_unique_scarf	Formerly a magic and fluttering arabyan turban, this souvenir bears energetic enchantments. The cadre of Myrmidian priests who prodded it for a week have testified that the scarf won't strangle Gausser of its own initiative anytime soon, which is oddly specific.	true
+character_skills_localised_name_teb_gausser_unique_warhorse	Barded Warhorse	false
+character_skills_localised_name_teb_gausser_unique_bwarhorse	Barded Warhorse	false
+character_skills_localised_description_teb_gausser_unique_warhorse	A horse! A horse! An acceptable amount of florins for a horse!	true
+character_skills_localised_name_teb_catrazza_unique_warhorse	Barded Warhorse	false
+character_skills_localised_name_teb_catrazza_unique_bwarhorse	Barded Warhorse	false
+character_skills_localised_description_teb_catrazza_unique_warhorse	A horse! A horse! An acceptable amount of florins for a horse!	true
+character_skills_localised_name_teb_catrazza_unique_grif	Jade Griffon	false
+character_skills_localised_description_teb_catrazza_unique_grif	Respect my autoritah.	true
+character_skills_localised_name_teb_lupio_unique_warhorse	Barded Warhorse	false
+character_skills_localised_name_teb_lupio_unique_bwarhorse	Barded Warhorse	false
+character_skills_localised_description_teb_lupio_unique_warhorse	"I had actually sent to buy a unicorn. Made of diamonds. Like, a real live unicorn made of diamonds, very stylish. But they say it can't be done. Unimaginative buggers, the lot of them."	true
+character_skills_localised_name_teb_lupio_unique_grif	Urracón	false
+character_skills_localised_description_teb_lupio_unique_grif	Lupio's own demigryph owes his companionship to Lupio and "Big Magpie" nickname to his distinctive black and white coat and attraction towards shiny baubles.	true
+character_skills_localised_name_teb_catrazza_unique_sword	Relic Sword of Sea Gold	false
+character_skills_localised_description_teb_catrazza_unique_sword	An ancient elven blade, relic of a time when Tilea was an Asur colony. Its wielder's attacks leave a glowing and elegant trail of light and molten armour.	true
+character_skills_localised_name_teb_catrazza_unique_ring	Ring of Myrmidian Glory	false
+character_skills_localised_description_teb_catrazza_unique_ring	Catrazza is not usually one for religious displays, but there are solid practical and diplomatical advantages for wearing this ring around.	true
+character_skills_localised_name_teb_lupio_unique_cloak	Cloak of Visibility	false
+character_skills_localised_description_teb_lupio_unique_cloak	A cloak made of Lustrian gold, with uncertain magic properties. Its known feature is to give Lupio immense satisfaction.	true
+character_skills_localised_name_teb_lupio_unique_ring	Ring of Desire	false
+character_skills_localised_description_teb_lupio_unique_ring	Reaped during a confusing skirmish against reptiles, elf corsairs and marauders, this ring bears an eerie and intriguing aura over it. Inquisitors never managed to get it off Lupio for investigation.	true
+character_skills_localised_name_teb_lupio_unique_sea	Masters of the Sea	false
+character_skills_localised_description_teb_lupio_unique_sea	Magrittan naval prowess accepts very few rivals. Begrudgingly.	true
+character_skills_localised_name_teb_lupio_unique_eldorado	El Dorado	false
+character_skills_localised_description_teb_lupio_unique_eldorado	Estalians are notoriously fascinated by the gold overseas. Lupio is more interested in the gold over himself.	true
+character_skills_localised_name_teb_lupio_unique_peasants	Worthless Peasants	false
+character_skills_localised_description_teb_lupio_unique_peasants	They stink, and really they don't know any better than living in muddy shacks. Also, something should be done about their wretched windmills.	true
+character_skills_localised_name_teb_lupio_unique_army	The Royal Legion	false
+character_skills_localised_description_teb_lupio_unique_army	Perfect uniforms and incessant drills, that's the stuff.	true
+character_skills_localised_name_teb_lupio_unique_windmills	The Ingenuous and Righteous Struggle	false
+character_skills_localised_description_teb_lupio_unique_windmills	Lupio has secretly concocted the perfect plan to dramatically improve the region's welfare. This requires him to destroy all windmills in the world, particularly those that move by themselves. Despite people telling Lupio those are Giants, they clearly don't know better.	true
+character_skills_localised_name_teb_catrazza_unique_blackbands	Black Bands	false
+character_skills_localised_description_teb_catrazza_unique_blackbands	Catrazza's companies have gathered much fame as reliable and efficient skirmishers, able to bring victory against all odds. 	true
+character_skills_localised_name_teb_catrazza_unique_favours	Knightly Favours	false
+character_skills_localised_description_teb_catrazza_unique_favours	It is good to be friends with most of the armed nobles of the region, and to always know who was in whose bedroom.	true
+character_skills_localised_name_teb_catrazza_unique_renaissance	Re-Renaissance	false
+character_skills_localised_description_teb_catrazza_unique_renaissance	Once again, Tilea will be covered in marble and, most importantly, wealthy in money and people.	true
+character_skills_localised_name_teb_catrazza_unique_verybest	The Very Best Money Can Buy	false
+character_skills_localised_description_teb_catrazza_unique_verybest	Good equipment may make the difference between competent and successful mercenaries, or competent and dead ones. Everything is an investment towards the future.	true
+character_skills_localised_name_teb_catrazza_unique_birdmen	Scouting Loonies	false
+character_skills_localised_description_teb_catrazza_unique_birdmen	The so-called Birdmen of Catrazza (no relations) are a weird lot, to be sure, but they are good at scouting and at getting out of tight spots.	true
+character_skills_localised_name_teb_gausser_unique_friend	Dwarf-Friend	false
+character_skills_localised_description_teb_gausser_unique_friend	Being considered a true friend by the Dwarfs is a huge honour and benefit. As long as one keeps being careful not to offend them.	true
+character_skills_localised_name_teb_gausser_unique_stats	Sanctioned Aid	false
+character_skills_localised_description_teb_gausser_unique_stats	Good warriors and equipment coming from the mountains, not only the poorest dwarf misfits and adventurers caught at a low ebb.	true
+character_skills_localised_name_teb_gausser_unique_shieldwall	Dawi Shieldwall	false
+character_skills_localised_description_teb_gausser_unique_shieldwall	Sincere Dwarf warriors will defend your kin like their own. And teach your own fighters to fight like they do.	true
+character_skills_localised_name_teb_gausser_unique_trade	Special Tariffs	false
+character_skills_localised_description_teb_gausser_unique_trade	Gods know the Dwarfs are careful with their trade relationships. Especially with related payments. Favoured ties are to be cherished.	true
+character_skills_localised_name_teb_gausser_unique_rangers	Ranger Corps	false
+character_skills_localised_description_teb_gausser_unique_rangers	"You shoulda seen him! There was the troll behind him, right, raising its club, then Beardy turns around and buries his axe right in the thing's face! And down it goes! Who would have known dem damn stunties can move that quickly? Oh, hey Beardy!"	true
+character_skills_localised_name_teb_catrazza_innate	Prince, Ambassador and Condottiero	false
+character_skills_localised_description_teb_catrazza_innate	Money equals power, power equals money. Marinated in good manners and leverage, money can move mountains aside. And armies, especially armies.	true
+character_skills_localised_name_teb_lupio_innate	Royal Muskets and Royal Gilt	false
+character_skills_localised_description_teb_lupio_innate	Good handguns are the future of warfare, if only these wretched peasants wouldn't whine so much about having to pay for them.	true
+character_skills_localised_name_teb_gausser_innate	Inspirational	false
+character_skills_localised_description_teb_gausser_innate	Men will always gather around the leader that is fighting for the well-being of their own country.	true
+character_skills_localised_name_teb_cadavo_innate	Legend	false
+character_skills_localised_description_teb_cadavo_innate	El Cadavo is a feared and inspiring figure in three continents. However, some would rather snuff his existence altogether.	true
+character_skills_localised_name_teb_cadavo_story1	Tale of Cadavo: Prologue	false
+character_skills_localised_description_teb_cadavo_story1	It is with one of nature's tricks that Cadavo created one Duke Arrenault's hardship. It was El Cadavo, still in Tilea, that originally happened to destroy Rodrigo Delmonte's lands, which in turn prompted the latter to start what ended up as the Alcatani Fellowship. In one of the company's campaigns, it was Duke Arrenault's turn to fall in the dust, losing his knights, his feud and his eye to the Tilean pikes. A fallen knight by fate and attitude, Arrenault goes renegade in search for the tools for vengeance.	true
+character_skills_localised_name_teb_cadavo_story2	The Duel	false
+character_skills_localised_description_teb_cadavo_story2	Arrenault is in Estalia, trying to gather what men and resources he can against the Alcatani and their masters. He is out of luck until he is mistaken for the famous El Cadavo, whose successful persona he promptly abuses to lead what turns out being an overseas expedition. Arrenault ends up in the New World, growing into the figure of a ruthless mercenary commander, accruing a large retinue of adventurers and even other disillusioned Bretonnians. Almost as he reckoned his resources to be enough for his vendetta, the real Cadavo, also in the New World, gets wind of the impostor. El Cadavo and Arrenault start a slithery game of hunted and hunter until their forces collide under a showering monsoon. The battle is fierce and chaotic, yet the two leaders finally manage to meet each other in a fierce and one-eyed duel in the undergrowth. In the exhausted silence of a dying battle, a fateful pistol shot rings among the rain sprays.	true
+character_skills_localised_name_teb_cadavo_story3	Room for One	false
+character_skills_localised_description_teb_cadavo_story3	Renegades, adventurers and mercenaries stop fighting as one, as the monsoon also stops its apparently tireless attempt at turning the place into a swamp. A couple of minutes later, Cadavo emerges from the jungle, bloodied yet satisfied, for the challenger is dead, head caved in by the bullet. He raises Arrenault's crest, the trophy upon which he scratches his victory mark, as the survivors from both armies cheer the victor, for this is how things often go among such fighters. He adds the crest to the lot of other charms and trophies he carries, and reassembles his troops for whatever the future awaits.	true
+character_skills_localised_name_teb_cadavo_story4	Between Legend and Myth	false
+character_skills_localised_description_teb_cadavo_story4	Only a few of the defeated are killed: there aren't many other ways to get rid of troublemakers so far away from provisions and what passes as civilization. And yet the survivors' hearts are high, because even if the day was bloody and wet, the pay is going to be excellent, the future looks bright for they are the best troops ever assembled in the Colonies, under a legendary Condottiero that has just defeated an upstart rival and that now only intends to restock and start what promises to be a fruitful adventure in a ripe land. 	true
+character_skills_localised_name_teb_cadavo_story5a	And so he vowed	false
+character_skills_localised_description_teb_cadavo_story5a	That he would lead the greatest adventuring army ever assembled, that he would trample any opposition in this New World and in the Old World. That he would never forget his past and learn from it, for the future challenges will likely demand each grain of his ability.	true
+character_skills_localised_name_teb_cadavo_story5b	And so he swore	false
+character_skills_localised_description_teb_cadavo_story5b	That he is El Cadavo, the greatest mercenary commander to ever exist, a rock against the ebbs and tides of the ruthless world, and that he will be just as merciless for the world is his for the taking, and for anybody who would follow him to glory.	true
+character_skills_localised_name_teb_cadavo_story5c	And so he moved on	false
+character_skills_localised_description_teb_cadavo_story5c	A Duke was just another notch on Cadavo's blades, just another scar on his face. The figure of Cadavo was born in the heat of politics and battle, had matured in incredible stories and then into myth. The clever would notice that Cadavo's stories are centuries old, scattered in space and time and yet mostly true. Someone whispers that he is immortal, that his is only a title, that he cannot just be a mercenary commander. Be that as it may, Arrenault's apparent demise will just fuel Cadavo's legend and add another paragraph to fireside stories.	true
+character_skills_localised_name_teb_cadavo_unique_warhorse	Barded Warhorse	false
+character_skills_localised_description_teb_cadavo_unique_warhorse	Cadavo's current steed is an ill-tempered gelding only loyal and tending to Cadavo. To those few he doesn't kick on sight, he answers to the name of Broccolo. 	true
+character_skills_localised_name_teb_cadavo_buff_pirates	Adventurers at Best	false
+character_skills_localised_description_teb_cadavo_buff_pirates	It doesn't matter if they have gambling issues or if their perception of property is somewhat challenged. These men are the best fighters around Cadavo.	true
+character_skills_localised_name_teb_cadavo_buff_pirates2	Scum at Worst	false
+character_skills_localised_description_teb_cadavo_buff_pirates2	Cadavo's usual bunch also tends to dispatch opponents as quickly as possible, since in a dangerous New World the least dangerous foe is a trained Elf. Or maybe they just like hurting stuff.	true
+character_skills_localised_name_teb_cadavo_buff_dirty	Dirty Tactics	false
+character_skills_localised_description_teb_cadavo_buff_dirty	Whatever the enemy, Cadavo is unsubtle in his subtlety and will exploit any possible trick to vex the enemy. His troops are veteran harriers and have learned from the best.	true
+character_skills_localised_name_teb_cadavo_unique_lucky	Survivor	false
+character_skills_localised_description_teb_cadavo_unique_lucky	Cadavo has survived multiple military campaigns, an undefined number of duels, at least five magical armageddons and six mothers-in-law.	true
+character_skills_localised_name_teb_cadavo_talisman	Starbrass Talisman	false
+character_skills_localised_description_teb_cadavo_talisman	An amulet made of a weird alloy, capable of neutralizing poisons and many of the magical properties for weapons that would injure the bearer.	true
+character_skills_localised_name_teb_colombo_unique_warhorse	Warhorse & Doom Crossbolt	false
+character_skills_localised_description_teb_colombo_unique_warhorse	A lucky prey from a skirmish against Corsairs, this rare magical repeater crossbow is too cumbersome for use on foot, but if you want something positively dead, it's a nice toy. Just have to hope the magic in it isn't too dark. 	true
+character_skills_localised_name_teb_colombo_unique_steed	Barded Elven Steed & Doom Crossbolt	false
+character_skills_localised_description_teb_colombo_unique_steed	"This baby can do zero to fifty in nothing! And I swear she can understand everything I- did she just write "sixty" with her hoof?"	true
+character_skills_localised_name_teb_colombo_vsBST	Kill Beastmen	false
+character_skills_localised_description_teb_colombo_vsBST	"Yes, I can see that is a Minotaur skull, my day hasn't improved one bit."	true
+character_skills_localised_name_teb_colombo_vsSKV	Kill Xa'Kota	false
+character_skills_localised_description_teb_colombo_vsSKV	"That's a rat, right? Yes, that's a rat. I was worried you'd say that."	true
+character_skills_localised_name_teb_colombo_vsDELF	Kill Chaq'xa'khanx	false
+character_skills_localised_description_teb_colombo_vsDELF	"It's Corsairs again, boys. Say your prayers and remember they run faster than you do."	true
+character_skills_localised_name_teb_colombo_vsGRN	Kill Greenskins	false
+character_skills_localised_description_teb_colombo_vsGRN	"That's a pretty good impression of an orc, alright. We can do that, pal, just show us where they are."	true
+character_skills_localised_name_teb_colombo_vsCHS	Kill Ax'za'khanx	false
+character_skills_localised_description_teb_colombo_vsCHS	"Franco, I know you have only the one arm left, but if they say there are Chaos fellas around here it's everybody's problem, alright?"	true
+character_skills_localised_name_teb_colombo_vsUND	Kill Undead	false
+character_skills_localised_description_teb_colombo_vsUND	"A skull. Walks like a drunk. Bites. Huinipachutli, mate, unless you're mimicking Giovanni I know what you mean."	true
+character_skills_localised_name_teb_colombo_contact	Skink Contacts	false
+character_skills_localised_description_teb_colombo_contact	Making friends with Skink interpreters isn't easy, but the more contacts you have, the more you understand each other, the more business can be done.	true
+character_skills_localised_name_teb_colombo_befriend1	Befriend the Priests	false
+character_skills_localised_description_teb_colombo_befriend1	Skink Priests like their prophetic mumbo-jumbo, but their needs are just as businesslike as anybody else's. And they pay in pearls as big as their eyes.	true
+character_skills_localised_name_teb_colombo_befriend2	Befriend the Slann	false
+character_skills_localised_description_teb_colombo_befriend2	Managing to get an audience with an actual Slann is a big honour, to actually get them to notice you in those big fat plans of theirs is... a triumph.	true
+character_skills_localised_name_teb_colombo_befriend3	Secrets of the Lizards	false
+character_skills_localised_description_teb_colombo_befriend3	Surprisingly, the local Slanns and Chiefs seem legitimately friendly now towards Colombo's expedition. There is a lot to learn just by being shown around their cities.	true
+character_skills_localised_name_teb_colombo_unique_marksmen	Full Marks Marksmen	false
+character_skills_localised_description_teb_colombo_unique_marksmen	Fine troops, personally drilled by Colombo, tend to become a devastating force on the battlefield.	true
+character_skills_localised_name_teb_colombo_unique_antirogue	Scourges' Scourge	false
+character_skills_localised_description_teb_colombo_unique_antirogue	Colombo's fame, and his army's, is growing. Even the most fearsome bandits and raiders tend to shuffle their feet upon learning they have become a target for Colombo's mercenaries.	true
+character_skills_localised_name_teb_colombo_innate	First Contact	false
+character_skills_localised_description_teb_colombo_innate	Marco Colombo is famous for having 'discovered' the New World, and for being one of the very few to have peaceful dealings with the Lizardmen.	true
+character_skills_localised_name_teb_colombo_gem	Gem of Lustria	false
+character_skills_localised_description_teb_colombo_gem	A reward from the Slann, this amulet in the shape of Sotek's tongue feels oddly alive and protected the wearer more times than he recalls.	true
+character_skills_localised_name_teb_colombo_wine	Gourd of Lustrian Wine	false
+character_skills_localised_description_teb_colombo_wine	About as potent as orange juice to the Lizardmen, this precious lustrian wine is strong indeed for a human!	true
+character_skills_localised_name_teb_colombo_scroll	Scroll of Araby	false
+character_skills_localised_description_teb_colombo_scroll	Used by someone to write an otherwise uninteresting map, this scroll bears potent enchantments of Nehekharan protective magic. However, it tends to crumble a bit with each use.	true
+character_skills_localised_name_teb_cadavo_unique_founder	Founder	false
+character_skills_localised_description_teb_cadavo_unique_founder	Cadavo will have his city. The fat toad will probably get tired of destroying it way before Cadavo is of trying.	true
+character_skills_localised_name_teb_colombo_unique_trantio	Reinforcements from Trantio	false
+character_skills_localised_description_teb_colombo_unique_trantio	Until he is usurped, for these things tend to happen in Tilea and especially in Trantio, Colombo is still prince, with friends over there. Armoured friends.	true
+character_skills_localised_name_teb_gausser_guardian	Protector	false
+character_skills_localised_description_teb_gausser_guardian	You take care of your mates, and they take care of you.	true
+character_skills_localised_name_teb_cadavo_ultimate	The Ultimate Adventurer	false
+character_skills_localised_description_teb_cadavo_ultimate	You may not like it, but this is what peak performance looks like.	true
+character_skills_localised_name_teb_borgio_milan	Shielded Menace	false
+character_skills_localised_description_teb_borgio_milan	Borgio knows the worth of a well-trained and well-protected force of versatile crossbowmen. Let Miragliano be known for a fearsome force of troops that can block well, fight well and shoot back!	true
+character_skills_localised_name_teb_borgio_immortan	Immortan Borgio	false
+character_skills_localised_description_teb_borgio_immortan	Borgio has no time for being wounded by his enemies. Not even by forks.	true
+character_skills_localised_name_teb_lucrezzia_morediplo	Diplomatic Manipulation	false
+character_skills_localised_description_teb_lucrezzia_morediplo	Oh, so much can be done with a letter here, a smile there, or more audacious initiatives. The Lady of Pavona's ability to maintain her web of connections is powerful and precious in this world.	true
+character_skills_localised_name_teb_gashnag_summons	Extreme Measures	false
+character_skills_localised_description_teb_gashnag_summons	Gashnag allows a few well-controlled ghouls and beasts to circle around his forces, attacking his foes and his foes only. Even if the wretched creatures are incredibly well-behaved for their type and ultimately fight on the humans' side, old habits die hard and many start connecting the dots.	true
+character_skills_localised_name_teb_lupio_foot_alt	Show Off	false
+character_skills_localised_description_teb_lupio_foot_alt	Some people mistake Lupio's battlefield antics for astute shows of force and bravery for the troops. Truth is, they're Lupio's own satisfaction.	false
+character_skills_localised_name_teb_catrazza_duellist	Accomplished Duellist	false
+character_skills_localised_description_teb_catrazza_duellist	Catrazza's political skills and calm demeanour has led a few to forget he once was an able captain of venture, and a quick fencer at that.	true
+character_skills_localised_name_teb_eldaddio_innate	Day of the Dead	false
+character_skills_localised_description_teb_eldaddio_innate	Eustaquio's presence at the lead of an army has an understandably perplexing effect on the troops, except on the most travelled of them. Some who have taken up odd customs abroad even tried to paint a pair of moustaches on the skull.	true
+character_skills_localised_name_teb_eldaddio_cantankerous	Ancient and Cantankerous	false
+character_skills_localised_description_teb_eldaddio_cantankerous	The old Sunscryer trusts the fellow human so very marginally more than he trusts the other races, and any common ground only propels his paranoia. Something about their foreigner habits and their filthy lingo.	true
+character_skills_localised_name_teb_eldaddio_contact	Binding of Thieves	false
+character_skills_localised_description_teb_eldaddio_contact	Unbeknownst to him, Sokth's curse pervading what is left of his body is only becoming stronger, more vengeful and contagious. Eventually, it will put an end to Eustaquio's unlife, but until then it's only corroborating his belief in a blessing of the gods.	true
+character_skills_localised_name_teb_eldaddio_weapon	Spear of Morr	false
+character_skills_localised_description_teb_eldaddio_weapon		true
+character_skills_localised_name_teb_eldaddio_armour	Armour of Magritta	false
+character_skills_localised_description_teb_eldaddio_armour		true
+character_skills_localised_name_teb_eldaddio_okboomer	End Timers	false
+character_skills_localised_description_teb_eldaddio_okboomer	"These End Times of yours, pffsh, the crops are not even failing that much. When I was young I had to fight off two thousand Arabyans just to get to my hors- WHERE ARE YOU GOING?"	true
+character_skills_localised_name_teb_eldaddio_oldstyle	Old-fashioned	false
+character_skills_localised_description_teb_eldaddio_oldstyle	"Be like a spear, and have a point! Ah-ah!"	true
+character_skills_localised_name_teb_lorenzo_lupo_innate	Laughing Prince of Luccini	false
+character_skills_localised_description_teb_lorenzo_lupo_innate	The rulers of Luccini may be eccentric and a bit inbred, but Lorenzo is a great fighter at the head of the best pikes of Tilea.	true
+character_skills_localised_name_teb_lorenzo_lupo_aura	Exemplary Warrior	false
+character_skills_localised_description_teb_lorenzo_lupo_aura		false
+character_skills_localised_name_teb_lorenzo_lupo_shield	Shield of Myrmidia	false
+character_skills_localised_description_teb_lorenzo_lupo_shield		false
+character_skills_localised_name_teb_lorenzo_lupo_sword	Sword of Lucan	false
+character_skills_localised_description_teb_lorenzo_lupo_sword		false
+character_skills_localised_name_teb_lorenzo_lupo_ring	Ring of Luccina	false
+character_skills_localised_description_teb_lorenzo_lupo_ring		true
+character_skills_localised_name_teb_lorenzo_lupo_runner	Mighty Runner	false
+character_skills_localised_description_teb_lorenzo_lupo_runner	Lupo likes to run to the edge of his Principality and back to the other border. And again. 	false
+character_skills_localised_name_teb_lorenzo_lupo_wrestling	Mighty Wrestler	false
+character_skills_localised_description_teb_lorenzo_lupo_wrestling	"Oh my gods, but here goes Lorenzo with the Double Elbow Bonanza! What a match!"	false
+character_skills_localised_name_teb_lorenzo_lupo_gladiator	Mighty Gladiator	false
+character_skills_localised_description_teb_lorenzo_lupo_gladiator	In one of the bloodiest pages of Tilean culture, the true mettle of a warrior is measured in the pit, for the amusement of the public. And Lorenzo is very entertaining.	false
+character_skills_localised_name_teb_lorenzo_lupo_stronk	Mighty Strongman	false
+character_skills_localised_description_teb_lorenzo_lupo_stronk	"Mate of mine saw the Prince in the baths. He said he had an eight pack. Lorenzo is shredded."	false
+character_skills_localised_name_teb_lorenzo_lupo_rowing	Mighty Rower	false
+character_skills_localised_description_teb_lorenzo_lupo_rowing	"Row row row your boat", they used to say, and Lorenzo can sweat and pull for miles.	false
+character_skills_localised_name_teb_lorenzo_lupo_statuesque	Absolutely Statuesque	false
+character_skills_localised_description_teb_lorenzo_lupo_statuesque	Lorenzo may be a weird fellow with his obsession for the antiques and the ancients, but his physique surely reminds one of the impossibly-perfect statues literring Luccini.	false
+character_skills_localised_name_teb_lorenzo_lupo_luccini_army	Glory of Luccini	false
+character_skills_localised_description_teb_lorenzo_lupo_luccini_army	Luccini commands the strongest fleet in Tilea and perhaps the strongest army as well.	false
+character_skills_localised_name_teb_lorenzo_lupo_luccini_order	The Ancient City	false
+character_skills_localised_description_teb_lorenzo_lupo_luccini_order	They say that Luccinians will depose a Prince with poor humour. They take jokes seriously over there.	true
+character_skills_localised_name_teb_lupio_unique_lupiocentric	Lupiocentric Model	false
+character_skills_localised_description_teb_lupio_unique_lupiocentric	Nothing shines as bright as the man in gilted armour who insists on having telescopes aimed at himself.	true
+character_skills_localised_name_teb_piggolo_warpig	{{tr:ancillaries_onscreen_name_teb_piggolo_warpig}}	false
+character_skills_localised_description_teb_piggolo_warpig	{{tr:ancillaries_colour_text_teb_piggolo_warpig}}	false
+character_skills_localised_name_teb_piggolo_wagon	{{tr:ancillaries_onscreen_name_teb_piggolo_wagon}}	false
+character_skills_localised_description_teb_piggolo_wagon	{{tr:ancillaries_colour_text_teb_piggolo_wagon}}	false
+character_skills_localised_name_teb_piggolo_tank	{{tr:ancillaries_onscreen_name_teb_piggolo_tank}}	false
+character_skills_localised_description_teb_piggolo_tank	{{tr:ancillaries_colour_text_teb_piggolo_tank}}	false
+character_skills_localised_name_teb_piggolo_innate	The Most Magnificent	false
+character_skills_localised_description_teb_piggolo_innate	Such unrivalled talent, unmitigated brilliance, unparalleled strategy, a pig destined to rule and lead to a new golden age. \\nOr so his guardians say, as they translate Piggolo's every though, move and project.	true
+character_skills_localised_name_teb_piggolo_unique_01	Oink, oink oink snorf	false
+character_skills_localised_description_teb_piggolo_unique_01	"Truly inspiring, my lord."	false
+character_skills_localised_name_teb_piggolo_unique_02	Groink! Squeee! Snorf!	false
+character_skills_localised_description_teb_piggolo_unique_02	"At once, my lord."	false
+character_skills_localised_name_teb_piggolo_unique_03	Oink oink, oink oink groink!	false
+character_skills_localised_description_teb_piggolo_unique_03	"So very efficient, my lord." \\n"Why didn't we think of that before?"	false
+character_skills_localised_name_teb_piggolo_unique_04	Oink!	false
+character_skills_localised_description_teb_piggolo_unique_04	"Your presence has certainly gotten majestic and, err, enormous, my lord." \\n"Girthy." \\n"Heroic!"	false
+character_skills_localised_name_teb_piggolo_unique_05	Oink! Oink oink groink groink...	false
+character_skills_localised_description_teb_piggolo_unique_05	"My lord, not in ther- oh, gods, not again."\\n"Fetch the Bath Guard with buckets this instant!"	false
+character_skills_localised_name_teb_piggolo_unique_06	OINK! Oink oink, snorf groink!	false
+character_skills_localised_description_teb_piggolo_unique_06	"Astrounding, my lord." \\n"Truly amazing." \\n"Unprecedented! Revolutionary!"	false
+character_skills_localised_name_teb_piggolo_self_01	Oink groink, oink	false
+character_skills_localised_description_teb_piggolo_self_01	"Astute, my lord."	false
+character_skills_localised_name_teb_piggolo_self_02	Oinker!	false
+character_skills_localised_description_teb_piggolo_self_02	"They shall tremble at your mere sight, my prince."	false
+character_skills_localised_name_teb_piggolo_self_03	Groinker!	false
+character_skills_localised_description_teb_piggolo_self_03	"Indeed, my lord, they will fire at will and with efficiency if they value their double pay!"	false
+character_skills_localised_name_teb_piggolo_self_04	Oink snorf snorf	false
+character_skills_localised_description_teb_piggolo_self_04	"Wait, that actually made sen-"\\n"Shush, you bottom-feeder! Just genius, my lord!"	false
+character_skills_localised_name_teb_piggolo_self_05	Snorf, snor-Oink! Oink! 	false
+character_skills_localised_description_teb_piggolo_self_05	"Another one, my lord?"\\n"I swear, it's like truffles."	false
+character_skills_localised_name_teb_piggolo_self_06	Oink groink, oink, groink snorf	false
+character_skills_localised_description_teb_piggolo_self_06	"We haven't seen such military prowess since Prince Borgio!"\\n"You do know he's alive, yes?"	false
+character_skills_localised_name_teb_piggolo_actions	HIDDEN HERO ACTION STUFF	false
+character_skills_localised_description_teb_piggolo_actions		true
+character_skills_localised_name_		false
+character_skills_localised_description_		true
+character_skills_localised_name_teb_piggolo_enrage	{{tr:unit_abilities_onscreen_name_teb_piggolo_enrage}}	false
+character_skills_localised_description_teb_piggolo_enrage		true

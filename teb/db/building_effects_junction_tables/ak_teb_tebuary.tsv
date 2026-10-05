@@ -1,0 +1,34 @@
+building	effect	context_requirement	effect_scope	value	value_damaged	value_ruined
+#building_effects_junction_tables;0;db/building_effects_junction_tables/ak_teb_tebuary						
+teb_worship_myrmidia_4_magritta	teb_templar_lord_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_worship_myrmidia_5_magritta	teb_templar_lord_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_worship_myrmidia_4	teb_templar_lord_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_worship_myrmidia_5	teb_templar_lord_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh2_main_special_settlement_sartosa_emp_4	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_emp_settlement_major_4	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_special_settlement_altdorf_4_emp	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_special_settlement_castle_drakenhof_4_emp	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_special_settlement_couronne_4_emp	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_special_settlement_miragliano_4_teb	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_tylos_settlement_4	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh2_main_special_settlement_sartosa_emp_5	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_emp_settlement_major_5	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_special_settlement_altdorf_5_emp	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_special_settlement_castle_drakenhof_5_emp	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_special_settlement_couronne_5_emp	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_special_settlement_miragliano_5_teb	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_tylos_settlement_5	teb_duellist_hero_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_luccini_acropolis_2	teb_lorenzo_lupo_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_tylos_settlement_1	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_tylos_settlement_2	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_tylos_settlement_3	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_tylos_settlement_4	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_tylos_settlement_5	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_teb_port_2	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh_main_teb_port_3	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_worship_shallya_3	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_worship_shallya_4	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_worship_shallya_5	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+teb_tobaro_deep	teb_piggolo_PR		region_to_region_own	1.0000	1.0000	0.0000
+wh2_dlc14_special_pigbarter_human	teb_piggolo_PR	IsTEB	region_to_region_own	1.0000	1.0000	0.0000
+wh3_main_special_the_great_embassy	teb_piggolo_PR	IsTEB	region_to_region_own	1.0000	1.0000	0.0000

@@ -1,0 +1,11 @@
+bonus_value_id	effect	missile_weapon_junction
+#effect_bonus_value_missile_weapon_junctions_tables;0;db/effect_bonus_value_missile_weapon_junctions_tables/ak_teb		
+enable	teb_militia_archers_fire	3011990
+enable	teb_militia_archers_fire	3011991
+enable	teb_militia_archers_fire	3011992
+enable	teb_xbows_blazing_fire	3011993
+enable	teb_xbows_blazing_fire	3011994
+enable	teb_xbows_blazing_fire	3011995
+enable	teb_crossbow_rocket	3011996
+enable	teb_crossbow_rocket	3011997
+enable	teb_crossbow_rocket	3011998

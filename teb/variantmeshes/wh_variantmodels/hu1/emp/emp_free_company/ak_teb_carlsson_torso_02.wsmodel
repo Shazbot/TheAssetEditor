@@ -1,0 +1,17 @@
+<model version="1">
+	<geometry>variantmeshes\wh_variantmodels\hu1\emp\emp_free_company\ak_teb_carlsson_torso_02.rigid_model_v2</geometry>
+		<materials>
+			<material lod_index="0" part_index="0">variantmeshes\wh_variantmodels\hu1\emp\emp_free_company\materials\emp_free_company_torso_01_weighted4_alpha_off.xml.material</material>
+			<material lod_index="0" part_index="1">variantmeshes\wh_variantmodels\hu1\emp\emp_empire_knights\torso\materials\emp_empire_knight_torso_weighted4.xml.material</material>
+
+			<material lod_index="1" part_index="0">variantmeshes\wh_variantmodels\hu1\emp\emp_free_company\materials\emp_free_company_torso_01_weighted4_alpha_off.xml.material</material>
+			<material lod_index="1" part_index="1">variantmeshes\wh_variantmodels\hu1\emp\emp_empire_knights\torso\materials\emp_empire_knight_torso_weighted4.xml.material</material>
+
+			<material lod_index="2" part_index="0">variantmeshes\wh_variantmodels\hu1\emp\emp_free_company\materials\emp_free_company_torso_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="2" part_index="1">variantmeshes\wh_variantmodels\hu1\emp\emp_empire_knights\torso\materials\emp_empire_knight_torso_weighted2.xml.material</material>
+
+			<material lod_index="3" part_index="0">variantmeshes\wh_variantmodels\hu1\emp\emp_free_company\materials\emp_free_company_torso_01_weighted2_alpha_off.xml.material</material>
+			<material lod_index="3" part_index="1">variantmeshes\wh_variantmodels\hu1\emp\emp_empire_knights\torso\materials\emp_empire_knight_torso_weighted2.xml.material</material>
+
+	</materials>
+</model>

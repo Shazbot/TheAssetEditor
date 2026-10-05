@@ -1,0 +1,579 @@
+key	building	unit	XP	conditions	faction	enabled
+#building_units_allowed_tables;4;db/building_units_allowed_tables/ak_teb						
+3011990	wh_main_emp_forges_2	teb_light_cannon	0	0		false
+3011991	wh_main_emp_forges_3	teb_light_cannon	0	0		false
+3011992	wh_main_emp_barracks_2	teb_pikemen	0	0		false
+3011993	wh_main_emp_barracks_3	teb_pikemen	0	0		false
+3011994	wh_main_emp_barracks_3	teb_montante_greatswords	0	0		false
+3011995	wh_main_emp_barracks_3	teb_republican_guard	0	0		false
+3011996	wh_main_emp_barracks_3	teb_pavisiers	0	0		false
+3011999	wh_main_emp_stables_2	teb_broken_lances	0	0		false
+3012000	wh_main_emp_stables_3	teb_broken_lances	0	0		false
+3012001	wh_main_special_blazing_sun_chapterhouse	teb_broken_lances	0	0		false
+3012002	wh_main_special_knights_panther_chapterhouse	teb_broken_lances	0	0		false
+3012003	wh_main_emp_stables_3	teb_noble_retinue	0	0		false
+3012004	wh_main_special_blazing_sun_chapterhouse	teb_noble_retinue	0	0		false
+3012005	wh_main_special_knights_panther_chapterhouse	teb_noble_retinue	0	0		false
+3012006	wh_main_emp_stables_3	teb_encarmine	0	0		false
+3012007	wh_main_special_blazing_sun_chapterhouse	teb_encarmine	0	0		false
+3012008	wh_main_special_knights_panther_chapterhouse	teb_encarmine	0	0		false
+3012009	wh_main_emp_stables_2	teb_carabiniers	0	0		false
+3012010	wh_main_emp_stables_3	teb_carabiniers	0	0		false
+3012011	wh_main_emp_barracks_3	teb_conqui_royal_guard	0	0		false
+3012012	wh_main_emp_barracks_2	teb_conqui_adventurers	0	0		false
+3012013	wh_main_emp_barracks_3	teb_conqui_adventurers	0	0		false
+3012014	wh_main_emp_stables_2	teb_conqui_riders	0	0		false
+3012015	wh_main_emp_stables_3	teb_conqui_riders	0	0		false
+3012016	wh_main_emp_stables_1	teb_conqui_lancers	0	0		false
+3012017	wh_main_emp_stables_2	teb_conqui_lancers	0	0		false
+3012018	wh_main_emp_stables_3	teb_conqui_lancers	0	0		false
+3012019	wh_main_special_blazing_sun_chapterhouse	teb_kotrs	0	0		false
+3012020	wh_main_special_knights_panther_chapterhouse	teb_kotrs	0	0		false
+3012021	teb_worship_myrmidia_3	teb_kotrs	0	0		false
+3012022	teb_worship_myrmidia_4	teb_kotrs	0	0		false
+3012023	wh_main_emp_barracks_3	teb_shieldbearers	0	0		false
+3012024	wh_main_emp_stables_2	teb_enforcers	0	0		false
+3012025	wh_main_emp_stables_3	teb_enforcers	0	0		false
+3012026	wh_main_emp_stables_1	teb_light_scouts	0	0		false
+3012027	wh_main_emp_stables_2	teb_light_scouts	0	0		false
+3012028	wh_main_emp_stables_3	teb_light_scouts	0	0		false
+3012029	wh_main_emp_stables_2	teb_militia_knights	0	0		false
+3012030	wh_main_emp_stables_3	teb_militia_knights	0	0		false
+3012031	wh_main_emp_stables_3	teb_freelance_knights	0	0		false
+3012032	wh_main_emp_barracks_1	teb_militia_archers	0	0		false
+3012033	wh_main_emp_barracks_2	teb_militia_archers	0	0		false
+3012034	wh_main_emp_barracks_3	teb_militia_archers	0	0		false
+3012035	wh_main_emp_barracks_2	teb_border_rangers	0	0		false
+3012036	wh_main_emp_barracks_3	teb_border_rangers	0	0		false
+3012037	wh_main_emp_barracks_3	teb_bwatch	0	0		false
+3012038	wh_main_special_blazing_sun_chapterhouse	teb_freelance_knights	0	0		false
+3012039	wh_main_special_blazing_sun_chapterhouse	teb_militia_knights	0	0		false
+3012040	wh_main_special_knights_panther_chapterhouse	teb_freelance_knights	0	0		false
+3012041	wh_main_special_knights_panther_chapterhouse	teb_militia_knights	0	0		false
+3012042	wh_main_emp_barracks_2	teb_billmen	0	0		false
+3012043	wh_main_emp_barracks_3	teb_billmen	0	0		false
+3012051	teb_mercs_2	teb_swash	0	0		false
+3012052	teb_mercs_3	teb_swash	0	0		false
+3012053	teb_mercs_1	teb_paymaster	0	0		false
+3012054	teb_mercs_2	teb_paymaster	0	0		false
+3012055	teb_mercs_3	teb_paymaster	0	0		false
+3012064	teb_homeland_1	teb_paymaster	0	0		false
+3012065	teb_homeland_2	teb_paymaster	0	0		false
+3012066	teb_homeland_3	teb_paymaster	0	0		false
+3012075	teb_lothern_bad	teb_pavisiers	0	0		false
+3012076	teb_lothern_bad	teb_noble_retinue	0	0		false
+3012077	teb_lothern_bad	teb_conqui_royal_guard	0	0		false
+3012078	teb_lothern_bad	teb_shieldbearers	0	0		false
+3012079	teb_lothern_bad	teb_freelance_knights	0	0		false
+3012082	wh2_main_special_empire_fort_emp_1	teb_militia_archers	0	0		false
+3012083	wh2_main_special_empire_fort_emp_2	teb_militia_archers	0	0		false
+3012084	wh2_main_special_empire_fort_emp_3	teb_militia_archers	0	0		false
+3012085	wh2_main_special_empire_fort_emp_4	teb_militia_archers	0	0		false
+3012086	wh2_main_special_empire_fort_emp_5	teb_militia_archers	0	0		false
+3012087	wh2_main_special_settlement_sartosa_emp_1	teb_militia_archers	0	0		false
+3012088	wh2_main_special_settlement_sartosa_emp_2	teb_militia_archers	0	0		false
+3012089	wh2_main_special_settlement_sartosa_emp_3	teb_militia_archers	0	0		false
+3012090	wh2_main_special_settlement_sartosa_emp_4	teb_militia_archers	0	0		false
+3012091	wh2_main_special_settlement_sartosa_emp_5	teb_militia_archers	0	0		false
+3012092	wh_main_emp_barracks_1	teb_militia_archers	0	0		false
+3012093	wh_main_emp_barracks_2	teb_militia_archers	0	0		false
+3012094	wh_main_emp_barracks_3	teb_militia_archers	0	0		false
+3012095	wh_main_emp_settlement_major_1	teb_militia_archers	0	0		false
+3012096	wh_main_emp_settlement_major_2	teb_militia_archers	0	0		false
+3012097	wh_main_emp_settlement_major_3	teb_militia_archers	0	0		false
+3012098	wh_main_emp_settlement_major_4	teb_militia_archers	0	0		false
+3012099	wh_main_emp_settlement_major_5	teb_militia_archers	0	0		false
+3012100	wh_main_emp_settlement_minor_1	teb_militia_archers	0	0		false
+3012101	wh_main_emp_settlement_minor_2	teb_militia_archers	0	0		false
+3012102	wh_main_emp_settlement_minor_3	teb_militia_archers	0	0		false
+3012103	wh_main_special_settlement_altdorf_1_emp	teb_militia_archers	0	0		false
+3012104	wh_main_special_settlement_altdorf_2_emp	teb_militia_archers	0	0		false
+3012105	wh_main_special_settlement_altdorf_3_emp	teb_militia_archers	0	0		false
+3012106	wh_main_special_settlement_altdorf_4_emp	teb_militia_archers	0	0		false
+3012107	wh_main_special_settlement_altdorf_5_emp	teb_militia_archers	0	0		false
+3012108	wh_main_special_settlement_castle_drakenhof_1_emp	teb_militia_archers	0	0		false
+3012109	wh_main_special_settlement_castle_drakenhof_2_emp	teb_militia_archers	0	0		false
+3012110	wh_main_special_settlement_castle_drakenhof_3_emp	teb_militia_archers	0	0		false
+3012111	wh_main_special_settlement_castle_drakenhof_4_emp	teb_militia_archers	0	0		false
+3012112	wh_main_special_settlement_castle_drakenhof_5_emp	teb_militia_archers	0	0		false
+3012113	wh_main_special_settlement_couronne_1_emp	teb_militia_archers	0	0		false
+3012114	wh_main_special_settlement_couronne_2_emp	teb_militia_archers	0	0		false
+3012115	wh_main_special_settlement_couronne_3_emp	teb_militia_archers	0	0		false
+3012116	wh_main_special_settlement_couronne_4_emp	teb_militia_archers	0	0		false
+3012117	wh_main_special_settlement_couronne_5_emp	teb_militia_archers	0	0		false
+3012118	wh_main_special_settlement_miragliano_1_teb	teb_militia_archers	0	0		false
+3012119	wh_main_special_settlement_miragliano_2_teb	teb_militia_archers	0	0		false
+3012120	wh_main_special_settlement_miragliano_3_teb	teb_militia_archers	0	0		false
+3012121	wh_main_special_settlement_miragliano_4_teb	teb_militia_archers	0	0		false
+3012122	wh_main_special_settlement_miragliano_5_teb	teb_militia_archers	0	0		false
+3012123	wh_main_special_blazing_sun_chapterhouse	teb_sisters	0	0		false
+3012124	wh_main_special_knights_panther_chapterhouse	teb_sisters	0	0		false
+3012125	teb_worship_myrmidia_4	teb_sisters	0	0		false
+3012126	teb_worship_myrmidia_3	teb_bwatch	0	0		false
+3012127	teb_worship_myrmidia_4	teb_bwatch	0	0		false
+3012128	teb_mercs_2	teb_duellists	0	0		false
+3012129	teb_mercs_3	teb_duellists	0	0		false
+3012130	teb_homeland_2	teb_duellists	0	0		false
+3012131	teb_homeland_3	teb_duellists	0	0		false
+3012132	teb_mercs_1	teb_irrana	0	0		false
+3012133	teb_mercs_2	teb_irrana	0	0		false
+3012134	teb_mercs_3	teb_irrana	0	0		false
+3012135	wh_main_emp_stables_3	teb_xbow_cav	0	0		false
+3012136	teb_homeland_2	teb_xbow_cav	0	0		false
+3012137	teb_homeland_3	teb_xbow_cav	0	0		false
+3012138	wh_main_emp_forges_2	teb_tank	0	0		false
+3012139	wh_main_emp_forges_2	teb_tank_ror	0	0		false
+3012140	wh2_main_special_empire_fort_emp_1	teb_militia_spearmen	0	0		false
+3012141	wh2_main_special_empire_fort_emp_2	teb_militia_spearmen	0	0		false
+3012142	wh2_main_special_empire_fort_emp_3	teb_militia_spearmen	0	0		false
+3012143	wh2_main_special_empire_fort_emp_4	teb_militia_spearmen	0	0		false
+3012144	wh2_main_special_empire_fort_emp_5	teb_militia_spearmen	0	0		false
+3012145	wh2_main_special_settlement_sartosa_emp_1	teb_militia_spearmen	0	0		false
+3012146	wh2_main_special_settlement_sartosa_emp_2	teb_militia_spearmen	0	0		false
+3012147	wh2_main_special_settlement_sartosa_emp_3	teb_militia_spearmen	0	0		false
+3012148	wh2_main_special_settlement_sartosa_emp_4	teb_militia_spearmen	0	0		false
+3012149	wh2_main_special_settlement_sartosa_emp_5	teb_militia_spearmen	0	0		false
+3012150	wh_main_emp_settlement_major_1	teb_militia_spearmen	0	0		false
+3012151	wh_main_emp_settlement_major_2	teb_militia_spearmen	0	0		false
+3012152	wh_main_emp_settlement_major_3	teb_militia_spearmen	0	0		false
+3012153	wh_main_emp_settlement_major_4	teb_militia_spearmen	0	0		false
+3012154	wh_main_emp_settlement_major_5	teb_militia_spearmen	0	0		false
+3012155	wh_main_emp_settlement_minor_1	teb_militia_spearmen	0	0		false
+3012156	wh_main_emp_settlement_minor_2	teb_militia_spearmen	0	0		false
+3012157	wh_main_emp_settlement_minor_3	teb_militia_spearmen	0	0		false
+3012158	wh_main_special_settlement_altdorf_1_emp	teb_militia_spearmen	0	0		false
+3012159	wh_main_special_settlement_altdorf_2_emp	teb_militia_spearmen	0	0		false
+3012160	wh_main_special_settlement_altdorf_3_emp	teb_militia_spearmen	0	0		false
+3012161	wh_main_special_settlement_altdorf_4_emp	teb_militia_spearmen	0	0		false
+3012162	wh_main_special_settlement_altdorf_5_emp	teb_militia_spearmen	0	0		false
+3012163	wh_main_special_settlement_castle_drakenhof_1_emp	teb_militia_spearmen	0	0		false
+3012164	wh_main_special_settlement_castle_drakenhof_2_emp	teb_militia_spearmen	0	0		false
+3012165	wh_main_special_settlement_castle_drakenhof_3_emp	teb_militia_spearmen	0	0		false
+3012166	wh_main_special_settlement_castle_drakenhof_4_emp	teb_militia_spearmen	0	0		false
+3012167	wh_main_special_settlement_castle_drakenhof_5_emp	teb_militia_spearmen	0	0		false
+3012168	wh_main_special_settlement_couronne_1_emp	teb_militia_spearmen	0	0		false
+3012169	wh_main_special_settlement_couronne_2_emp	teb_militia_spearmen	0	0		false
+3012170	wh_main_special_settlement_couronne_3_emp	teb_militia_spearmen	0	0		false
+3012171	wh_main_special_settlement_couronne_4_emp	teb_militia_spearmen	0	0		false
+3012172	wh_main_special_settlement_couronne_5_emp	teb_militia_spearmen	0	0		false
+3012173	wh_main_special_settlement_miragliano_1_teb	teb_militia_spearmen	0	0		false
+3012174	wh_main_special_settlement_miragliano_2_teb	teb_militia_spearmen	0	0		false
+3012175	wh_main_special_settlement_miragliano_3_teb	teb_militia_spearmen	0	0		false
+3012176	wh_main_special_settlement_miragliano_4_teb	teb_militia_spearmen	0	0		false
+3012177	wh_main_special_settlement_miragliano_5_teb	teb_militia_spearmen	0	0		false
+3012178	wh2_main_special_empire_fort_emp_3	teb_half_pikes	0	0		false
+3012179	wh2_main_special_empire_fort_emp_4	teb_half_pikes	0	0		false
+3012180	wh2_main_special_empire_fort_emp_5	teb_half_pikes	0	0		false
+3012181	wh2_main_special_settlement_sartosa_emp_3	teb_half_pikes	0	0		false
+3012182	wh2_main_special_settlement_sartosa_emp_4	teb_half_pikes	0	0		false
+3012183	wh2_main_special_settlement_sartosa_emp_5	teb_half_pikes	0	0		false
+3012184	wh_main_emp_settlement_major_3	teb_half_pikes	0	0		false
+3012185	wh_main_emp_settlement_major_4	teb_half_pikes	0	0		false
+3012186	wh_main_emp_settlement_major_5	teb_half_pikes	0	0		false
+3012187	wh_main_emp_settlement_minor_3	teb_half_pikes	0	0		false
+3012188	wh_main_special_settlement_altdorf_3_emp	teb_half_pikes	0	0		false
+3012189	wh_main_special_settlement_altdorf_4_emp	teb_half_pikes	0	0		false
+3012190	wh_main_special_settlement_altdorf_5_emp	teb_half_pikes	0	0		false
+3012191	wh_main_special_settlement_castle_drakenhof_3_emp	teb_half_pikes	0	0		false
+3012192	wh_main_special_settlement_castle_drakenhof_4_emp	teb_half_pikes	0	0		false
+3012193	wh_main_special_settlement_castle_drakenhof_5_emp	teb_half_pikes	0	0		false
+3012194	wh_main_special_settlement_couronne_3_emp	teb_half_pikes	0	0		false
+3012195	wh_main_special_settlement_couronne_4_emp	teb_half_pikes	0	0		false
+3012196	wh_main_special_settlement_couronne_5_emp	teb_half_pikes	0	0		false
+3012197	wh_main_special_settlement_miragliano_3_teb	teb_half_pikes	0	0		false
+3012198	wh_main_special_settlement_miragliano_4_teb	teb_half_pikes	0	0		false
+3012199	wh_main_special_settlement_miragliano_5_teb	teb_half_pikes	0	0		false
+3012200	wh2_main_special_empire_fort_emp_2	teb_half_pikes	0	0		false
+3012201	wh2_main_special_settlement_sartosa_emp_2	teb_half_pikes	0	0		false
+3012202	wh_main_emp_settlement_major_2	teb_half_pikes	0	0		false
+3012203	wh_main_special_settlement_altdorf_2_emp	teb_half_pikes	0	0		false
+3012204	wh_main_special_settlement_castle_drakenhof_2_emp	teb_half_pikes	0	0		false
+3012205	wh_main_special_settlement_couronne_2_emp	teb_half_pikes	0	0		false
+3012206	wh_main_special_settlement_miragliano_2_teb	teb_half_pikes	0	0		false
+3012207	wh_main_emp_settlement_minor_2	teb_half_pikes	0	0		false
+3012208	teb_mil_city_1	teb_pikemen	0	0	mixer_teb_tilea	true
+3012209	teb_mil_city_2	teb_pikemen	0	0	mixer_teb_tilea	true
+3012210	teb_mil_city_3	teb_pikemen	0	0	mixer_teb_tilea	true
+3012211	teb_mil_city_1	teb_pikemen	0	0	mixer_teb_catrazza	true
+3012212	teb_mil_city_2	teb_pikemen	0	0	mixer_teb_catrazza	true
+3012213	teb_mil_city_3	teb_pikemen	0	0	mixer_teb_catrazza	true
+3012214	teb_mil_mercs_1	teb_pikemen	0	0		false
+3012215	teb_mil_mercs_2	teb_pikemen	0	0		false
+3012216	teb_mil_mercs_3	teb_pikemen	0	0		false
+3012217	teb_mil_city_2	teb_pikemen	0	0		false
+3012218	teb_mil_city_3	teb_pikemen	0	0		false
+3012219	teb_mil_city_1	teb_xbowmen	0	0		false
+3012220	teb_mil_city_2	teb_xbowmen	0	0		false
+3012221	teb_mil_city_3	teb_xbowmen	0	0		false
+3012222	teb_mil_mercs_1	teb_xbowmen	0	0	mixer_teb_tilea	true
+3012223	teb_mil_mercs_2	teb_xbowmen	0	0	mixer_teb_tilea	true
+3012224	teb_mil_mercs_3	teb_xbowmen	0	0	mixer_teb_tilea	true
+3012225	teb_mil_mercs_1	teb_xbowmen	0	0	mixer_teb_catrazza	true
+3012226	teb_mil_mercs_2	teb_xbowmen	0	0	mixer_teb_catrazza	true
+3012227	teb_mil_mercs_3	teb_xbowmen	0	0	mixer_teb_catrazza	true
+3012228	teb_mil_city_1	teb_billmen	0	0		false
+3012229	teb_mil_city_2	teb_billmen	0	0		false
+3012230	teb_mil_city_3	teb_billmen	0	0		false
+3012231	teb_mil_city_3	teb_noble_retinue	0	0		false
+3012232	teb_mil_city_2	teb_broken_lances	0	0	mixer_teb_catrazza	true
+3012233	teb_mil_city_3	teb_broken_lances	0	0	mixer_teb_catrazza	true
+3012234	teb_mil_city_2	teb_broken_lances	0	0	mixer_teb_tilea	true
+3012235	teb_mil_city_3	teb_broken_lances	0	0	mixer_teb_tilea	true
+3012236	teb_mil_mercs_2	teb_broken_lances	0	0	mixer_teb_colombo	true
+3012237	teb_mil_mercs_3	teb_broken_lances	0	0	mixer_teb_colombo	true
+3012238	teb_mil_mercs_2	teb_broken_lances	0	0	mixer_teb_new_world_colonies	true
+3012239	teb_mil_mercs_3	teb_broken_lances	0	0	mixer_teb_new_world_colonies	true
+3012240	teb_mil_duellists_1	teb_duellists	0	0		false
+3012241	teb_mil_duellists_2	teb_duellists	0	0		false
+3012242	teb_mil_duellists_2	teb_montante_greatswords	0	0		false
+3012243	teb_mil_city_3	teb_encarmine	0	0		false
+3012244	teb_mil_mercs_1	teb_conqui_adventurers	0	0		false
+3012245	teb_mil_mercs_2	teb_conqui_adventurers	0	0		false
+3012246	teb_mil_mercs_3	teb_conqui_adventurers	0	0		false
+3012247	teb_mil_mercs_1	teb_conqui_lancers	0	0		false
+3012248	teb_mil_mercs_2	teb_conqui_lancers	0	0		false
+3012249	teb_mil_mercs_3	teb_conqui_lancers	0	0		false
+3012250	teb_mil_mercs_2	teb_conqui_riders	0	0		false
+3012251	teb_mil_mercs_3	teb_conqui_riders	0	0		false
+3012252	teb_mil_mercs_3	teb_conqui_royal_guard	0	0		false
+3012253	teb_mil_city_3	teb_carabiniers	0	0		false
+3012254	teb_mil_city_2	teb_handgunners	0	0	mixer_teb_bilbali	true
+3012255	teb_mil_city_3	teb_handgunners	0	0	mixer_teb_bilbali	true
+3012256	teb_mil_city_2	teb_handgunners	0	0	mixer_teb_estalia	true
+3012257	teb_mil_city_3	teb_handgunners	0	0	mixer_teb_estalia	true
+3012258	teb_mil_city_2	teb_handgunners	0	0	mixer_teb_colombo	true
+3012259	teb_mil_city_3	teb_handgunners	0	0	mixer_teb_colombo	true
+3012260	teb_mil_city_2	teb_handgunners	0	0	mixer_teb_new_world_colonies	true
+3012261	teb_mil_city_3	teb_handgunners	0	0	mixer_teb_new_world_colonies	true
+3012262	teb_mil_mercs_2	teb_handgunners	0	0	mixer_teb_tilea	true
+3012263	teb_mil_mercs_3	teb_handgunners	0	0	mixer_teb_tilea	true
+3012264	teb_mil_mercs_2	teb_handgunners	0	0	mixer_teb_catrazza	true
+3012265	teb_mil_mercs_3	teb_handgunners	0	0	mixer_teb_catrazza	true
+3012266	teb_mil_mercs_2	teb_handgunners	0	0	mixer_teb_border_princes	true
+3012267	teb_mil_mercs_3	teb_handgunners	0	0	mixer_teb_border_princes	true
+3012268	teb_mil_mercs_2	teb_handgunners	0	0	mixer_teb_gashnag	true
+3012269	teb_mil_mercs_3	teb_handgunners	0	0	mixer_teb_gashnag	true
+3012270	teb_mil_mercs_3	wh3_main_ogr_inf_maneaters_1	0	0		false
+3012271	teb_mil_mercs_3	wh3_main_ogr_inf_maneaters_3	0	0		false
+3012272	teb_mil_mercs_2	teb_pavisiers	0	0		false
+3012273	teb_mil_mercs_3	teb_pavisiers	0	0		false
+3012274	teb_mil_mercs_1	teb_border_rangers	0	0		false
+3012275	teb_mil_mercs_2	teb_border_rangers	0	0		false
+3012276	teb_mil_mercs_3	teb_border_rangers	0	0		false
+3012277	teb_mil_mercs_1	teb_light_scouts	0	0		false
+3012278	teb_mil_mercs_2	teb_light_scouts	0	0		false
+3012279	teb_mil_mercs_3	teb_light_scouts	0	0		false
+3012280	teb_mil_mercs_2	teb_freelance_knights	0	0		false
+3012281	teb_mil_mercs_3	teb_freelance_knights	0	0		false
+3012282	teb_mil_city_2	teb_duellists	0	0		false
+3012283	teb_mil_city_3	teb_duellists	0	0		false
+3012284	teb_mil_city_3	teb_montante_greatswords	0	0		false
+3012285	teb_mil_rangers_1	teb_border_rangers	0	0		false
+3012286	teb_mil_rangers_2	teb_border_rangers	0	0		false
+3012287	teb_mil_rangers_1	teb_light_scouts	0	0		false
+3012288	teb_mil_rangers_2	teb_light_scouts	0	0		false
+3012289	teb_mil_rangers_2	teb_enforcers	0	0		false
+3012290	teb_mil_rangers_2	teb_swash	0	0		false
+3012291	teb_mil_city_2	teb_militia_knights	0	0		false
+3012292	teb_mil_city_3	teb_militia_knights	0	0		false
+3012293	teb_mil_city_3	teb_shieldbearers	0	0		false
+3012294	teb_mil_city_3	teb_guard_kossars	0	0		false
+3012295	teb_mil_city_3	teb_xbow_cav	0	0	mixer_teb_bilbali	true
+3012296	teb_mil_city_3	teb_xbow_cav	0	0	mixer_teb_estalia	true
+3012297	teb_mil_city_3	teb_xbow_cav	0	0	mixer_teb_colombo	true
+3012298	teb_mil_city_3	teb_xbow_cav	0	0	mixer_teb_new_world_colonies	true
+3012299	teb_mil_mercs_3	teb_xbow_cav	0	0	mixer_teb_tilea	true
+3012300	teb_mil_mercs_3	teb_xbow_cav	0	0	mixer_teb_catrazza	true
+3012301	teb_mil_mercs_3	teb_xbow_cav	0	0	mixer_teb_border_princes	true
+3012302	teb_mil_mercs_3	teb_xbow_cav	0	0	mixer_teb_gashnag	true
+3012303	teb_mil_mercs_2	teb_irrana	0	0		false
+3012304	teb_mil_mercs_3	teb_irrana	0	0		false
+3012305	teb_mil_city_2	teb_republican_guard	0	0		false
+3012306	teb_mil_city_3	teb_republican_guard	0	0		false
+3012307	teb_mil_cannons_1	teb_light_cannon	0	0		false
+3012308	teb_mil_cannons_2	teb_light_cannon	0	0		false
+3012309	teb_mil_cannons_1	wh_main_emp_art_mortar	0	0		false
+3012310	teb_mil_cannons_2	wh_main_emp_art_mortar	0	0		false
+3012311	teb_mil_cannons_2	teb_galloper	0	0		false
+3012312	teb_mil_cannons_2	teb_tank	0	0		false
+3012313	teb_mil_city_2	teb_swash	0	0	mixer_teb_colombo	true
+3012314	teb_mil_city_3	teb_swash	0	0	mixer_teb_colombo	true
+3012315	teb_mil_city_2	teb_swash	0	0	mixer_teb_new_world_colonies	true
+3012316	teb_mil_city_3	teb_swash	0	0	mixer_teb_new_world_colonies	true
+3012317	teb_mil_mercs_1	teb_paymaster	0	0		false
+3012318	teb_mil_mercs_2	teb_paymaster	0	0		false
+3012319	teb_mil_mercs_3	teb_paymaster	0	0		false
+3012320	teb_worship_myrmidia_5	teb_kotrs	0	0		false
+3012321	teb_worship_myrmidia_5	teb_sisters	0	0		false
+3012322	teb_worship_myrmidia_5	teb_bwatch	0	0		false
+3012323	teb_worship_myrmidia_3_magritta	teb_kotrs	0	0		false
+3012324	teb_worship_myrmidia_4_magritta	teb_kotrs	0	0		false
+3012325	teb_worship_myrmidia_3_magritta	teb_sisters	0	0		false
+3012326	teb_worship_myrmidia_4_magritta	teb_sisters	0	0		false
+3012327	teb_worship_myrmidia_3_magritta	teb_bwatch	0	0		false
+3012328	teb_worship_myrmidia_4_magritta	teb_bwatch	0	0		false
+3012329	teb_worship_myrmidia_5_magritta	teb_kotrs	0	0		false
+3012330	teb_worship_myrmidia_5_magritta	teb_sisters	0	0		false
+3012331	teb_worship_myrmidia_5_magritta	teb_bwatch	0	0		false
+3012332	teb_mil_rangers_2	wh_dlc06_dwf_inf_rangers_0	0	0	mixer_teb_border_princes	true
+3012333	teb_tylos_settlement_2	teb_militia_spearmen	0	0		false
+3012334	teb_tylos_settlement_3	teb_militia_spearmen	0	0		false
+3012335	teb_tylos_settlement_4	teb_militia_spearmen	0	0		false
+3012336	teb_tylos_settlement_5	teb_militia_spearmen	0	0		false
+3012337	teb_tylos_settlement_2	teb_half_pikes	0	0		false
+3012338	teb_tylos_settlement_3	teb_half_pikes	0	0		false
+3012339	teb_tylos_settlement_4	teb_half_pikes	0	0		false
+3012340	teb_tylos_settlement_5	teb_half_pikes	0	0		false
+3012341	teb_morgheim_gashnag_bad	wh_main_vmp_inf_crypt_ghouls	0	0		false
+3012342	teb_morgheim_gashnag_bad	wh_main_vmp_mon_dire_wolves	0	0		false
+3012343	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_luccini	true
+3012344	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_miragliano	true
+3012345	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_monte_castello	true
+3012346	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_pavona	true
+3012347	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_remas	true
+3012348	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_trantio	true
+3012349	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_verezzo	true
+3012350	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_tilea_rebels	true
+3012351	teb_mil_city_1	teb_pikemen	0	0	cr_teb_luccini	true
+3012352	teb_mil_city_1	teb_pikemen	0	0	cr_teb_miragliano	true
+3012353	teb_mil_city_1	teb_pikemen	0	0	cr_teb_monte_castello	true
+3012354	teb_mil_city_1	teb_pikemen	0	0	cr_teb_pavona	true
+3012355	teb_mil_city_1	teb_pikemen	0	0	cr_teb_remas	true
+3012356	teb_mil_city_1	teb_pikemen	0	0	cr_teb_trantio	true
+3012357	teb_mil_city_1	teb_pikemen	0	0	cr_teb_verezzo	true
+3012358	teb_mil_city_1	teb_pikemen	0	0	cr_teb_tilea_rebels	true
+3012359	teb_mil_city_2	teb_pikemen	0	0	cr_teb_luccini	true
+3012360	teb_mil_city_2	teb_pikemen	0	0	cr_teb_miragliano	true
+3012361	teb_mil_city_2	teb_pikemen	0	0	cr_teb_monte_castello	true
+3012362	teb_mil_city_2	teb_pikemen	0	0	cr_teb_pavona	true
+3012363	teb_mil_city_2	teb_pikemen	0	0	cr_teb_remas	true
+3012364	teb_mil_city_2	teb_pikemen	0	0	cr_teb_trantio	true
+3012365	teb_mil_city_2	teb_pikemen	0	0	cr_teb_verezzo	true
+3012366	teb_mil_city_2	teb_pikemen	0	0	cr_teb_tilea_rebels	true
+3012367	teb_mil_city_3	teb_pikemen	0	0	cr_teb_luccini	true
+3012368	teb_mil_city_3	teb_pikemen	0	0	cr_teb_miragliano	true
+3012369	teb_mil_city_3	teb_pikemen	0	0	cr_teb_monte_castello	true
+3012370	teb_mil_city_3	teb_pikemen	0	0	cr_teb_pavona	true
+3012371	teb_mil_city_3	teb_pikemen	0	0	cr_teb_remas	true
+3012372	teb_mil_city_3	teb_pikemen	0	0	cr_teb_trantio	true
+3012373	teb_mil_city_3	teb_pikemen	0	0	cr_teb_verezzo	true
+3012374	teb_mil_city_3	teb_pikemen	0	0	cr_teb_tilea_rebels	true
+3012375	teb_mil_mercs_1	teb_xbowmen	0	0	cr_teb_luccini	true
+3012376	teb_mil_mercs_1	teb_xbowmen	0	0	cr_teb_miragliano	true
+3012377	teb_mil_mercs_1	teb_xbowmen	0	0	cr_teb_monte_castello	true
+3012378	teb_mil_mercs_1	teb_xbowmen	0	0	cr_teb_pavona	true
+3012379	teb_mil_mercs_1	teb_xbowmen	0	0	cr_teb_remas	true
+3012380	teb_mil_mercs_1	teb_xbowmen	0	0	cr_teb_trantio	true
+3012381	teb_mil_mercs_1	teb_xbowmen	0	0	cr_teb_verezzo	true
+3012382	teb_mil_mercs_1	teb_xbowmen	0	0	cr_teb_tilea_rebels	true
+3012383	teb_mil_mercs_2	teb_xbowmen	0	0	cr_teb_luccini	true
+3012384	teb_mil_mercs_2	teb_xbowmen	0	0	cr_teb_miragliano	true
+3012385	teb_mil_mercs_2	teb_xbowmen	0	0	cr_teb_monte_castello	true
+3012386	teb_mil_mercs_2	teb_xbowmen	0	0	cr_teb_pavona	true
+3012387	teb_mil_mercs_2	teb_xbowmen	0	0	cr_teb_remas	true
+3012388	teb_mil_mercs_2	teb_xbowmen	0	0	cr_teb_trantio	true
+3012389	teb_mil_mercs_2	teb_xbowmen	0	0	cr_teb_verezzo	true
+3012390	teb_mil_mercs_2	teb_xbowmen	0	0	cr_teb_tilea_rebels	true
+3012391	teb_mil_mercs_3	teb_xbowmen	0	0	cr_teb_luccini	true
+3012392	teb_mil_mercs_3	teb_xbowmen	0	0	cr_teb_miragliano	true
+3012393	teb_mil_mercs_3	teb_xbowmen	0	0	cr_teb_monte_castello	true
+3012394	teb_mil_mercs_3	teb_xbowmen	0	0	cr_teb_pavona	true
+3012395	teb_mil_mercs_3	teb_xbowmen	0	0	cr_teb_remas	true
+3012396	teb_mil_mercs_3	teb_xbowmen	0	0	cr_teb_trantio	true
+3012397	teb_mil_mercs_3	teb_xbowmen	0	0	cr_teb_verezzo	true
+3012398	teb_mil_mercs_3	teb_xbowmen	0	0	cr_teb_tilea_rebels	true
+3012399	teb_mil_city_2	teb_broken_lances	0	0	cr_teb_luccini	true
+3012400	teb_mil_city_2	teb_broken_lances	0	0	cr_teb_miragliano	true
+3012401	teb_mil_city_2	teb_broken_lances	0	0	cr_teb_monte_castello	true
+3012402	teb_mil_city_2	teb_broken_lances	0	0	cr_teb_pavona	true
+3012403	teb_mil_city_2	teb_broken_lances	0	0	cr_teb_remas	true
+3012404	teb_mil_city_2	teb_broken_lances	0	0	cr_teb_trantio	true
+3012405	teb_mil_city_2	teb_broken_lances	0	0	cr_teb_verezzo	true
+3012406	teb_mil_city_2	teb_broken_lances	0	0	cr_teb_tilea_rebels	true
+3012407	teb_mil_city_3	teb_broken_lances	0	0	cr_teb_luccini	true
+3012408	teb_mil_city_3	teb_broken_lances	0	0	cr_teb_miragliano	true
+3012409	teb_mil_city_3	teb_broken_lances	0	0	cr_teb_monte_castello	true
+3012410	teb_mil_city_3	teb_broken_lances	0	0	cr_teb_pavona	true
+3012411	teb_mil_city_3	teb_broken_lances	0	0	cr_teb_remas	true
+3012412	teb_mil_city_3	teb_broken_lances	0	0	cr_teb_trantio	true
+3012413	teb_mil_city_3	teb_broken_lances	0	0	cr_teb_verezzo	true
+3012414	teb_mil_city_3	teb_broken_lances	0	0	cr_teb_tilea_rebels	true
+3012415	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_luccini	true
+3012416	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_miragliano	true
+3012417	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_monte_castello	true
+3012418	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_pavona	true
+3012419	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_remas	true
+3012420	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_trantio	true
+3012421	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_verezzo	true
+3012422	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_tilea_rebels	true
+3012423	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_luccini	true
+3012424	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_miragliano	true
+3012425	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_monte_castello	true
+3012426	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_pavona	true
+3012427	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_remas	true
+3012428	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_trantio	true
+3012429	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_verezzo	true
+3012430	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_tilea_rebels	true
+3012431	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_luccini	true
+3012432	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_miragliano	true
+3012433	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_monte_castello	true
+3012434	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_pavona	true
+3012435	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_remas	true
+3012436	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_trantio	true
+3012437	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_verezzo	true
+3012438	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_tilea_rebels	true
+3012439	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_central_confederacy	true
+3012440	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_north_confederacy	true
+3012441	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_south_confederacy	true
+3012442	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_pigbarter	true
+3012443	teb_mil_mercs_2	teb_handgunners	0	0	cr_teb_border_princes_rebels	true
+3012444	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_central_confederacy	true
+3012445	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_north_confederacy	true
+3012446	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_south_confederacy	true
+3012447	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_pigbarter	true
+3012448	teb_mil_mercs_3	teb_handgunners	0	0	cr_teb_border_princes_rebels	true
+3012449	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_central_confederacy	true
+3012450	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_north_confederacy	true
+3012451	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_south_confederacy	true
+3012452	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_pigbarter	true
+3012453	teb_mil_mercs_3	teb_xbow_cav	0	0	cr_teb_border_princes_rebels	true
+3012454	teb_mil_city_2	teb_handgunners	0	0	cr_teb_almagora	true
+3012455	teb_mil_city_2	teb_handgunners	0	0	cr_teb_bilbali	true
+3012456	teb_mil_city_2	teb_handgunners	0	0	cr_teb_gualcazar	true
+3012457	teb_mil_city_2	teb_handgunners	0	0	cr_teb_magritta	true
+3012458	teb_mil_city_2	teb_handgunners	0	0	cr_teb_estebans_caballeros	true
+3012459	teb_mil_city_2	teb_handgunners	0	0	cr_teb_nuja	true
+3012460	teb_mil_city_2	teb_handgunners	0	0	cr_teb_reinos_pobres	true
+3012461	teb_mil_city_2	teb_handgunners	0	0	cr_teb_vizeaya	true
+3012462	teb_mil_city_2	teb_handgunners	0	0	cr_teb_estalia_rebels	true
+3012463	teb_mil_city_3	teb_handgunners	0	0	cr_teb_almagora	true
+3012464	teb_mil_city_3	teb_handgunners	0	0	cr_teb_bilbali	true
+3012465	teb_mil_city_3	teb_handgunners	0	0	cr_teb_gualcazar	true
+3012466	teb_mil_city_3	teb_handgunners	0	0	cr_teb_magritta	true
+3012467	teb_mil_city_3	teb_handgunners	0	0	cr_teb_estebans_caballeros	true
+3012468	teb_mil_city_3	teb_handgunners	0	0	cr_teb_nuja	true
+3012469	teb_mil_city_3	teb_handgunners	0	0	cr_teb_reinos_pobres	true
+3012470	teb_mil_city_3	teb_handgunners	0	0	cr_teb_vizeaya	true
+3012471	teb_mil_city_3	teb_handgunners	0	0	cr_teb_estalia_rebels	true
+3012472	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_almagora	true
+3012473	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_bilbali	true
+3012474	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_gualcazar	true
+3012475	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_magritta	true
+3012476	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_estebans_caballeros	true
+3012477	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_nuja	true
+3012478	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_reinos_pobres	true
+3012479	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_vizeaya	true
+3012480	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_estalia_rebels	true
+3012481	teb_mil_mercs_2	teb_broken_lances	0	0	cr_teb_order_of_the_blazing_sun	true
+3012482	teb_mil_mercs_2	teb_broken_lances	0	0	cr_teb_tobaro	true
+3012483	teb_mil_mercs_3	teb_broken_lances	0	0	cr_teb_order_of_the_blazing_sun	true
+3012484	teb_mil_mercs_3	teb_broken_lances	0	0	cr_teb_tobaro	true
+3012485	teb_mil_city_2	teb_handgunners	0	0	cr_teb_order_of_the_blazing_sun	true
+3012486	teb_mil_city_2	teb_handgunners	0	0	cr_teb_tobaro	true
+3012487	teb_mil_city_3	teb_handgunners	0	0	cr_teb_order_of_the_blazing_sun	true
+3012488	teb_mil_city_3	teb_handgunners	0	0	cr_teb_tobaro	true
+3012489	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_order_of_the_blazing_sun	true
+3012490	teb_mil_city_3	teb_xbow_cav	0	0	cr_teb_tobaro	true
+3012491	teb_mil_city_2	teb_swash	0	0	cr_teb_order_of_the_blazing_sun	true
+3012492	teb_mil_city_2	teb_swash	0	0	cr_teb_tobaro	true
+3012493	teb_mil_city_3	teb_swash	0	0	cr_teb_order_of_the_blazing_sun	true
+3012494	teb_mil_city_3	teb_swash	0	0	cr_teb_tobaro	true
+3012495	teb_mil_rangers_2	wh_dlc06_dwf_inf_rangers_0	0	0	cr_teb_central_confederacy	true
+3012496	teb_special_sentinels	wh3_main_ogr_inf_maneaters_1	0	0		false
+3012497	teb_special_sentinels	wh3_main_ogr_inf_maneaters_3	0	0		false
+3012498	teb_worship_shallya_3_couronne	teb_freelance_knights	0	0		false
+3012499	teb_worship_shallya_3_couronne	teb_noble_retinue	0	0		false
+3012500	teb_worship_shallya_4_couronne	teb_freelance_knights	0	0		false
+3012501	teb_worship_shallya_4_couronne	teb_noble_retinue	0	0		false
+3012502	teb_worship_shallya_5_couronne	teb_freelance_knights	0	0		false
+3012503	teb_worship_shallya_5_couronne	teb_noble_retinue	0	0		false
+3012504	teb_camp_inf_2	teb_pikemen	0	0		false
+3012505	teb_camp_inf_3	teb_pikemen	0	0		false
+3012506	teb_camp_inf_4	teb_pikemen	0	0		false
+3012507	teb_camp_inf_4	teb_montante_greatswords	0	0		false
+3012508	teb_camp_inf_3	teb_republican_guard	0	0		false
+3012509	teb_camp_inf_4	teb_republican_guard	0	0		false
+3012510	teb_camp_main_2	teb_paymaster	0	0		false
+3012511	teb_camp_main_3	teb_paymaster	0	0		false
+3012512	teb_camp_main_4	teb_paymaster	0	0		false
+3012513	teb_camp_main_5	teb_paymaster	0	0		false
+3012514	teb_camp_missile_3	teb_pavisiers	0	0		false
+3012515	teb_camp_cavalry_2	teb_broken_lances	0	0		false
+3012516	teb_camp_cavalry_3	teb_broken_lances	0	0		false
+3012517	teb_camp_cavalry_3	teb_carabiniers	0	0		false
+3012518	teb_camp_artillery_1	teb_light_cannon	0	0		false
+3012519	teb_camp_artillery_2	teb_light_cannon	0	0		false
+3012520	teb_camp_missile_3	teb_conqui_royal_guard	0	0		false
+3012521	teb_camp_inf_2	teb_conqui_adventurers	0	0		false
+3012522	teb_camp_inf_3	teb_conqui_adventurers	0	0		false
+3012523	teb_camp_inf_4	teb_conqui_adventurers	0	0		false
+3012524	teb_camp_cavalry_2	teb_conqui_riders	0	0		false
+3012525	teb_camp_cavalry_3	teb_conqui_riders	0	0		false
+3012526	teb_camp_cavalry_1	teb_conqui_lancers	0	0		false
+3012527	teb_camp_cavalry_2	teb_conqui_lancers	0	0		false
+3012528	teb_camp_cavalry_3	teb_conqui_lancers	0	0		false
+3012529	teb_camp_cavalry_2	teb_enforcers	0	0		false
+3012530	teb_camp_cavalry_3	teb_enforcers	0	0		false
+3012531	teb_camp_main_1	teb_militia_archers	0	0		false
+3012532	teb_camp_main_2	teb_militia_archers	0	0		false
+3012533	teb_camp_main_3	teb_militia_archers	0	0		false
+3012534	teb_camp_main_4	teb_militia_archers	0	0		false
+3012535	teb_camp_main_5	teb_militia_archers	0	0		false
+3012536	teb_camp_cavalry_2	teb_freelance_knights	0	0		false
+3012537	teb_camp_cavalry_3	teb_freelance_knights	0	0		false
+3012538	teb_camp_cavalry_1	teb_light_scouts	0	0		false
+3012539	teb_camp_cavalry_2	teb_light_scouts	0	0		false
+3012540	teb_camp_cavalry_3	teb_light_scouts	0	0		false
+3012541	teb_camp_missile_1	teb_border_rangers	0	0		false
+3012542	teb_camp_missile_2	teb_border_rangers	0	0		false
+3012543	teb_camp_missile_3	teb_border_rangers	0	0		false
+3012544	teb_camp_inf_2	teb_swash	0	0		false
+3012545	teb_camp_inf_3	teb_swash	0	0		false
+3012546	teb_camp_inf_4	teb_swash	0	0		false
+3012547	teb_camp_inf_3	teb_duellists	0	0		false
+3012548	teb_camp_inf_4	teb_duellists	0	0		false
+3012549	teb_camp_cavalry_3	teb_xbow_cav	0	0		false
+3012550	teb_camp_missile_3	teb_irrana	0	0		false
+3012551	teb_camp_inf_1	teb_half_pikes	0	0		false
+3012552	teb_camp_inf_2	teb_half_pikes	0	0		false
+3012553	teb_camp_inf_3	teb_half_pikes	0	0		false
+3012554	teb_camp_inf_4	teb_half_pikes	0	0		false
+3012555	teb_camp_main_1	teb_militia_spearmen	0	0		false
+3012556	teb_camp_main_2	teb_militia_spearmen	0	0		false
+3012557	teb_camp_main_3	teb_militia_spearmen	0	0		false
+3012558	teb_camp_main_4	teb_militia_spearmen	0	0		false
+3012559	teb_camp_main_5	teb_militia_spearmen	0	0		false
+3012560	teb_camp_inf_1	teb_billmen	0	0		false
+3012561	teb_camp_inf_2	teb_billmen	0	0		false
+3012562	teb_camp_inf_3	teb_billmen	0	0		false
+3012563	teb_camp_inf_4	teb_billmen	0	0		false
+3012564	teb_camp_missile_3	teb_guard_kossars	0	0		false
+3012565	teb_camp_missile_1	teb_xbowmen	0	0		false
+3012566	teb_camp_missile_2	teb_xbowmen	0	0		false
+3012567	teb_camp_missile_3	teb_xbowmen	0	0		false
+3012568	teb_camp_missile_2	teb_handgunners	0	0		false
+3012569	teb_camp_missile_3	teb_handgunners	0	0		false
+3012570	teb_camp_artillery_2	teb_galloper	0	0		false
+3012571	teb_camp_artillery_2	teb_tank	0	0		false
+3012572	teb_camp_artillery_1	wh_main_emp_art_mortar	0	0		false
+3012573	teb_camp_artillery_2	wh_main_emp_art_mortar	0	0		false
+3012574	teb_camp_inf_4	wh3_main_ogr_inf_maneaters_1	0	0		false
+3012575	teb_camp_inf_4	wh3_main_ogr_inf_maneaters_3	0	0		false
+3012576	teb_camp_missile_3	wh_dlc06_dwf_inf_rangers_0	0	0	mixer_teb_border_princes	true
+3012577	teb_camp_missile_3	wh_dlc06_dwf_inf_rangers_0	0	0	cr_teb_central_confederacy	true
+3012578	teb_camp_foreign_2	wh3_main_ksl_cav_gryphon_legion_0	0	0		false
+3012579	teb_camp_foreign_1	wh3_dlc23_chd_cav_hobgoblin_wolf_raiders_bows	0	0		false
+3012580	teb_camp_foreign_2	wh3_dlc23_chd_cav_hobgoblin_wolf_raiders_bows	0	0		false
+3012581	teb_camp_foreign_1	wh3_dlc25_dwf_inf_slayer_pirates	0	0		false
+3012582	teb_camp_foreign_2	wh3_dlc25_dwf_inf_slayer_pirates	0	0		false
+3012583	teb_camp_foreign_2	wh_main_grn_mon_giant	0	0		false
+3012584	wh_main_teb_port_2	teb_golden_lion	0	0		false
+3012585	wh_main_teb_port_3	teb_golden_lion	0	0		false
+3012586	teb_special_windmills_lupio_2	teb_conqui_royal_guard	0	0		false
+3012587	teb_mil_base	teb_half_pikes	0	0		false
+3012588	teb_mil_city_1	teb_half_pikes	0	0		false
+3012589	teb_mil_city_2	teb_half_pikes	0	0		false
+3012590	teb_mil_city_3	teb_half_pikes	0	0		false
+3012591	teb_mil_mercs_1	teb_half_pikes	0	0		false
+3012592	teb_mil_mercs_2	teb_half_pikes	0	0		false
+3012593	teb_mil_mercs_3	teb_half_pikes	0	0		false

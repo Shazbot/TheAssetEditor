@@ -1,0 +1,12 @@
+the TWUI files for camps contain sensitive keys:
+
+- faction keys
+- reference to the cco file
+- camp key
+- camp general key
+
+
+
+BIG IMPORTANT: full credits to Rhox and the OVN team for letting me rip these from them, with further Rhox assistance to change GUIDs.
+
+also, not sure the method in rhox_teb_deploy_camp_button.twui.xml to check for faction keys is efficient but couldn't find anything better in vanilla.

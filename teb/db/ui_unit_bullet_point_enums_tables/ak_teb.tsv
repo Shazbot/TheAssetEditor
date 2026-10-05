@@ -1,0 +1,18 @@
+key	state	sort_order	icon_path
+#ui_unit_bullet_point_enums_tables;4;db/ui_unit_bullet_point_enums_tables/ak_teb			
+teb_paymaster	positive	0	
+lord_skirmish	positive	0	
+lord_battle_support	positive	0	
+teb_dirty_fighting	positive	0	
+teb_irrana	positive	4	
+teb_tank	positive	20	
+teb_blades_ancient	positive	1	
+teb_cloak&dagger	positive	1	
+teb_renown_officer	positive	0	
+teb_disgusting	negative	5	
+teb_pirazzo_xbows	very_positive	1	
+teb_galloper	positive	1	
+quick_learner	positive	71	
+teb_long_lances	positive	10	
+teb_roc_estragon	negative	1	
+teb_generalist_antilarge	positive	10	

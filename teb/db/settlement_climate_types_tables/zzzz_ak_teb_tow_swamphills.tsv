@@ -1,0 +1,5 @@
+type	ui_icon_image	ui_background_image
+#settlement_climate_types_tables;2;db/settlement_climate_types_tables/zzzz_ak_teb_tow_swamphills		
+climate_hills		default_background
+climate_swamp		default_background
+climate_immaterial		default_background

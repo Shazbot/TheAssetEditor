@@ -1,0 +1,86 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_ancillaries_lls.loc		
+ancillaries_onscreen_name_mount_teb_borgio_warhorse	Warhorse	true
+ancillaries_colour_text_mount_teb_borgio_warhorse	A horse can outrun Orcs, Trolls, even Giants. Not arrows. Or Doom Divers. But it still helps.	true
+ancillaries_onscreen_name_mount_teb_borgio_bwarhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_teb_borgio_bwarhorse	Can't be properly imposing without a plated barding for the horse.	true
+ancillaries_onscreen_name_teb_borgio_mace	Mace of Might	true
+ancillaries_colour_text_teb_borgio_mace	During the Siege of Remas, a cannonball flew straight at Borgio. Instead of rather influential smithereens, bystanders witnessed that the projectile was stuck right into the Prince's armour, who was barely wounded. Melted and reshaped as a mace, the cannonball makes for a terrifying and symbolic weapon.	true
+ancillaries_onscreen_name_teb_borgio_mask	Monstrous Mask Helm	true
+ancillaries_colour_text_teb_borgio_mask	During the most furious melees, Borgio wears his frightening mask, a grotesque grimace of malice. Coupled with the wearer's bulk and might, the effect is scary indeed.	true
+ancillaries_onscreen_name_teb_borgio_armour	Armour of Brazen Brass	true
+ancillaries_colour_text_teb_borgio_armour	Only some scholars might know what those statues were about, but once melted and used to forge this huge brazen armour, they might have brought over whatever enchantment they used to bear...	true
+ancillaries_onscreen_name_teb_gashnag_book	Tome of Ushoran	true
+ancillaries_colour_text_teb_gashnag_book	Knowledge is power, and this learning comes from the Strigoi patriarch's secrets and mistakes.	true
+ancillaries_onscreen_name_teb_gashnag_staff	Staff of Strygos	true
+ancillaries_colour_text_teb_gashnag_staff	One of Ushoran's own artefacts, this polestaff supposedly allowed the original Strigoi patriarch to hold off the Lahmians' aggression for so long.	true
+ancillaries_onscreen_name_mount_teb_lucrezzia_warhorse	Warhorse	true
+ancillaries_colour_text_mount_teb_lucrezzia_warhorse	A horse can outrun Orcs, Trolls, even Giants. Not arrows. Or Doom Divers. But it still helps.	true
+ancillaries_onscreen_name_mount_teb_lucrezzia_bwarhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_teb_lucrezzia_bwarhorse	A proper Bretonnian steed, fast and with fine cloth barding. None of that spiky steely business.	true
+ancillaries_onscreen_name_teb_lucrezzia_stiletto	Poisoned Stiletto	true
+ancillaries_colour_text_teb_lucrezzia_stiletto	Lucrezzia always wears, somewhere on her person, a dagger coated with another of her brews. Can't blame someone for being prepared for a midnight stab.	true
+ancillaries_onscreen_name_mount_teb_gausser_warhorse	Warhorse	true
+ancillaries_colour_text_mount_teb_gausser_warhorse	A horse can outrun Orcs, Trolls, even Giants. Not arrows. Or Doom Divers. But it still helps.	true
+ancillaries_onscreen_name_mount_teb_gausser_bwarhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_teb_gausser_bwarhorse	Good metal barding is important against foes that can otherwise cleave your horse in twain in one blow. 	true
+ancillaries_onscreen_name_mount_teb_gausser_pegasus	Radiant Pegasus	true
+ancillaries_colour_text_mount_teb_gausser_pegasus	A rare arabyan Pegasus, gifted by Crusaders. A living and swift siphon of light and magic, ready to unleash their energy on aggressors.	true
+ancillaries_onscreen_name_teb_gausser_axe	Axe of the Dwarf-Friend	true
+ancillaries_colour_text_teb_gausser_axe	A Dwarf's grudge is forever, but so is his gratitude for many lives saved. The unexpected gift of a family runic axe is to be remembered for just as long.	true
+ancillaries_onscreen_name_teb_gausser_scarf	Scarf of the Crusader	true
+ancillaries_colour_text_teb_gausser_scarf	Formerly a magic and fluttering arabyan turban, this souvenir bears energetic enchantments. The cadre of Myrmidian priests who prodded it for a week have testified that the scarf won't strangle Gausser of its own initiative anytime soon, which is oddly specific.	true
+ancillaries_onscreen_name_mount_teb_catrazza_warhorse	Warhorse	true
+ancillaries_colour_text_mount_teb_catrazza_warhorse	A horse can outrun Orcs, Trolls, even Giants. Not arrows. Or Doom Divers. But it still helps.	true
+ancillaries_onscreen_name_mount_teb_catrazza_bwarhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_teb_catrazza_bwarhorse	Good metal barding is important against foes that can otherwise cleave your horse in twain in one blow. 	true
+ancillaries_onscreen_name_mount_teb_catrazza_grif	Jade Griffon	true
+ancillaries_colour_text_mount_teb_catrazza_grif	Respect my autorithah.	true
+ancillaries_onscreen_name_mount_teb_lupio_warhorse	Warhorse	true
+ancillaries_colour_text_mount_teb_lupio_warhorse	A horse can outrun Orcs, Trolls, even Giants. Not arrows. Or Doom Divers. But it still helps.	true
+ancillaries_onscreen_name_mount_teb_lupio_bwarhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_teb_lupio_bwarhorse	"I had actually sent to buy a unicorn. Made of diamonds. Like, a real live unicorn made of diamonds, very stylish. But they say it can't be done. Unimaginative buggers, the lot of them."	true
+ancillaries_onscreen_name_mount_teb_lupio_grif	Urracón	true
+ancillaries_colour_text_mount_teb_lupio_grif	Lupio's own demigryph owes his companionship to Lupio and "Big Magpie" nickname to his distinctive black and white coat and attraction towards shiny baubles.	true
+ancillaries_onscreen_name_teb_catrazza_sword	Relic Sword of Sea Gold	true
+ancillaries_colour_text_teb_catrazza_sword	An ancient elven blade, relic of a time when Tilea was an Asur colony. Its wielder's attacks leave a glowing and elegant trail of light and molten armour.	true
+ancillaries_onscreen_name_teb_catrazza_ring	Ring of Myrmidian Glory	true
+ancillaries_colour_text_teb_catrazza_ring	Catrazza is not usually one for religious displays, but there are solid practical and diplomatical advantages for wearing this ring around.	true
+ancillaries_onscreen_name_teb_lupio_cloak	Cloak of Visibility	true
+ancillaries_colour_text_teb_lupio_cloak	A cloak made of Lustrian gold, with uncertain magic properties. Its known feature is to give Lupio immense satisfaction.	true
+ancillaries_onscreen_name_teb_lupio_ring	Ring of Desire	true
+ancillaries_colour_text_teb_lupio_ring	Reaped during a confusing skirmish against reptiles, elf corsairs and marauders, this ring bears an eerie and intriguing aura over it. Inquisitors never managed to get it off Lupio for investigation.	true
+ancillaries_onscreen_name_mount_teb_cadavo_warhorse	Warhorse	true
+ancillaries_colour_text_mount_teb_cadavo_warhorse	Cadavo's current steed is an ill-tempered gelding only loyal and tending to Cadavo. To those few he doesn't kick on sight, he answers to the name of Broccolo. 	true
+ancillaries_onscreen_name_mount_teb_cadavo_bwarhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_teb_cadavo_bwarhorse	Cadavo's current steed is an ill-tempered gelding only loyal and tending to Cadavo. To those few he doesn't kick on sight, he answers to the name of Broccolo. 	true
+ancillaries_onscreen_name_teb_cadavo_talisman	Starbrass Talisman	true
+ancillaries_colour_text_teb_cadavo_talisman	An amulet made of a weird alloy, capable of neutralizing poisons and many of the magical properties for weapons that would injure the bearer.	true
+ancillaries_onscreen_name_mount_teb_colombo_warhorse	Warhorse & Doom Crossbolt	true
+ancillaries_colour_text_mount_teb_colombo_warhorse	A lucky prey from a skirmish against Corsairs, this rare magical repeater crossbow is too cumbersome for use on foot, but if you want something positively dead, it's a nice toy. Just have to hope the magic in it isn't too dark. 	true
+ancillaries_onscreen_name_mount_teb_colombo_steed	Barded Elven Steed & Doom Crossbolt	true
+ancillaries_colour_text_mount_teb_colombo_steed	"This baby can do zero to fifty in nothing! And I swear she can understand everything I- did she just write "sixty" with her hoof?"	true
+ancillaries_onscreen_name_teb_colombo_gem	Gem of Lustria	true
+ancillaries_colour_text_teb_colombo_gem	A reward from the Slann, this amulet in the shape of Sotek's tongue feels oddly alive and protected the wearer more times than he recalls.	true
+ancillaries_onscreen_name_teb_colombo_scroll	Scroll of Araby	true
+ancillaries_colour_text_teb_colombo_scroll	Used by someone to write an otherwise uninteresting map, this scroll bears potent enchantments of Nehekharan protective magic. However, it tends to crumble a bit with each use.	true
+ancillaries_onscreen_name_teb_lupio_foot_alt	Show Off	true
+ancillaries_colour_text_teb_lupio_foot_alt	Some people mistake Lupio's battlefield antics for astute shows of force and bravery for the troops. Truth is, they're Lupio's own satisfaction.	true
+ancillaries_onscreen_name_		true
+ancillaries_colour_text_		true
+ancillaries_onscreen_name_teb_eldaddio_weapon	Spear of Morr	true
+ancillaries_colour_text_teb_eldaddio_weapon	The weapon is an old gift from the Black Guard to the then-High Eagle of Myrmidia, and later made its way to Eustaquio. It is excruciatingly sharp and smells faintly of rotting roses. No matter what, Eustaquio seems to be viciously gripping it like a life-line.	true
+ancillaries_onscreen_name_teb_eldaddio_armour	Armour of Magritta	true
+ancillaries_colour_text_teb_eldaddio_armour	The best smiths were called to restore Eustaquio's plate armour. However, he wouldn't let anyone replace the chest piece or repair the hole through which the Nehekharans ripped out his heart. 	true
+ancillaries_onscreen_name_teb_lorenzo_lupo_shield	Shield of Myrmidia	true
+ancillaries_colour_text_teb_lorenzo_lupo_shield	This ancient shield might predate the city of Luccini, and still embodies the power of the sun.	true
+ancillaries_onscreen_name_teb_lorenzo_lupo_sword	Sword of Lucan	true
+ancillaries_colour_text_teb_lorenzo_lupo_sword	This blade is believed to be the actual sword used by his remote ancestor, Lucan, one of the twin divine founders of Luccini.	true
+ancillaries_onscreen_name_teb_lorenzo_lupo_ring	Ring of Luccina	true
+ancillaries_colour_text_teb_lorenzo_lupo_ring	A ring bearing the cameo of Luccina, sorceress and sister of Lucan. This enchanted item sings inspiring hymns and exhortations that embolden nearby troops.	true
+ancillaries_onscreen_name_teb_piggolo_warpig	War Pig Suit	false
+ancillaries_colour_text_teb_piggolo_warpig	Like his predecessor, Piggolo II doesn't crave the battlefield. But when hand-to-hand combat is required, or rather tusk-to-groin, he is clad in a custom panoply proper for his status and girth.	false
+ancillaries_onscreen_name_teb_piggolo_wagon	Pigmaster Chest Wagon	false
+ancillaries_colour_text_teb_piggolo_wagon	The chest wagon is Piggolo's most customary campaigning mount.	false
+ancillaries_onscreen_name_teb_piggolo_tank	Tortoise Tank	false
+ancillaries_colour_text_teb_piggolo_tank	The re-experimental tank is Piggolo's ultimate battle mount, from within which his tactical acumen can dominate the battlefield.	false

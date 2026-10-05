@@ -1,0 +1,9 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_land_units_hero.loc		
+land_units_onscreen_name_teb_priestess	Priestess of Myrmidia	true
+land_units_onscreen_name_teb_priestess_horse	Priestess of Myrmidia	true
+land_units_onscreen_name_teb_priestess_bhorse	Priestess of Myrmidia	true
+land_units_onscreen_name_teb_duellist_hero	Master Duellist	true
+land_units_onscreen_name_teb_duellist_hero_horse	Master Duellist	true
+land_units_onscreen_name_teb_duellist_hero_bhorse	Master Duellist	true
+land_units_onscreen_name_teb_duellist_hero_encarmine	Knight Duellist Encarmine	true

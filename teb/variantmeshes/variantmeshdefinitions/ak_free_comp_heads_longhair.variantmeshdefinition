@@ -1,0 +1,9 @@
+<VARIANT_MESH>
+	<SLOT name="head" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/emp_free_company_stirland_head_01.rigid_model_v2"  imposter_model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/emp_free_company_stirland_head_01.rigid_model_v2" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/emp_free_company_stirland_head_02.rigid_model_v2"  imposter_model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/emp_free_company_stirland_head_01.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="hair" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/jade/head/AK_longhair_01_helmet_med.rigid_model_v2"  imposter_model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/jade/head/emp_jade_wizard_head_02.rigid_model_v2" />
+	</SLOT>
+</VARIANT_MESH>

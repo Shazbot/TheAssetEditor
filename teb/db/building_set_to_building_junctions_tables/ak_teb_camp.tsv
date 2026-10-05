@@ -1,0 +1,19 @@
+building_chain	building_level	building_set	exclude
+#building_set_to_building_junctions_tables;0;db/building_set_to_building_junctions_tables/ak_teb_camp			
+teb_camp_main		wh3_main_set_ogre_camp	false
+teb_camp_inf		teb_camp_recruitment	false
+teb_camp_inf2		teb_camp_recruitment	false
+teb_camp_missile		teb_camp_recruitment	false
+teb_camp_cavalry		teb_camp_recruitment	false
+teb_camp_artillery		teb_camp_recruitment	false
+teb_camp_replenish		teb_camp_infra	false
+teb_camp_growth		teb_camp_infra	false
+teb_camp_recr		teb_camp_support	false
+teb_camp_upk		teb_camp_support	false
+teb_camp_port		teb_camp_region	false
+teb_camp_mountain		teb_camp_region	false
+teb_camp_jungle		teb_camp_region	false
+teb_camp_foreign		teb_camp_support	false
+teb_camp_scavenge		teb_camp_region	false
+	teb_camp_main_1	teb_camp_newhorde_buildings	false
+	teb_camp_missile_1	teb_camp_newhorde_buildings	false

@@ -1,0 +1,52 @@
+<VARIANT_MESH>
+
+	<SLOT name="head+torso" >
+        <VARIANT_MESH>
+            <SLOT name="torso with collars" >
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_young_nobles\torso\emp_young_nobles_torso_01.wsmodel"   >
+                    <META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+                <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\torso\emp_state_troops_torso_02.wsmodel"   >
+                    <META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+            </SLOT>
+            <SLOT name="head" >
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_state_troops_heads.variantmeshdefinition" />
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_morion_all.variantmeshdefinition" />
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_morion_all.variantmeshdefinition" />
+                <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_captains/head/emp_captains_head_01.wsmodel"   >
+                    <SLOT name="helmet" >
+                        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_captains/head/emp_captains_helmet_01.wsmodel" />
+                    </SLOT>
+                </VARIANT_MESH>
+            </SLOT>
+        </VARIANT_MESH>
+        <VARIANT_MESH>
+            <SLOT name="torso with gorget" >
+                <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_young_nobles\torso\ak_noble_torso_gorgetready.wsmodel"   >
+                    <META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+                        <VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\torso\AK_teb_demi_torso_nosh.wsmodel"  />
+            </SLOT>
+            <SLOT name="head" >
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_state_troops_heads.variantmeshdefinition" />
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_morion_all.variantmeshdefinition" />
+                <VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_morion_all.variantmeshdefinition" />
+                <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_empire_knights\head\ak_teb_knights_head_partial_01.wsmodel"   />
+                <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_empire_knights\head\ak_teb_knights_head_partial_02.wsmodel"   />
+            </SLOT>
+            <SLOT name="gorget" >
+                <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_demigryph_knight/head/AK_demi_gorget.wsmodel" />
+            </SLOT>
+        </VARIANT_MESH>
+	</SLOT>
+
+	<SLOT name="rondels" probability ="0.7" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\ak_teb_rondels.variantmeshdefinition" />
+	</SLOT>
+	<SLOT name="shoulder pads" probability ="0.5" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\ak_teb_stroop_shoulders.variantmeshdefinition" />
+	</SLOT>
+	<SLOT name="legs" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_young_nobles\legs\emp_young_nobles_legs_01.wsmodel"  />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_freecomp_legs_conqui.variantmeshdefinition" />
+	</SLOT>
+
+</VARIANT_MESH>

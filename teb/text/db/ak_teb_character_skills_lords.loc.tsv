@@ -1,0 +1,132 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_character_skills_lords.loc		
+character_skills_localised_name_til_merchant_unique_warhorse	Barded Warhorse	false
+character_skills_localised_name_til_merchant_unique_bwarhorse	Barded Warhorse	false
+character_skills_localised_name_til_merchant_self_pecunia	Pecunia non Olet	false
+character_skills_localised_name_til_merchant_self_ld	Self-Invested	false
+character_skills_localised_name_til_merchant_campaign_trade	The Capital	false
+character_skills_localised_name_til_merchant_campaign_security	Extra Security	false
+character_skills_localised_name_til_merchant_campaign_repl_starter	Hiring	false
+character_skills_localised_name_til_merchant_campaign_promoter	Arts Promoter	false
+character_skills_localised_name_til_merchant_campaign_mason	Marshal Plan	false
+character_skills_localised_name_til_merchant_campaign_mages	Hedge Wizards	false
+character_skills_localised_name_til_merchant_campaign_machiavelli	Machiavellian Prince	false
+character_skills_localised_name_til_merchant_campaign_income	Investor	false
+character_skills_localised_name_til_merchant_campaign_global	Death by Mercenaries	false
+character_skills_localised_name_til_merchant_campaign_freerein	Free Rein	false
+character_skills_localised_name_til_merchant_campaign_festive	Festive	false
+character_skills_localised_name_til_merchant_campaign_enlist	A Man's Worth	false
+character_skills_localised_name_til_merchant_campaign_drop	Connoisseur	false
+character_skills_localised_name_til_merchant_campaign_captain	Captains of Venture	false
+character_skills_localised_name_til_merchant_campaign_bidder	Highest Bidder	false
+character_skills_localised_name_til_merchant_campaign_alert	Veteran Advisors	false
+character_skills_localised_name_til_merchant_battle_double	Duplicarii	false
+character_skills_localised_name_teb_lord_campaign_range	War Thunder	false
+character_skills_localised_name_bor_ranger_lord_unique_warhorse2	Warhorse and Repeater Handgun	false
+character_skills_localised_name_bor_ranger_lord_unique_warhorse	Warhorse	false
+character_skills_localised_name_bor_ranger_lord_unique_stalk	{{tr:unit_abilities_onscreen_name_bor_ranger_lord_stalk}}	false
+character_skills_localised_name_bor_ranger_lord_unique_blind	Deception	false
+character_skills_localised_name_bor_ranger_lord_campaign_strike	Lightning Strike	false
+character_skills_localised_name_bor_ranger_lord_battle_tough	Hardened Fighters	false
+character_skills_localised_name_bor_ranger_lord_battle_skirmish	Enforcers	false
+character_skills_localised_name_bor_ranger_lord_battle_rough	Rough Riders	false
+character_skills_localised_name_bor_ranger_lord_battle_rangers	Rangers Defiant	false
+character_skills_localised_name_bor_ranger_lord_battle_archers	A Borderlands Welcome	false
+character_skills_localised_description_til_merchant_campaign_mages	"People say that the colour of magic is purple, white, red... I say it is gold. For all that lot."	true
+character_skills_localised_description_til_merchant_unique_warhorse	A horse! A horse! An acceptable amount of florins for a horse!	true
+character_skills_localised_description_til_merchant_unique_bwarhorse	Steel barding adds that certain something to your mount. A pity they didn't have it in red.	true
+character_skills_localised_description_til_merchant_self_pecunia	The doubt that betrayal would hardly bring woes but even monetary incentives has turned the tables of many battles.	true
+character_skills_localised_description_til_merchant_self_ld	This man has not gotten where he is now by being weak-minded.	true
+character_skills_localised_description_til_merchant_campaign_trade	Personally seizing the means of production never felt better.	true
+character_skills_localised_description_til_merchant_campaign_security	"You know you're doing it right when everyone and their mamas are sending people to stab you."	true
+character_skills_localised_description_til_merchant_campaign_repl_starter	Being known for actually paying one's hirelings - those that come back alive, anyway - pays off.	true
+character_skills_localised_description_til_merchant_campaign_promoter	Being supportive of the flourishing tilean art is prestigious, and prestige is lucrative.	true
+character_skills_localised_description_til_merchant_campaign_mason	Improving infrastructure and rebuilding the war-ravaged regions is key to a prosperous economy.	true
+character_skills_localised_description_til_merchant_campaign_machiavelli	Such is the pinnacle of the tilean merchant prince and politician that seemingly anything can be handled.	true
+character_skills_localised_description_til_merchant_campaign_income	Money must flow.	true
+character_skills_localised_description_til_merchant_campaign_global	"Open the coffers, put up more signs. I want more cannons, pikes, even ogres, even those buggers with the paper wings. Everyone. I shall have that castle by tomorrow or by Myrmidia I will drown them in mercs."	true
+character_skills_localised_description_til_merchant_campaign_freerein	A commander that allows his captains and troops to everything they can put their hands on is either irresponsible, well-adviced, criminally aggressive or all of the above.	true
+character_skills_localised_description_til_merchant_campaign_festive	Sometimes it is just time to party. The louder, the better.	true
+character_skills_localised_description_til_merchant_campaign_enlist	Kill not, waste not.	true
+character_skills_localised_description_til_merchant_campaign_drop	This man can easily distinguish between an ancient elven magical sword of implacable might and a piece of shiny iron, which is not so simple when the artifact itself is in that disguise.	true
+character_skills_localised_description_til_merchant_campaign_captain	War is merely the extension of economy by other means. But you do need someone to do the actual killing.	true
+character_skills_localised_description_til_merchant_campaign_bidder	Knowledge that the enemy wallet might buy your troops out even before the first battle puts huge pressure to make sure it doesn't happen.	true
+character_skills_localised_description_til_merchant_campaign_alert	This commander has accrued a retinue of the sliest and shrewdest captains and guides available. Their advice is worth every silver coin.	true
+character_skills_localised_description_til_merchant_battle_double	Mercenary hosts usually include powerful regiments with double pay and double the risks, once dubbed in Tilea "Duplicarii". The original meaning has gone lost, and the usual sense is now "You bunch of dog-botherers will better get it done, with what you cost me."	true
+character_skills_localised_description_teb_lord_campaign_range	Be where the enemy expects you not.	true
+character_skills_localised_description_bor_ranger_lord_unique_warhorse2	Persuading a Warboss to flee is much easier with a repeater rifle from the Empire. Expensive, but worth it.	true
+character_skills_localised_description_bor_ranger_lord_unique_warhorse	A horse can outrun Orcs, Trolls, even Giants. Not arrows. Or Doom Divers. But it still helps.	true
+character_skills_localised_description_bor_ranger_lord_unique_stalk	Getting to shoot or otherwise ambush an unaware enemy is an art of its own. Just like cutting throats.	true
+character_skills_localised_description_bor_ranger_lord_unique_blind	The enemy might expect the old "What is that?!" trick, but there are other ways to distract them.	true
+character_skills_localised_description_bor_ranger_lord_campaign_strike	"I shall wear midnight... and many knives."	true
+character_skills_localised_description_bor_ranger_lord_battle_tough	Out here, only the toughest survive.	true
+character_skills_localised_description_bor_ranger_lord_battle_skirmish	Limited numbers and overwhelming foes require unorthodox combat tactics.	true
+character_skills_localised_description_bor_ranger_lord_battle_rough	Losing the initiative is losing the battle.	true
+character_skills_localised_description_bor_ranger_lord_battle_rangers	Behind each safe child in the towns there is a Ranger that has bled for him.	true
+character_skills_localised_description_bor_ranger_lord_battle_archers	An orc that has been shot down is an orc that isn't going to chop anybody.	true
+character_skills_localised_name_til_merchant_campaign_serenissima	Most Serene	false
+character_skills_localised_description_til_merchant_campaign_serenissima	Commerce is the life-blood of any economy, and the sea must be its heart.	true
+character_skills_localised_name_est_inquisitor_unique_warhorse	Barded Warhorse	false
+character_skills_localised_description_est_inquisitor_unique_warhorse	It is known that people do not expect the Estalian Inquisition. When its emissaries are mounted on warhorses, they should be expected sooner at any rate.	true
+character_skills_localised_name_est_inquisitor_unique_beaky	Hippogryph	false
+character_skills_localised_description_est_inquisitor_unique_beaky	There are special kinds of heresy that should be treated from atop a large and overprotective mount. With big talons.	true
+character_skills_localised_name_est_inquisitor_judgement	Judgement	false
+character_skills_localised_description_est_inquisitor_judgement	With unfailing accuracy, the Inquisitor declares his target a sinner and heretic beyond repentance.	true
+character_skills_localised_name_est_inquisitor_unique_magic	Spell Quench	false
+character_skills_localised_description_est_inquisitor_unique_magic	This Inquisitor shows an healthy mistrust towards magic users, and his entourage from the Cult makes sure there is no such petty interference from the enemy.	true
+character_skills_localised_name_est_inquisitor_unique_inquisition	Inquisitorial Troops	false
+character_skills_localised_description_est_inquisitor_unique_inquisition	At times, heresy is so well-radicated that it must be extinguished not from a tribunal but with an army.	true
+character_skills_localised_name_est_inquisitor_campaign_paranoia	Paranoia	false
+character_skills_localised_description_est_inquisitor_campaign_paranoia	Someone might dub it psychotic complex, but who knows what those shadows are plotting? This Lord does.	true
+character_skills_localised_name_est_inquisitor_campaign_heresy	Inquisitorial Purge	false
+character_skills_localised_description_est_inquisitor_campaign_heresy	"Kill them all. For the gods know those that are their own."	true
+character_skills_localised_name_est_inquisitor_battle_antichaos	Chaosbane	false
+character_skills_localised_description_est_inquisitor_battle_antichaos	Chaos Worshippers and mutants are anathema to everything sacred. Cutting them to ribbons is the first step towards purity.	true
+character_skills_localised_name_til_merchant_unique_best	The Best Money Can Buy	false
+character_skills_localised_description_til_merchant_unique_best	Costly gear lent to the mercenary companies may be expensive, but it may save the day and the treasury afterwards.	true
+character_skills_localised_name_teb_templar_lord_innate_insight	Chosen of the True Insight	false
+character_skills_localised_description_teb_templar_lord_innate_insight	This particular Knight was favoured with unanimity by the oracles of the Order of True Insight. That must have been expensive.	true
+character_skills_localised_name_teb_templar_lord_innate_crusader	Crusader	false
+character_skills_localised_description_teb_templar_lord_innate_crusader	In his training or previous command, this Templar has distinguished himself against the heathens. Bretonnian allies still have fond memories of him.	true
+character_skills_localised_name_teb_templar_lord_innate_merciful	Merciful	false
+character_skills_localised_description_teb_templar_lord_innate_merciful	"Respect the prisoners of war", says one of the major Myrmidian strictures. So this man does, honour and dignity above all. And tactical benefits.	true
+character_skills_localised_name_teb_templar_lord_innate_fiery	Fiery Inspiration	false
+character_skills_localised_description_teb_templar_lord_innate_fiery	The wrath of Bellona Myrmidia rides this Templar's arm and strikes the impure with blazing might!	true
+character_skills_localised_name_teb_templar_lord_bhorse	Barded Warhorse	false
+character_skills_localised_description_teb_templar_lord_bhorse	An excellent steed barded in stylish burnished steel, for the man that must not ask "Eh?".	true
+character_skills_localised_name_teb_templar_lord_pegasus	Pegasus	false
+character_skills_localised_description_teb_templar_lord_pegasus	Fly on your wings, fly, and touch the sun.	true
+character_skills_localised_name_teb_templar_lord_griff	Demigryph	false
+character_skills_localised_description_teb_templar_lord_griff	An exotic beast, the demigryph, mighty dangerous too. Whoever intends to tame and befriend one must be strong of will and limb, because even the best suits of plate are not demigryph-proof.	true
+character_skills_localised_name_teb_templar_lord_unq_genius	Tactical Genius	false
+character_skills_localised_description_teb_templar_lord_unq_genius	As the Templar’s troops come out of seemingly nowhere, the enemies scream his infamous name in frustration.	true
+character_skills_localised_name_teb_templar_lord_unq_reforms	Experimental Reforms	false
+character_skills_localised_description_teb_templar_lord_unq_reforms	The Templar’s mind is an incessant flow of tactical diagrams and pressure point markers.	true
+character_skills_localised_name_teb_templar_lord_unq_enlightened	Enlightened	false
+character_skills_localised_description_teb_templar_lord_unq_enlightened	The Templar’s righteousness is completely out of question, which is understandably uncommon.	true
+character_skills_localised_name_teb_templar_lord_unq_incarnate	Light of Bellona Incarnate	false
+character_skills_localised_description_teb_templar_lord_unq_incarnate	Behind the erudite mask of this Myrmidian commander lies the untamed spirit of a warrior. In battle, his arms glare of such a violent and supernatural light that even the untainted cannot stare for long.	true
+character_skills_localised_name_	1 onscreen	false
+character_skills_localised_description_	2 descr	true
+character_skills_localised_name_teb_army_buff_melee_A	The Melee, Ch.I	true
+character_skills_localised_description_teb_army_buff_melee_A	Well, this is straightforward enough.	true
+character_skills_localised_name_teb_army_buff_melee_B	The Melee, Ch.II	true
+character_skills_localised_description_teb_army_buff_melee_B	Oh wait, there's another chapter.	true
+character_skills_localised_name_teb_army_buff_charge	Hammer and Anvil	true
+character_skills_localised_description_teb_army_buff_charge	Even the lousiest commander knows that you need two halves of a pair of scissors.	true
+character_skills_localised_name_teb_army_buff_missile	Battle Trajectories	true
+character_skills_localised_description_teb_army_buff_missile	Duck! Shoot! Duck! Shoot! Shoot- shoot, that was wrong.	true
+character_skills_localised_name_teb_army_buff_speed	Tactical Fluidity	true
+character_skills_localised_description_teb_army_buff_speed	The key is not letting your initiative depend on a lucky die.	true
+character_skills_localised_name_teb_army_buff_stones	Sticks and Stones	true
+character_skills_localised_description_teb_army_buff_stones	It's seldom enough to have only some of your troops to be ready to take a beating. The enemy has their own plans.	true
+character_skills_localised_name_teb_army_buff_chevrons_MA	The Bloodiest	true
+character_skills_localised_description_teb_army_buff_chevrons_MA	"You kill them before they kill you, sonnie. That's all it is."	true
+character_skills_localised_name_teb_army_buff_chevrons_MD	The Slippery	true
+character_skills_localised_description_teb_army_buff_chevrons_MD	"Though of course, if they do stab you, you better know how to parry."	true
+character_skills_localised_name_teb_army_buff_chevrons_dmg	The Strongest	true
+character_skills_localised_description_teb_army_buff_chevrons_dmg	"Plus, you better kill them dead with the one shot you have."	true
+character_skills_localised_name_teb_army_buff_chevrons_charge	The Vicious	true
+character_skills_localised_description_teb_army_buff_chevrons_charge	"And to do that, it helps if you put all your weight where it counts."	true
+character_skills_localised_name_teb_army_buff_chevrons_ammo_phys_res	The Survivors	true
+character_skills_localised_description_teb_army_buff_chevrons_ammo_phys_res	"Look, at the end of the day, you may be alive and you better learn from what didn't kill you."	true

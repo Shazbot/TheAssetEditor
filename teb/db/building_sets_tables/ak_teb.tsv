@@ -1,0 +1,5 @@
+key	icon	sort_order	show_in_ui	audio_switch	colour_hex
+#building_sets_tables;5;db/building_sets_tables/ak_teb					
+teb_homeland	placeholder	0	true		FFFFFF
+teb_military_recruitment	UI/Buildings/Icons/empire_cat_recruitment.png	4	true	Military_Recruitment	781414
+teb_temples	placeholder	0	true		FFFFFF

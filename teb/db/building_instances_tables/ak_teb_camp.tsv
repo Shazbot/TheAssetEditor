@@ -1,0 +1,13 @@
+key	num_instances
+#building_instances_tables;0;db/building_instances_tables/ak_teb_camp	
+teb_camp_inf1	1
+teb_camp_inf2	1
+teb_camp_missile	1
+teb_camp_cavalry	1
+teb_camp_artillery	1
+teb_camp_replenish	1
+teb_camp_growth	1
+teb_camp_recr	1
+teb_camp_upk	1
+teb_camp_foreign	1
+teb_camp_region	1

@@ -1,0 +1,7 @@
+ability_group	unit	group_page_order
+#special_ability_groups_to_units_junctions_tables;1;db/special_ability_groups_to_units_junctions_tables/ak_teb_ll		
+wh_dlc05_lore_shadows	teb_gashnag	0
+wh_dlc05_lore_shadows	teb_gashnag_nocrumble2	0
+wh_main_lore_death	teb_lucrezzia_belladonna	0
+wh_main_lore_death	teb_lucrezzia_belladonna_horse	0
+wh_main_lore_death	teb_lucrezzia_belladonna_bhorse	0

@@ -1,0 +1,7 @@
+recharge_context	special_ability
+#special_ability_to_recharge_contexts_tables;0;db/special_ability_to_recharge_contexts_tables/ak_teb	
+health_above_50%	teb_pikeline
+out_of_melee	teb_muktar
+winning_melee_combat	teb_roc_dieterfist
+out_of_melee	teb_cadavo_pistolshot
+out_of_melee	teb_cadavo_pistolshot2

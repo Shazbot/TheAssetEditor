@@ -1,0 +1,4 @@
+ability_group	icon_path	special_edition_mask	sort_order	is_naval	button_name	sound_event	is_composite_group	unique_id	sound_switch	show_lore_icon	colour_hex
+#special_ability_groups_tables;11;db/special_ability_groups_tables/ak_teb											
+teb_lorenzo_lupo	UI\Battle UI\ability_icons\wh3_main_lore_passive_strength_of_yang.png	0	0	false	lore_yang	Play_WH_UI_Ability_Click_Generic_Heavens	true	3011990	Yang	false	FAFAFA
+teb_lorenzo_lupo_passives	UI\Battle UI\ability_icons\wh3_main_lore_passive_strength_of_yang.png	0	0	false	lore_yang	Play_WH_UI_Ability_Click_Generic_Heavens	true	3011991	Yang	false	FAFAFA

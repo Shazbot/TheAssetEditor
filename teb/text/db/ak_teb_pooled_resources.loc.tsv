@@ -1,0 +1,8 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_pooled_resources.loc		
+pooled_resources_display_name_teb_duellist_hero_PR	Required Building: \\n\\nCity (most major settlements level 4).	true
+pooled_resources_description_teb_duellist_hero_PR		true
+pooled_resources_display_name_teb_templar_lord_PR	Required Building: \\n\\nMyrmidian Fortress.	true
+pooled_resources_description_teb_templar_lord_PR		true
+pooled_resources_display_name_teb_lorenzo_lupo_PR	Required Building: \\n\\nFortified Acropolis (Luccini).	true
+pooled_resources_display_name_teb_piggolo_PR	Required Buildings (any 3 of these): \\n\\n{{tr:building_culture_variants_name_teb_tylos_settlement_1}} \\n{{tr:building_culture_variants_name_wh2_dlc14_special_pigbarter_human}} \\n{{tr:building_culture_variants_name_teb_tobaro_deep}} (Tobaro) \\n{{tr:building_culture_variants_name_wh3_main_special_the_great_embassy}} (Shang-Yang)\\n{{tr:building_culture_variants_name_teb_worship_shallya_3}} \\n{{tr:building_culture_variants_name_wh_main_teb_port_2mixer_teb_southern_realms}}	true

@@ -1,0 +1,17 @@
+key	tech_category_tab	tech_category_position	chain_category	in_encyclopedia	building_superchain	optional_tier_icon	optional_sort_order	optional_required_horde_commander	can_be_dismantled	is_foreign_slot_chain
+#building_chains_tables;10;db/building_chains_tables/ak_teb_camp										
+teb_camp_main			money	false	wh_main_sch_main_settlement	UI\Buildings\tier_icons\tier_ogr_camp.png	0		true	false
+teb_camp_inf			military	false	wh3_dlc26_sch_horde_ogr_camp_gnoblars		1		true	false
+teb_camp_inf2			military	false	wh3_main_sch_horde_ogr_camp_barracks		2		true	false
+teb_camp_missile			military	false	wh3_main_sch_horde_ogr_camp_hunting		3		true	false
+teb_camp_cavalry			military	false	wh3_main_sch_horde_ogr_camp_cav		4		true	false
+teb_camp_artillery			military	false	wh3_main_ogr_camp_gunpowder		5		true	false
+teb_camp_replenish			military	false	wh3_main_ogr_camp_defence_replenishment		6		true	false
+teb_camp_growth			military	false	wh3_main_sch_horde_ogr_camp_growth		7		true	false
+teb_camp_recr			military	false	wh3_main_sch_horde_ogr_camp_recruitment		8		true	false
+teb_camp_upk			military	false	wh3_main_sch_horde_ogr_camp_upkeep		9		true	false
+teb_camp_foreign			military	false	wh3_main_sch_horde_ogr_camp_dogs		10		true	false
+teb_camp_port			military	false	wh3_main_sch_horde_ogr_camp_monster		11		true	false
+teb_camp_mountain			military	false	wh3_main_sch_horde_ogr_camp_monster		12		true	false
+teb_camp_jungle			military	false	wh3_main_sch_horde_ogr_camp_monster		13		true	false
+teb_camp_scavenge			military	false	wh3_main_sch_horde_ogr_camp_monster		14		true	false

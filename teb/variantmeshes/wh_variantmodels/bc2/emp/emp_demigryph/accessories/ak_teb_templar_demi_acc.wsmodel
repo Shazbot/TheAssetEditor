@@ -1,0 +1,9 @@
+<model version="1">
+  <geometry>VariantMeshes/wh_variantmodels/bc2/emp/emp_demigryph/accessories/emp_demigryph_accessories_01.rigid_model_v2</geometry>
+  <materials>
+    <material part_index="0" lod_index="0">VariantMeshes/wh_variantmodels/bc2/emp/emp_demigryph/accessories/materials/ak_teb_templar_demi_acc_w4.xml.material</material>
+    <material part_index="0" lod_index="1">VariantMeshes/wh_variantmodels/bc2/emp/emp_demigryph/accessories/materials/ak_teb_templar_demi_acc_w4.xml.material</material>
+    <material part_index="0" lod_index="2">VariantMeshes/wh_variantmodels/bc2/emp/emp_demigryph/accessories/materials/ak_teb_templar_demi_acc_w2.xml.material</material>
+    <material part_index="0" lod_index="3">VariantMeshes/wh_variantmodels/bc2/emp/emp_demigryph/accessories/materials/ak_teb_templar_demi_acc_w2.xml.material</material>
+  </materials>
+</model>

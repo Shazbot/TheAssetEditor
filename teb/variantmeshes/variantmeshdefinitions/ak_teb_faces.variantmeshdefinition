@@ -1,0 +1,9 @@
+<VARIANT_MESH>
+	<SLOT name="subhead" >
+                <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_01.wsmodel" />
+                <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_02.wsmodel" />
+                <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_04.wsmodel" />
+                <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_02.wsmodel" />
+                <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_04.wsmodel" />   
+			</SLOT>
+</VARIANT_MESH>

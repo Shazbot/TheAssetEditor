@@ -1,0 +1,18 @@
+agent_subtype	campaign_type
+#campaign_to_agent_subtypes_tables;0;db/campaign_to_agent_subtypes_tables/ak_teb	
+teb_borgio_the_besieger	wh3_main_combi
+teb_gashnag	wh3_main_combi
+teb_lucrezzia_belladonna	wh3_main_combi
+teb_catrazza	wh3_main_combi
+teb_lupio	wh3_main_combi
+teb_gausser	wh3_main_combi
+teb_colombo	wh3_main_combi
+teb_cadavo	wh3_main_combi
+teb_borgio_the_besieger	cr_combi_expanded
+teb_gashnag	cr_combi_expanded
+teb_lucrezzia_belladonna	cr_combi_expanded
+teb_catrazza	cr_combi_expanded
+teb_lupio	cr_combi_expanded
+teb_gausser	cr_combi_expanded
+teb_colombo	cr_combi_expanded
+teb_cadavo	cr_combi_expanded

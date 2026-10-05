@@ -1,0 +1,15 @@
+
+<VARIANT_MESH>
+	<SLOT name="head" >
+		<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_empire_knights\head\ak_teb_knights_head_partial_01.wsmodel"   />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_empire_knights\head\ak_teb_knights_head_partial_02.wsmodel"   />
+
+	</SLOT>
+
+					<SLOT name="gorget" >
+				<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_demigryph_knight/head/AK_demi_gorget.wsmodel" />
+					</SLOT>
+
+</VARIANT_MESH>
+
+

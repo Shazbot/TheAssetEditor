@@ -1,0 +1,29 @@
+art_set_id	agent_type	culture	subculture	faction	is_custom	is_male	agent_subtype	campaign_map_scale	prebattle_separation_offset
+#campaign_character_art_sets_tables;7;db/campaign_character_art_sets_tables/!ak_teb_lords									
+bor_ranger_lord_01	general				false	true	bor_ranger_lord	1.0000	0.0000
+bor_ranger_lord_02	general				false	true	bor_ranger_lord	1.0000	0.0000
+bor_ranger_lord_03	general				false	true	bor_ranger_lord	1.0000	0.0000
+til_merchant_01	general				false	true	til_merchant	1.0000	0.0000
+til_merchant_02	general				false	true	til_merchant	1.0000	0.0000
+til_merchant_03	general				false	true	til_merchant	1.0000	0.0000
+est_inquisitor_01	general				false	true	est_inquisitor	1.0000	0.0000
+est_inquisitor_02	general				false	true	est_inquisitor	1.0000	0.0000
+est_inquisitor_03	general				false	true	est_inquisitor	1.0000	0.0000
+teb_borgio	general				false	true	teb_borgio_the_besieger	1.0000	0.0000
+teb_gashnag	general				false	true	teb_gashnag	1.0000	0.0000
+teb_lucrezzia	general				false	true	teb_lucrezzia_belladonna	1.0000	0.0000
+teb_catrazza	general				false	true	teb_catrazza	1.0000	0.0000
+teb_lupio	general				false	true	teb_lupio	1.0000	0.0000
+teb_gausser	general				false	true	teb_gausser	1.0000	0.0000
+teb_colombo	general				false	true	teb_colombo	1.0000	0.0000
+teb_cadavo	general				false	true	teb_cadavo	1.0000	0.0000
+teb_merc_general_01	general				false	true	teb_merc_general	1.0000	0.0000
+teb_merc_general_02	general				false	true	teb_merc_general	1.0000	0.0000
+teb_merc_general_03	general				false	true	teb_merc_general	1.0000	0.0000
+teb_merc_general_04	general				false	true	teb_merc_general	1.0000	0.0000
+teb_merc_general_05	general				false	true	teb_merc_general	1.0000	0.0000
+teb_templar_lord_01	general				false	true	teb_templar_lord	1.0000	0.0000
+teb_templar_lord_02	general				false	true	teb_templar_lord	1.0000	0.0000
+teb_eldaddio	general				false	true	teb_eldaddio	1.0000	0.0000
+teb_lorenzo_lupo	general				false	true	teb_lorenzo_lupo	1.0000	0.0000
+teb_piggolo	engineer				false	true	teb_piggolo	1.0000	0.0000

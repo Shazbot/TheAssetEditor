@@ -1,0 +1,14 @@
+
+<VARIANT_MESH>
+	<SLOT name="head" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_peasants_bowmen\head\AK_shoulder_cape_01_cloth.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\brt\brt_peasants_bowmen\head\brt_peasants_bowmen_head_01.rigid_model_v2" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\brt\brt_peasants_bowmen\head\AK_shoulder_cape_02_cloth.rigid_model_v2"  imposter_model="VariantMeshes\wh_variantmodels\hu1\brt\brt_peasants_bowmen\head\brt_peasants_bowmen_head_01.rigid_model_v2" />
+	</SLOT>
+</VARIANT_MESH>
+
+
+01 & 02 masked (half split)
+
+03 brown cloth
+
+no hood and no filthy peasant either

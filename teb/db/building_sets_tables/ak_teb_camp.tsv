@@ -1,0 +1,8 @@
+key	icon	sort_order	show_in_ui	audio_switch	colour_hex
+#building_sets_tables;5;db/building_sets_tables/ak_teb_camp					
+teb_camp_recruitment	UI/Buildings/Icons/empire_cat_recruitment.png	3	true	Military_Recruitment	653934
+teb_camp_support	UI/Buildings/Icons/kislev_cat_support.png	4	true	Advanced_Military	4B4158
+teb_camp_infra	UI/Buildings/Icons/dwarf_cat_civic.png	7	true	Infrastructure	3E4739
+teb_camp_defence	UI/Buildings/Icons/empire_cat_defence.png	6	true	Defence	5B492F
+teb_camp_region	UI/Buildings/Icons/empire_cat_defence.png	9	true	Defence	354551
+teb_camp_newhorde_buildings	placeholder	0	false		FFFFFF

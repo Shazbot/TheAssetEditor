@@ -1,0 +1,15 @@
+unit_key	technology_key
+#unit_required_technology_junctions_tables;0;db/unit_required_technology_junctions_tables/ak_teb	
+teb_amazons	teb_tech_ROR_outland
+teb_marksmen	teb_tech_ROR_pro
+teb_besiegers	teb_tech_ROR_brass
+teb_pirazzo	teb_tech_ROR_outland
+teb_vespero	teb_tech_ROR_pro
+teb_ricco	teb_tech_ROR_brass
+teb_muktar	teb_tech_ROR_outland
+teb_leopard	teb_tech_ROR_pro
+teb_venators	teb_tech_ROR_brass
+teb_bronzino_limbered	teb_tech_ROR_brass
+teb_origo	teb_tech_ROR_pro
+teb_tank	teb_tank_1
+teb_tank_ror	teb_tank_3

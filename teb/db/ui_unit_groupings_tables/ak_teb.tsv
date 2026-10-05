@@ -1,0 +1,10 @@
+key	icon	parent_group
+#ui_unit_groupings_tables;1;db/ui_unit_groupings_tables/ak_teb		
+teb_priestess	wh_main_brt_champion	heroes_agents
+infantry_pike	infantry_pike	infantry
+flying_missile_infantry	wh_main_flying_missile_infantry	missile_infantry
+teb_duellist_hero	wh2_main_def_spy	heroes_agents
+teb_duellist_hero_horse	missile_cavalry_rifle	heroes_agents
+teb_merc_captain	wh_main_emp_champion	heroes_agents
+teb_paymaster	missile_chariot	missile_cavalry_chariots
+lord_monstrous_cavalry	wh2_dlc15_griffon_knights	commander

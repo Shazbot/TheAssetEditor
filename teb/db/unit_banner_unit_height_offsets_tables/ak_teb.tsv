@@ -1,0 +1,6 @@
+unit_record	height_offset	campaign_height_offset
+#unit_banner_unit_height_offsets_tables;2;db/unit_banner_unit_height_offsets_tables/ak_teb		
+teb_asarnil	6.0000	0.0000
+teb_tank	2.0000	0.0000
+teb_tank_ror	2.0000	0.0000
+teb_birdmen	1.0000	0.0000

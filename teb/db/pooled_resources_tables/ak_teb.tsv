@@ -1,0 +1,6 @@
+key	maximum	minimum	ai_ignored	default_factor	optional_icon_path	income_policy	reset_before_income	scope	has_persistent_factors	sort_order	battle_conversion	appy_income_on_creation	always_display_zero_factors	can_scale_effect_thresholds_per_unit
+#pooled_resources_tables;2;db/pooled_resources_tables/ak_teb														
+teb_duellist_hero_PR	1	0	false	buildings	teb_duellist_hero_PR.png	END_OF_ROUND	false	FACTION	false	0		false	true	false
+teb_templar_lord_PR	1	0	false	buildings	teb_duellist_hero_PR.png	END_OF_ROUND	false	FACTION	false	0		false	true	false
+teb_lorenzo_lupo_PR	1	0	false	buildings	teb_duellist_hero_PR.png	END_OF_ROUND	false	FACTION	false	0		false	true	false
+teb_piggolo_PR	3	0	true	buildings	teb_duellist_hero_PR.png	END_OF_ROUND	true	FACTION	false	0		false	true	false

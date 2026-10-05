@@ -1,0 +1,13 @@
+component_id	source	target	attitude_base	negative_attitude_multiplier	positive_attitude_multiplier
+#cai_personality_cultural_relations_overrides_tables;1;db/cai_personality_cultural_relations_overrides_tables/ak_teb					
+anti_chaos	wh2_main_sc_hef_high_elves	mixer_teb_southern_realms	50.0000	0.7500	1.5000
+anti_chaos	wh2_main_sc_lzd_lizardmen	mixer_teb_southern_realms	50.0000	0.7500	1.5000
+anti_chaos	wh_main_sc_brt_bretonnia	mixer_teb_southern_realms	50.0000	0.7500	1.5000
+anti_chaos	wh_main_sc_dwf_dwarfs	mixer_teb_southern_realms	50.0000	0.7500	1.5000
+anti_chaos	wh_main_sc_emp_empire	mixer_teb_southern_realms	50.0000	0.7500	1.5000
+anti_chaos	mixer_teb_southern_realms	wh2_main_sc_hef_high_elves	50.0000	0.7500	1.5000
+anti_chaos	mixer_teb_southern_realms	wh2_main_sc_lzd_lizardmen	50.0000	0.7500	1.5000
+anti_chaos	mixer_teb_southern_realms	wh_main_sc_brt_bretonnia	50.0000	0.7500	1.5000
+anti_chaos	mixer_teb_southern_realms	wh_main_sc_dwf_dwarfs	50.0000	0.7500	1.5000
+anti_chaos	mixer_teb_southern_realms	wh_main_sc_emp_empire	50.0000	0.7500	1.5000
+anti_chaos	mixer_teb_southern_realms	mixer_teb_southern_realms	50.0000	0.7500	1.5000

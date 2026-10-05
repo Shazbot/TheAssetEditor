@@ -1,0 +1,39 @@
+
+<VARIANT_MESH>
+
+
+	<SLOT name="head skins" >
+		<VARIANT_MESH> DEMI HEAD INBUILT GORGET ====
+
+	<SLOT name="head" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\emp_demigryph_knight_head_01.wsmodel"   />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_morion_royal_guard.variantmeshdefinition" />
+	</SLOT>
+		</VARIANT_MESH>
+
+		<VARIANT_MESH> OTHER HEADS, NEED GORGET ====
+
+	<SLOT name="head" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_state_troops_heads.variantmeshdefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_morion_royal_guard.variantmeshdefinition" />
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_morion_royal_guard.variantmeshdefinition" />
+	</SLOT>
+
+					<SLOT name="gorget" >
+				<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_demigryph_knight\head\ak_demi_gorget.wsmodel" />
+					</SLOT>
+		</VARIANT_MESH>
+	</SLOT>
+
+
+
+
+	<SLOT name="torso" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_captains\body\AK_teb_guard_plate_simple.wsmodel" >
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>			<META_DATA>audio_armour_type:plate</META_DATA></VARIANT_MESH>
+	</SLOT>
+					<SLOT name="bandolier" >
+				<VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\emp\emp_captains\body\ak_teb_bandolero.rigid_model_v2" />
+					</SLOT>
+</VARIANT_MESH>
+

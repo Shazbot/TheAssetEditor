@@ -1,0 +1,12 @@
+technology	required_building_level
+#technology_required_building_levels_junctions_tables;0;db/technology_required_building_levels_junctions_tables/ak_teb	
+teb_pools_BP_brets	teb_mil_city_3
+teb_pools_BP_empire	teb_mil_rangers_1
+teb_pools_BP_teb	teb_mil_mercs_1
+teb_pools_til_mix	teb_mil_mercs_1
+teb_pools_tob_mix	teb_mil_mercs_1
+teb_pools_nwc_emp	teb_mil_city_2
+teb_pools_nwc_brets	teb_mil_mercs_2
+teb_pools_est_emp	teb_worship_myrmidia_4
+teb_tank_1	teb_art
+teb_tank_2	teb_mil_cannons_2

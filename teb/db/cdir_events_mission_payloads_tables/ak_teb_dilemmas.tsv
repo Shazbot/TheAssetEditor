@@ -1,0 +1,3 @@
+id	mission_key	payload_key	status_key	value	target_key
+#cdir_events_mission_payloads_tables;2;db/cdir_events_mission_payloads_tables/ak_teb_dilemmas					
+3011992	teb_eldaddio_req_01	EFFECT_BUNDLE	SUCCESS	KEY[teb_eldaddio_req_01_dummyreward];DURATION[0]	default

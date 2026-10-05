@@ -1,0 +1,41 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_factions.loc		
+factions_attack_desc_mixer_teb_tilea	You are attacking Tilea!	false
+factions_defend_desc_mixer_teb_tilea	You are defending against Tilea!	false
+factions_screen_name_mixer_teb_tilea	Tilea	false
+factions_screen_name_when_rebels_mixer_teb_tilea	Tilea Rebels	false
+factions_attack_desc_mixer_teb_estalia	You are attacking Estalia!	false
+factions_defend_desc_mixer_teb_estalia	You are defending against Estalia!	false
+factions_screen_name_mixer_teb_estalia	Estalia	false
+factions_screen_name_when_rebels_mixer_teb_estalia	Estalia Rebels	false
+factions_attack_desc_mixer_teb_border_princes	You are attacking Border Princes!	false
+factions_defend_desc_mixer_teb_border_princes	You are defending against Border Princes!	false
+factions_screen_name_mixer_teb_border_princes	Border Princes	false
+factions_screen_name_when_rebels_mixer_teb_border_princes	Border Princes Rebels	false
+factions_attack_desc_mixer_teb_new_world_colonies	You are attacking the New World Colonies!	false
+factions_defend_desc_mixer_teb_new_world_colonies	You are defending against the New World Colonies!	false
+factions_screen_name_mixer_teb_new_world_colonies	New World Colonies	false
+factions_screen_name_when_rebels_mixer_teb_new_world_colonies	New World Colony Rebels	false
+factions_attack_desc_mixer_teb_bilbali	You are attacking Bilbali!	true
+factions_defend_desc_mixer_teb_bilbali	You are defending against Bilbali!	true
+factions_screen_adjective_mixer_teb_bilbali	Bilbali	true
+factions_screen_name_mixer_teb_bilbali	Bilbali	true
+factions_screen_name_when_rebels_mixer_teb_bilbali	Bilbali Rebels	true
+factions_attack_desc_mixer_teb_gashnag	You are attacking Gashnagia!	true
+factions_defend_desc_mixer_teb_gashnag	You are defending against Gashnagia!	true
+factions_screen_adjective_mixer_teb_gashnag	Gashnagia	true
+factions_screen_name_mixer_teb_gashnag	Gashnagia	true
+factions_screen_name_when_rebels_mixer_teb_gashnag	Gashnagia Rebels	true
+factions_attack_desc_mixer_teb_catrazza	You are attacking East Ind Company!	true
+factions_defend_desc_mixer_teb_catrazza	You are defending against East Ind Company!	true
+factions_screen_adjective_mixer_teb_catrazza	East Ind Company	true
+factions_screen_name_mixer_teb_catrazza	East Ind Company	true
+factions_screen_name_when_rebels_mixer_teb_catrazza	East Ind Company Rebels	true
+factions_attack_desc_mixer_teb_colombo	You are attacking West Ind Company!	true
+factions_defend_desc_mixer_teb_colombo	You are defending against West Ind Company!	true
+factions_screen_adjective_mixer_teb_colombo	West Ind Company	true
+factions_screen_name_mixer_teb_colombo	West Ind Company	true
+factions_screen_name_when_rebels_mixer_teb_colombo	West Ind Company Rebels	true
+factions_screen_name_cr_teb_luccini	Luccini	true
+factions_screen_name_cr_teb_pavona	Pavona	true
+factions_screen_name_cr_teb_order_of_the_blazing_sun	Order of the Blazing Sun	false

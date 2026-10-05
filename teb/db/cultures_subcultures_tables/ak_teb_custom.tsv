@@ -1,0 +1,7 @@
+subculture	culture	index	audio_state_override	audio_corruption_state_override	audio_rtpc_override	region_owner_audio_switch
+#cultures_subcultures_tables;6;db/cultures_subcultures_tables/ak_teb_custom						
+wh_main_teb_border_princes_CB	mixer_teb_southern_realms	3011990				
+wh_main_teb_estalia_CB	mixer_teb_southern_realms	3011991				
+wh_main_teb_tilea_CB	mixer_teb_southern_realms	3011992				
+wh2_main_emp_new_world_colonies_CB	mixer_teb_southern_realms	3011993				
+mixer_teb_southern_realms	mixer_teb_southern_realms	153947202				

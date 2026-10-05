@@ -1,0 +1,11 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_agent_culture_details.loc		
+agent_culture_details_onscreen_name_9880158	champion	true
+agent_culture_details_onscreen_name_9880159	colonel	true
+agent_culture_details_onscreen_name_9880160	dignitary	true
+agent_culture_details_onscreen_name_9880161	engineer	true
+agent_culture_details_onscreen_name_9880162	general	true
+agent_culture_details_onscreen_name_9880163	minister	true
+agent_culture_details_onscreen_name_9880164	runesmith	true
+agent_culture_details_onscreen_name_9880165	spy	true
+agent_culture_details_onscreen_name_9880166	wizard	true

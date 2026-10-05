@@ -1,0 +1,18 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_ancillaries_hero.loc		
+ancillaries_onscreen_name_mount_teb_priestess_warhorse	Warhorse	true
+ancillaries_colour_text_mount_teb_priestess_warhorse	A good warhorse is not only a symbol of authority, also a swift vehicle that can bite and kick the enemy.	true
+ancillaries_onscreen_name_mount_teb_priestess_barded_warhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_teb_priestess_barded_warhorse	Horse plate bardings are expensive, but might stop the heathen or monster from killing your mount outright.	true
+ancillaries_onscreen_name_teb_duellist_hero_horse	Warhorse & Brace of Pistols	true
+ancillaries_colour_text_teb_duellist_hero_horse	Duellists are usually more comfortable fighting on solid ground rather than on a snorting beast, but they are also adaptable people at heart.	true
+ancillaries_onscreen_name_teb_duellist_hero_bhorse	Barded Warhorse & Brace of Pistols	true
+ancillaries_colour_text_teb_duellist_hero_bhorse	Duellists are usually more comfortable fighting on solid ground rather than on a snorting beast, but they are also adaptable people at heart.	true
+ancillaries_onscreen_name_teb_duellist_hero_encarmine	Barded Warhorse & Lots of Red Paint	true
+ancillaries_colour_text_teb_duellist_hero_encarmine	The customary uniform of the Knights Encarmine involves full plate, two swords, red paint and an unhealthy quantity of sass.	true
+ancillaries_onscreen_name_teb_merc_general_barded_horse	Barded Warhorse	true
+ancillaries_colour_text_teb_merc_general_barded_horse	Horse plate bardings are expensive, but might stop the heathen or monster from killing your mount outright.	true
+ancillaries_onscreen_name_teb_merc_captain_barded_horse	Barded Warhorse	true
+ancillaries_colour_text_teb_merc_captain_barded_horse	Horse plate bardings are expensive, but might stop the heathen or monster from killing your mount outright.	true
+ancillaries_onscreen_name_teb_merc_general_lion	Golden Lion	true
+ancillaries_colour_text_teb_merc_general_lion	This general was glared at by a Golden Lion and was judged to be greedy, brave and just in exactly the right amounts!	true

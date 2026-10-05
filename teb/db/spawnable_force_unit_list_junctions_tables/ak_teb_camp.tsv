@@ -1,0 +1,3 @@
+id	max_amount	max_xp	min_amount	min_xp	spawnable_force	unit_list
+#spawnable_force_unit_list_junctions_tables;0;db/spawnable_force_unit_list_junctions_tables/ak_teb_camp						
+3011990	4	0	2	0	teb_camp	teb_camp

@@ -1,0 +1,4 @@
+key	auto_target	camera_offset_x	camera_offset_y	camera_offset_z	half_accuracy_arc	half_horizontal_fire_arc	half_vertical_fire_arc_elevation	near_clipping_plane	reload_time	track_projectile_distance	turn_delay	half_vertical_fire_arc_declination	allow_direct_control	show_trajectory
+#first_person_engines_tables;3;db/first_person_engines_tables/ak_teb														
+teb_light_cannon	false	0.0000	2.2000	-5.0000	1.0000	10.0000	14.0000	-1.0000	18.0000	6.0000	0.5000	-6.0000	true	false
+teb_galloper_gun	false	0.0000	2.2000	-5.0000	1.0000	10.0000	14.0000	-1.0000	15.0000	6.0000	0.5000	-6.0000	true	false

@@ -1,0 +1,5 @@
+key	night_battles_only	your_force_type	their_force_type	war_contract_battles_only
+#campaign_bonus_value_battle_context_specifiers_tables;1;db/campaign_bonus_value_battle_context_specifiers_tables/ak_teb				
+teb_gashnag_antivampires	false			false
+teb_lupio_windmills	false			false
+teb_gashnag_antipillagers	false			false

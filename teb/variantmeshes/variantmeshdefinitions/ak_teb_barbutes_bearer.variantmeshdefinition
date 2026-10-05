@@ -1,0 +1,16 @@
+<VARIANT_MESH>
+			<SLOT name="helmet" >
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_bearer_01.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_bearer_02.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_bearer_03.wsmodel" />
+        
+			</SLOT>
+
+	<SLOT name="head" >
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_01.wsmodel" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_02.wsmodel" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/head/ak_teb_stroop_face_04.wsmodel" />
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_bearer_demiface.rigid_model_v2" />
+
+	</SLOT>
+</VARIANT_MESH>

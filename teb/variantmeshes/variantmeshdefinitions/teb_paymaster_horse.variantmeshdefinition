@@ -1,0 +1,15 @@
+<VARIANT_MESH>
+	<SLOT name="body" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hr1/emp/emp_warhorse/emp_warhorse_a_1.rigid_model_v2"  imposter_model="VariantMeshes/wh_variantmodels/hr1/emp/emp_warhorse/emp_warhorse_a_1.rigid_model_v2" >
+			<META_DATA>audio_armour_type:leather</META_DATA>			<META_DATA>audio_entity_type:wh_horse_normal</META_DATA></VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hr1/emp/emp_warhorse/emp_warhorse_b_1.rigid_model_v2"  imposter_model="VariantMeshes/wh_variantmodels/hr1/emp/emp_warhorse/emp_warhorse_a_1.rigid_model_v2" >
+			<META_DATA>audio_armour_type:leather</META_DATA>			<META_DATA>audio_entity_type:wh_horse_normal</META_DATA></VARIANT_MESH>
+	</SLOT>
+
+	<SLOT name="chest_top" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hr1\brt\brt_questing_knights\teb_paymaster_chest_01.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="chests" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hr1\teb\teb_horse\teb_crobie_paymaster_chests_01.wsmodel" />
+	</SLOT>
+</VARIANT_MESH>

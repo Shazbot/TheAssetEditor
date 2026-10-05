@@ -1,0 +1,10 @@
+<model version="1">
+  <geometry>warmachines/engines/til_tortoise_tank/til_tortoise_tank_ror.rigid_model_v2</geometry>
+  <materials>
+    <material part_index="0" lod_index="0">warmachines/materials/til_tortoise_tank_ror_weighted4_alpha_off.xml.material</material>
+    <material part_index="0" lod_index="1">warmachines/materials/til_tortoise_tank_ror_weighted4_alpha_off.xml.material</material>
+    <material part_index="0" lod_index="2">warmachines/materials/til_tortoise_tank_ror_weighted2_alpha_off.xml.material</material>
+    <material part_index="0" lod_index="3">warmachines/materials/til_tortoise_tank_ror_weighted2_alpha_off.xml.material</material>
+    <material part_index="0" lod_index="4">warmachines/materials/til_tortoise_tank_ror_weighted2_alpha_off.xml.material</material>
+  </materials>
+</model>

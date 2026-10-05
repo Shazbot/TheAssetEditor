@@ -1,0 +1,12 @@
+art_set_id	agent_type	culture	subculture	faction	is_custom	is_male	agent_subtype	campaign_map_scale	prebattle_separation_offset
+#campaign_character_art_sets_tables;7;db/campaign_character_art_sets_tables/ak_teb_hero									
+teb_priestess_01	dignitary				false	true	teb_priestess	1.0000	0.0000
+teb_priestess_02	dignitary				false	true	teb_priestess	1.0000	0.0000
+teb_priestess_03	dignitary				false	true	teb_priestess	1.0000	0.0000
+teb_merc_captain_01	champion				false	true	teb_merc_captain	1.0000	0.0000
+teb_merc_captain_02	champion				false	true	teb_merc_captain	1.0000	0.0000
+teb_merc_captain_03	champion				false	true	teb_merc_captain	1.0000	0.0000
+teb_merc_captain_04	champion				false	true	teb_merc_captain	1.0000	0.0000
+teb_duellist_hero_01	spy				false	true	teb_duellist_hero	1.0000	0.0000
+teb_duellist_hero_02	spy				false	true	teb_duellist_hero	1.0000	0.0000
+teb_duellist_hero_03	spy				false	true	teb_duellist_hero	1.0000	0.0000

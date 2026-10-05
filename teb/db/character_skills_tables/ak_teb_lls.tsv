@@ -1,0 +1,86 @@
+key	image_path	localised_description	localised_name	unlocked_at_rank	is_background_skill	is_female_only_background_skill	is_male_only_background_skill	background_weighting	influence_cost
+#character_skills_tables;5;db/character_skills_tables/ak_teb_lls									
+teb_borgio_unique_warhorse	mount_barded_warhorse.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_borgio_unique_mace	item_weapon.png	hurr	Warhorse	12	false	false	false	0.0000	0
+teb_borgio_unique_mask	item_enchanted_item.png	derp	Warhorse	14	false	false	false	0.0000	0
+teb_borgio_unique_armour	item_armour.png	durr	Warhorse	9	false	false	false	0.0000	0
+teb_borgio_beloved	battle_morale.png	+aura	Warhorse	0	false	false	false	0.0000	0
+teb_borgio_pick	battle_attack.png	stats t1	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_antipillagers	wh_main_lore_passive_power_of_da_waaagh.png	vs chaos & greens	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_antivampires	wh_main_lore_passive_the_curse_of_undeath.png	vs vamp	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_protection	battle_armour.png	+armour all, -ld enemy region	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_gashnagia_melee	teb_army_def.png	+stats all	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_gashnagia_skirmish	wh_dlc05_asuryan's_command.png	+stats all	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_attrition	campaign_vampiric_corruption.png	derp	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_ushoran	campaign_public_order.png	+order	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_peace	campaign_growth.png	+growth	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_mages	campaign_agent.png	-cap wiz and spies, +winds	Warhorse	0	false	false	false	0.0000	0
+teb_gashnag_unique_staff	item_weapon.png	hurr	Warhorse	9	false	false	false	0.0000	0
+teb_gashnag_unique_book	item_enchanted_item.png	derp	Warhorse	17	false	false	false	0.0000	0
+teb_gashnag_unique_wrath	wh2_dlc11_bestial_force.png	wrath of the strigoi passive	Warhorse	4	false	false	false	0.0000	0
+teb_lucrezzia_unique_warhorse	mount_barded_warhorse.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_lucrezzia_vanguard	campaign_agent.png	vanguard army	Warhorse	0	false	false	false	0.0000	0
+teb_lucrezzia_unique_poison	potion_green.png	ability	Warhorse	9	false	false	false	0.0000	0
+teb_lucrezzia_unique_potion	potion_purple.png	ability	Warhorse	7	false	false	false	0.0000	0
+teb_lucrezzia_unique_kiss	teb_lucrezzia_kiss.png	ability	Warhorse	4	false	false	false	0.0000	0
+teb_lucrezzia_unique_stiletto	item_weapon.png	ability	Warhorse	11	false	false	false	0.0000	0
+teb_lucrezzia_embedded	campaign_agent.png	buff for lords+heroes	Warhorse	0	false	false	false	0.0000	0
+teb_lucrezzia_marriage_dummy	campaign_growth.png	marriage option	Warhorse	0	false	false	false	0.0000	0
+teb_lucrezzia_marriage_tobaro	campaign_growth.png	marriage option	Warhorse	0	false	false	false	0.0000	0
+teb_lucrezzia_marriage_magritta	campaign_growth.png	marriage option	Warhorse	0	false	false	false	0.0000	0
+teb_lucrezzia_marriage_bilbali	campaign_growth.png	marriage option	Warhorse	0	false	false	false	0.0000	0
+teb_lucrezzia_marriage_free	character_replenishment.png	marriage option	Warhorse	0	false	false	false	0.0000	0
+teb_borgio_innate	trait_human.png	skmcklam	skmcklam	0	true	false	false	5.0000	0
+teb_gashnag_innate	trait_human.png	skmcklam	skmcklam	0	true	false	false	5.0000	0
+teb_lucrezzia_innate	trait_human.png	skmcklam	skmcklam	0	true	false	false	5.0000	0
+teb_catrazza_unique_sword	item_weapon.png	gold sea sword	Warhorse	9	false	false	false	0.0000	0
+teb_catrazza_unique_ring	item_talisman.png	ring of myrmidia	Warhorse	14	false	false	false	0.0000	0
+teb_lupio_unique_cloak	item_talisman.png	cloak of visibility	Warhorse	14	false	false	false	0.0000	0
+teb_lupio_unique_ring	item_enchanted_item.png	ring of desire	Warhorse	9	false	false	false	0.0000	0
+teb_gausser_unique_axe	item_weapon.png	dwarf axe	Warhorse	9	false	false	false	0.0000	0
+teb_gausser_unique_scarf	item_enchanted_item.png	strygan scarf	Warhorse	14	false	false	false	0.0000	0
+teb_catrazza_unique_warhorse	mount_barded_warhorse.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_catrazza_unique_grif	mount_imperial_griffon.png	griffon	griffon	14	false	false	false	0.0000	0
+teb_lupio_unique_warhorse	mount_barded_warhorse.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_lupio_unique_grif	mount_imperial_griffon.png	demigryph	demigryph	10	false	false	false	0.0000	0
+teb_gausser_unique_warhorse	mount_barded_warhorse.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_gausser_unique_pegasus	mount_imperial_pegasus.png	radiant pegasus	Warhorse	8	false	false	false	0.0000	0
+teb_catrazza_unique_blackbands	wh_dlc05_rage_of_kurnous.png	rifle buffs	Warhorse	11	false	false	false	0.0000	0
+teb_catrazza_unique_favours	character_military_spending.png	knights discount	Warhorse	1	false	false	false	0.0000	0
+teb_catrazza_unique_renaissance	character_construction.png	building & trade	Warhorse	1	false	false	false	0.0000	0
+teb_catrazza_unique_verybest	battle_armour.png	better gear	Warhorse	1	false	false	false	0.0000	0
+teb_catrazza_unique_birdmen	character_ambush.png	LOS	Warhorse	1	false	false	false	0.0000	0
+teb_lupio_unique_sea	teb_lupio_unique_sea.png	mount	Warhorse	11	false	false	false	0.0000	0
+teb_lupio_unique_eldorado	teb_lupio_unique_eldorado.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_lupio_unique_peasants	teb_lupio_unique_peasants.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_lupio_unique_army	wh_main_lord_passive_high_king.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_lupio_unique_windmills	battle_damage.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_lupio_unique_lupiocentric	character_bonus_vs_large.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_gausser_unique_friend	wh_pro01_time_of_the_ancestors.png	diplomacy + discounts	Warhorse	1	false	false	false	0.0000	0
+teb_gausser_unique_stats	battle_armour.png	herp	Warhorse	1	false	false	false	0.0000	0
+teb_gausser_unique_shieldwall	battle_defence.png	derp	Warhorse	1	false	false	false	0.0000	0
+teb_gausser_unique_trade	wh_dlc07_character_questing_vow.png	durr	Warhorse	1	false	false	false	0.0000	0
+teb_gausser_unique_rangers	character_ambush.png	"unlocks" rangers	Warhorse	1	false	false	false	0.0000	0
+teb_gausser_innate	trait_human.png	replenishment	sadaf	0	true	false	false	5.0000	0
+teb_lupio_innate	trait_human.png	tax and public order shenanigans	sadaf	0	true	false	false	5.0000	0
+teb_catrazza_innate	trait_human.png		sadaf	0	true	false	false	5.0000	0
+teb_gausser_guardian	wh2_dlc10_guardian.png	ability		7	false	false	false	0.0000	0
+teb_borgio_milan	teb_pavise.png	pavise		11	false	false	false	0.0000	0
+teb_borgio_immortan	character_health.png	hit points		17	false	false	false	0.0000	0
+teb_lucrezzia_morediplo	character_diplomacy.png			14	false	false	false	0.0000	0
+teb_gashnag_summons	wh2_dlc11_mist_form.png	 		7	false	false	false	0.0000	0
+teb_lupio_foot_alt	item_weapon.png	mount	Warhorse	1	false	false	false	0.0000	0
+teb_catrazza_duellist	character_bonus_vs_infantry.png			0	false	false	false	0.0000	0
+teb_lorenzo_lupo_innate	trait_human.png	skmcklam	skmcklam	0	true	false	false	5.0000	0
+teb_lorenzo_lupo_aura	character_general_ability.png			1	false	false	false	0.0000	0
+teb_lorenzo_lupo_shield	item_armour.png			1	false	false	false	0.0000	0
+teb_lorenzo_lupo_sword	item_weapon.png			1	false	false	false	0.0000	0
+teb_lorenzo_lupo_ring	item_enchanted_item.png	Ring of Luccina		1	false	false	false	0.0000	0
+teb_lorenzo_lupo_runner	wh2_dlc15_skill_hef_alastar_clearcutting_maneuvers.png	strider and speed		0	false	false	false	0.0000	0
+teb_lorenzo_lupo_wrestling	character_wound_time.png	mass		0	false	false	false	0.0000	0
+teb_lorenzo_lupo_gladiator	wh2_dlc17_bst_skill_barbed_knuckle_boxing.png	bonus vs inf		0	false	false	false	0.0000	0
+teb_lorenzo_lupo_stronk	character_damage.png	damage		0	false	false	false	0.0000	0
+teb_lorenzo_lupo_rowing	character_untainted.png	phys res and fleet		0	false	false	false	0.0000	0
+teb_lorenzo_lupo_statuesque	character_public_order.png	morale and stuff		0	false	false	false	0.0000	0
+teb_lorenzo_lupo_luccini_army	wh2_dlc13_skill_sleight_of_hand.png	armywide		0	false	false	false	0.0000	0
+teb_lorenzo_lupo_luccini_order	wh2_dlc14_skill_brt_repanse_the_peoples_hero.png	order		0	false	false	false	0.0000	0

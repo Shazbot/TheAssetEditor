@@ -1,0 +1,40 @@
+<VARIANT_MESH>
+	<SLOT name="head" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\teb\teb_birdmen\teb_birdmen_head_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\teb\teb_birdmen\teb_birdmen_head_02.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\teb\teb_birdmen\teb_birdmen_head_03.wsmodel" />
+	</SLOT>
+
+
+
+	<SLOT name="torso" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\teb\teb_birdmen\teb_birdmen_torso_01.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>
+		</VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\teb\teb_birdmen\teb_birdmen_torso_02.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>
+			<META_DATA>audio_entity_type:wh_human_male</META_DATA>
+		</VARIANT_MESH>
+	</SLOT>
+	<SLOT name="legs" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\teb\teb_birdmen\teb_birdmen_legs_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\teb\teb_birdmen\teb_birdmen_legs_02.wsmodel" />
+	</SLOT>
+	<SLOT name="kneepads" probability ="0.5">
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\teb\teb_birdmen\teb_birdmen_knee_pads_01.wsmodel" />
+	</SLOT>
+
+	<SLOT name="weapon_1" attach_point="be_prop_0" >
+	</SLOT>
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" />
+	<SLOT name="weapon_3">
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1d\teb\teb_birdmen\teb_birdmen_crossbow_01.wsmodel" />
+	</SLOT>
+	<SLOT name="weapon_4" attach_point="be_prop_4" >
+	</SLOT>
+	<SLOT name="weapon_5" attach_point="be_prop_5" >
+	</SLOT>
+</VARIANT_MESH>

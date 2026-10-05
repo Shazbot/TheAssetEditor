@@ -1,0 +1,40 @@
+chain	chain_set	slot_template	super_chain	remove
+#slot_template_permitted_building_chains_tables;0;db/slot_template_permitted_building_chains_tables/ak_teb				
+	teb_miragliano_channels	wh_main_special_miragliano_secondary		false
+	teb_lothern_good	wh2_main_special_lothern_secondary		false
+	teb_lothern_bad	wh2_main_special_lothern_secondary		false
+	teb_luccini_acropolis	wh_main_special_luccini_secondary		false
+teb_garrison_small		wh_main_special_luccini_secondary		true
+	teb_tobaro_deep	wh_main_special_tobaro_secondary		false
+teb_garrison_small		wh_main_special_tobaro_secondary		true
+	teb_artsy_capitals	wh_main_special_miragliano_secondary		false
+	teb_artsy_capitals	wh_main_special_magritta_secondary		false
+	teb_artsy_capitals	wh2_main_special_skavenblight_secondary		false
+	teb_artsy_capitals	wh2_main_special_lothern_secondary		false
+	teb_artsy_capitals	wh3_main_special_shang_yang_secondary_spices		false
+teb_worship_myrmidia		wh_main_special_magritta_secondary		true
+	teb_tylos_settlement	wh2_main_special_skavenblight_primary		false
+wh_main_EMPIRE_settlement_major		wh2_main_special_skavenblight_primary		true
+	teb_miragliano_channels	cr_major_secondary_miragliano		false
+	teb_artsy_capitals	cr_major_secondary_miragliano		false
+	teb_artsy_capitals	cr_major_secondary_magritta		false
+	teb_artsy_capitals	cr_major_secondary_skavenblight		false
+	teb_artsy_capitals	cr_major_secondary_luccini		false
+	teb_artsy_capitals	cr_major_secondary_remas		false
+	teb_luccini_acropolis_major	cr_major_secondary_luccini		false
+teb_garrison_big		cr_major_secondary_luccini		true
+	teb_tobaro_deep	cr_major_secondary_tobaro		false
+teb_garrison_small		cr_major_secondary_tobaro		true
+teb_worship_myrmidia		cr_major_secondary_magritta		true
+	teb_tylos_settlement	cr_major_primary_skavenblight		false
+wh_main_EMPIRE_settlement_major		cr_major_primary_skavenblight		true
+	teb_montecastello_special	cr_major_secondary_monte_castello		false
+	teb_pavona_lucy	cr_major_secondary_pavona		false
+teb_worship_shallya		wh_main_special_couronne_secondary		true
+	teb_artsy_capitals	cr_major_secondary_pavona		false
+	teb_artsy_capitals	cr_major_secondary_verezzo		false
+	teb_artsy_capitals	cr_major_secondary_myrmidens		false
+	teb_artsy_capitals	cr_major_secondary_khypris		false
+	teb_artsy_capitals	cr_minor_secondary_tor_anrok		false
+	wh3_main_secondary_addon_res_marble	cr_major_secondary_tobaro		false
+	teb_special_windmills	cr_minor_secondary_valley_of_windmills		false

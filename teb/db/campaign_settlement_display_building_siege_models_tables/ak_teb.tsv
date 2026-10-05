@@ -1,0 +1,4 @@
+blockade	culture	model_bmd
+#campaign_settlement_display_building_siege_models_tables;0;db/campaign_settlement_display_building_siege_models_tables/ak_teb		
+false	mixer_teb_southern_realms	prefabs/campaign/greenskins_siege.bmd
+true	mixer_teb_southern_realms	prefabs/campaign/greenskins_siege.bmd

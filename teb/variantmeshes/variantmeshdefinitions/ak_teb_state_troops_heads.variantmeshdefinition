@@ -1,0 +1,22 @@
+
+<VARIANT_MESH>
+	<SLOT name="subhead" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_01.wsmodel"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_02.wsmodel"   >
+						<SLOT name="plumes" probability ="0.7" >
+			<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_barbute2_crest.variantmeshdefinition" />
+				</SLOT>
+		</VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_04.wsmodel"   >
+						<SLOT name="plumes" probability ="0.7" >
+			<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_barbute2_crest.variantmeshdefinition" />
+				</SLOT>
+		</VARIANT_MESH>
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_05.wsmodel"   />
+	</SLOT>
+</VARIANT_MESH>
+
+--11 is moustache+plume
+--12 is beard stubble
+--14 is goatee+band
+--15 is alpha beard

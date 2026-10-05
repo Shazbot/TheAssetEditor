@@ -1,0 +1,24 @@
+key	agent_key	for_army	faction_key	subculture	for_navy	campaign_key	agent_subtype_key
+#character_skill_node_sets_tables;0;db/character_skill_node_sets_tables/ak_teb							
+bor_ranger_lord	general	false			false		bor_ranger_lord
+til_merchant	general	false			false		til_merchant
+est_inquisitor	general	false			false		est_inquisitor
+teb_catrazza	general	false			false		teb_catrazza
+teb_lupio	general	false			false		teb_lupio
+teb_gausser	general	false			false		teb_gausser
+teb_borgio_the_besieger	general	false			false		teb_borgio_the_besieger
+teb_gashnag	general	false			false		teb_gashnag
+teb_lucrezzia_belladonna	general	false			false		teb_lucrezzia_belladonna
+teb_lucrezzia_belladonna_TOW	general	false			false		teb_lucrezzia_belladonna_TOW
+teb_priestess	dignitary	false			false		teb_priestess
+teb_colombo	general	false			false		teb_colombo
+teb_colombo_TOW	general	false			false		teb_colombo_TOW
+teb_cadavo	general	false			false		teb_cadavo
+teb_templar_lord	general	false			false		teb_templar_lord
+teb_eldaddio	general	false			false		teb_eldaddio
+teb_duellist_hero	spy	false			false		teb_duellist_hero
+teb_merc_general	general	false			false		teb_merc_general
+teb_merc_captain	champion	false			false		teb_merc_captain
+teb_lorenzo_lupo	general	false			false		teb_lorenzo_lupo
+teb_merc_general_camp	general	false			false		teb_merc_general_camp
+teb_piggolo	engineer	false			false		teb_piggolo

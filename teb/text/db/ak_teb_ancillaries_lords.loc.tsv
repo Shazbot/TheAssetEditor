@@ -1,0 +1,24 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_ancillaries_lords.loc		
+ancillaries_colour_text_mount_bor_ranger_lord_warhorse	A horse can outrun Orcs, Trolls, even Giants. Not arrows. Or Doom Divers. But it still helps.	true
+ancillaries_onscreen_name_mount_bor_ranger_lord_warhorse	Warhorse	true
+ancillaries_onscreen_name_mount_bor_ranger_lord_warhorse2	Warhorse and Repeater Handgun	true
+ancillaries_colour_text_mount_bor_ranger_lord_warhorse2	Persuading a Warboss to flee is much easier with a repeater rifle from the Empire. Expensive, but worth it.	true
+ancillaries_colour_text_mount_til_merchant_warhorse	A good warhorse is not only a symbol of authority, also a swift vehicle that can bite and kick the enemy.	true
+ancillaries_onscreen_name_mount_til_merchant_warhorse	Warhorse	true
+ancillaries_colour_text_mount_til_merchant_bwarhorse	Horse plate bardings are expensive, but might stop the heathen or monster from killing your mount outright.	true
+ancillaries_onscreen_name_mount_til_merchant_bwarhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_est_inquisitor_bwarhorse	Horse plate bardings are expensive, but might stop the heathen or monster from killing your mount outright.	true
+ancillaries_onscreen_name_mount_est_inquisitor_bwarhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_est_inquisitor_warhorse	A good warhorse is not only a symbol of authority, also a swift vehicle that can bite and kick the enemy.	true
+ancillaries_onscreen_name_mount_est_inquisitor_warhorse	Warhorse	true
+ancillaries_colour_text_mount_est_inquisitor_beaky	A flying monster from the northern ridges, a Hippogryph makes for a loyal and protective mount when trained.	true
+ancillaries_onscreen_name_mount_est_inquisitor_beaky	Hippogryph	true
+ancillaries_onscreen_name_mount_teb_templar_lord_bhorse	Barded Warhorse	true
+ancillaries_colour_text_mount_teb_templar_lord_bhorse	An excellent steed barded in stylish burnished steel, for the man that must not ask "Eh?".	true
+ancillaries_onscreen_name_mount_teb_templar_lord_pegasus	Pegasus	true
+ancillaries_colour_text_mount_teb_templar_lord_pegasus	Fly on your wings, fly, and touch the sun.	true
+ancillaries_onscreen_name_mount_teb_templar_lord_griff	Demigryph	true
+ancillaries_colour_text_mount_teb_templar_lord_griff	An exotic beast, the demigryph, mighty dangerous too. Whoever intends to tame and befriend one must be strong of will and limb, because even the best suits of plate are not demigryph-proof.	true
+ancillaries_onscreen_name_mount_teb_templar_lord_champ	Champion of Bellona Myrmidia	true
+ancillaries_colour_text_mount_teb_templar_lord_champ	Behind the erudite mask of this Myrmidian commander lies the untamed spirit of a warrior. In battle, his arms glare of such a violent and supernatural light that even the untainted cannot stare for long.	true

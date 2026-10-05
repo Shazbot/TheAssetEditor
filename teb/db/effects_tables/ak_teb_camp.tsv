@@ -1,0 +1,24 @@
+effect	icon	priority	icon_negative	category	is_positive_value_good
+#effects_tables;0;db/effects_tables/ak_teb_camp					
+teb_camp_newhorde_buildings		0		campaign	true
+teb_camp_cap	ogre_camp.png	25	ogre_camp.png	campaign	true
+teb_camp_units_ogre_removal_spray	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_pikemen	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_xbowmen	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_pavisiers	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_broken_lances	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_carabiniers	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_light_cannon	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_conqui_royal_guard	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_conqui_adventurers	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_conqui_riders	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_conqui_lancers	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_enforcers	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_freelance_knights	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_militia_knights	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_border_rangers	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_swash	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_duellists	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_xbow_cav	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_guard_kossars	merc_replen.png	0	merc_replen.png	campaign	true
+teb_camp_units_mercenary_cap_teb_galloper	merc_replen.png	0	merc_replen.png	campaign	true

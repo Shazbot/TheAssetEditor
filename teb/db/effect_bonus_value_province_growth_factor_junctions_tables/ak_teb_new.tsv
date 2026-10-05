@@ -1,0 +1,4 @@
+bonus_value_id	effect	province_growth_factor
+#effect_bonus_value_province_growth_factor_junctions_tables;0;db/effect_bonus_value_province_growth_factor_junctions_tables/ak_teb_new		
+value	hidden_growth	buildings
+value	teb_edict_base_growth	commandment

@@ -1,0 +1,162 @@
+faction	general_unit	unit	siege_unit_attacker	siege_unit_defender	general_portrait	general_uniform	set_piece_character	campaign_exclusive	armory_item_set	supports_upgrades
+#units_custom_battle_permissions_tables;11;db/units_custom_battle_permissions_tables/ak_teb_monoculture										
+mixer_teb_tilea	true	teb_merc_general	true	true	ui/portraits/portholes/no_culture/teb_merc_general_02.png	teb_merc_general_02	teb_merc_general	false		false
+mixer_teb_tilea	true	teb_merc_general_barded_horse	true	true	ui/portraits/portholes/no_culture/teb_merc_general_02.png	teb_merc_general_02	teb_merc_general	false		false
+mixer_teb_tilea	true	teb_merc_general_grif	true	true	ui/portraits/portholes/no_culture/teb_merc_general_02.png	teb_merc_general_02	teb_merc_general	false		false
+mixer_teb_tilea	true	teb_merc_general_lion	true	true	ui/portraits/portholes/no_culture/teb_merc_general_02.png	teb_merc_general_02	teb_merc_general	false		false
+mixer_teb_tilea	false	teb_merc_captain	true	true	ui/portraits/portholes/no_culture/teb_merc_captain_01.png	teb_merc_captain_01	wh_main_emp_cha_captain_0	false		false
+mixer_teb_tilea	false	teb_merc_captain_barded_horse	true	true	ui/portraits/portholes/no_culture/teb_merc_captain_03.png	teb_merc_captain_03	wh_main_emp_cha_captain_0	false		false
+mixer_teb_tilea	false	teb_pavisiers	true	true				false		false
+mixer_teb_tilea	false	teb_republican_guard	true	true				false		false
+mixer_teb_tilea	false	teb_encarmine	true	true				false		false
+mixer_teb_tilea	false	teb_carabiniers	true	true				false		false
+mixer_teb_tilea	false	teb_conqui_lancers	true	true				false		false
+mixer_teb_tilea	false	teb_kotrs	true	true				false		false
+mixer_teb_tilea	false	teb_shieldbearers	true	true				false		false
+mixer_teb_tilea	false	teb_enforcers	true	true				false		false
+mixer_teb_tilea	false	teb_militia_archers	true	true				false		false
+mixer_teb_tilea	false	teb_freelance_knights	true	true				false		false
+mixer_teb_tilea	false	teb_militia_knights	true	true				false		false
+mixer_teb_tilea	false	teb_light_scouts	true	true				false		false
+mixer_teb_tilea	false	teb_border_rangers	true	true				false		false
+mixer_teb_tilea	false	teb_swash	true	true				false		false
+mixer_teb_tilea	false	teb_conqui_royal_guard	true	true				false		false
+mixer_teb_tilea	false	teb_conqui_adventurers	true	true				false		false
+mixer_teb_tilea	false	teb_conqui_riders	true	true				false		false
+mixer_teb_tilea	false	teb_bwatch	true	true				false		false
+mixer_teb_tilea	false	teb_montante_greatswords	true	true				false		false
+mixer_teb_tilea	false	teb_pikemen	true	true				false		false
+mixer_teb_tilea	false	teb_broken_lances	true	true				false		false
+mixer_teb_tilea	false	teb_noble_retinue	true	true				false		false
+mixer_teb_tilea	false	teb_light_cannon	true	true				false		false
+mixer_teb_tilea	false	teb_paymaster	true	true				false		false
+mixer_teb_tilea	false	teb_duellists	true	true				false		false
+mixer_teb_tilea	false	teb_sisters	true	true				false		false
+mixer_teb_tilea	false	teb_xbow_cav	true	true				false		false
+mixer_teb_tilea	false	teb_irrana	true	true				false		false
+mixer_teb_tilea	true	est_inquisitor	true	true	ui/portraits/portholes/no_culture/est_inquisitor_02.png	est_inquisitor_02	est_inquisitor	false		false
+mixer_teb_tilea	true	est_inquisitor_bhorse	true	true	ui/portraits/portholes/no_culture/est_inquisitor_03.png	est_inquisitor_03	est_inquisitor	false		false
+mixer_teb_tilea	true	est_inquisitor_grif	true	true	ui/portraits/portholes/no_culture/est_inquisitor_01.png	est_inquisitor_01	est_inquisitor	false		false
+mixer_teb_tilea	true	est_inquisitor_horse	true	true	ui/portraits/portholes/no_culture/est_inquisitor_01.png	est_inquisitor_01	est_inquisitor	false		false
+mixer_teb_tilea	true	til_merchant	true	true	ui/portraits/portholes/no_culture/til_merchant_01.png	til_merchant_01	til_merchant	false		false
+mixer_teb_tilea	true	til_merchant_bhorse	true	true	ui/portraits/portholes/no_culture/til_merchant_03.png	til_merchant_03	til_merchant	false		false
+mixer_teb_tilea	true	bor_ranger_lord	true	true	ui/portraits/portholes/no_culture/bor_ranger_lord_01.png	bor_ranger_lord_01	bor_ranger_lord	false		false
+mixer_teb_tilea	true	bor_ranger_lord_horse	true	true	ui/portraits/portholes/no_culture/bor_ranger_lord_02.png	bor_ranger_lord_horse_02	bor_ranger_lord	false		false
+mixer_teb_tilea	true	bor_ranger_lord_horse2	true	true	ui/portraits/portholes/no_culture/bor_ranger_lord_03.png	bor_ranger_lord_horse2_03	bor_ranger_lord	false		false
+mixer_teb_tilea	true	til_merchant_horse	true	true	ui/portraits/portholes/no_culture/til_merchant_02.png	til_merchant_02	til_merchant	false		false
+mixer_teb_tilea	true	teb_borgio_the_besieger	true	true	ui/portraits/portholes/no_culture/teb_borgio.png	teb_borgio	teb_borgio_the_besieger	false		false
+mixer_teb_tilea	true	teb_borgio_the_besieger_horse	true	true	ui/portraits/portholes/no_culture/teb_borgio.png	teb_borgio	teb_borgio_the_besieger	false		false
+mixer_teb_tilea	true	teb_borgio_the_besieger_bhorse	true	true	ui/portraits/portholes/no_culture/teb_borgio.png	teb_borgio	teb_borgio_the_besieger	false		false
+mixer_teb_tilea	true	teb_gashnag	true	true	ui/portraits/portholes/no_culture/teb_gashnag.png	teb_gashnag	teb_gashnag	false		false
+mixer_teb_tilea	true	teb_lucrezzia_belladonna	true	true	ui/portraits/portholes/no_culture/teb_lucrezzia.png	teb_lucrezzia	teb_lucrezzia_belladonna	false		false
+mixer_teb_tilea	true	teb_lucrezzia_belladonna_bhorse	true	true	ui/portraits/portholes/no_culture/teb_lucrezzia.png	teb_lucrezzia	teb_lucrezzia_belladonna	false		false
+mixer_teb_tilea	true	teb_catrazza	true	true	ui/portraits/portholes/no_culture/teb_catrazza.png	teb_catrazza	teb_catrazza	false		false
+mixer_teb_tilea	true	teb_catrazza_warhorse	true	true	ui/portraits/portholes/no_culture/teb_catrazza.png	teb_catrazza	teb_catrazza	false		false
+mixer_teb_tilea	true	teb_catrazza_barded_warhorse	true	true	ui/portraits/portholes/no_culture/teb_catrazza.png	teb_catrazza	teb_catrazza	false		false
+mixer_teb_tilea	true	teb_catrazza_grif	true	true	ui/portraits/portholes/no_culture/teb_catrazza.png	teb_catrazza	teb_catrazza	false		false
+mixer_teb_tilea	true	teb_lupio	true	true	ui/portraits/portholes/no_culture/teb_lupio.png	teb_lupio	teb_lupio	false		false
+mixer_teb_tilea	true	teb_lupio_barded_warhorse	true	true	ui/portraits/portholes/no_culture/teb_lupio.png	teb_lupio_mounted_horse	teb_lupio	false		false
+mixer_teb_tilea	true	teb_lupio_grif	true	true	ui/portraits/portholes/no_culture/teb_lupio.png	teb_lupio	teb_lupio	false		false
+mixer_teb_tilea	true	teb_gausser	true	true	ui/portraits/portholes/no_culture/teb_gausser.png	teb_gausser	teb_gausser	false		false
+mixer_teb_tilea	true	teb_gausser_warhorse	true	true	ui/portraits/portholes/no_culture/teb_gausser.png	teb_gausser	teb_gausser	false		false
+mixer_teb_tilea	true	teb_gausser_barded_warhorse	true	true	ui/portraits/portholes/no_culture/teb_gausser.png	teb_gausser	teb_gausser	false		false
+mixer_teb_tilea	true	teb_gausser_pegasus	true	true	ui/portraits/portholes/no_culture/teb_gausser.png	teb_gausser	teb_gausser	false		false
+mixer_teb_tilea	true	teb_cadavo	true	true	ui/portraits/portholes/no_culture/teb_cadavo.png		teb_cadavo	false		false
+mixer_teb_tilea	true	teb_cadavo_horse	true	true	ui/portraits/portholes/no_culture/teb_cadavo.png		teb_cadavo	false		false
+mixer_teb_tilea	true	teb_cadavo_bhorse	true	true	ui/portraits/portholes/no_culture/teb_cadavo.png		teb_cadavo	false		false
+mixer_teb_tilea	true	teb_colombo	true	true	ui/portraits/portholes/no_culture/teb_colombo.png		teb_colombo	false		false
+mixer_teb_tilea	true	teb_colombo_horse	true	true	ui/portraits/portholes/no_culture/teb_colombo.png		teb_colombo	false		false
+mixer_teb_tilea	true	teb_colombo_steed	true	true	ui/portraits/portholes/no_culture/teb_colombo.png		teb_colombo	false		false
+mixer_teb_tilea	true	teb_eldaddio	true	true	ui/portraits/portholes/no_culture/teb_eldaddio.png		teb_eldaddio	false		false
+mixer_teb_tilea	false	teb_priestess	true	true	ui/portraits/portholes/no_culture/teb_priestess_01.png	teb_priestess_01	wh_main_vmp_cha_vampire_0	false		false
+mixer_teb_tilea	false	teb_priestess_horse	true	true	ui/portraits/portholes/no_culture/teb_priestess_01.png	teb_priestess_01	wh_main_vmp_cha_vampire_0	false		false
+mixer_teb_tilea	false	teb_priestess_bhorse	true	true	ui/portraits/portholes/no_culture/teb_priestess_01.png	teb_priestess_01	wh_main_vmp_cha_vampire_0	false		false
+mixer_teb_tilea	false	teb_duellist_hero	true	true	ui/portraits/portholes/no_culture/teb_duellist_hero_03.png	teb_duellist_hero_03	wh_dlc06_grn_cha_night_goblin_warboss_0	false		false
+mixer_teb_tilea	false	teb_duellist_hero_bhorse	true	true	ui/portraits/portholes/no_culture/teb_duellist_hero_02.png	teb_duellist_hero_horse_02	wh_dlc06_grn_cha_night_goblin_warboss_0	false		false
+mixer_teb_tilea	false	teb_duellist_hero_horse	true	true	ui/portraits/portholes/no_culture/teb_duellist_hero_01.png	teb_duellist_hero_horse_01	wh_dlc06_grn_cha_night_goblin_warboss_0	false		false
+mixer_teb_tilea	false	teb_duellist_hero_encarmine	true	true	ui/portraits/portholes/no_culture/teb_duellist_hero_encarmine_03.png	teb_duellist_hero_encarmine_03	wh_dlc06_grn_cha_night_goblin_warboss_0	false		false
+mixer_teb_tilea	false	teb_roc_strygos	true	true				true		false
+mixer_teb_tilea	false	teb_roc_broswords	true	true				true		false
+mixer_teb_tilea	false	teb_roc_gwatch	true	true				true		false
+mixer_teb_tilea	true	teb_templar_lord	true	true	ui/portraits/portholes/no_culture/teb_templar_lord_02.png	teb_templar_lord_02	teb_templar_lord	false		false
+mixer_teb_tilea	false	teb_roc_dieterfist	true	true				true		false
+mixer_teb_tilea	false	teb_roc_estragon	true	true				true		false
+mixer_teb_tilea	false	teb_roc_verena	true	true				true		false
+mixer_teb_tilea	true	teb_templar_lord_bhorse	true	true	ui/portraits/portholes/no_culture/teb_templar_lord_01.png	teb_templar_lord_01	teb_templar_lord	false		false
+mixer_teb_tilea	true	teb_templar_lord_pegasus	true	true	ui/portraits/portholes/no_culture/teb_templar_lord_01.png	teb_templar_lord_01	teb_templar_lord	false		false
+mixer_teb_tilea	true	teb_templar_lord_griff	true	true	ui/portraits/portholes/no_culture/teb_templar_lord_01.png	teb_templar_lord_01	teb_templar_lord	false		false
+mixer_teb_tilea	true	teb_templar_lord_champ	true	true	ui/portraits/portholes/no_culture/teb_templar_lord_02.png	teb_templar_lord_02_champ	teb_templar_lord	false		false
+mixer_teb_tilea	false	teb_roc_kotss	true	true				true		false
+mixer_teb_tilea	false	teb_roc_organ	true	true				true		false
+mixer_teb_tilea	false	teb_roc_gunn	true	true				true		false
+mixer_teb_tilea	false	teb_roc_montecastello	true	true				true		false
+mixer_teb_tilea	false	teb_alcatani	true	true				false		false
+mixer_teb_tilea	false	teb_pirazzo	true	true				false		false
+mixer_teb_tilea	false	teb_venators	true	true				false		false
+mixer_teb_tilea	false	teb_marksmen	true	true				false		false
+mixer_teb_tilea	false	teb_origo	true	true				false		false
+mixer_teb_tilea	false	teb_cursed	true	true				false		false
+mixer_teb_tilea	false	teb_leopard	true	true				false		false
+mixer_teb_tilea	false	teb_vespero	true	true				false		false
+mixer_teb_tilea	false	teb_besiegers	true	true				false		false
+mixer_teb_tilea	false	teb_asarnil	true	true				false		false
+mixer_teb_tilea	false	teb_ricco	true	true				false		false
+mixer_teb_tilea	false	teb_tichi	true	true				false		false
+mixer_teb_tilea	false	teb_bronzino	true	true				false		false
+mixer_teb_tilea	false	teb_birdmen	true	true				false		false
+mixer_teb_tilea	false	teb_manflayers	true	true				false		false
+mixer_teb_tilea	false	teb_tank	true	true				false		false
+mixer_teb_tilea	false	teb_tank_ror	true	true				true		false
+mixer_teb_tilea	false	wh_main_emp_art_mortar	true	true				false		false
+mixer_teb_tilea	false	teb_half_pikes	true	true				false		false
+mixer_teb_tilea	false	teb_militia_spearmen	true	true				false		false
+mixer_teb_tilea	false	teb_billmen	true	true				false		false
+mixer_teb_tilea	false	teb_guard_kossars	true	true				false		false
+mixer_teb_tilea	false	teb_xbowmen	true	true				false		false
+mixer_teb_tilea	false	teb_handgunners	true	true				false		false
+mixer_teb_tilea	false	teb_galloper	true	true				false		false
+mixer_teb_tilea	false	wh2_pro07_emp_cha_wizard_death_0	true	true	ui/portraits/portholes/no_culture/emp_wizard_amethyst_campaign_01_0.png	wh2_pro07_uniform_emp_amethyst_wizard_01	wh_pro07_emp_cha_wizard_death_0	false		false
+mixer_teb_tilea	false	wh2_pro07_emp_cha_wizard_death_3	true	true	ui/portraits/portholes/no_culture/emp_wizard_amethyst_campaign_01_0.png	wh2_pro07_uniform_emp_amethyst_wizard_01	wh_pro07_emp_cha_wizard_death_3	false		false
+mixer_teb_tilea	false	wh_dlc05_emp_cha_wizard_life_0	true	true	ui/portraits/portholes/no_culture/emp_wizard_life_campaign_01_0.png	wh_dlc05_uniform_emp_jade_wizard_01	wh_dlc05_emp_cha_wizard_life_0	false		false
+mixer_teb_tilea	false	wh_dlc05_emp_cha_wizard_life_2	true	true	ui/portraits/portholes/no_culture/emp_wizard_life_campaign_01_0.png	wh_dlc05_uniform_emp_jade_wizard_01	wh_dlc05_emp_cha_wizard_life_2	false		false
+mixer_teb_tilea	false	wh_dlc05_emp_cha_wizard_life_3	true	true	ui/portraits/portholes/no_culture/emp_wizard_life_campaign_01_0.png	wh_dlc05_uniform_emp_jade_wizard_01	wh_dlc05_emp_cha_wizard_life_3	false		false
+mixer_teb_tilea	false	wh_dlc05_emp_cha_wizard_shadows_0	true	true	ui/portraits/portholes/no_culture/emp_shadow_wizard_campaign_01_0.png	wh_dlc05_uniform_emp_grey_wizard_01	wh_dlc05_emp_cha_wizard_shadows_0	false		false
+mixer_teb_tilea	false	wh_dlc05_emp_cha_wizard_shadows_2	true	true	ui/portraits/portholes/no_culture/emp_shadow_wizard_campaign_01_0.png	wh_dlc05_uniform_emp_grey_wizard_01	wh_dlc05_emp_cha_wizard_shadows_2	false		false
+mixer_teb_tilea	false	wh_dlc05_emp_cha_wizard_shadows_3	true	true	ui/portraits/portholes/no_culture/emp_shadow_wizard_campaign_01_0.png	wh_dlc05_uniform_emp_grey_wizard_01	wh_dlc05_emp_cha_wizard_shadows_3	false		false
+mixer_teb_tilea	false	wh_main_emp_cha_wizard_fire_0	true	true	ui/portraits/portholes/no_culture/emp_wizard_fire_campaign_01_0.png	wh_main_uniform_emp_bright_wizard_01	wh_main_emp_cha_wizard_fire_0	false		false
+mixer_teb_tilea	false	wh_main_emp_cha_wizard_fire_2	true	true	ui/portraits/portholes/no_culture/emp_wizard_fire_campaign_01_0.png	wh_main_uniform_emp_bright_wizard_01	wh_main_emp_cha_wizard_fire_2	false		false
+mixer_teb_tilea	false	wh_main_emp_cha_wizard_fire_3	true	true	ui/portraits/portholes/no_culture/emp_wizard_fire_campaign_01_0.png	wh_main_uniform_emp_bright_wizard_01	wh_main_emp_cha_wizard_fire_3	false		false
+mixer_teb_tilea	false	wh_main_emp_cha_wizard_heavens_0	true	true	ui/portraits/portholes/no_culture/emp_wizard_heavens_0.png	wh_main_uniform_emp_celestial_wizard	wh_main_emp_cha_wizard_heavens_0	false		false
+mixer_teb_tilea	false	wh_main_emp_cha_wizard_heavens_2	true	true	ui/portraits/portholes/no_culture/emp_wizard_heavens_0.png	wh_main_uniform_emp_celestial_wizard	wh_main_emp_cha_wizard_heavens_2	false		false
+mixer_teb_tilea	false	wh_main_emp_cha_wizard_heavens_4	true	true	ui/portraits/portholes/no_culture/emp_wizard_heavens_0.png	wh_main_uniform_emp_celestial_wizard	wh_main_emp_cha_wizard_heavens_4	false		false
+mixer_teb_tilea	false	wh_main_emp_cha_wizard_light_0	true	true	ui/portraits/portholes/no_culture/emp_wizard_light_campaign_01_0.png	wh_main_uniform_emp_light_wizard_01	wh_main_emp_cha_wizard_light_0	false		false
+mixer_teb_tilea	false	wh_main_emp_cha_wizard_light_2	true	true	ui/portraits/portholes/no_culture/emp_wizard_light_campaign_01_0.png	wh_main_uniform_emp_light_wizard_01	wh_main_emp_cha_wizard_light_2	false		false
+mixer_teb_tilea	false	wh_main_emp_cha_wizard_light_4	true	true	ui/portraits/portholes/no_culture/emp_wizard_light_campaign_01_0.png	wh_main_uniform_emp_light_wizard_01	wh_main_emp_cha_wizard_light_4	false		false
+mixer_teb_tilea	true	teb_lorenzo_lupo	true	true	ui/portraits/portholes/no_culture/teb_lorenzo_lupo.png	teb_lorenzo_lupo	teb_lorenzo_lupo	false		false
+mixer_teb_tilea	false	wh_dlc06_dwf_inf_rangers_0	true	true				true		false
+mixer_teb_tilea	false	wh3_main_ogr_inf_maneaters_1	true	true				true		false
+mixer_teb_tilea	false	wh3_main_ogr_inf_maneaters_3	true	true				true		false
+mixer_teb_tilea	true	til_merchant_bear	true	true	ui/portraits/portholes/no_culture/til_merchant_02.png	til_merchant_02	til_merchant	true		false
+mixer_teb_tilea	false	wh3_dlc25_emp_cha_wizard_metal_warhorse	true	true	ui/portraits/portholes/no_culture/emp_wizard_metal_campaign_01_0.png	wh3_dlc25_uniform_emp_gold_wizard_01	wh3_dlc25_emp_cha_wizard_metal	false		false
+mixer_teb_tilea	false	wh3_dlc25_emp_cha_wizard_metal	true	true	ui/portraits/portholes/no_culture/emp_wizard_metal_campaign_01_0.png	wh3_dlc25_uniform_emp_gold_wizard_01	wh3_dlc25_emp_cha_wizard_metal	false		false
+mixer_teb_tilea	false	teb_piggolo	true	true	ui/portraits/portholes/no_culture/teb_piggolo.png		teb_piggolo	false		false
+mixer_teb_tilea	false	teb_piggolo_warpig	true	true	ui/portraits/portholes/no_culture/teb_piggolo.png	teb_piggolo_warpig	teb_piggolo	false		false
+mixer_teb_tilea	false	teb_piggolo_wagon	true	true	ui/portraits/portholes/no_culture/teb_piggolo.png		teb_piggolo	false		false
+mixer_teb_tilea	false	teb_piggolo_tank	true	true	ui/portraits/portholes/no_culture/teb_piggolo.png		teb_piggolo	false		false
+mixer_teb_tilea	false	teb_golden_lion	true	true				false		false
+mixer_teb_tilea	true	teb_merc_general_CB_tilea	true	true	ui/portraits/portholes/no_culture/teb_merc_general_04.png	teb_merc_general_04	teb_merc_general_tilea	false		false
+mixer_teb_tilea	true	teb_merc_general_barded_horse_CB_tilea	true	true	ui/portraits/portholes/no_culture/teb_merc_general_04.png	teb_merc_general_04	teb_merc_general_tilea	false		false
+mixer_teb_tilea	true	teb_merc_general_grif_CB_tilea	true	true	ui/portraits/portholes/no_culture/teb_merc_general_04.png	teb_merc_general_04	teb_merc_general_tilea	false		false
+mixer_teb_tilea	true	teb_merc_general_lion_CB_tilea	true	true	ui/portraits/portholes/no_culture/teb_merc_general_04.png	teb_merc_general_04	teb_merc_general_tilea	false		false
+mixer_teb_tilea	true	teb_merc_general_CB_estalia	true	true	ui/portraits/portholes/no_culture/teb_merc_general_03.png	teb_merc_general_03	teb_merc_general_estalia	false		false
+mixer_teb_tilea	true	teb_merc_general_barded_horse_CB_estalia	true	true	ui/portraits/portholes/no_culture/teb_merc_general_03.png	teb_merc_general_03	teb_merc_general_estalia	false		false
+mixer_teb_tilea	true	teb_merc_general_grif_CB_estalia	true	true	ui/portraits/portholes/no_culture/teb_merc_general_03.png	teb_merc_general_03	teb_merc_general_estalia	false		false
+mixer_teb_tilea	true	teb_merc_general_lion_CB_estalia	true	true	ui/portraits/portholes/no_culture/teb_merc_general_03.png	teb_merc_general_03	teb_merc_general_estalia	false		false
+mixer_teb_tilea	true	teb_merc_general_CB_border	true	true	ui/portraits/portholes/no_culture/teb_merc_general_05.png	teb_merc_general_05	teb_merc_general_border	false		false
+mixer_teb_tilea	true	teb_merc_general_barded_horse_CB_border	true	true	ui/portraits/portholes/no_culture/teb_merc_general_05.png	teb_merc_general_05	teb_merc_general_border	false		false
+mixer_teb_tilea	true	teb_merc_general_grif_CB_border	true	true	ui/portraits/portholes/no_culture/teb_merc_general_05.png	teb_merc_general_05	teb_merc_general_border	false		false
+mixer_teb_tilea	true	teb_merc_general_lion_CB_border	true	true	ui/portraits/portholes/no_culture/teb_merc_general_05.png	teb_merc_general_05	teb_merc_general_border	false		false
+mixer_teb_tilea	true	teb_merc_general_CB_colonies	true	true	ui/portraits/portholes/no_culture/teb_merc_general_01.png	teb_merc_general_01	teb_merc_general_colonies	false		false
+mixer_teb_tilea	true	teb_merc_general_barded_horse_CB_colonies	true	true	ui/portraits/portholes/no_culture/teb_merc_general_01.png	teb_merc_general_01	teb_merc_general_colonies	false		false
+mixer_teb_tilea	true	teb_merc_general_grif_CB_colonies	true	true	ui/portraits/portholes/no_culture/teb_merc_general_01.png	teb_merc_general_01	teb_merc_general_colonies	false		false
+mixer_teb_tilea	true	teb_merc_general_lion_CB_colonies	true	true	ui/portraits/portholes/no_culture/teb_merc_general_01.png	teb_merc_general_01	teb_merc_general_colonies	false		false

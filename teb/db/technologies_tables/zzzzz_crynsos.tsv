@@ -1,0 +1,8 @@
+key	building_level	position_index	icon_name	mp_available_early	mp_available_late	info_pic	unique_index	is_civil	is_engineering	is_military	is_hidden
+#technologies_tables;7;db/technologies_tables/zzzzz_crynsos											
+tech_teb_port_1	wh_main_teb_port_2	1	wh_main_emp_fishing_fleet	false	false	"placeholder.tga"	990000	false	false	true	false
+tech_teb_port_2	wh_main_teb_port_2	1	wh_main_emp_merchantile_fleet	false	false	"placeholder.tga"	990001	false	false	true	false
+tech_teb_port_3	wh_main_teb_port_2	1	wh_main_emp_imperial_navy	false	false	"placeholder.tga"	990002	false	false	true	false
+tech_teb_worship_1	wh_main_teb_worship_2	1	wh_main_emp_purge_dark_cults	false	false	"placeholder.tga"	990003	false	false	true	false
+tech_teb_worship_2	wh_main_teb_worship_2	1	wh_main_emp_divine_sanction	false	false	"placeholder.tga"	990004	false	false	true	false
+tech_teb_worship_3	wh_main_teb_worship_2	1	wh_main_emp_ecclestial_writ	false	false	"placeholder.tga"	990005	false	false	true	false

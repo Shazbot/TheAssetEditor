@@ -1,0 +1,4 @@
+key	building_level	factorial_effect	value	scope
+#campaign_building_level_factorial_effect_junctions_tables;2;db/campaign_building_level_factorial_effect_junctions_tables/ak_teb				
+3011990	teb_miragliano_channels	skaven_discoverability_buildings_settlement	30	EFS_ONLY_OTHERS
+3011991	teb_tobaro_deep	skaven_discoverability_buildings_settlement	40	EFS_ONLY_OTHERS

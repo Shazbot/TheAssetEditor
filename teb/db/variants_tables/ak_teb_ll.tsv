@@ -1,0 +1,32 @@
+variant_name	tech_folder	variant_filename	low_poly_filename	mount_scale	scale	scale_variation	super_low_poly_filename
+#variants_tables;6;db/variants_tables/ak_teb_ll							
+teb_borgio		teb_borgio		1.0000	1.2000	0.0000	
+teb_gashnag		teb_gashnag		1.0000	0.9000	0.0000	
+warhorse_barded_borgio_campaign	VariantMeshes\wh_variantmodels\hr1\emp\emp_warbeast_horse\tech	emp_knight_blazing_sun_warhorse	hr1\emp\emp_horse\low_poly\emp_horse_blazing_lowlod	1.0000	1.0000	0.0000	
+teb_colombo		teb_colombo		1.0000	1.2000	0.0000	
+teb_colombo_horse		teb_colombo_horse		1.0000	1.2000	0.0000	
+teb_lucrezzia		teb_lucrezzia		1.0000	1.1500	0.0000	
+teb_catrazza		teb_catrazza		1.0000	1.2000	0.0000	
+teb_lupio		teb_lupio		1.0000	1.2000	0.0000	
+teb_lupio_mounted_horse		teb_lupio_mounted_horse		1.0000	1.2000	0.0000	
+teb_gausser		teb_gausser		1.0000	1.2000	0.0000	
+teb_gausser_pegasus	VariantMeshes\wh_variantmodels\hr1\emp\emp_warbeast_horse\tech	teb_gausser_pegasus		1.0000	1.0000	0.0000	
+teb_catrazza_griffon	VariantMeshes\wh_variantmodels\bc2\emp\emp_imperial_griffon\tech	teb_catrazza_griffon		1.6275	1.1500	0.0000	
+teb_cadavo		teb_cadavo		1.0000	1.2000	0.0000	
+teb_colombo2		teb_colombo2		1.0000	1.2000	0.0000	
+teb_eldaddio		teb_eldaddio		1.0000	1.2000	0.0000	
+teb_barded_lupio_campaign	VariantMeshes\wh_variantmodels\hr1\emp\emp_warbeast_horse\tech	teb_barded_lupio	hr1\emp\emp_horse\low_poly\emp_horse_blazing_lowlod	1.0000	1.0000	0.0000	
+teb_barded_lupio		teb_barded_lupio		1.0000	1.0000	0.0000	
+teb_lupio_demi	VariantMeshes\wh_variantmodels\hr1\emp\emp_warbeast_horse\tech	teb_lupio_demi		1.0000	1.0000	0.0000	
+teb_cadavo_horse		teb_cadavo_horse		1.0000	1.0000	0.0000	
+teb_cadavo_barded_horse		teb_cadavo_barded_horse		1.0000	1.0000	0.0000	
+teb_cadavo_horse_camp	VariantMeshes\wh_variantmodels\hr1\emp\emp_warbeast_horse\tech	teb_cadavo_horse	hr1\emp\emp_horse\low_poly\emp_horse_lowlod	1.0000	1.0000	0.0000	
+teb_cadavo_barded_horse_camp	VariantMeshes\wh_variantmodels\hr1\emp\emp_warbeast_horse\tech	teb_cadavo_barded_horse	hr1\emp\emp_warhorse_armoured\low_poly\emp_horse_armoured_lowlod	1.0000	1.0000	0.0000	
+teb_lucrezzia_steed		teb_lucrezzia_steed		1.0000	1.0000	0.0000	
+teb_lucrezzia_steed_camp	VariantMeshes\wh_variantmodels\hr1\emp\emp_warbeast_horse\tech	teb_lucrezzia_steed	hr1\emp\emp_warhorse_armoured\low_poly\emp_horse_armoured_lowlod	1.0000	1.0000	0.0000	
+teb_lorenzo_lupo		teb_lorenzo_lupo		1.0000	1.2000	0.0500	
+teb_piggolo		teb_piggolo		1.0000	1.2000	0.0000	
+teb_piggolo_warpig		teb_piggolo_warpig		1.0000	1.2000	0.0000	
+teb_piggolo_tank		teb_piggolo_sitting		1.0000	0.9000	0.0000	
+teb_piggolo_tank_camp	warmachines\engines\til_tortoise_tank\tech	teb_piggolo_tank_camp		1.0000	0.8000	0.0000	
+teb_piggolo_wagon_camp	art\campaign\chariots\cam_cch1\chs_marauder_chariot\tech	teb_piggolo_wagon_camp		1.0000	1.0000	0.0000	

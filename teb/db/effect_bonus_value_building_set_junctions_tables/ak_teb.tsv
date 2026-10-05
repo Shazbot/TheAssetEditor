@@ -1,0 +1,5 @@
+bonus_value_id	building_set	effect
+#effect_bonus_value_building_set_junctions_tables;0;db/effect_bonus_value_building_set_junctions_tables/ak_teb		
+mod_cost	teb_homeland	teb_port_homeland_discount
+mod_cost	teb_military_recruitment	wh_main_effect_building_construction_cost_mod_recruitment
+add_build_time	teb_temples	teb_temples_constr_time

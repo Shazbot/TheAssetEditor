@@ -1,0 +1,76 @@
+<material>
+  <name>emp_everlasting_lance_alpha_off.xml</name>
+  <shader>shaders/rigid_random_colours.xml.shader</shader>
+  <sort_override>255</sort_override>
+  <textures>
+    <texture>
+      <slot>s_blood_map</slot>
+      <source>commontextures/bloodmap.dds</source>
+    </texture>
+    <texture>
+      <slot>s_blood_map2</slot>
+      <source>commontextures/bloodmap.dds</source>
+    </texture>
+    <texture>
+      <slot>s_blood_map3</slot>
+      <source>commontextures/bloodmap.dds</source>
+    </texture>
+    <texture>
+      <slot>s_colour_map</slot>
+      <source>VariantMeshes/wh_variantmodels/hr1/vmp/vmp_skeletal_horse/tex/AK_ducale_array_colours_diffuse.dds</source>
+    </texture>
+    <texture>
+      <slot>s_colour_map_2</slot>
+      <source>VariantMeshes/wh_variantmodels/hr1/vmp/vmp_skeletal_horse/tex/AK_ducale_array_colours_diffuse.dds</source>
+    </texture>
+
+    <texture>
+      <slot>s_diffuse</slot>
+      <source>VariantMeshes/wh_variantmodels/hu1/teb/props/tex/AK_teb_demihalb_masked_diffuse.dds</source>
+    </texture>
+    <texture>
+      <slot>s_gloss</slot>
+      <source>VariantMeshes/wh_variantmodels/hu1/emp/emp_props/tex/emp_demigryph_knights_halberd_2h_01_gloss_map.dds</source>
+    </texture>
+
+    <texture>
+      <slot>s_mask1</slot>
+      <source>VariantMeshes/wh_variantmodels/hu1/teb/props/tex/AK_teb_demihalb_mask.dds</source>
+    </texture>
+
+    <texture>
+      <slot>s_normal</slot>
+      <source>VariantMeshes/wh_variantmodels/hu1/emp/emp_props/tex/emp_demigryph_knights_halberd_2h_01_normal.dds</source>
+    </texture>
+    <texture>
+      <slot>s_specular</slot>
+      <source>VariantMeshes/wh_variantmodels/hu1/emp/emp_props/tex/emp_demigryph_knights_halberd_2h_01_specular.dds</source>
+    </texture>
+    <texture>
+      <slot>s_dither</slot>
+      <source>commontextures/dither.dds</source>
+    </texture>
+    <texture>
+      <slot>s_dither</slot>
+      <source>commontextures/dither.dds</source>
+    </texture>
+    <texture>
+      <slot>s_Texture1</slot>
+      <source>commontextures/winds_of_magic_noise.dds</source>
+    </texture>
+    <texture>
+      <slot>s_Texture1</slot>
+      <source>commontextures/winds_of_magic_specular.dds</source>
+    </texture>
+  </textures>
+  <params>
+    <param>
+      <name>num_columns</name>
+      <type>float</type>
+      <value>16</value>
+    </param>
+  </params>
+</material>
+
+
+

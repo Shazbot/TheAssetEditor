@@ -1,0 +1,3 @@
+issuer_key	default_rounds_between	icon_path
+#mission_issuers_tables;3;db/mission_issuers_tables/ak_teb_dilemmas		
+TEB_ELDADDIO	0	ui/campaign ui/mission_issuers/teb_eldaddio.png

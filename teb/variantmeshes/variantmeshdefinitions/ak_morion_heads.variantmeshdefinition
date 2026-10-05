@@ -1,0 +1,28 @@
+<VARIANT_MESH>
+<SLOT name="head" >
+
+	<VARIANT_MESH>
+
+			<SLOT name="subhead" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\ak_teb_wh_undermorion_head_02.wsmodel"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_witch_hunter\head\ak_teb_wh_undermorion_head_03.wsmodel"   />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_undermorion_head_02.wsmodel"/>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_undermorion_head_03.wsmodel"/>
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_free_company/AK_undermorion_head_04.wsmodel"/>
+			</SLOT>
+
+	</VARIANT_MESH>
+	<VARIANT_MESH>
+
+
+			<SLOT name="bighead_hunter" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_01.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_02.wsmodel" />
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_huntsmarshal/AK_teb_hunter_subhead_04.wsmodel" />
+			</SLOT>
+
+	</VARIANT_MESH>
+
+</SLOT>
+
+</VARIANT_MESH>

@@ -1,0 +1,6 @@
+member	value
+#campaign_group_member_criteria_values_tables;0;db/campaign_group_member_criteria_values_tables/ak_teb	
+event_feed_cult_MIXER_TEB_battle_attack_outcome_defeat	-1
+event_feed_cult_MIXER_TEB_battle_attack_outcome_draw	0
+event_feed_cult_MIXER_TEB_battle_attack_outcome_victory	1
+teb_how_they_play	3011

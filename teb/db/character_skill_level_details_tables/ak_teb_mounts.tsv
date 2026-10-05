@@ -1,0 +1,29 @@
+campaign_key	faction_key	level	skill_key	subculture_key	image_path	unlocked_at_rank
+#character_skill_level_details_tables;1;db/character_skill_level_details_tables/ak_teb_mounts						
+		1	teb_borgio_unique_warhorse		x	3
+		1	teb_gausser_unique_warhorse		x	3
+		1	teb_gausser_unique_pegasus		x	10
+		1	teb_catrazza_unique_warhorse		x	3
+		1	teb_catrazza_unique_grif		x	15
+		1	teb_lupio_unique_warhorse		x	3
+		1	teb_lupio_unique_grif		x	11
+		1	teb_lucrezzia_unique_warhorse		x	3
+		1	teb_cadavo_unique_warhorse		x	3
+		1	teb_colombo_unique_warhorse		x	7
+		1	teb_priestess_unique_warhorse		x	3
+		1	teb_duellist_hero_horse		x	5
+		1	teb_duellist_hero_encarmine		x	15
+		1	bor_ranger_lord_unique_warhorse		x	3
+		1	bor_ranger_lord_unique_warhorse2		x	11
+		1	est_inquisitor_unique_warhorse		x	3
+		1	est_inquisitor_unique_beaky		x	19
+		1	til_merchant_unique_warhorse		x	3
+		1	teb_templar_lord_bhorse		x	3
+		1	teb_templar_lord_pegasus		x	8
+		1	teb_templar_lord_griff		x	13
+		1	teb_merc_general_barded_horse		x	3
+		1	teb_merc_general_lion		x	16
+		1	teb_merc_captain_barded_horse		x	3
+		1	teb_piggolo_warpig		x	2
+		1	teb_piggolo_wagon		x	6
+		1	teb_piggolo_tank		x	17

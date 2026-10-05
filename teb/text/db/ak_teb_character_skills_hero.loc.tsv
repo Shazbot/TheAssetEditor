@@ -1,0 +1,73 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_character_skills_hero.loc		
+character_skills_localised_name_teb_priestess_spear	Spear of Myrmidia	true
+character_skills_localised_description_teb_priestess_spear		true
+character_skills_localised_name_teb_priestess_unique_warhorse	Barded Warhorse	true
+character_skills_localised_description_teb_priestess_unique_warhorse	A Priestess or Templar of Myrmidia has every right to ride good estalian, arabyan or even bretonnian steeds into battle.	true
+character_skills_localised_name_teb_priestess_legion	Legion's Courage	true
+character_skills_localised_description_teb_priestess_legion	The troops are led to amazing feats of bravery by the mere confidence of being guided by Myrmidia and one of Her skillful warriors.	true
+character_skills_localised_name_teb_priestess_blessing	Blessing of the Goddess	true
+character_skills_localised_description_teb_priestess_blessing	In a flash of polished armour and shiny robes, the Templar strikes fast and deadly.	true
+character_skills_localised_name_teb_priestess_shield	Shield of Myrmidia	true
+character_skills_localised_description_teb_priestess_shield	Warrior Priests of Myrmidia are master tacticians known in the whole Old World.	true
+character_skills_localised_name_teb_priestess_unique_fear	Bane	true
+character_skills_localised_description_teb_priestess_unique_fear	The Templar's armour, naturally shiny, turns into an unsustainable beacon of light for the Forces of Destruction.	true
+character_skills_localised_name_teb_priestess_unique_tank	Bulwark	true
+character_skills_localised_description_teb_priestess_unique_tank	A stance of mind and shield, and the enemy's onslaught is halted.	true
+character_skills_localised_name_teb_priestess_unique_vlarge	Beastslayer	true
+character_skills_localised_description_teb_priestess_unique_vlarge	A sure thrust in the foulest beast's heart can stop its meaningless flailing.	true
+character_skills_localised_name_teb_priestess_unique_flaming	Sunlight's Edge	true
+character_skills_localised_description_teb_priestess_unique_flaming	Charged with the Goddess' holy flame, the Templar's spear strikes the hardest when the arm is strong and the heart is pure. That's what she says, anyway.	true
+character_skills_localised_name_teb_priestess_unique_drill	Myrmidian Drills	true
+character_skills_localised_description_teb_priestess_unique_drill	"Oh, no, not another marathon at dawn."	true
+character_skills_localised_name_teb_duellist_hero_innate_figuera	Figuera's Techniques	true
+character_skills_localised_description_teb_duellist_hero_innate_figuera	The Duellist is loyal to the teachings of the father of fencing, focused on balance.	true
+character_skills_localised_name_teb_duellist_hero_innate_estevan	Estevan's Techniques	true
+character_skills_localised_description_teb_duellist_hero_innate_estevan	If Figuera is the father of fencing, Estevan is the bastard son. This Duellist uses the off-hand as a lightning-quick defensive tool.	true
+character_skills_localised_name_teb_duellist_hero_innate_casanova	Casanova's Techniques	true
+character_skills_localised_description_teb_duellist_hero_innate_casanova	If Figuera is the father of fencing, Casanova is the impertinent grandchild. Like the adventurous teacher, the Duellist focuses on agility of foot and bedazzling assaults that put an end to the fight as soon as possible.	true
+character_skills_localised_name_teb_duellist_hero_bodyguard	Bodyguard	true
+character_skills_localised_description_teb_duellist_hero_bodyguard	It's good to have someone watching your back against foes looking for a cheap kill. Especially if they know everything about it.	true
+character_skills_localised_name_teb_duellist_hero_figuera_chargedef	Figuera's Eel	true
+character_skills_localised_description_teb_duellist_hero_figuera_chargedef	"You shoulda seen him, he was-a like a capitone! Kinda greasy, too."	true
+character_skills_localised_name_teb_duellist_hero_horse	Warhorse & Brace of Pistols	true
+character_skills_localised_description_teb_duellist_hero_horse	Duellists are usually more comfortable fighting on solid ground rather than on a snorting beast, but they are also adaptable people at heart.	true
+character_skills_localised_name_teb_duellist_hero_ranged_caracole	Caracole	true
+character_skills_localised_description_teb_duellist_hero_ranged_caracole	Charge and fire with all weapons! They won't expect that.	true
+character_skills_localised_name_teb_duellist_hero_ranged_dmg	More Pistols	true
+character_skills_localised_description_teb_duellist_hero_ranged_dmg	Where there is a loaded pistol, there is hope.	true
+character_skills_localised_name_teb_duellist_hero_ranged_ammo	More Powder	true
+character_skills_localised_description_teb_duellist_hero_ranged_ammo	A long mission outside the city requires to be locked and loaded. For Orcs.	true
+character_skills_localised_name_teb_duellist_hero_words_intro	Introduccione	true
+character_skills_localised_description_teb_duellist_hero_words_intro	It is poor form to duel someone without first introducing yourself. Of course, it's a good chance to make the opponent angry and clumsy.	true
+character_skills_localised_name_teb_duellist_hero_words_metodo	Metodologia	true
+character_skills_localised_description_teb_duellist_hero_words_metodo	The Duellist explains in detail, more or less politely and technically, how they'll win. More or less.	true
+character_skills_localised_name_teb_duellist_hero_words_critica	Critica	true
+character_skills_localised_description_teb_duellist_hero_words_critica	The Duellist takes pause to analyse and criticise the opponent's fighting technique. The verbal assault is occasionally polite but always substantial.	true
+character_skills_localised_name_teb_duellist_hero_words_floreo	Ultimos Floreo	true
+character_skills_localised_description_teb_duellist_hero_words_floreo	With a last and complex flourish, the Duellist has a last word on the duel. The opponent likely wishes they were dead at this point.	true
+character_skills_localised_name_teb_duellist_hero_dummy	[this is a dummy, dummy]	true
+character_skills_localised_description_teb_duellist_hero_dummy	[this is a dummy, dummy]	true
+character_skills_localised_name_teb_duellist_hero_estevan_parry	Estevan's Blur	true
+character_skills_localised_description_teb_duellist_hero_estevan_parry	A parrying dagger won't protect you from darts, but a strike will never hurt you if you know your trigonometry.	true
+character_skills_localised_name_teb_duellist_hero_casanova_disarm	Casanova's Onslaught	true
+character_skills_localised_description_teb_duellist_hero_casanova_disarm	A surgical strike at the enemy's sword-hand, and the duel ends before it has even begun. 	true
+character_skills_localised_name_teb_duellist_hero_duel	En Garde!	true
+character_skills_localised_description_teb_duellist_hero_duel	"What do you mean 'You killed my father, prepare to die'? How can you say that when there are about thirty-six pretenders to that role, by today's count! In guardia!"	true
+character_skills_localised_name_teb_duellist_hero_epicwin	Protagonist's Sass	true
+character_skills_localised_description_teb_duellist_hero_epicwin		true
+character_skills_localised_name_teb_duellist_hero_duellists	A Murder of Cronies	true
+character_skills_localised_description_teb_duellist_hero_duellists	The best Duellists tend to draw the attention of colleagues who'd love to challenge and learn from them, in a non-specific order.	true
+character_skills_localised_name_teb_duellist_hero_encarmine	Encarmine Knighthood	true
+character_skills_localised_description_teb_duellist_hero_encarmine	Not all of the really great duellists can dream of becoming a full-pledged Knight Encarmine, but certainly all the Knights Encarmine are great duellists.	true
+character_skills_localised_name_teb_merc_captain_combined_arms	Combined Arms	true
+character_skills_localised_description_teb_merc_captain_combined_arms		true
+character_skills_localised_name_teb_merc_general_barded_horse	Barded Warhorse	true
+character_skills_localised_description_teb_merc_general_barded_horse		true
+character_skills_localised_name_teb_merc_captain_barded_horse	Barded Warhorse	true
+character_skills_localised_description_teb_merc_captain_barded_horse		true
+character_skills_localised_name_		true
+character_skills_localised_description_		true
+character_skills_localised_name_teb_merc_general_lion	Golden Lion	true
+character_skills_localised_name_teb_duellist_hero_montante	{{tr:unit_abilities_onscreen_name_teb_montante_passive}}	true
+character_skills_localised_description_teb_duellist_hero_montante		true

@@ -1,0 +1,83 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_building_short_description_texts.loc		
+building_short_description_texts_short_description_teb_art	Raw genius, shapeless marble and lumps of dye can become breathtaking works of art. The South has plenty of all of them.	true
+building_short_description_texts_short_description_teb_mercs_1	A simple encampment with a well-visible "HYRING" sign is often enough to draw a conspicuous force of mercenaries that won't mind the spelling.	true
+building_short_description_texts_short_description_teb_mercs_2	A larger recruitment building, compulsorily next to a tavern and reasonably close to a brothel, will draw more than the usual cutthroat.	true
+building_short_description_texts_short_description_teb_mercs_3	Famed condottieri, adventuring knights, scarred veterans, exotic warriors, all in one well-organized and relatively peaceful hub.	true
+building_short_description_texts_short_description_teb_homeland_1	With the promise of loot, professional soldiery is imported from the mainlands. 	true
+building_short_description_texts_short_description_teb_homeland_2	Inspired by the success of the colonies, major forces are made available from the homeland.	true
+building_short_description_texts_short_description_teb_homeland_3	As the colony flourishes, entire powerful retinues are assembled, both local and imported.	true
+building_short_description_texts_short_description_teb_ritual_exploit_1	Unknown tablets and mysterious stones are found in this region, for now unceremoniously sent to the homeland as proof of success.	true
+building_short_description_texts_short_description_teb_ritual_exploit_2	Sizable amounts of artefacts are being found and smelt or otherwise traded home, for they are fetching a nice price.	true
+building_short_description_texts_short_description_teb_ritual_trade_1	Unknown tables and mysterious stones are found in this region... There is more in this than it catches the eye.	true
+building_short_description_texts_short_description_teb_ritual_trade_2	Invaluable artefacts are being recovered in the region, and traded to the neighbouring races for exorbitant rates.	true
+building_short_description_texts_short_description_teb_tylos_1	The superhuman venture of cleansing the Skaven capital has begun. The surface is being purified by settlers, wizards and priests, but there is still fighting in the tunnels.	true
+building_short_description_texts_short_description_teb_tylos_2	The disinfestation is proceeding, humans can call the settlement a livable town again, relatively free from Skaven presence.	true
+building_short_description_texts_short_description_teb_tylos_3	The Doom of Kavzar is avenged! Tylos is reborn, a beacon of determination and wealth for all to see!	true
+building_short_description_texts_short_description_teb_miragliano_channels	Restored and enlarged, Miragliano's channel system is a unique panorama of bridges and leaning towers, accurately safeguarded from infiltrating ratmen.	true
+building_short_description_texts_short_description_teb_lothern_good	A respectful trading quarter, an expansion and improvement upon the existing Foreigners Quarter. Mutual benefits, at discreet rates.	true
+building_short_description_texts_short_description_teb_lothern_bad	Built upon the Sapphire Gate, this fortress makes sure there are more arbalests on the walls than resentful Elves inside.	true
+building_short_description_texts_short_description_teb_starfort	Though incredibly expensive, this new type of bastion has no blind spots, is aesthetically pleasant, and is impervious to assaults and artillery. It may not be Shaggoth-proof.	true
+building_short_description_texts_short_description_wh_main_special_archecclesiatium	While the Archecclesiatium is technically the governing council of Myrmidia's cult, it has become the main temple's name by association. 	true
+building_short_description_texts_short_description_teb_luccini_acropolis	The ancient city of Luccini is built on elven ruins, but its temples are all too human. The Temple of Luccina is sacred to the city's peculiar rulers, and the Temple of Morr is one of the main chapterhouses for the god's knightly order.	true
+building_short_description_texts_short_description_teb_tobaro_deep	Tobaro sits on rocks, most of them dangerous and many of them inhabited. The city has a history of Skaven infestations and invasions, which the scarred Deepwatch is trained to oppose.	true
+building_short_description_texts_short_description_teb_smith_1	Any small town may have a local farrier, but good weapon and armoursmiths tend to get reasonably wealthy where mercenaries come to buy and repair their gear.	true
+building_short_description_texts_short_description_teb_smith_2	With tricks of their own or dwarfen masters, southern smiths can produce quality gear and hallmark brass plate armour. Strong competition and high demand may drive to the creation of whole smithy districts and marketplaces.	true
+building_short_description_texts_short_description_teb_terraform_jungle	The jungle can hide a lot of precious resources and fertile land. Plus, it's about time someone did something about the dog-sized mosquitoes.	true
+building_short_description_texts_short_description_teb_terraform_mountain	High mountains are unforgiving and possibly host to several annoyed monsters. Human adaptability can take care of both.	true
+building_short_description_texts_short_description_teb_barracks_1	Paid local militias can be given basic training, and all the clamour can attract better soldiers.	true
+building_short_description_texts_short_description_teb_barracks_2	Citizens are rarely enthusiastic soldiers, but with enough effort they can be put into shape together with the local mercenary bands.	false
+building_short_description_texts_short_description_teb_barracks_3	Given enough time and money, local militias and some of the reliable companies can be trained to work together.	false
+building_short_description_texts_short_description_teb_stables_1	Horses need tending, even for the lowliest local scout.	true
+building_short_description_texts_short_description_teb_stables_2	There is a good market for good steeds when good mounted companies are invited to work in the area. With good money.	true
+building_short_description_texts_short_description_teb_stables_3	Local nobles may own their own horses, but encouraging healthy manageries to tend and renew the stock is necessary.	true
+building_short_description_texts_short_description_teb_resource_wood_1	Plenty of quality timber isn't just prettier firewood, and can be used for sturdier weapons and buildings.	true
+building_short_description_texts_short_description_teb_resource_wood_2	There is an art in making full use of good trees.	true
+building_short_description_texts_short_description_teb_resource_iron_1	Good iron ore is a precious commodity, propelling steel quality in the region.	true
+building_short_description_texts_short_description_teb_resource_iron_2	Only premium steel here, for premium prices!	true
+building_short_description_texts_short_description_teb_mil_base	One can have the bare minimum, or try to improve upon it.	true
+building_short_description_texts_short_description_teb_mil_city_1	City barracks can put militias in shape, together with locally available mercenaries.	true
+building_short_description_texts_short_description_teb_mil_city_2	Given enough time and money, local militias and some of the reliable companies can be trained to work together.	true
+building_short_description_texts_short_description_teb_mil_city_3	The best that a large city can offer locally, if the local Prince doesn't want to bother with too many mercenaries in the same place.	true
+building_short_description_texts_short_description_teb_mil_mercs_1	A simple encampment with a well-visible "HYRING" sign is often enough to draw a conspicuous force of mercenaries that won't mind the spelling.	true
+building_short_description_texts_short_description_teb_mil_mercs_2	Southern mercenaries tend to be vastly more professional than their colleagues, and this city's infrastructure will attract legions of them.	true
+building_short_description_texts_short_description_teb_mil_mercs_3	Scarred veterans and exotic warriors, all in one well-organized and relatively peaceful hub.	true
+building_short_description_texts_short_description_teb_mil_duellists_1	teb_mil_duellists_1	true
+building_short_description_texts_short_description_teb_mil_duellists_2	teb_mil_duellists_2	true
+building_short_description_texts_short_description_teb_mil_rangers_1	Greenskin-afflicted villagers who dream of being saved by a swift ranger probably didn't imagine his breath and smell accurately enough.	true
+building_short_description_texts_short_description_teb_mil_rangers_2	The borderlands are dangerous places for dangerous men. Some of them are on the local prince's payroll.	true
+building_short_description_texts_short_description_teb_mil_cannons_1	Cannon foundries are uncommon in the South, but Tilean engineers are deemed "acceptable" even by Dwarfs.	true
+building_short_description_texts_short_description_teb_mil_cannons_2	Cannon foundries are uncommon in the South, but Tilean engineers are deemed "acceptable" even by Dwarfs.	true
+building_short_description_texts_short_description_teb_worship_shallya_1	A small effigy of Shallya, usually attended with flowers and kind people.	true
+building_short_description_texts_short_description_teb_worship_shallya_2	A small effigy of Shallya, usually attended with flowers and kind people.	true
+building_short_description_texts_short_description_teb_worship_shallya_3	A temple to Shallya, that doubles as local infirmary and apothecary.	true
+building_short_description_texts_short_description_teb_worship_shallya_4	A large temple to Shallya, that doubles as local infirmary and apothecary.	true
+building_short_description_texts_short_description_teb_worship_shallya_5	A large temple to Shallya, that doubles as local infirmary and apothecary.	true
+building_short_description_texts_short_description_teb_mil_badmercs_1	Paying mercenaries to do your fighting is handy. However, you often end up paying more for them to stop fighting you.	true
+building_short_description_texts_short_description_teb_mil_badmercs_2	Regiments and warbands that are normally kept in check are abundant and unruly, attracted by easy money and entertainment. The populace is definitely unhappy.	true
+building_short_description_texts_short_description_teb_mil_badmercs_3	The province has seen better days, as entire armies of mercenaries obey their own whims and unscrupulous commanders more than any local Prince.	true
+building_short_description_texts_short_description_		true
+building_short_description_texts_short_description_teb_eco_stocks_1	Just dropping the goods on the piers won't do. Having efficient storage in a strategic position is key to good commerce.	true
+building_short_description_texts_short_description_teb_eco_stocks_2	Just dropping the goods on the piers won't do. Having efficient storage in a strategic position is key to good commerce.	true
+building_short_description_texts_short_description_teb_eco_stocks_3	Well-organized depots, marketplaces and networks are the lifeblood of a mercantile system. And with enough goods in its veins, merchants will engage in advanced finance over products that are yet to be shipped or even produced.	true
+building_short_description_texts_short_description_teb_eco_stocks_4	Well-organized depots, marketplaces and networks are the lifeblood of a mercantile system. And with enough goods in its veins, merchants will engage in advanced finance over products that are yet to be shipped or even produced.	true
+building_short_description_texts_short_description_teb_eco_stocks_5	Well-organized depots, marketplaces and networks are the lifeblood of a mercantile system. And with enough goods in its veins, merchants will engage in advanced finance over products that are yet to be shipped or even produced.	true
+building_short_description_texts_short_description_teb_worship_myrmidia_1	A small effigy of Myrmidia, that recruits and mercenaries pray and salute to.	true
+building_short_description_texts_short_description_teb_tylos_settlement_1	This is essentially still Skavenblight, but with a beachhead on top. Skaven still lurk just outside of a cautious perimeter.	true
+building_short_description_texts_short_description_teb_tylos_settlement_2	The Skaven are being pushed away and downwards, but danger is still very present. Some brave souls are starting to call the place home.	true
+building_short_description_texts_short_description_teb_tylos_settlement_3	Ambitious pioneers are jump-starting the rebirth of a new and old city, and cleaning up the place from the everpresent rabbles and dead rats.	true
+building_short_description_texts_short_description_teb_tylos_settlement_4	Against even the most optimistic predictions, business is booming! The swamp is being sanitised and you can almost not smell rat anymore!	true
+building_short_description_texts_short_description_teb_tylos_settlement_5	For all the blood and sweat invested in it, the city is as powerful as any other human city-state, and a testament of determination. Now if only people could stop building towers.	true
+building_short_description_texts_short_description_teb_allied_outpost_1	Outposts from the Southern Realms are generally little more than bodyguards around a mercantile enterprise.	true
+building_short_description_texts_short_description_teb_allied_outpost_2	Tilea and Estalia have districts within the settlements of lands as far afield as Lustria, Ulthuan and even the Far East.	true
+building_short_description_texts_short_description_teb_allied_outpost_3	Strong embassies around the world guarantee the flow of commerce and mercenaries.	true
+building_short_description_texts_short_description_teb_morgheim_gashnag	The many secrets of Ushoran still lie in these ruins, for those who can learn.	true
+building_short_description_texts_short_description_teb_morgheim_gashnag_bad	Mistakes were made. Mistakes will be repeated, because such is Fate.	true
+building_short_description_texts_short_description_teb_montecastello_special	Within these walls and halls, the garrison was inspired by the spirited Monna Lissa to defend the fabulous frescoes therein almost to the last man. True Tileans will die fighting rather than let anything happen to Tintoverdi's Five Seasons.	true
+building_short_description_texts_short_description_teb_norsca_exploit_furs	"That big, ugly, mutated thing is a walking treasure hoard. Go on, shoot it down."	false
+building_short_description_texts_short_description_teb_norsca_exploit_obsi	Norscan stone is filled with precious stuff that nobody claimed before, although some of the rocks fight back.	false
+building_short_description_texts_short_description_teb_pavona_lucy	Vast empires are crude. Why bother micro-managing when you can direct subjects and allies from your seat of power?	true
+building_short_description_texts_short_description_teb_worship_shallya_5_couronne	The centre of Shallyan worship. Its magical waters are said to have been poured from the goddess's chalice, that which granted Ranald immortality, and which is perhaps even the Grail itself. Countless pilgrims travel here in the hopes of being cured of the deadliest afflictions.	true
+building_short_description_texts_short_description_teb_special_windmills_lupio_1	One Mad Prince's folly to remove a Mad King's folly! The tyranny of windmills is over, leaving room for military drilling fields.	true
+building_short_description_texts_short_description_teb_special_windmills_lupio_2	The success against the windmills, and the geography of the valley, make this just the perrrrrrfect spot for Lupio to leave his permanent mark. In gold.	true
+building_short_description_texts_short_description_teb_special_windmills	With the Ratmen removed and the windmills restored, this valley can actually be of surprising effect.	true

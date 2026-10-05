@@ -1,0 +1,67 @@
+key	image_path	localised_description	localised_name	unlocked_at_rank	is_background_skill	is_female_only_background_skill	is_male_only_background_skill	background_weighting	influence_cost
+#character_skills_tables;5;db/character_skills_tables/ak_teb_lords									
+bor_ranger_lord_unique_warhorse	mount_warhorse.png	mount with bow	Warhorse	1	false	false	false	0.0000	0
+bor_ranger_lord_unique_warhorse2	mount_warhorse_repeater.png	mount with rep.rifle	Warhorse	11	false	false	false	0.0000	0
+bor_ranger_lord_unique_stalk	stalk.png	sneak		4	false	false	false	0.0000	0
+bor_ranger_lord_unique_blind	bor_ranger_lord_blind.png	deception		10	false	false	false	0.0000	0
+bor_ranger_lord_battle_rough	battle_speed.png	rough riders		0	false	false	false	0.0000	0
+bor_ranger_lord_battle_archers	battle_ammo.png	welcome buff archers		0	false	false	false	0.0000	0
+bor_ranger_lord_battle_rangers	battle_attack.png	defiant rangers buff		0	false	false	false	0.0000	0
+bor_ranger_lord_battle_skirmish	battle_defence.png	missile res		0	false	false	false	0.0000	0
+bor_ranger_lord_battle_tough	battle_armour.png	hardened, rangers armour, state troops		0	false	false	false	0.0000	0
+bor_ranger_lord_campaign_strike	campaign_subterfuge.png	lightning strike		0	false	false	false	0.0000	0
+til_merchant_self_pecunia	til_merchant_pecunia.png	pecunia non olet		0	false	false	false	0.0000	0
+til_merchant_battle_double	til_merchant_double.png	duplicarii		0	false	false	false	0.0000	0
+til_merchant_self_ld	character_morale.png	self-investment	Conviction	0	false	false	false	0.0000	0
+til_merchant_campaign_repl_starter	campaign_army.png	replenish buff starter	Inspirational	0	false	false	false	0.0000	0
+teb_lord_campaign_range	campaign_movement.png	mov range	Absolutely Relentless	0	false	false	false	0.0000	0
+til_merchant_campaign_income	campaign_military_spending.png	income buildings	Tenth-Share	0	false	false	false	0.0000	0
+til_merchant_campaign_trade	campaign_trade.png	yadda yadda trade	Prospector	0	false	false	false	0.0000	0
+til_merchant_unique_warhorse	mount_barded_warhorse.png	derp	Warhorse	1	false	false	false	0.0000	0
+til_merchant_campaign_mason	campaign_military_spending.png	discount buildings	Mason	0	false	false	false	0.0000	0
+til_merchant_campaign_freerein	campaign_disaster.png	raiding + malus po	free rein	0	false	false	false	0.0000	0
+til_merchant_campaign_alert	campaign_ambush.png	ambush advisors	Alert	0	false	false	false	0.0000	0
+til_merchant_campaign_security	campaign_agent.png	bodyguard	Alert	0	false	false	false	0.0000	0
+til_merchant_campaign_captain	campaign_agent.png	+1 captain	Alert	0	false	false	false	0.0000	0
+til_merchant_campaign_drop	campaign_technology.png	connoisseur	Alert	0	false	false	false	0.0000	0
+til_merchant_campaign_promoter	campaign_technology.png	arts promoter +tech	Alert	0	false	false	false	0.0000	0
+til_merchant_campaign_bidder	campaign_military_spending.png	+income enemy	REDO EFFECT COLOUR	0	false	false	false	0.0000	0
+til_merchant_campaign_festive	campaign_growth.png	+growth -income	sdvdv	0	false	false	false	0.0000	0
+til_merchant_campaign_machiavelli	campaign_public_order.png	+sec +order +diplomacy	csdcsdv	0	false	false	false	0.0000	0
+til_merchant_campaign_slot	campaign_army.png	+1 recr slot	Inspirational	0	false	false	false	0.0000	0
+til_merchant_campaign_global	campaign_army.png	-1 turn global	Inspirational	0	false	false	false	0.0000	0
+til_merchant_campaign_enlist	campaign_replenishment.png	captives	Inspirational	0	false	false	false	0.0000	0
+til_merchant_campaign_mages	campaign_agent.png	+1 wizards - upk	Alert	0	false	false	false	0.0000	0
+til_merchant_campaign_serenissima	campaign_military_spending.png	income ports	Mason	0	false	false	false	0.0000	0
+est_inquisitor_unique_warhorse	mount_barded_warhorse.png	derp	Warhorse	1	false	false	false	0.0000	0
+est_inquisitor_unique_beaky	mount_hippogryph.png	hurr		16	false	false	false	0.0000	0
+est_inquisitor_battle_antichaos	wh_dlc05_force_for_change.png	herp		0	false	false	false	0.0000	0
+est_inquisitor_judgement	est_inquisitor_judgement.png	durr		1	false	false	false	0.0000	0
+est_inquisitor_campaign_paranoia	campaign_agent.png	SECURITY		0	false	false	false	0.0000	0
+est_inquisitor_campaign_heresy	campaign_untainted.png	burn the heretic		0	false	false	false	0.0000	0
+est_inquisitor_unique_magic	character_magic.png	WOM reduction both		7	false	false	false	0.0000	0
+est_inquisitor_unique_inquisition	character_general_ability.png	buff myrmidia -1 turn bwatch		0	false	false	false	0.0000	0
+til_merchant_unique_best	battle_armour.png	armour armywide		9	false	false	false	0.0000	0
+teb_templar_lord_innate_insight	trait_personality.png	aura size		0	true	false	false	5.0000	0
+teb_templar_lord_innate_crusader	trait_personality.png	movement + diplo brt crusaders		0	true	false	false	5.0000	0
+teb_templar_lord_innate_merciful	trait_personality.png	-loot, +prisoners etc		0	true	false	false	5.0000	0
+teb_templar_lord_innate_fiery	trait_personality.png	fire attacks, dmg		0	true	false	false	5.0000	0
+teb_templar_lord_bhorse	mount_barded_warhorse.png	derp		5	false	false	false	0.0000	0
+teb_templar_lord_pegasus	mount_royal_pegasus.png	derp		8	false	false	false	0.0000	0
+teb_templar_lord_griff	mount_imperial_griffon.png	demi		15	false	false	false	0.0000	0
+teb_templar_lord_unq_genius	guerrilla_deploy.png			24	false	false	false	0.0000	0
+teb_templar_lord_unq_reforms	character_charge.png			24	false	false	false	0.0000	0
+teb_templar_lord_unq_enlightened	wh_main_character_passive_benediction.png			24	false	false	false	0.0000	0
+teb_templar_lord_unq_incarnate	character_ward_save.png			24	false	false	false	0.0000	0
+teb_army_buff_melee_A	battle_attack.png	md sticks, ma hand		0	false	false	false	0.0000	0
+teb_army_buff_melee_B	battle_defence.png	ma sticks, md hand		0	false	false	false	0.0000	0
+teb_army_buff_charge	battle_charge.png	morale some, charge cav and others		0	false	false	false	0.0000	0
+teb_army_buff_missile	battle_ranged_damage.png	md sticks, ma hand		0	false	false	false	0.0000	0
+teb_army_buff_speed	battle_speed.png	speed		0	false	false	false	0.0000	0
+teb_army_buff_stones	battle_armour.png	dmg polearms, armour handw		0	false	false	false	0.0000	0
+teb_army_buff_chevrons_MA	battle_attack.png	MA per rank	this should be % to avoid too much stacking	0	false	false	false	0.0000	0
+teb_army_buff_chevrons_MD	battle_defence.png	MD per rank	this should be % to avoid too much stacking	0	false	false	false	0.0000	0
+teb_army_buff_chevrons_dmg	battle_damage.png	dmg per rank	this should be % to avoid too much stacking	0	false	false	false	0.0000	0
+teb_army_buff_chevrons_charge	battle_charge.png	charge per rank	this should be % to avoid too much stacking	0	false	false	false	0.0000	0
+teb_army_buff_chevrons_ammo_phys_res	battle_ammo.png	guess what	this should be % to avoid too much stacking	0	false	false	false	0.0000	0
+teb_templar_lord_immortality	character_wound_time.png		Immortality	11	false	false	false	0.0000	0

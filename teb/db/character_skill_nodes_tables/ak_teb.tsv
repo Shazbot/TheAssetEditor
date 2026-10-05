@@ -1,0 +1,66 @@
+key	campaign_key	character_skill_key	faction_key	indent	tier	subculture	points_on_creation	required_num_parents	visible_in_ui
+#character_skill_nodes_tables;6;db/character_skill_nodes_tables/ak_teb									
+wh_main_skill_node_teb_bright_wizard_unique_03		teb_lord_unique_ward		0	2	mixer_teb_southern_realms	0	0	true
+teb_bright_wiz_immortality		wh2_main_skill_all_immortality_hero		0	8	mixer_teb_southern_realms	0	0	false
+teb_agent_action_scaling_hidden_bor_ranger_lord		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_til_merchant		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_est_inquisitor		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_catrazza		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_lupio		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_gausser		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_borgio_the_besieger		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_gashnag		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_lucrezzia_belladonna		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_priestess		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_colombo		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_cadavo		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_templar_lord		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_eldaddio		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+teb_agent_action_scaling_hidden_teb_duellist_hero		wh3_main_skill_agent_action_success_scaling		99	0		0	0	false
+wh2_pro07_skill_node_amethyst_wizard_unique_03_MIXER_TEB_PLUG		teb_placeholder		0	2	mixer_teb_southern_realms	0	0	false
+wh_dlc03_skill_node_emp_amber_wizard_unique_02_MIXER_TEB_PLUG		teb_placeholder		0	2	mixer_teb_southern_realms	0	0	false
+wh_dlc03_skill_node_emp_amber_wizard_unique_03_MIXER_TEB_PLUG		teb_placeholder		0	3	mixer_teb_southern_realms	0	0	false
+wh_dlc05_skill_node_grey_wizard_unique_03_MIXER_TEB_PLUG		teb_placeholder		0	2	mixer_teb_southern_realms	0	0	false
+wh_dlc05_skill_node_jade_wizard_unique_03_MIXER_TEB_PLUG		teb_placeholder		0	2	mixer_teb_southern_realms	0	0	false
+wh_main_skill_node_emp_bright_wizard_unique_02_MIXER_TEB_PLUG		teb_placeholder		0	2	mixer_teb_southern_realms	0	0	false
+wh_main_skill_node_emp_celestial_wizard_unique_02_MIXER_TEB_PLUG		teb_placeholder		0	2	mixer_teb_southern_realms	0	0	false
+wh_main_skill_node_emp_light_wizard_unique_02_MIXER_TEB_PLUG		teb_placeholder		0	2	mixer_teb_southern_realms	0	0	false
+wh3_dlc25_skill_node_emp_gold_wizard_top_02_MIXER_TEB_PLUG		teb_placeholder		0	2	mixer_teb_southern_realms	0	0	false
+wh_dlc03_skill_node_emp_amber_wizard_unique_04_MIXER_TEB_ward		teb_lord_unique_ward		0	6	mixer_teb_southern_realms	0	0	true
+wh_dlc05_skill_node_grey_wizard_unique_04_MIXER_TEB_ward		teb_lord_unique_ward		0	5	mixer_teb_southern_realms	0	0	true
+wh_dlc05_skill_node_jade_wizard_unique_04_MIXER_TEB_ward		teb_lord_unique_ward		0	5	mixer_teb_southern_realms	0	0	true
+wh_main_skill_node_emp_bright_wizard_unique_03_MIXER_TEB_ward		teb_lord_unique_ward		0	5	mixer_teb_southern_realms	0	0	true
+wh_main_skill_node_emp_celestial_wizard_unique_03_MIXER_TEB_ward		teb_lord_unique_ward		0	5	mixer_teb_southern_realms	0	0	true
+wh_main_skill_node_emp_light_wizard_unique_03_MIXER_TEB_ward		teb_lord_unique_ward		0	5	mixer_teb_southern_realms	0	0	true
+wh_main_skill_node_teb_bright_wizard_unique_02_MIXER_TEB_ward		teb_lord_unique_ward		0	1	mixer_teb_southern_realms	0	0	true
+bor_ranger_lord_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+til_merchant_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+est_inquisitor_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_catrazza_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_lupio_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_gausser_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_borgio_the_besieger_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_gashnag_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_lucrezzia_belladonna_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_priestess_mentor		wh3_main_skill_all_mentor_hero		0	40		0	0	true
+teb_colombo_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_cadavo_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_templar_lord_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_eldaddio_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_duellist_hero_mentor		wh3_main_skill_all_mentor_hero		0	40		0	0	true
+teb_merc_general_mentor		wh3_main_skill_all_mentor_lord		0	40		0	0	true
+teb_merc_captain_mentor		wh3_main_skill_all_mentor_hero		0	40		0	0	true
+teb_wizard_MIXER_TEB_PLUG_02		teb_placeholder		0	2	mixer_teb_southern_realms	0	0	false
+teb_wizard_MIXER_TEB_PLUG_03		teb_placeholder		0	3	mixer_teb_southern_realms	0	0	false
+teb_wizard_MIXER_TEB_ward_06		teb_lord_unique_ward		0	6	mixer_teb_southern_realms	0	0	true
+teb_wizard_MIXER_TEB_ward_05		teb_lord_unique_ward		0	5	mixer_teb_southern_realms	0	0	true
+teb_wizard_MIXER_TEB_ward_01		teb_lord_unique_ward		0	1	mixer_teb_southern_realms	0	0	true
+teb_dedicated_myrmidia		teb_dedicated_myrmidia		1	20		0	0	true
+teb_dedicated_nahmud		teb_dedicated_nahmud		1	21		0	0	true
+teb_dedicated_fury		teb_dedicated_fury		1	22		0	0	true
+teb_dedicated_solkan		teb_dedicated_solkan		1	23		0	0	true
+teb_dedicated_morr		teb_dedicated_morr		1	24		0	0	true
+teb_dedicated_shallya		teb_dedicated_shallya		1	25		0	0	true
+teb_dedicated_verena		teb_dedicated_verena		1	26		0	0	true
+teb_dedicated_ranald		teb_dedicated_ranald		1	27		0	0	true
+teb_dedicated_required_dumbdumbdummy		teb_dedicated_required_dumbdumbdummy		1	19		1	0	false

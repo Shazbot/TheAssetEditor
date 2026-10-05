@@ -1,0 +1,9 @@
+id
+#campaign_groups_tables;0;db/campaign_groups_tables/zzz_ak_teb_tow_swamphills
+cr_climate_suitable_hills
+cr_climate_uninhabitable_hills
+cr_climate_unsuitable_hills
+cr_climate_suitable_swamp
+cr_climate_uninhabitable_swamp
+cr_climate_unsuitable_swamp
+cr_climate_uninhabitable_immaterial

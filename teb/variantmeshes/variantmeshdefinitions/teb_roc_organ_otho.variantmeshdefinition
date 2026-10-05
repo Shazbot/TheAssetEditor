@@ -1,0 +1,50 @@
+<VARIANT_MESH>
+	<SLOT name="head" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu3/dwf/dwf_master_engineer/head/dwf_master_engineer_head_2.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="body" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu3\chs\chs_chaos_dwarf_artillery_crew\torso\chs_dwarf_artillery_crew_torso_02.wsmodel" >
+			<META_DATA>audio_armour_type:leather</META_DATA>			<META_DATA>audio_entity_type:wh_dwarf_default</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="accessories" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu3\dwf\dwf_slayers\body\dwf_slayers_bracelet_01.rigid_model_v2" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu3\dwf\dwf_slayers\body\dwf_slayers_bracelet_02.rigid_model_v2" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu3\dwf\dwf_slayers\body\dwf_slayers_bracelet_03.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="legs" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu3\dwf\dwf_slayers\legs\dwf_slayers_legs.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="belt" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu3\dwf\dwf_slayers\legs\dwf_slayers_belt_02.rigid_model_v2" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu3\dwf\dwf_slayers\legs\dwf_slayers_belt_03.rigid_model_v2" />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu3\dwf\dwf_slayers\legs\dwf_slayers_belt_04.rigid_model_v2" />
+	</SLOT>
+	<SLOT name="weapon_1" attach_point="be_prop_0" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes/VariantMeshDefinitions/dwf_warriors_axe_2h_set1.VariantMeshDefinition" />
+	</SLOT>
+	<SLOT name="weapon_2" attach_point="be_prop_1" />
+	<SLOT name="shield" attach_point="be_prop_2" />
+	<SLOT name="weapon_3" attach_point="be_prop_3" />
+	<SLOT name="weapon_4" attach_point="be_prop_4" />
+	<SLOT name="weapon_5" attach_point="be_prop_5" />
+	<SLOT name="stump_neck" attach_point="spine_2" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu3/dlc02_blood_pack/dlc02_stump_neck_hu3.rigid_model_v2" >
+			<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="stump_left_arm" attach_point="clav_left" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu3/dlc02_blood_pack/dlc02_stump_left_arm_hu3.rigid_model_v2" >
+			<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="stump_right_arm" attach_point="clav_right" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu3/dlc02_blood_pack/dlc02_stump_right_arm_hu3.rigid_model_v2" >
+			<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="stump_waist" attach_point="root" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu3/dlc02_blood_pack/dlc02_stump_waist_hu3.rigid_model_v2" >
+			<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="stump_severed_head" attach_point="head" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu3/dlc02_blood_pack/dlc02_stump_head_hu3_2.rigid_model_v2" >
+			<META_DATA>equipment</META_DATA></VARIANT_MESH>
+	</SLOT>
+</VARIANT_MESH>

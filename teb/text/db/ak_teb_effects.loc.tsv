@@ -1,0 +1,268 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_effects.loc		
+effects_description_teb_freelance_knights_time	Global recruitment duration: %+n for Freelance Knights	true
+effects_description_bor_ranger_lord_rangers_MA	Melee attack: %+n for Border Rangers, Swashbucklers, Enforcers and Light Scouts	true
+effects_description_bor_ranger_lord_rangers_CB	Charge bonus: %+n for Border Rangers, Swashbucklers, Enforcers and Light Scouts	true
+effects_description_bor_ranger_lord_rough_def	Melee defence: %+n for Enforcers and Light Scouts	true
+effects_description_bor_ranger_lord_rough_ld	Leadership: %+n for Enforcers and Light Scouts	true
+effects_description_bor_ranger_lord_skirmish_armour	Armour: %+n for Border Rangers, Enforcers and Light Scouts	true
+effects_description_enable_immune_psy_generals	Attribute: Immune to Psychology (all Lords)	true
+effects_description_teb_cap_bwatch	Capacity: %+n [[img:estalia]][[/img]]Black Watch	true
+effects_description_teb_cap_bwatch+encarmine	Capacity: %+n [[img:tilea]][[/img]]Knights Encarmine and [[img:estalia]][[/img]]Black Watch	true
+effects_description_teb_cap_dorfs	Capacity: %+n Dwarf Warriors	true
+effects_description_teb_cap_dorfs_art	Capacity: %+n Dwarfen artillery	true
+effects_description_teb_cap_teb_paymaster	Capacity: %+n Paymaster Chest Wagons	true
+effects_description_teb_conquistadores_xp	Recruit rank: %+n for Adventurers, Riders, Lancers and Royal Guard	true
+effects_description_teb_MA_shieldbearers	Melee attack: %+n for Shieldbearers	true
+effects_description_teb_MD_shieldbearers	Melee defence: %+n for Shieldbearers	true
+effects_description_teb_MA_MD_duellists_montante	Melee attack and Melee defence: %+n for Duellists and Montante Swordsmen	true
+effects_description_teb_lord_battle_dorfs_arm	Armour: %+n for all heavy armour units	true
+effects_description_teb_lord_battle_dorfs_att	Melee attack: %+n for all Dwarfen units	true
+effects_description_teb_lord_battle_dorfs_def	Melee defence: %+n for all Dwarfen units	true
+effects_description_teb_lord_battle_lightcav_ch	Charge bonus: %+n for all missile cavalry units	true
+effects_description_teb_lord_battle_lightcav_speed	Speed: %+n% for all missile cavalry units	true
+effects_description_teb_MD_militia_low	Melee defence: %+n for Militia Spearmen, Militia Archers, Half Pikes and Billmen	true
+effects_description_teb_MA_militia_low	Melee attack: %+n for Militia Spearmen, Militia Archers, Half Pikes and Billmen	true
+effects_description_teb_lord_picked_vets_def	Melee defence: %+n for [[img:tilea]][[img:estalia]][[img:nwc]][[/img]]Pikemen and [[img:border]][[/img]]Border Rangers units	true
+effects_description_teb_lord_picked_vets_mor	Leadership: %+n for [[img:tilea]][[img:estalia]][[img:nwc]][[/img]]Pikemen and [[img:border]][[/img]]Border Rangers units	true
+effects_description_teb_princes_costs	Recruitment and Upkeep cost: %+n% for Freelance Knights, Carlsson Militia, Uvetovsk Kossars and Shieldbearers units	true
+effects_description_teb_princes_stats	Melee attack and Melee defence: %+n for Freelance Knights, Carlsson Militia and Uvetovsk Kossars units	true
+effects_description_teb_ranger_cost	Recruitment and Upkeep cost: %+n% for Border Rangers, Enforcers and Light Scouts units	true
+effects_description_teb_ranger_ld	Leadership: %+n for Border Rangers, Enforcers and Light Scouts units	true
+effects_description_teb_tech_conquistadores_buff	Melee attack and Melee defence: %+n for Adventurers, Riders, Lancers and Royal Guard units	true
+effects_description_teb_tech_conquistadores_buff_reload	Reload time reduction: %+n% for Riders and Royal Guard units	true
+effects_description_teb_recr_cost_heavy_armour	Recruitment cost: %+n% for all heavy armour units	true
+effects_description_teb_tech_dorf_upk	Upkeep: %+n% for all Dwarfen units	true
+effects_description_teb_tech_inquisition_ld	Leadership: %+n for Black Watch units	true
+effects_description_teb_tech_inquisition_repl	Replenishment: %+n% for Black Watch units	true
+effects_description_teb_tech_steel_ap	Armour-piercing damage: %+n for all units	true
+effects_description_teb_tech_steel_armour	Armour: %+n for all heavy armour units	true
+effects_description_teb_tech_supremacy_dmg_add	Base Weapon damage: %+n for Duellists, Pikemen, Republican Guard and cavalry units	true
+effects_description_teb_tech_survivors_ld	Leadership: %+n for all characters	true
+effects_description_teb_tech_survivors_medef	Melee defence: %+n for [[img:estalia]][[img:nwc]][[/img]]Adventurers, [[img:tilea]][[/img]]Carabiniers and [[img:border]][[/img]]Carlsson Militia units	true
+effects_description_teb_tech_survivors_vL	Bonus vs. Large: %+n for [[img:estalia]][[img:nwc]][[/img]]Adventurers, [[img:tilea]][[/img]]Carabiniers and [[img:border]][[/img]]Carlsson Militia units	true
+effects_description_teb_tech_tercio_misres	Missile resistance: %+n% for Pikemen, Half Pikes, Billmen, Crossbowmen, Handgunners and Royal Guard	true
+effects_description_teb_tech_tercio_rodeleros	Bonus vs. Infantry: %+n for Adventurers units	true
+effects_description_teb_tech_tilean_armour	Armour: %+n for Pikemen and Pavise Crossbowmen units	true
+effects_description_teb_tech_trade_sartosa	Recruit rank: %+n for [[img:tilea]][[img:nwc]][[/img]]Sartosan Pirates	true
+effects_description_teb_tech_unsung	Melee attack and Melee defence: %+n for Border Rangers, Swashbucklers, and light cavalry units	true
+effects_description_teb_tech_unsung_upk	Upkeep: %+n% for Border Rangers, Swashbucklers, and light cavalry units	true
+effects_description_teb_tech_walls_build_time	Construction time: %+n for Wall/Garrison buildings	true
+effects_description_teb_upkeep_enemy	Upkeep: %+n% for all enemy units	true
+effects_description_est_inquisitor_recr_time	Recruitment Time: %+n for Black Watch and Noble Retinue units	true
+effects_description_teb_borgio_pick_melee	OBSOLETE Melee attack and Melee defence: %+n for all Spearmen, Swordsmen, Halberdiers, Pikemen and Pavise Crossbowmen units	true
+effects_description_teb_borgio_pick_ld	OBSOLETE Leadership: %+n for all Spearmen, Swordsmen, Halberdiers, Pikemen and Pavise Crossbowmen units	true
+effects_description_teb_gashnag_antipillagers	Melee attack: %+n against Chaos, Norsca, Greenskins and Ogre Kingdoms	true
+effects_description_teb_gashnag_antivampires	Melee attack: %+n against Vampire Counts and Vampire Coast	true
+effects_description_teb_gashnag_antivampires_fear	Attribute: Causes Fear against Vampire Counts and Vampire Coast	true
+effects_description_teb_gashnag_attrition_others	Attrition: %+n% enemy casualties from untainted territory	true
+effects_description_teb_diplomacy_teb	Diplomatic relations: %+n with all Southern Realms	true
+effects_description_teb_diplomacy_tilea	Diplomatic relations: %+n with [[img:UI/Flags/mixer_teb_tilea/mon_24.png]][[/img]]Miragliano (Tilea)	true
+effects_description_teb_diplomacy_catrazza	Diplomatic relations: %+n with [[img:UI/Flags/mixer_teb_catrazza/mon_24.png]][[/img]]East Ind Company	true
+effects_description_teb_diplomacy_estalia	Diplomatic relations: %+n with [[img:UI/Flags/mixer_teb_estalia/mon_24.png]][[/img]]Magritta (Estalia)	true
+effects_description_teb_diplomacy_tobaro	Diplomatic relations: %+n with [[img:UI/Flags/wh_main_teb_tobaro/mon_24.png]][[/img]Tobaro (if present on the map)	true
+effects_description_teb_diplomacy_bilbali	Diplomatic relations: %+n with [[img:UI/Flags/mixer_teb_bilbali/mon_24.png]][[/img]]Bilbali	true
+effects_description_teb_diplomacy_magritta	Diplomatic relations: %+n with Magritta OBSOLETE REMOVE 	true
+effects_description_teb_diplomacy_cadavo	Diplomatic relations: %+n with [[img:UI/Flags/mixer_teb_new_world_colonies/mon_24.png]][[/img]]New World Colonies	true
+effects_description_teb_diplomacy_colombo	Diplomatic relations: %+n with [[img:UI/Flags/mixer_teb_colombo/mon_24.png]][[/img]]West Ind Company	true
+effects_description_teb_priestess_recr	Unlocks [[img:icon_hero]][[/img]]Hero recruitment: Priestess of Myrmidia	true
+effects_description_teb_priestess_recr_xp	Hero recruit rank: %+n for Priestesses of Myrmidia	true
+effects_description_teb_priestess_cap	Hero capacity: %+n for Priestesses of Myrmidia	true
+effects_description_teb_diplomacy_luccini	Diplomatic relations: %+n with Luccini HIDDEN	true
+effects_description_teb_diplomacy_marienburg	Diplomatic relations: %+n with [[img:UI/Flags/wh_main_emp_marienburg/mon_24.png]][[/img]]Marienburg	true
+effects_description_teb_diplomacy_goldtooth_zhaoming	Diplomatic relations: %+n with [[img:UI/Flags/wh3_main_ogr_goldtooth/mon_24.png]][[/img]]Goldtooth and [[img:UI/Flags/wh3_main_cth_the_western_provinces/mon_24.png]][[/img]]Western Provinces	true
+effects_description_teb_all_def	Melee defence: %+n for all units	true
+effects_description_teb_all_morale	Leadership: %+n for all units	true
+effects_description_teb_lupio_windmills_dummy	Weapon strength: +1605%% against windmills	true
+effects_description_teb_lupio_windmills	Bonus vs. Large: %+n when fighting against Wood Elves, Warriors of Chaos, Beastmen, Norsca, Greenskins and Vampire Coast	true
+effects_description_teb_catrazza_upk_ror	Upkeep: %+n% for all Regiments of Renown	true
+effects_description_teb_catrazza_bb_reload	Reload time reduction: %+n% for Carabiniers, Cranequiniers and Handgunners units	true
+effects_description_teb_catrazza_bb_ld	Leadership: %+n for Carabiniers, Cranequiniers and Handgunners units	true
+effects_description_teb_catrazza_costs_knights	Recruitment and Upkeep cost: %+n% for all heavy cavalry and other aristocratic units	true
+effects_description_teb_gausser_rangers_dummy	[[col:yellow]]Can recruit Dwarf Rangers[[/col]]	true
+effects_description_teb_melee_antidorf	Melee attack: %+n for all units against Dwarfs	true
+effects_description_teb_melee_ap_multi	Armour-piercing weapon damage: %+n%	true
+effects_description_teb_enable_flaming	Enables flaming attacks	true
+effects_description_teb_enable_sunder	Enables sundering attacks	true
+effects_description_teb_buff_xp7+_stats	HIDDEN-Hardened Veterans: Strong Vigour, %+n Armour and Leadership for all units {{tr:rank7}}	true
+effects_description_teb_buff_xp7+_dummy	All units {{tr:rank7}}:\\n[[img:bullet_point_white]][[img:UI/battle ui/ability_icons/fatigue_res.png]][[/img]]Attribute: Strong Vigour\\n[[img:bullet_point_white]][[img:icon_armour]][[/img]]Armour: +5 \\n[[img:bullet_point_white]][[img:icon_weapon_damage]][[/img]]all Damage: +8%% 	true
+effects_description_teb_buff_xp7+_cost	HIDDEN-Hardened Veterans: %+n% Replenishment rate for all units {{tr:rank7}}	true
+effects_description_teb_homeland_req_dummy	The following buildings (or better) need to be present in the same settlement.	true
+effects_description_teb_colonial_striders	Attribute: Strider for Adventurers, Swashbucklers and Crossbowmen	true
+effects_description_teb_colonial_stalkers	Attribute: Stalk for Swashbucklers, Handgunners and Billmen	true
+effects_description_teb_colonial_encou	Attribute: Encourage for Lancers and Broken Lances	true
+effects_description_teb_ritual_lock_dummy	Only one of the two Ritual Artefact chains can be constructed	true
+effects_description_enable_charge_defence_clean	Attribute: Expert Charge Defence	true
+effects_description_teb_tylos_1_dummy	[[col:white]]Halves climate penalties[[/col]]	true
+effects_description_teb_tylos_2_dummy	[[col:white]]Entirely removes climate penalties[[/col]]	true
+effects_description_hidden_construction_time	hidden_construction_time	true
+effects_description_hidden_recruitment_time	hidden_recruitment_time	true
+effects_description_hidden_construction_cost	hidden_construction_cost	true
+effects_description_hidden_income_all	hidden_income_all	true
+effects_description_hidden_replenishment	hidden_replenishment	true
+effects_description_hidden_growth	hidden_growth	true
+effects_description_hidden_order	hidden_order	true
+effects_description_teb_diplomacy_mazdamundi	Diplomatic relations: %+n with Lord Mazdamundi	true
+effects_description_teb_cadavo_alcatani	The Alcatani Fellowship will never fight for this Legendary Lord	true
+effects_description_teb_cadavo_alcatani_morale	The Alcatani Fellowship will never fight for this Legendary Lord	true
+effects_description_teb_cadavo_buff_pirates_morale	Leadership: %+n for Half Pikes, Swashbucklers, Riders and Maneaters	true
+effects_description_teb_cadavo_buff_pirates_dakka	Missile strength: %+n% for Swashbucklers, Riders and Maneaters	true
+effects_description_teb_cadavo_buff_pirates_melee	Melee defence: %+n for Half Pikes, Swashbucklers, Riders and Maneaters	true
+effects_description_teb_cadavo_buff_pirates_attack	Melee attack: %+n for Half Pikes, Swashbucklers, Riders and Maneaters	true
+effects_description_teb_cadavo_buff_pirates_dmg	Weapon Strength: %+n% for Half Pikes, Swashbucklers, Riders and Maneaters	true
+effects_description_teb_cadavo_story_dummy	The Tale of Cadavo skill chain provides story-driven buffs for him and his army	true
+effects_description_teb_melee_antirogue	Melee defence: %+n when fighting against Rogue Armies	true
+effects_description_teb_colombo_trantio	Recruit rank: %+n for Crossbowmen, Pavise Crossbowmen and Noble Retinue	true
+effects_description_teb_vslarge_antilzd	Bonus vs. Large: %+n when fighting against Lizardmen	true
+effects_description_teb_def_antilzd	Melee defence: %+n when fighting against Lizardmen	true
+effects_description_enable_teb_counterbonus	Passive ability: "Discombobulate" for Adventurers, Carabiniers and Carlsson Militia units	true
+effects_description_teb_rangers_scouts_immpsy	Attribute: Immune to psychology for Border Rangers, Enforcers and Light Scouts	true
+effects_description_teb_bp_noble_encou	Attribute: Encourage for Shieldbearers	true
+effects_description_teb_xp7+_fear	Attribute: Cause Fear for all units {{tr:rank7}}	true
+effects_description_teb_cap_besiegers	Can recruit a second company of Braganza's Besiegers	true
+effects_description_teb_cannon_barrage	Garrison ability: "Cannon Barrage"	true
+effects_description_teb_additional_siege_tower	Siege towers: %+n per siege item constructed	true
+effects_description_teb_additional_siege_tower_trait	Siege towers: %+n per siege item constructed	true
+effects_description_teb_enable_blinding	Enables blinding attacks	true
+effects_description_teb_fear_vs_undead	Attribute: Cause Fear when fighting against Undead	true
+effects_description_teb_pavise_armour	Armour: %+n for Pavise Crossbowmen and Militia Spearmen 	true
+effects_description_teb_pavise_missile_dmg	Missile strength: %+n% for Pavise Crossbowmen	true
+effects_description_teb_pavise_chargedef	Attribute: Expert Charge Defence for Pavise Crossbowmen and Militia Spearmen	true
+effects_description_teb_tichi_nostepsnek	HIDDEN - used to autoroute Tichi Huichis when fighting other lizzies. ACTUALLY this does not work at all.	true
+effects_description_teb_lupio_gunpowder_range_buff	Range: %+n% for gunpowder cavalry & infantry units	true
+effects_description_teb_port_homeland_discount	HIDDEN - Construction cost: %+n% for [[img:nwc]][[/img]]Homeland Chain	true
+effects_description_teb_port_homeland_discount_dummy	Construction cost: %+n% in inland settlements for this chain	true
+effects_description_teb_KOM_unlock_dummy	[[col:black]]Unlocks recruitment of Knights of Morr via Renown pool upon construction (Southern Realms only)[[/col]]	true
+effects_description_teb_diplomacy_wulfhart	Diplomatic relations: %+n with the Huntsmarshal's Expedition	true
+effects_description_teb_crossbow_range	Range: %+n% for all crossbow units	true
+effects_description_teb_bow_reload	Reload time reduction: %+n% for all bow units	true
+effects_description_teb_pools_BP_brets	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]Questing Knights, Battle Pilgrims[[/col]]	true
+effects_description_teb_pools_BP_empire	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]War Wagons, Greatswords[[/col]]	false
+effects_description_teb_pools_BP_teb	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]Pikemen[[/col]]	false
+effects_description_teb_pools_til_teb	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]bippity bappity[[/col]]	false
+effects_description_teb_pools_til_emp	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]bippity bappity[[/col]]	false
+effects_description_teb_pools_til_mix	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]War Wagons, Light Scouts[[/col]]	false
+effects_description_teb_pools_tob_mix	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]Miners (Blasting Charges), Swashbucklers[[/col]]	false
+effects_description_teb_pools_nwc_emp	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]War Wagons, Huntsmen[[/col]]	false
+effects_description_teb_pools_nwc_brets	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]Knights of the Realm[[/col]]	false
+effects_description_teb_pools_est_emp	Unlocks %n {{tr:teb_pools_dummybase}} \\n[[col:white]]Knights of the Blazing Sun[[/col]]	false
+effects_description_teb_attrition_res_wasteland	Attrition: %+n% casualties suffered from wasteland attrition	true
+effects_description_teb_attrition_res_mountain	Attrition: %+n% casualties suffered from mountain attrition	true
+effects_description_teb_birdmen_buffs	Speed and Missile strength: %+n% for Birdmen of Catrazza (no relations)	true
+effects_description_teb_cap_sisters	Capacity: %+n Sisters of Fury	true
+effects_description_teb_costs_kotrs_sisters	Recruitment and Upkeep cost: %+n% for Knights of the Righteous Spear and Sisters of Fury	true
+effects_description_teb_cost_recr_duellists	Recruitment cost: %+n% for Duellist units	true
+effects_description_teb_repl_duellists	Replenishment: %+n% for Duellist units	true
+effects_description_teb_eldaddio_gunpowder_reload	Reload time reduction: %+n% for all gunpowder units	true
+effects_description_teb_eldaddio_gunpowder_cost	Upkeep: %+n% for all gunpowder units	true
+effects_description_teb_eldaddio_oldstyle_MD	Melee defence: %+n for spear, pike, halberd and lance units	true
+effects_description_teb_terraform_dummy	[[col:black]]Negates and ameliorates penalties from hostile climate in the region [[/col]]	true
+effects_description_teb_xp_antirogue	Double experience gain for units when fighting against Rogue Armies	true
+effects_description_teb_upkeep_lords	Lord Upkeep: %+n% 	true
+effects_description_teb_edict_base_order	{{tr:public_order_effect}}: %+n	true
+effects_description_teb_edict_base_order_tax	{{tr:public_order_effect}}: %+n	true
+effects_description_teb_edict_base_growth	Growth: %+n	true
+effects_description_teb_edict_base_constr_cost	Construction cost: %+n% for all buildings	true
+effects_description_teb_edict_base_tech	Research rate: %+n%	true
+effects_description_teb_edict_add_constr_cost	Stimulate Trade commandment: additional %+n% Construction cost for all buildings	true
+effects_description_teb_edict_add_tech	Stimulate Trade commandment: additional %+n% Research rate	true
+effects_description_teb_edict_add_diplo_all	Foster Independence commandment: additional %+n Diplomatic relations with Men and High Elves	true
+effects_description_teb_edict_add_tax	Collect Tribute commandment: additional %n% [[img:icon_income]][[/img]]income	false
+effects_description_teb_edict_add_order_tax	Collect Tribute commandment: additional %+n {{tr:public_order_effect}}	false
+effects_description_teb_edict_add_order	Foster Independence commandment: additional %+n {{tr:public_order_effect}}	false
+effects_description_teb_irrana_dmg	All damage: %+n% for Irranan Hillmen	false
+effects_description_teb_irrana_morale	Leadership: %+n for Irranan Hillmen	false
+effects_description_teb_irrana_recr_cost	Recruitment cost: %+n% for Irranan Hillmen	false
+effects_description_teb_xbow_cav_dmg	All damage: %+n% for Cranequiniers	false
+effects_description_teb_xbow_cav_MA	Melee attack: %+n for Cranequiniers	false
+effects_description_teb_costs_ror_all	Recruitment and Upkeep costs: %+n% for all Regiments of Renown	true
+effects_description_teb_xp_heavy_armour	Recruit rank: %+n for all heavy armour units	true
+effects_description_teb_xp_wood	OBSOLETE Recruit rank: %+n for all pike, spear, halberd, bow and crossbow units	true
+effects_description_teb_lord_villanos_dmg	All damage: %+n% for Adventurers, Royal Guard, Riders and Lancers {{tr:rank7}}	true
+effects_description_teb_lord_villanos_speed	Speed: %+n% for Adventurers, Royal Guard, Riders and Lancers {{tr:rank7}}	false
+effects_description_teb_lord_villanos_upk	Upkeep: %+n% for Adventurers, Royal Guard, Riders and Lancers	false
+effects_description_teb_lord_bordermen_phys	Physical resistance: %+n% for all units {{tr:rank4}}	true
+effects_description_teb_lord_tileaguy_cav_MA	Melee attack: %+n for Broken Lances, Noble Retinue and Knights Encarmine {{tr:rank7}}	false
+effects_description_teb_lord_tileaguy_pike_MD	Melee defence: %+n for Pikemen and Half Pikes {{tr:rank7}}	false
+effects_description_teb_lord_tileaguy_upk	Upkeep: %+n% for Pikemen, Half Pikes, Broken Lances, Noble Retinue, Knights Encarmine and all crossbow units	false
+effects_description_teb_lord_tileaguy_xbow_dmg	Missile strength: %+n% for all crossbow units {{tr:rank7}}	false
+effects_description_teb_tank_cap	Capacity: %+n Tortoise Tanks	true
+effects_description_teb_tank_cap_infinite	Uncapped recruitment for Tortoise Tanks	true
+effects_description_teb_tank_speed	Speed: %+n% for Tortoise Tanks	true
+effects_description_teb_tank_fire_phys_res	Physical resistance: %+n% for Tortoise Tanks	true
+effects_description_teb_tank_missile	Missile strength and reload: %+n% for Tortoise Tanks	true
+effects_description_teb_vsinf_antibret	Bonus vs. Infantry: %+n when fighting against Bretonnia	true
+effects_description_teb_master_duellist_recr	Unlocks [[img:icon_hero]][[/img]]Hero recruitment: Master Duellist	true
+effects_description_teb_master_duellist_cap	Hero capacity: %+n for Master Duellists	true
+effects_description_teb_master_duellist_recr_xp	Hero recruit rank: %+n for Master Duellists	true
+effects_description_wh_main_effect_agent_enable_recruitment_wizard_teb	Unlocks [[img:icon_hero]][[/img]]Hero recruitment: Battle Wizard	true
+effects_description_teb_charge_add_cavalry	Charge bonus: %+n for cavalry units	true
+effects_description_teb_fear_vs_rogue	Attribute: Causes Fear when fighting against Rogue Armies	true
+effects_description_teb_cavalry_missile_damage	Missile strength: %+n% for cavalry units	true
+effects_description_teb_terror_vs_chaos_all	Attribute: Causes Terror when fighting against Beastmen, Daemons, Norsca and Warriors of Chaos	true
+effects_description_teb_merc_captain_recr	Unlocks [[img:icon_hero]][[/img]]Hero recruitment: Mercenary Captain	true
+effects_description_teb_merc_captain_recr_xp	Hero recruit rank: %+n for Mercenary Captains	true
+effects_description_teb_merc_captain_cap	Hero capacity: %+n for Mercenary Captains	true
+effects_description_teb_army_buff_MD_sticks_gw	Melee defence: %+n for spear, pike, halberd, lance and great weapon units	false
+effects_description_teb_army_buff_MA_sticks_gw	Melee attack: %+n for spear, pike, halberd, lance and great weapon units	false
+effects_description_teb_army_buff_MA_swords_etc	Melee attack: %+n for hand weapon and dual wield units	false
+effects_description_teb_army_buff_MD_swords_etc	Melee defence: %+n for hand weapon and dual wield units	false
+effects_description_teb_army_buff_LD_pike_halb_swords_etc	Leadership: %+n for hand weapon, pike and halberd units	false
+effects_description_teb_army_buff_CB_lance_gw_spear	Charge bonus: %+n for spear, lance and great weapon units	false
+effects_description_teb_army_buff_dmg_sticks	Weapon strength: %+n% for spear, pike, halberd and lance units	true
+effects_description_teb_army_buff_armour_gw_swords_etc	Armour: %+n for great weapon, hand weapon and dual wield units	false
+effects_description_teb_army_buff_missres_melee	Missile resistance: %+n% for all melee units	false
+effects_description_teb_army_buff_chevrons_MA_per_rank	Melee attack: %+n% per experience rank for all units	true
+effects_description_teb_army_buff_chevrons_MD_per_rank	Melee defence: %+n% per experience rank for all units	true
+effects_description_teb_army_buff_chevrons_dmg_per_rank	Weapon strength: %+n% per experience rank for all units	true
+effects_description_teb_army_buff_chevrons_reload_per_rank	Reload time reduction: %+n% per experience rank for all units	true
+effects_description_teb_army_buff_chevrons_CB_per_rank	Charge bonus: %+n% per experience rank for all units	true
+effects_description_teb_army_buff_chevrons_phys_per_rank	Physical resistance: %+n% per experience rank for all units	true
+effects_description_teb_army_buff_chevrons_ammo_per_rank	Ammunition: %+n% per experience rank for all units	true
+effects_description_teb_LD_per_rank	Leadership: %+n per experience rank for all units	true
+effects_description_teb_agent_action_dignitary_assist_army_training	[[col:yellow]]{{tr:agent_action_name_training}}[[/col]] action: Experience per turn is increased by an additional %n	true
+effects_description_teb_phys_res_cavalry	Physical resistance: %+n% for cavalry units	true
+effects_description_teb_NWC_recr_cost_penalty	Recruitment cost: %+n% for all units outside of coastal regions	true
+effects_description_teb_catrazza_recr_cost_penalty	Recruitment cost: %+n% for all units without direct control of Miragliano	true
+effects_description_teb_tercio_encou	Attribute: Encourage for Pikemen	true
+effects_description_teb_replenish_heavy_cav	Replenishment: %+n% for Priestesses, High Eagles and Myrmidian units	true
+effects_description_teb_tilean_supremacy_dmg	Weapon strength: %+n% for Duellists, Pikemen, Republican Guard and cavalry units	true
+effects_description_teb_nobles_MD	Melee defence: %+n for all heavy cavalry and other aristocratic units	true
+effects_description_teb_nobles_dmg	Armour-piercing weapon damage: %+n for all heavy cavalry and other aristocratic units	true
+effects_description_teb_tank_enable_dummy	Unlocks recruitment of:\\n[[img:ui/common ui/unit_category_icons/emp_steam_tank.png]][[/img]]Tortoise Tanks	true
+effects_description_teb_tank_enable_dummy_ror	Unlocked in the Renown pool:\\n[[img:ui/common ui/unit_category_icons/emp_steam_tank.png]][[/img]] Ugoletti's Floating Ordnance (Tortoise Tank)	true
+effects_description_teb_tech_ROR_outland	Unlocked in the Renown pool:\\n[[img:ui/common ui/unit_category_icons/infantry_pike.png]][[/img]]Pirazzo's Lost Legion\\n[[img:ui/common ui/unit_category_icons/infantry_sword.png]][[/img]]Knights of Origo\\n[[img:ui/common ui/unit_category_icons/wh2_main_skv_infantry_sword_stormvermin.png]][[/img]]Cursed Company	true
+effects_description_teb_tech_ROR_pro	Unlocked in the Renown pool:\\n[[img:ui/common ui/unit_category_icons/missile_infantry_bow.png]][[/img]]Marksmen of Miragliano\\n[[img:ui/common ui/unit_category_icons/wh2_main_infantry_dual_swords.png]][[/img]]Vespero's Vendetta\\n[[img:ui/common ui/unit_category_icons/infantry_pike.png]][[/img]]Leopard Company	true
+effects_description_teb_tech_ROR_brass	Unlocked in the Renown pool:\\n[[img:ui/common ui/unit_category_icons/missile_infantry_bow.png]][[/img]]Braganza's Besiegers\\n[[img:ui/common ui/unit_category_icons/infantry_pike.png]][[/img]]Ricco's Republican Guard\\n[[img:ui/common ui/unit_category_icons/shock_cavalry.png]][[/img]]Voland's Venators\\n[[img:ui/common ui/unit_category_icons/artillery_field_gun.png]][[/img]]Bronzino's Galloper Guns	true
+effects_description_teb_mil_swap_dummy	City-State and Mercenary recruitment chains are mutually exclusive in each settlement, but can sidegrade into each other	true
+effects_description_teb_gashnag_barrier_add	Barrier hit points: %+n for Gashnag	true
+effects_description_teb_gashnag_ghoul_wolves_attacks	Magical and discouraging attacks for Crypt Ghouls and Dire Wolves	true
+effects_description_teb_gashnag_ghoul_wolves_LD	Leadership: %+n for Crypt Ghouls and Dire Wolves	true
+effects_description_tebuary_desertion	All your forces suffer [[img:icon_attrition]][[/img]]attrition from desertion	true
+effects_description_teb_lorenzo_lupo_leopard_morale	The Leopard Company will never fight for this Legendary Lord	true
+effects_description_teb_lorenzo_lupo_dmg_pikes_morr	Weapon strength: %+n% for Knights of Morr and pike units	true
+effects_description_		true
+effects_description_teb_merc_general_griffon_tip	Can be manually assigned to a [[img:ui/campaign ui/effect_bundles/general_ability.png]][[/img]]Mercenary General regardless of rank	false
+effects_description_til_merchant_bear_tip	Can be manually assigned to a [[img:ui/campaign ui/effect_bundles/general_ability.png]][[/img]]Merchant Prince regardless of rank	false
+effects_description_teb_block_myrmidian_units	Missile block chance: %+n% for Priestesses, High Eagles and Myrmidian units	true
+effects_description_teb_missile_dmg_crossbow_gun_artillery	Missile strength: %+n% for crossbow, gunpowder and artillery units	true
+effects_description_teb_guard_kossars_handgunners_missile_dmg	Missile strength: %+n% for Uvetovsk Kossars and Handgunners	true
+effects_description_teb_tow_norsca_exploit_dummy	[[col:yellow]]Construct buildings to exploit untapped resources in Norsca[[/col]]	true
+effects_description_teb_immune_flanking_billmen	Attribute: Immune to Flanking for Billmen	true
+effects_description_teb_tank_block_360	360 Missile block chance: %+n%	true
+effects_description_teb_catrazza_money_dummy	Improved effects from [[img:ui/campaign ui/effect_bundles/resource_spices.png]][[/img]]spices resource buildings	true
+effects_description_teb_paymaster_armour	Armour: %+n for Paymaster Chest Wagons	false
+effects_description_teb_paymaster_missile_dmg	Missile strength: %+n% for Paymaster Chest Wagons	false
+effects_description_teb_sergioleone_phys_res	Physical resistance: %+n% for {{tr:land_units_onscreen_name_teb_carabiniers}}, {{tr:land_units_onscreen_name_teb_conqui_riders}}, {{tr:land_units_onscreen_name_teb_enforcers}} and {{tr:land_units_onscreen_name_teb_xbow_cav}}	false
+effects_description_teb_sergioleone_charge	Charge bonus: %+n for {{tr:land_units_onscreen_name_teb_carabiniers}}, {{tr:land_units_onscreen_name_teb_conqui_riders}}, {{tr:land_units_onscreen_name_teb_enforcers}} and {{tr:land_units_onscreen_name_teb_xbow_cav}}	false
+effects_description_teb_sergioleone_missile_dmg	Missile strength: %+n% for {{tr:land_units_onscreen_name_teb_carabiniers}}, {{tr:land_units_onscreen_name_teb_conqui_riders}}, {{tr:land_units_onscreen_name_teb_enforcers}} and {{tr:land_units_onscreen_name_teb_xbow_cav}}	false
+effects_description_teb_temples_constr_time	Construction time: %+n for normal Cult of Myrmidia and Cult of Shallya buildings	false
+effects_description_teb_artillery_recr_time_both	Global and Local Recruitment duration: %+n turn for artillery units	false
+effects_description_teb_pavise_block	Missile block chance: %+n% for Militia Spearmen and other units with pavise shields	false
+effects_description_teb_militia_spearmen_archers_morale	Leadership: %+n for Militia Spearmen and Militia Archers	true
+effects_description_teb_billmen_contact	Enables Hooking attacks for Billmen, exposing foes	false
+effects_description_teb_half_pikes_contact	Enables Containing attacks for Half Pikes, weakening foes	false
+effects_description_teb_cap_golden_lions	Capacity: %+n for Golden Lions	true
+effects_description_teb_golden_lion_spell_mastery	Attribute: Mastery of Elemental Winds for spellcasters and all {{tr:land_units_onscreen_name_teb_golden_lion}}s (including mounts)	false
+effects_description_teb_golden_lion_phys_res	Physical resistance: %+n% for all {{tr:land_units_onscreen_name_teb_golden_lion}}s (including mounts)	false
+effects_description_teb_force_loot_all	Income from raiding, sacking, looting and post-battle loot: %+n%	true

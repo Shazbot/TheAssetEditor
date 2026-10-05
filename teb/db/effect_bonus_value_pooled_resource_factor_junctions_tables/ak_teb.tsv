@@ -1,0 +1,6 @@
+bonus_value_id	effect	resource_factor
+#effect_bonus_value_pooled_resource_factor_junctions_tables;0;db/effect_bonus_value_pooled_resource_factor_junctions_tables/ak_teb		
+base_amount	teb_duellist_hero_PR	teb_duellist_hero_PR
+base_amount	teb_templar_lord_PR	teb_templar_lord_PR
+base_amount	teb_lorenzo_lupo_PR	teb_lorenzo_lupo_PR
+base_amount	teb_piggolo_PR	teb_piggolo_PR

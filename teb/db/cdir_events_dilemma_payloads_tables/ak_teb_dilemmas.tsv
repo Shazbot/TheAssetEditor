@@ -1,0 +1,10 @@
+id	choice_key	dilemma_key	payload_key	value	target_key
+#cdir_events_dilemma_payloads_tables;0;db/cdir_events_dilemma_payloads_tables/ak_teb_dilemmas					
+3011990	FIRST	teb_dilemma_trade	EFFECT_BUNDLE	KEY[teb_dilemma_trade_diplo];DURATION[8]	default
+3011991	SECOND	teb_dilemma_trade	EFFECT_BUNDLE	KEY[wh2_main_incident_trade_income_up];DURATION[8]	default
+3011992	THIRD	teb_dilemma_trade	TREASURY	AMOUNT[1500]	default
+3011993	FOURTH	teb_dilemma_trade	EFFECT_BUNDLE	KEY[teb_dilemma_trade_delegate];DURATION[5]	default
+3011998	FIRST	teb_dilemma_sketches	DIPLOMATIC_STANDING	AMOUNT[1]	default
+3011999	FIRST	teb_dilemma_sketches	TREASURY	AMOUNT[1500]	default
+3012000	SECOND	teb_dilemma_sketches	EFFECT_BUNDLE	KEY[teb_dilemma_sketches_engi];DURATION[5]	default
+3012001	THIRD	teb_dilemma_sketches	EFFECT_BUNDLE	KEY[teb_dilemma_sketches_research];DURATION[1]	default

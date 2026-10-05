@@ -1,0 +1,9 @@
+tech_ui_group	bottom_right_node	top_left_node	optional_top_right_node	optional_bottom_left_node
+#technology_ui_groups_to_technology_nodes_junctions_tables;2;db/technology_ui_groups_to_technology_nodes_junctions_tables/ak_teb				
+teb_pools_BP	teb_pools_BP_brets	teb_pools_BP_teb		
+teb_pools_til	teb_pools_til_mix	teb_pools_til_mix		
+teb_pools_tob	teb_pools_tob_mix	teb_pools_tob_mix		
+teb_pools_nwc	teb_pools_nwc_brets	teb_pools_nwc_emp		
+teb_pools_est	teb_pools_est_emp	teb_pools_est_emp		
+teb_tech_tank_stuff	teb_tank_3	teb_crossbow_rocket		
+teb_tech_NWC_renown	teb_tech_ROR_brass	teb_tech_ROR_outland		

@@ -1,0 +1,32 @@
+<VARIANT_MESH>
+	<SLOT name="crest FULL CREDITS TO SHAWMUSCLE FOR MODELS AND TEXTURES" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\lorenzo_lupo\lorenzo_crest.wsmodel" />
+	</SLOT>
+	<SLOT name="helmet" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\lorenzo_lupo\lorenzo_helmet.wsmodel" />
+	</SLOT>
+	<SLOT name="head" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\lorenzo_lupo\lorenzo_head.wsmodel" />
+	</SLOT>
+	<SLOT name="body" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\lorenzo_lupo\lorenzo_torso.wsmodel" >
+			<META_DATA>audio_armour_type:plate</META_DATA>			<META_DATA>audio_entity_type:wh_human_male_LORD</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="legs" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\lorenzo_lupo\lorenzo_legs.wsmodel" />
+	</SLOT>
+	<SLOT name="cape" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\lorenzo_lupo\lorenzo_cape.wsmodel" />
+	</SLOT>
+	<SLOT name="weapon_1" attach_point="be_prop_0" />
+	<SLOT name="weapon_2" attach_point="be_prop_1" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\lorenzo_lupo\lorenzo_sword.wsmodel" >
+			<META_DATA>audio_melee_weapon_type:sword</META_DATA></VARIANT_MESH>
+	</SLOT>
+	<SLOT name="shield" attach_point="be_prop_2" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\lorenzo_lupo\lorenzo_shield.wsmodel" />
+	</SLOT>
+	<SLOT name="weapon_3" attach_point="be_prop_3" />
+	<SLOT name="weapon_4" attach_point="be_prop_4" />
+	<SLOT name="weapon_5" attach_point="be_prop_5" />
+</VARIANT_MESH>

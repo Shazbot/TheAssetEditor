@@ -1,0 +1,17 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_unit_abilities_additional_ui_effects_.loc		
+unit_abilities_additional_ui_effects_localised_text_remains_in_play	Remains in play	true
+unit_abilities_additional_ui_effects_localised_text_ap_average	[[img:icon_ap]][[/img]]Average Armour-Piercing	true
+unit_abilities_additional_ui_effects_localised_text_ap_good	[[img:icon_ap]][[/img]]Good Armour-Piercing	true
+unit_abilities_additional_ui_effects_localised_text_damage_bad	Low Damage	true
+unit_abilities_additional_ui_effects_localised_text_flat_angle	Good on flat terrain	true
+unit_abilities_additional_ui_effects_localised_text_inaccurate	Inaccurate	true
+unit_abilities_additional_ui_effects_localised_text_teb_colombo_telescope	Will spot most invisible units within 200m	true
+unit_abilities_additional_ui_effects_localised_text_teb_roc_organ_immolation	One artillery piece will detonate with each use	true
+unit_abilities_additional_ui_effects_localised_text_teb_galloper_horse_unlimber	Deploys the galloper cannons for use	true
+unit_abilities_additional_ui_effects_localised_text_teb_galloper_limber	Limbers the cannons back onto the horses to reposition	true
+unit_abilities_additional_ui_effects_localised_text_teb_causes_rampage	May cause [[img:ui/battle ui/ability_icons/rampage.png]][[/img]]Rampage	true
+unit_abilities_additional_ui_effects_localised_text_teb_causes_terror	May cause [[img:ui/battle ui/ability_icons/causes_terror.png]][[/img]]Terror	true
+unit_abilities_additional_ui_effects_localised_text_teb_spirit_drain	Damages and heals target at the same time to manipulate their  [[img:icon_hp]][[/img]]regenerating capabilities	true
+unit_abilities_additional_ui_effects_localised_text_self_damage_chance_start	Causes minor damage to target	true
+unit_abilities_additional_ui_effects_localised_text_teb_lucrezzia_potion	Will [[b]][[col:white]]execute[[/col]][[/b]] the recipient below a 10% [[img:icon_hp]][[/img]]hit points threshold.	true

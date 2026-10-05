@@ -1,0 +1,44 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_loading_screen_quotes.loc		
+loading_screen_quotes_description_teb_militia_archers	Commoners armed with bows have any chance to help against the incursions from the Badlands.	true
+loading_screen_quotes_description_teb_militia_knights	Well-equipped and hand-picked by the mercenary prince Sven Carlsson, these cavalrymen are a solid force.	true
+loading_screen_quotes_description_teb_shieldbearers	Dwarf-crafted gear and proud hearts bring forth the legacy of Khypris.	true
+loading_screen_quotes_description_teb_freelance_knights	Wealthy horsemen fighting in the well-known Bretonnian style.	true
+loading_screen_quotes_description_teb_swash	To these men, "fairplay" is just another one of those funny bretonnian kinds of cheese.	true
+loading_screen_quotes_description_teb_border_rangers	To the sufficiently shrewd and tough, an Orc is just another prey.	true
+loading_screen_quotes_description_teb_bwatch	Sitting in a shade of grey between Order of the Eagle and Estalian Inquisition, the Black Watch is made of the most fanatical and stubborn among knightly aristocracy.	true
+loading_screen_quotes_description_teb_conqui_lancers	Good horses and fine steel moving fast on the battlefield.	true
+loading_screen_quotes_description_teb_conqui_riders	These hardy mercenaries have learned how to best deal harm unpunished.	true
+loading_screen_quotes_description_teb_conqui_adventurers	The fellow human is hardly worrisome when one has faced murderous lizardmen in Lustria.	true
+loading_screen_quotes_description_teb_kotrs	The Order of the Eagle is the armed protector of Myrmidia on the battlefield.	true
+loading_screen_quotes_description_teb_conqui_royal_guard	A reliable force of veterans in heavy armour and the best handguns.	true
+loading_screen_quotes_description_teb_paymaster	Spreading words of encouragement and promises of higher salary, the Paymaster makes sure the hired fighters don't get too hesitant.	true
+loading_screen_quotes_description_teb_carabiniers	Experienced and well-protected, the Carabiniers have their muskets always pointed in the most dangerous blindside of the enemy.	true
+loading_screen_quotes_description_teb_noble_retinue	The Condottieri's own relatives may make up their bodyguard or crack unit.	true
+loading_screen_quotes_description_teb_encarmine	Ostentatious and lethal with their red enamelled armour and peculiar dual-wielding techniques, the Knights Encarmine are a spoiled fury on the battlefield.	true
+loading_screen_quotes_description_teb_montante_greatswords	Big swords can help in cutting the teeth of a pikeline.	true
+loading_screen_quotes_description_teb_republican_guard	Generals - and treasurers - need the best protection possible.	true
+loading_screen_quotes_description_teb_light_cannon	Smaller, mobile cannons can be instrumental in advanced tactics.	true
+loading_screen_quotes_description_teb_pikemen	Clad in heavy armour, a formation of these pikemen is a deadly hedgehog pointed at the enemy.	true
+loading_screen_quotes_description_teb_sartosan_pirates	Why is the rum always gone?	true
+loading_screen_quotes_title_teb_militia_archers	Militia Archers	true
+loading_screen_quotes_title_teb_militia_knights	Carlsson Militia	true
+loading_screen_quotes_title_teb_shieldbearers	Shieldbearers	true
+loading_screen_quotes_title_teb_freelance_knights	Knights	true
+loading_screen_quotes_title_teb_swash	Swashbucklers	true
+loading_screen_quotes_title_teb_border_rangers	Rangers	true
+loading_screen_quotes_title_teb_bwatch	Black Watch	true
+loading_screen_quotes_title_teb_conqui_lancers	Lancers	true
+loading_screen_quotes_title_teb_conqui_riders	Riders	true
+loading_screen_quotes_title_teb_conqui_adventurers	Adventurers	true
+loading_screen_quotes_title_teb_kotrs	Knights of the Righteous Spear	true
+loading_screen_quotes_title_teb_conqui_royal_guard	Royal Guard	true
+loading_screen_quotes_title_teb_paymaster	Paymaster Bodyguard	true
+loading_screen_quotes_title_teb_carabiniers	Carabiniers	true
+loading_screen_quotes_title_teb_noble_retinue	Noble Retinue	true
+loading_screen_quotes_title_teb_encarmine	Knights Encarmine	true
+loading_screen_quotes_title_teb_montante_greatswords	Montante Swordsmen	true
+loading_screen_quotes_title_teb_republican_guard	Republican Guard	true
+loading_screen_quotes_title_teb_light_cannon	Light Cannon	true
+loading_screen_quotes_title_teb_pikemen	Pikemen	true
+loading_screen_quotes_title_teb_sartosan_pirates	Sartosan Pirates	true

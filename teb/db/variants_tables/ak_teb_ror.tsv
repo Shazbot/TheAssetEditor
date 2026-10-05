@@ -1,0 +1,32 @@
+variant_name	tech_folder	variant_filename	low_poly_filename	mount_scale	scale	scale_variation	super_low_poly_filename
+#variants_tables;6;db/variants_tables/ak_teb_ror							
+teb_ricco		teb_ricco	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_alcatani		teb_alcatani	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_pirazzo		teb_pirazzo	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_pirazzo_xbows		teb_pirazzo_xbows	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_leopard		teb_leopard	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_venators		teb_venators	hu1/emp/low_poly/emp_reiksguard_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_vespero		teb_vespero	hu1\emp\emp_free_company\low_poly\emp_free_company_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_marksmen		teb_marksmen	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_besiegers		teb_besiegers	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_muktar		teb_muktar	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_amazons		teb_amazons	hu1b\wef\wef_wardancers\imposter\wef_wardancers_sword_sword_imposter	1.0000	0.9500	0.0500	hu1\imposter\humanoid_imposter
+teb_cursed		teb_cursed	hu1\emp\emp_free_company\low_poly\emp_free_company_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_origo		teb_origo	hu1\brt\brt_grail_knights\low_poly\brt_grail_knights_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_manflayers		teb_manflayers	hu1d\wef\wef_wildwood_rangers\imposter\wef_wildwood_rangers_sword_imposter	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_asarnil		teb_asarnil		1.0000	1.0000	0.0000	
+teb_asarnil_dragon	VariantMeshes\wh_variantmodels\dr1\hef\hef_sun_dragon\tech	teb_asarnil_dragon		1.0000	1.2000	0.0000	
+teb_tichi		teb_tichi	hu7/lzd/lzd_skink/imposter/lzd_skink_redcrest_imposter	1.0000	1.0000	0.0000	hu7/lzd/lzd_skink/imposter/skink_super_imposter
+teb_roc_dieterfist		teb_roc_dieterfist	hu1\emp\low_poly\emp_greatswords_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_roc_estragon		teb_roc_estragon	hu1\emp\low_poly\emp_greatswords_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_roc_verena		teb_roc_verena	hu1\emp\emp_archer\emp_archer_imposter	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_roc_strygos		teb_roc_strygos	hu1\brt\brt_men_at_arms\low_poly\brt_men_at_arms_archer_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_roc_broswords		teb_roc_broswords	hu1\emp\low_poly\emp_greatswords_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_roc_gwatch		teb_roc_gwatch	hu1\emp\low_poly\emp_greatswords_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_roc_kotss		teb_roc_kotss	hu1\brt\brt_grail_knights\low_poly\brt_grail_knights_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_roc_organ		teb_roc_organ	hu3/dwf/dwf_slayers/low_poly/dwf_slayers_lowlod	1.0000	1.0500	0.0500	hu3/dwf/dwf_warriors/low_poly/super_imposter
+teb_roc_gunn		teb_roc_gunn	hu1\brt\brt_men_at_arms\low_poly\brt_spearmen_at_arms_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_roc_montecastello		teb_roc_montecastello	hu1/emp/low_poly/emp_reiksguard_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_artillery_crew_bronzino		teb_artillery_crew_bronzino	hu1/emp/low_poly/emp_artillery_crew	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_birdmen		teb_birdmen	hu1\emp\emp_free_company\low_poly\emp_free_company_lowlod	1.0000	1.0000	0.0000	hu1\imposter\humanoid_imposter
+teb_birdmen_wings	VariantMeshes\wh_variantmodels\hu10b\teb\teb_birdmen_wings\tech	teb_birdmen_wings		1.0000	1.0000	0.0000	

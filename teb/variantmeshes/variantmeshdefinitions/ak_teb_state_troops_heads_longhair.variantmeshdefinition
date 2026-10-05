@@ -1,0 +1,18 @@
+head 14 = goatee (helmet w curved neckline)
+head 15 = full beard (curved neckline)
+
+clippy. 
+never would have thought trimming hair would be so fucking hard.
+
+<VARIANT_MESH>
+	<SLOT name="subhead" >
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_01.wsmodel"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_02.wsmodel"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_04.wsmodel"   />
+		<VARIANT_MESH model="VariantMeshes\wh_variantmodels\hu1\emp\emp_state_troops\head\ak_teb_stroop_head_05.wsmodel"  >	<SLOT name="hair" >
+		<VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_wizard/jade/head/AK_longhair_02_helmet_low.rigid_model_v2"  />
+	</SLOT>
+</VARIANT_MESH>
+
+	</SLOT>
+</VARIANT_MESH>

@@ -1,0 +1,6 @@
+building_level	diplomatic_stance
+#foreign_building_level_diplomatic_stance_requirements_tables;0;db/foreign_building_level_diplomatic_stance_requirements_tables/ak_teb	
+teb_allied_outpost_2	master
+teb_allied_outpost_2	military_allies
+teb_allied_outpost_3	master
+teb_allied_outpost_3	military_allies

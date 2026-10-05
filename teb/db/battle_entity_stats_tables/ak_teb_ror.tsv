@@ -1,0 +1,12 @@
+key	primary_melee_weapon	primary_missile_weapon
+#battle_entity_stats_tables;2;db/battle_entity_stats_tables/ak_teb_ror		
+teb_cursed_richter	teb_cursed_richter	
+teb_vespero_vespero	wh_main_brt_sword_hero	
+teb_muktar_muktar	wh_main_emp_sword_hero	
+teb_manflayers_mengil	teb_manflayers_mengil	teb_manflayers_mengil
+teb_leopard_leopold	wh_main_emp_sword_hero	teb_leopard_leopold
+teb_ricco_ricco	wh_main_brt_sword_hero	
+teb_besiegers_champ	teb_pike	
+teb_besiegers_braganza	wh_main_emp_sword_hero	teb_leopard_leopold
+teb_tank		teb_tank
+teb_tank_ror		teb_tank_ror

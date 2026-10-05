@@ -1,0 +1,516 @@
+key	text	tooltip
+#Loc;1;text/db/ak_teb_names.loc		
+names_name_3011990	Aarón	true
+names_name_3011991	Agustín	true
+names_name_3011992	Alejandro	true
+names_name_3011993	Alexander	true
+names_name_3011994	Alonso	true
+names_name_3011995	Alonso	true
+names_name_3011996	Alonzo	true
+names_name_3011997	Alvarez	true
+names_name_3011998	Benjamín	true
+names_name_3011999	Blanco	true
+names_name_3012000	Bruno	true
+names_name_3012001	Calvo	true
+names_name_3012002	Cano	true
+names_name_3012003	Castillo	true
+names_name_3012004	Castro	true
+names_name_3012005	Cruz	true
+names_name_3012006	Damiàn	true
+names_name_3012007	Daniel	true
+names_name_3012008	David	true
+names_name_3012009	de Bilbali	true
+names_name_3012010	de Magritta	true
+names_name_3012011	Diaz	true
+names_name_3012012	Diego	true
+names_name_3012013	Diez	true
+names_name_3012014	Dominguez	true
+names_name_3012015	Dylan	true
+names_name_3012016	Emiliano	true
+names_name_3012017	Emilio	true
+names_name_3012018	Emmanuel	true
+names_name_3012019	Felipe	true
+names_name_3012020	Fernandez	true
+names_name_3012021	Francisco	true
+names_name_3012022	Fuentes	true
+names_name_3012023	Gabriel	true
+names_name_3012024	Gael	true
+names_name_3012025	Garrido	true
+names_name_3012026	Gil	true
+names_name_3012027	Gomez	true
+names_name_3012028	Gonzalez	true
+names_name_3012029	Gonzalez	true
+names_name_3012030	Gutierrez	true
+names_name_3012031	Hernandez	true
+names_name_3012032	Herrero	true
+names_name_3012033	Hugo	true
+names_name_3012034	Ignacio	true
+names_name_3012035	Ignacio	true
+names_name_3012036	Iker	true
+names_name_3012037	Isaac	true
+names_name_3012038	Javier	true
+names_name_3012039	Jerónimo	true
+names_name_3012040	Jimenez	true
+names_name_3012041	Jimenez	true
+names_name_3012042	Joaquín	true
+names_name_3012043	Juan	true
+names_name_3012044	Juan	true
+names_name_3012045	Juan Diego	true
+names_name_3012046	Juan José	true
+names_name_3012047	Juan Pablo	true
+names_name_3012048	Julián	true
+names_name_3012049	Leo	true
+names_name_3012050	Leon	true
+names_name_3012051	León	true
+names_name_3012052	Leonardo	true
+names_name_3012053	Lopez	true
+names_name_3012054	Lorenzo	true
+names_name_3012055	Lucas	true
+names_name_3012056	Manuel	true
+names_name_3012057	Marin	true
+names_name_3012058	Martin	true
+names_name_3012059	Martinez	true
+names_name_3012060	Mateo	true
+names_name_3012061	Matías	true
+names_name_3012062	Mauricio	true
+names_name_3012063	Maximiliano	true
+names_name_3012064	Máximo	true
+names_name_3012065	Medina	true
+names_name_3012066	Mendez	true
+names_name_3012067	Miguel ángel	true
+names_name_3012068	Molina	true
+names_name_3012069	Moreno	true
+names_name_3012070	Munoz	true
+names_name_3012071	Nicolás	true
+names_name_3012072	Nunez	true
+names_name_3012073	Ortega	true
+names_name_3012074	Ortiz	true
+names_name_3012075	Pablo	true
+names_name_3012076	Pablo	true
+names_name_3012077	Pascual	true
+names_name_3012078	Pedro	true
+names_name_3012079	Pena	true
+names_name_3012080	Perez	true
+names_name_3012081	Prieto	true
+names_name_3012082	Ramos	true
+names_name_3012083	Rodrigo	true
+names_name_3012084	Rodriguez	true
+names_name_3012085	Romero	true
+names_name_3012086	Rubio	true
+names_name_3012087	Ruiz	true
+names_name_3012088	Samuel	true
+names_name_3012089	Sanchez	true
+names_name_3012090	Sanchez	true
+names_name_3012091	Santiago	true
+names_name_3012092	Santino	true
+names_name_3012093	Santos	true
+names_name_3012094	Sanz	true
+names_name_3012095	Sebastián	true
+names_name_3012096	Serrano	true
+names_name_3012097	Simón	true
+names_name_3012098	Thiago	true
+names_name_3012099	Tomás	true
+names_name_3012100	Torres	true
+names_name_3012101	Valentino	true
+names_name_3012102	Vazquez	true
+names_name_3012103	Vega	true
+names_name_3012104	Vicente	true
+names_name_3012105	Vicente	true
+names_name_3012106	Vidal	true
+names_name_3012261	Amelia	true
+names_name_3012262	Amelie	true
+names_name_3012263	Ann	true
+names_name_3012264	Anna	true
+names_name_3012265	Beatrice	true
+names_name_3012266	Beatrix	true
+names_name_3012267	Cat	true
+names_name_3012268	Catherine	true
+names_name_3012269	Charlee	true
+names_name_3012270	Charlotte	true
+names_name_3012271	Elle	true
+names_name_3012272	Emily	true
+names_name_3012273	Estelle	true
+names_name_3012274	Eve	true
+names_name_3012275	Evelyn	true
+names_name_3012276	Felicia	true
+names_name_3012277	Henrietta	true
+names_name_3012278	Isabella	true
+names_name_3012279	Isabelle	true
+names_name_3012280	Jacqueline	true
+names_name_3012281	Jessie	true
+names_name_3012282	Kat	true
+names_name_3012283	Katrina	true
+names_name_3012284	Lana	true
+names_name_3012285	Madeleine	true
+names_name_3012286	Margaret	true
+names_name_3012287	Mary-Anne	true
+names_name_3012288	Rose	true
+names_name_3012289	Roselyn	true
+names_name_3012290	Viola	true
+names_name_3012291	Vivian	true
+names_name_3012292	Adelasia	true
+names_name_3012293	Adriana	true
+names_name_3012294	Agnese	true
+names_name_3012295	Alessandra	true
+names_name_3012296	Alessia	true
+names_name_3012297	Allegra	true
+names_name_3012298	Amalia	true
+names_name_3012299	Angelica	true
+names_name_3012300	Anita	true
+names_name_3012301	Annalisa	true
+names_name_3012302	Antonella	true
+names_name_3012303	Antonia	true
+names_name_3012304	Antonietta	true
+names_name_3012305	Aria	true
+names_name_3012306	Aurora	true
+names_name_3012307	Barbara	true
+names_name_3012308	Beatrice	true
+names_name_3012309	Berenice	true
+names_name_3012310	Bianca	true
+names_name_3012311	Bridgetta	true
+names_name_3012312	Carlotta	true
+names_name_3012313	Catiuscia	true
+names_name_3012314	Cecilia	true
+names_name_3012315	Chiara	true
+names_name_3012316	Claudia	true
+names_name_3012317	Clelia	true
+names_name_3012318	Concetta	true
+names_name_3012319	Costanza	true
+names_name_3012320	Danila	true
+names_name_3012321	Daria	true
+names_name_3012322	Diana	true
+names_name_3012323	Diletta	true
+names_name_3012324	Donatella	true
+names_name_3012325	Donna	true
+names_name_3012326	Dora	true
+names_name_3012327	Eleanora	true
+names_name_3012328	Elena	true
+names_name_3012329	Eliana	true
+names_name_3012330	Elisa	true
+names_name_3012331	Elisabetta	true
+names_name_3012332	Elvira	true
+names_name_3012333	Emilia	true
+names_name_3012334	Emma	true
+names_name_3012335	Enrica	true
+names_name_3012336	Eugenia	true
+names_name_3012337	Eva	true
+names_name_3012338	Evelina	true
+names_name_3012339	Fabia	true
+names_name_3012340	Fabrizia	true
+names_name_3012341	Federica	true
+names_name_3012342	Fernanda	true
+names_name_3012343	Fiammetta	true
+names_name_3012344	Filippa	true
+names_name_3012345	Fiorella	true
+names_name_3012346	Fiorenza	true
+names_name_3012347	Flavia	true
+names_name_3012348	Fortunata	true
+names_name_3012349	Franca	true
+names_name_3012350	Francesca	true
+names_name_3012351	Gelsomina	true
+names_name_3012352	Gemma	true
+names_name_3012353	Gessica	true
+names_name_3012354	Giada	true
+names_name_3012355	Gianna	true
+names_name_3012356	Gigliola	true
+names_name_3012357	Giorgia	true
+names_name_3012358	Giovanna	true
+names_name_3012359	Gisela	true
+names_name_3012360	Giulia	true
+names_name_3012361	Giuliana	true
+names_name_3012362	Gloria	true
+names_name_3012363	Graziella	true
+names_name_3012364	Griselda	true
+names_name_3012365	Ida	true
+names_name_3012366	Ilaria	true
+names_name_3012367	Imelda	true
+names_name_3012368	Iolanda	true
+names_name_3012369	Ippolita	true
+names_name_3012370	Irene	true
+names_name_3012371	Irma	true
+names_name_3012372	Isa	true
+names_name_3012373	Isabella	true
+names_name_3012374	Jolanda	true
+names_name_3012375	Lara	true
+names_name_3012376	Larissa	true
+names_name_3012377	Laura	true
+names_name_3012378	Letizia	true
+names_name_3012379	Licia	true
+names_name_3012380	Lidia	true
+names_name_3012381	Liliana	true
+names_name_3012382	Lilla	true
+names_name_3012383	Lisa	true
+names_name_3012384	Livia	true
+names_name_3012385	Lolita	true
+names_name_3012386	Loredana	true
+names_name_3012387	Lorena	true
+names_name_3012388	Lucia	true
+names_name_3012389	Luciana	true
+names_name_3012390	Ludovica	true
+names_name_3012391	Luisa	true
+names_name_3012392	Manila	true
+names_name_3012393	Marcella	true
+names_name_3012394	Margherita	true
+names_name_3012395	Mariana	true
+names_name_3012396	Marisa	true
+names_name_3012397	Marta	true
+names_name_3012398	Martina	true
+names_name_3012399	Matilda	true
+names_name_3012400	Maura	true
+names_name_3012401	Melania	true
+names_name_3012402	Melina	true
+names_name_3012403	Melissa	true
+names_name_3012404	Michela	true
+names_name_3012405	Milena	true
+names_name_3012406	Monica	true
+names_name_3012407	Morena	true
+names_name_3012408	Nadia	true
+names_name_3012409	Natalia	true
+names_name_3012410	Nedda	true
+names_name_3012411	Nicoletta	true
+names_name_3012412	Olga	true
+names_name_3012413	Ornella	true
+names_name_3012414	Ottavia	true
+names_name_3012415	Paloma	true
+names_name_3012416	Paola	true
+names_name_3012417	Patrizia	true
+names_name_3012418	Raffaella	true
+names_name_3012419	Ramona	true
+names_name_3012420	Regina	true
+names_name_3012421	Renata	true
+names_name_3012422	Rita	true
+names_name_3012423	Roberta	true
+names_name_3012424	Romana	true
+names_name_3012425	Romilda	true
+names_name_3012426	Romina	true
+names_name_3012427	Rosa	true
+names_name_3012428	Rosalia	true
+names_name_3012429	Rosina	true
+names_name_3012430	Rossana	true
+names_name_3012431	Rossella	true
+names_name_3012432	Serafina	true
+names_name_3012433	Serena	true
+names_name_3012434	Sibilla	true
+names_name_3012435	Silvia	true
+names_name_3012436	Simonetta	true
+names_name_3012437	Sonia	true
+names_name_3012438	Sofia	true
+names_name_3012439	Stefania	true
+names_name_3012440	Stella	true
+names_name_3012441	Susanna	true
+names_name_3012442	Sylvia	true
+names_name_3012443	Tatiana	true
+names_name_3012444	Teresa	true
+names_name_3012445	Tiziana	true
+names_name_3012446	Tonia	true
+names_name_3012447	Valentina	true
+names_name_3012448	Valeria	true
+names_name_3012449	Vanessa	true
+names_name_3012450	Verona	true
+names_name_3012451	Veronica	true
+names_name_3012452	Vincenza	true
+names_name_3012453	Virginia	true
+names_name_3012454	Viridiana	true
+names_name_3012455	Vittoria	true
+names_name_3012456	Adriana	true
+names_name_3012457	Aida	true
+names_name_3012458	Aldea	true
+names_name_3012459	Alejandra	true
+names_name_3012460	Alicia	true
+names_name_3012461	Alma	true
+names_name_3012462	Almudena	true
+names_name_3012463	Amalia	true
+names_name_3012464	Amaya	true
+names_name_3012465	Amparo	true
+names_name_3012466	Ana	true
+names_name_3012467	Anabel	true
+names_name_3012468	Andrea	true
+names_name_3012469	Anita	true
+names_name_3012470	Antonella	true
+names_name_3012471	Antonia	true
+names_name_3012472	Araceli	true
+names_name_3012473	Aurora	true
+names_name_3012474	Beatriz	true
+names_name_3012475	Bianca	true
+names_name_3012476	Blanca	true
+names_name_3012477	Bonita	true
+names_name_3012478	Cari	true
+names_name_3012479	Carlota	true
+names_name_3012480	Celia	true
+names_name_3012481	Chara	true
+names_name_3012482	Claudia	true
+names_name_3012483	Consuelo	true
+names_name_3012484	Cynthia	true
+names_name_3012485	Delia	true
+names_name_3012486	Diana	true
+names_name_3012487	Dolores	true
+names_name_3012488	Dora	true
+names_name_3012489	Elena	true
+names_name_3012490	Eliana	true
+names_name_3012491	Elisa	true
+names_name_3012492	Elvira	true
+names_name_3012493	Erika	true
+names_name_3012494	Esmeralda	true
+names_name_3012495	Esperanza	true
+names_name_3012496	Ester	true
+names_name_3012497	Eugenia	true
+names_name_3012498	Eva	true
+names_name_3012499	Fatima	true
+names_name_3012500	Fernanda	true
+names_name_3012501	Fiorella	true
+names_name_3012502	Flavia	true
+names_name_3012503	Gabriela	true
+names_name_3012504	Garbiñe	true
+names_name_3012505	Gisela	true
+names_name_3012506	Gloria	true
+names_name_3012507	Guiomar	true
+names_name_3012508	Helena	true
+names_name_3012509	Hilda	true
+names_name_3012510	Ignacia	true
+names_name_3012511	Ileana	true
+names_name_3012512	Ilona	true
+names_name_3012513	Imelda	true
+names_name_3012514	Ines	true
+names_name_3012515	Inez	true
+names_name_3012516	Irene	true
+names_name_3012517	Iris	true
+names_name_3012518	Isa	true
+names_name_3012519	Isabel	true
+names_name_3012520	Isidora	true
+names_name_3012521	Ivette	true
+names_name_3012522	Ivonne	true
+names_name_3012523	Jacin	true
+names_name_3012524	Javiera	true
+names_name_3012525	Josefa	true
+names_name_3012526	Juana	true
+names_name_3012527	Julia	true
+names_name_3012528	Julieta	true
+names_name_3012529	Laia	true
+names_name_3012530	Lana	true
+names_name_3012531	Lara	true
+names_name_3012532	Larissa	true
+names_name_3012533	Laura	true
+names_name_3012534	Lena	true
+names_name_3012535	Lidia	true
+names_name_3012536	Liliana	true
+names_name_3012537	Lolita	true
+names_name_3012538	Lorena	true
+names_name_3012539	Lucia	true
+names_name_3012540	Luciana	true
+names_name_3012541	Luisa	true
+names_name_3012542	Lupe	true
+names_name_3012543	Luz	true
+names_name_3012544	Magdalena	true
+names_name_3012545	Manuela	true
+names_name_3012546	Marcela	true
+names_name_3012547	Margarita	true
+names_name_3012548	Mariana	true
+names_name_3012549	Mariela	true
+names_name_3012550	Marisa	true
+names_name_3012551	Marisela	true
+names_name_3012552	Marisol	true
+names_name_3012553	Marta	true
+names_name_3012554	Maru	true
+names_name_3012555	Maruja	true
+names_name_3012556	Maura	true
+names_name_3012557	Maya	true
+names_name_3012558	Melania	true
+names_name_3012559	Mercedes	true
+names_name_3012560	Merilyn	true
+names_name_3012561	Milagros	true
+names_name_3012562	Milena	true
+names_name_3012563	Millaray	true
+names_name_3012564	Mirta	true
+names_name_3012565	Morena	true
+names_name_3012566	Nadia	true
+names_name_3012567	Natalia	true
+names_name_3012568	Nazaret	true
+names_name_3012569	Nena	true
+names_name_3012570	Noelia	true
+names_name_3012571	Núria	true
+names_name_3012572	Olga	true
+names_name_3012573	Paloma	true
+names_name_3012574	Paula	true
+names_name_3012575	Pilar	true
+names_name_3012576	Ramona	true
+names_name_3012577	Raquel	true
+names_name_3012578	Rita	true
+names_name_3012579	Rosa	true
+names_name_3012580	Rosalia	true
+names_name_3012581	Selva	true
+names_name_3012582	Silvia	true
+names_name_3012583	Simone	true
+names_name_3012584	Soledad	true
+names_name_3012585	Sonia	true
+names_name_3012586	Sophia	true
+names_name_3012587	Soraya	true
+names_name_3012588	Tamara	true
+names_name_3012589	Teresa	true
+names_name_3012590	Tomasa	true
+names_name_3012591	Tona	true
+names_name_3012592	Tonia	true
+names_name_3012593	Urraca	true
+names_name_3012594	Valeria	true
+names_name_3012595	Veronica	true
+names_name_3012596	Vilma	true
+names_name_3012597	Viola	true
+names_name_3012598	Violeta	true
+names_name_3012599	Virginia	true
+names_name_3012600	Viridiana	true
+names_name_3012601	Xenia	true
+names_name_3012602	Xiomara	true
+names_name_3012603	Xóchitl	true
+names_name_3012604	Yanet	true
+names_name_3012605	Yazmin	true
+names_name_3012606	Yuliana	true
+names_name_3012607	Zulema	true
+names_name_3012608	Merilyn Alfero	true
+names_name_3012609	Aldea Albero	true
+names_name_3012610	Katrina León	true
+names_name_3012611	Amalia Belladonna	true
+names_name_3012612	Isa Gronchi	true
+names_name_3012613	Millaray Garrioso	true
+names_name_3012614	Angelica Jimenez	true
+names_name_3012615	Griselda Rosa	true
+names_name_3012616	Mary-Anne Rocchi	true
+names_name_3012617	Lena Orsini	true
+names_name_3012618	Adriana Medina	true
+names_name_3012619	Olga Ferrum	true
+names_name_3012620	Julieta Aconncia	true
+names_name_3012621	Vittoria Ortiz	true
+names_name_3012622	Claudia Portoanez	true
+names_name_3012623	Cynthia Rodriguez	true
+names_name_3012624	Rosalia Diez	true
+names_name_3012625	Selva Vega	true
+names_name_3012626	Fabia Ganza	true
+names_name_3012627	Barbara Landini	true
+names_name_3012628	Eliana Marconi	true
+names_name_3012629	Irene Pesce	true
+names_name_3012630	Consuelo Bandoni	true
+names_name_3012631	Margarita Sapenti	true
+names_name_3012632	Celia Gutierrez	true
+names_name_3012633	Bianca Conti	true
+names_name_3012634	Teresa Vidal	true
+names_name_3012635	Ines Ramos	true
+names_name_3012636	Roberta Torres	true
+names_name_3012637	Nicoletta Alvarez	true
+names_name_3012638	Alessia Molina	true
+names_name_3012639	Simone Drago	true
+names_name_3012640	Loredana Monti	true
+names_name_3012641	Liliana Salvay	true
+names_name_3012642	Melissa Rotolo	true
+names_name_3012643	Vilma Nannini	true
+names_name_3012644	Liliana Blanco	true
+names_name_3012645	Giovanna Sanchez	true
+names_name_3012646	Sofia Buffone	true
+names_name_3012647	Maura de Magritta	true
+names_name_3012648	Ramona Abatangelo	true
+names_name_3012649	Manuela Alonso	true
+names_name_3012650	Chara Castillo	true
+names_name_3012651	Tiziana Bertolini	true
+names_name_3012652	Isabella Ortega	true
+names_name_3012653	Mirta Abandonato	true
+names_name_3012654	Ludovica Mendez	true
+names_name_3012655	Gigliola Gomez	true
+names_name_3012656	Elena Gonzalez	true
+names_name_3012657	Virginia Poletti	true

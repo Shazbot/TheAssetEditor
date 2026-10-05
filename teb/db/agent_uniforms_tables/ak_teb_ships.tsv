@@ -1,0 +1,6 @@
+uniform_name	filename	battle_filename	campaign_porthole_filename	campaign_politician_filename	campaign_override_skeleton
+#agent_uniforms_tables;10;db/agent_uniforms_tables/ak_teb_ships					
+teb_ship_unique_teb_borgio	teb_ship_unique_teb_borgio		teb_ship_unique_teb_borgio		
+teb_ship_unique_teb_lorenzo_lupo	teb_ship_unique_teb_lorenzo_lupo		teb_ship_unique_teb_lorenzo_lupo		
+teb_ship_generic_lord	teb_ship_generic_lord		teb_ship_generic_lord		
+teb_ship_generic_hero	teb_ship_generic_hero		teb_ship_generic_hero		

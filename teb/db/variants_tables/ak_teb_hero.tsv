@@ -1,0 +1,26 @@
+variant_name	tech_folder	variant_filename	low_poly_filename	mount_scale	scale	scale_variation	super_low_poly_filename
+#variants_tables;6;db/variants_tables/ak_teb_hero							
+teb_captain_01		teb_captain_01		1.0000	1.1500	0.0500	
+teb_captain_02		teb_captain_02		1.0000	1.1500	0.0500	
+teb_captain_03		teb_captain_03		1.0000	1.1500	0.0500	
+teb_captain_04		teb_captain_04		1.0000	1.1500	0.0500	
+teb_duellist_hero		teb_duellist_hero		1.0000	1.1500	0.0500	
+teb_duellist_hero_horse		teb_duellist_hero_horse		1.0000	1.1500	0.0500	
+teb_duellist_hero_01		teb_duellist_hero_01		1.0000	1.1500	0.0500	
+teb_duellist_hero_02		teb_duellist_hero_02		1.0000	1.1500	0.0500	
+teb_duellist_hero_03		teb_duellist_hero_03		1.0000	1.1500	0.0500	
+teb_duellist_hero_horse_01		teb_duellist_hero_horse_01		1.0000	1.1500	0.0500	
+teb_duellist_hero_horse_02		teb_duellist_hero_horse_02		1.0000	1.1500	0.0500	
+teb_duellist_hero_horse_03		teb_duellist_hero_horse_03		1.0000	1.1500	0.0500	
+teb_duellist_hero_encarmine_01		teb_duellist_hero_encarmine_01		1.0000	1.1500	0.0500	
+teb_duellist_hero_encarmine_02		teb_duellist_hero_encarmine_02		1.0000	1.1500	0.0500	
+teb_duellist_hero_encarmine_03		teb_duellist_hero_encarmine_03		1.0000	1.1500	0.0500	
+teb_priestess		teb_priestess		1.0000	1.1000	0.0500	
+teb_priestess_01		teb_priestess_01		1.0000	1.1000	0.0500	
+teb_priestess_02		teb_priestess_02		1.0000	1.1000	0.0500	
+teb_priestess_03		teb_priestess_03		1.0000	1.1000	0.0500	
+teb_merc_captain		teb_merc_captain		1.0000	1.1500	0.0500	
+teb_merc_captain_01		teb_merc_captain_01		1.0000	1.1500	0.0500	
+teb_merc_captain_02		teb_merc_captain_02		1.0000	1.1500	0.0500	
+teb_merc_captain_03		teb_merc_captain_03		1.0000	1.1500	0.0500	
+teb_merc_captain_04		teb_merc_captain_04		1.0000	1.1500	0.0500	

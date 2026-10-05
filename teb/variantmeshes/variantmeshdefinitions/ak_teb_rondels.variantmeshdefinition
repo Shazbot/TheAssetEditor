@@ -1,0 +1,9 @@
+<VARIANT_MESH>
+
+	<SLOT name="rondels" >
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/torso/ak_teb_rondels_left.rigid_model_v2" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/torso/ak_teb_rondels_right_brass.rigid_model_v2" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/torso/ak_teb_rondels_star_couple.rigid_model_v2" />
+        <VARIANT_MESH model="VariantMeshes/wh_variantmodels/hu1/emp/emp_state_troops/torso/ak_teb_rondels_star_couple_bis.rigid_model_v2" />
+	</SLOT>
+</VARIANT_MESH>

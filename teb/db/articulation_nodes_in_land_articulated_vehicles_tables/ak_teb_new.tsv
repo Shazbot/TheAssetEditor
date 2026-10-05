@@ -1,0 +1,5 @@
+land_unit_articulated_vehicle	index	max_angle	offset	radius	secondary_entity_index	docking_offset	pivot_0_target_offset	pivot_1_target_offset	pivot_2_target_offset
+#articulation_nodes_in_land_articulated_vehicles_tables;3;db/articulation_nodes_in_land_articulated_vehicles_tables/ak_teb_new									
+wh_main_emp_galloper_gun	0	60.0000	0.8000	1.2500	-1	0.0000	0	0	0
+wh_main_emp_galloper_gun	1	60.0000	2.7000	0.2500	-1	0.0000	0	0	0
+wh_main_emp_galloper_gun	2	60.0000	5.0000	1.5000	-1	0.0000	0	0	0

@@ -1,0 +1,6 @@
+effect	icon	priority	icon_negative	category	is_positive_value_good
+#effects_tables;0;db/effects_tables/ak_teb_missions					
+teb_eldaddio_req_01_dummyreward	general_ability.png	1	general_ability.png	campaign	true
+teb_eldaddio_req_02_dummyreward	general_ability.png	1	general_ability.png	campaign	true
+teb_eldaddio_req_03_dummyreward	general_ability.png	1	general_ability.png	campaign	true
+teb_eldaddio_req_03_dummyreward_money	treasury.png	1	treasury.png	campaign	true

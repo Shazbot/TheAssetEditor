@@ -1,0 +1,9 @@
+<model version="1">
+	<geometry>projectiles\teb_crossbow_rocket.rigid_model_v2</geometry>
+		<materials>
+			<material lod_index="0" part_index="0">projectiles/materials/teb_crossbow_rocket_bolt.xml.material</material>
+			<material lod_index="0" part_index="1">projectiles/materials/teb_crossbow_rocket_rocket.xml.material</material>
+			<material lod_index="1" part_index="0">projectiles/materials/teb_crossbow_rocket_bolt.xml.material</material>
+			<material lod_index="1" part_index="1">projectiles/materials/teb_crossbow_rocket_rocket.xml.material</material>
+	</materials>
+</model>

@@ -1,0 +1,11 @@
+choice_key	dilemma_key	incident_key
+#cdir_events_dilemma_incidents_tables;0;db/cdir_events_dilemma_incidents_tables/ak_teb_dilemmas		
+FIRST	teb_dilemma_recipe	teb_dilemma_recipe
+SECOND	teb_dilemma_recipe	teb_dilemma_recipe
+THIRD	teb_dilemma_recipe	teb_dilemma_recipe
+FOURTH	teb_dilemma_recipe	teb_dilemma_recipe
+FIRST	teb_dilemma_hedge	teb_dilemma_hedge_no
+SECOND	teb_dilemma_hedge	teb_dilemma_hedge_yes
+FIRST	teb_dilemma_darkmaiden	teb_dilemma_darkmaiden_censor
+SECOND	teb_dilemma_darkmaiden	teb_dilemma_darkmaiden_ok
+THIRD	teb_dilemma_darkmaiden	teb_dilemma_darkmaiden_ignore

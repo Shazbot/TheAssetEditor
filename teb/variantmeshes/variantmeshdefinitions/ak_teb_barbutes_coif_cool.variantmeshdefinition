@@ -1,0 +1,11 @@
+<VARIANT_MESH>
+	<SLOT name="head" >
+		<VARIANT_MESH_REFERENCE definition="VariantMeshes\VariantMeshDefinitions\AK_teb_barbutes_cool.variantmeshdefinition" />
+	</SLOT>
+	<SLOT name="coif" >
+        <VARIANT_MESH model="variantmeshes\wh_variantmodels\hu1\teb\barbutes\ak_teb_barbute_coif.rigid_model_v2" />
+	</SLOT>
+</VARIANT_MESH>
+
+
+===this goes well with demigryph knight and greatsword chests, except 01

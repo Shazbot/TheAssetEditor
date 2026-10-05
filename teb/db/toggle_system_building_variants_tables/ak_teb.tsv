@@ -1,0 +1,10 @@
+base_battlefield_building	culture	prefab_path	settlement_gun_type	survival_gun_type	settlement_construction_delay	settlement_dismantle_delay	survival_construction_delay	survival_dismantle_delay
+#toggle_system_building_variants_tables;2;db/toggle_system_building_variants_tables/ak_teb								
+blk_ksl_tower_30m_01	mixer_teb_southern_realms	prefabs\emp_toggle_tower_01.bmd	wh3_settlement_tower_emp_bullet	wh3_survival_tower_emp_bullet	90.0000	45.0000	30.0000	30.0000
+blk_ksl_tower_30m_02	mixer_teb_southern_realms	prefabs\emp_toggle_tower_02.bmd	wh3_settlement_tower_emp_bullet_improved	wh3_survival_tower_emp_bullet_improved	90.0000	45.0000	30.0000	30.0000
+blk_ksl_tower_30m_03	mixer_teb_southern_realms	prefabs\emp_toggle_tower_03.bmd	wh3_settlement_tower_emp_cannon_ball	wh3_survival_tower_emp_cannon_ball	90.0000	45.0000	30.0000	30.0000
+blk_ksl_tower_30m_04	mixer_teb_southern_realms	prefabs\emp_toggle_tower_04.bmd	wh3_settlement_tower_emp_clockwork_bomb	wh3_survival_tower_emp_clockwork_bomb	90.0000	45.0000	30.0000	30.0000
+glb_barricade_01	mixer_teb_southern_realms	prefabs\emp_barricade_01.bmd			30.0000	15.0000	30.0000	15.0000
+glb_barricade_ice_block_01	mixer_teb_southern_realms	prefabs\emp_blocker_01.bmd			30.0000	15.0000	30.0000	15.0000
+glb_barricade_monument_01	mixer_teb_southern_realms	prefabs\emp_monument_ammo.bmd			30.0000	15.0000	30.0000	15.0000
+glb_barricade_traps_01	mixer_teb_southern_realms	prefabs\emp_trap_01.bmd			30.0000	15.0000	30.0000	15.0000

@@ -1,0 +1,57 @@
+variant_name	tech_folder	variant_filename	low_poly_filename	mount_scale	scale	scale_variation	super_low_poly_filename
+#variants_tables;6;db/variants_tables/ak_teb							
+teb_pavisiers		teb_pavisiers	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_montante_greatswords		teb_montante_greatswords	hu1\emp\low_poly\emp_greatswords_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_republican_guard		teb_republican_guard	hu1\emp\low_poly\emp_state_troops_halberdiers_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_pikemen		teb_pikemen	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_pikemen_estalia		teb_pikemen_estalia	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_artillery_crew		teb_artillery_crew	hu1/emp/low_poly/emp_artillery_crew	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_sartosan_pirates		teb_sartosan_pirates	hu1\emp\emp_free_company\low_poly\emp_free_company_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_broken_lances		teb_broken_lances	hu1/emp/low_poly/emp_reiksguard_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_encarmine		teb_encarmine	hu1/emp/low_poly/emp_reiksguard_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_carabiniers		teb_carabiniers	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_noble_retinue		teb_noble_retinue	hu1/emp/low_poly/emp_reiksguard_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_conqui_royal_guard		teb_conqui_royal_guard	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_conqui_adventurers		teb_conqui_adventurers	hu1\emp\low_poly\empire_state_troops_sword_shield_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_conqui_riders		teb_conqui_riders	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_conqui_lancers		teb_conqui_lancers	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_kotrs		teb_kotrs	hu1/emp/low_poly/emp_reiksguard_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_shieldbearers		teb_shieldbearers	hu1\emp\low_poly\emp_state_troops_spear_shield_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_enforcers		teb_enforcers	hu1\brt\brt_men_at_arms\low_poly\brt_men_at_arms_archer_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_militia_archers		teb_militia_archers	hu1\emp\emp_archer\emp_archer_imposter	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_freelance_knights		teb_freelance_knights	hu1\brt\brt_grail_knights\low_poly\brt_grail_knights_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_militia_knights		teb_militia_knights	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_light_scouts		teb_light_scouts	hu1\brt\brt_men_at_arms\low_poly\brt_spearmen_at_arms_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_warhorse_encarmine		teb_warhorse_encarmine	hr1\emp\emp_warhorse_armoured\low_poly\emp_horse_armoured_lowlod	1.0000	1.0000	0.0500	
+teb_warhorse_venators		teb_warhorse_venators	hr1\emp\emp_warhorse_armoured\low_poly\emp_horse_armoured_lowlod	1.0000	1.0000	0.0500	
+teb_border_rangers		teb_border_rangers	hu1\emp\emp_archer\emp_archer_imposter	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_bwatch		teb_bwatch	hu1\emp\low_poly\emp_state_troops_halberdiers_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_swash		teb_swash	hu1\emp\emp_free_company\low_poly\emp_free_company_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_paymaster		teb_paymaster	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_paymaster_horse		teb_paymaster_horse	hr1\emp\emp_warhorse_armoured\low_poly\emp_horse_armoured_lowlod	1.0000	1.0000	0.0500	
+est_greatswords		est_greatswords	hu1\emp\low_poly\emp_greatswords_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_duellists		teb_duellists	hu1\emp\emp_free_company\low_poly\emp_free_company_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_sisters		teb_sisters	hu1\emp\low_poly\emp_greatswords_lowlod	1.0000	0.9500	0.0500	hu1\imposter\humanoid_imposter
+teb_warhorse_ducale		teb_warhorse_ducale	hr1\emp\emp_warhorse_armoured\low_poly\emp_horse_armoured_lowlod	1.0000	1.0000	0.0500	
+teb_warhorse_ducale_campaign	VariantMeshes\wh_variantmodels\hr1\emp\emp_warbeast_horse\tech	teb_warhorse_ducale	hr1\emp\emp_warhorse_armoured\low_poly\emp_horse_armoured_lowlod	1.0000	1.0000	0.0000	
+teb_xbow_cav		teb_xbow_cav	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_irrana		teb_irrana	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_half_pikes		teb_half_pikes	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_half_pikes_tilea		teb_half_pikes_tilea	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_half_pikes_estalia		teb_half_pikes_estalia	hu1\emp\low_poly\emp_state_troops_spearmen_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_militia_spearmen		teb_militia_spearmen	hu1\brt\brt_men_at_arms\low_poly\brt_spearmen_at_arms_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_militia_spearmen_tilea		teb_militia_spearmen_tilea	hu1\brt\brt_men_at_arms\low_poly\brt_spearmen_at_arms_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_militia_spearmen_estalia		teb_militia_spearmen_estalia	hu1\brt\brt_men_at_arms\low_poly\brt_spearmen_at_arms_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_billmen		teb_billmen	hu1\brt\brt_men_at_arms\low_poly\brt_men_at_arms_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_billmen_tilea		teb_billmen_tilea	hu1\brt\brt_men_at_arms\low_poly\brt_men_at_arms_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_billmen_estalia		teb_billmen_estalia	hu1\brt\brt_men_at_arms\low_poly\brt_men_at_arms_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_guard_kossars		teb_guard_kossars	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0500	0.0500	hu1\imposter\humanoid_imposter
+teb_xbowmen		teb_militia_xbowmen	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_xbowmen_tilea		teb_militia_xbowmen_tilea	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_xbowmen_estalia		teb_militia_xbowmen_estalia	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_handgunners		teb_militia_handgunners	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_handgunners_tilea		teb_militia_handgunners_tilea	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_handgunners_estalia		teb_militia_handgunners_estalia	hu1\emp\low_poly\emp_state_troops_handgunners_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_paymaster_crew		teb_paymaster_crew	hu1\emp\low_poly\emp_young_nobles_lowlod	1.0000	1.0000	0.0500	hu1\imposter\humanoid_imposter
+teb_golden_lion	VariantMeshes\wh_variantmodels\bc2\cth\cth_celestial_lion\tech	teb_golden_lion		1.0000	1.6000	0.0000	
+teb_golden_lion_mount	VariantMeshes\wh_variantmodels\bc2\cth\cth_celestial_lion\tech	teb_golden_lion_mount		1.4000	1.1500	0.0000	

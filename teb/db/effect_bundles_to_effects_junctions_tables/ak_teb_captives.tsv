@@ -1,0 +1,4 @@
+effect_bundle_key	effect_key	effect_scope	value	advancement_stage
+#effect_bundles_to_effects_junctions_tables;3;db/effect_bundles_to_effects_junctions_tables/ak_teb_captives				
+teb_captive_kill	wh_main_effect_character_stat_leadership	force_to_force_own	2.0000	start_turn_completed
+teb_captive_kill	wh_main_effect_force_all_campaign_upkeep	force_to_force_own	-5.0000	start_turn_completed
