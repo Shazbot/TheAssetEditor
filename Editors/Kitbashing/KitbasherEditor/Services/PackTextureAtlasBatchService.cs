@@ -82,6 +82,8 @@ namespace Editors.KitbasherEditor.Services
             256L * 1024 * 1024; // 256 MiB
         private const double MinimumCrossRigidSingleVmdExpectedArmyDraw = 0.02;
         private const int MaxCrossRigidJointStateCombinations = 512;
+        private const int MaxCrossRigidGeneratedLodCount = 5;
+        private const float CrossRigidLodDistanceEpsilon = 0.01f;
         private static readonly bool AtlasProfilingEnabled =
             IsEnabledEnvironmentVariable(AtlasProfilingEnvironmentVariable);
 
@@ -6683,7 +6685,7 @@ namespace Editors.KitbasherEditor.Services
                 components.Max(component =>
                     component.Rigid.LodHeaders.Length),
                 1,
-                5);
+                MaxCrossRigidGeneratedLodCount);
             var rawBoundaries =
                 new List<CrossRigidLodBoundaryCandidate>();
             foreach (var component in components)
@@ -6799,7 +6801,8 @@ namespace Editors.KitbasherEditor.Services
                 if (output.Count != 0 &&
                     Math.Abs(
                         output[^1].Distance -
-                        candidate.Distance) <= 0.01f)
+                        candidate.Distance) <=
+                    CrossRigidLodDistanceEpsilon)
                 {
                     var previous = output[^1];
                     output[^1] = previous with
@@ -6971,7 +6974,8 @@ namespace Editors.KitbasherEditor.Services
             {
                 if (distance <=
                     rigid.LodHeaders[lodIndex]
-                        .LodCameraDistance + 0.01f)
+                        .LodCameraDistance +
+                    CrossRigidLodDistanceEpsilon)
                 {
                     return lodIndex;
                 }
