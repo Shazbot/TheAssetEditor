@@ -1858,6 +1858,13 @@ namespace Editors.KitbasherEditor.Services
                             continue;
                         }
 
+                        var sourceLodCounts =
+                            distinctComponents
+                                .Select(component =>
+                                    component.Rigid.ModelList.Length)
+                                .Distinct()
+                                .OrderBy(count => count)
+                                .ToArray();
                         var sourceVersions =
                             distinctComponents
                                 .Select(component =>
@@ -1879,6 +1886,16 @@ namespace Editors.KitbasherEditor.Services
                                 state,
                                 group,
                                 cancellationToken);
+                        if (sourceLodCounts.Length > 1)
+                        {
+                            RecordCrossRigidAnalysisDiagnostic(
+                                state,
+                                "Cross-rigid source LOD counts reconciled",
+                                $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
+                                $"sourceCounts=[{string.Join(",", sourceLodCounts)}] -> " +
+                                $"generated={lodAnalyses.Count}");
+                        }
+
                         var qualityProfiles = distinctComponents
                             .Select(component =>
                                 BuildCrossRigidQualityProfile(component.Rigid))
@@ -5295,6 +5312,7 @@ namespace Editors.KitbasherEditor.Services
                         .Max();
                 var header = representative.Rigid.Header;
                 header.Version = generatedVersion;
+                header.LodCount = (uint)generatedLodCount;
                 var lodHeaderFactory =
                     LodHeaderFactory.Create();
                 var generatedRigid = new RmvFile
@@ -5411,7 +5429,7 @@ namespace Editors.KitbasherEditor.Services
             var baseline = components[0].Rigid;
             var baselineSkeleton =
                 baseline.Header.SkeletonName;
-            foreach (var component in components.Skip(1))
+            foreach (var component in components)
             {
                 var rigid = component.Rigid;
                 if (!string.Equals(
@@ -5424,16 +5442,15 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                if (rigid.ModelList.Length !=
-                        baseline.ModelList.Length ||
-                    rigid.LodHeaders.Length !=
-                        baseline.LodHeaders.Length)
+                if (rigid.ModelList.Length == 0 ||
+                    rigid.LodHeaders.Length == 0 ||
+                    rigid.ModelList.Length !=
+                        rigid.LodHeaders.Length)
                 {
                     reason =
-                        "source rigid LOD counts differ";
+                        "source rigid LOD model/header counts are inconsistent";
                     return false;
                 }
-
             }
 
             return true;
