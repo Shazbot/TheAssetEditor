@@ -3029,38 +3029,6 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
-        private static CrossRigidVmdReferenceHop[]
-            GetCrossRigidCommonReferenceChainPrefix(
-                IReadOnlyList<CrossRigidVisualInstance> instances)
-        {
-            if (instances.Count == 0)
-                return [];
-
-            var minimumLength =
-                instances.Min(instance =>
-                    instance.ReferenceChain.Length);
-            var commonLength = 0;
-            while (commonLength < minimumLength)
-            {
-                var candidate =
-                    instances[0].ReferenceChain[commonLength];
-                if (instances.Skip(1).Any(instance =>
-                        !AreCrossRigidReferenceHopsEqual(
-                            candidate,
-                            instance.ReferenceChain[commonLength])))
-                {
-                    break;
-                }
-
-                commonLength++;
-            }
-
-            return instances[0]
-                .ReferenceChain
-                .Take(commonLength)
-                .ToArray();
-        }
-
         private static bool TryGetCrossRigidRelativeXmlPath(
             string ancestorXmlPath,
             string descendantXmlPath,
@@ -26181,7 +26149,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative probability-1 structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections are anchored at the shallowest shared structural VMD parent and materialized as a bounded Cartesian slot with the same uniform product distribution; multiple source models may live inside one selected branch, while optional-slot restructuring remains excluded from the value gate.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Terminal probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution; multiple fixed source models may live inside one selected branch, while deeper varying and optional-slot restructuring remain excluded from the value gate.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
