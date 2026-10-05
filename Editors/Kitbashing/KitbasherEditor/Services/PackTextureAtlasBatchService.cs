@@ -5350,18 +5350,32 @@ namespace Editors.KitbasherEditor.Services
                      lodIndex < baseline.LodHeaders.Length;
                      lodIndex++)
                 {
-                    if (Math.Abs(
+                    var cameraDistanceDiffers =
+                        Math.Abs(
                             rigid.LodHeaders[lodIndex]
                                 .LodCameraDistance -
                             baseline.LodHeaders[lodIndex]
-                                .LodCameraDistance) > 0.01f ||
+                                .LodCameraDistance) > 0.01f;
+                    var qualityLevelDiffers =
                         rigid.LodHeaders[lodIndex].QualityLvl !=
-                        baseline.LodHeaders[lodIndex].QualityLvl)
+                        baseline.LodHeaders[lodIndex].QualityLvl;
+                    if (!cameraDistanceDiffers &&
+                        !qualityLevelDiffers)
                     {
-                        reason =
-                            $"source rigid LOD {lodIndex} thresholds/quality differ";
-                        return false;
+                        continue;
                     }
+
+                    reason = (cameraDistanceDiffers, qualityLevelDiffers) switch
+                    {
+                        (true, true) =>
+                            $"source rigid LOD {lodIndex} camera-distance thresholds and quality levels differ",
+                        (true, false) =>
+                            $"source rigid LOD {lodIndex} camera-distance thresholds differ",
+                        (false, true) =>
+                            $"source rigid LOD {lodIndex} quality levels differ",
+                        _ => string.Empty,
+                    };
+                    return false;
                 }
             }
 
