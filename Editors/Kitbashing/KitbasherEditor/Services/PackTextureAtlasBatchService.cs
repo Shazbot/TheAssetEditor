@@ -1883,15 +1883,23 @@ namespace Editors.KitbasherEditor.Services
                             .Distinct(StringComparer.Ordinal)
                             .OrderBy(profile => profile, StringComparer.Ordinal)
                             .ToArray();
-                        if (qualityProfiles.Length > 1)
+                        var distanceProfiles = distinctComponents
+                            .Select(component =>
+                                BuildCrossRigidDistanceProfile(component.Rigid))
+                            .Distinct(StringComparer.Ordinal)
+                            .OrderBy(profile => profile, StringComparer.Ordinal)
+                            .ToArray();
+                        if (qualityProfiles.Length > 1 ||
+                            distanceProfiles.Length > 1)
                         {
                             RecordCrossRigidAnalysisDiagnostic(
                                 state,
-                                "Cross-rigid mixed source LOD quality levels normalized to Asset Editor defaults",
+                                "Cross-rigid source LOD headers reconciled",
                                 $"{vmdPath} [{configuration.AttachmentIdentity}]: " +
-                                $"{string.Join(" <> ", qualityProfiles)} -> " +
-                                $"Q=[{string.Join(",", Enumerable.Range(0, distinctComponents[0].Rigid.ModelList.Length).Select(GetCrossRigidDefaultLodQualityLevel))}], " +
-                                $"D=[{string.Join(",", Enumerable.Range(0, distinctComponents[0].Rigid.ModelList.Length).Select(GetCrossRigidDefaultLodCameraDistance))}]");
+                                $"sourceQ={string.Join(" <> ", qualityProfiles)}, " +
+                                $"sourceD={string.Join(" <> ", distanceProfiles)} -> " +
+                                $"Q=[{string.Join(",", lodAnalyses.Select(lod => lod.QualityLevel))}], " +
+                                $"D=[{string.Join(",", lodAnalyses.Select(lod => lod.CameraDistance.ToString("0.###", CultureInfo.InvariantCulture)))}]");
                         }
 
                         if (lodAnalyses.Count == 0 ||
@@ -5424,23 +5432,6 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                for (var lodIndex = 0;
-                     lodIndex < baseline.LodHeaders.Length;
-                     lodIndex++)
-                {
-                    if (Math.Abs(
-                            rigid.LodHeaders[lodIndex]
-                                .LodCameraDistance -
-                            baseline.LodHeaders[lodIndex]
-                                .LodCameraDistance) <= 0.01f)
-                    {
-                        continue;
-                    }
-
-                    reason =
-                        $"source rigid LOD {lodIndex} camera-distance thresholds differ";
-                    return false;
-                }
             }
 
             return true;
@@ -6612,7 +6603,7 @@ namespace Editors.KitbasherEditor.Services
             if (components.Length == 0)
                 return [];
 
-            var lodCount = components[0].Rigid.ModelList.Length;
+            var sourceLodCount = components[0].Rigid.ModelList.Length;
             var qualityProfilesDiffer =
                 components
                     .Select(component =>
@@ -6620,56 +6611,403 @@ namespace Editors.KitbasherEditor.Services
                     .Distinct(StringComparer.Ordinal)
                     .Skip(1)
                     .Any();
-            var result = new List<CrossRigidLodAnalysis>(lodCount);
+            var distanceProfilesDiffer =
+                components
+                    .Select(component =>
+                        BuildCrossRigidDistanceProfile(component.Rigid))
+                    .Distinct(StringComparer.Ordinal)
+                    .Skip(1)
+                    .Any();
 
-            for (var lodIndex = 0;
-                 lodIndex < lodCount;
-                 lodIndex++)
+            IReadOnlyList<CrossRigidGeneratedLodScheduleEntry> schedule;
+            if (!distanceProfilesDiffer &&
+                sourceLodCount <= 5)
+            {
+                schedule = Enumerable
+                    .Range(0, sourceLodCount)
+                    .Select(lodIndex =>
+                        new CrossRigidGeneratedLodScheduleEntry(
+                            components[0].Rigid.LodHeaders[lodIndex]
+                                .LodCameraDistance,
+                            components
+                                .Select(component =>
+                                    new CrossRigidSourceLodSelection(
+                                        component.WsModelPath,
+                                        lodIndex))
+                                .ToArray()))
+                    .ToArray();
+            }
+            else
+            {
+                schedule =
+                    BuildBoundedCrossRigidUnionLodSchedule(
+                        components);
+            }
+
+            var result =
+                new List<CrossRigidLodAnalysis>(schedule.Count);
+            for (var generatedLodIndex = 0;
+                 generatedLodIndex < schedule.Count;
+                 generatedLodIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var selections = components
-                    .Select(component =>
-                        new CrossRigidSourceLodSelection(
-                            component.WsModelPath,
-                            lodIndex))
-                    .ToArray();
-
+                var scheduleEntry = schedule[generatedLodIndex];
                 var qualityLevel = qualityProfilesDiffer
-                    ? GetCrossRigidDefaultLodQualityLevel(lodIndex)
-                    : components[0].Rigid.LodHeaders[lodIndex].QualityLvl;
-                var cameraDistance = qualityProfilesDiffer
-                    ? GetCrossRigidDefaultLodCameraDistance(lodIndex)
-                    : components[0].Rigid.LodHeaders[lodIndex]
-                        .LodCameraDistance;
+                    ? GetCrossRigidDefaultLodQualityLevel(
+                        generatedLodIndex)
+                    : GetCrossRigidReconciledLodQualityLevel(
+                        components,
+                        scheduleEntry.SourceLodSelections,
+                        generatedLodIndex);
 
                 result.Add(
                     AnalyzeCrossRigidLodState(
                         state,
                         instances,
-                        lodIndex,
-                        lodIndex,
+                        generatedLodIndex,
+                        generatedLodIndex,
                         qualityLevel,
-                        cameraDistance,
-                        selections,
+                        scheduleEntry.CameraDistance,
+                        scheduleEntry.SourceLodSelections,
                         isScenarioRepresentativeState: true));
             }
 
             return result;
         }
 
+        private static IReadOnlyList<CrossRigidGeneratedLodScheduleEntry>
+            BuildBoundedCrossRigidUnionLodSchedule(
+                IReadOnlyList<CrossRigidAnalysisComponent> components)
+        {
+            var targetLodCount = Math.Clamp(
+                components.Max(component =>
+                    component.Rigid.LodHeaders.Length),
+                1,
+                5);
+            var rawBoundaries =
+                new List<CrossRigidLodBoundaryCandidate>();
+            foreach (var component in components)
+            {
+                for (var lodIndex = 0;
+                     lodIndex < component.Rigid.LodHeaders.Length;
+                     lodIndex++)
+                {
+                    var distance =
+                        component.Rigid.LodHeaders[lodIndex]
+                            .LodCameraDistance;
+                    if (!float.IsFinite(distance) ||
+                        distance <= 0)
+                    {
+                        continue;
+                    }
+
+                    rawBoundaries.Add(
+                        new CrossRigidLodBoundaryCandidate(
+                            distance,
+                            GetCrossRigidLodTransitionWeight(
+                                component,
+                                lodIndex)));
+                }
+            }
+
+            var unionBoundaries =
+                MergeCrossRigidLodBoundaryCandidates(
+                    rawBoundaries);
+            if (unionBoundaries.Count == 0)
+            {
+                return Enumerable
+                    .Range(0, targetLodCount)
+                    .Select(lodIndex =>
+                        new CrossRigidGeneratedLodScheduleEntry(
+                            lodIndex switch
+                            {
+                                0 => 20.0f,
+                                1 => 80.0f,
+                                2 => 100.0f,
+                                _ => 10000.0f,
+                            },
+                            components
+                                .Select(component =>
+                                    new CrossRigidSourceLodSelection(
+                                        component.WsModelPath,
+                                        Math.Min(
+                                            lodIndex,
+                                            component.Rigid.ModelList.Length -
+                                            1)))
+                                .ToArray()))
+                    .ToArray();
+            }
+
+            var selectedBoundaries =
+                SelectBoundedCrossRigidLodBoundaries(
+                    unionBoundaries,
+                    Math.Min(
+                        targetLodCount,
+                        unionBoundaries.Count));
+            var schedule =
+                new List<CrossRigidGeneratedLodScheduleEntry>(
+                    selectedBoundaries.Count);
+            var previousDistance = 0.0f;
+            foreach (var boundary in selectedBoundaries)
+            {
+                var sampleDistance =
+                    previousDistance +
+                    ((boundary.Distance - previousDistance) * 0.5f);
+                var selections = components
+                    .Select(component =>
+                    {
+                        var sourceLodIndex =
+                            FindCrossRigidSourceLodAtDistance(
+                                component.Rigid,
+                                sampleDistance);
+                        return sourceLodIndex >= 0
+                            ? new CrossRigidSourceLodSelection(
+                                component.WsModelPath,
+                                sourceLodIndex)
+                            : null;
+                    })
+                    .Where(selection => selection != null)
+                    .Cast<CrossRigidSourceLodSelection>()
+                    .OrderBy(
+                        selection => selection.WsModelPath,
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                if (selections.Length != 0)
+                {
+                    schedule.Add(
+                        new CrossRigidGeneratedLodScheduleEntry(
+                            boundary.Distance,
+                            selections));
+                }
+
+                previousDistance = boundary.Distance;
+            }
+
+            return schedule;
+        }
+
+        private static List<CrossRigidLodBoundaryCandidate>
+            MergeCrossRigidLodBoundaryCandidates(
+                IReadOnlyList<CrossRigidLodBoundaryCandidate> candidates)
+        {
+            var output =
+                new List<CrossRigidLodBoundaryCandidate>();
+            foreach (var candidate in candidates
+                         .OrderBy(candidate => candidate.Distance))
+            {
+                if (output.Count != 0 &&
+                    Math.Abs(
+                        output[^1].Distance -
+                        candidate.Distance) <= 0.01f)
+                {
+                    var previous = output[^1];
+                    output[^1] = previous with
+                    {
+                        Distance = Math.Max(
+                            previous.Distance,
+                            candidate.Distance),
+                        Weight =
+                            previous.Weight +
+                            candidate.Weight,
+                    };
+                    continue;
+                }
+
+                output.Add(candidate);
+            }
+
+            return output;
+        }
+
+        private static IReadOnlyList<CrossRigidLodBoundaryCandidate>
+            SelectBoundedCrossRigidLodBoundaries(
+                IReadOnlyList<CrossRigidLodBoundaryCandidate> candidates,
+                int targetCount)
+        {
+            if (targetCount <= 0 ||
+                candidates.Count == 0)
+            {
+                return [];
+            }
+
+            if (candidates.Count <= targetCount)
+                return candidates.ToArray();
+
+            if (targetCount == 1)
+                return [candidates[^1]];
+
+            var finalBoundary = candidates[^1];
+            var pool = candidates
+                .Take(candidates.Count - 1)
+                .ToArray();
+            var preFinalTargetCount = targetCount - 1;
+            if (pool.Length <= preFinalTargetCount)
+            {
+                return pool
+                    .Append(finalBoundary)
+                    .ToArray();
+            }
+
+            var selected =
+                new HashSet<int>();
+            var totalWeight = pool.Sum(candidate =>
+                Math.Max(1.0, candidate.Weight));
+            if (totalWeight > 0)
+            {
+                var cumulativeCenters =
+                    new double[pool.Length];
+                double cumulativeWeight = 0;
+                for (var index = 0;
+                     index < pool.Length;
+                     index++)
+                {
+                    var weight =
+                        Math.Max(1.0, pool[index].Weight);
+                    cumulativeCenters[index] =
+                        cumulativeWeight +
+                        (weight * 0.5);
+                    cumulativeWeight += weight;
+                }
+
+                for (var slot = 0;
+                     slot < preFinalTargetCount;
+                     slot++)
+                {
+                    var targetWeight =
+                        totalWeight *
+                        ((slot + 0.5) /
+                         preFinalTargetCount);
+                    var bestIndex = Enumerable
+                        .Range(0, pool.Length)
+                        .Where(index =>
+                            !selected.Contains(index))
+                        .OrderBy(index =>
+                            Math.Abs(
+                                cumulativeCenters[index] -
+                                targetWeight))
+                        .ThenByDescending(index =>
+                            pool[index].Weight)
+                        .ThenBy(index =>
+                            pool[index].Distance)
+                        .First();
+                    selected.Add(bestIndex);
+                }
+            }
+
+            if (selected.Count <
+                preFinalTargetCount)
+            {
+                foreach (var index in Enumerable
+                             .Range(0, pool.Length)
+                             .Where(index =>
+                                 !selected.Contains(index))
+                             .OrderByDescending(index =>
+                                 pool[index].Weight)
+                             .ThenBy(index =>
+                                 pool[index].Distance))
+                {
+                    selected.Add(index);
+                    if (selected.Count ==
+                        preFinalTargetCount)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return selected
+                .Select(index => pool[index])
+                .Append(finalBoundary)
+                .OrderBy(candidate => candidate.Distance)
+                .ToArray();
+        }
+
+        private static double GetCrossRigidLodTransitionWeight(
+            CrossRigidAnalysisComponent component,
+            int lodIndex)
+        {
+            var currentWeight =
+                GetCrossRigidLodGeometryWeight(
+                    component.Rigid,
+                    lodIndex);
+            if (lodIndex + 1 >=
+                component.Rigid.ModelList.Length)
+            {
+                return Math.Max(1.0, currentWeight);
+            }
+
+            var nextWeight =
+                GetCrossRigidLodGeometryWeight(
+                    component.Rigid,
+                    lodIndex + 1);
+            return Math.Max(
+                1.0,
+                Math.Max(currentWeight, nextWeight));
+        }
+
+        private static long GetCrossRigidLodGeometryWeight(
+            RmvFile rigid,
+            int lodIndex)
+        {
+            if (lodIndex < 0 ||
+                lodIndex >= rigid.ModelList.Length)
+            {
+                return 0;
+            }
+
+            return rigid.ModelList[lodIndex].Sum(model =>
+                (long)model.Mesh.VertexList.Length +
+                (model.Mesh.IndexList.Length / 3L));
+        }
+
+        private static int FindCrossRigidSourceLodAtDistance(
+            RmvFile rigid,
+            float distance)
+        {
+            for (var lodIndex = 0;
+                 lodIndex < rigid.LodHeaders.Length;
+                 lodIndex++)
+            {
+                if (distance <=
+                    rigid.LodHeaders[lodIndex]
+                        .LodCameraDistance + 0.01f)
+                {
+                    return lodIndex;
+                }
+            }
+
+            return -1;
+        }
+
+        private static byte GetCrossRigidReconciledLodQualityLevel(
+            IReadOnlyList<CrossRigidAnalysisComponent> components,
+            IReadOnlyList<CrossRigidSourceLodSelection> selections,
+            int generatedLodIndex)
+        {
+            var qualityLevels = selections
+                .Select(selection =>
+                {
+                    var component = components.First(item =>
+                        item.WsModelPath.Equals(
+                            selection.WsModelPath,
+                            StringComparison.OrdinalIgnoreCase));
+                    return component.Rigid.LodHeaders[
+                        selection.SourceLodIndex].QualityLvl;
+                })
+                .ToArray();
+            if (qualityLevels.Length == 0)
+            {
+                return GetCrossRigidDefaultLodQualityLevel(
+                    generatedLodIndex);
+            }
+
+            return qualityLevels.Max();
+        }
+
         private static byte GetCrossRigidDefaultLodQualityLevel(
             int lodIndex)
             => lodIndex == 0 ? (byte)2 : (byte)0;
-
-        private static float GetCrossRigidDefaultLodCameraDistance(
-            int lodIndex)
-            => lodIndex switch
-            {
-                0 => 20.0f,
-                1 => 80.0f,
-                2 => 100.0f,
-                _ => 10000.0f,
-            };
 
         private static CrossRigidLodAnalysis AnalyzeCrossRigidLodState(
             BatchState state,
@@ -7092,6 +7430,14 @@ namespace Editors.KitbasherEditor.Services
                 rigid.LodHeaders.Select(header =>
                     Convert.ToString(
                         header.QualityLvl,
+                        CultureInfo.InvariantCulture)))}]";
+
+        private static string BuildCrossRigidDistanceProfile(RmvFile rigid)
+            => $"D=[{string.Join(
+                ",",
+                rigid.LodHeaders.Select(header =>
+                    header.LodCameraDistance.ToString(
+                        "0.###",
                         CultureInfo.InvariantCulture)))}]";
 
         private static string BuildCrossRigidFullLodProfile(RmvFile rigid)
@@ -25438,7 +25784,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Generated-geometry residency uses a conservative upper-bound union of attachment-local rewrite probabilities; displaced-source credit is a strict lower bound.");
                 sb.AppendLine(
-                    "When otherwise-compatible source rigids have mixed LOD quality profiles, the generated cross-rigid asset uses Asset Editor's normal LOD-generator defaults instead of emitting duplicate quality fallback states: LOD0 uses quality level 2, later LODs use quality level 0, and camera distances are 20, 80, 100, then 10000.");
+                    "Cross-rigid LOD reconciliation preserves identical authored distance schedules. When source camera-distance schedules differ, their transition distances are unioned, weighted by affected geometry, and reduced to at most the largest source LOD count with a hard cap of 5; each retained interval samples the source LOD each component would render there. Mixed quality profiles use quality level 2 on generated LOD0 and quality level 0 afterward.");
                 sb.AppendLine(
                     "Geometry payload bytes are serialized vertex plus 16-bit index payload only; RMV headers and material metadata are excluded.");
                 sb.AppendLine(
@@ -28168,6 +28514,14 @@ namespace Editors.KitbasherEditor.Services
         private sealed record CrossRigidSourceLodSelection(
             string WsModelPath,
             int SourceLodIndex);
+
+        private sealed record CrossRigidGeneratedLodScheduleEntry(
+            float CameraDistance,
+            CrossRigidSourceLodSelection[] SourceLodSelections);
+
+        private sealed record CrossRigidLodBoundaryCandidate(
+            float Distance,
+            double Weight);
 
         private sealed record CrossRigidLodAnalysis(
             int LodIndex,
