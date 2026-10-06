@@ -2588,6 +2588,48 @@ namespace Editors.KitbasherEditor.Services
                 new List<CrossRigidJointSourceSelectionCandidate>();
             var candidateFailureReasons =
                 new List<string>();
+            var requiredOptionalDimensionKeys =
+                new HashSet<string>(
+                    StringComparer.Ordinal);
+            foreach (var differingToken in
+                     tokenSets
+                         .SelectMany(tokens => tokens)
+                         .Where(token =>
+                             !commonTokens.Contains(token))
+                         .Distinct(StringComparer.Ordinal))
+            {
+                if (!TryParseCrossRigidActivationToken(
+                        state,
+                        differingToken,
+                        sourceVmdDocuments,
+                        out var differingSelection,
+                        out var differingReason))
+                {
+                    candidateFailureReasons.Add(
+                        differingReason);
+                    continue;
+                }
+
+                if (!differingSelection.OptionalSlot)
+                    continue;
+
+                if (!TryValidateCrossRigidOptionalJointSelection(
+                        state,
+                        differingSelection,
+                        sourceVmdDocuments,
+                        out var optionalReason))
+                {
+                    candidateFailureReasons.Add(
+                        optionalReason);
+                    continue;
+                }
+
+                requiredOptionalDimensionKeys.Add(
+                    BuildCrossRigidJointSelectionDimensionKey(
+                        differingSelection.OwnerVmdPath,
+                        differingSelection.ParentXmlPath,
+                        differingSelection.SlotIndex));
+            }
 
             for (var instanceIndex = 0;
                  instanceIndex < occurrenceSet.SourceInstances.Length;
@@ -2746,6 +2788,20 @@ namespace Editors.KitbasherEditor.Services
                                 .Count() != 1);
                 if (incompatibleSharedSlot)
                     continue;
+
+                var selectedDimensionKeys =
+                    sourceSelections
+                        .Select(
+                            BuildCrossRigidJointSourceSelectionDimensionKey)
+                        .ToHashSet(
+                            StringComparer.Ordinal);
+                if (!requiredOptionalDimensionKeys.IsSubsetOf(
+                        selectedDimensionKeys))
+                {
+                    candidateFailureReasons.Add(
+                        "same-parent optional writer requires every differing optional slot to be an explicit Cartesian dimension");
+                    continue;
+                }
 
                 var anchorVmdPath =
                     selectedCandidates[0].AnchorVmdPath;
@@ -28585,7 +28641,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine("Cross-rigid merge analysis and emission");
                 sb.AppendLine("---------------------------------------");
                 sb.AppendLine(
-                    "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative probability-1 structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
+                    "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
                     "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. At one shared structural parent, probability-0.5 optional slots with exactly one model/reference alternative are represented as explicit absent/present Cartesian states; other optional-slot topologies remain excluded.");
                 sb.AppendLine(
