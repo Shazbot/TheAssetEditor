@@ -2613,6 +2613,16 @@ namespace Editors.KitbasherEditor.Services
                 if (!differingSelection.OptionalSlot)
                     continue;
 
+                // Every differing optional slot must remain explicit even
+                // when its probability/topology is not yet supported. That
+                // prevents a deeper terminal selection from bypassing an
+                // unsupported optional ancestor.
+                requiredOptionalDimensionKeys.Add(
+                    BuildCrossRigidJointSelectionDimensionKey(
+                        differingSelection.OwnerVmdPath,
+                        differingSelection.ParentXmlPath,
+                        differingSelection.SlotIndex));
+
                 if (!TryValidateCrossRigidOptionalJointSelection(
                         state,
                         differingSelection,
@@ -2623,12 +2633,6 @@ namespace Editors.KitbasherEditor.Services
                         optionalReason);
                     continue;
                 }
-
-                requiredOptionalDimensionKeys.Add(
-                    BuildCrossRigidJointSelectionDimensionKey(
-                        differingSelection.OwnerVmdPath,
-                        differingSelection.ParentXmlPath,
-                        differingSelection.SlotIndex));
             }
 
             for (var instanceIndex = 0;
