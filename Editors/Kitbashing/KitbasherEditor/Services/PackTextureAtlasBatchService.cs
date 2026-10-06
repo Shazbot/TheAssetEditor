@@ -2094,7 +2094,9 @@ namespace Editors.KitbasherEditor.Services
                     }
 
                     if (classified.RewriteClass !=
-                        CrossRigidActivationRewriteClass.JointAlwaysPresentSlots)
+                            CrossRigidActivationRewriteClass.JointAlwaysPresentSlots &&
+                        classified.RewriteClass !=
+                            CrossRigidActivationRewriteClass.JointOptionalSlots)
                     {
                         continue;
                     }
@@ -2113,7 +2115,7 @@ namespace Editors.KitbasherEditor.Services
                     {
                         RecordCrossRigidAnalysisDiagnostic(
                             state,
-                            "Joint probability-1 rewrite state is outside conservative writer",
+                            "Joint activation rewrite state is outside conservative writer",
                             $"{plan.VmdPath} [{plan.AttachmentIdentity}]: " +
                             $"{jointReason}; sources=[" +
                             $"{string.Join(", ", classified.OccurrenceSet.SourceInstances.Select(instance => instance.WsModelPath))}]");
@@ -2625,8 +2627,17 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                if (tokenSelection.OptionalSlot)
+                if (tokenSelection.OptionalSlot &&
+                    !TryValidateCrossRigidOptionalJointSelection(
+                        state,
+                        tokenSelection,
+                        sourceVmdDocuments,
+                        out var optionalSelectionReason))
+                {
+                    candidateFailureReasons.Add(
+                        optionalSelectionReason);
                     continue;
+                }
 
                 if (!TryGetCrossRigidReferenceChainPrefixToVmd(
                         instance,
@@ -2784,20 +2795,21 @@ namespace Editors.KitbasherEditor.Services
                         ParseVmdSlotProbability(
                             slotElement.GetAttribute("probability"));
                     if (probability <
-                        1.0 - AtlasValueGateExpectedDrawEpsilon)
+                            1.0 - AtlasValueGateExpectedDrawEpsilon &&
+                        !IsSupportedCrossRigidOptionalJointSlot(
+                            slotElement))
                     {
                         valid = false;
                         candidateFailureReasons.Add(
-                            $"joint source slot {slotIndex} is optional");
+                            $"joint source slot {slotIndex} has an unsupported optional probability/topology");
                         break;
                     }
 
-                    var alternativeCount =
-                        (slotElement.SelectNodes(
-                            "VARIANT_MESH")?.Count ?? 0) +
-                        (slotElement.SelectNodes(
-                            "VARIANT_MESH_REFERENCE")?.Count ?? 0);
-                    if (alternativeCount <= 1)
+                    var alternatives =
+                        GetCrossRigidJointAlternatives(
+                            slotElement,
+                            slotIndex);
+                    if (alternatives.Length <= 1)
                     {
                         valid = false;
                         candidateFailureReasons.Add(
@@ -2805,7 +2817,7 @@ namespace Editors.KitbasherEditor.Services
                         break;
                     }
 
-                    combinationCount *= alternativeCount;
+                    combinationCount *= alternatives.Length;
                     if (combinationCount >
                         MaxCrossRigidJointStateCombinations)
                     {
@@ -4709,6 +4721,68 @@ namespace Editors.KitbasherEditor.Services
                     slotProbability <
                         1.0 - AtlasValueGateExpectedDrawEpsilon);
             return true;
+        }
+
+        private static bool
+            TryValidateCrossRigidOptionalJointSelection(
+                BatchState state,
+                CrossRigidActivationTokenSelection selection,
+                Dictionary<string, XmlDocument> sourceVmdDocuments,
+                out string reason)
+        {
+            reason = string.Empty;
+            if (!selection.OptionalSlot)
+                return true;
+
+            if (!TryGetCrossRigidSourceVmdDocument(
+                    state,
+                    selection.OwnerVmdPath,
+                    sourceVmdDocuments,
+                    out var ownerDocument,
+                    out reason))
+            {
+                return false;
+            }
+
+            if (ownerDocument.SelectSingleNode(
+                    $"{selection.ParentXmlPath}/SLOT[{selection.SlotIndex}]") is
+                not XmlElement slotElement)
+            {
+                reason =
+                    "optional joint slot no longer resolves in source VMD";
+                return false;
+            }
+
+            if (!IsSupportedCrossRigidOptionalJointSlot(
+                    slotElement))
+            {
+                reason =
+                    "optional joint writer currently supports only probability-0.5 slots with exactly one model/reference alternative";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool
+            IsSupportedCrossRigidOptionalJointSlot(
+                XmlElement slotElement)
+        {
+            var probability =
+                ParseVmdSlotProbability(
+                    slotElement.GetAttribute("probability"));
+            if (Math.Abs(probability - 0.5) >
+                AtlasValueGateExpectedDrawEpsilon)
+            {
+                return false;
+            }
+
+            var alternativeCount =
+                (slotElement.SelectNodes(
+                    "VARIANT_MESH")?.Count ?? 0) +
+                (slotElement.SelectNodes(
+                    "VARIANT_MESH_REFERENCE")?.Count ?? 0);
+            return alternativeCount == 1;
         }
 
         private static bool TryClassifyCrossRigidActivationToken(
@@ -6657,10 +6731,12 @@ namespace Editors.KitbasherEditor.Services
                     ParseVmdSlotProbability(
                         slotElement.GetAttribute("probability"));
                 if (probability <
-                    1.0 - AtlasValueGateExpectedDrawEpsilon)
+                        1.0 - AtlasValueGateExpectedDrawEpsilon &&
+                    !IsSupportedCrossRigidOptionalJointSlot(
+                        slotElement))
                 {
                     reason =
-                        $"Joint source slot {slotIndex} became optional";
+                        $"Joint source slot {slotIndex} became an unsupported optional slot";
                     return false;
                 }
 
@@ -6753,9 +6829,35 @@ namespace Editors.KitbasherEditor.Services
                         slotDefinitions.First(definition =>
                             definition.SlotIndex ==
                             alternative.SlotIndex);
+                    if (alternative.AlternativeIndex == 0)
+                    {
+                        if (!IsSupportedCrossRigidOptionalJointSlot(
+                                slotDefinition.SlotElement))
+                        {
+                            reason =
+                                "Synthetic absent joint alternative belongs to a non-supported optional slot";
+                            return false;
+                        }
+
+                        // Absence is materialized by omitting this slot from
+                        // the deterministic wrapper. The outer Cartesian
+                        // alternative already carries the 0.5 probability.
+                        continue;
+                    }
+
                     var deterministicSlot =
                         (XmlElement)slotDefinition.SlotElement
                             .CloneNode(deep: true);
+                    if (ParseVmdSlotProbability(
+                            deterministicSlot.GetAttribute(
+                                "probability")) <
+                        1.0 - AtlasValueGateExpectedDrawEpsilon)
+                    {
+                        deterministicSlot.SetAttribute(
+                            "probability",
+                            "1");
+                    }
+
                     if (!TryReduceCrossRigidJointSlotToAlternative(
                             deterministicSlot,
                             alternative,
@@ -7234,6 +7336,20 @@ namespace Editors.KitbasherEditor.Services
         {
             var alternatives =
                 new List<CrossRigidJointAlternative>();
+            if (IsSupportedCrossRigidOptionalJointSlot(
+                    slotElement))
+            {
+                // AlternativeIndex 0 is the synthetic "slot absent" state.
+                // With probability 0.5 and one authored alternative, absent
+                // and present are equiprobable and can therefore participate
+                // in the existing uniform Cartesian product exactly.
+                alternatives.Add(
+                    new CrossRigidJointAlternative(
+                        slotIndex,
+                        false,
+                        0));
+            }
+
             var meshCount =
                 slotElement.SelectNodes(
                     "VARIANT_MESH")?.Count ?? 0;
@@ -28471,7 +28587,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative probability-1 structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Optional slots remain excluded.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. At one shared structural parent, probability-0.5 optional slots with exactly one model/reference alternative are represented as explicit absent/present Cartesian states; other optional-slot topologies remain excluded.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
