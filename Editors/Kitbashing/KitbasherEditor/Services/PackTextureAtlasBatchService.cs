@@ -5729,6 +5729,108 @@ namespace Editors.KitbasherEditor.Services
             return selected.ToArray();
         }
 
+        private static void AddCrossRigidStructuralSlotConflictKeys(
+            HashSet<string> conflictKeys,
+            string rootVmdPath,
+            CrossRigidVisualInstance instance)
+        {
+            for (var hopIndex = 0;
+                 hopIndex < instance.ReferenceChain.Length;
+                 hopIndex++)
+            {
+                var hop =
+                    instance.ReferenceChain[hopIndex];
+                AddCrossRigidStructuralSlotConflictKeysForXmlPath(
+                    conflictKeys,
+                    rootVmdPath,
+                    instance.ReferenceChain.Take(
+                        hopIndex),
+                    hop.OwnerVmdPath,
+                    hop.ReferenceXmlPath);
+            }
+
+            AddCrossRigidStructuralSlotConflictKeysForXmlPath(
+                conflictKeys,
+                rootVmdPath,
+                instance.ReferenceChain,
+                instance.DefiningVmdPath,
+                instance.ModelXmlPath);
+        }
+
+        private static void
+            AddCrossRigidStructuralSlotConflictKeysForXmlPath(
+                HashSet<string> conflictKeys,
+                string rootVmdPath,
+                IEnumerable<CrossRigidVmdReferenceHop>
+                    anchorReferenceChain,
+                string ownerVmdPath,
+                string xmlPath)
+        {
+            const string slotMarker = "/SLOT[";
+            var searchIndex = 0;
+            while (searchIndex < xmlPath.Length)
+            {
+                var slotMarkerIndex =
+                    xmlPath.IndexOf(
+                        slotMarker,
+                        searchIndex,
+                        StringComparison.Ordinal);
+                if (slotMarkerIndex < 0)
+                    break;
+
+                var slotIndexStart =
+                    slotMarkerIndex +
+                    slotMarker.Length;
+                var slotIndexEnd =
+                    xmlPath.IndexOf(
+                        ']',
+                        slotIndexStart);
+                if (slotIndexEnd <= slotIndexStart ||
+                    !int.TryParse(
+                        xmlPath[
+                            slotIndexStart..
+                            slotIndexEnd],
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var slotIndex) ||
+                    slotIndex <= 0)
+                {
+                    searchIndex =
+                        slotIndexStart;
+                    continue;
+                }
+
+                conflictKeys.Add(
+                    BuildCrossRigidStructuralSlotConflictKey(
+                        rootVmdPath,
+                        anchorReferenceChain,
+                        ownerVmdPath,
+                        xmlPath[..slotMarkerIndex],
+                        slotIndex));
+                searchIndex =
+                    slotIndexEnd + 1;
+            }
+        }
+
+        private static string
+            BuildCrossRigidStructuralSlotConflictKey(
+                string rootVmdPath,
+                IEnumerable<CrossRigidVmdReferenceHop>
+                    anchorReferenceChain,
+                string ownerVmdPath,
+                string parentXmlPath,
+                int slotIndex)
+            => string.Join(
+                "\u001f",
+                "structural-slot",
+                Normalize(rootVmdPath),
+                BuildCrossRigidReferenceChainSignature(
+                    anchorReferenceChain),
+                Normalize(ownerVmdPath),
+                parentXmlPath,
+                slotIndex.ToString(
+                    CultureInfo.InvariantCulture));
+
         private static string BuildCrossRigidSelectedRewriteOccurrenceKey(
             CrossRigidMergeAnalysisEntry plan,
             CrossRigidRewriteOccurrenceSet occurrenceSet)
@@ -5784,6 +5886,10 @@ namespace Editors.KitbasherEditor.Services
                                     BuildCrossRigidConsumedOccurrenceKey(
                                         plan.VmdPath,
                                         instance)));
+                            AddCrossRigidStructuralSlotConflictKeys(
+                                rewriteConflictKeys,
+                                plan.VmdPath,
+                                instance);
                         }
                     }
                     else
@@ -5810,6 +5916,17 @@ namespace Editors.KitbasherEditor.Services
                         jointContextKeyByParentLocation[
                             parentLocationKey] =
                             contextKey;
+                        foreach (var slotIndex in
+                                 descriptor.SlotIndices)
+                        {
+                            rewriteConflictKeys.Add(
+                                BuildCrossRigidStructuralSlotConflictKey(
+                                    plan.VmdPath,
+                                    descriptor.AnchorReferenceChain,
+                                    descriptor.AnchorVmdPath,
+                                    descriptor.ParentXmlPath,
+                                    slotIndex));
+                        }
 
                         var combinationKey =
                             BuildCrossRigidJointSelectedCombinationKey(
