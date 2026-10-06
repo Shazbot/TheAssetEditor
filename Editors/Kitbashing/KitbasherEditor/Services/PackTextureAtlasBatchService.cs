@@ -2115,7 +2115,8 @@ namespace Editors.KitbasherEditor.Services
                             state,
                             "Joint probability-1 rewrite state is outside conservative writer",
                             $"{plan.VmdPath} [{plan.AttachmentIdentity}]: " +
-                            jointReason);
+                            $"{jointReason}; sources=[" +
+                            $"{string.Join(", ", classified.OccurrenceSet.SourceInstances.Select(instance => instance.WsModelPath))}]");
                     }
                 }
 
@@ -3958,26 +3959,23 @@ namespace Editors.KitbasherEditor.Services
                         ParseVmdSlotProbability(
                             slotElement.GetAttribute(
                                 "probability"));
-                    var meshCount =
-                        slotElement.SelectNodes(
-                            "VARIANT_MESH")?.Count ??
-                        0;
-                    var referenceCount =
-                        slotElement.SelectNodes(
-                            "VARIANT_MESH_REFERENCE")
-                            ?.Count ??
-                        0;
                     if (probability <
-                            1.0 -
-                            AtlasValueGateExpectedDrawEpsilon ||
-                        meshCount +
-                            referenceCount !=
-                        1)
+                        1.0 -
+                        AtlasValueGateExpectedDrawEpsilon)
                     {
                         reason =
-                            "common-ancestor descendant selection crosses a non-fixed local carrier";
+                            "common-ancestor descendant selection crosses an optional local carrier";
                         return false;
                     }
+
+                    // The local carrier itself does not have to be a
+                    // single-alternative slot. It is cloned intact into
+                    // every outer Cartesian wrapper, so its own
+                    // probability-1 alternative distribution is preserved.
+                    // Only the nested dependency dimension is reduced in
+                    // the branch where it exists. Sibling carrier
+                    // alternatives therefore retain exactly their original
+                    // aggregate probability across the wrappers.
 
                     current =
                         slotElement.ParentNode as
@@ -28461,7 +28459,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative probability-1 structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through fixed probability-1 single-alternative local wrappers and through fixed child-VMD references to their common structural parent. Optional slots remain excluded.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Optional slots remain excluded.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
