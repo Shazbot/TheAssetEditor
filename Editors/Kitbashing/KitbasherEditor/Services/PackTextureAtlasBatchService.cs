@@ -3902,8 +3902,15 @@ namespace Editors.KitbasherEditor.Services
 
             var terminalPart =
                 splitPaths[0][commonLength - 1];
+            // Traversal records the document root as /VARIANT_MESH,
+            // while nested model alternatives use VARIANT_MESH[n].
+            // Both forms are valid structural parents for a joint that
+            // spans sibling top-level slots.
             if (!terminalPart.Equals(
                     "<root>",
+                    StringComparison.Ordinal) &&
+                !terminalPart.Equals(
+                    "VARIANT_MESH",
                     StringComparison.Ordinal) &&
                 !terminalPart.StartsWith(
                     "VARIANT_MESH[",
