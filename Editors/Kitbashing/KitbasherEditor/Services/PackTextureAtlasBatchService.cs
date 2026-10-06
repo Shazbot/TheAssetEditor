@@ -3920,6 +3920,11 @@ namespace Editors.KitbasherEditor.Services
             }
 
             commonParentXmlPath =
+                (parentXmlPaths[0].StartsWith(
+                    "/",
+                    StringComparison.Ordinal)
+                    ? "/"
+                    : string.Empty) +
                 string.Join(
                     "/",
                     splitPaths[0]
