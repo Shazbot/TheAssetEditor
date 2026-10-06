@@ -7041,7 +7041,7 @@ namespace Editors.KitbasherEditor.Services
 
             if (dimension.ReferenceChainFromAnchor.Length == 0)
             {
-                var dimensionSlotElement =
+                var localDimensionSlotElement =
                     carrierSlotElement;
                 if (!string.IsNullOrWhiteSpace(
                         dimension.LocalDimensionSlotRelativeXmlPath))
@@ -7058,12 +7058,12 @@ namespace Editors.KitbasherEditor.Services
                         return false;
                     }
 
-                    dimensionSlotElement =
+                    localDimensionSlotElement =
                         nestedDimensionSlotElement;
                 }
 
                 return TryReduceCrossRigidJointSlotToAlternative(
-                    dimensionSlotElement,
+                    localDimensionSlotElement,
                     new CrossRigidJointAlternative(
                         dimension.SlotIndex,
                         alternative.IsReference,
