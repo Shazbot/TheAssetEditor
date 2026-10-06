@@ -5699,7 +5699,8 @@ namespace Editors.KitbasherEditor.Services
                              item => item.SelectionKey,
                              StringComparer.Ordinal))
             {
-                if (occurrence.RewriteConflictKeys.Overlaps(
+                if (HasCrossRigidRewriteConflict(
+                        occurrence.RewriteConflictKeys,
                         localRewriteConflictKeys) ||
                     occurrence.JointContextKeyByParentLocation.Any(
                         pair =>
@@ -5727,6 +5728,52 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return selected.ToArray();
+        }
+
+        private static bool HasCrossRigidRewriteConflict(
+            IReadOnlySet<string> candidateKeys,
+            IReadOnlySet<string> selectedKeys)
+        {
+            const string exactStructuralPrefix =
+                "exact-structural-slot\u001f";
+            const string jointStructuralPrefix =
+                "joint-structural-slot\u001f";
+
+            foreach (var key in candidateKeys)
+            {
+                if (key.StartsWith(
+                        exactStructuralPrefix,
+                        StringComparison.Ordinal))
+                {
+                    if (selectedKeys.Contains(
+                            jointStructuralPrefix +
+                            key[exactStructuralPrefix.Length..]))
+                    {
+                        return true;
+                    }
+
+                    continue;
+                }
+
+                if (key.StartsWith(
+                        jointStructuralPrefix,
+                        StringComparison.Ordinal))
+                {
+                    if (selectedKeys.Contains(
+                            exactStructuralPrefix +
+                            key[jointStructuralPrefix.Length..]))
+                    {
+                        return true;
+                    }
+
+                    continue;
+                }
+
+                if (selectedKeys.Contains(key))
+                    return true;
+            }
+
+            return false;
         }
 
         private static void AddCrossRigidStructuralSlotConflictKeys(
@@ -5802,6 +5849,7 @@ namespace Editors.KitbasherEditor.Services
 
                 conflictKeys.Add(
                     BuildCrossRigidStructuralSlotConflictKey(
+                        "exact-structural-slot",
                         rootVmdPath,
                         anchorReferenceChain,
                         ownerVmdPath,
@@ -5814,6 +5862,7 @@ namespace Editors.KitbasherEditor.Services
 
         private static string
             BuildCrossRigidStructuralSlotConflictKey(
+                string conflictKind,
                 string rootVmdPath,
                 IEnumerable<CrossRigidVmdReferenceHop>
                     anchorReferenceChain,
@@ -5822,7 +5871,7 @@ namespace Editors.KitbasherEditor.Services
                 int slotIndex)
             => string.Join(
                 "\u001f",
-                "structural-slot",
+                conflictKind,
                 Normalize(rootVmdPath),
                 BuildCrossRigidReferenceChainSignature(
                     anchorReferenceChain),
@@ -5921,6 +5970,7 @@ namespace Editors.KitbasherEditor.Services
                         {
                             rewriteConflictKeys.Add(
                                 BuildCrossRigidStructuralSlotConflictKey(
+                                    "joint-structural-slot",
                                     plan.VmdPath,
                                     descriptor.AnchorReferenceChain,
                                     descriptor.AnchorVmdPath,
