@@ -5612,15 +5612,15 @@ namespace Editors.KitbasherEditor.Services
             return descriptor;
         }
 
-        private static bool TryGetCrossRigidMatchingJointCombinationKeys(
+        private static bool TryGetCrossRigidMatchingJointCombinations(
             BatchState state,
             CrossRigidJointAlwaysPresentRewriteDescriptor occurrenceDescriptor,
             CrossRigidJointAlwaysPresentRewriteDescriptor contextDescriptor,
             Dictionary<string, XmlDocument> sourceVmdDocuments,
-            out string[] combinationKeys,
+            out CrossRigidJointMatchingCombination[] matchingCombinations,
             out string reason)
         {
-            combinationKeys = [];
+            matchingCombinations = [];
             reason = string.Empty;
             if (!IsCrossRigidJointDescriptorStructuralSuperset(
                     contextDescriptor,
@@ -5747,7 +5747,7 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                combinationKeys =
+                matchingCombinations =
                     combinations
                         .Where(alternatives =>
                             constraints.All(constraint =>
@@ -5758,11 +5758,24 @@ namespace Editors.KitbasherEditor.Services
                                         constraint.Value.IsReference &&
                                     alternative.AlternativeIndex ==
                                         constraint.Value.AlternativeIndex)))
-                        .Select(
-                            BuildCrossRigidJointCombinationKey)
-                        .Distinct(StringComparer.Ordinal)
+                        .Select(alternatives =>
+                            new CrossRigidJointMatchingCombination(
+                                BuildCrossRigidJointCombinationKey(
+                                    alternatives),
+                                GetCrossRigidJointCombinationMultiplicity(
+                                    alternatives)))
+                        .GroupBy(
+                            combination =>
+                                combination.CombinationKey,
+                            StringComparer.Ordinal)
+                        .Select(group =>
+                            new CrossRigidJointMatchingCombination(
+                                group.Key,
+                                group.Sum(item =>
+                                    item.Multiplicity)))
                         .OrderBy(
-                            key => key,
+                            combination =>
+                                combination.CombinationKey,
                             StringComparer.Ordinal)
                         .ToArray();
             }
@@ -5857,7 +5870,7 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                combinationKeys =
+                matchingCombinations =
                     combinations
                         .Where(alternatives =>
                             constraints.All(constraint =>
@@ -5869,16 +5882,29 @@ namespace Editors.KitbasherEditor.Services
                                         constraint.Value.IsReference &&
                                     alternative.AlternativeIndex ==
                                         constraint.Value.AlternativeIndex)))
-                        .Select(
-                            BuildCrossRigidCommonAncestorCombinationKey)
-                        .Distinct(StringComparer.Ordinal)
+                        .Select(alternatives =>
+                            new CrossRigidJointMatchingCombination(
+                                BuildCrossRigidCommonAncestorCombinationKey(
+                                    alternatives),
+                                GetCrossRigidJointCombinationMultiplicity(
+                                    alternatives)))
+                        .GroupBy(
+                            combination =>
+                                combination.CombinationKey,
+                            StringComparer.Ordinal)
+                        .Select(group =>
+                            new CrossRigidJointMatchingCombination(
+                                group.Key,
+                                group.Sum(item =>
+                                    item.Multiplicity)))
                         .OrderBy(
-                            key => key,
+                            combination =>
+                                combination.CombinationKey,
                             StringComparer.Ordinal)
                         .ToArray();
             }
 
-            if (combinationKeys.Length == 0)
+            if (matchingCombinations.Length == 0)
             {
                 reason =
                     "Analyzed occurrence does not match any canonical Cartesian state";
@@ -5888,12 +5914,30 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
-        private static void SelectCrossRigidGeneratedPayloads(
+        private static CrossRigidJointMatchingCombination[]
+            FilterCrossRigidSelectedJointCombinations(
+                IReadOnlyList<CrossRigidJointMatchingCombination>
+                    matchingCombinations,
+                IReadOnlySet<string>? selectedCombinationKeys)
+        {
+            if (selectedCombinationKeys == null)
+                return matchingCombinations.ToArray();
+
+            return matchingCombinations
+                .Where(combination =>
+                    selectedCombinationKeys.Contains(
+                        combination.CombinationKey))
+                .ToArray();
+        }
+
+
+        private static void SelectCrossRigidGeneratedPayloads(        private static void SelectCrossRigidGeneratedPayloads(
             BatchState state)
         {
             state.CrossRigidPayloadSelectionEntries.Clear();
             state.CrossRigidSelectedPayloadIds.Clear();
             state.CrossRigidSelectedRewriteOccurrenceKeys.Clear();
+            state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey.Clear();
             state.CrossRigidRewriteConflictReasonCounts.Clear();
             state.CrossRigidRewriteConflictExpectedDraws.Clear();
             state.CrossRigidRewriteConflictExamples.Clear();
@@ -5952,11 +5996,20 @@ namespace Editors.KitbasherEditor.Services
                             .SingleVmdBenefitTooSmall;
                 }
 
+                var maxRawDrawsSavedPerState =
+                    payload.Lods
+                        .Where(lod =>
+                            lod.IsScenarioRepresentativeState)
+                        .Select(lod =>
+                            lod.DrawsSaved)
+                        .DefaultIfEmpty(0)
+                        .Max();
                 var entry = new CrossRigidPayloadSelectionEntry(
                     payload.GeneratedPayloadId,
                     decision,
                     expectedDraws,
                     expectedDraws,
+                    maxRawDrawsSavedPerState,
                     payload.RewritePlanCount,
                     payload.VmdCount,
                     payload.GeneratedGeometryBytes,
@@ -5978,7 +6031,9 @@ namespace Editors.KitbasherEditor.Services
 
             var orderedCandidates =
                 selectionCandidates
-                    .OrderBy(entry =>
+                    .OrderByDescending(entry =>
+                        entry.MaxRawDrawsSavedPerState)
+                    .ThenBy(entry =>
                         Math.Max(
                             entry.ResidentBytesPerExpectedDraw /
                             MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw,
@@ -6233,7 +6288,28 @@ namespace Editors.KitbasherEditor.Services
                         }
 
                         state.CrossRigidSelectedRewriteOccurrenceKeys.Add(
-                            occurrence.SelectionKey);
+                            occurrence.RewriteOccurrenceKey);
+                        if (!string.IsNullOrWhiteSpace(
+                                occurrence.JointCombinationKey))
+                        {
+                            if (!state
+                                    .CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey
+                                    .TryGetValue(
+                                        occurrence.RewriteOccurrenceKey,
+                                        out var selectedCombinationKeys))
+                            {
+                                selectedCombinationKeys =
+                                    new HashSet<string>(
+                                        StringComparer.Ordinal);
+                                state
+                                    .CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey[
+                                        occurrence.RewriteOccurrenceKey] =
+                                    selectedCombinationKeys;
+                            }
+
+                            selectedCombinationKeys.Add(
+                                occurrence.JointCombinationKey);
+                        }
                     }
 
                     state.CrossRigidSelectedPayloadIds.Add(
@@ -6744,6 +6820,16 @@ namespace Editors.KitbasherEditor.Services
                 BuildCrossRigidOccurrenceProvenanceSignature(
                     occurrenceSet.SourceInstances));
 
+        private static string
+            BuildCrossRigidSelectedRewriteCombinationKey(
+                string rewriteOccurrenceKey,
+                string combinationKey)
+            => string.Join(
+                "\u001f",
+                rewriteOccurrenceKey,
+                "canonical-joint-state",
+                combinationKey);
+
         private static bool
             TryBuildCrossRigidPayloadRewriteConflictProfile(
                 BatchState state,
@@ -6766,6 +6852,16 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var occurrenceSet in
                          plan.RewriteOccurrenceSets)
                 {
+                    var rewriteOccurrenceKey =
+                        BuildCrossRigidSelectedRewriteOccurrenceKey(
+                            plan,
+                            occurrenceSet);
+                    var expectedDraws =
+                        CalculateExpectedCrossRigidArmyDrawSavings(
+                            state,
+                            plan.VmdPath,
+                            occurrenceSet.Probability,
+                            plan.Lods);
                     var rewriteConflictKeys =
                         new HashSet<string>(
                             StringComparer.Ordinal);
@@ -6795,95 +6891,120 @@ namespace Editors.KitbasherEditor.Services
                                 plan.VmdPath,
                                 instance);
                         }
-                    }
-                    else
-                    {
-                        if (!TryDescribeCrossRigidJointAlwaysPresentRewrite(
-                                state,
-                                occurrenceSet,
-                                sourceVmdDocuments,
-                                out var descriptor,
-                                out reason))
-                        {
-                            profile = null!;
-                            return false;
-                        }
 
-                        var parentLocationKey =
-                            BuildCrossRigidJointParentLocationKey(
-                                plan.VmdPath,
-                                descriptor);
-                        var contextDescriptor =
-                            GetCrossRigidEffectiveJointDescriptor(
-                                state,
-                                plan.VmdPath,
-                                descriptor);
-                        var contextKey =
-                            BuildCrossRigidJointContextKey(
-                                plan.VmdPath,
-                                contextDescriptor);
-                        jointContextKeyByParentLocation[
-                            parentLocationKey] =
-                            contextKey;
-                        AddCrossRigidJointTraversalStructuralSlotConflictKeys(
-                            rewriteConflictKeys,
+                        occurrences.Add(
+                            new CrossRigidRewriteConflictOccurrence(
+                                rewriteOccurrenceKey,
+                                rewriteOccurrenceKey,
+                                null,
+                                expectedDraws,
+                                rewriteConflictKeys,
+                                jointContextKeyByParentLocation));
+                        continue;
+                    }
+
+                    if (!TryDescribeCrossRigidJointAlwaysPresentRewrite(
+                            state,
+                            occurrenceSet,
+                            sourceVmdDocuments,
+                            out var descriptor,
+                            out reason))
+                    {
+                        profile = null!;
+                        return false;
+                    }
+
+                    var parentLocationKey =
+                        BuildCrossRigidJointParentLocationKey(
+                            plan.VmdPath,
+                            descriptor);
+                    var contextDescriptor =
+                        GetCrossRigidEffectiveJointDescriptor(
+                            state,
+                            plan.VmdPath,
+                            descriptor);
+                    var contextKey =
+                        BuildCrossRigidJointContextKey(
                             plan.VmdPath,
                             contextDescriptor);
-                        foreach (var slotIndex in
-                                 contextDescriptor.SlotIndices)
-                        {
-                            rewriteConflictKeys.Add(
-                                BuildCrossRigidStructuralSlotConflictKey(
-                                    "joint-structural-slot",
-                                    plan.VmdPath,
-                                    contextDescriptor.AnchorReferenceChain,
-                                    contextDescriptor.AnchorVmdPath,
-                                    contextDescriptor.ParentXmlPath,
-                                    slotIndex));
-                        }
-
-                        if (!TryGetCrossRigidMatchingJointCombinationKeys(
-                                state,
-                                descriptor,
-                                contextDescriptor,
-                                sourceVmdDocuments,
-                                out var combinationKeys,
-                                out reason))
-                        {
-                            profile = null!;
-                            return false;
-                        }
-
-                        foreach (var combinationKey in
-                                 combinationKeys)
-                        {
-                            foreach (var selection in
-                                     descriptor.SourceSelections)
-                            {
-                                rewriteConflictKeys.Add(
-                                    string.Join(
-                                        "\u001f",
-                                        "joint",
-                                        contextKey,
-                                        combinationKey,
-                                        BuildCrossRigidOccurrenceProvenanceSignature(
-                                            [selection.Instance])));
-                            }
-                        }
+                    jointContextKeyByParentLocation[
+                        parentLocationKey] =
+                        contextKey;
+                    AddCrossRigidJointTraversalStructuralSlotConflictKeys(
+                        rewriteConflictKeys,
+                        plan.VmdPath,
+                        contextDescriptor);
+                    foreach (var slotIndex in
+                             contextDescriptor.SlotIndices)
+                    {
+                        rewriteConflictKeys.Add(
+                            BuildCrossRigidStructuralSlotConflictKey(
+                                "joint-structural-slot",
+                                plan.VmdPath,
+                                contextDescriptor.AnchorReferenceChain,
+                                contextDescriptor.AnchorVmdPath,
+                                contextDescriptor.ParentXmlPath,
+                                slotIndex));
                     }
 
-                    occurrences.Add(
-                        new CrossRigidRewriteConflictOccurrence(
-                            BuildCrossRigidSelectedRewriteOccurrenceKey(
-                                plan,
-                                occurrenceSet),
-                            CalculateExpectedCrossRigidArmyDrawSavings(
-                                state,
-                                plan.VmdPath,
-                                occurrenceSet.Probability,
-                                plan.Lods),
-                            rewriteConflictKeys,
-                            jointContextKeyByParentLocation));
+                    if (!TryGetCrossRigidMatchingJointCombinations(
+                            state,
+                            descriptor,
+                            contextDescriptor,
+                            sourceVmdDocuments,
+                            out var matchingCombinations,
+                            out reason))
+                    {
+                        profile = null!;
+                        return false;
+                    }
+
+                    var totalMatchingMultiplicity =
+                        matchingCombinations.Sum(combination =>
+                            combination.Multiplicity);
+                    if (totalMatchingMultiplicity <= 0)
+                    {
+                        reason =
+                            "Canonical joint state projection has zero total multiplicity";
+                        profile = null!;
+                        return false;
+                    }
+
+                    foreach (var matchingCombination in
+                             matchingCombinations)
+                    {
+                        var combinationConflictKeys =
+                            new HashSet<string>(
+                                rewriteConflictKeys,
+                                StringComparer.Ordinal);
+                        foreach (var selection in
+                                 descriptor.SourceSelections)
+                        {
+                            combinationConflictKeys.Add(
+                                string.Join(
+                                    "\u001f",
+                                    "joint",
+                                    contextKey,
+                                    matchingCombination.CombinationKey,
+                                    BuildCrossRigidOccurrenceProvenanceSignature(
+                                        [selection.Instance])));
+                        }
+
+                        occurrences.Add(
+                            new CrossRigidRewriteConflictOccurrence(
+                                BuildCrossRigidSelectedRewriteCombinationKey(
+                                    rewriteOccurrenceKey,
+                                    matchingCombination.CombinationKey),
+                                rewriteOccurrenceKey,
+                                matchingCombination.CombinationKey,
+                                expectedDraws *
+                                matchingCombination.Multiplicity /
+                                totalMatchingMultiplicity,
+                                combinationConflictKeys,
+                                new Dictionary<string, string>(
+                                    jointContextKeyByParentLocation,
+                                    StringComparer.Ordinal)));
+                    }
                 }
             }
 
@@ -6900,7 +7021,7 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
-        private static void EmitSelectedCrossRigidMerges(
+        private static void EmitSelectedCrossRigidMerges(        private static void EmitSelectedCrossRigidMerges(
             BatchState state,
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
@@ -7040,6 +7161,22 @@ namespace Editors.KitbasherEditor.Services
                                      StringComparer.Ordinal))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
+                        var rewriteOccurrenceKey =
+                            BuildCrossRigidSelectedRewriteOccurrenceKey(
+                                plan,
+                                occurrenceSet);
+                        IReadOnlySet<string>? selectedJointCombinationKeys =
+                            null;
+                        if (state
+                                .CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey
+                                .TryGetValue(
+                                    rewriteOccurrenceKey,
+                                    out var selectedCombinationKeys))
+                        {
+                            selectedJointCombinationKeys =
+                                selectedCombinationKeys;
+                        }
+
                         if (!TryValidateCrossRigidRewriteOccurrenceSet(
                                 state,
                                 vmdPath,
@@ -7050,6 +7187,7 @@ namespace Editors.KitbasherEditor.Services
                                 consumedModelOccurrences,
                                 jointRewriteContexts,
                                 jointContextKeyByParentLocation,
+                                selectedJointCombinationKeys,
                                 out var validationReason))
                         {
                             RecordCrossRigidEmissionSkip(
@@ -7108,6 +7246,8 @@ namespace Editors.KitbasherEditor.Services
                                 consumedModelOccurrences,
                                 jointRewriteContexts,
                                 jointContextKeyByParentLocation,
+                                selectedJointCombinationKeys,
+                                out var appliedProbabilityFraction,
                                 out var applyReason))
                         {
                             RecordCrossRigidEmissionSkip(
@@ -7120,7 +7260,8 @@ namespace Editors.KitbasherEditor.Services
                         }
 
                         emittedOccurrenceProbability +=
-                            occurrenceSet.Probability;
+                            occurrenceSet.Probability *
+                            appliedProbabilityFraction;
                         emittedOccurrenceSetCount++;
                         rootModified = true;
                     }
@@ -7274,6 +7415,7 @@ namespace Editors.KitbasherEditor.Services
                 jointRewriteContexts,
             IReadOnlyDictionary<string, string>
                 jointContextKeyByParentLocation,
+            IReadOnlySet<string>? selectedJointCombinationKeys,
             out string reason)
         {
             reason = string.Empty;
@@ -7315,14 +7457,25 @@ namespace Editors.KitbasherEditor.Services
                     BuildCrossRigidJointContextKey(
                         rootVmdPath,
                         contextDescriptor);
-                if (!TryGetCrossRigidMatchingJointCombinationKeys(
+                if (!TryGetCrossRigidMatchingJointCombinations(
                         state,
                         jointDescriptor,
                         contextDescriptor,
                         sourceVmdDocuments,
-                        out var combinationKeys,
+                        out var matchingCombinations,
                         out reason))
                 {
+                    return false;
+                }
+
+                var selectedCombinations =
+                    FilterCrossRigidSelectedJointCombinations(
+                        matchingCombinations,
+                        selectedJointCombinationKeys);
+                if (selectedCombinations.Length == 0)
+                {
+                    reason =
+                        "No selected canonical Cartesian state remains for this rewrite occurrence";
                     return false;
                 }
 
@@ -7342,11 +7495,11 @@ namespace Editors.KitbasherEditor.Services
                         contextKey,
                         out var existingContext))
                 {
-                    foreach (var combinationKey in
-                             combinationKeys)
+                    foreach (var selectedCombination in
+                             selectedCombinations)
                     {
                         if (!existingContext.Combinations.TryGetValue(
-                                combinationKey,
+                                selectedCombination.CombinationKey,
                                 out var combination))
                         {
                             reason =
@@ -7518,8 +7671,11 @@ namespace Editors.KitbasherEditor.Services
                 jointRewriteContexts,
             Dictionary<string, string>
                 jointContextKeyByParentLocation,
+            IReadOnlySet<string>? selectedJointCombinationKeys,
+            out double appliedProbabilityFraction,
             out string reason)
         {
+            appliedProbabilityFraction = 0;
             reason = string.Empty;
             var exactActivation =
                 occurrenceSet.SourceInstances
@@ -7538,6 +7694,8 @@ namespace Editors.KitbasherEditor.Services
                     generatedClonePathByBranchKey,
                     jointRewriteContexts,
                     jointContextKeyByParentLocation,
+                    selectedJointCombinationKeys,
+                    out appliedProbabilityFraction,
                     out reason);
             }
 
@@ -7600,6 +7758,7 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            appliedProbabilityFraction = 1;
             return true;
         }
 
@@ -7616,8 +7775,11 @@ namespace Editors.KitbasherEditor.Services
                     jointRewriteContexts,
                 Dictionary<string, string>
                     jointContextKeyByParentLocation,
+                IReadOnlySet<string>? selectedJointCombinationKeys,
+                out double appliedProbabilityFraction,
                 out string reason)
         {
+            appliedProbabilityFraction = 0;
             if (!TryDescribeCrossRigidJointAlwaysPresentRewrite(
                     state,
                     occurrenceSet,
@@ -7641,16 +7803,45 @@ namespace Editors.KitbasherEditor.Services
                 BuildCrossRigidJointContextKey(
                     rootVmdPath,
                     contextDescriptor);
-            if (!TryGetCrossRigidMatchingJointCombinationKeys(
+            if (!TryGetCrossRigidMatchingJointCombinations(
                     state,
                     descriptor,
                     contextDescriptor,
                     sourceVmdDocuments,
-                    out var combinationKeys,
+                    out var matchingCombinations,
                     out reason))
             {
                 return false;
             }
+
+            var selectedCombinations =
+                FilterCrossRigidSelectedJointCombinations(
+                    matchingCombinations,
+                    selectedJointCombinationKeys);
+            if (selectedCombinations.Length == 0)
+            {
+                reason =
+                    "No selected canonical Cartesian state remains for this rewrite occurrence";
+                return false;
+            }
+
+            var totalMatchingMultiplicity =
+                matchingCombinations.Sum(combination =>
+                    combination.Multiplicity);
+            var selectedMultiplicity =
+                selectedCombinations.Sum(combination =>
+                    combination.Multiplicity);
+            if (totalMatchingMultiplicity <= 0 ||
+                selectedMultiplicity <= 0)
+            {
+                reason =
+                    "Selected canonical Cartesian state has invalid multiplicity";
+                return false;
+            }
+
+            appliedProbabilityFraction =
+                (double)selectedMultiplicity /
+                totalMatchingMultiplicity;
 
             if (jointContextKeyByParentLocation.TryGetValue(
                     parentLocationKey,
@@ -7709,9 +7900,11 @@ namespace Editors.KitbasherEditor.Services
                         CrossRigidJointSourceSelection Selection,
                         XmlElement ModelElement)> ModelElements)>();
 
-            foreach (var combinationKey in
-                     combinationKeys)
+            foreach (var selectedCombination in
+                     selectedCombinations)
             {
+                var combinationKey =
+                    selectedCombination.CombinationKey;
                 if (!context.Combinations.TryGetValue(
                         combinationKey,
                         out var combination))
@@ -30108,7 +30301,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "The runtime gate charges gross expected generated-geometry residency; displaced-source credit is not spent by the gate.");
                 sb.AppendLine(
-                    "Rewrite conflicts are resolved at occurrence-set granularity. Payload economics use conflict-deduplicated marginal draw savings; partially selected payloads conservatively pay their full generated geometry and full estimated residency.");
+                    "Rewrite conflicts are resolved at exact occurrence granularity and, for canonical joint supersets, per concrete Cartesian state. Narrower rewrites can therefore remain selected in non-conflicting superset states. Payloads with larger raw per-state draw reduction are considered first; payload economics then use conflict-deduplicated marginal draw savings, while partially selected payloads conservatively pay their full generated geometry and full estimated residency.");
                 sb.AppendLine(
                     "Scenario-resident and physical-per-draw limits are selected-portfolio budgets rather than per-payload hard gates; budget-deferred candidates are retried after cheaper accepted payloads create headroom.");
                 sb.AppendLine(
@@ -30245,6 +30438,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Rewrite occurrence sets selected: " +
                     $"{selectedRewriteOccurrenceSetCount:N0}");
+                sb.AppendLine(
+                    $"Canonical joint Cartesian states selected: " +
+                    $"{state.CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey.Values.Sum(keys => keys.Count):N0}");
                 sb.AppendLine(
                     $"Rewrite occurrence sets emitted: " +
                     $"{state.CrossRigidRewriteOccurrenceSetsApplied:N0}");
@@ -32980,8 +33176,14 @@ namespace Editors.KitbasherEditor.Services
             string[] ExternalStructuralConsumers,
             bool ConsumerDiscoveryComplete);
 
+        private sealed record CrossRigidJointMatchingCombination(
+            string CombinationKey,
+            int Multiplicity);
+
         private sealed record CrossRigidRewriteConflictOccurrence(
             string SelectionKey,
+            string RewriteOccurrenceKey,
+            string? JointCombinationKey,
             double ExpectedArmyDrawCallsEliminated,
             HashSet<string> RewriteConflictKeys,
             Dictionary<string, string>
@@ -33006,6 +33208,7 @@ namespace Editors.KitbasherEditor.Services
             CrossRigidPayloadSelectionDecision Decision,
             double ExpectedArmyDrawCallsEliminated,
             double MarginalExpectedArmyDrawCallsEliminated,
+            int MaxRawDrawsSavedPerState,
             int RewritePlanCount,
             int VmdCount,
             long GeneratedGeometryBytes,
@@ -33118,6 +33321,9 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.Ordinal);
             public HashSet<string> CrossRigidSelectedRewriteOccurrenceKeys { get; } =
                 new(StringComparer.Ordinal);
+            public Dictionary<string, HashSet<string>>
+                CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey { get; } =
+                    new(StringComparer.Ordinal);
             public Dictionary<
                 string,
                 CrossRigidJointAlwaysPresentRewriteDescriptor>
