@@ -5738,6 +5738,8 @@ namespace Editors.KitbasherEditor.Services
                 "exact-structural-slot\u001f";
             const string jointStructuralPrefix =
                 "joint-structural-slot\u001f";
+            const string jointTraversalPrefix =
+                "joint-traversal-slot\u001f";
 
             foreach (var key in candidateKeys)
             {
@@ -5759,9 +5761,28 @@ namespace Editors.KitbasherEditor.Services
                         jointStructuralPrefix,
                         StringComparison.Ordinal))
                 {
+                    var suffix =
+                        key[jointStructuralPrefix.Length..];
                     if (selectedKeys.Contains(
                             exactStructuralPrefix +
-                            key[jointStructuralPrefix.Length..]))
+                            suffix) ||
+                        selectedKeys.Contains(
+                            jointTraversalPrefix +
+                            suffix))
+                    {
+                        return true;
+                    }
+
+                    continue;
+                }
+
+                if (key.StartsWith(
+                        jointTraversalPrefix,
+                        StringComparison.Ordinal))
+                {
+                    if (selectedKeys.Contains(
+                            jointStructuralPrefix +
+                            key[jointTraversalPrefix.Length..]))
                     {
                         return true;
                     }
@@ -5789,6 +5810,7 @@ namespace Editors.KitbasherEditor.Services
                     instance.ReferenceChain[hopIndex];
                 AddCrossRigidStructuralSlotConflictKeysForXmlPath(
                     conflictKeys,
+                    "exact-structural-slot",
                     rootVmdPath,
                     instance.ReferenceChain.Take(
                         hopIndex),
@@ -5798,6 +5820,7 @@ namespace Editors.KitbasherEditor.Services
 
             AddCrossRigidStructuralSlotConflictKeysForXmlPath(
                 conflictKeys,
+                "exact-structural-slot",
                 rootVmdPath,
                 instance.ReferenceChain,
                 instance.DefiningVmdPath,
@@ -5805,8 +5828,40 @@ namespace Editors.KitbasherEditor.Services
         }
 
         private static void
+            AddCrossRigidJointTraversalStructuralSlotConflictKeys(
+                HashSet<string> conflictKeys,
+                string rootVmdPath,
+                CrossRigidJointAlwaysPresentRewriteDescriptor descriptor)
+        {
+            for (var hopIndex = 0;
+                 hopIndex < descriptor.AnchorReferenceChain.Length;
+                 hopIndex++)
+            {
+                var hop =
+                    descriptor.AnchorReferenceChain[hopIndex];
+                AddCrossRigidStructuralSlotConflictKeysForXmlPath(
+                    conflictKeys,
+                    "joint-traversal-slot",
+                    rootVmdPath,
+                    descriptor.AnchorReferenceChain.Take(
+                        hopIndex),
+                    hop.OwnerVmdPath,
+                    hop.ReferenceXmlPath);
+            }
+
+            AddCrossRigidStructuralSlotConflictKeysForXmlPath(
+                conflictKeys,
+                "joint-traversal-slot",
+                rootVmdPath,
+                descriptor.AnchorReferenceChain,
+                descriptor.AnchorVmdPath,
+                descriptor.ParentXmlPath);
+        }
+
+        private static void
             AddCrossRigidStructuralSlotConflictKeysForXmlPath(
                 HashSet<string> conflictKeys,
+                string conflictKind,
                 string rootVmdPath,
                 IEnumerable<CrossRigidVmdReferenceHop>
                     anchorReferenceChain,
@@ -5849,7 +5904,7 @@ namespace Editors.KitbasherEditor.Services
 
                 conflictKeys.Add(
                     BuildCrossRigidStructuralSlotConflictKey(
-                        "exact-structural-slot",
+                        conflictKind,
                         rootVmdPath,
                         anchorReferenceChain,
                         ownerVmdPath,
@@ -5965,6 +6020,10 @@ namespace Editors.KitbasherEditor.Services
                         jointContextKeyByParentLocation[
                             parentLocationKey] =
                             contextKey;
+                        AddCrossRigidJointTraversalStructuralSlotConflictKeys(
+                            rewriteConflictKeys,
+                            plan.VmdPath,
+                            descriptor);
                         foreach (var slotIndex in
                                  descriptor.SlotIndices)
                         {
