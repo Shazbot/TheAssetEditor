@@ -5350,6 +5350,9 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidPayloadSelectionEntries.Clear();
             state.CrossRigidSelectedPayloadIds.Clear();
             state.CrossRigidSelectedRewriteOccurrenceKeys.Clear();
+            state.CrossRigidRewriteConflictReasonCounts.Clear();
+            state.CrossRigidRewriteConflictExpectedDraws.Clear();
+            state.CrossRigidRewriteConflictExamples.Clear();
 
             var expectedDrawsByPayload =
                 state.CrossRigidMergeAnalysisEntries
@@ -5497,8 +5500,17 @@ namespace Editors.KitbasherEditor.Services
                                 candidate.GeneratedPayloadId,
                                 conflictProfileVmdDocuments,
                                 out conflictProfile,
-                                out _))
+                                out var conflictBuildReason))
                         {
+                            RecordCrossRigidRewriteConflict(
+                                state,
+                                "Conflict profile could not be built",
+                                candidate,
+                                string.IsNullOrWhiteSpace(
+                                    conflictBuildReason)
+                                    ? $"payload={candidate.GeneratedPayloadId}"
+                                    : $"payload={candidate.GeneratedPayloadId}: " +
+                                      conflictBuildReason);
                             state.CrossRigidPayloadSelectionEntries.Add(
                                 candidate with
                                 {
@@ -5555,6 +5567,17 @@ namespace Editors.KitbasherEditor.Services
                     if (marginalExpectedDraws <=
                         AtlasValueGateExpectedDrawEpsilon)
                     {
+                        var (conflictReason, conflictDetail) =
+                            ClassifyCrossRigidRewriteOccurrenceConflict(
+                                conflictProfile,
+                                selectedRewriteConflictKeys,
+                                selectedJointContextKeyByParentLocation);
+                        RecordCrossRigidRewriteConflict(
+                            state,
+                            conflictReason,
+                            effectiveCandidate,
+                            $"payload={candidate.GeneratedPayloadId}: " +
+                            conflictDetail);
                         state.CrossRigidPayloadSelectionEntries.Add(
                             effectiveCandidate with
                             {
@@ -5844,6 +5867,183 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return false;
+        }
+
+        private static (string Reason, string Detail)
+            ClassifyCrossRigidRewriteOccurrenceConflict(
+                CrossRigidPayloadRewriteConflictProfile profile,
+                IReadOnlySet<string> selectedRewriteConflictKeys,
+                IReadOnlyDictionary<string, string>
+                    selectedJointContextKeyByParentLocation)
+        {
+            const string exactStructuralPrefix =
+                "exact-structural-slot\u001f";
+            const string jointStructuralPrefix =
+                "joint-structural-slot\u001f";
+            const string jointTraversalPrefix =
+                "joint-traversal-slot\u001f";
+
+            foreach (var occurrence in profile.Occurrences)
+            {
+                foreach (var pair in
+                         occurrence.JointContextKeyByParentLocation)
+                {
+                    if (!selectedJointContextKeyByParentLocation.TryGetValue(
+                            pair.Key,
+                            out var selectedContextKey) ||
+                        selectedContextKey.Equals(
+                            pair.Value,
+                            StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var selectedSuffix =
+                        selectedContextKey.StartsWith(
+                            pair.Key + "\u001f",
+                            StringComparison.Ordinal)
+                            ? selectedContextKey[
+                                (pair.Key.Length + 1)..]
+                            : selectedContextKey;
+                    var candidateSuffix =
+                        pair.Value.StartsWith(
+                            pair.Key + "\u001f",
+                            StringComparison.Ordinal)
+                            ? pair.Value[
+                                (pair.Key.Length + 1)..]
+                            : pair.Value;
+                    return (
+                        "Different joint slot/dimension set under one structural parent",
+                        $"parent={pair.Key}; selected={selectedSuffix}; " +
+                        $"candidate={candidateSuffix}");
+                }
+
+                foreach (var key in occurrence.RewriteConflictKeys)
+                {
+                    if (key.StartsWith(
+                            exactStructuralPrefix,
+                            StringComparison.Ordinal))
+                    {
+                        var counterpart =
+                            jointStructuralPrefix +
+                            key[exactStructuralPrefix.Length..];
+                        if (selectedRewriteConflictKeys.Contains(
+                                counterpart))
+                        {
+                            return (
+                                "Exact rewrite overlaps a selected joint structural slot",
+                                key);
+                        }
+
+                        continue;
+                    }
+
+                    if (key.StartsWith(
+                            jointStructuralPrefix,
+                            StringComparison.Ordinal))
+                    {
+                        var suffix =
+                            key[jointStructuralPrefix.Length..];
+                        if (selectedRewriteConflictKeys.Contains(
+                                exactStructuralPrefix + suffix))
+                        {
+                            return (
+                                "Joint rewrite overlaps a selected exact structural slot",
+                                key);
+                        }
+
+                        if (selectedRewriteConflictKeys.Contains(
+                                jointTraversalPrefix + suffix))
+                        {
+                            return (
+                                "Joint rewrite would invalidate a selected nested joint path",
+                                key);
+                        }
+
+                        continue;
+                    }
+
+                    if (key.StartsWith(
+                            jointTraversalPrefix,
+                            StringComparison.Ordinal))
+                    {
+                        var counterpart =
+                            jointStructuralPrefix +
+                            key[jointTraversalPrefix.Length..];
+                        if (selectedRewriteConflictKeys.Contains(
+                                counterpart))
+                        {
+                            return (
+                                "Joint traversal passes through a selected rewritten slot",
+                                key);
+                        }
+
+                        continue;
+                    }
+
+                    if (!selectedRewriteConflictKeys.Contains(key))
+                        continue;
+
+                    if (key.StartsWith(
+                            "exact\u001f",
+                            StringComparison.Ordinal))
+                    {
+                        return (
+                            "Exact source model occurrence already selected",
+                            key);
+                    }
+
+                    if (key.StartsWith(
+                            "joint\u001f",
+                            StringComparison.Ordinal))
+                    {
+                        return (
+                            "Joint Cartesian source occurrence already selected",
+                            key);
+                    }
+
+                    return (
+                        "Rewrite conflict key already selected",
+                        key);
+                }
+            }
+
+            return (
+                "Rewrite conflict could not be classified",
+                "all occurrence states were incompatible but no specific key was identified");
+        }
+
+        private static void RecordCrossRigidRewriteConflict(
+            BatchState state,
+            string reason,
+            CrossRigidPayloadSelectionEntry candidate,
+            string example)
+        {
+            state.CrossRigidRewriteConflictReasonCounts[reason] =
+                state.CrossRigidRewriteConflictReasonCounts
+                    .GetValueOrDefault(reason) + 1;
+            state.CrossRigidRewriteConflictExpectedDraws[reason] =
+                state.CrossRigidRewriteConflictExpectedDraws
+                    .GetValueOrDefault(reason) +
+                candidate.ExpectedArmyDrawCallsEliminated;
+
+            if (!state.CrossRigidRewriteConflictExamples.TryGetValue(
+                    reason,
+                    out var examples))
+            {
+                examples = [];
+                state.CrossRigidRewriteConflictExamples[reason] =
+                    examples;
+            }
+
+            const int maxExamplesPerReason = 8;
+            if (examples.Count < maxExamplesPerReason &&
+                !examples.Contains(
+                    example,
+                    StringComparer.Ordinal))
+            {
+                examples.Add(example);
+            }
         }
 
         private static void AddCrossRigidStructuralSlotConflictKeys(
@@ -29358,6 +29558,33 @@ namespace Editors.KitbasherEditor.Services
                     }
                 }
 
+                if (state.CrossRigidRewriteConflictReasonCounts.Count != 0)
+                {
+                    sb.AppendLine(
+                        "Cross-rigid rewrite-conflict diagnostics " +
+                        "(final zero-marginal payloads):");
+                    foreach (var (reason, count) in
+                             state.CrossRigidRewriteConflictReasonCounts
+                                 .OrderByDescending(entry => entry.Value)
+                                 .ThenBy(
+                                     entry => entry.Key,
+                                     StringComparer.Ordinal))
+                    {
+                        sb.AppendLine(
+                            $"  {reason}: {count:N0} payload(s), " +
+                            $"{state.CrossRigidRewriteConflictExpectedDraws.GetValueOrDefault(reason):0.###} standalone expected draw(s)");
+                        if (!state.CrossRigidRewriteConflictExamples.TryGetValue(
+                                reason,
+                                out var examples))
+                        {
+                            continue;
+                        }
+
+                        foreach (var example in examples)
+                            sb.AppendLine($"    - {example}");
+                    }
+                }
+
                 sb.AppendLine();
                 sb.AppendLine("Cross-rigid merge emission");
                 sb.AppendLine("--------------------------");
@@ -32265,6 +32492,15 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.Ordinal);
             public HashSet<string> CrossRigidSelectedRewriteOccurrenceKeys { get; } =
                 new(StringComparer.Ordinal);
+            public Dictionary<string, int>
+                CrossRigidRewriteConflictReasonCounts { get; } =
+                    new(StringComparer.Ordinal);
+            public Dictionary<string, double>
+                CrossRigidRewriteConflictExpectedDraws { get; } =
+                    new(StringComparer.Ordinal);
+            public Dictionary<string, List<string>>
+                CrossRigidRewriteConflictExamples { get; } =
+                    new(StringComparer.Ordinal);
             public HashSet<string> CrossRigidGeneratedPayloadIds { get; } =
                 new(StringComparer.Ordinal);
             public HashSet<string> CrossRigidGeneratedRigidPaths { get; } =
