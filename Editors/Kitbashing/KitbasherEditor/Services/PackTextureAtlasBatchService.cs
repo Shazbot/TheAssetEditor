@@ -6431,43 +6431,66 @@ namespace Editors.KitbasherEditor.Services
             FinalizeCrossRigidJointProbabilityMultiplicities(
                 IEnumerable<CrossRigidJointRewriteContext> contexts)
         {
-            foreach (var context in contexts)
+            // Inner weighted joints must be finalized before outer wrappers
+            // are cloned, so every outer clone captures the already-finalized
+            // probability distribution of its descendant joints.
+            var combinations =
+                contexts
+                    .SelectMany(context =>
+                        context.Combinations.Values)
+                    .Distinct()
+                    .OrderByDescending(combination =>
+                        GetCrossRigidXmlNodeDepth(
+                            combination.WrapperElement))
+                    .ToArray();
+
+            foreach (var combination in combinations)
             {
-                foreach (var combination in
-                         context.Combinations.Values)
+                if (combination.ProbabilityMultiplicityFinalized ||
+                    combination.ProbabilityMultiplicity <= 1)
                 {
-                    if (combination.ProbabilityMultiplicityFinalized ||
-                        combination.ProbabilityMultiplicity <= 1)
-                    {
-                        combination.ProbabilityMultiplicityFinalized = true;
-                        continue;
-                    }
-
-                    XmlNode insertionPoint =
-                        combination.WrapperElement;
-                    var parent =
-                        combination.WrapperElement.ParentNode;
-                    if (parent == null)
-                        continue;
-
-                    for (var copyIndex = 1;
-                         copyIndex <
-                         combination.ProbabilityMultiplicity;
-                         copyIndex++)
-                    {
-                        var clone =
-                            combination.WrapperElement.CloneNode(
-                                deep: true);
-                        parent.InsertAfter(
-                            clone,
-                            insertionPoint);
-                        insertionPoint =
-                            clone;
-                    }
-
                     combination.ProbabilityMultiplicityFinalized = true;
+                    continue;
                 }
+
+                XmlNode insertionPoint =
+                    combination.WrapperElement;
+                var parent =
+                    combination.WrapperElement.ParentNode;
+                if (parent == null)
+                    continue;
+
+                for (var copyIndex = 1;
+                     copyIndex <
+                     combination.ProbabilityMultiplicity;
+                     copyIndex++)
+                {
+                    var clone =
+                        combination.WrapperElement.CloneNode(
+                            deep: true);
+                    parent.InsertAfter(
+                        clone,
+                        insertionPoint);
+                    insertionPoint =
+                        clone;
+                }
+
+                combination.ProbabilityMultiplicityFinalized = true;
             }
+        }
+
+        private static int GetCrossRigidXmlNodeDepth(
+            XmlNode node)
+        {
+            var depth = 0;
+            for (var current = node.ParentNode;
+                 current != null;
+                 current = current.ParentNode)
+            {
+                depth++;
+            }
+
+            return depth;
         }
 
         private static bool TryValidateCrossRigidRewriteOccurrenceSet(
