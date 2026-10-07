@@ -5931,7 +5931,7 @@ namespace Editors.KitbasherEditor.Services
         }
 
 
-        private static void SelectCrossRigidGeneratedPayloads(        private static void SelectCrossRigidGeneratedPayloads(
+        private static void SelectCrossRigidGeneratedPayloads(
             BatchState state)
         {
             state.CrossRigidPayloadSelectionEntries.Clear();
@@ -7021,7 +7021,7 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
-        private static void EmitSelectedCrossRigidMerges(        private static void EmitSelectedCrossRigidMerges(
+        private static void EmitSelectedCrossRigidMerges(
             BatchState state,
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
