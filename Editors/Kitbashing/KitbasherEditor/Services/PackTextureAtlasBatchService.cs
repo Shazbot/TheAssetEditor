@@ -2877,7 +2877,9 @@ namespace Editors.KitbasherEditor.Services
                         break;
                     }
 
-                    combinationCount *= alternatives.Length;
+                    combinationCount *=
+                        alternatives.Sum(alternative =>
+                            alternative.Multiplicity);
                     if (combinationCount >
                         MaxCrossRigidJointStateCombinations)
                     {
@@ -3313,7 +3315,8 @@ namespace Editors.KitbasherEditor.Services
                                     tokenSelection.ParentXmlPath,
                                     tokenSelection.SlotIndex),
                                 alternative.IsReference,
-                                alternative.AlternativeIndex))
+                                alternative.AlternativeIndex,
+                                alternative.Multiplicity))
                         .ToArray();
                 if (dimensionAlternatives.Length <= 1)
                 {
@@ -3418,7 +3421,8 @@ namespace Editors.KitbasherEditor.Services
             foreach (var dimension in dimensionsByKey.Values)
             {
                 combinationCount *=
-                    dimension.Alternatives.Length;
+                    dimension.Alternatives.Sum(alternative =>
+                        alternative.Multiplicity);
                 if (combinationCount >
                     MaxCrossRigidJointStateCombinations)
                 {
@@ -3757,7 +3761,8 @@ namespace Editors.KitbasherEditor.Services
                             new CrossRigidJointDimensionAlternative(
                                 dimensionKey,
                                 alternative.IsReference,
-                                alternative.AlternativeIndex))
+                                alternative.AlternativeIndex,
+                                alternative.Multiplicity))
                         .ToArray();
                 if (alternatives.Length <= 1)
                 {
@@ -3853,7 +3858,8 @@ namespace Editors.KitbasherEditor.Services
                      dimensionsByKey.Values)
             {
                 combinationCount *=
-                    dimension.Alternatives.Length;
+                    dimension.Alternatives.Sum(alternative =>
+                        alternative.Multiplicity);
                 if (combinationCount >
                     MaxCrossRigidJointStateCombinations)
                 {
@@ -4817,7 +4823,7 @@ namespace Editors.KitbasherEditor.Services
                     slotElement))
             {
                 reason =
-                    "optional joint writer currently supports only probability-0.5 slots with exactly one model/reference alternative";
+                    "optional joint writer supports only one-alternative slots whose authored probability has a bounded exact rational expansion";
                 return false;
             }
 
@@ -4827,22 +4833,65 @@ namespace Editors.KitbasherEditor.Services
         private static bool
             IsSupportedCrossRigidOptionalJointSlot(
                 XmlElement slotElement)
-        {
-            var probability =
-                ParseVmdSlotProbability(
-                    slotElement.GetAttribute("probability"));
-            if (Math.Abs(probability - 0.5) >
-                AtlasValueGateExpectedDrawEpsilon)
-            {
-                return false;
-            }
+            => TryGetCrossRigidOptionalJointMultiplicities(
+                slotElement,
+                out _,
+                out _);
 
+        private static bool
+            TryGetCrossRigidOptionalJointMultiplicities(
+                XmlElement slotElement,
+                out int absentMultiplicity,
+                out int presentMultiplicity)
+        {
+            absentMultiplicity = 0;
+            presentMultiplicity = 0;
             var alternativeCount =
                 (slotElement.SelectNodes(
                     "VARIANT_MESH")?.Count ?? 0) +
                 (slotElement.SelectNodes(
                     "VARIANT_MESH_REFERENCE")?.Count ?? 0);
-            return alternativeCount == 1;
+            if (alternativeCount != 1)
+                return false;
+
+            var probabilityText =
+                slotElement.GetAttribute("probability");
+            if (!decimal.TryParse(
+                    probabilityText,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var probability) ||
+                probability <= 0 ||
+                probability >= 1)
+            {
+                return false;
+            }
+
+            const int maxExactDenominator = 32;
+            for (var denominator = 2;
+                 denominator <= maxExactDenominator;
+                 denominator++)
+            {
+                var scaled =
+                    probability * denominator;
+                if (scaled != decimal.Truncate(scaled))
+                    continue;
+
+                var numerator =
+                    decimal.ToInt32(scaled);
+                if (numerator <= 0 ||
+                    numerator >= denominator)
+                {
+                    continue;
+                }
+
+                presentMultiplicity = numerator;
+                absentMultiplicity =
+                    denominator - numerator;
+                return true;
+            }
+
+            return false;
         }
 
         private static bool TryClassifyCrossRigidActivationToken(
@@ -6360,6 +6409,9 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            FinalizeCrossRigidJointProbabilityMultiplicities(
+                jointRewriteContexts.Values);
+
             if (state.ModifiedVmdDocuments.Count != 0)
             {
                 foreach (var (path, document) in
@@ -6372,6 +6424,49 @@ namespace Editors.KitbasherEditor.Services
 
                 state.ReachableWsModelsByRoot.Clear();
                 state.ReachableWsModelsByRootVersion++;
+            }
+        }
+
+        private static void
+            FinalizeCrossRigidJointProbabilityMultiplicities(
+                IEnumerable<CrossRigidJointRewriteContext> contexts)
+        {
+            foreach (var context in contexts)
+            {
+                foreach (var combination in
+                         context.Combinations.Values)
+                {
+                    if (combination.ProbabilityMultiplicityFinalized ||
+                        combination.ProbabilityMultiplicity <= 1)
+                    {
+                        combination.ProbabilityMultiplicityFinalized = true;
+                        continue;
+                    }
+
+                    XmlNode insertionPoint =
+                        combination.WrapperElement;
+                    var parent =
+                        combination.WrapperElement.ParentNode;
+                    if (parent == null)
+                        continue;
+
+                    for (var copyIndex = 1;
+                         copyIndex <
+                         combination.ProbabilityMultiplicity;
+                         copyIndex++)
+                    {
+                        var clone =
+                            combination.WrapperElement.CloneNode(
+                                deep: true);
+                        parent.InsertAfter(
+                            clone,
+                            insertionPoint);
+                        insertionPoint =
+                            clone;
+                    }
+
+                    combination.ProbabilityMultiplicityFinalized = true;
+                }
             }
         }
 
@@ -7076,11 +7171,15 @@ namespace Editors.KitbasherEditor.Services
                 combinationAlternatives = expanded;
             }
 
-            if (combinationAlternatives.Count !=
+            var expandedCombinationCount =
+                combinationAlternatives.Sum(alternatives =>
+                    GetCrossRigidJointCombinationMultiplicity(
+                        alternatives));
+            if (expandedCombinationCount !=
                 descriptor.CombinationCount)
             {
                 reason =
-                    "Joint Cartesian product changed since analysis";
+                    "Joint weighted Cartesian product changed since analysis";
                 return false;
             }
 
@@ -7126,8 +7225,8 @@ namespace Editors.KitbasherEditor.Services
                         }
 
                         // Absence is materialized by omitting this slot from
-                        // the deterministic wrapper. The outer Cartesian
-                        // alternative already carries the 0.5 probability.
+                        // the deterministic wrapper. Probability is preserved
+                        // by the wrapper's final integer multiplicity.
                         continue;
                     }
 
@@ -7166,7 +7265,11 @@ namespace Editors.KitbasherEditor.Services
                         alternatives);
                 combinations[combinationKey] =
                     new CrossRigidJointCombinationRewriteState(
-                        selectedElementsBySlotIndex);
+                        selectedElementsBySlotIndex,
+                        wrapperElement: wrapper,
+                        probabilityMultiplicity:
+                            GetCrossRigidJointCombinationMultiplicity(
+                                alternatives));
             }
 
             var firstSlot =
@@ -7280,11 +7383,15 @@ namespace Editors.KitbasherEditor.Services
                 combinationAlternatives = expanded;
             }
 
-            if (combinationAlternatives.Count !=
+            var expandedCombinationCount =
+                combinationAlternatives.Sum(alternatives =>
+                    GetCrossRigidJointCombinationMultiplicity(
+                        alternatives));
+            if (expandedCombinationCount !=
                 descriptor.CombinationCount)
             {
                 reason =
-                    "Common-ancestor Cartesian product changed since analysis";
+                    "Common-ancestor weighted Cartesian product changed since analysis";
                 return false;
             }
 
@@ -7339,7 +7446,10 @@ namespace Editors.KitbasherEditor.Services
                 var combination =
                     new CrossRigidJointCombinationRewriteState(
                         clonedCarrierSlots,
-                        selectedElementsByDimensionKey);
+                        selectedElementsByDimensionKey,
+                        wrapper,
+                        GetCrossRigidJointCombinationMultiplicity(
+                            alternatives));
                 var combinationKey =
                     BuildCrossRigidCommonAncestorCombinationKey(
                         alternatives);
@@ -7462,12 +7572,49 @@ namespace Editors.KitbasherEditor.Services
                         nestedDimensionSlotElement;
                 }
 
+                if (alternative.AlternativeIndex == 0)
+                {
+                    if (!IsSupportedCrossRigidOptionalJointSlot(
+                            localDimensionSlotElement))
+                    {
+                        reason =
+                            "Synthetic absent common-ancestor alternative belongs to a non-supported optional slot";
+                        return false;
+                    }
+
+                    var optionalParent =
+                        localDimensionSlotElement.ParentNode;
+                    if (optionalParent == null)
+                    {
+                        reason =
+                            "Synthetic absent common-ancestor slot has no parent";
+                        return false;
+                    }
+
+                    optionalParent.RemoveChild(
+                        localDimensionSlotElement);
+                    selectedElement =
+                        carrierSlotElement;
+                    return true;
+                }
+
+                if (ParseVmdSlotProbability(
+                        localDimensionSlotElement.GetAttribute(
+                            "probability")) <
+                    1.0 - AtlasValueGateExpectedDrawEpsilon)
+                {
+                    localDimensionSlotElement.SetAttribute(
+                        "probability",
+                        "1");
+                }
+
                 return TryReduceCrossRigidJointSlotToAlternative(
                     localDimensionSlotElement,
                     new CrossRigidJointAlternative(
                         dimension.SlotIndex,
                         alternative.IsReference,
-                        alternative.AlternativeIndex),
+                        alternative.AlternativeIndex,
+                        alternative.Multiplicity),
                     out selectedElement,
                     out reason);
             }
@@ -7605,12 +7752,49 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
+            if (alternative.AlternativeIndex == 0)
+            {
+                if (!IsSupportedCrossRigidOptionalJointSlot(
+                        dimensionSlotElement))
+                {
+                    reason =
+                        "Synthetic absent referenced common-ancestor alternative belongs to a non-supported optional slot";
+                    return false;
+                }
+
+                var optionalParent =
+                    dimensionSlotElement.ParentNode;
+                if (optionalParent == null)
+                {
+                    reason =
+                        "Synthetic absent referenced common-ancestor slot has no parent";
+                    return false;
+                }
+
+                optionalParent.RemoveChild(
+                    dimensionSlotElement);
+                selectedElement =
+                    currentDocument.DocumentElement!;
+                return true;
+            }
+
+            if (ParseVmdSlotProbability(
+                    dimensionSlotElement.GetAttribute(
+                        "probability")) <
+                1.0 - AtlasValueGateExpectedDrawEpsilon)
+            {
+                dimensionSlotElement.SetAttribute(
+                    "probability",
+                    "1");
+            }
+
             return TryReduceCrossRigidJointSlotToAlternative(
                 dimensionSlotElement,
                 new CrossRigidJointAlternative(
                     dimension.SlotIndex,
                     alternative.IsReference,
-                    alternative.AlternativeIndex),
+                    alternative.AlternativeIndex,
+                    alternative.Multiplicity),
                 out selectedElement,
                 out reason);
         }
@@ -7622,18 +7806,22 @@ namespace Editors.KitbasherEditor.Services
         {
             var alternatives =
                 new List<CrossRigidJointAlternative>();
-            if (IsSupportedCrossRigidOptionalJointSlot(
-                    slotElement))
+            var optional =
+                TryGetCrossRigidOptionalJointMultiplicities(
+                    slotElement,
+                    out var absentMultiplicity,
+                    out var presentMultiplicity);
+            if (optional)
             {
                 // AlternativeIndex 0 is the synthetic "slot absent" state.
-                // With probability 0.5 and one authored alternative, absent
-                // and present are equiprobable and can therefore participate
-                // in the existing uniform Cartesian product exactly.
+                // Integer multiplicities reproduce the authored optional
+                // probability exactly once the finished wrappers are cloned.
                 alternatives.Add(
                     new CrossRigidJointAlternative(
                         slotIndex,
                         false,
-                        0));
+                        0,
+                        absentMultiplicity));
             }
 
             var meshCount =
@@ -7647,7 +7835,10 @@ namespace Editors.KitbasherEditor.Services
                     new CrossRigidJointAlternative(
                         slotIndex,
                         false,
-                        meshIndex));
+                        meshIndex,
+                        optional
+                            ? presentMultiplicity
+                            : 1));
             }
 
             var referenceCount =
@@ -7661,11 +7852,36 @@ namespace Editors.KitbasherEditor.Services
                     new CrossRigidJointAlternative(
                         slotIndex,
                         true,
-                        referenceIndex));
+                        referenceIndex,
+                        optional
+                            ? presentMultiplicity
+                            : 1));
             }
 
             return alternatives.ToArray();
         }
+
+        private static int GetCrossRigidJointCombinationMultiplicity(
+            IEnumerable<CrossRigidJointAlternative> alternatives)
+            => alternatives.Aggregate(
+                1,
+                (product, alternative) =>
+                    checked(
+                        product *
+                        Math.Max(
+                            1,
+                            alternative.Multiplicity)));
+
+        private static int GetCrossRigidJointCombinationMultiplicity(
+            IEnumerable<CrossRigidJointDimensionAlternative> alternatives)
+            => alternatives.Aggregate(
+                1,
+                (product, alternative) =>
+                    checked(
+                        product *
+                        Math.Max(
+                            1,
+                            alternative.Multiplicity)));
 
         private static bool TryReduceCrossRigidJointSlotToAlternative(
             XmlElement slotElement,
@@ -28873,7 +29089,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. At one shared structural parent, probability-0.5 optional slots with exactly one model/reference alternative are represented as explicit absent/present Cartesian states; other optional-slot topologies remain excluded.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. At one shared structural parent, one-alternative optional slots whose authored probability has a bounded exact rational expansion are represented as weighted absent/present Cartesian states; finished wrappers are duplicated by integer multiplicity so the original probability is preserved exactly. Other optional-slot topologies remain excluded.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
@@ -31709,12 +31925,14 @@ namespace Editors.KitbasherEditor.Services
         private sealed record CrossRigidJointDimensionAlternative(
             string DimensionKey,
             bool IsReference,
-            int AlternativeIndex);
+            int AlternativeIndex,
+            int Multiplicity = 1);
 
         private sealed record CrossRigidJointAlternative(
             int SlotIndex,
             bool IsReference,
-            int AlternativeIndex);
+            int AlternativeIndex,
+            int Multiplicity = 1);
 
         private sealed record CrossRigidJointSlotDefinition(
             int SlotIndex,
@@ -31726,7 +31944,9 @@ namespace Editors.KitbasherEditor.Services
             public CrossRigidJointCombinationRewriteState(
                 Dictionary<int, XmlElement> selectedElementsBySlotIndex,
                 Dictionary<string, XmlElement>?
-                    selectedElementsByDimensionKey = null)
+                    selectedElementsByDimensionKey = null,
+                XmlElement? wrapperElement = null,
+                int probabilityMultiplicity = 1)
             {
                 SelectedElementsBySlotIndex =
                     selectedElementsBySlotIndex;
@@ -31734,7 +31954,19 @@ namespace Editors.KitbasherEditor.Services
                     selectedElementsByDimensionKey ??
                     new Dictionary<string, XmlElement>(
                         StringComparer.Ordinal);
+                WrapperElement =
+                    wrapperElement ??
+                    throw new ArgumentNullException(
+                        nameof(wrapperElement));
+                ProbabilityMultiplicity =
+                    Math.Max(
+                        1,
+                        probabilityMultiplicity);
             }
+
+            public XmlElement WrapperElement { get; }
+            public int ProbabilityMultiplicity { get; }
+            public bool ProbabilityMultiplicityFinalized { get; set; }
 
             public Dictionary<int, XmlElement>
                 SelectedElementsBySlotIndex { get; }
