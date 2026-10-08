@@ -7059,37 +7059,43 @@ namespace Editors.KitbasherEditor.Services
                 IReadOnlyDictionary<string, string>
                     selectedJointContextKeyByParentLocation)
         {
+            // The caller's selected keys/contexts are immutable for this
+            // evaluation. Only track additions made by *this* payload.
+            // Copying the whole selected portfolio here was quadratic across
+            // candidates, multiplied again by each portfolio-ordering trial.
             var localRewriteConflictKeys =
-                new HashSet<string>(
-                    selectedRewriteConflictKeys,
-                    StringComparer.Ordinal);
+                new HashSet<string>(StringComparer.Ordinal);
             var localJointContextKeyByParentLocation =
-                new Dictionary<string, string>(
-                    selectedJointContextKeyByParentLocation,
-                    StringComparer.Ordinal);
+                new Dictionary<string, string>(StringComparer.Ordinal);
             var selected =
                 new List<CrossRigidRewriteConflictOccurrence>();
 
-            foreach (var occurrence in
-                     profile.Occurrences
-                         .OrderByDescending(item =>
-                             item.ExpectedArmyDrawCallsEliminated)
-                         .ThenBy(
-                             item => item.SelectionKey,
-                             StringComparer.Ordinal))
+            // Profile occurrences are already sorted by expected draw benefit,
+            // then by selection key, when the conflict profile is constructed.
+            foreach (var occurrence in profile.Occurrences)
             {
                 if (HasCrossRigidRewriteConflict(
+                        occurrence.RewriteConflictKeys,
+                        selectedRewriteConflictKeys) ||
+                    HasCrossRigidRewriteConflict(
                         occurrence.RewriteConflictKeys,
                         localRewriteConflictKeys) ||
                     occurrence.JointContextKeyByParentLocation.Any(
                         pair =>
-                            localJointContextKeyByParentLocation
-                                .TryGetValue(
-                                    pair.Key,
-                                    out var existingContextKey) &&
-                            !existingContextKey.Equals(
-                                pair.Value,
-                                StringComparison.Ordinal)))
+                            (selectedJointContextKeyByParentLocation
+                                 .TryGetValue(
+                                     pair.Key,
+                                     out var existingContextKey) &&
+                             !existingContextKey.Equals(
+                                 pair.Value,
+                                 StringComparison.Ordinal)) ||
+                            (localJointContextKeyByParentLocation
+                                 .TryGetValue(
+                                     pair.Key,
+                                     out var localContextKey) &&
+                             !localContextKey.Equals(
+                                 pair.Value,
+                                 StringComparison.Ordinal))))
                 {
                     continue;
                 }
