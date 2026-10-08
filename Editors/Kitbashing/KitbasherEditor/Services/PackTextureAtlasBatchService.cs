@@ -6031,23 +6031,33 @@ namespace Editors.KitbasherEditor.Services
 
             var orderedCandidates =
                 selectionCandidates
+                    // Optimize the expected benefit of the competing rewrite
+                    // portfolio, not the largest single rendered-state reduction.
+                    // A large raw-draw merge may occupy the same Cartesian states
+                    // as several cheaper, more valuable merges. Normalize physical
+                    // and resident payload costs by their respective budgets before
+                    // comparing the benefit of mutually competing payloads.
                     .OrderByDescending(entry =>
-                        entry.MaxRawDrawsSavedPerState)
+                        entry.ExpectedArmyDrawCallsEliminated /
+                        Math.Max(
+                            1.0,
+                            Math.Max(
+                                (double)entry.GeneratedGeometryBytes /
+                                MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw,
+                                entry.ExpectedResidentGeneratedGeometryBytes /
+                                MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw)))
+                    .ThenByDescending(entry =>
+                        entry.ExpectedArmyDrawCallsEliminated)
                     .ThenBy(entry =>
                         Math.Max(
                             entry.ResidentBytesPerExpectedDraw /
                             MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw,
                             entry.PhysicalBytesPerExpectedDraw /
                             MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw))
-                    .ThenBy(entry =>
-                        entry.ResidentBytesPerExpectedDraw /
-                        MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw +
-                        entry.PhysicalBytesPerExpectedDraw /
-                        MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw)
+                    .ThenByDescending(entry =>
+                        entry.MaxRawDrawsSavedPerState)
                     .ThenByDescending(entry =>
                         entry.RewritePlanCount)
-                    .ThenByDescending(entry =>
-                        entry.ExpectedArmyDrawCallsEliminated)
                     .ThenBy(
                         entry => entry.GeneratedPayloadId,
                         StringComparer.Ordinal)
