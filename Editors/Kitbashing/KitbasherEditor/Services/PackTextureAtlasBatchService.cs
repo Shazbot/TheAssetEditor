@@ -4030,6 +4030,39 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // Optional direct dimensions are independent only when no
+            // other dimension lives inside their selected subtree.
+            // Otherwise absent/present states must be enumerated
+            // conditionally rather than as a plain Cartesian product.
+            foreach (var optionalDimension in dimensionsByKey.Values
+                         .Where(dimension => dimension.Alternatives.Any(
+                             alternative => alternative.AlternativeIndex == 0)))
+            {
+                var optionalSlotPath =
+                    $"{optionalDimension.ParentXmlPath}/SLOT[{optionalDimension.SlotIndex}]";
+                foreach (var otherDimension in dimensionsByKey.Values)
+                {
+                    if (otherDimension.DimensionKey.Equals(
+                            optionalDimension.DimensionKey,
+                            StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    if (Normalize(otherDimension.OwnerVmdPath).Equals(
+                            Normalize(optionalDimension.OwnerVmdPath),
+                            StringComparison.OrdinalIgnoreCase) &&
+                        otherDimension.ParentXmlPath.StartsWith(
+                            optionalSlotPath + "/",
+                            StringComparison.Ordinal))
+                    {
+                        reason =
+                            "fixed-local optional Cartesian dimension contains a nested varying dimension";
+                        return false;
+                    }
+                }
+            }
+
             long combinationCount = 1;
             foreach (var dimension in
                      dimensionsByKey.Values)
