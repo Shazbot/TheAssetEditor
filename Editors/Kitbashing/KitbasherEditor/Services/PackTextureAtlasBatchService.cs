@@ -5855,14 +5855,15 @@ namespace Editors.KitbasherEditor.Services
             // The canonical descriptor is only the joint context's shape.
             // Each emitted occurrence retains its own source selections
             // and is projected onto every matching union state.
-            descriptor = first with
+            var canonicalDescriptor = first with
             {
                 SlotIndices = slotIndices,
                 CombinationCount = (int)weightedStates,
             };
+            descriptor = canonicalDescriptor;
             return candidates.All(candidate =>
                 IsCrossRigidJointDescriptorStructuralSuperset(
-                    descriptor,
+                    canonicalDescriptor,
                     candidate));
         }
 
