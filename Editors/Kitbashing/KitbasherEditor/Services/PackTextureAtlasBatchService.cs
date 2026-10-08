@@ -2119,6 +2119,13 @@ namespace Editors.KitbasherEditor.Services
                             $"{plan.VmdPath} [{plan.AttachmentIdentity}]: " +
                             $"{jointReason}; sources=[" +
                             $"{string.Join(", ", classified.OccurrenceSet.SourceInstances.Select(instance => instance.WsModelPath))}]");
+                        // Aggregate the actual reason separately rather
+                        // than showing only the first few examples from a
+                        // large, undifferentiated rejection category.
+                        RecordCrossRigidAnalysisDiagnostic(
+                            state,
+                            $"Joint writer exclusion: {jointReason}",
+                            $"{plan.VmdPath} [{plan.AttachmentIdentity}]");
                     }
                 }
 
@@ -2933,19 +2940,23 @@ namespace Editors.KitbasherEditor.Services
                 return true;
             }
 
+            // Prefer the general cross-VMD common-ancestor explanation.
+            // The fixed-local fallback reports a generic "different
+            // defining VMDs" for any mixed-source case, masking the
+            // specific reference-carrier or optional-topology constraint.
             reason =
                 candidateGroups.Length == 0
                     ? new[]
                         {
-                            localCommonAncestorReason,
                             commonAncestorReason,
+                            localCommonAncestorReason,
                         }
                         .FirstOrDefault(value =>
                             !string.IsNullOrWhiteSpace(value)) ??
                       "shared structural parent could not be materialized safely"
                     : candidateFailureReasons
-                        .Append(localCommonAncestorReason)
                         .Append(commonAncestorReason)
+                        .Append(localCommonAncestorReason)
                         .FirstOrDefault(value =>
                             !string.IsNullOrWhiteSpace(value)) ??
                       "shared structural parent could not be materialized safely";
