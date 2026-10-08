@@ -2055,13 +2055,11 @@ namespace Editors.KitbasherEditor.Services
                              fullGroupPlanKeys.Contains(entry.Key) ? 0 : 1)
                          .ThenBy(entry => entry.Key, StringComparer.Ordinal))
             {
-                var isFallbackOnly =
-                    !fullGroupPlanKeys.Contains(planKey) &&
+                if (!fullGroupPlanKeys.Contains(planKey) &&
                     fallbackParentPlanKeys.TryGetValue(
-                        planKey, out var fallbackParents);
-                if (isFallbackOnly)
+                        planKey, out var fallbackParents))
                 {
-                    if (fallbackParents!.Any(
+                    if (fallbackParents.Any(
                             safeFullGroupPlanKeys.Contains))
                     {
                         state.CrossRigidPairFallbackPlansSuppressed++;
