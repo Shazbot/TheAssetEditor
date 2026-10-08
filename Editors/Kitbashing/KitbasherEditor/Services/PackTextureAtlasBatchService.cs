@@ -1665,6 +1665,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisConfigurationCount = 0;
             state.CrossRigidAnalysisOpportunityObservationCount = 0;
             state.CrossRigidTimingDetails.Clear();
+            state.CrossRigidSourceMeshMergeIdentityCache.Clear();
+            state.CrossRigidMaterialMergeIdentityCache.Clear();
             var crossRigidAnalysisStage = Stopwatch.StartNew();
 
             var rigidCache = new Dictionary<string, RmvFile>(
@@ -10396,21 +10398,14 @@ namespace Editors.KitbasherEditor.Services
                              partIndex < models.Length;
                              partIndex++)
                         {
-                            var mergeIdentity = string.Join(
-                                "\u001e",
-                                GetAtlasBatchMergeBoundaryIdentity(
+                            var mergeIdentity =
+                                GetCrossRigidSourcePartMergeIdentity(
                                     state,
-                                    new MeshKey(
-                                        component.RigidPath,
-                                        sourceLodIndex,
-                                        partIndex)),
-                                GetRmvMergeIdentityForMerge(
+                                    component.RigidPath,
+                                    sourceLodIndex,
+                                    partIndex,
                                     models[partIndex],
-                                    includeEmbeddedMaterialIdentity:
-                                        false),
-                                GetMeshMergeMaterialIdentity(
-                                    state,
-                                    assignments[partIndex]));
+                                    assignments[partIndex]);
 
                             sourceParts.Add(
                                 new CrossRigidGeneratedSourcePart(
@@ -12296,22 +12291,14 @@ namespace Editors.KitbasherEditor.Services
                             (long)sizeof(ushort) *
                             model.Mesh.IndexList.Length);
 
-                    var materialIdentity =
-                        GetMeshMergeMaterialIdentity(
+                    var identity =
+                        GetCrossRigidSourcePartMergeIdentity(
                             state,
-                            materialAssignments[partIndex]);
-                    var identity = string.Join(
-                        "\u001e",
-                        GetAtlasBatchMergeBoundaryIdentity(
-                            state,
-                            new MeshKey(
-                                component.RigidPath,
-                                sourceLodIndex,
-                                partIndex)),
-                        GetRmvMergeIdentityForMerge(
+                            component.RigidPath,
+                            sourceLodIndex,
+                            partIndex,
                             model,
-                            includeEmbeddedMaterialIdentity: false),
-                        materialIdentity);
+                            materialAssignments[partIndex]);
                     if (!partsByIdentity.TryGetValue(
                             identity,
                             out var parts))
@@ -26908,6 +26895,57 @@ namespace Editors.KitbasherEditor.Services
                 ContentHash(Convert.ToHexString(materialBytes)));
         }
 
+        private static string GetCrossRigidSourcePartMergeIdentity(
+            BatchState state,
+            string rigidPath,
+            int lodIndex,
+            int partIndex,
+            RmvModel model,
+            string materialPath)
+        {
+            // The same source part is inspected repeatedly across attachment
+            // alternatives, LOD states and VMD roots. RMV identity serializes
+            // embedded material metadata; material identity may parse XML.
+            // Both depend only on the source part / material during the
+            // cross-rigid analysis and emission stages.
+            var meshKey = new MeshKey(
+                Normalize(rigidPath),
+                lodIndex,
+                partIndex);
+            if (!state.CrossRigidSourceMeshMergeIdentityCache.TryGetValue(
+                    meshKey,
+                    out var modelIdentity))
+            {
+                modelIdentity = GetRmvMergeIdentityForMerge(
+                    model,
+                    includeEmbeddedMaterialIdentity: false);
+                state.CrossRigidSourceMeshMergeIdentityCache[meshKey] =
+                    modelIdentity;
+            }
+
+            var normalizedMaterialPath = Normalize(materialPath);
+            if (!state.CrossRigidMaterialMergeIdentityCache.TryGetValue(
+                    normalizedMaterialPath,
+                    out var materialIdentity))
+            {
+                materialIdentity = GetMeshMergeMaterialIdentity(
+                    state,
+                    normalizedMaterialPath);
+                state.CrossRigidMaterialMergeIdentityCache[
+                    normalizedMaterialPath] = materialIdentity;
+            }
+
+            // Evaluate the logical atlas boundary on each use: it may vary
+            // between physical mesh states and is not covered by either cache.
+            return string.Join(
+                "\u001e",
+                GetAtlasBatchMergeBoundaryIdentity(
+                    state,
+                    meshKey),
+                modelIdentity,
+                materialIdentity);
+        }
+
         private static string GetRmvMergeIdentityForMerge(
             RmvModel model,
             bool includeEmbeddedMaterialIdentity)
@@ -34632,6 +34670,10 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, TimeSpan> PhaseDurations { get; } = new(StringComparer.Ordinal);
             public Dictionary<string, TimeSpan> CrossRigidTimingDetails { get; } =
                 new(StringComparer.Ordinal);
+            public Dictionary<MeshKey, string> CrossRigidSourceMeshMergeIdentityCache { get; } =
+                [];
+            public Dictionary<string, string> CrossRigidMaterialMergeIdentityCache { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public TimeSpan TotalElapsed { get; set; }
 
             public BatchState(
