@@ -5945,6 +5945,9 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidCanonicalJointParentCount = 0;
             state.CrossRigidCanonicalJointContextsFolded = 0;
             state.CrossRigidCanonicalJointParentConflictCount = 0;
+            state.CrossRigidPortfolioOrderingsEvaluated = 0;
+            state.CrossRigidRawGreedyExpectedDraws = 0;
+            state.CrossRigidBestPortfolioExpectedDraws = 0;
 
             var expectedDrawsByPayload =
                 state.CrossRigidMergeAnalysisEntries
@@ -6094,6 +6097,16 @@ namespace Editors.KitbasherEditor.Services
                     string,
                     CrossRigidSelectedRewriteConflictOwner>(
                     StringComparer.Ordinal);
+
+            // Compare whole portfolios before committing any rewrites. Each
+            // candidate is replayed through the same exact-occurrence and
+            // nested-context conflict rules used by the final writer.
+            orderedCandidates =
+                OptimizeCrossRigidPayloadCandidateOrdering(
+                    state,
+                    orderedCandidates,
+                    conflictProfiles,
+                    conflictProfileVmdDocuments);
 
             var acceptedGeneratedGeometryBytes = 0L;
             var acceptedExpectedResidentGeometryBytes = 0.0;
@@ -6411,6 +6424,326 @@ namespace Editors.KitbasherEditor.Services
                                 : double.PositiveInfinity,
                     });
             }
+        }
+
+        private static List<CrossRigidPayloadSelectionEntry>
+            OptimizeCrossRigidPayloadCandidateOrdering(
+                BatchState state,
+                IReadOnlyList<CrossRigidPayloadSelectionEntry> candidates,
+                Dictionary<string, CrossRigidPayloadRewriteConflictProfile>
+                    conflictProfiles,
+                Dictionary<string, XmlDocument> sourceVmdDocuments)
+        {
+            // Retain the original raw-draw ordering as an explicit baseline:
+            // a single cost-density ordering must never silently regress it.
+            var rawDrawOrder =
+                candidates
+                    .OrderByDescending(entry =>
+                        entry.MaxRawDrawsSavedPerState)
+                    .ThenBy(entry =>
+                        Math.Max(
+                            entry.ResidentBytesPerExpectedDraw /
+                            MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw,
+                            entry.PhysicalBytesPerExpectedDraw /
+                            MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw))
+                    .ThenBy(entry =>
+                        entry.ResidentBytesPerExpectedDraw /
+                        MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw +
+                        entry.PhysicalBytesPerExpectedDraw /
+                        MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw)
+                    .ThenByDescending(entry =>
+                        entry.RewritePlanCount)
+                    .ThenByDescending(entry =>
+                        entry.ExpectedArmyDrawCallsEliminated)
+                    .ThenBy(entry =>
+                        entry.GeneratedPayloadId,
+                        StringComparer.Ordinal)
+                    .ToArray();
+            var scenarioBenefitOrder =
+                candidates
+                    .OrderByDescending(entry =>
+                        entry.ExpectedArmyDrawCallsEliminated)
+                    .ThenBy(entry =>
+                        Math.Max(
+                            entry.ResidentBytesPerExpectedDraw /
+                            MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw,
+                            entry.PhysicalBytesPerExpectedDraw /
+                            MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw))
+                    .ThenBy(entry =>
+                        entry.GeneratedPayloadId,
+                        StringComparer.Ordinal)
+                    .ToArray();
+
+            var invalidProfiles =
+                new HashSet<string>(StringComparer.Ordinal);
+            var bestOrder = rawDrawOrder;
+            var best =
+                EvaluateCrossRigidPayloadPortfolio(
+                    state,
+                    bestOrder,
+                    conflictProfiles,
+                    invalidProfiles,
+                    sourceVmdDocuments);
+            var evaluated = 1;
+            state.CrossRigidRawGreedyExpectedDraws =
+                best.ExpectedDraws;
+
+            foreach (var alternative in
+                     new IReadOnlyList<CrossRigidPayloadSelectionEntry>[]
+                     {
+                         candidates,
+                         scenarioBenefitOrder,
+                     })
+            {
+                var trial =
+                    EvaluateCrossRigidPayloadPortfolio(
+                        state,
+                        alternative,
+                        conflictProfiles,
+                        invalidProfiles,
+                        sourceVmdDocuments);
+                evaluated++;
+                if (IsBetterCrossRigidPayloadPortfolio(
+                        trial,
+                        best))
+                {
+                    best = trial;
+                    bestOrder = alternative.ToArray();
+                }
+            }
+
+            // A rejected payload may replace several overlapping winners.
+            // Probe a bounded set of those competitors at the front of the
+            // current best ordering, then greedily refill freed occurrences.
+            // Full payload memory is charged even for a partially used payload.
+            const int maxAlternativeSeeds = 16;
+            var alternativeSeeds =
+                candidates
+                    .Where(entry =>
+                        !best.SelectedPayloadIds.Contains(
+                            entry.GeneratedPayloadId))
+                    .OrderByDescending(entry =>
+                        entry.ExpectedArmyDrawCallsEliminated)
+                    .ThenBy(entry =>
+                        entry.PhysicalBytesPerExpectedDraw)
+                    .ThenBy(entry =>
+                        entry.GeneratedPayloadId,
+                        StringComparer.Ordinal)
+                    .Take(maxAlternativeSeeds)
+                    .ToArray();
+            foreach (var seed in alternativeSeeds)
+            {
+                var trialOrder =
+                    new[] { seed }
+                        .Concat(bestOrder.Where(entry =>
+                            !entry.GeneratedPayloadId.Equals(
+                                seed.GeneratedPayloadId,
+                                StringComparison.Ordinal)))
+                        .ToArray();
+                var trial =
+                    EvaluateCrossRigidPayloadPortfolio(
+                        state,
+                        trialOrder,
+                        conflictProfiles,
+                        invalidProfiles,
+                        sourceVmdDocuments);
+                evaluated++;
+                if (IsBetterCrossRigidPayloadPortfolio(
+                        trial,
+                        best))
+                {
+                    best = trial;
+                    bestOrder = trialOrder;
+                }
+            }
+
+            state.CrossRigidPortfolioOrderingsEvaluated = evaluated;
+            state.CrossRigidBestPortfolioExpectedDraws =
+                best.ExpectedDraws;
+            return bestOrder
+                .Select((entry, index) =>
+                    entry with { SelectionRank = index + 1 })
+                .ToList();
+        }
+
+        private static bool IsBetterCrossRigidPayloadPortfolio(
+            (double ExpectedDraws, long GeometryBytes,
+                double ResidentBytes, HashSet<string> SelectedPayloadIds)
+                candidate,
+            (double ExpectedDraws, long GeometryBytes,
+                double ResidentBytes, HashSet<string> SelectedPayloadIds)
+                current)
+        {
+            if (candidate.ExpectedDraws >
+                current.ExpectedDraws +
+                AtlasValueGateExpectedDrawEpsilon)
+            {
+                return true;
+            }
+
+            if (Math.Abs(
+                    candidate.ExpectedDraws -
+                    current.ExpectedDraws) >
+                AtlasValueGateExpectedDrawEpsilon)
+            {
+                return false;
+            }
+
+            return candidate.ResidentBytes <
+                       current.ResidentBytes -
+                       AtlasValueGateExpectedDrawEpsilon ||
+                   (Math.Abs(
+                        candidate.ResidentBytes -
+                        current.ResidentBytes) <=
+                    AtlasValueGateExpectedDrawEpsilon &&
+                    candidate.GeometryBytes <
+                    current.GeometryBytes);
+        }
+
+        private static (
+            double ExpectedDraws,
+            long GeometryBytes,
+            double ResidentBytes,
+            HashSet<string> SelectedPayloadIds)
+            EvaluateCrossRigidPayloadPortfolio(
+                BatchState state,
+                IReadOnlyList<CrossRigidPayloadSelectionEntry>
+                    orderedCandidates,
+                Dictionary<string, CrossRigidPayloadRewriteConflictProfile>
+                    conflictProfiles,
+                HashSet<string> invalidProfiles,
+                Dictionary<string, XmlDocument> sourceVmdDocuments)
+        {
+            var selectedKeys =
+                new HashSet<string>(StringComparer.Ordinal);
+            var selectedContexts =
+                new Dictionary<string, string>(
+                    StringComparer.Ordinal);
+            var selectedIds =
+                new HashSet<string>(StringComparer.Ordinal);
+            var pending =
+                new List<CrossRigidPayloadSelectionEntry>(
+                    orderedCandidates);
+            var physicalBytes = 0L;
+            var residentBytes = 0.0;
+            var expectedDraws = 0.0;
+
+            // Match the final greedy writer, including budget deferrals.
+            // The evaluator mutates only local selection sets and caches
+            // read-only conflict profiles; it never marks rewrites for output.
+            while (pending.Count != 0)
+            {
+                var acceptedThisPass = false;
+                for (var index = 0; index < pending.Count;)
+                {
+                    var candidate = pending[index];
+                    if (invalidProfiles.Contains(
+                            candidate.GeneratedPayloadId))
+                    {
+                        pending.RemoveAt(index);
+                        continue;
+                    }
+
+                    if (!conflictProfiles.TryGetValue(
+                            candidate.GeneratedPayloadId,
+                            out var profile))
+                    {
+                        if (!TryBuildCrossRigidPayloadRewriteConflictProfile(
+                                state,
+                                candidate.GeneratedPayloadId,
+                                sourceVmdDocuments,
+                                out profile,
+                                out _))
+                        {
+                            invalidProfiles.Add(
+                                candidate.GeneratedPayloadId);
+                            pending.RemoveAt(index);
+                            continue;
+                        }
+
+                        conflictProfiles[
+                            candidate.GeneratedPayloadId] = profile;
+                    }
+
+                    var occurrences =
+                        SelectCrossRigidCompatibleRewriteOccurrences(
+                            profile,
+                            selectedKeys,
+                            selectedContexts);
+                    var marginalDraws =
+                        occurrences.Sum(occurrence =>
+                            occurrence.ExpectedArmyDrawCallsEliminated);
+                    if (marginalDraws <=
+                            AtlasValueGateExpectedDrawEpsilon ||
+                        (candidate.VmdCount == 1 &&
+                         marginalDraws <
+                         MinimumCrossRigidSingleVmdExpectedArmyDraw))
+                    {
+                        pending.RemoveAt(index);
+                        continue;
+                    }
+
+                    var projectedDraws =
+                        expectedDraws + marginalDraws;
+                    var projectedResident =
+                        residentBytes +
+                        candidate.ExpectedResidentGeneratedGeometryBytes;
+                    if (projectedResident >
+                        projectedDraws *
+                        MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw)
+                    {
+                        index++;
+                        continue;
+                    }
+
+                    var projectedPhysical =
+                        physicalBytes +
+                        candidate.GeneratedGeometryBytes;
+                    if (projectedPhysical >
+                        projectedDraws *
+                        MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw)
+                    {
+                        index++;
+                        continue;
+                    }
+
+                    if (projectedPhysical >
+                        MaxCrossRigidGeneratedGeometryGrowthBytes)
+                    {
+                        pending.RemoveAt(index);
+                        continue;
+                    }
+
+                    physicalBytes = projectedPhysical;
+                    residentBytes = projectedResident;
+                    expectedDraws = projectedDraws;
+                    selectedIds.Add(
+                        candidate.GeneratedPayloadId);
+                    foreach (var occurrence in occurrences)
+                    {
+                        selectedKeys.UnionWith(
+                            occurrence.RewriteConflictKeys);
+                        foreach (var context in
+                                 occurrence.JointContextKeyByParentLocation)
+                        {
+                            selectedContexts[context.Key] =
+                                context.Value;
+                        }
+                    }
+
+                    pending.RemoveAt(index);
+                    acceptedThisPass = true;
+                }
+
+                if (!acceptedThisPass)
+                    break;
+            }
+
+            return (
+                expectedDraws,
+                physicalBytes,
+                residentBytes,
+                selectedIds);
         }
 
         private static CrossRigidRewriteConflictOccurrence[]
@@ -30401,7 +30734,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "The runtime gate charges gross expected generated-geometry residency; displaced-source credit is not spent by the gate.");
                 sb.AppendLine(
-                    "Rewrite conflicts are resolved at exact occurrence granularity and, for canonical joint supersets, per concrete Cartesian state. Narrower rewrites can therefore remain selected in non-conflicting superset states. Payloads with larger raw per-state draw reduction are considered first; payload economics then use conflict-deduplicated marginal draw savings, while partially selected payloads conservatively pay their full generated geometry and full estimated residency. Conflict diagnostics identify the already-selected payload that owns the blocking occurrence/state.");
+                    "Rewrite conflicts are resolved at exact occurrence granularity and, for canonical joint supersets, per concrete Cartesian state. Narrower rewrites can therefore remain selected in non-conflicting superset states. A bounded portfolio search compares raw-draw, cost-density, scenario-benefit, and competing-payload-first orderings using conflict-deduplicated marginal draw savings; the best valid portfolio is replayed for emission. Partially selected payloads conservatively pay their full generated geometry and full estimated residency. Conflict diagnostics identify the already-selected payload that owns the blocking occurrence/state.");
                 sb.AppendLine(
                     "Scenario-resident and physical-per-draw limits are selected-portfolio budgets rather than per-payload hard gates; budget-deferred candidates are retried after cheaper accepted payloads create headroom.");
                 sb.AppendLine(
@@ -30421,6 +30754,11 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidCanonicalJointParentCount:N0} parent(s), " +
                     $"{state.CrossRigidCanonicalJointContextsFolded:N0} narrower context(s) folded, " +
                     $"{state.CrossRigidCanonicalJointParentConflictCount:N0} multi-context parent(s) left separate");
+                sb.AppendLine(
+                    $"Cross-rigid portfolio search: " +
+                    $"{state.CrossRigidPortfolioOrderingsEvaluated:N0} ordering(s) evaluated; " +
+                    $"raw-draw baseline={state.CrossRigidRawGreedyExpectedDraws:0.###}, " +
+                    $"best={state.CrossRigidBestPortfolioExpectedDraws:0.###} expected draws");
                 sb.AppendLine(
                     $"Payload candidates: " +
                     $"{state.CrossRigidPayloadSelectionEntries.Count:N0}");
@@ -33440,6 +33778,9 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidCanonicalJointParentCount { get; set; }
             public int CrossRigidCanonicalJointContextsFolded { get; set; }
             public int CrossRigidCanonicalJointParentConflictCount { get; set; }
+            public int CrossRigidPortfolioOrderingsEvaluated { get; set; }
+            public double CrossRigidRawGreedyExpectedDraws { get; set; }
+            public double CrossRigidBestPortfolioExpectedDraws { get; set; }
             public Dictionary<string, int>
                 CrossRigidRewriteConflictReasonCounts { get; } =
                     new(StringComparer.Ordinal);
