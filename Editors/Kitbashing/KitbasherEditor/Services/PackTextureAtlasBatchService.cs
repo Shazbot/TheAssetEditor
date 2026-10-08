@@ -1672,8 +1672,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisOpportunityObservationCount = 0;
             state.CrossRigidPairFallbackSubgroupObservations = 0;
             state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups = 0;
-            state.CrossRigidSafeFullGroupPayloadIds.Clear();
-            state.CrossRigidPreviouslySuppressedPairFallbackPayloadIds.Clear();
+            state.CrossRigidPreviouslySuppressedPairFallbackPlanIds.Clear();
+            state.CrossRigidLegacyEligiblePayloadIds.Clear();
             state.CrossRigidPairFallbackPlansEvaluated = 0;
             state.CrossRigidTimingDetails.Clear();
             state.CrossRigidSourceMeshMergeIdentityCache.Clear();
@@ -2067,8 +2067,6 @@ namespace Editors.KitbasherEditor.Services
                             safeFullGroupPlanKeys.Contains))
                     {
                         state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups++;
-                        state.CrossRigidPreviouslySuppressedPairFallbackPayloadIds.Add(
-                            plan.GeneratedPayloadId);
                     }
 
                     state.CrossRigidPairFallbackPlansEvaluated++;
@@ -2287,7 +2285,24 @@ namespace Editors.KitbasherEditor.Services
                 if (fullGroupPlanKeys.Contains(planKey))
                 {
                     safeFullGroupPlanKeys.Add(planKey);
-                    state.CrossRigidSafeFullGroupPayloadIds.Add(
+                }
+
+                // Track provenance at plan granularity: generated geometry
+                // can be shared by both existing full-group plans and newly
+                // admitted fallback pairs across different VMDs.
+                var newlyAdmittedPairFallback =
+                    !fullGroupPlanKeys.Contains(planKey) &&
+                    fallbackParentPlanKeys.TryGetValue(
+                        planKey, out var parentPlanKeys) &&
+                    parentPlanKeys.Any(safeFullGroupPlanKeys.Contains);
+                if (newlyAdmittedPairFallback)
+                {
+                    state.CrossRigidPreviouslySuppressedPairFallbackPlanIds.Add(
+                        plan.RewritePlanId);
+                }
+                else
+                {
+                    state.CrossRigidLegacyEligiblePayloadIds.Add(
                         plan.GeneratedPayloadId);
                 }
 
@@ -6058,6 +6073,14 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var plan in state.CrossRigidMergeAnalysisEntries)
             {
+                // Pair-only fallback plans must not change the canonical
+                // Cartesian context used by the old full-group portfolio.
+                // They can project into a compatible context at selection
+                // time or use an independent parent when safe.
+                if (state.CrossRigidPreviouslySuppressedPairFallbackPlanIds
+                        .Contains(plan.RewritePlanId))
+                    continue;
+
                 foreach (var occurrenceSet in plan.RewriteOccurrenceSets)
                 {
                     if (occurrenceSet.SourceInstances
@@ -7721,23 +7744,31 @@ namespace Editors.KitbasherEditor.Services
                     conflictProfiles,
                 Dictionary<string, XmlDocument> sourceVmdDocuments)
         {
-            // Retain the original raw-draw ordering as an explicit baseline:
-            // a single cost-density ordering must never silently regress it.
+            // Keep the original full-group portfolio intact before
+            // evaluating newly admitted pairs as supplementary rewrites.
+            // A small pair's high scenario benefit must not displace many
+            // otherwise writable full-group states just by changing order.
+            var primaryCandidates = candidates
+                .Where(entry =>
+                    state.CrossRigidLegacyEligiblePayloadIds.Contains(
+                        entry.GeneratedPayloadId))
+                .ToArray();
+            var fallbackOnlyCandidates = candidates
+                .Where(entry =>
+                    !state.CrossRigidLegacyEligiblePayloadIds.Contains(
+                        entry.GeneratedPayloadId))
+                .OrderByDescending(entry =>
+                    entry.ExpectedArmyDrawCallsEliminated)
+                .ThenBy(entry =>
+                    entry.GeneratedPayloadId,
+                    StringComparer.Ordinal)
+                .ToArray();
+
+            // A generated payload shared with any legacy rewrite remains
+            // in the primary portfolio, so its geometry is charged once.
             var rawDrawOrder =
-                candidates
-                    // Preserve the pre-fallback search as a valid baseline:
-                    // newly admitted pair-only payloads come *after* all
-                    // candidates that were eligible under the old policy.
-                    // Later portfolio trials may promote them if doing so
-                    // actually increases conflict-deduplicated savings.
-                    .OrderBy(entry =>
-                        state.CrossRigidPreviouslySuppressedPairFallbackPayloadIds
-                            .Contains(entry.GeneratedPayloadId) &&
-                        !state.CrossRigidSafeFullGroupPayloadIds
-                            .Contains(entry.GeneratedPayloadId)
-                            ? 1
-                            : 0)
-                    .ThenByDescending(entry =>
+                primaryCandidates
+                    .OrderByDescending(entry =>
                         entry.MaxRawDrawsSavedPerState)
                     .ThenBy(entry =>
                         Math.Max(
@@ -7759,7 +7790,7 @@ namespace Editors.KitbasherEditor.Services
                         StringComparer.Ordinal)
                     .ToArray();
             var scenarioBenefitOrder =
-                candidates
+                primaryCandidates
                     .OrderByDescending(entry =>
                         entry.ExpectedArmyDrawCallsEliminated)
                     .ThenBy(entry =>
@@ -7790,7 +7821,7 @@ namespace Editors.KitbasherEditor.Services
             foreach (var alternative in
                      new IReadOnlyList<CrossRigidPayloadSelectionEntry>[]
                      {
-                         candidates,
+                         primaryCandidates,
                          scenarioBenefitOrder,
                      })
             {
@@ -7827,7 +7858,7 @@ namespace Editors.KitbasherEditor.Services
                         group => group.First().VmdPath,
                         StringComparer.Ordinal);
             var rejectedCandidates =
-                candidates
+                primaryCandidates
                     .Where(entry =>
                         !best.SelectedPayloadIds.Contains(
                             entry.GeneratedPayloadId))
@@ -8099,7 +8130,12 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidPortfolioPairTrials = pairsToEvaluate.Length * 2;
             state.CrossRigidBestPortfolioExpectedDraws =
                 best.ExpectedDraws;
+            // The final greedy replay applies the same conflict keys,
+            // exact Cartesian matching, per-payload benefit floor, geometry
+            // and residency budgets to pair-only additions, after the best
+            // original portfolio has occupied its writable states.
             return bestOrder
+                .Concat(fallbackOnlyCandidates)
                 .Select((entry, index) =>
                     entry with { SelectionRank = index + 1 })
                 .ToList();
@@ -32636,6 +32672,14 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Payloads rejected: {rejectedPayloads.Length:N0}");
                 sb.AppendLine(
+                    $"Cross-rigid protected primary portfolio: " +
+                    $"{state.CrossRigidPayloadSelectionEntries.Count(entry => state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} eligible payload(s), " +
+                    $"{selectedPayloads.Count(entry => state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} accepted");
+                sb.AppendLine(
+                    $"Supplementary pair-only fallback payloads: " +
+                    $"{state.CrossRigidPayloadSelectionEntries.Count(entry => !state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} candidate(s), " +
+                    $"{selectedPayloads.Count(entry => !state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} accepted");
+                sb.AppendLine(
                     $"Accepted payloads reused by multiple selected rewrite plans: " +
                     $"{selectedRewritePlans
                         .GroupBy(
@@ -35821,9 +35865,9 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidPairFallbackSubgroupObservations { get; set; }
             public int CrossRigidPairFallbackPlansCompetingWithSafeFullGroups { get; set; }
             public int CrossRigidPairFallbackPlansEvaluated { get; set; }
-            public HashSet<string> CrossRigidSafeFullGroupPayloadIds { get; } =
+            public HashSet<string> CrossRigidPreviouslySuppressedPairFallbackPlanIds { get; } =
                 new(StringComparer.Ordinal);
-            public HashSet<string> CrossRigidPreviouslySuppressedPairFallbackPayloadIds { get; } =
+            public HashSet<string> CrossRigidLegacyEligiblePayloadIds { get; } =
                 new(StringComparer.Ordinal);
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
