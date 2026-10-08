@@ -7830,6 +7830,9 @@ namespace Editors.KitbasherEditor.Services
             var rigidCache = new Dictionary<string, RmvFile>(
                 state.RigidModels,
                 StringComparer.OrdinalIgnoreCase);
+            var sourceComponentCache =
+                new Dictionary<string, CrossRigidAnalysisComponent>(
+                    StringComparer.OrdinalIgnoreCase);
             var payloadBuildFailures = new Dictionary<string, string>(
                 StringComparer.Ordinal);
             var sourceVmdDocuments = new Dictionary<string, XmlDocument>(
@@ -7995,6 +7998,7 @@ namespace Editors.KitbasherEditor.Services
                                     plan,
                                     traversalContainers,
                                     rigidCache,
+                                    sourceComponentCache,
                                     out var payloadFailure);
                             geometryBuildElapsed +=
                                 Stopwatch.GetElapsedTime(geometryBuildStarted);
@@ -10259,9 +10263,12 @@ namespace Editors.KitbasherEditor.Services
             CrossRigidMergeAnalysisEntry plan,
             IReadOnlyList<IPackFileContainer> traversalContainers,
             Dictionary<string, RmvFile> rigidCache,
+            Dictionary<string, CrossRigidAnalysisComponent>
+                sourceComponentCache,
             out string reason)
         {
             reason = string.Empty;
+            var buildTimer = Stopwatch.GetTimestamp();
             var generatedRigidPath =
                 BuildCrossRigidGeneratedRigidPath(
                     plan.GeneratedPayloadId);
@@ -10289,24 +10296,36 @@ namespace Editors.KitbasherEditor.Services
                              .Distinct(StringComparer.OrdinalIgnoreCase))
                 {
                     var wsModelPath = Normalize(wsModelPathValue);
-                    if (!TryBuildCrossRigidAnalysisComponent(
-                            state,
-                            plan.VmdPath,
+                    if (!sourceComponentCache.TryGetValue(
                             wsModelPath,
-                            traversalContainers,
-                            rigidCache,
-                            out var component,
-                            out var componentReason))
+                            out var component))
                     {
-                        reason =
-                            $"{wsModelPath}: {componentReason}";
-                        return false;
+                        if (!TryBuildCrossRigidAnalysisComponent(
+                                state,
+                                plan.VmdPath,
+                                wsModelPath,
+                                traversalContainers,
+                                rigidCache,
+                                out component,
+                                out var componentReason))
+                        {
+                            reason =
+                                $"{wsModelPath}: {componentReason}";
+                            return false;
+                        }
+
+                        sourceComponentCache[wsModelPath] = component;
                     }
 
                     componentsByWsModel[wsModelPath] =
                         component;
                 }
 
+                AddCrossRigidTimingDuration(
+                    state,
+                    "Emit payload: resolve source components",
+                    Stopwatch.GetElapsedTime(buildTimer));
+                buildTimer = Stopwatch.GetTimestamp();
                 var components = componentsByWsModel.Values
                     .OrderBy(
                         component => component.WsModelPath,
@@ -10518,6 +10537,11 @@ namespace Editors.KitbasherEditor.Services
                     ModelList = generatedModels,
                 };
                 generatedRigid.RecalculateOffsets();
+                AddCrossRigidTimingDuration(
+                    state,
+                    "Emit payload: assemble and merge LOD geometry",
+                    Stopwatch.GetElapsedTime(buildTimer));
+                buildTimer = Stopwatch.GetTimestamp();
 
                 // Round-trip once before storing the generated RMV so the new asset owns
                 // independent model/material/vertex objects. The source rigids remain
@@ -10528,6 +10552,11 @@ namespace Editors.KitbasherEditor.Services
                         generatedRigid,
                         validateByReloading: false,
                         logProgress: false));
+                AddCrossRigidTimingDuration(
+                    state,
+                    "Emit payload: RMV ownership round-trip",
+                    Stopwatch.GetElapsedTime(buildTimer));
+                buildTimer = Stopwatch.GetTimestamp();
 
                 var generatedWsDocument = new XmlDocument();
                 generatedWsDocument.LoadXml(
@@ -10571,6 +10600,10 @@ namespace Editors.KitbasherEditor.Services
                     generatedRigidPath);
                 state.CrossRigidGeneratedWsModelPaths.Add(
                     generatedWsModelPath);
+                AddCrossRigidTimingDuration(
+                    state,
+                    "Emit payload: generate and validate WSModel",
+                    Stopwatch.GetElapsedTime(buildTimer));
                 return true;
             }
             catch (Exception ex) when (
@@ -33716,6 +33749,23 @@ namespace Editors.KitbasherEditor.Services
                 state.PhaseDurations[phase] = existing + elapsed;
             else
                 state.PhaseDurations[phase] = elapsed;
+        }
+
+        private static void AddCrossRigidTimingDuration(
+            BatchState state,
+            string phase,
+            TimeSpan elapsed)
+        {
+            if (state.CrossRigidTimingDetails.TryGetValue(
+                    phase,
+                    out var existing))
+            {
+                state.CrossRigidTimingDetails[phase] = existing + elapsed;
+            }
+            else
+            {
+                state.CrossRigidTimingDetails[phase] = elapsed;
+            }
         }
 
         private static void ReportProgress(
