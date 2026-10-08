@@ -82,7 +82,10 @@ namespace Editors.KitbasherEditor.Services
         private const long MaxCrossRigidGeneratedGeometryGrowthBytes =
             256L * 1024 * 1024; // 256 MiB
         private const double MinimumCrossRigidSingleVmdExpectedArmyDraw = 0.02;
-        private const int MaxCrossRigidJointStateCombinations = 512;
+        // Limit exact generated joint appearance states, not probability precision.
+        // Large VMDs need more room than 512 combinations, while the
+        // portfolio's geometry and residency budgets still cap output cost.
+        private const int MaxCrossRigidJointStateCombinations = 1024;
         private const int MaxCrossRigidGeneratedLodCount = 5;
         private const float CrossRigidLodDistanceEpsilon = 0.01f;
         private static readonly bool AtlasProfilingEnabled =
