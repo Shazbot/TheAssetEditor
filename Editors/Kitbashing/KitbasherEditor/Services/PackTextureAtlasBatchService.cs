@@ -6208,6 +6208,26 @@ namespace Editors.KitbasherEditor.Services
                         $"weightedStates={conditionalUnion.CombinationCount}");
                 }
 
+                if (canonicalDescriptor == null &&
+                    TryBuildCrossRigidCanonicalMixedDimensionUnion(
+                        state,
+                        candidates.Select(candidate => candidate.Descriptor),
+                        sourceVmdDocuments,
+                        out var mixedUnion))
+                {
+                    canonicalDescriptor = mixedUnion;
+                    RecordCrossRigidAnalysisDiagnostic(
+                        state,
+                        "Canonical independent sibling/conditional union synthesized",
+                        candidates[0].RootVmdPath + " / " +
+                        mixedUnion.ParentXmlPath + ": slots=" +
+                        string.Join(",", mixedUnion.SlotIndices) +
+                        ", dimensions=" +
+                        mixedUnion.CommonAncestorDimensions.Length +
+                        ", weightedStates=" +
+                        mixedUnion.CombinationCount);
+                }
+
                 // A single parent may have several incompatible contexts
                 // even though a useful subset can be represented exactly.
                 // Do not discard compatible smaller cohorts merely because
@@ -6399,11 +6419,13 @@ namespace Editors.KitbasherEditor.Services
                     out descriptor);
             }
 
-            // A direct sibling-slot context and a conditional dimension
-            // context have different projection/materialization rules.
-            // Never silently promote one to the other.
-            descriptor = null!;
-            return false;
+            // Independent sibling choices can coexist with conditional
+            // dimensions only when they do not share a carrier slot.
+            return TryBuildCrossRigidCanonicalMixedDimensionUnion(
+                state,
+                [left, right],
+                sourceVmdDocuments,
+                out descriptor);
         }
 
         private static bool TryBuildCrossRigidCanonicalSiblingSlotUnion(
@@ -6507,6 +6529,152 @@ namespace Editors.KitbasherEditor.Services
                     canonicalDescriptor,
                     candidate));
         }
+
+        // Lift independent sibling alternatives to root dimensions beside
+        // conditional dimensions. A conditional carrier (even when fixed)
+        // must remain under its original dependency graph.
+        private static bool TryBuildCrossRigidCanonicalMixedDimensionUnion(
+            BatchState state,
+            IEnumerable<CrossRigidJointAlwaysPresentRewriteDescriptor>
+                candidateDescriptors,
+            Dictionary<string, XmlDocument> sourceVmdDocuments,
+            out CrossRigidJointAlwaysPresentRewriteDescriptor descriptor)
+        {
+            descriptor = null!;
+            var candidates = candidateDescriptors.ToArray();
+            var direct = candidates.Where(candidate =>
+                candidate.CommonAncestorDimensions.Length == 0).ToArray();
+            var conditional = candidates.Where(candidate =>
+                candidate.CommonAncestorDimensions.Length != 0).ToArray();
+            if (direct.Length == 0 || conditional.Length == 0)
+                return false;
+
+            var first = candidates[0];
+            if (candidates.Skip(1).Any(candidate =>
+                    !Normalize(candidate.AnchorVmdPath).Equals(
+                        Normalize(first.AnchorVmdPath),
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !candidate.ParentXmlPath.Equals(
+                        first.ParentXmlPath,
+                        StringComparison.Ordinal) ||
+                    !BuildCrossRigidReferenceChainSignature(
+                        candidate.AnchorReferenceChain).Equals(
+                        BuildCrossRigidReferenceChainSignature(
+                            first.AnchorReferenceChain),
+                        StringComparison.Ordinal)))
+            {
+                return false;
+            }
+
+            if (!TryGetCrossRigidSourceVmdDocument(
+                    state,
+                    first.AnchorVmdPath,
+                    sourceVmdDocuments,
+                    out var anchorDocument,
+                    out _) ||
+                anchorDocument.SelectSingleNode(
+                    first.ParentXmlPath) is not XmlElement parentElement)
+            {
+                return false;
+            }
+
+            var directSlots = direct
+                .SelectMany(candidate => candidate.SlotIndices)
+                .Distinct()
+                .OrderBy(index => index)
+                .ToArray();
+            var conditionalCarrierSlots = conditional
+                .SelectMany(candidate => candidate.SlotIndices)
+                .ToHashSet();
+            if (directSlots.Any(conditionalCarrierSlots.Contains))
+                return false;
+
+            var rootDimensions =
+                new Dictionary<int, CrossRigidJointSelectionDimension>();
+            foreach (var slotIndex in directSlots)
+            {
+                if (parentElement.SelectSingleNode(
+                        "SLOT[" + slotIndex + "]") is not XmlElement slot)
+                    return false;
+                if (ParseVmdSlotProbability(
+                        slot.GetAttribute("probability")) <
+                        1.0 - AtlasValueGateExpectedDrawEpsilon &&
+                    !IsSupportedCrossRigidOptionalJointSlot(slot))
+                {
+                    return false;
+                }
+
+                var key = BuildCrossRigidJointSelectionDimensionKey(
+                    first.AnchorVmdPath,
+                    first.ParentXmlPath,
+                    slotIndex);
+                var alternatives =
+                    GetCrossRigidJointAlternatives(slot, slotIndex)
+                        .Select(alternative =>
+                            new CrossRigidJointDimensionAlternative(
+                                key,
+                                alternative.IsReference,
+                                alternative.AlternativeIndex,
+                                alternative.Multiplicity))
+                        .ToArray();
+                if (alternatives.Length <= 1)
+                    return false;
+
+                rootDimensions[slotIndex] =
+                    new CrossRigidJointSelectionDimension(
+                        key,
+                        first.AnchorVmdPath,
+                        first.ParentXmlPath,
+                        slotIndex,
+                        slotIndex,
+                        null,
+                        Array.Empty<CrossRigidVmdReferenceHop>(),
+                        alternatives);
+            }
+
+            // The original occurrence descriptors are retained for matching.
+            // Only the canonical context shapes are lifted to dimensions.
+            var lifted = candidates.Select(candidate =>
+                candidate.CommonAncestorDimensions.Length != 0
+                    ? candidate
+                    : candidate with
+                    {
+                        CommonAncestorDimensions = candidate.SlotIndices
+                            .Select(index => rootDimensions[index])
+                            .ToArray(),
+                    }).ToArray();
+            if (!TryBuildCrossRigidCanonicalConditionalDimensionUnion(
+                    state,
+                    lifted,
+                    sourceVmdDocuments,
+                    out var union) ||
+                !candidates.All(candidate =>
+                    IsCrossRigidJointDescriptorStructuralSuperset(
+                        union, candidate)))
+            {
+                return false;
+            }
+
+            descriptor = union;
+            return true;
+        }
+
+        private static bool IsCrossRigidIndependentRootDimension(
+            CrossRigidJointSelectionDimension dimension,
+            CrossRigidJointAlwaysPresentRewriteDescriptor descriptor,
+            int slotIndex)
+            => dimension.SlotIndex == slotIndex &&
+               dimension.CarrierSlotIndex == slotIndex &&
+               dimension.ParentDimensionKey == null &&
+               dimension.ReferenceChainFromAnchor.Length == 0 &&
+               string.IsNullOrWhiteSpace(
+                   dimension.LocalDimensionSlotRelativeXmlPath) &&
+               Normalize(dimension.OwnerVmdPath).Equals(
+                   Normalize(descriptor.AnchorVmdPath),
+                   StringComparison.OrdinalIgnoreCase) &&
+               dimension.ParentXmlPath.Equals(
+                   descriptor.ParentXmlPath,
+                   StringComparison.Ordinal);
 
         // Reconcile compatible, overlapping nested choice graphs at the
         // same parent. Every candidate describes a valid subset of the
@@ -6716,7 +6884,26 @@ namespace Editors.KitbasherEditor.Services
             var otherUsesDimensions =
                 other.CommonAncestorDimensions.Length != 0;
             if (candidateUsesDimensions != otherUsesDimensions)
-                return false;
+            {
+                // A direct context projects onto conditional states only
+                // when every source selection is an independent root choice.
+                if (!candidateUsesDimensions ||
+                    other.SlotIndices.Any(slotIndex =>
+                        !candidate.CommonAncestorDimensions.Any(dimension =>
+                            IsCrossRigidIndependentRootDimension(
+                                dimension, candidate, slotIndex))) ||
+                    other.SourceSelections.Any(selection =>
+                        !candidate.CommonAncestorDimensions.Any(dimension =>
+                            dimension.DimensionKey.Equals(
+                                BuildCrossRigidJointSourceSelectionDimensionKey(
+                                    selection),
+                                StringComparison.Ordinal) &&
+                            IsCrossRigidIndependentRootDimension(
+                                dimension, candidate, selection.SlotIndex))))
+                {
+                    return false;
+                }
+            }
 
             var candidateSlots =
                 candidate.SlotIndices.ToHashSet();
