@@ -4921,7 +4921,7 @@ namespace Editors.KitbasherEditor.Services
                     slotElement))
             {
                 reason =
-                    "optional joint writer supports only one-alternative slots whose authored probability has a bounded exact rational expansion";
+                    "optional joint writer requires a nonempty slot, a bounded exact rational probability, and a bounded weighted alternative expansion";
                 return false;
             }
 
@@ -4949,7 +4949,7 @@ namespace Editors.KitbasherEditor.Services
                     "VARIANT_MESH")?.Count ?? 0) +
                 (slotElement.SelectNodes(
                     "VARIANT_MESH_REFERENCE")?.Count ?? 0);
-            if (alternativeCount != 1)
+            if (alternativeCount == 0)
                 return false;
 
             var probabilityText =
@@ -4983,9 +4983,21 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
+                // The active slot chooses uniformly among its alternatives.
+                // Weight the absent state by (d - n) * k and each of the k
+                // present alternatives by n, giving d * k equally likely
+                // wrapper copies: P(absent) = (d - n) / d and
+                // P(each present alternative) = n / (d * k).
+                // Bound the expanded wrappers just like the joint writer.
+                if ((long)denominator * alternativeCount >
+                    MaxCrossRigidJointStateCombinations)
+                {
+                    return false;
+                }
+
                 presentMultiplicity = numerator;
                 absentMultiplicity =
-                    denominator - numerator;
+                    (denominator - numerator) * alternativeCount;
                 return true;
             }
 
@@ -30875,7 +30887,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Fixed-local common ancestors under the same complete child-VMD reference chain can also be materialized with copy-on-write branch clones. Compatible narrower joint descriptions at one structural parent are folded into an already-analyzed bounded superset Cartesian context; narrower rewrites are projected across every matching superset state. At one shared structural parent, one-alternative optional slots whose authored probability has a bounded exact rational expansion are represented as weighted absent/present Cartesian states; finished wrappers are duplicated by integer multiplicity so the original probability is preserved exactly. Only exactly representable single-alternative optional dependency dimensions are admitted across fixed child-VMD references; nested optional dependencies and other unsupported optional-slot topologies remain excluded.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Fixed-local common ancestors under the same complete child-VMD reference chain can also be materialized with copy-on-write branch clones. Compatible narrower joint descriptions at one structural parent are folded into an already-analyzed bounded superset Cartesian context; narrower rewrites are projected across every matching superset state. At one shared structural parent, optional slots with a bounded exact rational probability and bounded alternative count are represented as weighted absent/present-alternative Cartesian states; each present alternative receives its conditional uniform share, and finished wrappers are duplicated by integer multiplicity to preserve the original slot probability exactly. Only exactly representable, bounded optional dependency dimensions are admitted across fixed child-VMD references; nested optional dependencies and other unsupported optional-slot topologies remain excluded.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
