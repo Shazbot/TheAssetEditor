@@ -6071,8 +6071,18 @@ namespace Editors.KitbasherEditor.Services
                     StringComparer.Ordinal);
             var selectedRewriteConflictKeys =
                 new HashSet<string>(StringComparer.Ordinal);
+            var selectedRewriteConflictOwnerByKey =
+                new Dictionary<
+                    string,
+                    CrossRigidSelectedRewriteConflictOwner>(
+                    StringComparer.Ordinal);
             var selectedJointContextKeyByParentLocation =
                 new Dictionary<string, string>(
+                    StringComparer.Ordinal);
+            var selectedJointContextOwnerByParentLocation =
+                new Dictionary<
+                    string,
+                    CrossRigidSelectedRewriteConflictOwner>(
                     StringComparer.Ordinal);
 
             var acceptedGeneratedGeometryBytes = 0L;
@@ -6177,7 +6187,9 @@ namespace Editors.KitbasherEditor.Services
                             ClassifyCrossRigidRewriteOccurrenceConflict(
                                 conflictProfile,
                                 selectedRewriteConflictKeys,
-                                selectedJointContextKeyByParentLocation);
+                                selectedRewriteConflictOwnerByKey,
+                                selectedJointContextKeyByParentLocation,
+                                selectedJointContextOwnerByParentLocation);
                         RecordCrossRigidRewriteConflict(
                             state,
                             conflictReason,
@@ -6276,8 +6288,24 @@ namespace Editors.KitbasherEditor.Services
                     foreach (var occurrence in
                              compatibleOccurrences)
                     {
-                        selectedRewriteConflictKeys.UnionWith(
-                            occurrence.RewriteConflictKeys);
+                        var conflictOwner =
+                            new CrossRigidSelectedRewriteConflictOwner(
+                                candidate.GeneratedPayloadId,
+                                occurrence.SelectionKey,
+                                occurrence.ExpectedArmyDrawCallsEliminated,
+                                candidate.MaxRawDrawsSavedPerState,
+                                candidate.GeneratedGeometryBytes,
+                                candidate.SelectionRank);
+                        foreach (var rewriteConflictKey in
+                                 occurrence.RewriteConflictKeys)
+                        {
+                            selectedRewriteConflictKeys.Add(
+                                rewriteConflictKey);
+                            selectedRewriteConflictOwnerByKey.TryAdd(
+                                rewriteConflictKey,
+                                conflictOwner);
+                        }
+
                         foreach (var pair in
                                  occurrence
                                      .JointContextKeyByParentLocation)
@@ -6285,6 +6313,9 @@ namespace Editors.KitbasherEditor.Services
                             selectedJointContextKeyByParentLocation[
                                 pair.Key] =
                                 pair.Value;
+                            selectedJointContextOwnerByParentLocation[
+                                pair.Key] =
+                                conflictOwner;
                         }
 
                         state.CrossRigidSelectedRewriteOccurrenceKeys.Add(
@@ -6500,8 +6531,16 @@ namespace Editors.KitbasherEditor.Services
             ClassifyCrossRigidRewriteOccurrenceConflict(
                 CrossRigidPayloadRewriteConflictProfile profile,
                 IReadOnlySet<string> selectedRewriteConflictKeys,
+                IReadOnlyDictionary<
+                    string,
+                    CrossRigidSelectedRewriteConflictOwner>
+                    selectedRewriteConflictOwnerByKey,
                 IReadOnlyDictionary<string, string>
-                    selectedJointContextKeyByParentLocation)
+                    selectedJointContextKeyByParentLocation,
+                IReadOnlyDictionary<
+                    string,
+                    CrossRigidSelectedRewriteConflictOwner>
+                    selectedJointContextOwnerByParentLocation)
         {
             const string exactStructuralPrefix =
                 "exact-structural-slot\u001f";
@@ -6539,10 +6578,18 @@ namespace Editors.KitbasherEditor.Services
                             ? pair.Value[
                                 (pair.Key.Length + 1)..]
                             : pair.Value;
+                    var ownerDetail =
+                        selectedJointContextOwnerByParentLocation
+                            .TryGetValue(
+                                pair.Key,
+                                out var contextOwner)
+                            ? DescribeCrossRigidSelectedConflictOwner(
+                                contextOwner)
+                            : string.Empty;
                     return (
                         "Different joint slot/dimension set under one structural parent",
                         $"parent={pair.Key}; selected={selectedSuffix}; " +
-                        $"candidate={candidateSuffix}");
+                        $"candidate={candidateSuffix}{ownerDetail}");
                 }
 
                 foreach (var key in occurrence.RewriteConflictKeys)
@@ -6559,7 +6606,10 @@ namespace Editors.KitbasherEditor.Services
                         {
                             return (
                                 "Exact rewrite overlaps a selected joint structural slot",
-                                key);
+                                key +
+                                DescribeCrossRigidSelectedConflictOwner(
+                                    selectedRewriteConflictOwnerByKey,
+                                    counterpart));
                         }
 
                         continue;
@@ -6576,7 +6626,10 @@ namespace Editors.KitbasherEditor.Services
                         {
                             return (
                                 "Joint rewrite overlaps a selected exact structural slot",
-                                key);
+                                key +
+                                DescribeCrossRigidSelectedConflictOwner(
+                                    selectedRewriteConflictOwnerByKey,
+                                    exactStructuralPrefix + suffix));
                         }
 
                         if (selectedRewriteConflictKeys.Contains(
@@ -6584,7 +6637,10 @@ namespace Editors.KitbasherEditor.Services
                         {
                             return (
                                 "Joint rewrite would invalidate a selected nested joint path",
-                                key);
+                                key +
+                                DescribeCrossRigidSelectedConflictOwner(
+                                    selectedRewriteConflictOwnerByKey,
+                                    jointTraversalPrefix + suffix));
                         }
 
                         continue;
@@ -6602,7 +6658,10 @@ namespace Editors.KitbasherEditor.Services
                         {
                             return (
                                 "Joint traversal passes through a selected rewritten slot",
-                                key);
+                                key +
+                                DescribeCrossRigidSelectedConflictOwner(
+                                    selectedRewriteConflictOwnerByKey,
+                                    counterpart));
                         }
 
                         continue;
@@ -6617,7 +6676,10 @@ namespace Editors.KitbasherEditor.Services
                     {
                         return (
                             "Exact source model occurrence already selected",
-                            key);
+                            key +
+                            DescribeCrossRigidSelectedConflictOwner(
+                                selectedRewriteConflictOwnerByKey,
+                                key));
                     }
 
                     if (key.StartsWith(
@@ -6626,12 +6688,18 @@ namespace Editors.KitbasherEditor.Services
                     {
                         return (
                             "Joint Cartesian source occurrence already selected",
-                            key);
+                            key +
+                            DescribeCrossRigidSelectedConflictOwner(
+                                selectedRewriteConflictOwnerByKey,
+                                key));
                     }
 
                     return (
                         "Rewrite conflict key already selected",
-                        key);
+                        key +
+                        DescribeCrossRigidSelectedConflictOwner(
+                            selectedRewriteConflictOwnerByKey,
+                            key));
                 }
             }
 
@@ -6639,6 +6707,28 @@ namespace Editors.KitbasherEditor.Services
                 "Rewrite conflict could not be classified",
                 "all occurrence states were incompatible but no specific key was identified");
         }
+
+        private static string DescribeCrossRigidSelectedConflictOwner(
+            IReadOnlyDictionary<
+                string,
+                CrossRigidSelectedRewriteConflictOwner>
+                ownerByConflictKey,
+            string conflictKey)
+            => ownerByConflictKey.TryGetValue(
+                    conflictKey,
+                    out var owner)
+                ? DescribeCrossRigidSelectedConflictOwner(
+                    owner)
+                : string.Empty;
+
+        private static string DescribeCrossRigidSelectedConflictOwner(
+            CrossRigidSelectedRewriteConflictOwner owner)
+            => $"; ownerPayload={owner.GeneratedPayloadId}, " +
+               $"ownerStateExpectedDraws=" +
+               $"{owner.OccurrenceExpectedArmyDrawCallsEliminated:0.######}, " +
+               $"ownerMaxRawDraws={owner.MaxRawDrawsSavedPerState}, " +
+               $"ownerGeometry={FormatMiB(owner.GeneratedGeometryBytes, 2)}, " +
+               $"ownerRank={owner.SelectionRank}";
 
         private static void RecordCrossRigidRewriteConflict(
             BatchState state,
@@ -30301,7 +30391,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "The runtime gate charges gross expected generated-geometry residency; displaced-source credit is not spent by the gate.");
                 sb.AppendLine(
-                    "Rewrite conflicts are resolved at exact occurrence granularity and, for canonical joint supersets, per concrete Cartesian state. Narrower rewrites can therefore remain selected in non-conflicting superset states. Payloads with larger raw per-state draw reduction are considered first; payload economics then use conflict-deduplicated marginal draw savings, while partially selected payloads conservatively pay their full generated geometry and full estimated residency.");
+                    "Rewrite conflicts are resolved at exact occurrence granularity and, for canonical joint supersets, per concrete Cartesian state. Narrower rewrites can therefore remain selected in non-conflicting superset states. Payloads with larger raw per-state draw reduction are considered first; payload economics then use conflict-deduplicated marginal draw savings, while partially selected payloads conservatively pay their full generated geometry and full estimated residency. Conflict diagnostics identify the already-selected payload that owns the blocking occurrence/state.");
                 sb.AppendLine(
                     "Scenario-resident and physical-per-draw limits are selected-portfolio budgets rather than per-payload hard gates; budget-deferred candidates are retried after cheaper accepted payloads create headroom.");
                 sb.AppendLine(
@@ -33188,6 +33278,14 @@ namespace Editors.KitbasherEditor.Services
             HashSet<string> RewriteConflictKeys,
             Dictionary<string, string>
                 JointContextKeyByParentLocation);
+
+        private sealed record CrossRigidSelectedRewriteConflictOwner(
+            string GeneratedPayloadId,
+            string SelectionKey,
+            double OccurrenceExpectedArmyDrawCallsEliminated,
+            int MaxRawDrawsSavedPerState,
+            long GeneratedGeometryBytes,
+            int SelectionRank);
 
         private sealed record CrossRigidPayloadRewriteConflictProfile(
             CrossRigidRewriteConflictOccurrence[] Occurrences);
