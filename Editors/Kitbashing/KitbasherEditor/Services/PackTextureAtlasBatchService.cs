@@ -3161,6 +3161,46 @@ namespace Editors.KitbasherEditor.Services
                         dependencySelection);
                 }
 
+                // Fixed single-reference prefixes are provenance, not
+                // independent appearance choices. Keeping them as the
+                // dependency root incorrectly excludes independent child-VMD
+                // slots such as teb_billmen -> teb_militia_base -> torso.
+                // Preserve the reference hop in the instance's chain so the
+                // generated VMD is still cloned copy-on-write.
+                while (dependencySelections.Count > 1 &&
+                       dependencySelections[0].IsReference)
+                {
+                    var fixedPrefix = dependencySelections[0];
+                    if (!TryGetCrossRigidSourceVmdDocument(
+                            state,
+                            fixedPrefix.OwnerVmdPath,
+                            sourceVmdDocuments,
+                            out var prefixDocument,
+                            out reason) ||
+                        prefixDocument.SelectSingleNode(
+                            $"{fixedPrefix.ParentXmlPath}/SLOT[{fixedPrefix.SlotIndex}]") is
+                            not XmlElement prefixSlot)
+                    {
+                        if (string.IsNullOrWhiteSpace(reason))
+                            reason = "Fixed reference prefix slot is missing";
+                        return false;
+                    }
+
+                    if (ParseVmdSlotProbability(
+                            prefixSlot.GetAttribute("probability")) <
+                            1.0 - AtlasValueGateExpectedDrawEpsilon ||
+                        (prefixSlot.SelectNodes("VARIANT_MESH")?.Count ?? 0) != 0 ||
+                        (prefixSlot.SelectNodes("VARIANT_MESH_REFERENCE")?.Count ?? 0) != 1 ||
+                        fixedPrefix.AlternativeIndex != 1)
+                    {
+                        break;
+                    }
+
+                    dependencySelections.RemoveAt(0);
+                    orderedDifferingTokens =
+                        orderedDifferingTokens.Skip(1).ToArray();
+                }
+
                 // Each varying child must exist only under its exact parent
                 // alternative. Preserve the full conditional chain rather
                 // than treating a grandchild as an independent Cartesian
@@ -3211,16 +3251,48 @@ namespace Editors.KitbasherEditor.Services
                             $"{parentSelection.ParentXmlPath}/" +
                             $"SLOT[{parentSelection.SlotIndex}]/" +
                             $"VARIANT_MESH[{parentSelection.AlternativeIndex}]";
-                        // A variable child-VMD reference requires a distinct
-                        // conditional reference-chain writer. Do not rewrite
-                        // it as a local model branch.
-                        if (parentSelection.IsReference ||
-                            !Normalize(childSelection.OwnerVmdPath).Equals(
+                        var isDirectReferencedChild = false;
+                        if (parentSelection.IsReference &&
+                            Normalize(parentSelection.OwnerVmdPath).Equals(
+                                anchorVmdPath,
+                                StringComparison.OrdinalIgnoreCase) &&
+                            TryGetCrossRigidReferenceChainPrefixToVmd(
+                                instance,
+                                childSelection.OwnerVmdPath,
+                                out var childReferenceChain) &&
+                            childReferenceChain.Length ==
+                                commonReferenceChain.Length + 1)
+                        {
+                            var referenceHop = childReferenceChain[^1];
+                            var expectedReferencePath =
+                                $"{parentSelection.ParentXmlPath}/" +
+                                $"SLOT[{parentSelection.SlotIndex}]/" +
+                                $"VARIANT_MESH_REFERENCE[{parentSelection.AlternativeIndex}]";
+                            isDirectReferencedChild =
+                                Normalize(referenceHop.OwnerVmdPath).Equals(
+                                    Normalize(parentSelection.OwnerVmdPath),
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                Normalize(referenceHop.ReferencedVmdPath).Equals(
+                                    Normalize(childSelection.OwnerVmdPath),
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                referenceHop.ReferenceXmlPath.Equals(
+                                    expectedReferencePath,
+                                    StringComparison.Ordinal) &&
+                                childSelection.ParentXmlPath.StartsWith(
+                                    "/VARIANT_MESH",
+                                    StringComparison.Ordinal);
+                        }
+
+                        var isLocalChild =
+                            !parentSelection.IsReference &&
+                            Normalize(childSelection.OwnerVmdPath).Equals(
                                 Normalize(parentSelection.OwnerVmdPath),
-                                StringComparison.OrdinalIgnoreCase) ||
-                            !childSelection.ParentXmlPath.Equals(
+                                StringComparison.OrdinalIgnoreCase) &&
+                            childSelection.ParentXmlPath.Equals(
                                 expectedChildParent,
-                                StringComparison.Ordinal))
+                                StringComparison.Ordinal);
+                        if (!isLocalChild &&
+                            !isDirectReferencedChild)
                         {
                             reason =
                                 "common-ancestor optional dependency has nested varying selections";
@@ -3278,10 +3350,14 @@ namespace Editors.KitbasherEditor.Services
                     }
                 }
 
-                if (!TryBuildCrossRigidJointSourceSelection(
+                if (!TryGetCrossRigidReferenceChainPrefixToVmd(
+                        instance,
+                        sourceTokenSelection.OwnerVmdPath,
+                        out var sourceReferenceChain) ||
+                    !TryBuildCrossRigidJointSourceSelection(
                         instance,
                         sourceTokenSelection,
-                        ownerReferenceChain,
+                        sourceReferenceChain,
                         out var sourceSelection,
                         out reason))
                 {
@@ -3530,8 +3606,23 @@ namespace Editors.KitbasherEditor.Services
                         return false;
                     }
 
+                    if (!TryGetCrossRigidReferenceChainPrefixToVmd(
+                            instance,
+                            childSelection.OwnerVmdPath,
+                            out var childOwnerReferenceChain) ||
+                        childOwnerReferenceChain.Length <
+                            commonReferenceChain.Length)
+                    {
+                        reason = "Conditional child reference provenance is missing";
+                        return false;
+                    }
+
+                    var childRelativeReferenceChain =
+                        childOwnerReferenceChain
+                            .Skip(commonReferenceChain.Length)
+                            .ToArray();
                     string? childRelativeSlotPath = null;
-                    if (relativeReferenceChain.Length == 0)
+                    if (childRelativeReferenceChain.Length == 0)
                     {
                         if (!TryGetCrossRigidRelativeXmlPath(
                                 $"{anchorParentXmlPath}/SLOT[{carrierSlotIndex}]",
@@ -3578,7 +3669,7 @@ namespace Editors.KitbasherEditor.Services
                             childSelection.SlotIndex,
                             carrierSlotIndex,
                             childRelativeSlotPath,
-                            relativeReferenceChain,
+                            childRelativeReferenceChain,
                             childAlternatives,
                             parentKey,
                             conditionalParentSelection.IsReference,
@@ -31559,7 +31650,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Fixed-local common ancestors under the same complete child-VMD reference chain can also be materialized with copy-on-write branch clones. Compatible narrower joint descriptions at one structural parent are folded into an already-analyzed bounded superset Cartesian context; narrower rewrites are projected across every matching superset state. At one shared structural parent, optional slots with a bounded exact rational probability and bounded alternative count are represented as weighted absent/present-alternative Cartesian states; each present alternative receives its conditional uniform share, and finished wrappers are duplicated by integer multiplicity to preserve the original slot probability exactly. Exactly representable, bounded optional dependency dimensions are admitted across fixed child-VMD references, including deterministic descendants inside an optional selected subtree; bounded local nested varying-selection chains under selected parent alternatives (including mandatory parent slots) are enumerated conditionally with exact inactive-child weights; variable child-VMD reference chains and unsupported optional-slot topologies remain excluded.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Fixed-local common ancestors under the same complete child-VMD reference chain can also be materialized with copy-on-write branch clones. Compatible narrower joint descriptions at one structural parent are folded into an already-analyzed bounded superset Cartesian context; narrower rewrites are projected across every matching superset state. At one shared structural parent, optional slots with a bounded exact rational probability and bounded alternative count are represented as weighted absent/present-alternative Cartesian states; each present alternative receives its conditional uniform share, and finished wrappers are duplicated by integer multiplicity to preserve the original slot probability exactly. Exactly representable, bounded optional dependency dimensions are admitted across fixed child-VMD references, including deterministic descendants inside an optional selected subtree; bounded local nested varying-selection chains and directly selected child-VMD reference alternatives are enumerated conditionally with exact inactive-child weights; fixed single-reference prefixes are kept as copy-on-write provenance, not independent Cartesian dimensions; deeper variable-reference chains and unsupported optional-slot topologies remain excluded.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
