@@ -7991,6 +7991,27 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // Emission is the last source of truth for structural savings.
+            // A rejected selected occurrence can leave generated RMVs/WSModels
+            // in the output without any corresponding draw elimination, and
+            // an incomplete joint branch may have partially mutated cloned
+            // documents. Do not save such a pack as a successful conversion.
+            if (state.CrossRigidEmissionSkipCounts.Count != 0 ||
+                state.CrossRigidRewritePlansApplied != selectedPlans.Length ||
+                state.CrossRigidRewriteOccurrenceSetsApplied !=
+                    state.CrossRigidSelectedRewriteOccurrenceKeys.Count)
+            {
+                throw new InvalidOperationException(
+                    "Cross-rigid emission did not apply every selected " +
+                    "copy-on-write rewrite; refusing to save a partial " +
+                    $"topology (plans={state.CrossRigidRewritePlansApplied}/" +
+                    $"{selectedPlans.Length}, occurrences=" +
+                    $"{state.CrossRigidRewriteOccurrenceSetsApplied}/" +
+                    $"{state.CrossRigidSelectedRewriteOccurrenceKeys.Count}, " +
+                    $"skip reasons={string.Join(", ", state.CrossRigidEmissionSkipCounts.Select(entry => $"{entry.Key}: {entry.Value}"))}). " +
+                    "See cross-rigid emission skip diagnostics in the report.");
+            }
+
             FinalizeCrossRigidJointProbabilityMultiplicities(
                 jointRewriteContexts.Values);
 
