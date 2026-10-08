@@ -6128,6 +6128,94 @@ namespace Editors.KitbasherEditor.Services
             return descriptor;
         }
 
+        private static bool TryEnumerateCrossRigidConditionalJointStates(
+            IReadOnlyList<CrossRigidJointSelectionDimension> dimensions,
+            out CrossRigidJointDimensionAlternative[][] states,
+            out string reason)
+        {
+            states = [];
+            reason = string.Empty;
+
+            // Parents must precede their children; only one directly
+            // nested level is currently modeled.
+            var orderedDimensions = dimensions
+                .OrderBy(dimension =>
+                    dimension.ParentDimensionKey == null ? 0 : 1)
+                .ThenBy(dimension =>
+                    dimension.DimensionKey,
+                    StringComparer.Ordinal)
+                .ToArray();
+            var knownKeys = dimensions
+                .Select(dimension => dimension.DimensionKey)
+                .ToHashSet(StringComparer.Ordinal);
+            var combinations =
+                new List<CrossRigidJointDimensionAlternative[]>
+                {
+                    Array.Empty<CrossRigidJointDimensionAlternative>(),
+                };
+            foreach (var dimension in orderedDimensions)
+            {
+                if (dimension.ParentDimensionKey != null &&
+                    !knownKeys.Contains(dimension.ParentDimensionKey))
+                {
+                    reason = "Conditional Cartesian dimension has no parent";
+                    return false;
+                }
+
+                var expanded =
+                    new List<CrossRigidJointDimensionAlternative[]>();
+                foreach (var prefix in combinations)
+                {
+                    var active =
+                        dimension.ParentDimensionKey == null ||
+                        prefix.Any(alternative =>
+                            alternative.DimensionKey.Equals(
+                                dimension.ParentDimensionKey,
+                                StringComparison.Ordinal) &&
+                            alternative.IsReference ==
+                                dimension.ParentIsReference &&
+                            alternative.AlternativeIndex ==
+                                dimension.ParentAlternativeIndex);
+                    if (active)
+                    {
+                        foreach (var alternative in dimension.Alternatives)
+                        {
+                            expanded.Add(prefix.Append(alternative).ToArray());
+                        }
+                    }
+                    else
+                    {
+                        // An inactive child has no appearance selection.
+                        // Preserve the exact parent probability by folding
+                        // the full child alternative weight into one
+                        // synthetic state rather than multiplying variants
+                        // that cannot exist under this parent selection.
+                        expanded.Add(prefix.Append(
+                            new CrossRigidJointDimensionAlternative(
+                                dimension.DimensionKey,
+                                false,
+                                -1,
+                                dimension.Alternatives.Sum(alternative =>
+                                    alternative.Multiplicity))).ToArray());
+                    }
+
+                    if (expanded.Count >
+                        MaxCrossRigidJointStateCombinations)
+                    {
+                        reason =
+                            $"Conditional Cartesian state count exceeds " +
+                            $"{MaxCrossRigidJointStateCombinations:N0}";
+                        return false;
+                    }
+                }
+
+                combinations = expanded;
+            }
+
+            states = combinations.ToArray();
+            return true;
+        }
+
         private static bool TryGetCrossRigidMatchingJointCombinations(
             BatchState state,
             CrossRigidJointAlwaysPresentRewriteDescriptor occurrenceDescriptor,
@@ -6338,40 +6426,12 @@ namespace Editors.KitbasherEditor.Services
                         value;
                 }
 
-                var combinations =
-                    new List<
-                        CrossRigidJointDimensionAlternative[]>
-                    {
-                        Array.Empty<
-                            CrossRigidJointDimensionAlternative>(),
-                    };
-                foreach (var dimension in
-                         contextDescriptor.CommonAncestorDimensions)
+                if (!TryEnumerateCrossRigidConditionalJointStates(
+                        contextDescriptor.CommonAncestorDimensions,
+                        out var combinations,
+                        out reason))
                 {
-                    var expanded =
-                        new List<
-                            CrossRigidJointDimensionAlternative[]>();
-                    foreach (var prefix in combinations)
-                    {
-                        foreach (var alternative in
-                                 dimension.Alternatives)
-                        {
-                            expanded.Add(
-                                prefix
-                                    .Append(alternative)
-                                    .ToArray());
-                            if (expanded.Count >
-                                MaxCrossRigidJointStateCombinations)
-                            {
-                                reason =
-                                    $"Canonical common-ancestor Cartesian product exceeds " +
-                                    $"{MaxCrossRigidJointStateCombinations:N0} combinations";
-                                return false;
-                            }
-                        }
-                    }
-
-                    combinations = expanded;
+                    return false;
                 }
 
                 var weightedCombinationCount =
@@ -9564,40 +9624,12 @@ namespace Editors.KitbasherEditor.Services
                     carrierSlotElement;
             }
 
-            var combinationAlternatives =
-                new List<
-                    CrossRigidJointDimensionAlternative[]>
-                {
-                    Array.Empty<
-                        CrossRigidJointDimensionAlternative>(),
-                };
-            foreach (var dimension in
-                     descriptor.CommonAncestorDimensions)
+            if (!TryEnumerateCrossRigidConditionalJointStates(
+                    descriptor.CommonAncestorDimensions,
+                    out var combinationAlternatives,
+                    out reason))
             {
-                var expanded =
-                    new List<
-                        CrossRigidJointDimensionAlternative[]>();
-                foreach (var prefix in combinationAlternatives)
-                {
-                    foreach (var alternative in
-                             dimension.Alternatives)
-                    {
-                        expanded.Add(
-                            prefix
-                                .Append(alternative)
-                                .ToArray());
-                        if (expanded.Count >
-                            MaxCrossRigidJointStateCombinations)
-                        {
-                            reason =
-                                $"Common-ancestor Cartesian product exceeds " +
-                                $"{MaxCrossRigidJointStateCombinations:N0} combinations";
-                            return false;
-                        }
-                    }
-                }
-
-                combinationAlternatives = expanded;
+                return false;
             }
 
             var expandedCombinationCount =
@@ -9703,6 +9735,13 @@ namespace Editors.KitbasherEditor.Services
                 {
                     var alternative = entry.Alternative;
                     var dimension = entry.Dimension;
+                    if (alternative.AlternativeIndex == -1)
+                    {
+                        // This child does not exist under the selected
+                        // parent branch; no subtree is materialized.
+                        continue;
+                    }
+
                     if (!TryMaterializeCrossRigidCommonAncestorDimension(
                             state,
                             contextKey,
