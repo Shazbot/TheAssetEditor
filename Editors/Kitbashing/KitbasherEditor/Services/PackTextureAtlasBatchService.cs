@@ -3101,18 +3101,24 @@ namespace Editors.KitbasherEditor.Services
 
                     if (dependencySelection.OptionalSlot)
                     {
-                        // The existing common-ancestor writer handles
-                        // synthetic absent/present alternatives, including
-                        // their exact integer multiplicities and child-VMD
-                        // copy-on-write. However, an optional ancestor of
-                        // another varying selection would leave the emitted
-                        // merged model unconditional in the absent branch.
-                        // Admit only a single, directly selected optional
-                        // dependency, never a nested optional ancestor.
-                        if (orderedDifferingTokens.Length != 1)
+                        // An optional ancestor can be a Cartesian root
+                        // even when the actual model is nested below it, but
+                        // only if all deeper selected slots are deterministic.
+                        // The present branch then always contains that model,
+                        // while the absent branch contains none of its subtree.
+                        // A varying descendant needs conditional Cartesian
+                        // states, which this writer does not yet materialize.
+                        if (orderedDifferingTokens.Length > 1 &&
+                            (dependencySelections.Count != 0 ||
+                             !TryValidateCrossRigidDeterministicJointSuffix(
+                                 state,
+                                 orderedDifferingTokens.Skip(1),
+                                 sourceVmdDocuments,
+                                 out reason)))
                         {
-                            reason =
-                                "common-ancestor optional dependency has nested varying selections";
+                            reason = string.IsNullOrWhiteSpace(reason)
+                                ? "common-ancestor optional dependency has nested varying selections"
+                                : reason;
                             return false;
                         }
 
@@ -4884,6 +4890,55 @@ namespace Editors.KitbasherEditor.Services
                     alternativeIndex,
                     slotProbability <
                         1.0 - AtlasValueGateExpectedDrawEpsilon);
+            return true;
+        }
+
+        private static bool
+            TryValidateCrossRigidDeterministicJointSuffix(
+                BatchState state,
+                IEnumerable<string> descendantTokens,
+                Dictionary<string, XmlDocument> sourceVmdDocuments,
+                out string reason)
+        {
+            reason = string.Empty;
+            foreach (var descendantToken in descendantTokens)
+            {
+                if (!TryParseCrossRigidActivationToken(
+                        state,
+                        descendantToken,
+                        sourceVmdDocuments,
+                        out var selection,
+                        out reason) ||
+                    !TryGetCrossRigidSourceVmdDocument(
+                        state,
+                        selection.OwnerVmdPath,
+                        sourceVmdDocuments,
+                        out var ownerDocument,
+                        out reason))
+                {
+                    return false;
+                }
+
+                if (ownerDocument.SelectSingleNode(
+                        $"{selection.ParentXmlPath}/SLOT[{selection.SlotIndex}]") is
+                    not XmlElement slotElement)
+                {
+                    reason =
+                        "nested optional dependency's descendant slot is missing";
+                    return false;
+                }
+
+                var alternativeCount =
+                    (slotElement.SelectNodes("VARIANT_MESH")?.Count ?? 0) +
+                    (slotElement.SelectNodes("VARIANT_MESH_REFERENCE")?.Count ?? 0);
+                if (selection.OptionalSlot || alternativeCount != 1)
+                {
+                    reason =
+                        "common-ancestor optional dependency has nested varying selections";
+                    return false;
+                }
+            }
+
             return true;
         }
 
@@ -30887,7 +30942,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Fixed-local common ancestors under the same complete child-VMD reference chain can also be materialized with copy-on-write branch clones. Compatible narrower joint descriptions at one structural parent are folded into an already-analyzed bounded superset Cartesian context; narrower rewrites are projected across every matching superset state. At one shared structural parent, optional slots with a bounded exact rational probability and bounded alternative count are represented as weighted absent/present-alternative Cartesian states; each present alternative receives its conditional uniform share, and finished wrappers are duplicated by integer multiplicity to preserve the original slot probability exactly. Only exactly representable, bounded optional dependency dimensions are admitted across fixed child-VMD references; nested optional dependencies and other unsupported optional-slot topologies remain excluded.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Fixed-local common ancestors under the same complete child-VMD reference chain can also be materialized with copy-on-write branch clones. Compatible narrower joint descriptions at one structural parent are folded into an already-analyzed bounded superset Cartesian context; narrower rewrites are projected across every matching superset state. At one shared structural parent, optional slots with a bounded exact rational probability and bounded alternative count are represented as weighted absent/present-alternative Cartesian states; each present alternative receives its conditional uniform share, and finished wrappers are duplicated by integer multiplicity to preserve the original slot probability exactly. Exactly representable, bounded optional dependency dimensions are admitted across fixed child-VMD references, including deterministic descendants inside an optional selected subtree; genuinely varying nested optional dependencies and unsupported optional-slot topologies remain excluded.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
