@@ -31189,6 +31189,63 @@ namespace Editors.KitbasherEditor.Services
                     $"Selected resident geometry per expected draw: " +
                     $"{FormatMiB(selectedExpectedDraws > AtlasValueGateExpectedDrawEpsilon ? selectedExpectedResidentGeometryBytes / selectedExpectedDraws : 0, 2)}");
 
+                // Report marginal, conflict-deduplicated benefit rather than
+                // the overlap-inclusive standalone benefit when explaining
+                // how much geometry the selected portfolio actually costs.
+                // These are diagnostic cohorts; the selected portfolio and
+                // its existing budgets remain unchanged.
+                sb.AppendLine(
+                    "Accepted cross-rigid geometry cost by payload reuse:");
+                foreach (var cohort in selectedPayloads
+                             .GroupBy(entry =>
+                                 entry.VmdCount == 1
+                                     ? "one-VMD payloads"
+                                     : "multi-VMD payloads"))
+                {
+                    var cohortDraws = cohort.Sum(entry =>
+                        entry.MarginalExpectedArmyDrawCallsEliminated);
+                    var cohortGeometry = cohort.Sum(entry =>
+                        entry.GeneratedGeometryBytes);
+                    sb.AppendLine(
+                        $"  {cohort.Key}: {cohort.Count():N0} payload(s), " +
+                        $"marginal={cohortDraws:0.###} expected draw(s), " +
+                        $"physical={FormatMiB(cohortGeometry)}, " +
+                        $"physical per expected draw=" +
+                        FormatMiB(
+                            cohortDraws > AtlasValueGateExpectedDrawEpsilon
+                                ? cohortGeometry / cohortDraws
+                                : 0,
+                            2));
+                }
+
+                sb.AppendLine(
+                    "Highest physical cost per marginal expected draw " +
+                    "among selected payloads (top 12):");
+                foreach (var entry in selectedPayloads
+                             .Where(entry =>
+                                 entry.MarginalExpectedArmyDrawCallsEliminated >
+                                 AtlasValueGateExpectedDrawEpsilon)
+                             .OrderByDescending(entry =>
+                                 entry.GeneratedGeometryBytes /
+                                 entry.MarginalExpectedArmyDrawCallsEliminated)
+                             .ThenBy(entry =>
+                                 entry.GeneratedPayloadId,
+                                 StringComparer.Ordinal)
+                             .Take(12))
+                {
+                    sb.AppendLine(
+                        $"  payload={entry.GeneratedPayloadId}, " +
+                        $"VMDs={entry.VmdCount:N0}, " +
+                        $"marginal={entry.MarginalExpectedArmyDrawCallsEliminated:0.######} draws, " +
+                        $"physical={FormatMiB(entry.GeneratedGeometryBytes)}, " +
+                        $"physical per expected draw=" +
+                        FormatMiB(
+                            entry.GeneratedGeometryBytes /
+                            entry.MarginalExpectedArmyDrawCallsEliminated,
+                            2));
+                }
+
+
                 if (rejectedPayloads.Length != 0)
                 {
                     sb.AppendLine("Cross-rigid payload value-gate rejection breakdown:");
