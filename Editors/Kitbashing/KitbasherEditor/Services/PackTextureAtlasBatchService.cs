@@ -3107,6 +3107,7 @@ namespace Editors.KitbasherEditor.Services
 
                 var dependencySelections =
                     new List<CrossRigidActivationTokenSelection>();
+                CrossRigidActivationTokenSelection? conditionalChildSelection = null;
                 foreach (var differingToken in
                          orderedDifferingTokens)
                 {
@@ -3122,25 +3123,45 @@ namespace Editors.KitbasherEditor.Services
 
                     if (dependencySelection.OptionalSlot)
                     {
-                        // An optional ancestor can be a Cartesian root
-                        // even when the actual model is nested below it, but
-                        // only if all deeper selected slots are deterministic.
-                        // The present branch then always contains that model,
-                        // while the absent branch contains none of its subtree.
-                        // A varying descendant needs conditional Cartesian
-                        // states, which this writer does not yet materialize.
+                        // A varying child directly inside the selected
+                        // optional model may be conditioned on that parent's
+                        // precise alternative. Other nested dependencies
+                        // cannot be flattened independently.
                         if (orderedDifferingTokens.Length > 1 &&
-                            (dependencySelections.Count != 0 ||
-                             !TryValidateCrossRigidDeterministicJointSuffix(
-                                 state,
-                                 orderedDifferingTokens.Skip(1),
-                                 sourceVmdDocuments,
-                                 out reason)))
+                            !TryValidateCrossRigidDeterministicJointSuffix(
+                                state,
+                                orderedDifferingTokens.Skip(1),
+                                sourceVmdDocuments,
+                                out _))
                         {
-                            reason = string.IsNullOrWhiteSpace(reason)
-                                ? "common-ancestor optional dependency has nested varying selections"
-                                : reason;
-                            return false;
+                            CrossRigidActivationTokenSelection nestedSelection =
+                                null!;
+                            var supportedConditionalChild =
+                                orderedDifferingTokens.Length == 2 &&
+                                dependencySelections.Count == 0 &&
+                                !dependencySelection.IsReference &&
+                                TryParseCrossRigidActivationToken(
+                                    state,
+                                    orderedDifferingTokens[1],
+                                    sourceVmdDocuments,
+                                    out nestedSelection,
+                                    out _) &&
+                                Normalize(nestedSelection.OwnerVmdPath).Equals(
+                                    Normalize(dependencySelection.OwnerVmdPath),
+                                    StringComparison.OrdinalIgnoreCase) &&
+                                nestedSelection.ParentXmlPath.Equals(
+                                    $"{dependencySelection.ParentXmlPath}/" +
+                                    $"SLOT[{dependencySelection.SlotIndex}]/" +
+                                    $"VARIANT_MESH[{dependencySelection.AlternativeIndex}]",
+                                    StringComparison.Ordinal);
+                            if (!supportedConditionalChild)
+                            {
+                                reason =
+                                    "common-ancestor optional dependency has nested varying selections";
+                                return false;
+                            }
+
+                            conditionalChildSelection = nestedSelection;
                         }
 
                         if (!TryValidateCrossRigidOptionalJointSelection(
@@ -3177,13 +3198,12 @@ namespace Editors.KitbasherEditor.Services
                         dependencySelection);
                 }
 
-                // Activation signatures are recorded in traversal order.
-                // The first differing token is therefore the highest
-                // probability-1 branch that distinguishes this source.
-                // Keep deeper selections inside that branch rather than
-                // flattening them into independent Cartesian dimensions.
-                var tokenSelection =
-                    dependencySelections[0];
+                // The highest differing token owns the carrier. The
+                // conditional child identifies the precise model occurrence
+                // while its parent activation is tracked independently.
+                var tokenSelection = dependencySelections[0];
+                var sourceTokenSelection =
+                    conditionalChildSelection ?? tokenSelection;
 
                 if (!TryGetCrossRigidReferenceChainPrefixToVmd(
                         instance,
@@ -3219,7 +3239,7 @@ namespace Editors.KitbasherEditor.Services
 
                 if (!TryBuildCrossRigidJointSourceSelection(
                         instance,
-                        tokenSelection,
+                        sourceTokenSelection,
                         ownerReferenceChain,
                         out var sourceSelection,
                         out reason))
@@ -3446,6 +3466,92 @@ namespace Editors.KitbasherEditor.Services
                         dimension;
                 }
 
+                if (conditionalChildSelection != null)
+                {
+                    var childSelection = conditionalChildSelection;
+                    var childKey =
+                        BuildCrossRigidJointSelectionDimensionKey(
+                            childSelection.OwnerVmdPath,
+                            childSelection.ParentXmlPath,
+                            childSelection.SlotIndex);
+                    if (!TryGetCrossRigidSourceVmdDocument(
+                            state,
+                            childSelection.OwnerVmdPath,
+                            sourceVmdDocuments,
+                            out var childDocument,
+                            out reason) ||
+                        childDocument.SelectSingleNode(
+                            $"{childSelection.ParentXmlPath}/SLOT[{childSelection.SlotIndex}]") is
+                            not XmlElement childSlot)
+                    {
+                        if (string.IsNullOrWhiteSpace(reason))
+                            reason = "Conditional nested child slot is missing";
+                        return false;
+                    }
+
+                    string? childRelativeSlotPath = null;
+                    if (relativeReferenceChain.Length == 0)
+                    {
+                        if (!TryGetCrossRigidRelativeXmlPath(
+                                $"{anchorParentXmlPath}/SLOT[{carrierSlotIndex}]",
+                                $"{childSelection.ParentXmlPath}/SLOT[{childSelection.SlotIndex}]",
+                                out var relativeSlotPath))
+                        {
+                            reason = "Conditional nested child is outside carrier";
+                            return false;
+                        }
+
+                        childRelativeSlotPath = relativeSlotPath;
+                    }
+
+                    var childAlternatives =
+                        GetCrossRigidJointAlternatives(
+                                childSlot,
+                                childSelection.SlotIndex)
+                            .Select(alternative =>
+                                new CrossRigidJointDimensionAlternative(
+                                    childKey,
+                                    alternative.IsReference,
+                                    alternative.AlternativeIndex,
+                                    alternative.Multiplicity))
+                            .ToArray();
+                    if (childAlternatives.Length <= 1)
+                    {
+                        reason = "Conditional nested child has no varying alternatives";
+                        return false;
+                    }
+
+                    var childDimension =
+                        new CrossRigidJointSelectionDimension(
+                            childKey,
+                            childSelection.OwnerVmdPath,
+                            childSelection.ParentXmlPath,
+                            childSelection.SlotIndex,
+                            carrierSlotIndex,
+                            childRelativeSlotPath,
+                            relativeReferenceChain,
+                            childAlternatives,
+                            dimensionKey,
+                            tokenSelection.IsReference,
+                            tokenSelection.AlternativeIndex);
+                    if (dimensionsByKey.TryGetValue(
+                            childKey,
+                            out var existingChild))
+                    {
+                        if (!AreEquivalentCrossRigidJointDimensions(
+                                existingChild,
+                                childDimension))
+                        {
+                            reason = "Conditional nested child has incompatible provenance";
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        dimensionsByKey[childKey] = childDimension;
+                    }
+                }
+
                 sourceSelections.Add(sourceSelection);
             }
 
@@ -3536,6 +3642,14 @@ namespace Editors.KitbasherEditor.Services
                                 StringComparison.Ordinal));
                     if (!sameDocumentDescendant &&
                         !descendantReference)
+                    {
+                        continue;
+                    }
+
+                    if (otherDimension.ParentDimensionKey != null &&
+                        otherDimension.ParentDimensionKey.Equals(
+                            optionalDimension.DimensionKey,
+                            StringComparison.Ordinal))
                     {
                         continue;
                     }
@@ -5939,6 +6053,12 @@ namespace Editors.KitbasherEditor.Services
                     StringComparison.Ordinal) ||
                 left.SlotIndex != right.SlotIndex ||
                 left.CarrierSlotIndex != right.CarrierSlotIndex ||
+                !string.Equals(
+                    left.ParentDimensionKey,
+                    right.ParentDimensionKey,
+                    StringComparison.Ordinal) ||
+                left.ParentIsReference != right.ParentIsReference ||
+                left.ParentAlternativeIndex != right.ParentAlternativeIndex ||
                 !string.Equals(
                     left.LocalDimensionSlotRelativeXmlPath,
                     right.LocalDimensionSlotRelativeXmlPath,
@@ -34264,7 +34384,10 @@ namespace Editors.KitbasherEditor.Services
             int CarrierSlotIndex,
             string? LocalDimensionSlotRelativeXmlPath,
             CrossRigidVmdReferenceHop[] ReferenceChainFromAnchor,
-            CrossRigidJointDimensionAlternative[] Alternatives);
+            CrossRigidJointDimensionAlternative[] Alternatives,
+            string? ParentDimensionKey = null,
+            bool ParentIsReference = false,
+            int ParentAlternativeIndex = -1);
 
         private sealed record CrossRigidJointDimensionAlternative(
             string DimensionKey,
