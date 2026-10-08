@@ -7803,6 +7803,10 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidExpectedArmyDrawCallsEmitted = 0;
             state.CrossRigidRawLodDrawsBefore = 0;
             state.CrossRigidRawLodDrawsAfter = 0;
+            var emissionTimer = Stopwatch.StartNew();
+            var validationElapsed = TimeSpan.Zero;
+            var geometryBuildElapsed = TimeSpan.Zero;
+            var copyOnWriteElapsed = TimeSpan.Zero;
 
             var selectedPlans = state.CrossRigidMergeAnalysisEntries
                 .Where(plan =>
@@ -7941,7 +7945,9 @@ namespace Editors.KitbasherEditor.Services
                                 selectedCombinationKeys;
                         }
 
-                        if (!TryValidateCrossRigidRewriteOccurrenceSet(
+                        var validationStarted = Stopwatch.GetTimestamp();
+                        var validationSucceeded =
+                            TryValidateCrossRigidRewriteOccurrenceSet(
                                 state,
                                 vmdPath,
                                 plan,
@@ -7952,7 +7958,10 @@ namespace Editors.KitbasherEditor.Services
                                 jointRewriteContexts,
                                 jointContextKeyByParentLocation,
                                 selectedJointCombinationKeys,
-                                out var validationReason))
+                                out var validationReason);
+                        validationElapsed +=
+                            Stopwatch.GetElapsedTime(validationStarted);
+                        if (!validationSucceeded)
                         {
                             RecordCrossRigidEmissionSkip(
                                 state,
@@ -7977,12 +7986,17 @@ namespace Editors.KitbasherEditor.Services
                         if (!state.CrossRigidGeneratedPayloadIds.Contains(
                                 plan.GeneratedPayloadId))
                         {
-                            if (!TryBuildCrossRigidGeneratedPayload(
+                            var geometryBuildStarted = Stopwatch.GetTimestamp();
+                            var geometryBuildSucceeded =
+                                TryBuildCrossRigidGeneratedPayload(
                                     state,
                                     plan,
                                     traversalContainers,
                                     rigidCache,
-                                    out var payloadFailure))
+                                    out var payloadFailure);
+                            geometryBuildElapsed +=
+                                Stopwatch.GetElapsedTime(geometryBuildStarted);
+                            if (!geometryBuildSucceeded)
                             {
                                 payloadBuildFailures[
                                     plan.GeneratedPayloadId] =
@@ -7999,7 +8013,9 @@ namespace Editors.KitbasherEditor.Services
                         var generatedWsModelPath =
                             BuildCrossRigidGeneratedWsModelPath(
                                 plan.GeneratedPayloadId);
-                        if (!TryApplyCrossRigidRewriteOccurrenceSet(
+                        var copyOnWriteStarted = Stopwatch.GetTimestamp();
+                        var copyOnWriteSucceeded =
+                            TryApplyCrossRigidRewriteOccurrenceSet(
                                 state,
                                 vmdPath,
                                 rootDocument,
@@ -8012,7 +8028,10 @@ namespace Editors.KitbasherEditor.Services
                                 jointContextKeyByParentLocation,
                                 selectedJointCombinationKeys,
                                 out var appliedProbabilityFraction,
-                                out var applyReason))
+                                out var applyReason);
+                        copyOnWriteElapsed +=
+                            Stopwatch.GetElapsedTime(copyOnWriteStarted);
+                        if (!copyOnWriteSucceeded)
                         {
                             RecordCrossRigidEmissionSkip(
                                 state,
@@ -8104,6 +8123,7 @@ namespace Editors.KitbasherEditor.Services
                     "See cross-rigid emission skip diagnostics in the report.");
             }
 
+            var finalizationTimer = Stopwatch.StartNew();
             FinalizeCrossRigidJointProbabilityMultiplicities(
                 jointRewriteContexts.Values);
 
@@ -8120,6 +8140,19 @@ namespace Editors.KitbasherEditor.Services
                 state.ReachableWsModelsByRoot.Clear();
                 state.ReachableWsModelsByRootVersion++;
             }
+
+            state.CrossRigidTimingDetails["Emit: validate occurrences"] =
+                validationElapsed;
+            state.CrossRigidTimingDetails["Emit: construct RMV/WSModel payloads"] =
+                geometryBuildElapsed;
+            state.CrossRigidTimingDetails["Emit: apply copy-on-write rewrites"] =
+                copyOnWriteElapsed;
+            state.CrossRigidTimingDetails["Emit: finalize and load VMDs"] =
+                finalizationTimer.Elapsed;
+            state.CrossRigidTimingDetails["Emit: remaining orchestration"] =
+                emissionTimer.Elapsed -
+                (validationElapsed + geometryBuildElapsed +
+                 copyOnWriteElapsed + finalizationTimer.Elapsed);
         }
 
         private static void
