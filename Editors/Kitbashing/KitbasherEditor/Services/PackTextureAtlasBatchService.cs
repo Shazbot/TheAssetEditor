@@ -6159,6 +6159,31 @@ namespace Editors.KitbasherEditor.Services
                         $"weightedStates={conditionalUnion.CombinationCount}");
                 }
 
+                // A single parent may have several incompatible contexts
+                // even though a useful subset can be represented exactly.
+                // Do not discard compatible smaller cohorts merely because
+                // the union of every observed context exceeds the state cap.
+                if (canonicalDescriptor == null &&
+                    TryBuildCrossRigidBestPartialCanonicalJointContext(
+                        state,
+                        candidates.Select(candidate => candidate.Descriptor)
+                            .ToArray(),
+                        sourceVmdDocuments,
+                        out var partialDescriptor,
+                        out var partialContextCount))
+                {
+                    canonicalDescriptor = partialDescriptor;
+                    RecordCrossRigidAnalysisDiagnostic(
+                        state,
+                        "Partial canonical joint context synthesized",
+                        $"{candidates[0].RootVmdPath} / " +
+                        $"{partialDescriptor.ParentXmlPath}: " +
+                        $"covered={partialContextCount}/{candidates.Count}, " +
+                        $"slots={string.Join(",", partialDescriptor.SlotIndices)}, " +
+                        $"dimensions={partialDescriptor.CommonAncestorDimensions.Length}, " +
+                        $"weightedStates={partialDescriptor.CombinationCount}");
+                }
+
                 if (canonicalDescriptor == null)
                 {
                     if (candidates.Count > 1)
@@ -6169,16 +6194,167 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
+                var coveredContextCount = candidates.Count(candidate =>
+                    IsCrossRigidJointDescriptorStructuralSuperset(
+                        canonicalDescriptor,
+                        candidate.Descriptor));
+                if (coveredContextCount < candidates.Count)
+                {
+                    // The remaining contexts continue to compete through
+                    // their normal parent-location conflict keys.
+                    state.CrossRigidCanonicalJointParentConflictCount++;
+                }
+
                 state.CrossRigidCanonicalJointDescriptorByParentLocation[
                     parentLocationKey] =
                     canonicalDescriptor;
-                if (candidates.Count > 1)
+                if (coveredContextCount > 1)
                 {
                     state.CrossRigidCanonicalJointParentCount++;
                     state.CrossRigidCanonicalJointContextsFolded +=
-                        candidates.Count - 1;
+                        coveredContextCount - 1;
                 }
             }
+        }
+
+        // The writer can materialize only one Cartesian context at a
+        // structural parent. When the entire union is too large, find the
+        // largest *compatible* cohort and leave the remaining contexts as
+        // normal conflicting candidates. Every expansion goes through the
+        // same exact-probability, dependency and 1,024-state validation as
+        // a full canonical union.
+        private static bool
+            TryBuildCrossRigidBestPartialCanonicalJointContext(
+                BatchState state,
+                IReadOnlyList<CrossRigidJointAlwaysPresentRewriteDescriptor>
+                    candidates,
+                Dictionary<string, XmlDocument> sourceVmdDocuments,
+                out CrossRigidJointAlwaysPresentRewriteDescriptor descriptor,
+                out int coveredContextCount)
+        {
+            descriptor = null!;
+            coveredContextCount = 0;
+            if (candidates.Count < 3)
+                return false;
+
+            for (var seedIndex = 0;
+                 seedIndex < candidates.Count;
+                 seedIndex++)
+            {
+                var current = candidates[seedIndex];
+                var currentCoverage = candidates.Count(candidate =>
+                    IsCrossRigidJointDescriptorStructuralSuperset(
+                        current, candidate));
+
+                // Try every seed, since two overlapping contexts may
+                // combine while another ordering chooses an incompatible
+                // but individually larger context first.
+                while (true)
+                {
+                    CrossRigidJointAlwaysPresentRewriteDescriptor?
+                        bestExpansion = null;
+                    var bestExpansionCoverage = currentCoverage;
+                    foreach (var candidate in candidates)
+                    {
+                        if (IsCrossRigidJointDescriptorStructuralSuperset(
+                                current, candidate) ||
+                            !TryCombineCrossRigidCanonicalJointContexts(
+                                state,
+                                current,
+                                candidate,
+                                sourceVmdDocuments,
+                                out var expansion))
+                        {
+                            continue;
+                        }
+
+                        var expansionCoverage = candidates.Count(other =>
+                            IsCrossRigidJointDescriptorStructuralSuperset(
+                                expansion, other));
+                        if (expansionCoverage > bestExpansionCoverage ||
+                            (expansionCoverage == bestExpansionCoverage &&
+                             bestExpansion != null &&
+                             expansion.CombinationCount <
+                             bestExpansion.CombinationCount))
+                        {
+                            bestExpansion = expansion;
+                            bestExpansionCoverage = expansionCoverage;
+                        }
+                    }
+
+                    if (bestExpansion == null ||
+                        bestExpansionCoverage <= currentCoverage)
+                    {
+                        break;
+                    }
+
+                    current = bestExpansion;
+                    currentCoverage = bestExpansionCoverage;
+                }
+
+                if (currentCoverage <= 1 ||
+                    (currentCoverage < coveredContextCount) ||
+                    (currentCoverage == coveredContextCount &&
+                     descriptor != null &&
+                     current.CombinationCount >=
+                     descriptor.CombinationCount))
+                {
+                    continue;
+                }
+
+                descriptor = current;
+                coveredContextCount = currentCoverage;
+            }
+
+            return coveredContextCount > 1;
+        }
+
+        private static bool TryCombineCrossRigidCanonicalJointContexts(
+            BatchState state,
+            CrossRigidJointAlwaysPresentRewriteDescriptor left,
+            CrossRigidJointAlwaysPresentRewriteDescriptor right,
+            Dictionary<string, XmlDocument> sourceVmdDocuments,
+            out CrossRigidJointAlwaysPresentRewriteDescriptor descriptor)
+        {
+            if (IsCrossRigidJointDescriptorStructuralSuperset(
+                    left, right))
+            {
+                descriptor = left;
+                return true;
+            }
+
+            if (IsCrossRigidJointDescriptorStructuralSuperset(
+                    right, left))
+            {
+                descriptor = right;
+                return true;
+            }
+
+            if (left.CommonAncestorDimensions.Length == 0 &&
+                right.CommonAncestorDimensions.Length == 0)
+            {
+                return TryBuildCrossRigidCanonicalSiblingSlotUnion(
+                    state,
+                    [left, right],
+                    sourceVmdDocuments,
+                    out descriptor);
+            }
+
+            if (left.CommonAncestorDimensions.Length != 0 &&
+                right.CommonAncestorDimensions.Length != 0)
+            {
+                return TryBuildCrossRigidCanonicalConditionalDimensionUnion(
+                    state,
+                    [left, right],
+                    sourceVmdDocuments,
+                    out descriptor);
+            }
+
+            // A direct sibling-slot context and a conditional dimension
+            // context have different projection/materialization rules.
+            // Never silently promote one to the other.
+            descriptor = null!;
+            return false;
         }
 
         private static bool TryBuildCrossRigidCanonicalSiblingSlotUnion(
