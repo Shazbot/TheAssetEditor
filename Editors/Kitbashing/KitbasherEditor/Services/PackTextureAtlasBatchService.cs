@@ -8373,6 +8373,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidGeneratedRigidPaths.Clear();
             state.CrossRigidGeneratedWsModelPaths.Clear();
             state.CrossRigidGeneratedVmdPaths.Clear();
+            state.CrossRigidGeneratedVmdFilesDeduplicated = 0;
             state.CrossRigidRewrittenRootVmdPaths.Clear();
             state.CrossRigidRetainedSourceAssetPaths.Clear();
             state.CrossRigidEmissionSkipCounts.Clear();
@@ -8709,6 +8710,7 @@ namespace Editors.KitbasherEditor.Services
             var finalizationTimer = Stopwatch.StartNew();
             FinalizeCrossRigidJointProbabilityMultiplicities(
                 jointRewriteContexts.Values);
+            DeduplicateCrossRigidGeneratedVmdDocuments(state);
 
             if (state.ModifiedVmdDocuments.Count != 0)
             {
@@ -8736,6 +8738,137 @@ namespace Editors.KitbasherEditor.Services
                 emissionTimer.Elapsed -
                 (validationElapsed + geometryBuildElapsed +
                  copyOnWriteElapsed + finalizationTimer.Elapsed);
+        }
+
+        // Finalized copies are no longer mutated by the Cartesian writer.
+        // Equivalent child VMDs can be shared across otherwise unrelated
+        // appearance combinations, provided their referenced child VMDs are
+        // canonicalized first. Do not alter source VMD identities.
+        private static void DeduplicateCrossRigidGeneratedVmdDocuments(
+            BatchState state)
+        {
+            if (state.CrossRigidGeneratedVmdPaths.Count < 2)
+                return;
+
+            var generatedPaths = state.CrossRigidGeneratedVmdPaths
+                .Select(Normalize)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var generatedPathSet = generatedPaths.ToHashSet(
+                StringComparer.OrdinalIgnoreCase);
+            var canonicalByPath = new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+            var canonicalByXml = new Dictionary<string, string>(
+                StringComparer.Ordinal);
+            var processing = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
+
+            string Canonicalize(string generatedPath)
+            {
+                generatedPath = Normalize(generatedPath);
+                if (canonicalByPath.TryGetValue(
+                        generatedPath, out var existingPath))
+                    return existingPath;
+
+                // A cyclic generated reference cannot be normalized by
+                // bottom-up structural sharing. Refuse to change that graph
+                // rather than accidentally redirecting its self references.
+                if (!processing.Add(generatedPath))
+                {
+                    throw new InvalidOperationException(
+                        "Cross-rigid generated child VMD references contain a cycle: " +
+                        generatedPath);
+                }
+
+                if (!state.ModifiedVmdDocuments.TryGetValue(
+                        generatedPath, out var document))
+                {
+                    throw new InvalidOperationException(
+                        "Cross-rigid generated child VMD document is missing: " +
+                        generatedPath);
+                }
+
+                var references = document.SelectNodes(
+                    "//VARIANT_MESH_REFERENCE");
+                if (references != null)
+                {
+                    foreach (XmlNode node in references)
+                    {
+                        if (node is not XmlElement reference)
+                            continue;
+
+                        var childPath = Normalize(
+                            reference.GetAttribute("definition"));
+                        if (!generatedPathSet.Contains(childPath))
+                            continue;
+
+                        var canonicalChildPath = Canonicalize(childPath);
+                        if (!canonicalChildPath.Equals(
+                                childPath,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            reference.SetAttribute(
+                                "definition", canonicalChildPath);
+                        }
+                    }
+                }
+
+                // OuterXml preserves all slot probabilities, selection
+                // order, metadata, model paths, and attachment semantics.
+                var xml = document.OuterXml;
+                if (!canonicalByXml.TryGetValue(xml, out var canonicalPath))
+                {
+                    canonicalPath = generatedPath;
+                    canonicalByXml.Add(xml, canonicalPath);
+                }
+
+                processing.Remove(generatedPath);
+                canonicalByPath.Add(generatedPath, canonicalPath);
+                return canonicalPath;
+            }
+
+            foreach (var generatedPath in generatedPaths)
+                Canonicalize(generatedPath);
+
+            // Rewrite both generated and root VMD references only once
+            // all content identities are established. Duplicate generated
+            // documents are discarded before serialization and validation.
+            foreach (var document in state.ModifiedVmdDocuments.Values)
+            {
+                var references = document.SelectNodes(
+                    "//VARIANT_MESH_REFERENCE");
+                if (references == null)
+                    continue;
+
+                foreach (XmlNode node in references)
+                {
+                    if (node is not XmlElement reference)
+                        continue;
+
+                    var childPath = Normalize(
+                        reference.GetAttribute("definition"));
+                    if (!canonicalByPath.TryGetValue(
+                            childPath, out var canonicalPath) ||
+                        childPath.Equals(
+                            canonicalPath,
+                            StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    reference.SetAttribute("definition", canonicalPath);
+                }
+            }
+
+            foreach (var (generatedPath, canonicalPath) in canonicalByPath)
+            {
+                if (generatedPath.Equals(
+                        canonicalPath,
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                state.ModifiedVmdDocuments.Remove(generatedPath);
+                state.CrossRigidGeneratedVmdPaths.Remove(generatedPath);
+                state.CrossRigidGeneratedVmdFilesDeduplicated++;
+            }
         }
 
         private static void
@@ -32018,6 +32151,9 @@ namespace Editors.KitbasherEditor.Services
                     $"Generated copy-on-write VMD files: " +
                     $"{state.CrossRigidGeneratedVmdPaths.Count:N0}");
                 sb.AppendLine(
+                    $"Identical generated child VMD copies deduplicated: " +
+                    $"{state.CrossRigidGeneratedVmdFilesDeduplicated:N0}");
+                sb.AppendLine(
                     $"Source-pack VMD files rewritten: " +
                     $"{state.CrossRigidRewrittenRootVmdPaths.Count:N0}");
                 var selectedRewriteOccurrenceSetCount =
@@ -34979,6 +35115,7 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> CrossRigidGeneratedVmdPaths { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public int CrossRigidGeneratedVmdFilesDeduplicated { get; set; }
             public HashSet<string> CrossRigidRewrittenRootVmdPaths { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> CrossRigidRetainedSourceAssetPaths { get; } =
