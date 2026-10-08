@@ -7442,6 +7442,13 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidRawGreedyExpectedDraws = 0;
             state.CrossRigidBestPortfolioExpectedDraws = 0;
             state.CrossRigidPortfolioPairTrials = 0;
+            state.CrossRigidSharedPayloadFallbackCandidatePlans = 0;
+            state.CrossRigidSharedPayloadFallbackCompatibleStates = 0;
+            state.CrossRigidSharedPayloadFallbackAcceptedStates = 0;
+            state.CrossRigidSharedPayloadFallbackExpectedDraws = 0;
+            state.CrossRigidSharedPayloadFallbackResidentBytes = 0;
+            state.CrossRigidSharedPayloadFallbackBudgetRejections = 0;
+            state.CrossRigidSharedPayloadFallbackAdmittedPlanIds.Clear();
 
             var plansByPayload =
                 state.CrossRigidMergeAnalysisEntries
@@ -7972,6 +7979,234 @@ namespace Editors.KitbasherEditor.Services
                                   marginalExpectedDraws
                                 : double.PositiveInfinity,
                     });
+            }
+
+            // Reuse selected primary geometry only after both primary and
+            // normal fallback-only payload portfolios have been finalized.
+            AdmitCrossRigidSharedPayloadFallbacks(
+                state,
+                primaryPlansByPayload,
+                plansByPayload,
+                selectedRewriteConflictKeys,
+                selectedRewriteConflictOwnerByKey,
+                selectedJointContextKeyByParentLocation,
+                selectedJointContextOwnerByParentLocation,
+                conflictProfileVmdDocuments,
+                ref acceptedExpectedDraws,
+                ref acceptedExpectedResidentGeometryBytes);
+        }
+
+        private static void AdmitCrossRigidSharedPayloadFallbacks(
+            BatchState state,
+            IReadOnlyDictionary<string, CrossRigidMergeAnalysisEntry[]>
+                primaryPlansByPayload,
+            IReadOnlyDictionary<string, CrossRigidMergeAnalysisEntry[]>
+                plansByPayload,
+            HashSet<string> selectedRewriteConflictKeys,
+            Dictionary<string, CrossRigidSelectedRewriteConflictOwner>
+                selectedRewriteConflictOwnerByKey,
+            Dictionary<string, string>
+                selectedJointContextKeyByParentLocation,
+            Dictionary<string, CrossRigidSelectedRewriteConflictOwner>
+                selectedJointContextOwnerByParentLocation,
+            Dictionary<string, XmlDocument> sourceVmdDocuments,
+            ref double acceptedExpectedDraws,
+            ref double acceptedExpectedResidentGeometryBytes)
+        {
+            // A payload with no accepted primary still has to pay for its
+            // geometry through the existing fallback-only selection stage.
+            // This pass never adds a new payload or evicts a selected rewrite.
+            var selectedPrimaryPayloads =
+                state.CrossRigidPayloadSelectionEntries
+                    .Where(entry =>
+                        entry.Accepted &&
+                        state.CrossRigidLegacyEligiblePayloadIds.Contains(
+                            entry.GeneratedPayloadId))
+                    .OrderBy(entry => entry.SelectionRank)
+                    .ToArray();
+
+            foreach (var primary in selectedPrimaryPayloads)
+            {
+                var payloadId = primary.GeneratedPayloadId;
+                var fallbackPlans = plansByPayload[payloadId]
+                    .Where(plan =>
+                        state.CrossRigidPreviouslySuppressedPairFallbackPlanIds
+                            .Contains(plan.RewritePlanId))
+                    .ToArray();
+                if (fallbackPlans.Length == 0)
+                    continue;
+
+                state.CrossRigidSharedPayloadFallbackCandidatePlans +=
+                    fallbackPlans.Length;
+                if (!TryBuildCrossRigidPayloadRewriteConflictProfile(
+                        state,
+                        payloadId,
+                        sourceVmdDocuments,
+                        true,
+                        out var fallbackProfile,
+                        out var profileReason,
+                        onlySupplementaryPairFallbackPlans: true))
+                {
+                    RecordCrossRigidAnalysisDiagnostic(
+                        state,
+                        "Shared-payload fallback profile unavailable",
+                        $"payload={payloadId}: {profileReason}");
+                    continue;
+                }
+
+                // Exact occurrences, structural slots, and canonical joint
+                // contexts must all remain compatible with existing winners.
+                var compatible = SelectCrossRigidCompatibleRewriteOccurrences(
+                    fallbackProfile,
+                    selectedRewriteConflictKeys,
+                    selectedJointContextKeyByParentLocation);
+                state.CrossRigidSharedPayloadFallbackCompatibleStates +=
+                    compatible.Length;
+                var marginalDraws = compatible.Sum(occurrence =>
+                    occurrence.ExpectedArmyDrawCallsEliminated);
+                if (marginalDraws <= AtlasValueGateExpectedDrawEpsilon)
+                    continue;
+
+                var selectedOccurrenceKeys = compatible
+                    .Select(occurrence => occurrence.RewriteOccurrenceKey)
+                    .ToHashSet(StringComparer.Ordinal);
+                var admittedPlans = fallbackPlans
+                    .Where(plan =>
+                        plan.RewriteOccurrenceSets.Any(set =>
+                            selectedOccurrenceKeys.Contains(
+                                BuildCrossRigidSelectedRewriteOccurrenceKey(
+                                    plan, set))))
+                    .ToArray();
+                if (admittedPlans.Length == 0)
+                    continue;
+
+                // Generated physical bytes were paid by the primary. Reaching
+                // more units can still make that geometry resident more often;
+                // charge the conservative upper-bound residency increment.
+                var primaryPlans = primaryPlansByPayload[payloadId];
+                var primaryResidency =
+                    CalculateExpectedCrossRigidPayloadResidentProbability(
+                        state, primaryPlans);
+                var expandedResidency =
+                    CalculateExpectedCrossRigidPayloadResidentProbability(
+                        state,
+                        primaryPlans.Concat(admittedPlans).ToArray());
+                var incrementalResidentBytes =
+                    primary.GeneratedGeometryBytes *
+                    Math.Max(0.0, expandedResidency - primaryResidency);
+                var projectedDraws = acceptedExpectedDraws + marginalDraws;
+                if (acceptedExpectedResidentGeometryBytes +
+                        incrementalResidentBytes >
+                    projectedDraws *
+                    MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw)
+                {
+                    state.CrossRigidSharedPayloadFallbackBudgetRejections++;
+                    continue;
+                }
+
+                // Commit the same selection keys the writer and original
+                // portfolio use. A joint rewrite may accept only a subset of
+                // its Cartesian states, so retain those combination keys.
+                foreach (var occurrence in compatible)
+                {
+                    var owner = new CrossRigidSelectedRewriteConflictOwner(
+                        payloadId,
+                        occurrence.SelectionKey,
+                        occurrence.ExpectedArmyDrawCallsEliminated,
+                        primary.MaxRawDrawsSavedPerState,
+                        primary.GeneratedGeometryBytes,
+                        primary.SelectionRank);
+                    foreach (var key in occurrence.RewriteConflictKeys)
+                    {
+                        selectedRewriteConflictKeys.Add(key);
+                        selectedRewriteConflictOwnerByKey.TryAdd(key, owner);
+                    }
+
+                    foreach (var context in
+                             occurrence.JointContextKeyByParentLocation)
+                    {
+                        selectedJointContextKeyByParentLocation[context.Key] =
+                            context.Value;
+                        selectedJointContextOwnerByParentLocation[context.Key] =
+                            owner;
+                    }
+
+                    state.CrossRigidSelectedRewriteOccurrenceKeys.Add(
+                        occurrence.RewriteOccurrenceKey);
+                    if (string.IsNullOrWhiteSpace(
+                            occurrence.JointCombinationKey))
+                    {
+                        continue;
+                    }
+
+                    if (!state
+                            .CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey
+                            .TryGetValue(
+                                occurrence.RewriteOccurrenceKey,
+                                out var combinationKeys))
+                    {
+                        combinationKeys =
+                            new HashSet<string>(StringComparer.Ordinal);
+                        state
+                            .CrossRigidSelectedJointCombinationKeysByRewriteOccurrenceKey[
+                                occurrence.RewriteOccurrenceKey] =
+                            combinationKeys;
+                    }
+
+                    combinationKeys.Add(occurrence.JointCombinationKey);
+                }
+
+                acceptedExpectedDraws = projectedDraws;
+                acceptedExpectedResidentGeometryBytes +=
+                    incrementalResidentBytes;
+                state.CrossRigidSharedPayloadFallbackAcceptedStates +=
+                    compatible.Length;
+                state.CrossRigidSharedPayloadFallbackExpectedDraws +=
+                    marginalDraws;
+                state.CrossRigidSharedPayloadFallbackResidentBytes +=
+                    incrementalResidentBytes;
+                foreach (var plan in admittedPlans)
+                {
+                    state.CrossRigidSharedPayloadFallbackAdmittedPlanIds.Add(
+                        plan.RewritePlanId);
+                }
+
+                // Update the accepted payload's accounting, not the physical
+                // payload count. Small one-VMD additions do not need to meet
+                // the standalone minimum when geometry is already selected.
+                var updatedMarginal =
+                    primary.MarginalExpectedArmyDrawCallsEliminated +
+                    marginalDraws;
+                var updatedResident =
+                    primary.ExpectedResidentGeneratedGeometryBytes +
+                    incrementalResidentBytes;
+                var acceptedIndex =
+                    state.CrossRigidPayloadSelectionEntries.FindIndex(
+                        entry =>
+                            entry.Accepted &&
+                            entry.GeneratedPayloadId.Equals(
+                                payloadId, StringComparison.Ordinal));
+                state.CrossRigidPayloadSelectionEntries[acceptedIndex] =
+                    primary with
+                    {
+                        ExpectedArmyDrawCallsEliminated =
+                            primary.ExpectedArmyDrawCallsEliminated +
+                            marginalDraws,
+                        MarginalExpectedArmyDrawCallsEliminated =
+                            updatedMarginal,
+                        RewritePlanCount =
+                            primary.RewritePlanCount + admittedPlans.Length,
+                        VmdCount = primaryPlans.Concat(admittedPlans)
+                            .Select(plan => plan.VmdPath)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count(),
+                        ExpectedResidentGeneratedGeometryBytes =
+                            updatedResident,
+                        PhysicalBytesPerExpectedDraw =
+                            primary.GeneratedGeometryBytes / updatedMarginal,
+                        ResidentBytesPerExpectedDraw =
+                            updatedResident / updatedMarginal,
+                    };
             }
         }
 
@@ -9094,7 +9329,8 @@ namespace Editors.KitbasherEditor.Services
                 Dictionary<string, XmlDocument> sourceVmdDocuments,
                 bool includeSupplementaryPairFallbackPlans,
                 out CrossRigidPayloadRewriteConflictProfile profile,
-                out string reason)
+                out string reason,
+                bool onlySupplementaryPairFallbackPlans = false)
         {
             reason = string.Empty;
             var occurrences =
@@ -9106,9 +9342,12 @@ namespace Editors.KitbasherEditor.Services
                              entry.GeneratedPayloadId.Equals(
                                  generatedPayloadId,
                                  StringComparison.Ordinal) &&
-                             (includeSupplementaryPairFallbackPlans ||
-                              !state.CrossRigidPreviouslySuppressedPairFallbackPlanIds
-                                  .Contains(entry.RewritePlanId))))
+                             (onlySupplementaryPairFallbackPlans
+                                  ? state.CrossRigidPreviouslySuppressedPairFallbackPlanIds
+                                      .Contains(entry.RewritePlanId)
+                                  : includeSupplementaryPairFallbackPlans ||
+                                    !state.CrossRigidPreviouslySuppressedPairFallbackPlanIds
+                                        .Contains(entry.RewritePlanId))))
             {
                 foreach (var occurrenceSet in
                          plan.RewriteOccurrenceSets)
@@ -9315,7 +9554,10 @@ namespace Editors.KitbasherEditor.Services
                                     BuildCrossRigidSelectedRewriteOccurrenceKey(
                                         plan,
                                         occurrenceSet))))
-                .OrderByDescending(plan =>
+                .OrderBy(plan =>
+                    state.CrossRigidSharedPayloadFallbackAdmittedPlanIds
+                        .Contains(plan.RewritePlanId))
+                .ThenByDescending(plan =>
                     plan.ExpectedArmyDrawCallsEliminated)
                 .ThenBy(plan => plan.RewritePlanId, StringComparer.Ordinal)
                 .ToArray();
@@ -9356,7 +9598,10 @@ namespace Editors.KitbasherEditor.Services
                 cancellationToken.ThrowIfCancellationRequested();
                 var vmdPath = planGroups[vmdIndex].Key;
                 var plans = planGroups[vmdIndex]
-                    .OrderByDescending(plan =>
+                    .OrderBy(plan =>
+                        state.CrossRigidSharedPayloadFallbackAdmittedPlanIds
+                            .Contains(plan.RewritePlanId))
+                    .ThenByDescending(plan =>
                         plan.ExpectedArmyDrawCallsEliminated)
                     .ThenBy(plan => plan.RewritePlanId, StringComparer.Ordinal)
                     .ToArray();
@@ -32927,6 +33172,16 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidPayloadSelectionEntries.Count(entry => !state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} candidate(s), " +
                     $"{selectedPayloads.Count(entry => !state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} accepted");
                 sb.AppendLine(
+                    $"Selected-primary geometry reused by supplementary pairs: " +
+                    $"{state.CrossRigidSharedPayloadFallbackCandidatePlans:N0} candidate plan(s), " +
+                    $"{state.CrossRigidSharedPayloadFallbackAdmittedPlanIds.Count:N0} admitted plan(s), " +
+                    $"{state.CrossRigidSharedPayloadFallbackAcceptedStates:N0}/" +
+                    $"{state.CrossRigidSharedPayloadFallbackCompatibleStates:N0} compatible state(s), " +
+                    $"{state.CrossRigidSharedPayloadFallbackExpectedDraws:0.###} extra expected draw(s), " +
+                    $"0 additional generated geometry bytes, " +
+                    $"{FormatMiB(state.CrossRigidSharedPayloadFallbackResidentBytes)} additional expected residency, " +
+                    $"{state.CrossRigidSharedPayloadFallbackBudgetRejections:N0} blocked payload(s) by residency budget");
+                sb.AppendLine(
                     $"Accepted payloads reused by multiple selected rewrite plans: " +
                     $"{selectedRewritePlans
                         .GroupBy(
@@ -36033,6 +36288,15 @@ namespace Editors.KitbasherEditor.Services
             public double CrossRigidRawGreedyExpectedDraws { get; set; }
             public double CrossRigidBestPortfolioExpectedDraws { get; set; }
             public int CrossRigidPortfolioPairTrials { get; set; }
+            public int CrossRigidSharedPayloadFallbackCandidatePlans { get; set; }
+            public int CrossRigidSharedPayloadFallbackCompatibleStates { get; set; }
+            public int CrossRigidSharedPayloadFallbackAcceptedStates { get; set; }
+            public double CrossRigidSharedPayloadFallbackExpectedDraws { get; set; }
+            public double CrossRigidSharedPayloadFallbackResidentBytes { get; set; }
+            public int CrossRigidSharedPayloadFallbackBudgetRejections { get; set; }
+            public HashSet<string>
+                CrossRigidSharedPayloadFallbackAdmittedPlanIds { get; } =
+                    new(StringComparer.Ordinal);
             public Dictionary<string, int>
                 CrossRigidRewriteConflictReasonCounts { get; } =
                     new(StringComparer.Ordinal);
