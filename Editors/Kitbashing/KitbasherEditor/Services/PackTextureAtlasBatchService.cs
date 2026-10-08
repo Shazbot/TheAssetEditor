@@ -3490,17 +3490,35 @@ namespace Editors.KitbasherEditor.Services
                     .Distinct(
                         StringComparer.OrdinalIgnoreCase)
                     .ToArray();
-            if (anchorVmdPaths.Length != 1 ||
-                instances.Any(instance =>
-                    instance.ReferenceChain.Length != 0))
+            if (anchorVmdPaths.Length != 1)
             {
                 reason =
-                    "fixed-local common-ancestor writer only handles direct occurrences in one VMD";
+                    "fixed-local common-ancestor sources belong to different defining VMDs";
                 return false;
             }
 
             var anchorVmdPath =
                 anchorVmdPaths[0];
+            // All source models must reach the same defining VMD via the
+            // same *complete* reference chain. Merely sharing a prefix
+            // would allow a rewrite to leak into distinct child branches.
+            // The joint writer already clones this anchor chain copy-on-write.
+            var commonReferenceChain =
+                GetCrossRigidCommonReferenceChainPrefix(instances);
+            if (instances.Any(instance =>
+                    instance.ReferenceChain.Length !=
+                    commonReferenceChain.Length) ||
+                (commonReferenceChain.Length != 0 &&
+                 !Normalize(
+                         commonReferenceChain[^1].ReferencedVmdPath)
+                     .Equals(
+                         anchorVmdPath,
+                         StringComparison.OrdinalIgnoreCase)))
+            {
+                reason =
+                    "fixed-local common-ancestor sources do not share a complete child-VMD reference chain";
+                return false;
+            }
             if (!TryGetCrossRigidSourceVmdDocument(
                     state,
                     anchorVmdPath,
@@ -3630,8 +3648,7 @@ namespace Editors.KitbasherEditor.Services
                 if (!TryBuildCrossRigidJointSourceSelection(
                         instance,
                         tokenSelection,
-                        Array.Empty<
-                            CrossRigidVmdReferenceHop>(),
+                        commonReferenceChain,
                         out var sourceSelection,
                         out reason))
                 {
@@ -3818,8 +3835,7 @@ namespace Editors.KitbasherEditor.Services
                         fixedSourceInstance,
                         anchorVmdPath,
                         anchorParentXmlPath,
-                        Array.Empty<
-                            CrossRigidVmdReferenceHop>(),
+                        commonReferenceChain,
                         anchorDocument,
                         out var fixedSourceSelection,
                         out var fixedCarrierSlotIndex,
@@ -3874,8 +3890,7 @@ namespace Editors.KitbasherEditor.Services
                 new CrossRigidJointAlwaysPresentRewriteDescriptor(
                     anchorVmdPath,
                     anchorParentXmlPath,
-                    Array.Empty<
-                        CrossRigidVmdReferenceHop>(),
+                    commonReferenceChain,
                     sourceSelections
                         .OrderBy(
                             BuildCrossRigidJointSourceSelectionDimensionKey,
@@ -30700,7 +30715,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "Analysis records exact model/reference provenance. Metadata stays on its original VARIANT_MESH branch and does not block geometry rewrites; imposter/decal state remains rewrite-blocking. The emission pass writes value-gate-selected exact-activation states plus conservative structural joint states; selected branches may contain nested models or cross child VMD references, which are cloned per Cartesian combination instead of modified globally.");
                 sb.AppendLine(
-                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Compatible narrower joint descriptions at one structural parent are folded into an already-analyzed bounded superset Cartesian context; narrower rewrites are projected across every matching superset state. At one shared structural parent, one-alternative optional slots whose authored probability has a bounded exact rational expansion are represented as weighted absent/present Cartesian states; finished wrappers are duplicated by integer multiplicity so the original probability is preserved exactly. Other optional-slot topologies remain excluded.");
+                    "VMD rewrite plans are separated from VMD-independent generated RMV/WSModel payloads; payload geometry is charged once across all rewrite plans that can reuse it. Probability-1 selections that share a structural VMD parent are materialized as a bounded Cartesian slot with the same uniform product distribution. For a source with nested probability-1 activation choices, only its highest differing selection becomes a Cartesian dependency-root dimension; deeper selections stay conditional inside that selected subtree and are resolved copy-on-write at their exact model occurrence. Always-present probability-1 source slots may be carried through every Cartesian branch so they can merge safely with varying siblings. Dependency roots may be lifted through probability-1 local wrappers while preserving the wrapper's own alternatives, and through fixed child-VMD references to their common structural parent. Fixed-local common ancestors under the same complete child-VMD reference chain can also be materialized with copy-on-write branch clones. Compatible narrower joint descriptions at one structural parent are folded into an already-analyzed bounded superset Cartesian context; narrower rewrites are projected across every matching superset state. At one shared structural parent, one-alternative optional slots whose authored probability has a bounded exact rational expansion are represented as weighted absent/present Cartesian states; finished wrappers are duplicated by integer multiplicity so the original probability is preserved exactly. Other optional-slot topologies remain excluded.");
                 sb.AppendLine(
                     "Visual probability is projected per attachment context, avoiding the full-VMD Cartesian product of unrelated appearance slots.");
                 sb.AppendLine(
