@@ -1671,6 +1671,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisConfigurationCount = 0;
             state.CrossRigidAnalysisOpportunityObservationCount = 0;
             state.CrossRigidPairFallbackSubgroupObservations = 0;
+            state.CrossRigidPairFallbackPlansSuppressed = 0;
+            state.CrossRigidPairFallbackPlansEvaluated = 0;
             state.CrossRigidTimingDetails.Clear();
             state.CrossRigidSourceMeshMergeIdentityCache.Clear();
             state.CrossRigidMaterialMergeIdentityCache.Clear();
@@ -1687,6 +1689,9 @@ namespace Editors.KitbasherEditor.Services
                 new Dictionary<string, CrossRigidMergePlanAccumulator>(
                     StringComparer.Ordinal);
             var rejectedPlanKeys = new HashSet<string>(StringComparer.Ordinal);
+            var fullGroupPlanKeys = new HashSet<string>(StringComparer.Ordinal);
+            var fallbackParentPlanKeys =
+                new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
             var activationClassificationVmdDocuments =
                 new Dictionary<string, XmlDocument>(
                     StringComparer.OrdinalIgnoreCase);
@@ -1823,7 +1828,7 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    foreach (var (group, isPairFallback) in
+                    foreach (var (group, isPairFallback, fullGroup) in
                              EnumerateCrossRigidCandidateGroups(
                                  topologyGroups))
                     {
@@ -1834,6 +1839,26 @@ namespace Editors.KitbasherEditor.Services
                             vmdPath,
                             configuration.AttachmentIdentity,
                             group);
+                        if (!isPairFallback)
+                        {
+                            fullGroupPlanKeys.Add(rewritePlanKey);
+                        }
+                        else
+                        {
+                            if (!fallbackParentPlanKeys.TryGetValue(
+                                    rewritePlanKey, out var parentKeys))
+                            {
+                                parentKeys = new HashSet<string>(
+                                    StringComparer.Ordinal);
+                                fallbackParentPlanKeys.Add(
+                                    rewritePlanKey, parentKeys);
+                            }
+
+                            parentKeys.Add(BuildCrossRigidRewritePlanKey(
+                                vmdPath,
+                                configuration.AttachmentIdentity,
+                                fullGroup));
+                        }
 
                         if (rewritePlanAccumulators.TryGetValue(
                                 rewritePlanKey,
@@ -2019,8 +2044,33 @@ namespace Editors.KitbasherEditor.Services
                 crossRigidAnalysisStage.Elapsed;
             crossRigidAnalysisStage.Restart();
 
-            foreach (var plan in rewritePlanAccumulators.Values)
+            // Analyze all full groups first. A pair is a fallback only when
+            // none of its enclosing full groups has a writable activation
+            // state. Otherwise the pair competes for the same structural
+            // slots and can displace a much larger safe merge.
+            var safeFullGroupPlanKeys = new HashSet<string>(
+                StringComparer.Ordinal);
+            foreach (var (planKey, plan) in rewritePlanAccumulators
+                         .OrderBy(entry =>
+                             fullGroupPlanKeys.Contains(entry.Key) ? 0 : 1)
+                         .ThenBy(entry => entry.Key, StringComparer.Ordinal))
             {
+                var isFallbackOnly =
+                    !fullGroupPlanKeys.Contains(planKey) &&
+                    fallbackParentPlanKeys.TryGetValue(
+                        planKey, out var fallbackParents);
+                if (isFallbackOnly)
+                {
+                    if (fallbackParents!.Any(
+                            safeFullGroupPlanKeys.Contains))
+                    {
+                        state.CrossRigidPairFallbackPlansSuppressed++;
+                        continue;
+                    }
+
+                    state.CrossRigidPairFallbackPlansEvaluated++;
+                }
+
                 var allRewriteOccurrenceSets =
                     MergeCrossRigidRewriteOccurrenceSets(
                         plan.RewriteOccurrenceSets);
@@ -2231,6 +2281,9 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
+                if (fullGroupPlanKeys.Contains(planKey))
+                    safeFullGroupPlanKeys.Add(planKey);
+
                 state.CrossRigidMergeAnalysisEntries.Add(
                     new CrossRigidMergeAnalysisEntry(
                         plan.RewritePlanId,
@@ -2350,7 +2403,8 @@ namespace Editors.KitbasherEditor.Services
 
         private static IEnumerable<(
                 CrossRigidAnalysisInstanceComponent[] Group,
-                bool IsPairFallback)>
+                bool IsPairFallback,
+                CrossRigidAnalysisInstanceComponent[] FullGroup)>
             EnumerateCrossRigidCandidateGroups(
                 CrossRigidAnalysisInstanceComponent[][] topologyGroups)
         {
@@ -2359,7 +2413,7 @@ namespace Editors.KitbasherEditor.Services
                 // Keep the original complete merge candidate. Pairwise
                 // alternatives are strictly additional choices for the
                 // existing provenance validator and value/conflict gates.
-                yield return (group, false);
+                yield return (group, false, group);
                 if (group.Length < 3)
                     continue;
 
@@ -2401,7 +2455,8 @@ namespace Editors.KitbasherEditor.Services
                         emitted++;
                         yield return (
                             new[] { first, second },
-                            true);
+                            true,
+                            group);
                     }
                 }
             }
@@ -31877,6 +31932,12 @@ namespace Editors.KitbasherEditor.Services
                     $"Pairwise cross-rigid fallback subgroups considered: " +
                     $"{state.CrossRigidPairFallbackSubgroupObservations:N0}");
                 sb.AppendLine(
+                    $"Pairwise fallback plans suppressed by safe full groups: " +
+                    $"{state.CrossRigidPairFallbackPlansSuppressed:N0}");
+                sb.AppendLine(
+                    $"Pairwise fallback plans evaluated (no safe parent): " +
+                    $"{state.CrossRigidPairFallbackPlansEvaluated:N0}");
+                sb.AppendLine(
                     "Activation rewrite-state classification " +
                     "(plans may appear in more than one class):");
                 foreach (var rewriteClass in
@@ -35245,6 +35306,8 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidAnalysisConfigurationCount { get; set; }
             public int CrossRigidAnalysisOpportunityObservationCount { get; set; }
             public int CrossRigidPairFallbackSubgroupObservations { get; set; }
+            public int CrossRigidPairFallbackPlansSuppressed { get; set; }
+            public int CrossRigidPairFallbackPlansEvaluated { get; set; }
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
