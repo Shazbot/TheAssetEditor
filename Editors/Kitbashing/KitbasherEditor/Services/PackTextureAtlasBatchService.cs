@@ -1664,6 +1664,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisDirectWsModelCount = 0;
             state.CrossRigidAnalysisConfigurationCount = 0;
             state.CrossRigidAnalysisOpportunityObservationCount = 0;
+            state.CrossRigidTimingDetails.Clear();
+            var crossRigidAnalysisStage = Stopwatch.StartNew();
 
             var rigidCache = new Dictionary<string, RmvFile>(
                 state.RigidModels,
@@ -1993,10 +1995,16 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            state.CrossRigidTimingDetails["Analyze: enumerate candidates"] =
+                crossRigidAnalysisStage.Elapsed;
+            crossRigidAnalysisStage.Restart();
             ExpandCrossRigidRewriteCoverageAcrossConfigurations(
                 state,
                 rewritePlanAccumulators.Values,
                 visualConfigurationCache);
+            state.CrossRigidTimingDetails["Analyze: expand occurrence coverage"] =
+                crossRigidAnalysisStage.Elapsed;
+            crossRigidAnalysisStage.Restart();
 
             foreach (var plan in rewritePlanAccumulators.Values)
             {
@@ -2230,8 +2238,16 @@ namespace Editors.KitbasherEditor.Services
                             plan.Lods)));
             }
 
+            state.CrossRigidTimingDetails["Analyze: classify rewrite states"] =
+                crossRigidAnalysisStage.Elapsed;
+            crossRigidAnalysisStage.Restart();
             BuildCrossRigidGeneratedPayloadAnalysis(state);
+            state.CrossRigidTimingDetails["Analyze: build payload estimates"] =
+                crossRigidAnalysisStage.Elapsed;
+            crossRigidAnalysisStage.Restart();
             SelectCrossRigidGeneratedPayloads(state);
+            state.CrossRigidTimingDetails["Analyze: select payload portfolio"] =
+                crossRigidAnalysisStage.Elapsed;
         }
 
         private static void
@@ -6267,12 +6283,15 @@ namespace Editors.KitbasherEditor.Services
             // Compare whole portfolios before committing any rewrites. Each
             // candidate is replayed through the same exact-occurrence and
             // nested-context conflict rules used by the final writer.
+            var portfolioSearchTimer = Stopwatch.StartNew();
             orderedCandidates =
                 OptimizeCrossRigidPayloadCandidateOrdering(
                     state,
                     orderedCandidates,
                     conflictProfiles,
                     conflictProfileVmdDocuments);
+            state.CrossRigidTimingDetails["Analyze: portfolio ordering search"] =
+                portfolioSearchTimer.Elapsed;
 
             var acceptedGeneratedGeometryBytes = 0L;
             var acceptedExpectedResidentGeometryBytes = 0.0;
@@ -31961,6 +31980,17 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine("-------------");
             foreach (var phase in state.PhaseDurations)
                 sb.AppendLine($"{phase.Key}: {phase.Value.TotalMilliseconds:N0} ms");
+            if (state.CrossRigidTimingDetails.Count != 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Cross-rigid timing details (included in parent phases)");
+                sb.AppendLine("------------------------------------------------------");
+                foreach (var detail in state.CrossRigidTimingDetails)
+                {
+                    sb.AppendLine(
+                        $"{detail.Key}: {detail.Value.TotalMilliseconds:N0} ms");
+                }
+            }
 
             var interactiveWait = state.PhaseDurations
                 .Where(x => x.Key.StartsWith("Wait for ", StringComparison.Ordinal))
@@ -34567,6 +34597,8 @@ namespace Editors.KitbasherEditor.Services
             public CancellationToken CancellationToken { get; set; }
             public IProgress<TextureAtlasPackProgress>? Progress { get; set; }
             public Dictionary<string, TimeSpan> PhaseDurations { get; } = new(StringComparer.Ordinal);
+            public Dictionary<string, TimeSpan> CrossRigidTimingDetails { get; } =
+                new(StringComparer.Ordinal);
             public TimeSpan TotalElapsed { get; set; }
 
             public BatchState(
