@@ -11502,10 +11502,31 @@ namespace Editors.KitbasherEditor.Services
                     wsDocument,
                     rigid,
                     out var assignments,
-                    out var assignmentReason))
+                    out var assignmentReason,
+                    allowUnreferencedMaterialEntries: true))
             {
                 reason = $"WSModel material table is not structurally usable ({assignmentReason})";
                 return false;
+            }
+
+            // A few modded WSModels retain obsolete LOD/part material rows
+            // after the rigid's mesh topology was reduced. Those rows cannot
+            // be sampled by the current rigid. Accept only this surplus in
+            // cross-rigid source analysis: missing, blank, duplicate, or
+            // malformed assignments still fail, and generated WSModels are
+            // rewritten and validated with the exact active part count.
+            var referencedMaterialCount =
+                rigid.ModelList.Sum(lod => lod.Length);
+            var authoredMaterialCount =
+                wsDocument.SelectNodes("/model/materials/material")?.Count ?? 0;
+            if (authoredMaterialCount > referencedMaterialCount)
+            {
+                RecordCrossRigidAnalysisDiagnostic(
+                    state,
+                    "Unused source WSModel material entries ignored",
+                    $"{wsModelPath}: authored={authoredMaterialCount}, " +
+                    $"active={referencedMaterialCount}, " +
+                    $"unused={authoredMaterialCount - referencedMaterialCount}");
             }
 
             component = new CrossRigidAnalysisComponent(
@@ -27354,7 +27375,8 @@ namespace Editors.KitbasherEditor.Services
             XmlDocument document,
             RmvFile rmv,
             out string[][] assignments,
-            out string reason)
+            out string reason,
+            bool allowUnreferencedMaterialEntries = false)
         {
             assignments = new string[rmv.ModelList.Length][];
             reason = string.Empty;
@@ -27402,7 +27424,13 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            if (byKey.Count != expectedCount)
+            // In the cross-rigid copy-on-write path alone, allow obsolete
+            // material assignments for LOD/part indices absent from the
+            // current rigid. Required assignments were all verified above.
+            // The generated WSModel is emitted with an exact replacement
+            // table, so no unused source rows are carried forward.
+            if (!allowUnreferencedMaterialEntries &&
+                byKey.Count != expectedCount)
             {
                 reason =
                     $"WSModel material table contains {byKey.Count} entries but rigid expects {expectedCount}.";
