@@ -7843,8 +7843,108 @@ namespace Editors.KitbasherEditor.Services
                             entry.GeneratedPayloadId))
                     .Take(maxDiverseSeeds)
                     .ToArray();
+            // A VMD can contain several mutually incompatible joint
+            // Cartesian contexts. Sampling only globally expensive payloads
+            // and one rejected payload per VMD misses alternatives from a
+            // *different structural parent or slot set* in the same VMD.
+            // Sample those contexts independently, but always evaluate each
+            // ordering against the exact same occurrence conflicts and
+            // selected-portfolio geometry/residency budgets.
+            var contextSeedObservations =
+                new List<(
+                    string ParentLocation,
+                    string ContextKey,
+                    CrossRigidPayloadSelectionEntry Candidate)>();
+            foreach (var candidate in rejectedCandidates)
+            {
+                if (!conflictProfiles.TryGetValue(
+                        candidate.GeneratedPayloadId,
+                        out var profile))
+                {
+                    if (!TryBuildCrossRigidPayloadRewriteConflictProfile(
+                            state,
+                            candidate.GeneratedPayloadId,
+                            sourceVmdDocuments,
+                            out profile,
+                            out _))
+                    {
+                        invalidProfiles.Add(candidate.GeneratedPayloadId);
+                        continue;
+                    }
+
+                    conflictProfiles[candidate.GeneratedPayloadId] =
+                        profile;
+                }
+
+                foreach (var context in
+                         profile.Occurrences
+                             .SelectMany(occurrence =>
+                                 occurrence.JointContextKeyByParentLocation)
+                             .GroupBy(pair =>
+                                 pair.Key + "\u001f" + pair.Value,
+                                 StringComparer.Ordinal)
+                             .Select(group => group.First()))
+                {
+                    contextSeedObservations.Add(
+                        (context.Key, context.Value, candidate));
+                }
+            }
+
+            // Prefer breadth across distinct parents, then a second
+            // competing context under each parent. This specifically
+            // exposes slot-set choices such as the independent optional
+            // alternatives in teb_roc_estragon that global benefit
+            // ranking alone may never try.
+            var contextOptionsByParent =
+                contextSeedObservations
+                    .GroupBy(
+                        observation => observation.ParentLocation,
+                        StringComparer.Ordinal)
+                    .Select(parentGroup =>
+                        parentGroup
+                            .GroupBy(
+                                observation => observation.ContextKey,
+                                StringComparer.Ordinal)
+                            .Select(contextGroup =>
+                                contextGroup
+                                    .OrderByDescending(observation =>
+                                        observation.Candidate
+                                            .ExpectedArmyDrawCallsEliminated)
+                                    .ThenBy(observation =>
+                                        observation.Candidate.GeneratedPayloadId,
+                                        StringComparer.Ordinal)
+                                    .First()
+                                    .Candidate)
+                            .OrderByDescending(candidate =>
+                                candidate.ExpectedArmyDrawCallsEliminated)
+                            .ThenBy(candidate =>
+                                candidate.GeneratedPayloadId,
+                                StringComparer.Ordinal)
+                            .ToArray())
+                    .OrderByDescending(options =>
+                        options[0].ExpectedArmyDrawCallsEliminated)
+                    .ThenBy(options =>
+                        options[0].GeneratedPayloadId,
+                        StringComparer.Ordinal)
+                    .ToArray();
+            const int maxContextSeeds = 24;
+            var contextSeedIds =
+                globalSeeds.Concat(diverseSeeds)
+                    .Select(candidate => candidate.GeneratedPayloadId)
+                    .ToHashSet(StringComparer.Ordinal);
+            var contextSeeds =
+                contextOptionsByParent
+                    .Select(options => options[0])
+                    .Concat(contextOptionsByParent
+                        .Where(options => options.Length > 1)
+                        .Select(options => options[1]))
+                    .Where(candidate =>
+                        contextSeedIds.Add(candidate.GeneratedPayloadId))
+                    .Take(maxContextSeeds)
+                    .ToArray();
             var alternativeSeeds =
-                globalSeeds.Concat(diverseSeeds).ToArray();
+                globalSeeds.Concat(diverseSeeds).Concat(contextSeeds)
+                    .ToArray();
 
             foreach (var seed in alternativeSeeds)
             {
