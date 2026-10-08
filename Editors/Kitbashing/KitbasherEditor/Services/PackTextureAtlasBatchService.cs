@@ -3448,6 +3448,58 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // Optional dimensions may only be materialized independently
+            // when their absent branch cannot remove another Cartesian
+            // dimension's containing subtree. The source-level
+            // differing-token check does not detect dependence between
+            // dimensions contributed by *different* source instances.
+            // Such nested optional domains require conditional rather
+            // than independent Cartesian enumeration.
+            foreach (var optionalDimension in
+                     dimensionsByKey.Values.Where(dimension =>
+                         dimension.Alternatives.Any(alternative =>
+                             alternative.AlternativeIndex == 0)))
+            {
+                var optionalSlotXmlPath =
+                    $"{optionalDimension.ParentXmlPath}/" +
+                    $"SLOT[{optionalDimension.SlotIndex}]";
+                foreach (var otherDimension in
+                         dimensionsByKey.Values.Where(dimension =>
+                             !dimension.DimensionKey.Equals(
+                                 optionalDimension.DimensionKey,
+                                 StringComparison.Ordinal)))
+                {
+                    var sameDocumentDescendant =
+                        Normalize(otherDimension.OwnerVmdPath)
+                            .Equals(
+                                Normalize(optionalDimension.OwnerVmdPath),
+                                StringComparison.OrdinalIgnoreCase) &&
+                        otherDimension.ParentXmlPath.StartsWith(
+                            optionalSlotXmlPath + "/",
+                            StringComparison.Ordinal);
+                    var descendantReference =
+                        otherDimension.ReferenceChainFromAnchor.Any(hop =>
+                            Normalize(hop.OwnerVmdPath).Equals(
+                                Normalize(optionalDimension.OwnerVmdPath),
+                                StringComparison.OrdinalIgnoreCase) &&
+                            hop.ReferenceXmlPath.StartsWith(
+                                optionalSlotXmlPath + "/",
+                                StringComparison.Ordinal));
+                    if (!sameDocumentDescendant &&
+                        !descendantReference)
+                    {
+                        continue;
+                    }
+
+                    reason =
+                        "common-ancestor optional slot contains another " +
+                        "Cartesian dependency dimension; conditional " +
+                        $"rewriting is required ({optionalDimension.DimensionKey} " +
+                        $"> {otherDimension.DimensionKey})";
+                    return false;
+                }
+            }
+
             long combinationCount = 1;
             foreach (var dimension in dimensionsByKey.Values)
             {
@@ -9111,14 +9163,38 @@ namespace Editors.KitbasherEditor.Services
                     BuildCrossRigidCommonAncestorCombinationKey(
                         alternatives);
 
-                foreach (var alternative in alternatives)
+                // The source XML locations are positional XPath indices.
+                // Removing an absent optional SLOT[1] shifts a later SLOT[2]
+                // to position 1 in that same parent. Materialize deeper
+                // dimensions first, then sibling slots in descending index
+                // order, while keeping combination identity/probability in
+                // its original canonical dimension order.
+                var materializationOrder =
+                    alternatives
+                        .Select(alternative =>
+                            (
+                                Alternative: alternative,
+                                Dimension:
+                                    descriptor.CommonAncestorDimensions
+                                        .First(item =>
+                                            item.DimensionKey.Equals(
+                                                alternative.DimensionKey,
+                                                StringComparison.Ordinal))
+                            ))
+                        .OrderByDescending(item =>
+                            item.Dimension.ReferenceChainFromAnchor.Length)
+                        .ThenByDescending(item =>
+                            item.Dimension.ParentXmlPath.Length)
+                        .ThenByDescending(item =>
+                            item.Dimension.SlotIndex)
+                        .ThenBy(item =>
+                            item.Dimension.DimensionKey,
+                            StringComparer.Ordinal)
+                        .ToArray();
+                foreach (var entry in materializationOrder)
                 {
-                    var dimension =
-                        descriptor.CommonAncestorDimensions
-                            .First(item =>
-                                item.DimensionKey.Equals(
-                                    alternative.DimensionKey,
-                                    StringComparison.Ordinal));
+                    var alternative = entry.Alternative;
+                    var dimension = entry.Dimension;
                     if (!TryMaterializeCrossRigidCommonAncestorDimension(
                             state,
                             contextKey,
@@ -9405,7 +9481,11 @@ namespace Editors.KitbasherEditor.Services
                 not XmlElement dimensionSlotElement)
             {
                 reason =
-                    "Common-ancestor terminal selection slot could not be located";
+                    "Common-ancestor terminal selection slot could not be located: " +
+                    $"{dimension.OwnerVmdPath} / {dimension.ParentXmlPath}/" +
+                    $"SLOT[{dimension.SlotIndex}], " +
+                    $"combination={combinationKey}, " +
+                    $"referenceHops={dimension.ReferenceChainFromAnchor.Length}";
                 return false;
             }
 
