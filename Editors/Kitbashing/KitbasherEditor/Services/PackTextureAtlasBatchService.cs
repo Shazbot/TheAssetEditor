@@ -86,6 +86,9 @@ namespace Editors.KitbasherEditor.Services
         // Large VMDs need more room than 512 combinations, while the
         // portfolio's geometry and residency budgets still cap output cost.
         private const int MaxCrossRigidJointStateCombinations = 1024;
+        // When a full co-rendering group is too complex to rewrite jointly,
+        // smaller cross-rigid pairs can retain independent visual choices.
+        private const int MaxCrossRigidPairFallbacksPerGroup = 24;
         private const int MaxCrossRigidGeneratedLodCount = 5;
         private const float CrossRigidLodDistanceEpsilon = 0.01f;
         private static readonly bool AtlasProfilingEnabled =
@@ -1667,6 +1670,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisDirectWsModelCount = 0;
             state.CrossRigidAnalysisConfigurationCount = 0;
             state.CrossRigidAnalysisOpportunityObservationCount = 0;
+            state.CrossRigidPairFallbackSubgroupObservations = 0;
             state.CrossRigidTimingDetails.Clear();
             state.CrossRigidSourceMeshMergeIdentityCache.Clear();
             state.CrossRigidMaterialMergeIdentityCache.Clear();
@@ -1819,9 +1823,13 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    foreach (var group in topologyGroups)
+                    foreach (var (group, isPairFallback) in
+                             EnumerateCrossRigidCandidateGroups(
+                                 topologyGroups))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
+                        if (isPairFallback)
+                            state.CrossRigidPairFallbackSubgroupObservations++;
                         var rewritePlanKey = BuildCrossRigidRewritePlanKey(
                             vmdPath,
                             configuration.AttachmentIdentity,
@@ -2339,6 +2347,65 @@ namespace Editors.KitbasherEditor.Services
                     group => group.Key,
                     group => group.Count(),
                     StringComparer.OrdinalIgnoreCase);
+
+        private static IEnumerable<(
+                CrossRigidAnalysisInstanceComponent[] Group,
+                bool IsPairFallback)>
+            EnumerateCrossRigidCandidateGroups(
+                CrossRigidAnalysisInstanceComponent[][] topologyGroups)
+        {
+            foreach (var group in topologyGroups)
+            {
+                // Keep the original complete merge candidate. Pairwise
+                // alternatives are strictly additional choices for the
+                // existing provenance validator and value/conflict gates.
+                yield return (group, false);
+                if (group.Length < 3)
+                    continue;
+
+                var uniquePairs = new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase);
+                var emitted = 0;
+                for (var firstIndex = 0;
+                     firstIndex < group.Length &&
+                     emitted < MaxCrossRigidPairFallbacksPerGroup;
+                     firstIndex++)
+                {
+                    for (var secondIndex = firstIndex + 1;
+                         secondIndex < group.Length &&
+                         emitted < MaxCrossRigidPairFallbacksPerGroup;
+                         secondIndex++)
+                    {
+                        var first = group[firstIndex];
+                        var second = group[secondIndex];
+                        if (first.Component.RigidPath.Equals(
+                                second.Component.RigidPath,
+                                StringComparison.OrdinalIgnoreCase) ||
+                            first.Instance.WsModelPath.Equals(
+                                second.Instance.WsModelPath,
+                                StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var paths = new[]
+                        {
+                            Normalize(first.Instance.WsModelPath),
+                            Normalize(second.Instance.WsModelPath)
+                        };
+                        Array.Sort(
+                            paths,
+                            StringComparer.OrdinalIgnoreCase);
+                        var pairKey = string.Join("\u001f", paths);
+                        if (!uniquePairs.Add(pairKey))
+                            continue;
+
+                        emitted++;
+                        yield return (
+                            new[] { first, second },
+                            true);
+                    }
+                }
+            }
+        }
 
         private static string BuildCrossRigidRewritePlanKey(
             string vmdPath,
@@ -31807,6 +31874,9 @@ namespace Editors.KitbasherEditor.Services
                     $"Eligible configuration-group observations before rewrite-plan dedupe: " +
                     $"{state.CrossRigidAnalysisOpportunityObservationCount:N0}");
                 sb.AppendLine(
+                    $"Pairwise cross-rigid fallback subgroups considered: " +
+                    $"{state.CrossRigidPairFallbackSubgroupObservations:N0}");
+                sb.AppendLine(
                     "Activation rewrite-state classification " +
                     "(plans may appear in more than one class):");
                 foreach (var rewriteClass in
@@ -35174,6 +35244,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidAnalysisDirectWsModelCount { get; set; }
             public int CrossRigidAnalysisConfigurationCount { get; set; }
             public int CrossRigidAnalysisOpportunityObservationCount { get; set; }
+            public int CrossRigidPairFallbackSubgroupObservations { get; set; }
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
