@@ -3331,15 +3331,37 @@ namespace Editors.KitbasherEditor.Services
 
                 if (anchorDocument.SelectSingleNode(
                         $"{anchorParentXmlPath}/SLOT[{carrierSlotIndex}]") is
-                    not XmlElement carrierSlotElement ||
-                    ParseVmdSlotProbability(
+                    not XmlElement carrierSlotElement)
+                {
+                    reason =
+                        "common-ancestor carrier slot is missing";
+                    return false;
+                }
+
+                // The direct optional slot is itself the Cartesian
+                // dimension: its absent/present alternatives already have
+                // exact integer weights. Optional ancestors of deeper
+                // dimensions still require conditional enumeration.
+                var directOptionalCarrier =
+                    tokenSelection.OptionalSlot &&
+                    tokenSelection.SlotIndex == carrierSlotIndex &&
+                    Normalize(tokenSelection.OwnerVmdPath).Equals(
+                        anchorVmdPath,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    tokenSelection.ParentXmlPath.Equals(
+                        anchorParentXmlPath,
+                        StringComparison.Ordinal) &&
+                    IsSupportedCrossRigidOptionalJointSlot(
+                        carrierSlotElement);
+                if (ParseVmdSlotProbability(
                         carrierSlotElement.GetAttribute(
                             "probability")) <
                         1.0 -
-                        AtlasValueGateExpectedDrawEpsilon)
+                        AtlasValueGateExpectedDrawEpsilon &&
+                    !directOptionalCarrier)
                 {
                     reason =
-                        "common-ancestor carrier slot is missing or optional";
+                        "common-ancestor optional carrier requires a direct Cartesian dimension";
                     return false;
                 }
 
@@ -3733,9 +3755,21 @@ namespace Editors.KitbasherEditor.Services
 
                     if (dependencySelection.OptionalSlot)
                     {
-                        reason =
-                            "fixed-local common-ancestor writer does not restructure optional slots";
-                        return false;
+                        if (orderedDifferingTokens.Length != 1)
+                        {
+                            reason =
+                                "fixed-local optional dependency has nested varying selections";
+                            return false;
+                        }
+
+                        if (!TryValidateCrossRigidOptionalJointSelection(
+                                state,
+                                dependencySelection,
+                                sourceVmdDocuments,
+                                out reason))
+                        {
+                            return false;
+                        }
                     }
 
                     if (!Normalize(
@@ -3854,15 +3888,32 @@ namespace Editors.KitbasherEditor.Services
 
                 if (anchorDocument.SelectSingleNode(
                         $"{anchorParentXmlPath}/SLOT[{carrierSlotIndex}]") is
-                    not XmlElement carrierSlotElement ||
-                    ParseVmdSlotProbability(
+                    not XmlElement carrierSlotElement)
+                {
+                    reason =
+                        "fixed-local common-ancestor carrier slot is missing";
+                    return false;
+                }
+
+                // Never lift through an optional wrapper unless that
+                // wrapper is exactly the enumerated absent/present slot.
+                var directOptionalCarrier =
+                    tokenSelection.OptionalSlot &&
+                    tokenSelection.SlotIndex == carrierSlotIndex &&
+                    tokenSelection.ParentXmlPath.Equals(
+                        anchorParentXmlPath,
+                        StringComparison.Ordinal) &&
+                    IsSupportedCrossRigidOptionalJointSlot(
+                        carrierSlotElement);
+                if (ParseVmdSlotProbability(
                         carrierSlotElement.GetAttribute(
                             "probability")) <
                         1.0 -
-                        AtlasValueGateExpectedDrawEpsilon)
+                        AtlasValueGateExpectedDrawEpsilon &&
+                    !directOptionalCarrier)
                 {
                     reason =
-                        "fixed-local common-ancestor carrier slot is missing or optional";
+                        "fixed-local optional carrier requires a direct Cartesian dimension";
                     return false;
                 }
 
@@ -9202,9 +9253,32 @@ namespace Editors.KitbasherEditor.Services
                 if (probability <
                     1.0 - AtlasValueGateExpectedDrawEpsilon)
                 {
-                    reason =
-                        $"Common-ancestor carrier slot {carrierSlotIndex} became optional";
-                    return false;
+                    // Only direct optional dimensions may serve as
+                    // carrier slots. Every emitted branch explicitly
+                    // materializes their absent or probability-1 state.
+                    var explicitOptionalDimension =
+                        descriptor.CommonAncestorDimensions.Any(dimension =>
+                            dimension.CarrierSlotIndex == carrierSlotIndex &&
+                            dimension.SlotIndex == carrierSlotIndex &&
+                            Normalize(dimension.OwnerVmdPath).Equals(
+                                Normalize(descriptor.AnchorVmdPath),
+                                StringComparison.OrdinalIgnoreCase) &&
+                            dimension.ParentXmlPath.Equals(
+                                descriptor.ParentXmlPath,
+                                StringComparison.Ordinal) &&
+                            dimension.ReferenceChainFromAnchor.Length == 0 &&
+                            string.IsNullOrWhiteSpace(
+                                dimension.LocalDimensionSlotRelativeXmlPath) &&
+                            dimension.Alternatives.Any(alternative =>
+                                alternative.AlternativeIndex == 0)) &&
+                        IsSupportedCrossRigidOptionalJointSlot(
+                            carrierSlotElement);
+                    if (!explicitOptionalDimension)
+                    {
+                        reason =
+                            $"Common-ancestor carrier slot {carrierSlotIndex} became an unsupported optional carrier";
+                        return false;
+                    }
                 }
 
                 carrierSlots[carrierSlotIndex] =
