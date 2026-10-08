@@ -5540,21 +5540,38 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                // The active slot chooses uniformly among its alternatives.
-                // Weight the absent state by (d - n) * k and each of the k
-                // present alternatives by n, giving d * k equally likely
-                // wrapper copies: P(absent) = (d - n) / d and
+                // With k equally likely present alternatives and
+                // probability n/d, the absent weight is (d - n) * k
+                // and each present alternative has weight n. Divide
+                // every weight by their common divisor before counting
+                // emitted wrappers. The distribution remains *exact*:
+                // P(absent) = (d - n) / d and
                 // P(each present alternative) = n / (d * k).
-                // Bound the expanded wrappers just like the joint writer.
-                if ((long)denominator * alternativeCount >
-                    MaxCrossRigidJointStateCombinations)
+                //
+                // This matters when k and n share a factor: an optional
+                // 90% slot with three alternatives needs only 10
+                // equally likely wrappers (1 absent, 3 per present
+                // alternative), not the unreduced 30.
+                var absentWeight =
+                    (long)(denominator - numerator) * alternativeCount;
+                long divisor = numerator;
+                var remainder = absentWeight;
+                while (remainder != 0)
                 {
-                    return false;
+                    var next = divisor % remainder;
+                    divisor = remainder;
+                    remainder = next;
                 }
 
-                presentMultiplicity = numerator;
-                absentMultiplicity =
-                    (denominator - numerator) * alternativeCount;
+                var reducedAbsent = absentWeight / divisor;
+                var reducedPresent = numerator / divisor;
+                var weightedCount =
+                    reducedAbsent + reducedPresent * alternativeCount;
+                if (weightedCount > MaxCrossRigidJointStateCombinations)
+                    return false;
+
+                absentMultiplicity = (int)reducedAbsent;
+                presentMultiplicity = (int)reducedPresent;
                 return true;
             }
 
