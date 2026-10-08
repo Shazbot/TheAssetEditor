@@ -5719,6 +5719,30 @@ namespace Editors.KitbasherEditor.Services
                     break;
                 }
 
+                // Distinct same-parent slot sets can be independently
+                // correct without any existing candidate containing every
+                // slot. Synthesize the full sibling-slot product when it
+                // remains within the exact-state budget. Nested dimensions
+                // are deliberately excluded: their dependencies must not
+                // be flattened by a union.
+                if (canonicalDescriptor == null &&
+                    TryBuildCrossRigidCanonicalSiblingSlotUnion(
+                        state,
+                        candidates.Select(candidate =>
+                            candidate.Descriptor),
+                        sourceVmdDocuments,
+                        out var siblingUnion))
+                {
+                    canonicalDescriptor = siblingUnion;
+                    RecordCrossRigidAnalysisDiagnostic(
+                        state,
+                        "Canonical sibling-slot union synthesized",
+                        $"{candidates[0].RootVmdPath} / " +
+                        $"{siblingUnion.ParentXmlPath}: " +
+                        $"slots={string.Join(",", siblingUnion.SlotIndices)}, " +
+                        $"weightedStates={siblingUnion.CombinationCount}");
+                }
+
                 if (canonicalDescriptor == null)
                 {
                     if (candidates.Count > 1)
@@ -5739,6 +5763,107 @@ namespace Editors.KitbasherEditor.Services
                         candidates.Count - 1;
                 }
             }
+        }
+
+        private static bool TryBuildCrossRigidCanonicalSiblingSlotUnion(
+            BatchState state,
+            IEnumerable<CrossRigidJointAlwaysPresentRewriteDescriptor>
+                candidateDescriptors,
+            Dictionary<string, XmlDocument> sourceVmdDocuments,
+            out CrossRigidJointAlwaysPresentRewriteDescriptor descriptor)
+        {
+            descriptor = null!;
+            var candidates = candidateDescriptors.ToArray();
+            if (candidates.Length < 2 ||
+                candidates.Any(candidate =>
+                    candidate.CommonAncestorDimensions.Length != 0))
+            {
+                return false;
+            }
+
+            var first = candidates[0];
+            if (candidates.Skip(1).Any(candidate =>
+                    !Normalize(candidate.AnchorVmdPath).Equals(
+                        Normalize(first.AnchorVmdPath),
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !candidate.ParentXmlPath.Equals(
+                        first.ParentXmlPath,
+                        StringComparison.Ordinal) ||
+                    !BuildCrossRigidReferenceChainSignature(
+                        candidate.AnchorReferenceChain).Equals(
+                        BuildCrossRigidReferenceChainSignature(
+                            first.AnchorReferenceChain),
+                        StringComparison.Ordinal)))
+            {
+                return false;
+            }
+
+            var slotIndices = candidates
+                .SelectMany(candidate => candidate.SlotIndices)
+                .Distinct()
+                .OrderBy(index => index)
+                .ToArray();
+
+            if (!TryGetCrossRigidSourceVmdDocument(
+                    state,
+                    first.AnchorVmdPath,
+                    sourceVmdDocuments,
+                    out var anchorDocument,
+                    out _) ||
+                anchorDocument.SelectSingleNode(
+                    first.ParentXmlPath) is not XmlElement parentElement)
+            {
+                return false;
+            }
+
+            long weightedStates = 1;
+            foreach (var slotIndex in slotIndices)
+            {
+                if (parentElement.SelectSingleNode(
+                        $"SLOT[{slotIndex}]") is not XmlElement slotElement)
+                {
+                    return false;
+                }
+
+                var optional = ParseVmdSlotProbability(
+                    slotElement.GetAttribute("probability")) <
+                    1.0 - AtlasValueGateExpectedDrawEpsilon;
+                if (optional &&
+                    !IsSupportedCrossRigidOptionalJointSlot(slotElement))
+                {
+                    return false;
+                }
+
+                var alternatives = GetCrossRigidJointAlternatives(
+                    slotElement,
+                    slotIndex);
+                if (alternatives.Length <= 1)
+                    return false;
+
+                var factor = alternatives.Sum(alternative =>
+                    (long)alternative.Multiplicity);
+                if (factor <= 1 ||
+                    weightedStates >
+                    MaxCrossRigidJointStateCombinations / factor)
+                {
+                    return false;
+                }
+
+                weightedStates *= factor;
+            }
+
+            // The canonical descriptor is only the joint context's shape.
+            // Each emitted occurrence retains its own source selections
+            // and is projected onto every matching union state.
+            descriptor = first with
+            {
+                SlotIndices = slotIndices,
+                CombinationCount = (int)weightedStates,
+            };
+            return candidates.All(candidate =>
+                IsCrossRigidJointDescriptorStructuralSuperset(
+                    descriptor,
+                    candidate));
         }
 
         private static bool
