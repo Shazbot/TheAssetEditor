@@ -5948,6 +5948,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidPortfolioOrderingsEvaluated = 0;
             state.CrossRigidRawGreedyExpectedDraws = 0;
             state.CrossRigidBestPortfolioExpectedDraws = 0;
+            state.CrossRigidPortfolioPairTrials = 0;
 
             var expectedDrawsByPayload =
                 state.CrossRigidMergeAnalysisEntries
@@ -6513,11 +6514,21 @@ namespace Editors.KitbasherEditor.Services
             }
 
             // A rejected payload may replace several overlapping winners.
-            // Probe a bounded set of those competitors at the front of the
-            // current best ordering, then greedily refill freed occurrences.
-            // Full payload memory is charged even for a partially used payload.
-            const int maxAlternativeSeeds = 16;
-            var alternativeSeeds =
+            // Preserve the best global contenders but include representative
+            // alternatives from other VMD roots. Otherwise the seed budget
+            // tends to be monopolized by one large Cartesian family.
+            const int maxGlobalSeeds = 16;
+            const int maxDiverseSeeds = 8;
+            var primaryVmdByPayload =
+                state.CrossRigidMergeAnalysisEntries
+                    .GroupBy(
+                        entry => entry.GeneratedPayloadId,
+                        StringComparer.Ordinal)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.First().VmdPath,
+                        StringComparer.Ordinal);
+            var rejectedCandidates =
                 candidates
                     .Where(entry =>
                         !best.SelectedPayloadIds.Contains(
@@ -6529,8 +6540,35 @@ namespace Editors.KitbasherEditor.Services
                     .ThenBy(entry =>
                         entry.GeneratedPayloadId,
                         StringComparer.Ordinal)
-                    .Take(maxAlternativeSeeds)
                     .ToArray();
+            var globalSeeds =
+                rejectedCandidates
+                    .Take(maxGlobalSeeds)
+                    .ToArray();
+            var globalSeedIds =
+                globalSeeds
+                    .Select(entry =>
+                        entry.GeneratedPayloadId)
+                    .ToHashSet(StringComparer.Ordinal);
+            var diverseSeeds =
+                rejectedCandidates
+                    .GroupBy(
+                        entry =>
+                            primaryVmdByPayload.TryGetValue(
+                                entry.GeneratedPayloadId,
+                                out var vmdPath)
+                                ? vmdPath
+                                : entry.GeneratedPayloadId,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First())
+                    .Where(entry =>
+                        !globalSeedIds.Contains(
+                            entry.GeneratedPayloadId))
+                    .Take(maxDiverseSeeds)
+                    .ToArray();
+            var alternativeSeeds =
+                globalSeeds.Concat(diverseSeeds).ToArray();
+
             foreach (var seed in alternativeSeeds)
             {
                 var trialOrder =
@@ -6557,7 +6595,110 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // One-for-many substitutions are not sufficient when two cheaper
+            // payloads jointly replace a large merge. Search a bounded number
+            // of pairs within the same visual root and across roots. Each
+            // ordering is replayed from scratch with exact Cartesian-state
+            // occurrence conflicts, nested-path compatibility, and both
+            // selected-portfolio budgets. Never bypass the writer's safety
+            // rules or accept an ordering worse than the raw-draw baseline.
+            var pairSeeds =
+                alternativeSeeds
+                    .Where(entry =>
+                        !best.SelectedPayloadIds.Contains(
+                            entry.GeneratedPayloadId))
+                    .ToArray();
+            var pairOptions =
+                pairSeeds
+                    .SelectMany((first, index) =>
+                        pairSeeds.Skip(index + 1).Select(second =>
+                            new
+                            {
+                                First = first,
+                                Second = second,
+                                SameRoot =
+                                    primaryVmdByPayload.TryGetValue(
+                                        first.GeneratedPayloadId,
+                                        out var firstVmd) &&
+                                    primaryVmdByPayload.TryGetValue(
+                                        second.GeneratedPayloadId,
+                                        out var secondVmd) &&
+                                    firstVmd.Equals(
+                                        secondVmd,
+                                        StringComparison.OrdinalIgnoreCase),
+                                CombinedBenefit =
+                                    first.ExpectedArmyDrawCallsEliminated +
+                                    second.ExpectedArmyDrawCallsEliminated,
+                            }))
+                    .ToArray();
+            const int maxSameRootPairs = 16;
+            const int maxCrossRootPairs = 8;
+            var pairsToEvaluate =
+                pairOptions
+                    .Where(pair => pair.SameRoot)
+                    .OrderByDescending(pair =>
+                        pair.CombinedBenefit)
+                    .ThenBy(pair =>
+                        pair.First.GeneratedPayloadId,
+                        StringComparer.Ordinal)
+                    .ThenBy(pair =>
+                        pair.Second.GeneratedPayloadId,
+                        StringComparer.Ordinal)
+                    .Take(maxSameRootPairs)
+                    .Concat(
+                        pairOptions
+                            .Where(pair => !pair.SameRoot)
+                            .OrderByDescending(pair =>
+                                pair.CombinedBenefit)
+                            .ThenBy(pair =>
+                                pair.First.GeneratedPayloadId,
+                                StringComparer.Ordinal)
+                            .ThenBy(pair =>
+                                pair.Second.GeneratedPayloadId,
+                                StringComparer.Ordinal)
+                            .Take(maxCrossRootPairs))
+                    .ToArray();
+            foreach (var pair in pairsToEvaluate)
+            {
+                // The first candidate may block some of the second's
+                // concrete Cartesian states, so try both precedences.
+                foreach (var front in
+                         new[]
+                         {
+                             new[] { pair.First, pair.Second },
+                             new[] { pair.Second, pair.First },
+                         })
+                {
+                    var frontIds =
+                        front
+                            .Select(entry => entry.GeneratedPayloadId)
+                            .ToHashSet(StringComparer.Ordinal);
+                    var trialOrder =
+                        front
+                            .Concat(bestOrder.Where(entry =>
+                                !frontIds.Contains(
+                                    entry.GeneratedPayloadId)))
+                            .ToArray();
+                    var trial =
+                        EvaluateCrossRigidPayloadPortfolio(
+                            state,
+                            trialOrder,
+                            conflictProfiles,
+                            invalidProfiles,
+                            sourceVmdDocuments);
+                    evaluated++;
+                    if (IsBetterCrossRigidPayloadPortfolio(
+                            trial,
+                            best))
+                    {
+                        best = trial;
+                        bestOrder = trialOrder;
+                    }
+                }
+            }
+
             state.CrossRigidPortfolioOrderingsEvaluated = evaluated;
+            state.CrossRigidPortfolioPairTrials = pairsToEvaluate.Length * 2;
             state.CrossRigidBestPortfolioExpectedDraws =
                 best.ExpectedDraws;
             return bestOrder
@@ -30734,7 +30875,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     "The runtime gate charges gross expected generated-geometry residency; displaced-source credit is not spent by the gate.");
                 sb.AppendLine(
-                    "Rewrite conflicts are resolved at exact occurrence granularity and, for canonical joint supersets, per concrete Cartesian state. Narrower rewrites can therefore remain selected in non-conflicting superset states. A bounded portfolio search compares raw-draw, cost-density, scenario-benefit, and competing-payload-first orderings using conflict-deduplicated marginal draw savings; the best valid portfolio is replayed for emission. Partially selected payloads conservatively pay their full generated geometry and full estimated residency. Conflict diagnostics identify the already-selected payload that owns the blocking occurrence/state.");
+                    "Rewrite conflicts are resolved at exact occurrence granularity and, for canonical joint supersets, per concrete Cartesian state. Narrower rewrites can therefore remain selected in non-conflicting superset states. A bounded portfolio search compares raw-draw, cost-density, scenario-benefit, individual competing-payload, and bounded pairwise competing-payload orderings using conflict-deduplicated marginal draw savings; the best valid portfolio is replayed for emission. Partially selected payloads conservatively pay their full generated geometry and full estimated residency. Conflict diagnostics identify the already-selected payload that owns the blocking occurrence/state.");
                 sb.AppendLine(
                     "Scenario-resident and physical-per-draw limits are selected-portfolio budgets rather than per-payload hard gates; budget-deferred candidates are retried after cheaper accepted payloads create headroom.");
                 sb.AppendLine(
@@ -30758,7 +30899,8 @@ namespace Editors.KitbasherEditor.Services
                     $"Cross-rigid portfolio search: " +
                     $"{state.CrossRigidPortfolioOrderingsEvaluated:N0} ordering(s) evaluated; " +
                     $"raw-draw baseline={state.CrossRigidRawGreedyExpectedDraws:0.###}, " +
-                    $"best={state.CrossRigidBestPortfolioExpectedDraws:0.###} expected draws");
+                    $"best={state.CrossRigidBestPortfolioExpectedDraws:0.###} expected draws; " +
+                    $"pair ordering trials={state.CrossRigidPortfolioPairTrials:N0}");
                 sb.AppendLine(
                     $"Payload candidates: " +
                     $"{state.CrossRigidPayloadSelectionEntries.Count:N0}");
@@ -33781,6 +33923,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidPortfolioOrderingsEvaluated { get; set; }
             public double CrossRigidRawGreedyExpectedDraws { get; set; }
             public double CrossRigidBestPortfolioExpectedDraws { get; set; }
+            public int CrossRigidPortfolioPairTrials { get; set; }
             public Dictionary<string, int>
                 CrossRigidRewriteConflictReasonCounts { get; } =
                     new(StringComparer.Ordinal);
