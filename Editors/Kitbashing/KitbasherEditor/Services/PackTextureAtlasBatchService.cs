@@ -1671,7 +1671,9 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisConfigurationCount = 0;
             state.CrossRigidAnalysisOpportunityObservationCount = 0;
             state.CrossRigidPairFallbackSubgroupObservations = 0;
-            state.CrossRigidPairFallbackPlansSuppressed = 0;
+            state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups = 0;
+            state.CrossRigidSafeFullGroupPayloadIds.Clear();
+            state.CrossRigidPreviouslySuppressedPairFallbackPayloadIds.Clear();
             state.CrossRigidPairFallbackPlansEvaluated = 0;
             state.CrossRigidTimingDetails.Clear();
             state.CrossRigidSourceMeshMergeIdentityCache.Clear();
@@ -2044,10 +2046,12 @@ namespace Editors.KitbasherEditor.Services
                 crossRigidAnalysisStage.Elapsed;
             crossRigidAnalysisStage.Restart();
 
-            // Analyze all full groups first. A pair is a fallback only when
-            // none of its enclosing full groups has a writable activation
-            // state. Otherwise the pair competes for the same structural
-            // slots and can displace a much larger safe merge.
+            // Analyze full groups first so we can identify the fallback
+            // alternatives which *would previously* have been suppressed.
+            // A writable full-group plan is not necessarily selected by
+            // the portfolio or compatible with every other winning rewrite.
+            // Keep its pairs as genuine alternatives: conflict-state checks
+            // and the portfolio budgets will decide which can be emitted.
             var safeFullGroupPlanKeys = new HashSet<string>(
                 StringComparer.Ordinal);
             foreach (var (planKey, plan) in rewritePlanAccumulators
@@ -2062,8 +2066,9 @@ namespace Editors.KitbasherEditor.Services
                     if (fallbackParents.Any(
                             safeFullGroupPlanKeys.Contains))
                     {
-                        state.CrossRigidPairFallbackPlansSuppressed++;
-                        continue;
+                        state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups++;
+                        state.CrossRigidPreviouslySuppressedPairFallbackPayloadIds.Add(
+                            plan.GeneratedPayloadId);
                     }
 
                     state.CrossRigidPairFallbackPlansEvaluated++;
@@ -2280,7 +2285,11 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 if (fullGroupPlanKeys.Contains(planKey))
+                {
                     safeFullGroupPlanKeys.Add(planKey);
+                    state.CrossRigidSafeFullGroupPayloadIds.Add(
+                        plan.GeneratedPayloadId);
+                }
 
                 state.CrossRigidMergeAnalysisEntries.Add(
                     new CrossRigidMergeAnalysisEntry(
@@ -7716,7 +7725,19 @@ namespace Editors.KitbasherEditor.Services
             // a single cost-density ordering must never silently regress it.
             var rawDrawOrder =
                 candidates
-                    .OrderByDescending(entry =>
+                    // Preserve the pre-fallback search as a valid baseline:
+                    // newly admitted pair-only payloads come *after* all
+                    // candidates that were eligible under the old policy.
+                    // Later portfolio trials may promote them if doing so
+                    // actually increases conflict-deduplicated savings.
+                    .OrderBy(entry =>
+                        state.CrossRigidPreviouslySuppressedPairFallbackPayloadIds
+                            .Contains(entry.GeneratedPayloadId) &&
+                        !state.CrossRigidSafeFullGroupPayloadIds
+                            .Contains(entry.GeneratedPayloadId)
+                            ? 1
+                            : 0)
+                    .ThenByDescending(entry =>
                         entry.MaxRawDrawsSavedPerState)
                     .ThenBy(entry =>
                         Math.Max(
@@ -32424,10 +32445,10 @@ namespace Editors.KitbasherEditor.Services
                     $"Pairwise cross-rigid fallback subgroups considered: " +
                     $"{state.CrossRigidPairFallbackSubgroupObservations:N0}");
                 sb.AppendLine(
-                    $"Pairwise fallback plans suppressed by safe full groups: " +
-                    $"{state.CrossRigidPairFallbackPlansSuppressed:N0}");
+                    $"Pairwise fallback plans competing with writable full groups: " +
+                    $"{state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups:N0}");
                 sb.AppendLine(
-                    $"Pairwise fallback plans evaluated (no safe parent): " +
+                    $"Pairwise fallback plans evaluated (including competing pairs): " +
                     $"{state.CrossRigidPairFallbackPlansEvaluated:N0}");
                 sb.AppendLine(
                     "Activation rewrite-state classification " +
@@ -35798,8 +35819,12 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidAnalysisConfigurationCount { get; set; }
             public int CrossRigidAnalysisOpportunityObservationCount { get; set; }
             public int CrossRigidPairFallbackSubgroupObservations { get; set; }
-            public int CrossRigidPairFallbackPlansSuppressed { get; set; }
+            public int CrossRigidPairFallbackPlansCompetingWithSafeFullGroups { get; set; }
             public int CrossRigidPairFallbackPlansEvaluated { get; set; }
+            public HashSet<string> CrossRigidSafeFullGroupPayloadIds { get; } =
+                new(StringComparer.Ordinal);
+            public HashSet<string> CrossRigidPreviouslySuppressedPairFallbackPayloadIds { get; } =
+                new(StringComparer.Ordinal);
             public Dictionary<string, HashSet<string>> XmlCompatibilityRepairs { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
