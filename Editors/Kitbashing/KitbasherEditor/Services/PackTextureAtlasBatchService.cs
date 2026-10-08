@@ -7256,16 +7256,31 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidBestPortfolioExpectedDraws = 0;
             state.CrossRigidPortfolioPairTrials = 0;
 
-            var expectedDrawsByPayload =
+            var plansByPayload =
                 state.CrossRigidMergeAnalysisEntries
                     .GroupBy(
                         entry => entry.GeneratedPayloadId,
                         StringComparer.Ordinal)
                     .ToDictionary(
                         group => group.Key,
-                        group => group.Sum(entry =>
-                            entry.ExpectedArmyDrawCallsEliminated),
+                        group => group.ToArray(),
                         StringComparer.Ordinal);
+
+            // Supplemental pairwise plans may reuse geometry from an older
+            // full-group payload. Scoring by the entire shared payload would
+            // quietly introduce those pairs into the protected baseline.
+            // Use only originally eligible *rewrite plans* for primary
+            // benefit, VMD coverage and residency; full-payload analysis
+            // remains available for diagnostics and fallback-only payloads.
+            var primaryPlansByPayload = plansByPayload
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Value
+                        .Where(plan =>
+                            !state.CrossRigidPreviouslySuppressedPairFallbackPlanIds
+                                .Contains(plan.RewritePlanId))
+                        .ToArray(),
+                    StringComparer.Ordinal);
 
             var selectionCandidates =
                 new List<CrossRigidPayloadSelectionEntry>();
@@ -7273,13 +7288,27 @@ namespace Editors.KitbasherEditor.Services
             foreach (var payload in
                      state.CrossRigidGeneratedPayloadAnalysisEntries)
             {
-                var expectedDraws =
-                    expectedDrawsByPayload.GetValueOrDefault(
-                        payload.GeneratedPayloadId);
+                var primaryPlans =
+                    primaryPlansByPayload[payload.GeneratedPayloadId];
+                var isPrimary = primaryPlans.Length != 0;
+                var relevantPlans = isPrimary
+                    ? primaryPlans
+                    : plansByPayload[payload.GeneratedPayloadId];
+                var expectedDraws = relevantPlans.Sum(plan =>
+                    plan.ExpectedArmyDrawCallsEliminated);
                 var generatedGeometryBytes =
                     (double)payload.GeneratedGeometryBytes;
-                var expectedResidentBytes =
-                    payload.ExpectedResidentGeneratedGeometryBytes;
+                var expectedResidentBytes = isPrimary
+                    ? generatedGeometryBytes *
+                      CalculateExpectedCrossRigidPayloadResidentProbability(
+                          state,
+                          primaryPlans)
+                    : payload.ExpectedResidentGeneratedGeometryBytes;
+                var relevantVmdCount = isPrimary
+                    ? primaryPlans.Select(plan => plan.VmdPath)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Count()
+                    : payload.VmdCount;
                 var physicalBytesPerExpectedDraw =
                     expectedDraws > AtlasValueGateExpectedDrawEpsilon
                         ? generatedGeometryBytes / expectedDraws
@@ -7297,7 +7326,7 @@ namespace Editors.KitbasherEditor.Services
                         CrossRigidPayloadSelectionDecision
                             .ScenarioResolvedZeroBenefit;
                 }
-                else if (payload.VmdCount == 1 &&
+                else if (relevantVmdCount == 1 &&
                          expectedDraws <
                          MinimumCrossRigidSingleVmdExpectedArmyDraw)
                 {
@@ -7320,10 +7349,10 @@ namespace Editors.KitbasherEditor.Services
                     expectedDraws,
                     expectedDraws,
                     maxRawDrawsSavedPerState,
-                    payload.RewritePlanCount,
-                    payload.VmdCount,
+                    relevantPlans.Length,
+                    relevantVmdCount,
                     payload.GeneratedGeometryBytes,
-                    payload.ExpectedResidentGeneratedGeometryBytes,
+                    expectedResidentBytes,
                     physicalBytesPerExpectedDraw,
                     residentBytesPerExpectedDraw,
                     0);
@@ -7429,6 +7458,7 @@ namespace Editors.KitbasherEditor.Services
                     string,
                     CrossRigidPayloadSelectionDecision>(
                     StringComparer.Ordinal);
+            var admittingSupplementaryPairs = false;
 
             while (pendingCandidates.Count != 0)
             {
@@ -7440,6 +7470,18 @@ namespace Editors.KitbasherEditor.Services
                     var candidate =
                         pendingCandidates[candidateIndex];
 
+                    // Retry all budget-deferred primary candidates before
+                    // any supplementary pair can occupy their structural
+                    // states. The fallback stage begins only after the
+                    // protected primary portfolio stops making progress.
+                    if (!admittingSupplementaryPairs &&
+                        !state.CrossRigidLegacyEligiblePayloadIds.Contains(
+                            candidate.GeneratedPayloadId))
+                    {
+                        candidateIndex++;
+                        continue;
+                    }
+
                     if (!conflictProfiles.TryGetValue(
                             candidate.GeneratedPayloadId,
                             out var conflictProfile))
@@ -7448,6 +7490,8 @@ namespace Editors.KitbasherEditor.Services
                                 state,
                                 candidate.GeneratedPayloadId,
                                 conflictProfileVmdDocuments,
+                                !state.CrossRigidLegacyEligiblePayloadIds.Contains(
+                                    candidate.GeneratedPayloadId),
                                 out conflictProfile,
                                 out var conflictBuildReason))
                         {
@@ -7692,7 +7736,15 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 if (!acceptedThisPass)
+                {
+                    if (!admittingSupplementaryPairs)
+                    {
+                        admittingSupplementaryPairs = true;
+                        continue;
+                    }
+
                     break;
+                }
             }
 
             foreach (var candidate in pendingCandidates)
@@ -7917,6 +7969,8 @@ namespace Editors.KitbasherEditor.Services
                             state,
                             candidate.GeneratedPayloadId,
                             sourceVmdDocuments,
+                            !state.CrossRigidLegacyEligiblePayloadIds.Contains(
+                                candidate.GeneratedPayloadId),
                             out profile,
                             out _))
                     {
@@ -8227,6 +8281,8 @@ namespace Editors.KitbasherEditor.Services
                                 state,
                                 candidate.GeneratedPayloadId,
                                 sourceVmdDocuments,
+                                !state.CrossRigidLegacyEligiblePayloadIds.Contains(
+                                    candidate.GeneratedPayloadId),
                                 out profile,
                                 out _))
                         {
@@ -8849,6 +8905,7 @@ namespace Editors.KitbasherEditor.Services
                 BatchState state,
                 string generatedPayloadId,
                 Dictionary<string, XmlDocument> sourceVmdDocuments,
+                bool includeSupplementaryPairFallbackPlans,
                 out CrossRigidPayloadRewriteConflictProfile profile,
                 out string reason)
         {
@@ -8861,7 +8918,10 @@ namespace Editors.KitbasherEditor.Services
                          entry =>
                              entry.GeneratedPayloadId.Equals(
                                  generatedPayloadId,
-                                 StringComparison.Ordinal)))
+                                 StringComparison.Ordinal) &&
+                             (includeSupplementaryPairFallbackPlans ||
+                              !state.CrossRigidPreviouslySuppressedPairFallbackPlanIds
+                                  .Contains(entry.RewritePlanId))))
             {
                 foreach (var occurrenceSet in
                          plan.RewriteOccurrenceSets)
