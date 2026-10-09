@@ -1683,6 +1683,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidTripleFallbackSubgroupObservations = 0;
             state.CrossRigidQuadrupleFallbackSubgroupObservations = 0;
             state.CrossRigidQuintupleFallbackSubgroupObservations = 0;
+            state.CrossRigidMiddleTripleFallbackSubgroupObservations = 0;
+            state.CrossRigidMiddleQuadrupleFallbackSubgroupObservations = 0;
             state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups = 0;
             state.CrossRigidPreviouslySuppressedPairFallbackPlanIds.Clear();
             state.CrossRigidLegacyEligiblePayloadIds.Clear();
@@ -1844,7 +1846,7 @@ namespace Editors.KitbasherEditor.Services
 
                     foreach (var (group, isSubgroupFallback, fallbackSize, fullGroup) in
                              EnumerateCrossRigidCandidateGroups(
-                                 topologyGroups))
+                                 topologyGroups, state))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         if (isSubgroupFallback)
@@ -2447,7 +2449,8 @@ namespace Editors.KitbasherEditor.Services
                 int FallbackSize,
                 CrossRigidAnalysisInstanceComponent[] FullGroup)>
             EnumerateCrossRigidCandidateGroups(
-                CrossRigidAnalysisInstanceComponent[][] topologyGroups)
+                CrossRigidAnalysisInstanceComponent[][] topologyGroups,
+                BatchState state)
         {
             foreach (var group in topologyGroups)
             {
@@ -2593,6 +2596,7 @@ namespace Editors.KitbasherEditor.Services
                                        emittedTriples))
                     {
                         emittedTriples++;
+                        state.CrossRigidMiddleTripleFallbackSubgroupObservations++;
                         yield return (items, true, 3, group);
                     }
                 }
@@ -2697,6 +2701,7 @@ namespace Editors.KitbasherEditor.Services
                                        emittedQuadruples))
                     {
                         emittedQuadruples++;
+                        state.CrossRigidMiddleQuadrupleFallbackSubgroupObservations++;
                         yield return (items, true, 4, group);
                     }
                 }
@@ -33886,7 +33891,9 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidPairFallbackSubgroupObservations:N0} " +
                     $"(triples={state.CrossRigidTripleFallbackSubgroupObservations:N0}, " +
                     $"quadruples={state.CrossRigidQuadrupleFallbackSubgroupObservations:N0}, " +
-                    $"quintuples={state.CrossRigidQuintupleFallbackSubgroupObservations:N0})");
+                    $"quintuples={state.CrossRigidQuintupleFallbackSubgroupObservations:N0}); " +
+                    $"middle-out triples={state.CrossRigidMiddleTripleFallbackSubgroupObservations:N0}, " +
+                    $"middle-out quadruples={state.CrossRigidMiddleQuadrupleFallbackSubgroupObservations:N0}");
                 sb.AppendLine(
                     $"Subgroup fallback plans competing with writable full groups: " +
                     $"{state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups:N0}");
@@ -37314,6 +37321,8 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidTripleFallbackSubgroupObservations { get; set; }
             public int CrossRigidQuadrupleFallbackSubgroupObservations { get; set; }
             public int CrossRigidQuintupleFallbackSubgroupObservations { get; set; }
+            public int CrossRigidMiddleTripleFallbackSubgroupObservations { get; set; }
+            public int CrossRigidMiddleQuadrupleFallbackSubgroupObservations { get; set; }
             public int CrossRigidPairFallbackPlansCompetingWithSafeFullGroups { get; set; }
             public int CrossRigidPairFallbackPlansEvaluated { get; set; }
             public HashSet<string> CrossRigidPreviouslySuppressedPairFallbackPlanIds { get; } =
