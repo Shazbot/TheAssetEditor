@@ -2521,9 +2521,12 @@ namespace Editors.KitbasherEditor.Services
                         var candidates = scanForward
                             ? group
                             : group.Reverse().ToArray();
+                        // Preserve the original 16 forward and 8 reverse
+                        // candidates. The expanded total reserves eight
+                        // genuinely new choices for middle-out sampling.
                         var stageLimit = scanForward
                             ? 16
-                            : MaxCrossRigidTripleFallbacksPerGroup;
+                            : MaxCrossRigidTripleFallbacksPerGroup - 8;
                         for (var firstIndex = 0;
                              firstIndex < candidates.Length &&
                              emittedTriples < stageLimit;
@@ -2617,9 +2620,12 @@ namespace Editors.KitbasherEditor.Services
                         var candidates = scanForward
                             ? group
                             : group.Reverse().ToArray();
+                        // Preserve the original 8 forward and 8 reverse
+                        // candidates; reserve the last 8 for middle-out
+                        // groups rather than letting reverse exhaust them.
                         var stageLimit = scanForward
-                            ? MaxCrossRigidQuadrupleFallbacksPerGroup / 2
-                            : MaxCrossRigidQuadrupleFallbacksPerGroup;
+                            ? 8
+                            : MaxCrossRigidQuadrupleFallbacksPerGroup - 8;
                         for (var firstIndex = 0;
                              firstIndex < candidates.Length &&
                              emittedQuadruples < stageLimit;
