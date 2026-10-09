@@ -6259,12 +6259,25 @@ namespace Editors.KitbasherEditor.Services
                     state.CrossRigidFactoredConditionalGroupCount +=
                         factors.Count(factor =>
                             factor.CommonAncestorDimensions.Length != 0);
-                    if (factors.Length < candidates.Count)
+                    var coveredContexts = candidates.Count(candidate =>
+                        factors.Any(factor =>
+                            IsCrossRigidJointDescriptorStructuralSuperset(
+                                factor, candidate.Descriptor)));
+                    if (coveredContexts < candidates.Count)
                         state.CrossRigidCanonicalJointParentConflictCount++;
+                    var synthesizedFactors = factors.Count(factor =>
+                        !candidates.Any(candidate =>
+                            BuildCrossRigidJointContextKey(
+                                    candidate.RootVmdPath, factor)
+                                .Equals(
+                                    candidate.ContextKey,
+                                    StringComparison.Ordinal)));
                     RecordCrossRigidAnalysisDiagnostic(
                         state,
                         "Factored root Cartesian contexts synthesized",
-                        candidates[0].RootVmdPath + ": " +
+                        candidates[0].RootVmdPath +
+                        $": covered={coveredContexts}/{candidates.Count}, " +
+                        $"synthetic={synthesizedFactors}; " +
                         string.Join(" | ", factors.Select(factor =>
                             $"slots={string.Join(",", factor.SlotIndices)} " +
                             $"weightedStates={factor.CombinationCount}")));
