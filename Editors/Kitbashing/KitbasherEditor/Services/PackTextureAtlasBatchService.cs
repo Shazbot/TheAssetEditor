@@ -8090,6 +8090,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidBestPortfolioExpectedDraws = 0;
             state.CrossRigidPortfolioPairTrials = 0;
             state.CrossRigidPortfolioContextCohortTrials = 0;
+            state.CrossRigidPortfolioLocalInsertionTrials = 0;
             state.CrossRigidSharedPayloadFallbackCandidatePlans = 0;
             state.CrossRigidSharedPayloadFallbackCompatibleStates = 0;
             state.CrossRigidSharedPayloadFallbackAcceptedStates = 0;
@@ -9333,6 +9334,74 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // Promoting a candidate to the front can displace unrelated
+            // winners before reaching its actual conflicting occurrence.
+            // Try bounded insertions before the first selected conflicting
+            // owners. The complete portfolio replay remains authoritative.
+            const int maxLocalInsertionSeeds = 24;
+            const int maxLocalInsertionOwnersPerSeed = 2;
+            var localInsertionTrials = 0;
+            var localSeeds = rejectedCandidates
+                .Concat(contextSeeds)
+                .GroupBy(entry => entry.GeneratedPayloadId,
+                    StringComparer.Ordinal)
+                .Select(group => group.First())
+                .Take(maxLocalInsertionSeeds)
+                .ToArray();
+            foreach (var contender in localSeeds)
+            {
+                if (best.SelectedPayloadIds.Contains(
+                        contender.GeneratedPayloadId) ||
+                    !conflictProfiles.TryGetValue(
+                        contender.GeneratedPayloadId,
+                        out var contenderProfile))
+                {
+                    continue;
+                }
+
+                var conflictingOwners = bestOrder
+                    .Where(entry =>
+                        best.SelectedPayloadIds.Contains(
+                            entry.GeneratedPayloadId) &&
+                        conflictProfiles.TryGetValue(
+                            entry.GeneratedPayloadId, out var winnerProfile) &&
+                        MayCrossRigidPayloadProfilesCompete(
+                            contenderProfile, winnerProfile))
+                    .Take(maxLocalInsertionOwnersPerSeed)
+                    .ToArray();
+                foreach (var owner in conflictingOwners)
+                {
+                    var trialOrder = bestOrder
+                        .Where(entry => !entry.GeneratedPayloadId.Equals(
+                            contender.GeneratedPayloadId,
+                            StringComparison.Ordinal))
+                        .ToList();
+                    var ownerIndex = trialOrder.FindIndex(entry =>
+                        entry.GeneratedPayloadId.Equals(
+                            owner.GeneratedPayloadId,
+                            StringComparison.Ordinal));
+                    if (ownerIndex < 0)
+                        continue;
+
+                    trialOrder.Insert(ownerIndex, contender);
+                    var trial = EvaluateCrossRigidPayloadPortfolio(
+                        state,
+                        trialOrder,
+                        conflictProfiles,
+                        invalidProfiles,
+                        sourceVmdDocuments);
+                    localInsertionTrials++;
+                    evaluated++;
+                    if (IsBetterCrossRigidPayloadPortfolio(trial, best))
+                    {
+                        best = trial;
+                        bestOrder = trialOrder.ToArray();
+                    }
+                }
+            }
+
+            state.CrossRigidPortfolioLocalInsertionTrials =
+                localInsertionTrials;
             state.CrossRigidPortfolioOrderingsEvaluated = evaluated;
             state.CrossRigidPortfolioPairTrials = pairsToEvaluate.Length * 2;
             state.CrossRigidBestPortfolioExpectedDraws =
@@ -9346,6 +9415,36 @@ namespace Editors.KitbasherEditor.Services
                 .Select((entry, index) =>
                     entry with { SelectionRank = index + 1 })
                 .ToList();
+        }
+
+        // Conservative trial prefilter: even an overlap involving an
+        // unselected state only schedules another ordering; it never grants
+        // rewrite compatibility or bypasses the exact conflict evaluator.
+        private static bool MayCrossRigidPayloadProfilesCompete(
+            CrossRigidPayloadRewriteConflictProfile contender,
+            CrossRigidPayloadRewriteConflictProfile selected)
+        {
+            var selectedKeys = selected.Occurrences
+                .SelectMany(occurrence => occurrence.RewriteConflictKeys)
+                .ToHashSet(StringComparer.Ordinal);
+            var selectedContexts = selected.Occurrences
+                .SelectMany(occurrence =>
+                    occurrence.JointContextKeyByParentLocation)
+                .GroupBy(pair => pair.Key, StringComparer.Ordinal)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(pair => pair.Value)
+                        .ToHashSet(StringComparer.Ordinal),
+                    StringComparer.Ordinal);
+            return contender.Occurrences.Any(occurrence =>
+                HasCrossRigidRewriteConflict(
+                    occurrence.RewriteConflictKeys, selectedKeys) ||
+                occurrence.JointContextKeyByParentLocation.Any(pair =>
+                    selectedContexts.TryGetValue(
+                        pair.Key, out var contexts) &&
+                    contexts.Any(context =>
+                        !context.Equals(pair.Value,
+                            StringComparison.Ordinal))));
         }
 
         private static bool IsBetterCrossRigidPayloadPortfolio(
@@ -33958,7 +34057,8 @@ namespace Editors.KitbasherEditor.Services
                     $"raw-draw baseline={state.CrossRigidRawGreedyExpectedDraws:0.###}, " +
                     $"best={state.CrossRigidBestPortfolioExpectedDraws:0.###} expected draws; " +
                     $"pair ordering trials={state.CrossRigidPortfolioPairTrials:N0}, " +
-                    $"context cohort trials={state.CrossRigidPortfolioContextCohortTrials:N0}");
+                    $"context cohort trials={state.CrossRigidPortfolioContextCohortTrials:N0}, " +
+                    $"local insertion trials={state.CrossRigidPortfolioLocalInsertionTrials:N0}");
                 sb.AppendLine(
                     $"Payload candidates: " +
                     $"{state.CrossRigidPayloadSelectionEntries.Count:N0}");
@@ -37103,6 +37203,7 @@ namespace Editors.KitbasherEditor.Services
             public double CrossRigidBestPortfolioExpectedDraws { get; set; }
             public int CrossRigidPortfolioPairTrials { get; set; }
             public int CrossRigidPortfolioContextCohortTrials { get; set; }
+            public int CrossRigidPortfolioLocalInsertionTrials { get; set; }
             public int CrossRigidSharedPayloadFallbackCandidatePlans { get; set; }
             public int CrossRigidSharedPayloadFallbackCompatibleStates { get; set; }
             public int CrossRigidSharedPayloadFallbackAcceptedStates { get; set; }
