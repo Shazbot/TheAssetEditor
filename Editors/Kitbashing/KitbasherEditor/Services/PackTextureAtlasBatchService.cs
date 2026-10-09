@@ -8091,6 +8091,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidPortfolioPairTrials = 0;
             state.CrossRigidPortfolioContextCohortTrials = 0;
             state.CrossRigidPortfolioLocalInsertionTrials = 0;
+            state.CrossRigidPortfolioLocalInsertionImprovements = 0;
             state.CrossRigidSharedPayloadFallbackCandidatePlans = 0;
             state.CrossRigidSharedPayloadFallbackCompatibleStates = 0;
             state.CrossRigidSharedPayloadFallbackAcceptedStates = 0;
@@ -9338,15 +9339,24 @@ namespace Editors.KitbasherEditor.Services
             // winners before reaching its actual conflicting occurrence.
             // Try bounded insertions before the first selected conflicting
             // owners. The complete portfolio replay remains authoritative.
-            const int maxLocalInsertionSeeds = 24;
+            // Each category gets its own allowance. Appending contextSeeds
+            // after rejectedCandidates and then taking a global prefix
+            // starves them completely whenever there are 24+ rejects.
+            // Prefer structural context alternatives, then supplement with
+            // the strongest global and different-VMD rejected candidates.
+            const int maxLocalInsertionContextSeeds = 16;
+            const int maxLocalInsertionGlobalSeeds = 8;
+            const int maxLocalInsertionDiverseSeeds = 8;
             const int maxLocalInsertionOwnersPerSeed = 2;
             var localInsertionTrials = 0;
-            var localSeeds = rejectedCandidates
-                .Concat(contextSeeds)
+            var localInsertionImprovements = 0;
+            var localSeeds = contextSeeds
+                .Take(maxLocalInsertionContextSeeds)
+                .Concat(globalSeeds.Take(maxLocalInsertionGlobalSeeds))
+                .Concat(diverseSeeds.Take(maxLocalInsertionDiverseSeeds))
                 .GroupBy(entry => entry.GeneratedPayloadId,
                     StringComparer.Ordinal)
                 .Select(group => group.First())
-                .Take(maxLocalInsertionSeeds)
                 .ToArray();
             foreach (var contender in localSeeds)
             {
@@ -9396,12 +9406,15 @@ namespace Editors.KitbasherEditor.Services
                     {
                         best = trial;
                         bestOrder = trialOrder.ToArray();
+                        localInsertionImprovements++;
                     }
                 }
             }
 
             state.CrossRigidPortfolioLocalInsertionTrials =
                 localInsertionTrials;
+            state.CrossRigidPortfolioLocalInsertionImprovements =
+                localInsertionImprovements;
             state.CrossRigidPortfolioOrderingsEvaluated = evaluated;
             state.CrossRigidPortfolioPairTrials = pairsToEvaluate.Length * 2;
             state.CrossRigidBestPortfolioExpectedDraws =
@@ -34058,7 +34071,8 @@ namespace Editors.KitbasherEditor.Services
                     $"best={state.CrossRigidBestPortfolioExpectedDraws:0.###} expected draws; " +
                     $"pair ordering trials={state.CrossRigidPortfolioPairTrials:N0}, " +
                     $"context cohort trials={state.CrossRigidPortfolioContextCohortTrials:N0}, " +
-                    $"local insertion trials={state.CrossRigidPortfolioLocalInsertionTrials:N0}");
+                    $"local insertion trials={state.CrossRigidPortfolioLocalInsertionTrials:N0}, " +
+                    $"local improvements={state.CrossRigidPortfolioLocalInsertionImprovements:N0}");
                 sb.AppendLine(
                     $"Payload candidates: " +
                     $"{state.CrossRigidPayloadSelectionEntries.Count:N0}");
@@ -37204,6 +37218,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidPortfolioPairTrials { get; set; }
             public int CrossRigidPortfolioContextCohortTrials { get; set; }
             public int CrossRigidPortfolioLocalInsertionTrials { get; set; }
+            public int CrossRigidPortfolioLocalInsertionImprovements { get; set; }
             public int CrossRigidSharedPayloadFallbackCandidatePlans { get; set; }
             public int CrossRigidSharedPayloadFallbackCompatibleStates { get; set; }
             public int CrossRigidSharedPayloadFallbackAcceptedStates { get; set; }
