@@ -6061,6 +6061,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidFactoredJointDescriptorsByParentLocation.Clear();
             state.CrossRigidFactoredJointParentCount = 0;
             state.CrossRigidFactoredJointGroupCount = 0;
+            state.CrossRigidFactoredConditionalGroupCount = 0;
             state.CrossRigidCanonicalJointParentCount = 0;
             state.CrossRigidCanonicalJointContextsFolded = 0;
             state.CrossRigidCanonicalJointParentConflictCount = 0;
@@ -6253,6 +6254,9 @@ namespace Editors.KitbasherEditor.Services
                         parentLocationKey] = factors;
                     state.CrossRigidFactoredJointParentCount++;
                     state.CrossRigidFactoredJointGroupCount += factors.Length;
+                    state.CrossRigidFactoredConditionalGroupCount +=
+                        factors.Count(factor =>
+                            factor.CommonAncestorDimensions.Length != 0);
                     if (factors.Length < candidates.Count)
                         state.CrossRigidCanonicalJointParentConflictCount++;
                     RecordCrossRigidAnalysisDiagnostic(
@@ -6323,8 +6327,10 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        // Only direct root-level sibling slot sets are factored. Nested and
-        // referenced selections retain the ordinary joint-context semantics.
+        // Root-level carrier slots are independent random choices even when
+        // a carrier contains conditional local or child-VMD selections. Keep
+        // every dimension inside its own factor's carrier slot set; never
+        // factor a shared carrier or a non-root structural parent.
         private static bool TryBuildCrossRigidFactoredRootJointContexts(
             IReadOnlyList<(
                 string RootVmdPath,
@@ -6336,35 +6342,72 @@ namespace Editors.KitbasherEditor.Services
             factors = [];
             if (candidates.Count < 2 ||
                 candidates.Any(item =>
-                    item.Descriptor.CommonAncestorDimensions.Length != 0 ||
                     item.Descriptor.AnchorReferenceChain.Length != 0 ||
                     item.Descriptor.ParentXmlPath != "/VARIANT_MESH" ||
                     !Normalize(item.Descriptor.AnchorVmdPath).Equals(
                         Normalize(item.RootVmdPath),
-                        StringComparison.OrdinalIgnoreCase)))
+                        StringComparison.OrdinalIgnoreCase) ||
+                    item.Descriptor.CommonAncestorDimensions.Any(dimension =>
+                        !item.Descriptor.SlotIndices.Contains(
+                            dimension.CarrierSlotIndex))))
                 return false;
 
-            var chosen = new List<CrossRigidJointAlwaysPresentRewriteDescriptor>();
-            var usedSlots = new HashSet<int>();
-            foreach (var item in candidates
-                         .OrderByDescending(candidate =>
-                             benefitByContextKey.GetValueOrDefault(
-                                 candidate.ContextKey))
-                         .ThenBy(candidate =>
-                             candidate.Descriptor.CombinationCount)
-                         .ThenBy(candidate => candidate.ContextKey,
-                             StringComparer.Ordinal))
+            var ranked = candidates
+                .Where(item => item.Descriptor.SlotIndices.Length >= 2)
+                .OrderByDescending(item =>
+                    benefitByContextKey.GetValueOrDefault(item.ContextKey))
+                .ThenBy(item => item.Descriptor.CombinationCount)
+                .ThenBy(item => item.ContextKey, StringComparer.Ordinal)
+                .ToArray();
+            if (ranked.Length < 2)
+                return false;
+
+            // A single greedy highest-benefit factor can prevent two disjoint
+            // smaller factors (e.g. AB versus AC+BD). Try each promising seed,
+            // then fill disjoint groups in stable benefit order. This is a
+            // bounded alternative ordering, not an unbounded subset search.
+            var bestBenefit = double.NegativeInfinity;
+            var bestStateCount = long.MaxValue;
+            CrossRigidJointAlwaysPresentRewriteDescriptor[] best = [];
+            foreach (var seed in ranked.Take(64))
             {
-                if (item.Descriptor.SlotIndices.Length < 2 ||
-                    item.Descriptor.SlotIndices.Any(usedSlots.Contains))
+                var chosen =
+                    new List<CrossRigidJointAlwaysPresentRewriteDescriptor>();
+                var usedSlots = new HashSet<int>();
+                var benefit = 0.0;
+                long stateCount = 0;
+                foreach (var item in new[] { seed }
+                             .Concat(ranked.Where(item =>
+                                 !item.ContextKey.Equals(
+                                     seed.ContextKey,
+                                     StringComparison.Ordinal))))
+                {
+                    if (item.Descriptor.SlotIndices.Any(usedSlots.Contains))
+                        continue;
+
+                    chosen.Add(item.Descriptor);
+                    usedSlots.UnionWith(item.Descriptor.SlotIndices);
+                    benefit += benefitByContextKey.GetValueOrDefault(
+                        item.ContextKey);
+                    stateCount += item.Descriptor.CombinationCount;
+                }
+
+                if (chosen.Count < 2 ||
+                    benefit < bestBenefit -
+                        AtlasValueGateExpectedDrawEpsilon ||
+                    (Math.Abs(benefit - bestBenefit) <=
+                         AtlasValueGateExpectedDrawEpsilon &&
+                     stateCount >= bestStateCount))
                     continue;
-                chosen.Add(item.Descriptor);
-                usedSlots.UnionWith(item.Descriptor.SlotIndices);
+
+                bestBenefit = benefit;
+                bestStateCount = stateCount;
+                best = chosen.ToArray();
             }
 
-            if (chosen.Count < 2)
+            if (best.Length < 2)
                 return false;
-            factors = chosen.ToArray();
+            factors = best;
             return true;
         }
 
@@ -11246,9 +11289,9 @@ namespace Editors.KitbasherEditor.Services
             foreach (var carrierSlotIndex in
                      descriptor.SlotIndices)
             {
-                if (parentElement.SelectSingleNode(
-                        $"SLOT[{carrierSlotIndex}]") is
-                    not XmlElement carrierSlotElement)
+                if (ResolveCrossRigidFactoredRootSlot(
+                        state, parentLocationKey, parentElement,
+                        carrierSlotIndex) is not XmlElement carrierSlotElement)
                 {
                     reason =
                         $"Common-ancestor carrier slot {carrierSlotIndex} could not be resolved";
@@ -33343,7 +33386,8 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Factored independent-root Cartesian contexts: " +
                     $"{state.CrossRigidFactoredJointParentCount:N0} parent(s), " +
-                    $"{state.CrossRigidFactoredJointGroupCount:N0} separate context group(s)");
+                    $"{state.CrossRigidFactoredJointGroupCount:N0} separate context group(s), " +
+                    $"{state.CrossRigidFactoredConditionalGroupCount:N0} with conditional dimensions");
                 sb.AppendLine(
                     $"Cross-rigid portfolio search: " +
                     $"{state.CrossRigidPortfolioOrderingsEvaluated:N0} ordering(s) evaluated; " +
@@ -36485,6 +36529,7 @@ namespace Editors.KitbasherEditor.Services
                     new(StringComparer.OrdinalIgnoreCase);
             public int CrossRigidFactoredJointParentCount { get; set; }
             public int CrossRigidFactoredJointGroupCount { get; set; }
+            public int CrossRigidFactoredConditionalGroupCount { get; set; }
             public int CrossRigidCanonicalJointParentCount { get; set; }
             public int CrossRigidCanonicalJointContextsFolded { get; set; }
             public int CrossRigidCanonicalJointParentConflictCount { get; set; }
