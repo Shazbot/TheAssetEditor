@@ -6386,6 +6386,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidFactoredJointGroupCount = 0;
             state.CrossRigidFactoredConditionalGroupCount = 0;
             state.CrossRigidFactoredSingleCarrierGroupCount = 0;
+            state.CrossRigidFactoredPackingSearchImprovements = 0;
             state.CrossRigidCanonicalJointParentCount = 0;
             state.CrossRigidCanonicalJointContextsFolded = 0;
             state.CrossRigidCanonicalJointParentConflictCount = 0;
@@ -6859,8 +6860,111 @@ namespace Editors.KitbasherEditor.Services
                 best = chosen.ToArray();
             }
 
+            // The seeded greedy pass above is a safe baseline, but one
+            // high-benefit factor can mask two smaller disjoint factors.
+            // Search exact disjoint root-slot sets with bounded states.
+            // Only change the factoring if this strictly improves covered
+            // candidate benefit (or ties at fewer weighted states).
+            const int maxPackingStates = 4096;
+            var packingStates = new Dictionary<
+                (ulong Slots, int FactorCount),
+                (double Benefit, long StateCount, int[] OptionIndices)>
+            {
+                [(0UL, 0)] = (0, 0, []),
+            };
+            for (var optionIndex = 0; optionIndex < options.Length;
+                 optionIndex++)
+            {
+                var option = options[optionIndex];
+                ulong mask = 0;
+                var representable = true;
+                foreach (var slot in option.Descriptor.SlotIndices)
+                {
+                    if (slot < 1 || slot > 63)
+                    {
+                        representable = false;
+                        break;
+                    }
+
+                    mask |= 1UL << (slot - 1);
+                }
+
+                if (!representable || mask == 0)
+                    continue;
+
+                var nextStates = new Dictionary<
+                    (ulong Slots, int FactorCount),
+                    (double Benefit, long StateCount, int[] OptionIndices)>(
+                        packingStates);
+                foreach (var (used, selection) in packingStates)
+                {
+                    if ((used.Slots & mask) != 0)
+                        continue;
+
+                    var newKey = (
+                        Slots: used.Slots | mask,
+                        FactorCount: Math.Min(2, used.FactorCount + 1));
+                    var newBenefit = selection.Benefit + option.Benefit;
+                    var newStateCount =
+                        selection.StateCount +
+                        option.Descriptor.CombinationCount;
+                    if (nextStates.TryGetValue(newKey, out var previous) &&
+                        (previous.Benefit >
+                             newBenefit + AtlasValueGateExpectedDrawEpsilon ||
+                         (Math.Abs(previous.Benefit - newBenefit) <=
+                              AtlasValueGateExpectedDrawEpsilon &&
+                          previous.StateCount <= newStateCount)))
+                    {
+                        continue;
+                    }
+
+                    nextStates[newKey] = (
+                        newBenefit,
+                        newStateCount,
+                        selection.OptionIndices.Append(optionIndex).ToArray());
+                }
+
+                if (nextStates.Count > maxPackingStates)
+                {
+                    // Keep promising packings and always retain the empty
+                    // starting point for later disjoint alternatives.
+                    var reduced = nextStates
+                        .OrderByDescending(item => item.Value.Benefit)
+                        .ThenBy(item => item.Value.StateCount)
+                        .Take(maxPackingStates - 1)
+                        .ToDictionary(item => item.Key, item => item.Value);
+                    reduced.TryAdd((0UL, 0), (0, 0, []));
+                    nextStates = reduced;
+                }
+
+                packingStates = nextStates;
+            }
+
+            var packingImproved = false;
+            foreach (var (key, selection) in packingStates)
+            {
+                if (key.FactorCount < 2 ||
+                    selection.Benefit < bestBenefit -
+                        AtlasValueGateExpectedDrawEpsilon ||
+                    (Math.Abs(selection.Benefit - bestBenefit) <=
+                         AtlasValueGateExpectedDrawEpsilon &&
+                     selection.StateCount >= bestStateCount))
+                {
+                    continue;
+                }
+
+                bestBenefit = selection.Benefit;
+                bestStateCount = selection.StateCount;
+                best = selection.OptionIndices
+                    .Select(index => options[index].Descriptor)
+                    .ToArray();
+                packingImproved = true;
+            }
+
             if (best.Length < 2)
                 return false;
+            if (packingImproved)
+                state.CrossRigidFactoredPackingSearchImprovements++;
             factors = best;
             return true;
         }
@@ -34085,7 +34189,8 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidFactoredJointParentCount:N0} parent(s), " +
                     $"{state.CrossRigidFactoredJointGroupCount:N0} separate context group(s), " +
                     $"{state.CrossRigidFactoredConditionalGroupCount:N0} with conditional dimensions, " +
-                    $"{state.CrossRigidFactoredSingleCarrierGroupCount:N0} single-carrier factor(s)");
+                    $"{state.CrossRigidFactoredSingleCarrierGroupCount:N0} single-carrier factor(s), " +
+                    $"{state.CrossRigidFactoredPackingSearchImprovements:N0} packing improvement(s)");
                 sb.AppendLine(
                     $"Cross-rigid portfolio search: " +
                     $"{state.CrossRigidPortfolioOrderingsEvaluated:N0} ordering(s) evaluated; " +
@@ -37232,6 +37337,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidFactoredJointGroupCount { get; set; }
             public int CrossRigidFactoredConditionalGroupCount { get; set; }
             public int CrossRigidFactoredSingleCarrierGroupCount { get; set; }
+            public int CrossRigidFactoredPackingSearchImprovements { get; set; }
             public int CrossRigidCanonicalJointParentCount { get; set; }
             public int CrossRigidCanonicalJointContextsFolded { get; set; }
             public int CrossRigidCanonicalJointParentConflictCount { get; set; }
