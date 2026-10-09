@@ -89,6 +89,9 @@ namespace Editors.KitbasherEditor.Services
         // When a full co-rendering group is too complex to rewrite jointly,
         // smaller cross-rigid pairs can retain independent visual choices.
         private const int MaxCrossRigidPairFallbacksPerGroup = 24;
+        // A bounded three-rigid alternative can recover savings from a
+        // full group whose Cartesian appearance space is too large.
+        private const int MaxCrossRigidTripleFallbacksPerGroup = 16;
         private const int MaxCrossRigidGeneratedLodCount = 5;
         private const float CrossRigidLodDistanceEpsilon = 0.01f;
         private static readonly bool AtlasProfilingEnabled =
@@ -1671,6 +1674,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisConfigurationCount = 0;
             state.CrossRigidAnalysisOpportunityObservationCount = 0;
             state.CrossRigidPairFallbackSubgroupObservations = 0;
+            state.CrossRigidTripleFallbackSubgroupObservations = 0;
             state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups = 0;
             state.CrossRigidPreviouslySuppressedPairFallbackPlanIds.Clear();
             state.CrossRigidLegacyEligiblePayloadIds.Clear();
@@ -1830,13 +1834,15 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    foreach (var (group, isPairFallback, fullGroup) in
+                    foreach (var (group, isPairFallback, isTripleFallback, fullGroup) in
                              EnumerateCrossRigidCandidateGroups(
                                  topologyGroups))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         if (isPairFallback)
                             state.CrossRigidPairFallbackSubgroupObservations++;
+                        if (isTripleFallback)
+                            state.CrossRigidTripleFallbackSubgroupObservations++;
                         var rewritePlanKey = BuildCrossRigidRewritePlanKey(
                             vmdPath,
                             configuration.AttachmentIdentity,
@@ -2426,6 +2432,7 @@ namespace Editors.KitbasherEditor.Services
         private static IEnumerable<(
                 CrossRigidAnalysisInstanceComponent[] Group,
                 bool IsPairFallback,
+                bool IsTripleFallback,
                 CrossRigidAnalysisInstanceComponent[] FullGroup)>
             EnumerateCrossRigidCandidateGroups(
                 CrossRigidAnalysisInstanceComponent[][] topologyGroups)
@@ -2435,7 +2442,7 @@ namespace Editors.KitbasherEditor.Services
                 // Keep the original complete merge candidate. Pairwise
                 // alternatives are strictly additional choices for the
                 // existing provenance validator and value/conflict gates.
-                yield return (group, false, group);
+                yield return (group, false, false, group);
                 if (group.Length < 3)
                     continue;
 
@@ -2478,7 +2485,77 @@ namespace Editors.KitbasherEditor.Services
                         yield return (
                             new[] { first, second },
                             true,
+                            false,
                             group);
+                    }
+                }
+
+                // The complete three-component case has already been
+                // yielded above. For larger groups, allow up to sixteen
+                // three-rigid fallbacks through exactly the same rewrite
+                // validation, conflict resolution and value gate as pairs.
+                // The existing IsPairFallback flag denotes any subordinate
+                // subgroup; the third tuple field distinguishes triples for
+                // diagnostics without changing the protected full portfolio.
+                if (group.Length >= 4)
+                {
+                    var uniqueTriples = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+                    var emittedTriples = 0;
+                    for (var firstIndex = 0;
+                         firstIndex < group.Length &&
+                         emittedTriples < MaxCrossRigidTripleFallbacksPerGroup;
+                         firstIndex++)
+                    {
+                        for (var secondIndex = firstIndex + 1;
+                             secondIndex < group.Length &&
+                             emittedTriples < MaxCrossRigidTripleFallbacksPerGroup;
+                             secondIndex++)
+                        {
+                            for (var thirdIndex = secondIndex + 1;
+                                 thirdIndex < group.Length &&
+                                 emittedTriples < MaxCrossRigidTripleFallbacksPerGroup;
+                                 thirdIndex++)
+                            {
+                                var first = group[firstIndex];
+                                var second = group[secondIndex];
+                                var third = group[thirdIndex];
+                                var distinctRigids = new[]
+                                {
+                                    first.Component.RigidPath,
+                                    second.Component.RigidPath,
+                                    third.Component.RigidPath,
+                                }.Distinct(StringComparer.OrdinalIgnoreCase)
+                                    .Count();
+                                if (distinctRigids != 3)
+                                    continue;
+
+                                var paths = new[]
+                                {
+                                    Normalize(first.Instance.WsModelPath),
+                                    Normalize(second.Instance.WsModelPath),
+                                    Normalize(third.Instance.WsModelPath),
+                                };
+                                if (paths.Distinct(
+                                        StringComparer.OrdinalIgnoreCase)
+                                        .Count() != 3)
+                                    continue;
+
+                                Array.Sort(
+                                    paths,
+                                    StringComparer.OrdinalIgnoreCase);
+                                if (!uniqueTriples.Add(
+                                        string.Join("\u001f", paths)))
+                                    continue;
+
+                                emittedTriples++;
+                                yield return (
+                                    new[] { first, second, third },
+                                    true,
+                                    true,
+                                    group);
+                            }
+                        }
                     }
                 }
             }
@@ -33400,13 +33477,14 @@ namespace Editors.KitbasherEditor.Services
                     $"Eligible configuration-group observations before rewrite-plan dedupe: " +
                     $"{state.CrossRigidAnalysisOpportunityObservationCount:N0}");
                 sb.AppendLine(
-                    $"Pairwise cross-rigid fallback subgroups considered: " +
-                    $"{state.CrossRigidPairFallbackSubgroupObservations:N0}");
+                    $"Pair/triple cross-rigid fallback subgroups considered: " +
+                    $"{state.CrossRigidPairFallbackSubgroupObservations:N0} " +
+                    $"(triples={state.CrossRigidTripleFallbackSubgroupObservations:N0})");
                 sb.AppendLine(
-                    $"Pairwise fallback plans competing with writable full groups: " +
+                    $"Subgroup fallback plans competing with writable full groups: " +
                     $"{state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups:N0}");
                 sb.AppendLine(
-                    $"Pairwise fallback plans evaluated (including competing pairs): " +
+                    $"Subgroup fallback plans evaluated (including competing subsets): " +
                     $"{state.CrossRigidPairFallbackPlansEvaluated:N0}");
                 sb.AppendLine(
                     "Activation rewrite-state classification " +
@@ -33604,11 +33682,11 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidPayloadSelectionEntries.Count(entry => state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} eligible payload(s), " +
                     $"{selectedPayloads.Count(entry => state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} accepted");
                 sb.AppendLine(
-                    $"Supplementary pair-only fallback payloads: " +
+                    $"Supplementary subgroup-only fallback payloads: " +
                     $"{state.CrossRigidPayloadSelectionEntries.Count(entry => !state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} candidate(s), " +
                     $"{selectedPayloads.Count(entry => !state.CrossRigidLegacyEligiblePayloadIds.Contains(entry.GeneratedPayloadId)):N0} accepted");
                 sb.AppendLine(
-                    $"Selected-primary geometry reused by supplementary pairs: " +
+                    $"Selected-primary geometry reused by supplementary subgroups: " +
                     $"{state.CrossRigidSharedPayloadFallbackCandidatePlans:N0} candidate plan(s), " +
                     $"{state.CrossRigidSharedPayloadFallbackAdmittedPlanIds.Count:N0} admitted plan(s), " +
                     $"{state.CrossRigidSharedPayloadFallbackAcceptedStates:N0}/" +
@@ -36822,6 +36900,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidAnalysisConfigurationCount { get; set; }
             public int CrossRigidAnalysisOpportunityObservationCount { get; set; }
             public int CrossRigidPairFallbackSubgroupObservations { get; set; }
+            public int CrossRigidTripleFallbackSubgroupObservations { get; set; }
             public int CrossRigidPairFallbackPlansCompetingWithSafeFullGroups { get; set; }
             public int CrossRigidPairFallbackPlansEvaluated { get; set; }
             public HashSet<string> CrossRigidPreviouslySuppressedPairFallbackPlanIds { get; } =
