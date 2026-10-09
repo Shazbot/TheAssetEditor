@@ -91,10 +91,13 @@ namespace Editors.KitbasherEditor.Services
         private const int MaxCrossRigidPairFallbacksPerGroup = 24;
         // A bounded three-rigid alternative can recover savings from a
         // full group whose Cartesian appearance space is too large.
-        private const int MaxCrossRigidTripleFallbacksPerGroup = 24;
+        private const int MaxCrossRigidTripleFallbacksPerGroup = 32;
         // Four components can recover merges from otherwise unwritable five+
         // component groups without expanding the global Cartesian writer.
-        private const int MaxCrossRigidQuadrupleFallbacksPerGroup = 16;
+        private const int MaxCrossRigidQuadrupleFallbacksPerGroup = 24;
+        // Small five-component subsets can recover four draws when the full
+        // appearance group is too large to rewrite as one Cartesian state.
+        private const int MaxCrossRigidQuintupleFallbacksPerGroup = 12;
         private const int MaxCrossRigidGeneratedLodCount = 5;
         private const float CrossRigidLodDistanceEpsilon = 0.01f;
         private static readonly bool AtlasProfilingEnabled =
@@ -1679,6 +1682,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidPairFallbackSubgroupObservations = 0;
             state.CrossRigidTripleFallbackSubgroupObservations = 0;
             state.CrossRigidQuadrupleFallbackSubgroupObservations = 0;
+            state.CrossRigidQuintupleFallbackSubgroupObservations = 0;
             state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups = 0;
             state.CrossRigidPreviouslySuppressedPairFallbackPlanIds.Clear();
             state.CrossRigidLegacyEligiblePayloadIds.Clear();
@@ -1849,6 +1853,8 @@ namespace Editors.KitbasherEditor.Services
                             state.CrossRigidTripleFallbackSubgroupObservations++;
                         if (fallbackSize == 4)
                             state.CrossRigidQuadrupleFallbackSubgroupObservations++;
+                        if (fallbackSize == 5)
+                            state.CrossRigidQuintupleFallbackSubgroupObservations++;
                         var rewritePlanKey = BuildCrossRigidRewritePlanKey(
                             vmdPath,
                             configuration.AttachmentIdentity,
@@ -2571,6 +2577,21 @@ namespace Editors.KitbasherEditor.Services
                             }
                         }
                     }
+                    // The original first sixteen forward and eight reverse
+                    // candidates remain unchanged. Examine a small third
+                    // cohort around the middle, where large appearance groups
+                    // otherwise never reach the fallback enumerator.
+                    foreach (var items in
+                             EnumerateCrossRigidDistinctFallbackSubsets(
+                                     BuildCrossRigidMiddleOutFallbackOrder(group),
+                                     3,
+                                     uniqueTriples)
+                                 .Take(MaxCrossRigidTripleFallbacksPerGroup -
+                                       emittedTriples))
+                    {
+                        emittedTriples++;
+                        yield return (items, true, 3, group);
+                    }
                 }
 
                 // A full group with exactly four components is already
@@ -2659,6 +2680,118 @@ namespace Editors.KitbasherEditor.Services
                             }
                         }
                     }
+                    // Preserve the original eight forward and eight reverse
+                    // quadruples, then look at the middle of long groups.
+                    foreach (var items in
+                             EnumerateCrossRigidDistinctFallbackSubsets(
+                                     BuildCrossRigidMiddleOutFallbackOrder(group),
+                                     4,
+                                     uniqueQuadruples)
+                                 .Take(MaxCrossRigidQuadrupleFallbacksPerGroup -
+                                       emittedQuadruples))
+                    {
+                        emittedQuadruples++;
+                        yield return (items, true, 4, group);
+                    }
+                }
+
+                // When a six-or-larger full group exceeds the rewrite state
+                // budget, a bounded five-way subset may recover four draws.
+                // Only genuinely distinct WSModel occurrences are combined;
+                // repeated rigid paths are fine if at least two remain.
+                if (group.Length >= 6 &&
+                    group.Select(item => item.Component.RigidPath)
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Count() >= 2 &&
+                    group.Select(item => Normalize(item.Instance.WsModelPath))
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Count() >= 5)
+                {
+                    var seen = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+                    var emitted = 0;
+                    var orders = new[]
+                    {
+                        group,
+                        group.Reverse().ToArray(),
+                        BuildCrossRigidMiddleOutFallbackOrder(group)
+                    };
+                    for (var pass = 0; pass < orders.Length; pass++)
+                    {
+                        var stageLimit =
+                            (pass + 1) * MaxCrossRigidQuintupleFallbacksPerGroup /
+                            orders.Length;
+                        foreach (var items in
+                                 EnumerateCrossRigidDistinctFallbackSubsets(
+                                         orders[pass], 5, seen)
+                                     .Take(stageLimit - emitted))
+                        {
+                            emitted++;
+                            yield return (items, true, 5, group);
+                        }
+                    }
+                }
+            }
+        }
+
+        // A third sampling order prevents lexicographic prefix/suffix caps
+        // from excluding all components near the middle of long groups.
+        private static CrossRigidAnalysisInstanceComponent[]
+            BuildCrossRigidMiddleOutFallbackOrder(
+                CrossRigidAnalysisInstanceComponent[] group)
+            => group.Select((item, index) => (Item: item, Index: index))
+                .OrderBy(item => Math.Abs(
+                    2 * item.Index - (group.Length - 1)))
+                .ThenBy(item => item.Index)
+                .Select(item => item.Item)
+                .ToArray();
+
+        // All new subsets remain subject to the same topology, provenance,
+        // state-budget, generated-geometry and value gates as full groups.
+        // Limit the search effort as well as the number of emitted subsets.
+        private static IEnumerable<CrossRigidAnalysisInstanceComponent[]>
+            EnumerateCrossRigidDistinctFallbackSubsets(
+                CrossRigidAnalysisInstanceComponent[] candidates,
+                int size,
+                HashSet<string> seen)
+        {
+            const int maxInspectedCombinations = 512;
+            var selected = new CrossRigidAnalysisInstanceComponent[size];
+            var inspected = 0;
+            return Enumerate(0, 0);
+
+            IEnumerable<CrossRigidAnalysisInstanceComponent[]> Enumerate(
+                int nextIndex, int depth)
+            {
+                if (inspected >= maxInspectedCombinations)
+                    yield break;
+                if (depth == size)
+                {
+                    inspected++;
+                    if (selected.Select(item => item.Component.RigidPath)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count() < 2)
+                        yield break;
+
+                    var paths = selected.Select(item =>
+                            Normalize(item.Instance.WsModelPath))
+                        .ToArray();
+                    if (paths.Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count() != size)
+                        yield break;
+
+                    Array.Sort(paths, StringComparer.OrdinalIgnoreCase);
+                    if (seen.Add(string.Join("\u001f", paths)))
+                        yield return selected.ToArray();
+                    yield break;
+                }
+
+                for (var index = nextIndex;
+                     index <= candidates.Length - (size - depth) &&
+                     inspected < maxInspectedCombinations;
+                     index++)
+                {
+                    selected[depth] = candidates[index];
+                    foreach (var subset in Enumerate(index + 1, depth + 1))
+                        yield return subset;
                 }
             }
         }
@@ -33634,7 +33767,8 @@ namespace Editors.KitbasherEditor.Services
                     $"Cross-rigid fallback subgroups considered: " +
                     $"{state.CrossRigidPairFallbackSubgroupObservations:N0} " +
                     $"(triples={state.CrossRigidTripleFallbackSubgroupObservations:N0}, " +
-                    $"quadruples={state.CrossRigidQuadrupleFallbackSubgroupObservations:N0})");
+                    $"quadruples={state.CrossRigidQuadrupleFallbackSubgroupObservations:N0}, " +
+                    $"quintuples={state.CrossRigidQuintupleFallbackSubgroupObservations:N0})");
                 sb.AppendLine(
                     $"Subgroup fallback plans competing with writable full groups: " +
                     $"{state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups:N0}");
@@ -37057,6 +37191,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidPairFallbackSubgroupObservations { get; set; }
             public int CrossRigidTripleFallbackSubgroupObservations { get; set; }
             public int CrossRigidQuadrupleFallbackSubgroupObservations { get; set; }
+            public int CrossRigidQuintupleFallbackSubgroupObservations { get; set; }
             public int CrossRigidPairFallbackPlansCompetingWithSafeFullGroups { get; set; }
             public int CrossRigidPairFallbackPlansEvaluated { get; set; }
             public HashSet<string> CrossRigidPreviouslySuppressedPairFallbackPlanIds { get; } =
