@@ -6463,17 +6463,27 @@ namespace Editors.KitbasherEditor.Services
                         state,
                         candidates.Select(candidate => candidate.Descriptor)
                             .ToArray(),
+                        candidates[0].RootVmdPath,
+                        benefitByContextKey,
                         sourceVmdDocuments,
                         out var partialDescriptor,
                         out var partialContextCount))
                 {
                     canonicalDescriptor = partialDescriptor;
+                    var coveredBenefit = candidates
+                        .Where(candidate =>
+                            IsCrossRigidJointDescriptorStructuralSuperset(
+                                partialDescriptor, candidate.Descriptor))
+                        .Sum(candidate =>
+                            benefitByContextKey.GetValueOrDefault(
+                                candidate.ContextKey));
                     RecordCrossRigidAnalysisDiagnostic(
                         state,
                         "Partial canonical joint context synthesized",
                         $"{candidates[0].RootVmdPath} / " +
                         $"{partialDescriptor.ParentXmlPath}: " +
                         $"covered={partialContextCount}/{candidates.Count}, " +
+                        $"benefit={coveredBenefit:0.###} expectedDraws, " +
                         $"slots={string.Join(",", partialDescriptor.SlotIndices)}, " +
                         $"dimensions={partialDescriptor.CommonAncestorDimensions.Length}, " +
                         $"weightedStates={partialDescriptor.CombinationCount}");
@@ -6735,16 +6745,20 @@ namespace Editors.KitbasherEditor.Services
         }
 
         // The standard writer uses one Cartesian context at a structural
-        // parent. When the entire union is too large, find the
-        // largest *compatible* cohort and leave the remaining contexts as
-        // normal conflicting candidates. Every expansion goes through the
-        // same exact-probability, dependency and 1,024-state validation as
-        // a full canonical union.
+        // parent. When the entire union is too large, find the most
+        // valuable compatible subset and leave other contexts competing
+        // through their original structural-parent keys. Benefit comes from
+        // the same per-context scenario draw estimates used by the
+        // generated-payload portfolio; raw context count is only a tie-break.
+        // No new states are admitted without the existing exact-probability,
+        // dependency and 1,024-state union validators.
         private static bool
             TryBuildCrossRigidBestPartialCanonicalJointContext(
                 BatchState state,
                 IReadOnlyList<CrossRigidJointAlwaysPresentRewriteDescriptor>
                     candidates,
+                string rootVmdPath,
+                IReadOnlyDictionary<string, double> benefitByContextKey,
                 Dictionary<string, XmlDocument> sourceVmdDocuments,
                 out CrossRigidJointAlwaysPresentRewriteDescriptor descriptor,
                 out int coveredContextCount)
@@ -6754,22 +6768,47 @@ namespace Editors.KitbasherEditor.Services
             if (candidates.Count < 3)
                 return false;
 
+            var weightedCandidates = candidates
+                .Select(candidate => (
+                    Descriptor: candidate,
+                    Benefit: benefitByContextKey.GetValueOrDefault(
+                        BuildCrossRigidJointContextKey(
+                            rootVmdPath, candidate))))
+                .ToArray();
+
+            (double Benefit, int Count) Score(
+                CrossRigidJointAlwaysPresentRewriteDescriptor context)
+            {
+                var benefit = 0.0;
+                var count = 0;
+                foreach (var item in weightedCandidates)
+                {
+                    if (!IsCrossRigidJointDescriptorStructuralSuperset(
+                            context, item.Descriptor))
+                        continue;
+
+                    benefit += item.Benefit;
+                    count++;
+                }
+
+                return (benefit, count);
+            }
+
+            var bestBenefit = double.NegativeInfinity;
             for (var seedIndex = 0;
                  seedIndex < candidates.Count;
                  seedIndex++)
             {
                 var current = candidates[seedIndex];
-                var currentCoverage = candidates.Count(candidate =>
-                    IsCrossRigidJointDescriptorStructuralSuperset(
-                        current, candidate));
+                var (currentBenefit, currentCoverage) = Score(current);
 
-                // Try every seed, since two overlapping contexts may
-                // combine while another ordering chooses an incompatible
-                // but individually larger context first.
+                // Try all seeds: the highest-count cohort may exclude a
+                // more valuable compatible cohort that fits the same cap.
                 while (true)
                 {
                     CrossRigidJointAlwaysPresentRewriteDescriptor?
                         bestExpansion = null;
+                    var bestExpansionBenefit = currentBenefit;
                     var bestExpansionCoverage = currentCoverage;
                     foreach (var candidate in candidates)
                     {
@@ -6785,41 +6824,54 @@ namespace Editors.KitbasherEditor.Services
                             continue;
                         }
 
-                        var expansionCoverage = candidates.Count(other =>
-                            IsCrossRigidJointDescriptorStructuralSuperset(
-                                expansion, other));
-                        if (expansionCoverage > bestExpansionCoverage ||
-                            (expansionCoverage == bestExpansionCoverage &&
-                             bestExpansion != null &&
-                             expansion.CombinationCount <
-                             bestExpansion.CombinationCount))
+                        var (expansionBenefit, expansionCoverage) =
+                            Score(expansion);
+                        if (expansionBenefit >
+                                bestExpansionBenefit +
+                                AtlasValueGateExpectedDrawEpsilon ||
+                            (Math.Abs(
+                                 expansionBenefit -
+                                 bestExpansionBenefit) <=
+                             AtlasValueGateExpectedDrawEpsilon &&
+                             (expansionCoverage > bestExpansionCoverage ||
+                              (expansionCoverage == bestExpansionCoverage &&
+                               bestExpansion != null &&
+                               expansion.CombinationCount <
+                               bestExpansion.CombinationCount))))
                         {
                             bestExpansion = expansion;
+                            bestExpansionBenefit = expansionBenefit;
                             bestExpansionCoverage = expansionCoverage;
                         }
                     }
 
-                    if (bestExpansion == null ||
-                        bestExpansionCoverage <= currentCoverage)
-                    {
+                    if (bestExpansion == null)
                         break;
-                    }
 
                     current = bestExpansion;
+                    currentBenefit = bestExpansionBenefit;
                     currentCoverage = bestExpansionCoverage;
                 }
 
                 if (currentCoverage <= 1 ||
-                    (currentCoverage < coveredContextCount) ||
-                    (currentCoverage == coveredContextCount &&
-                     descriptor != null &&
-                     current.CombinationCount >=
-                     descriptor.CombinationCount))
+                    currentBenefit <
+                        bestBenefit -
+                        AtlasValueGateExpectedDrawEpsilon ||
+                    (Math.Abs(
+                         currentBenefit -
+                         bestBenefit) <=
+                     AtlasValueGateExpectedDrawEpsilon &&
+                     (currentCoverage < coveredContextCount ||
+                      (currentCoverage == coveredContextCount &&
+                       descriptor != null &&
+                       current.CombinationCount >=
+                       descriptor.CombinationCount))))
                 {
                     continue;
                 }
 
                 descriptor = current;
+                bestBenefit = currentBenefit;
                 coveredContextCount = currentCoverage;
             }
 
