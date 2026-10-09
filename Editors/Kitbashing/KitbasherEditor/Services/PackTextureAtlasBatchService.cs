@@ -2506,9 +2506,10 @@ namespace Editors.KitbasherEditor.Services
                     var uniqueTriples = new HashSet<string>(
                         StringComparer.OrdinalIgnoreCase);
                     var emittedTriples = 0;
-                    // Keep all sixteen previously considered candidates.
-                    // Examine eight additional candidates from the opposite
-                    // end to avoid starving late WSModels in large groups.
+                    // Preserve the previously considered sixteen distinct-
+                    // rigid triples exactly. Then examine eight additional
+                    // combinations from the opposite end, including separate
+                    // WSModels that reuse one of the selected rigid paths.
                     foreach (var scanForward in new[] { true, false })
                     {
                         var candidates = scanForward
@@ -2542,7 +2543,7 @@ namespace Editors.KitbasherEditor.Services
                                             item.Component.RigidPath)
                                         .Distinct(
                                             StringComparer.OrdinalIgnoreCase)
-                                        .Count() < 2)
+                                        .Count() < (scanForward ? 3 : 2))
                                         continue;
 
                                     var paths = items.Select(item =>
@@ -2587,10 +2588,9 @@ namespace Editors.KitbasherEditor.Services
                     var uniqueQuadruples = new HashSet<string>(
                         StringComparer.OrdinalIgnoreCase);
                     var emittedQuadruples = 0;
-                    // Keep the original first-eight candidate choices, but
-                    // sample up to eight more from the opposite end of the
-                    // WSModel order. Otherwise large groups spend every
-                    // candidate on the same early carrier combinations.
+                    // Preserve the original eight distinct-rigid candidates
+                    // before adding up to eight more from the opposite end,
+                    // including WSModels backed by repeated rigid sources.
                     foreach (var scanForward in new[] { true, false })
                     {
                         var candidates = scanForward
@@ -2630,7 +2630,7 @@ namespace Editors.KitbasherEditor.Services
                                                 item.Component.RigidPath)
                                             .Distinct(
                                                 StringComparer.OrdinalIgnoreCase)
-                                            .Count() < 2)
+                                            .Count() < (scanForward ? 4 : 2))
                                             continue;
 
                                         var paths = items.Select(item =>
