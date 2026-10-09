@@ -6385,6 +6385,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidFactoredJointParentCount = 0;
             state.CrossRigidFactoredJointGroupCount = 0;
             state.CrossRigidFactoredConditionalGroupCount = 0;
+            state.CrossRigidFactoredSingleCarrierGroupCount = 0;
             state.CrossRigidCanonicalJointParentCount = 0;
             state.CrossRigidCanonicalJointContextsFolded = 0;
             state.CrossRigidCanonicalJointParentConflictCount = 0;
@@ -6582,6 +6583,8 @@ namespace Editors.KitbasherEditor.Services
                     state.CrossRigidFactoredConditionalGroupCount +=
                         factors.Count(factor =>
                             factor.CommonAncestorDimensions.Length != 0);
+                    state.CrossRigidFactoredSingleCarrierGroupCount +=
+                        factors.Count(factor => factor.SlotIndices.Length == 1);
                     var coveredContexts = candidates.Count(candidate =>
                         factors.Any(factor =>
                             IsCrossRigidJointDescriptorStructuralSuperset(
@@ -6694,9 +6697,14 @@ namespace Editors.KitbasherEditor.Services
             if (candidates.Count < 2)
                 return false;
 
+            // A single root carrier can contain several co-rendered
+            // descendants with conditional choices. Such a joint context
+            // can coexist with disjoint root carriers without multiplying
+            // its Cartesian states into the other contexts.
+            // Keep every existing anchor, dimension and disjointness check.
             var ranked = candidates
                 .Where(item =>
-                    item.Descriptor.SlotIndices.Length >= 2 &&
+                    item.Descriptor.SlotIndices.Length >= 1 &&
                     item.Descriptor.AnchorReferenceChain.Length == 0 &&
                     item.Descriptor.ParentXmlPath == "/VARIANT_MESH" &&
                     Normalize(item.Descriptor.AnchorVmdPath).Equals(
@@ -34076,7 +34084,8 @@ namespace Editors.KitbasherEditor.Services
                     $"Factored independent-root Cartesian contexts: " +
                     $"{state.CrossRigidFactoredJointParentCount:N0} parent(s), " +
                     $"{state.CrossRigidFactoredJointGroupCount:N0} separate context group(s), " +
-                    $"{state.CrossRigidFactoredConditionalGroupCount:N0} with conditional dimensions");
+                    $"{state.CrossRigidFactoredConditionalGroupCount:N0} with conditional dimensions, " +
+                    $"{state.CrossRigidFactoredSingleCarrierGroupCount:N0} single-carrier factor(s)");
                 sb.AppendLine(
                     $"Cross-rigid portfolio search: " +
                     $"{state.CrossRigidPortfolioOrderingsEvaluated:N0} ordering(s) evaluated; " +
@@ -37222,6 +37231,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidFactoredJointParentCount { get; set; }
             public int CrossRigidFactoredJointGroupCount { get; set; }
             public int CrossRigidFactoredConditionalGroupCount { get; set; }
+            public int CrossRigidFactoredSingleCarrierGroupCount { get; set; }
             public int CrossRigidCanonicalJointParentCount { get; set; }
             public int CrossRigidCanonicalJointContextsFolded { get; set; }
             public int CrossRigidCanonicalJointParentConflictCount { get; set; }
