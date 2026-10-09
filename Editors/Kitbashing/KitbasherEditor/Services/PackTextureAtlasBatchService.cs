@@ -2707,7 +2707,7 @@ namespace Editors.KitbasherEditor.Services
                 {
                     var seen = new HashSet<string>(
                         StringComparer.OrdinalIgnoreCase);
-                    var emitted = 0;
+                    var emittedQuintuples = 0;
                     var orders = new[]
                     {
                         group,
@@ -2722,9 +2722,9 @@ namespace Editors.KitbasherEditor.Services
                         foreach (var items in
                                  EnumerateCrossRigidDistinctFallbackSubsets(
                                          orders[pass], 5, seen)
-                                     .Take(stageLimit - emitted))
+                                     .Take(stageLimit - emittedQuintuples))
                         {
-                            emitted++;
+                            emittedQuintuples++;
                             yield return (items, true, 5, group);
                         }
                     }
