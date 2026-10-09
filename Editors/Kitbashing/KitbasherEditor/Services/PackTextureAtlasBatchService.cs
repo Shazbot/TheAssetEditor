@@ -91,7 +91,7 @@ namespace Editors.KitbasherEditor.Services
         private const int MaxCrossRigidPairFallbacksPerGroup = 24;
         // A bounded three-rigid alternative can recover savings from a
         // full group whose Cartesian appearance space is too large.
-        private const int MaxCrossRigidTripleFallbacksPerGroup = 16;
+        private const int MaxCrossRigidTripleFallbacksPerGroup = 24;
         // Four components can recover merges from otherwise unwritable five+
         // component groups without expanding the global Cartesian writer.
         private const int MaxCrossRigidQuadrupleFallbacksPerGroup = 16;
@@ -2497,69 +2497,76 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 // The complete three-component case has already been
-                // yielded above. For larger groups, allow up to sixteen
-                // three-rigid fallbacks through exactly the same rewrite
-                // validation, conflict resolution and value gate as pairs.
-                // The existing subgroup flag denotes a candidate subordinate
-                // to a full group; the size identifies triples for diagnostics
-                // without changing the protected full portfolio.
+                // yielded above. For larger groups, fall back to a bounded
+                // three-component merge, including combinations of different
+                // WSModels which share a rigid path. Two distinct rigids are
+                // still required to provide an actual cross-rigid merge.
                 if (group.Length >= 4)
                 {
                     var uniqueTriples = new HashSet<string>(
                         StringComparer.OrdinalIgnoreCase);
                     var emittedTriples = 0;
-                    for (var firstIndex = 0;
-                         firstIndex < group.Length &&
-                         emittedTriples < MaxCrossRigidTripleFallbacksPerGroup;
-                         firstIndex++)
+                    // Keep all sixteen previously considered candidates.
+                    // Examine eight additional candidates from the opposite
+                    // end to avoid starving late WSModels in large groups.
+                    foreach (var scanForward in new[] { true, false })
                     {
-                        for (var secondIndex = firstIndex + 1;
-                             secondIndex < group.Length &&
-                             emittedTriples < MaxCrossRigidTripleFallbacksPerGroup;
-                             secondIndex++)
+                        var candidates = scanForward
+                            ? group
+                            : group.Reverse().ToArray();
+                        var stageLimit = scanForward
+                            ? 16
+                            : MaxCrossRigidTripleFallbacksPerGroup;
+                        for (var firstIndex = 0;
+                             firstIndex < candidates.Length &&
+                             emittedTriples < stageLimit;
+                             firstIndex++)
                         {
-                            for (var thirdIndex = secondIndex + 1;
-                                 thirdIndex < group.Length &&
-                                 emittedTriples < MaxCrossRigidTripleFallbacksPerGroup;
-                                 thirdIndex++)
+                            for (var secondIndex = firstIndex + 1;
+                                 secondIndex < candidates.Length &&
+                                 emittedTriples < stageLimit;
+                                 secondIndex++)
                             {
-                                var first = group[firstIndex];
-                                var second = group[secondIndex];
-                                var third = group[thirdIndex];
-                                var distinctRigids = new[]
+                                for (var thirdIndex = secondIndex + 1;
+                                     thirdIndex < candidates.Length &&
+                                     emittedTriples < stageLimit;
+                                     thirdIndex++)
                                 {
-                                    first.Component.RigidPath,
-                                    second.Component.RigidPath,
-                                    third.Component.RigidPath,
-                                }.Distinct(StringComparer.OrdinalIgnoreCase)
-                                    .Count();
-                                if (distinctRigids != 3)
-                                    continue;
+                                    var items = new[]
+                                    {
+                                        candidates[firstIndex],
+                                        candidates[secondIndex],
+                                        candidates[thirdIndex],
+                                    };
+                                    if (items.Select(item =>
+                                            item.Component.RigidPath)
+                                        .Distinct(
+                                            StringComparer.OrdinalIgnoreCase)
+                                        .Count() < 2)
+                                        continue;
 
-                                var paths = new[]
-                                {
-                                    Normalize(first.Instance.WsModelPath),
-                                    Normalize(second.Instance.WsModelPath),
-                                    Normalize(third.Instance.WsModelPath),
-                                };
-                                if (paths.Distinct(
-                                        StringComparer.OrdinalIgnoreCase)
+                                    var paths = items.Select(item =>
+                                            Normalize(item.Instance.WsModelPath))
+                                        .ToArray();
+                                    if (paths.Distinct(
+                                            StringComparer.OrdinalIgnoreCase)
                                         .Count() != 3)
-                                    continue;
+                                        continue;
 
-                                Array.Sort(
-                                    paths,
-                                    StringComparer.OrdinalIgnoreCase);
-                                if (!uniqueTriples.Add(
-                                        string.Join("\u001f", paths)))
-                                    continue;
+                                    Array.Sort(
+                                        paths,
+                                        StringComparer.OrdinalIgnoreCase);
+                                    if (!uniqueTriples.Add(
+                                            string.Join("\u001f", paths)))
+                                        continue;
 
-                                emittedTriples++;
-                                yield return (
-                                    new[] { first, second, third },
-                                    true,
-                                    3,
-                                    group);
+                                    emittedTriples++;
+                                    yield return (
+                                        items,
+                                        true,
+                                        3,
+                                        group);
+                                }
                             }
                         }
                     }
@@ -2568,12 +2575,14 @@ namespace Editors.KitbasherEditor.Services
                 // A full group with exactly four components is already
                 // represented by its original candidate. Only groups with
                 // at least five members can have a true four-way fallback.
-                // Preserve distinct WSModel/rigid membership and cap the
-                // additional candidates before normal provenance analysis.
+                // All WSModel paths must be different, but source rigid paths
+                // may repeat because distinct WSModels are distinct render
+                // occurrences. Require two different rigids and pass every
+                // candidate through the existing provenance/value gates.
                 if (group.Length >= 5 &&
                     group.Select(item => item.Component.RigidPath)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .Count() >= 4)
+                        .Count() >= 2)
                 {
                     var uniqueQuadruples = new HashSet<string>(
                         StringComparer.OrdinalIgnoreCase);
@@ -2621,7 +2630,7 @@ namespace Editors.KitbasherEditor.Services
                                                 item.Component.RigidPath)
                                             .Distinct(
                                                 StringComparer.OrdinalIgnoreCase)
-                                            .Count() != 4)
+                                            .Count() < 2)
                                             continue;
 
                                         var paths = items.Select(item =>
