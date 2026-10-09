@@ -6387,6 +6387,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidFactoredConditionalGroupCount = 0;
             state.CrossRigidFactoredSingleCarrierGroupCount = 0;
             state.CrossRigidFactoredPackingSearchImprovements = 0;
+            state.CrossRigidFactoredPairLookaheadSeeds = 0;
             state.CrossRigidCanonicalJointParentCount = 0;
             state.CrossRigidCanonicalJointContextsFolded = 0;
             state.CrossRigidCanonicalJointParentConflictCount = 0;
@@ -6731,9 +6732,79 @@ namespace Editors.KitbasherEditor.Services
             var possibleFactors = ranked
                 .Select(item => item.Descriptor)
                 .ToList();
-            foreach (var seed in ranked.Take(24))
+            // Greedy expansion from one candidate can skip a smaller
+            // overlapping-carrier union which leaves room for another
+            // independent factor. Generate bounded pair seeds through the
+            // same exact-state and dependency validators as ordinary unions.
+            const int maxPairLookaheadSources = 32;
+            const int maxPairLookaheadSeeds = 96;
+            var expansionSeeds = ranked.Take(24)
+                .Select(item => item.Descriptor)
+                .ToList();
+            var pairSeedOptions = new Dictionary<
+                string,
+                (CrossRigidJointAlwaysPresentRewriteDescriptor Descriptor,
+                    double Benefit)>(StringComparer.Ordinal);
+            var lookaheadCandidates = ranked
+                .Take(maxPairLookaheadSources)
+                .ToArray();
+            for (var leftIndex = 0;
+                 leftIndex < lookaheadCandidates.Length;
+                 leftIndex++)
             {
-                var current = seed.Descriptor;
+                var left = lookaheadCandidates[leftIndex].Descriptor;
+                for (var rightIndex = leftIndex + 1;
+                     rightIndex < lookaheadCandidates.Length;
+                     rightIndex++)
+                {
+                    var right = lookaheadCandidates[rightIndex].Descriptor;
+                    if (!left.SlotIndices.Intersect(
+                            right.SlotIndices).Any() ||
+                        !TryCombineCrossRigidCanonicalJointContexts(
+                            state,
+                            left,
+                            right,
+                            sourceVmdDocuments,
+                            out var union) ||
+                        union.CommonAncestorDimensions.Any(dimension =>
+                            !union.SlotIndices.Contains(
+                                dimension.CarrierSlotIndex)))
+                    {
+                        continue;
+                    }
+
+                    var key = BuildCrossRigidJointContextKey(
+                        ranked[0].RootVmdPath, union);
+                    if (pairSeedOptions.ContainsKey(key))
+                        continue;
+
+                    var benefit = ranked
+                        .Where(item =>
+                            IsCrossRigidJointDescriptorStructuralSuperset(
+                                union, item.Descriptor))
+                        .Sum(item =>
+                            benefitByContextKey.GetValueOrDefault(
+                                item.ContextKey));
+                    pairSeedOptions.Add(key, (union, benefit));
+                }
+            }
+
+            var pairSeeds = pairSeedOptions
+                .OrderByDescending(item => item.Value.Benefit)
+                .ThenBy(item => item.Value.Descriptor.CombinationCount)
+                .ThenBy(item => item.Key, StringComparer.Ordinal)
+                .Take(maxPairLookaheadSeeds)
+                .Select(item => item.Value.Descriptor)
+                .ToArray();
+            state.CrossRigidFactoredPairLookaheadSeeds += pairSeeds.Length;
+            expansionSeeds.AddRange(pairSeeds);
+
+            foreach (var seedDescriptor in expansionSeeds)
+            {
+                var current = seedDescriptor;
+                // Retain the unexpanded pair: its smaller carrier set may
+                // fit beside a better disjoint group than its greedy closure.
+                possibleFactors.Add(current);
                 while (true)
                 {
                     CrossRigidJointAlwaysPresentRewriteDescriptor?
@@ -34190,7 +34261,8 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidFactoredJointGroupCount:N0} separate context group(s), " +
                     $"{state.CrossRigidFactoredConditionalGroupCount:N0} with conditional dimensions, " +
                     $"{state.CrossRigidFactoredSingleCarrierGroupCount:N0} single-carrier factor(s), " +
-                    $"{state.CrossRigidFactoredPackingSearchImprovements:N0} packing improvement(s)");
+                    $"{state.CrossRigidFactoredPackingSearchImprovements:N0} packing improvement(s), " +
+                    $"{state.CrossRigidFactoredPairLookaheadSeeds:N0} pair lookahead seed(s)");
                 sb.AppendLine(
                     $"Cross-rigid portfolio search: " +
                     $"{state.CrossRigidPortfolioOrderingsEvaluated:N0} ordering(s) evaluated; " +
@@ -37338,6 +37410,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidFactoredConditionalGroupCount { get; set; }
             public int CrossRigidFactoredSingleCarrierGroupCount { get; set; }
             public int CrossRigidFactoredPackingSearchImprovements { get; set; }
+            public int CrossRigidFactoredPairLookaheadSeeds { get; set; }
             public int CrossRigidCanonicalJointParentCount { get; set; }
             public int CrossRigidCanonicalJointContextsFolded { get; set; }
             public int CrossRigidCanonicalJointParentConflictCount { get; set; }
