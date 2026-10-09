@@ -7612,6 +7612,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidRawGreedyExpectedDraws = 0;
             state.CrossRigidBestPortfolioExpectedDraws = 0;
             state.CrossRigidPortfolioPairTrials = 0;
+            state.CrossRigidPortfolioContextCohortTrials = 0;
             state.CrossRigidSharedPayloadFallbackCandidatePlans = 0;
             state.CrossRigidSharedPayloadFallbackCompatibleStates = 0;
             state.CrossRigidSharedPayloadFallbackAcceptedStates = 0;
@@ -8669,6 +8670,89 @@ namespace Editors.KitbasherEditor.Services
                     bestOrder = trialOrder;
                 }
             }
+
+            // A competing Cartesian context can require several payloads
+            // to replace existing joint-state owners. Promoting one or two
+            // candidates cannot expose their combined benefit. Evaluate
+            // bounded cohorts sharing an exact parent/context; the existing
+            // occurrence conflicts and portfolio budgets still gate each
+            // candidate in the ordinary replay.
+            var contextCohorts =
+                contextSeedObservations
+                    .GroupBy(
+                        item => item.ParentLocation + "\u001e" +
+                                item.ContextKey,
+                        StringComparer.Ordinal)
+                    .Select(group => new
+                    {
+                        group.First().ParentLocation,
+                        group.First().ContextKey,
+                        Candidates = group
+                            .Select(item => item.Candidate)
+                            .GroupBy(item => item.GeneratedPayloadId,
+                                StringComparer.Ordinal)
+                            .Select(items => items.First())
+                            .OrderByDescending(item =>
+                                item.ExpectedArmyDrawCallsEliminated)
+                            .ThenBy(item => item.GeneratedPayloadId,
+                                StringComparer.Ordinal)
+                            .Take(16)
+                            .ToArray(),
+                    })
+                    .Where(cohort => cohort.Candidates.Length >= 2)
+                    .OrderByDescending(cohort =>
+                        cohort.Candidates.Sum(item =>
+                            item.ExpectedArmyDrawCallsEliminated))
+                    .ThenBy(cohort => cohort.ParentLocation,
+                        StringComparer.Ordinal)
+                    .ThenBy(cohort => cohort.ContextKey,
+                        StringComparer.Ordinal)
+                    .ToArray();
+            // Reserve trials for distinct structural parents as well as
+            // globally strong cohorts, rather than letting one VMD family
+            // consume the entire bounded search budget.
+            var cohortsToEvaluate =
+                contextCohorts.Take(8)
+                    .Concat(contextCohorts
+                        .GroupBy(cohort => cohort.ParentLocation,
+                            StringComparer.Ordinal)
+                        .Select(group => group.First()))
+                    .GroupBy(
+                        cohort => cohort.ParentLocation + "\u001e" +
+                                  cohort.ContextKey,
+                        StringComparer.Ordinal)
+                    .Select(group => group.First())
+                    .Take(16)
+                    .ToArray();
+            foreach (var cohort in cohortsToEvaluate)
+            {
+                var promotedIds =
+                    cohort.Candidates
+                        .Select(entry => entry.GeneratedPayloadId)
+                        .ToHashSet(StringComparer.Ordinal);
+                var trialOrder =
+                    cohort.Candidates
+                        .Concat(bestOrder.Where(entry =>
+                            !promotedIds.Contains(
+                                entry.GeneratedPayloadId)))
+                        .ToArray();
+                var trial =
+                    EvaluateCrossRigidPayloadPortfolio(
+                        state,
+                        trialOrder,
+                        conflictProfiles,
+                        invalidProfiles,
+                        sourceVmdDocuments);
+                evaluated++;
+                if (IsBetterCrossRigidPayloadPortfolio(trial, best))
+                {
+                    best = trial;
+                    bestOrder = trialOrder;
+                }
+            }
+
+            state.CrossRigidPortfolioContextCohortTrials =
+                cohortsToEvaluate.Length;
 
             // One-for-many substitutions are not sufficient when two cheaper
             // payloads jointly replace a large merge. Search a bounded number
@@ -33393,7 +33477,8 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidPortfolioOrderingsEvaluated:N0} ordering(s) evaluated; " +
                     $"raw-draw baseline={state.CrossRigidRawGreedyExpectedDraws:0.###}, " +
                     $"best={state.CrossRigidBestPortfolioExpectedDraws:0.###} expected draws; " +
-                    $"pair ordering trials={state.CrossRigidPortfolioPairTrials:N0}");
+                    $"pair ordering trials={state.CrossRigidPortfolioPairTrials:N0}, " +
+                    $"context cohort trials={state.CrossRigidPortfolioContextCohortTrials:N0}");
                 sb.AppendLine(
                     $"Payload candidates: " +
                     $"{state.CrossRigidPayloadSelectionEntries.Count:N0}");
@@ -36537,6 +36622,7 @@ namespace Editors.KitbasherEditor.Services
             public double CrossRigidRawGreedyExpectedDraws { get; set; }
             public double CrossRigidBestPortfolioExpectedDraws { get; set; }
             public int CrossRigidPortfolioPairTrials { get; set; }
+            public int CrossRigidPortfolioContextCohortTrials { get; set; }
             public int CrossRigidSharedPayloadFallbackCandidatePlans { get; set; }
             public int CrossRigidSharedPayloadFallbackCompatibleStates { get; set; }
             public int CrossRigidSharedPayloadFallbackAcceptedStates { get; set; }
