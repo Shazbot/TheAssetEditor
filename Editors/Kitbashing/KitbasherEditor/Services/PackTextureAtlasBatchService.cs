@@ -6246,8 +6246,10 @@ namespace Editors.KitbasherEditor.Services
                 // product distribution without expanding the global product.
                 if (canonicalDescriptor == null &&
                     TryBuildCrossRigidFactoredRootJointContexts(
+                        state,
                         candidates,
                         benefitByContextKey,
+                        sourceVmdDocuments,
                         out var factors))
                 {
                     state.CrossRigidFactoredJointDescriptorsByParentLocation[
@@ -6328,32 +6330,35 @@ namespace Editors.KitbasherEditor.Services
         }
 
         // Root-level carrier slots are independent random choices even when
-        // a carrier contains conditional local or child-VMD selections. Keep
-        // every dimension inside its own factor's carrier slot set; never
-        // factor a shared carrier or a non-root structural parent.
+        // a carrier contains conditional local or child-VMD selections. An
+        // incompatible context must not disable factoring unrelated carriers:
+        // it can still compete against the factored context at selection time.
+        // Never factor overlapping carriers or non-root structural parents.
         private static bool TryBuildCrossRigidFactoredRootJointContexts(
+            BatchState state,
             IReadOnlyList<(
                 string RootVmdPath,
                 CrossRigidJointAlwaysPresentRewriteDescriptor Descriptor,
                 string ContextKey)> candidates,
             IReadOnlyDictionary<string, double> benefitByContextKey,
+            Dictionary<string, XmlDocument> sourceVmdDocuments,
             out CrossRigidJointAlwaysPresentRewriteDescriptor[] factors)
         {
             factors = [];
-            if (candidates.Count < 2 ||
-                candidates.Any(item =>
-                    item.Descriptor.AnchorReferenceChain.Length != 0 ||
-                    item.Descriptor.ParentXmlPath != "/VARIANT_MESH" ||
-                    !Normalize(item.Descriptor.AnchorVmdPath).Equals(
-                        Normalize(item.RootVmdPath),
-                        StringComparison.OrdinalIgnoreCase) ||
-                    item.Descriptor.CommonAncestorDimensions.Any(dimension =>
-                        !item.Descriptor.SlotIndices.Contains(
-                            dimension.CarrierSlotIndex))))
+            if (candidates.Count < 2)
                 return false;
 
             var ranked = candidates
-                .Where(item => item.Descriptor.SlotIndices.Length >= 2)
+                .Where(item =>
+                    item.Descriptor.SlotIndices.Length >= 2 &&
+                    item.Descriptor.AnchorReferenceChain.Length == 0 &&
+                    item.Descriptor.ParentXmlPath == "/VARIANT_MESH" &&
+                    Normalize(item.Descriptor.AnchorVmdPath).Equals(
+                        Normalize(item.RootVmdPath),
+                        StringComparison.OrdinalIgnoreCase) &&
+                    item.Descriptor.CommonAncestorDimensions.All(dimension =>
+                        item.Descriptor.SlotIndices.Contains(
+                            dimension.CarrierSlotIndex)))
                 .OrderByDescending(item =>
                     benefitByContextKey.GetValueOrDefault(item.ContextKey))
                 .ThenBy(item => item.Descriptor.CombinationCount)
@@ -6362,34 +6367,129 @@ namespace Editors.KitbasherEditor.Services
             if (ranked.Length < 2)
                 return false;
 
-            // A single greedy highest-benefit factor can prevent two disjoint
-            // smaller factors (e.g. AB versus AC+BD). Try each promising seed,
-            // then fill disjoint groups in stable benefit order. This is a
-            // bounded alternative ordering, not an unbounded subset search.
+            // Overlapping root carriers must form one factor, not two
+            // independent SLOTs. An exact bounded union can cover several
+            // overlapping candidate contexts, leaving other disjoint carrier
+            // groups free to become separate factors. Only combine through
+            // the same state/probability/dependency validator used for
+            // ordinary canonical joint contexts.
+            var possibleFactors = ranked
+                .Select(item => item.Descriptor)
+                .ToList();
+            foreach (var seed in ranked.Take(24))
+            {
+                var current = seed.Descriptor;
+                while (true)
+                {
+                    CrossRigidJointAlwaysPresentRewriteDescriptor?
+                        bestExpansion = null;
+                    var currentCoverage = ranked
+                        .Where(item =>
+                            IsCrossRigidJointDescriptorStructuralSuperset(
+                                current, item.Descriptor))
+                        .Sum(item =>
+                            benefitByContextKey.GetValueOrDefault(
+                                item.ContextKey));
+                    var bestGain = 0.0;
+                    foreach (var candidate in ranked.Take(48))
+                    {
+                        if (IsCrossRigidJointDescriptorStructuralSuperset(
+                                current, candidate.Descriptor) ||
+                            !current.SlotIndices.Intersect(
+                                candidate.Descriptor.SlotIndices).Any() ||
+                            !TryCombineCrossRigidCanonicalJointContexts(
+                                state,
+                                current,
+                                candidate.Descriptor,
+                                sourceVmdDocuments,
+                                out var expansion) ||
+                            expansion.CommonAncestorDimensions.Any(dimension =>
+                                !expansion.SlotIndices.Contains(
+                                    dimension.CarrierSlotIndex)))
+                        {
+                            continue;
+                        }
+
+                        var expandedCoverage = ranked
+                            .Where(item =>
+                                IsCrossRigidJointDescriptorStructuralSuperset(
+                                    expansion, item.Descriptor))
+                            .Sum(item =>
+                                benefitByContextKey.GetValueOrDefault(
+                                    item.ContextKey));
+                        var gain = expandedCoverage - currentCoverage;
+                        if (gain <= AtlasValueGateExpectedDrawEpsilon ||
+                            gain < bestGain -
+                                AtlasValueGateExpectedDrawEpsilon ||
+                            (Math.Abs(gain - bestGain) <=
+                                 AtlasValueGateExpectedDrawEpsilon &&
+                             bestExpansion != null &&
+                             expansion.CombinationCount >=
+                             bestExpansion.CombinationCount))
+                        {
+                            continue;
+                        }
+
+                        bestExpansion = expansion;
+                        bestGain = gain;
+                    }
+
+                    if (bestExpansion == null)
+                        break;
+                    current = bestExpansion;
+                }
+
+                possibleFactors.Add(current);
+            }
+
+            var options = possibleFactors
+                .Select(descriptor => new
+                {
+                    Descriptor = descriptor,
+                    Benefit = ranked
+                        .Where(item =>
+                            IsCrossRigidJointDescriptorStructuralSuperset(
+                                descriptor, item.Descriptor))
+                        .Sum(item =>
+                            benefitByContextKey.GetValueOrDefault(
+                                item.ContextKey)),
+                    Key = BuildCrossRigidJointContextKey(
+                        ranked[0].RootVmdPath, descriptor),
+                })
+                .GroupBy(option => option.Key, StringComparer.Ordinal)
+                .Select(group => group.First())
+                .OrderByDescending(option => option.Benefit)
+                .ThenBy(option => option.Descriptor.CombinationCount)
+                .ThenBy(option => option.Key, StringComparer.Ordinal)
+                .Take(96)
+                .ToArray();
+
+            // A single greedy largest-benefit factor can block two disjoint
+            // smaller groups (AB versus AC+BD). Compare bounded alternatives
+            // from each promising seed, including synthesized union factors.
             var bestBenefit = double.NegativeInfinity;
             var bestStateCount = long.MaxValue;
             CrossRigidJointAlwaysPresentRewriteDescriptor[] best = [];
-            foreach (var seed in ranked.Take(64))
+            foreach (var seed in options.Take(64))
             {
                 var chosen =
                     new List<CrossRigidJointAlwaysPresentRewriteDescriptor>();
                 var usedSlots = new HashSet<int>();
                 var benefit = 0.0;
                 long stateCount = 0;
-                foreach (var item in new[] { seed }
-                             .Concat(ranked.Where(item =>
-                                 !item.ContextKey.Equals(
-                                     seed.ContextKey,
-                                     StringComparison.Ordinal))))
+                foreach (var option in new[] { seed }
+                             .Concat(options.Where(option =>
+                                 !option.Key.Equals(
+                                     seed.Key, StringComparison.Ordinal))))
                 {
-                    if (item.Descriptor.SlotIndices.Any(usedSlots.Contains))
+                    if (option.Descriptor.SlotIndices.Any(
+                            usedSlots.Contains))
                         continue;
 
-                    chosen.Add(item.Descriptor);
-                    usedSlots.UnionWith(item.Descriptor.SlotIndices);
-                    benefit += benefitByContextKey.GetValueOrDefault(
-                        item.ContextKey);
-                    stateCount += item.Descriptor.CombinationCount;
+                    chosen.Add(option.Descriptor);
+                    usedSlots.UnionWith(option.Descriptor.SlotIndices);
+                    benefit += option.Benefit;
+                    stateCount += option.Descriptor.CombinationCount;
                 }
 
                 if (chosen.Count < 2 ||
