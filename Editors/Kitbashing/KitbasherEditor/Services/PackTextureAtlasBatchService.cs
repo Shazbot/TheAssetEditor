@@ -6058,6 +6058,9 @@ namespace Editors.KitbasherEditor.Services
             Dictionary<string, XmlDocument> sourceVmdDocuments)
         {
             state.CrossRigidCanonicalJointDescriptorByParentLocation.Clear();
+            state.CrossRigidFactoredJointDescriptorsByParentLocation.Clear();
+            state.CrossRigidFactoredJointParentCount = 0;
+            state.CrossRigidFactoredJointGroupCount = 0;
             state.CrossRigidCanonicalJointParentCount = 0;
             state.CrossRigidCanonicalJointContextsFolded = 0;
             state.CrossRigidCanonicalJointParentConflictCount = 0;
@@ -6070,6 +6073,8 @@ namespace Editors.KitbasherEditor.Services
                         CrossRigidJointAlwaysPresentRewriteDescriptor Descriptor,
                         string ContextKey)>>(
                     StringComparer.Ordinal);
+            var benefitByContextKey =
+                new Dictionary<string, double>(StringComparer.Ordinal);
 
             foreach (var plan in state.CrossRigidMergeAnalysisEntries)
             {
@@ -6110,6 +6115,13 @@ namespace Editors.KitbasherEditor.Services
                         BuildCrossRigidJointContextKey(
                             plan.VmdPath,
                             descriptor);
+                    benefitByContextKey[contextKey] =
+                        benefitByContextKey.GetValueOrDefault(contextKey) +
+                        plan.ExpectedArmyDrawCallsEliminated *
+                        occurrenceSet.Probability /
+                        Math.Max(
+                            plan.AggregatedConfigurationProbability,
+                            AtlasValueGateExpectedDrawEpsilon);
                     if (!candidatesByParent.TryGetValue(
                             parentLocationKey,
                             out var candidates))
@@ -6228,6 +6240,31 @@ namespace Editors.KitbasherEditor.Services
                         mixedUnion.CombinationCount);
                 }
 
+                // Disjoint direct root slot sets can remain separate joint
+                // slots. Their runtime random choices preserve the original
+                // product distribution without expanding the global product.
+                if (canonicalDescriptor == null &&
+                    TryBuildCrossRigidFactoredRootJointContexts(
+                        candidates,
+                        benefitByContextKey,
+                        out var factors))
+                {
+                    state.CrossRigidFactoredJointDescriptorsByParentLocation[
+                        parentLocationKey] = factors;
+                    state.CrossRigidFactoredJointParentCount++;
+                    state.CrossRigidFactoredJointGroupCount += factors.Length;
+                    if (factors.Length < candidates.Count)
+                        state.CrossRigidCanonicalJointParentConflictCount++;
+                    RecordCrossRigidAnalysisDiagnostic(
+                        state,
+                        "Factored root Cartesian contexts synthesized",
+                        candidates[0].RootVmdPath + ": " +
+                        string.Join(" | ", factors.Select(factor =>
+                            $"slots={string.Join(",", factor.SlotIndices)} " +
+                            $"weightedStates={factor.CombinationCount}")));
+                    continue;
+                }
+
                 // A single parent may have several incompatible contexts
                 // even though a useful subset can be represented exactly.
                 // Do not discard compatible smaller cohorts merely because
@@ -6286,8 +6323,93 @@ namespace Editors.KitbasherEditor.Services
             }
         }
 
-        // The writer can materialize only one Cartesian context at a
-        // structural parent. When the entire union is too large, find the
+        // Only direct root-level sibling slot sets are factored. Nested and
+        // referenced selections retain the ordinary joint-context semantics.
+        private static bool TryBuildCrossRigidFactoredRootJointContexts(
+            IReadOnlyList<(
+                string RootVmdPath,
+                CrossRigidJointAlwaysPresentRewriteDescriptor Descriptor,
+                string ContextKey)> candidates,
+            IReadOnlyDictionary<string, double> benefitByContextKey,
+            out CrossRigidJointAlwaysPresentRewriteDescriptor[] factors)
+        {
+            factors = [];
+            if (candidates.Count < 2 ||
+                candidates.Any(item =>
+                    item.Descriptor.CommonAncestorDimensions.Length != 0 ||
+                    item.Descriptor.AnchorReferenceChain.Length != 0 ||
+                    item.Descriptor.ParentXmlPath != "/VARIANT_MESH" ||
+                    !Normalize(item.Descriptor.AnchorVmdPath).Equals(
+                        Normalize(item.RootVmdPath),
+                        StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            var chosen = new List<CrossRigidJointAlwaysPresentRewriteDescriptor>();
+            var usedSlots = new HashSet<int>();
+            foreach (var item in candidates
+                         .OrderByDescending(candidate =>
+                             benefitByContextKey.GetValueOrDefault(
+                                 candidate.ContextKey))
+                         .ThenBy(candidate =>
+                             candidate.Descriptor.CombinationCount)
+                         .ThenBy(candidate => candidate.ContextKey,
+                             StringComparer.Ordinal))
+            {
+                if (item.Descriptor.SlotIndices.Length < 2 ||
+                    item.Descriptor.SlotIndices.Any(usedSlots.Contains))
+                    continue;
+                chosen.Add(item.Descriptor);
+                usedSlots.UnionWith(item.Descriptor.SlotIndices);
+            }
+
+            if (chosen.Count < 2)
+                return false;
+            factors = chosen.ToArray();
+            return true;
+        }
+
+        private const string CrossRigidFactoredParentMarker =
+            "factored-independent-root-slots";
+
+        private static bool TryGetCrossRigidFactoredDescriptor(
+            BatchState state,
+            string originalParentKey,
+            CrossRigidJointAlwaysPresentRewriteDescriptor descriptor,
+            out CrossRigidJointAlwaysPresentRewriteDescriptor factor)
+        {
+            if (state.CrossRigidFactoredJointDescriptorsByParentLocation
+                    .TryGetValue(originalParentKey, out var factors))
+            {
+                foreach (var candidate in factors)
+                {
+                    if (IsCrossRigidJointDescriptorStructuralSuperset(
+                            candidate, descriptor))
+                    {
+                        factor = candidate;
+                        return true;
+                    }
+                }
+            }
+            factor = null!;
+            return false;
+        }
+
+        private static string GetCrossRigidEffectiveJointParentKey(
+            BatchState state,
+            string rootVmdPath,
+            CrossRigidJointAlwaysPresentRewriteDescriptor descriptor)
+        {
+            var originalKey = BuildCrossRigidJointParentLocationKey(
+                rootVmdPath, descriptor);
+            return TryGetCrossRigidFactoredDescriptor(
+                    state, originalKey, descriptor, out var factor)
+                ? originalKey + "\u001ffactor-slots=" +
+                  string.Join(",", factor.SlotIndices)
+                : originalKey;
+        }
+
+        // The standard writer uses one Cartesian context at a structural
+        // parent. When the entire union is too large, find the
         // largest *compatible* cohort and leave the remaining contexts as
         // normal conflicting candidates. Every expansion goes through the
         // same exact-probability, dependency and 1,024-state validation as
@@ -7010,6 +7132,11 @@ namespace Editors.KitbasherEditor.Services
                 BuildCrossRigidJointParentLocationKey(
                     rootVmdPath,
                     descriptor);
+            if (TryGetCrossRigidFactoredDescriptor(
+                    state, parentLocationKey, descriptor,
+                    out var factoredDescriptor))
+                return factoredDescriptor;
+
             if (state.CrossRigidCanonicalJointDescriptorByParentLocation
                     .TryGetValue(
                         parentLocationKey,
@@ -9414,10 +9541,12 @@ namespace Editors.KitbasherEditor.Services
                         return false;
                     }
 
-                    var parentLocationKey =
+                    var originalParentKey =
                         BuildCrossRigidJointParentLocationKey(
-                            plan.VmdPath,
-                            descriptor);
+                            plan.VmdPath, descriptor);
+                    var parentLocationKey =
+                        GetCrossRigidEffectiveJointParentKey(
+                            state, plan.VmdPath, descriptor);
                     var contextDescriptor =
                         GetCrossRigidEffectiveJointDescriptor(
                             state,
@@ -9428,8 +9557,16 @@ namespace Editors.KitbasherEditor.Services
                             plan.VmdPath,
                             contextDescriptor);
                     jointContextKeyByParentLocation[
-                        parentLocationKey] =
-                        contextKey;
+                        parentLocationKey] = contextKey;
+                    if (!parentLocationKey.Equals(
+                            originalParentKey, StringComparison.Ordinal))
+                    {
+                        // Ordinary contexts conflict with this marker;
+                        // disjoint factors all share the same marker.
+                        jointContextKeyByParentLocation[
+                            originalParentKey] =
+                            CrossRigidFactoredParentMarker;
+                    }
                     AddCrossRigidJointTraversalStructuralSlotConflictKeys(
                         rewriteConflictKeys,
                         plan.VmdPath,
@@ -9540,6 +9677,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidExpectedArmyDrawCallsEmitted = 0;
             state.CrossRigidRawLodDrawsBefore = 0;
             state.CrossRigidRawLodDrawsAfter = 0;
+            state.CrossRigidOriginalRootSlotsByVmd.Clear();
             var emissionTimer = Stopwatch.StartNew();
             var validationElapsed = TimeSpan.Zero;
             var geometryBuildElapsed = TimeSpan.Zero;
@@ -9633,6 +9771,10 @@ namespace Editors.KitbasherEditor.Services
                     rootDocument = LoadXml(vmdFile);
                     sourceVmdDocuments[vmdPath] =
                         CloneXmlDocument(rootDocument);
+                    state.CrossRigidOriginalRootSlotsByVmd[vmdPath] =
+                        rootDocument.DocumentElement?
+                            .SelectNodes("SLOT")
+                            ?.OfType<XmlElement>().ToArray() ?? [];
                 }
                 catch (Exception ex) when (
                     ex is InvalidOperationException or
@@ -10141,10 +10283,12 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                var parentLocationKey =
+                var originalParentKey =
                     BuildCrossRigidJointParentLocationKey(
-                        rootVmdPath,
-                        jointDescriptor);
+                        rootVmdPath, jointDescriptor);
+                var parentLocationKey =
+                    GetCrossRigidEffectiveJointParentKey(
+                        state, rootVmdPath, jointDescriptor);
                 var contextDescriptor =
                     GetCrossRigidEffectiveJointDescriptor(
                         state,
@@ -10176,15 +10320,14 @@ namespace Editors.KitbasherEditor.Services
                     return false;
                 }
 
-                if (jointContextKeyByParentLocation.TryGetValue(
+                if (!IsCrossRigidWriterFactorCompatible(
+                        jointContextKeyByParentLocation,
+                        originalParentKey,
                         parentLocationKey,
-                        out var existingContextKey) &&
-                    !existingContextKey.Equals(
-                        contextKey,
-                        StringComparison.Ordinal))
+                        contextKey))
                 {
                     reason =
-                        "Joint writer already materialized a different slot set under this parent";
+                        "Joint writer already materialized an incompatible slot factor";
                     return false;
                 }
 
@@ -10487,10 +10630,12 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
-            var parentLocationKey =
+            var originalParentKey =
                 BuildCrossRigidJointParentLocationKey(
-                    rootVmdPath,
-                    descriptor);
+                    rootVmdPath, descriptor);
+            var parentLocationKey =
+                GetCrossRigidEffectiveJointParentKey(
+                    state, rootVmdPath, descriptor);
             var contextDescriptor =
                 GetCrossRigidEffectiveJointDescriptor(
                     state,
@@ -10540,15 +10685,14 @@ namespace Editors.KitbasherEditor.Services
                 (double)selectedMultiplicity /
                 totalMatchingMultiplicity;
 
-            if (jointContextKeyByParentLocation.TryGetValue(
+            if (!IsCrossRigidWriterFactorCompatible(
+                    jointContextKeyByParentLocation,
+                    originalParentKey,
                     parentLocationKey,
-                    out var existingContextKey) &&
-                !existingContextKey.Equals(
-                    contextKey,
-                    StringComparison.Ordinal))
+                    contextKey))
             {
                 reason =
-                    "Joint writer already materialized a different slot set under this parent";
+                    "Joint writer already materialized an incompatible slot factor";
                 return false;
             }
 
@@ -10581,6 +10725,11 @@ namespace Editors.KitbasherEditor.Services
                 jointRewriteContexts[contextKey] = context;
                 jointContextKeyByParentLocation[parentLocationKey] =
                     contextKey;
+                jointContextKeyByParentLocation[originalParentKey] =
+                    parentLocationKey.Equals(
+                        originalParentKey, StringComparison.Ordinal)
+                        ? contextKey
+                        : CrossRigidFactoredParentMarker;
             }
 
             var orderedSelections = descriptor.SourceSelections
@@ -10795,6 +10944,47 @@ namespace Editors.KitbasherEditor.Services
             return true;
         }
 
+        private static bool IsCrossRigidWriterFactorCompatible(
+            IReadOnlyDictionary<string, string> occupied,
+            string originalParentKey,
+            string effectiveParentKey,
+            string contextKey)
+        {
+            var expectedParent = effectiveParentKey.Equals(
+                    originalParentKey, StringComparison.Ordinal)
+                ? contextKey
+                : CrossRigidFactoredParentMarker;
+            return (!occupied.TryGetValue(
+                        originalParentKey, out var previousParent) ||
+                    previousParent.Equals(expectedParent,
+                        StringComparison.Ordinal)) &&
+                   (!occupied.TryGetValue(
+                        effectiveParentKey, out var previousFactor) ||
+                    previousFactor.Equals(contextKey,
+                        StringComparison.Ordinal));
+        }
+
+        private static XmlElement? ResolveCrossRigidFactoredRootSlot(
+            BatchState state,
+            string parentLocationKey,
+            XmlElement parentElement,
+            int slotIndex)
+        {
+            if (!parentLocationKey.Contains(
+                    "\u001ffactor-slots=", StringComparison.Ordinal))
+                return parentElement.SelectSingleNode(
+                    $"SLOT[{slotIndex}]") as XmlElement;
+
+            var rootPath = parentLocationKey.Split('\u001f')[0];
+            if (!state.CrossRigidOriginalRootSlotsByVmd.TryGetValue(
+                    rootPath, out var originalSlots) ||
+                slotIndex < 1 || slotIndex > originalSlots.Length ||
+                originalSlots[slotIndex - 1].ParentNode != parentElement)
+                return null;
+
+            return originalSlots[slotIndex - 1];
+        }
+
         private static bool TryCreateCrossRigidJointRewriteContext(
             BatchState state,
             XmlDocument definingDocument,
@@ -10833,9 +11023,9 @@ namespace Editors.KitbasherEditor.Services
                 new List<CrossRigidJointSlotDefinition>();
             foreach (var slotIndex in descriptor.SlotIndices)
             {
-                if (parentElement.SelectSingleNode(
-                        $"SLOT[{slotIndex}]") is
-                    not XmlElement slotElement)
+                if (ResolveCrossRigidFactoredRootSlot(
+                        state, parentLocationKey, parentElement,
+                        slotIndex) is not XmlElement slotElement)
                 {
                     reason =
                         $"Joint source slot {slotIndex} could not be resolved in mutable VMD";
@@ -33151,6 +33341,10 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidCanonicalJointContextsFolded:N0} narrower context(s) folded, " +
                     $"{state.CrossRigidCanonicalJointParentConflictCount:N0} multi-context parent(s) left separate");
                 sb.AppendLine(
+                    $"Factored independent-root Cartesian contexts: " +
+                    $"{state.CrossRigidFactoredJointParentCount:N0} parent(s), " +
+                    $"{state.CrossRigidFactoredJointGroupCount:N0} separate context group(s)");
+                sb.AppendLine(
                     $"Cross-rigid portfolio search: " +
                     $"{state.CrossRigidPortfolioOrderingsEvaluated:N0} ordering(s) evaluated; " +
                     $"raw-draw baseline={state.CrossRigidRawGreedyExpectedDraws:0.###}, " +
@@ -36281,6 +36475,16 @@ namespace Editors.KitbasherEditor.Services
                 CrossRigidJointAlwaysPresentRewriteDescriptor>
                 CrossRigidCanonicalJointDescriptorByParentLocation { get; } =
                     new(StringComparer.Ordinal);
+            public Dictionary<
+                string,
+                CrossRigidJointAlwaysPresentRewriteDescriptor[]>
+                CrossRigidFactoredJointDescriptorsByParentLocation { get; } =
+                    new(StringComparer.Ordinal);
+            public Dictionary<string, XmlElement[]>
+                CrossRigidOriginalRootSlotsByVmd { get; } =
+                    new(StringComparer.OrdinalIgnoreCase);
+            public int CrossRigidFactoredJointParentCount { get; set; }
+            public int CrossRigidFactoredJointGroupCount { get; set; }
             public int CrossRigidCanonicalJointParentCount { get; set; }
             public int CrossRigidCanonicalJointContextsFolded { get; set; }
             public int CrossRigidCanonicalJointParentConflictCount { get; set; }
