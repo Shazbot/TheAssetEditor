@@ -92,6 +92,9 @@ namespace Editors.KitbasherEditor.Services
         // A bounded three-rigid alternative can recover savings from a
         // full group whose Cartesian appearance space is too large.
         private const int MaxCrossRigidTripleFallbacksPerGroup = 16;
+        // Four components can recover merges from otherwise unwritable five+
+        // component groups without expanding the global Cartesian writer.
+        private const int MaxCrossRigidQuadrupleFallbacksPerGroup = 8;
         private const int MaxCrossRigidGeneratedLodCount = 5;
         private const float CrossRigidLodDistanceEpsilon = 0.01f;
         private static readonly bool AtlasProfilingEnabled =
@@ -1675,6 +1678,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAnalysisOpportunityObservationCount = 0;
             state.CrossRigidPairFallbackSubgroupObservations = 0;
             state.CrossRigidTripleFallbackSubgroupObservations = 0;
+            state.CrossRigidQuadrupleFallbackSubgroupObservations = 0;
             state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups = 0;
             state.CrossRigidPreviouslySuppressedPairFallbackPlanIds.Clear();
             state.CrossRigidLegacyEligiblePayloadIds.Clear();
@@ -1834,20 +1838,22 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    foreach (var (group, isPairFallback, isTripleFallback, fullGroup) in
+                    foreach (var (group, isSubgroupFallback, fallbackSize, fullGroup) in
                              EnumerateCrossRigidCandidateGroups(
                                  topologyGroups))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        if (isPairFallback)
+                        if (isSubgroupFallback)
                             state.CrossRigidPairFallbackSubgroupObservations++;
-                        if (isTripleFallback)
+                        if (fallbackSize == 3)
                             state.CrossRigidTripleFallbackSubgroupObservations++;
+                        if (fallbackSize == 4)
+                            state.CrossRigidQuadrupleFallbackSubgroupObservations++;
                         var rewritePlanKey = BuildCrossRigidRewritePlanKey(
                             vmdPath,
                             configuration.AttachmentIdentity,
                             group);
-                        if (!isPairFallback)
+                        if (!isSubgroupFallback)
                         {
                             fullGroupPlanKeys.Add(rewritePlanKey);
                         }
@@ -2431,8 +2437,8 @@ namespace Editors.KitbasherEditor.Services
 
         private static IEnumerable<(
                 CrossRigidAnalysisInstanceComponent[] Group,
-                bool IsPairFallback,
-                bool IsTripleFallback,
+                bool IsSubgroupFallback,
+                int FallbackSize,
                 CrossRigidAnalysisInstanceComponent[] FullGroup)>
             EnumerateCrossRigidCandidateGroups(
                 CrossRigidAnalysisInstanceComponent[][] topologyGroups)
@@ -2442,7 +2448,7 @@ namespace Editors.KitbasherEditor.Services
                 // Keep the original complete merge candidate. Pairwise
                 // alternatives are strictly additional choices for the
                 // existing provenance validator and value/conflict gates.
-                yield return (group, false, false, group);
+                yield return (group, false, 0, group);
                 if (group.Length < 3)
                     continue;
 
@@ -2485,7 +2491,7 @@ namespace Editors.KitbasherEditor.Services
                         yield return (
                             new[] { first, second },
                             true,
-                            false,
+                            2,
                             group);
                     }
                 }
@@ -2552,8 +2558,83 @@ namespace Editors.KitbasherEditor.Services
                                 yield return (
                                     new[] { first, second, third },
                                     true,
-                                    true,
+                                    3,
                                     group);
+                            }
+                        }
+                    }
+                }
+
+                // A full group with exactly four components is already
+                // represented by its original candidate. Only groups with
+                // at least five members can have a true four-way fallback.
+                // Preserve distinct WSModel/rigid membership and cap the
+                // additional candidates before normal provenance analysis.
+                if (group.Length >= 5 &&
+                    group.Select(item => item.Component.RigidPath)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Count() >= 4)
+                {
+                    var uniqueQuadruples = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+                    var emittedQuadruples = 0;
+                    for (var firstIndex = 0;
+                         firstIndex < group.Length &&
+                         emittedQuadruples < MaxCrossRigidQuadrupleFallbacksPerGroup;
+                         firstIndex++)
+                    {
+                        for (var secondIndex = firstIndex + 1;
+                             secondIndex < group.Length &&
+                             emittedQuadruples < MaxCrossRigidQuadrupleFallbacksPerGroup;
+                             secondIndex++)
+                        {
+                            for (var thirdIndex = secondIndex + 1;
+                                 thirdIndex < group.Length &&
+                                 emittedQuadruples < MaxCrossRigidQuadrupleFallbacksPerGroup;
+                                 thirdIndex++)
+                            {
+                                for (var fourthIndex = thirdIndex + 1;
+                                     fourthIndex < group.Length &&
+                                     emittedQuadruples < MaxCrossRigidQuadrupleFallbacksPerGroup;
+                                     fourthIndex++)
+                                {
+                                    var first = group[firstIndex];
+                                    var second = group[secondIndex];
+                                    var third = group[thirdIndex];
+                                    var fourth = group[fourthIndex];
+                                    var items = new[]
+                                    {
+                                        first, second, third, fourth
+                                    };
+                                    if (items.Select(item =>
+                                            item.Component.RigidPath)
+                                        .Distinct(
+                                            StringComparer.OrdinalIgnoreCase)
+                                        .Count() != 4)
+                                        continue;
+
+                                    var paths = items.Select(item =>
+                                            Normalize(item.Instance.WsModelPath))
+                                        .ToArray();
+                                    if (paths.Distinct(
+                                            StringComparer.OrdinalIgnoreCase)
+                                        .Count() != 4)
+                                        continue;
+
+                                    Array.Sort(
+                                        paths,
+                                        StringComparer.OrdinalIgnoreCase);
+                                    if (!uniqueQuadruples.Add(
+                                            string.Join("\u001f", paths)))
+                                        continue;
+
+                                    emittedQuadruples++;
+                                    yield return (
+                                        items,
+                                        true,
+                                        4,
+                                        group);
+                                }
                             }
                         }
                     }
@@ -33477,9 +33558,10 @@ namespace Editors.KitbasherEditor.Services
                     $"Eligible configuration-group observations before rewrite-plan dedupe: " +
                     $"{state.CrossRigidAnalysisOpportunityObservationCount:N0}");
                 sb.AppendLine(
-                    $"Pair/triple cross-rigid fallback subgroups considered: " +
+                    $"Cross-rigid fallback subgroups considered: " +
                     $"{state.CrossRigidPairFallbackSubgroupObservations:N0} " +
-                    $"(triples={state.CrossRigidTripleFallbackSubgroupObservations:N0})");
+                    $"(triples={state.CrossRigidTripleFallbackSubgroupObservations:N0}, " +
+                    $"quadruples={state.CrossRigidQuadrupleFallbackSubgroupObservations:N0})");
                 sb.AppendLine(
                     $"Subgroup fallback plans competing with writable full groups: " +
                     $"{state.CrossRigidPairFallbackPlansCompetingWithSafeFullGroups:N0}");
@@ -36901,6 +36983,7 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidAnalysisOpportunityObservationCount { get; set; }
             public int CrossRigidPairFallbackSubgroupObservations { get; set; }
             public int CrossRigidTripleFallbackSubgroupObservations { get; set; }
+            public int CrossRigidQuadrupleFallbackSubgroupObservations { get; set; }
             public int CrossRigidPairFallbackPlansCompetingWithSafeFullGroups { get; set; }
             public int CrossRigidPairFallbackPlansEvaluated { get; set; }
             public HashSet<string> CrossRigidPreviouslySuppressedPairFallbackPlanIds { get; } =
