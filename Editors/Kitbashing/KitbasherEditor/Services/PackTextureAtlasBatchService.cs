@@ -94,7 +94,7 @@ namespace Editors.KitbasherEditor.Services
         private const int MaxCrossRigidTripleFallbacksPerGroup = 16;
         // Four components can recover merges from otherwise unwritable five+
         // component groups without expanding the global Cartesian writer.
-        private const int MaxCrossRigidQuadrupleFallbacksPerGroup = 8;
+        private const int MaxCrossRigidQuadrupleFallbacksPerGroup = 16;
         private const int MaxCrossRigidGeneratedLodCount = 5;
         private const float CrossRigidLodDistanceEpsilon = 0.01f;
         private static readonly bool AtlasProfilingEnabled =
@@ -2500,9 +2500,9 @@ namespace Editors.KitbasherEditor.Services
                 // yielded above. For larger groups, allow up to sixteen
                 // three-rigid fallbacks through exactly the same rewrite
                 // validation, conflict resolution and value gate as pairs.
-                // The existing IsPairFallback flag denotes any subordinate
-                // subgroup; the third tuple field distinguishes triples for
-                // diagnostics without changing the protected full portfolio.
+                // The existing subgroup flag denotes a candidate subordinate
+                // to a full group; the size identifies triples for diagnostics
+                // without changing the protected full portfolio.
                 if (group.Length >= 4)
                 {
                     var uniqueTriples = new HashSet<string>(
@@ -2578,62 +2578,74 @@ namespace Editors.KitbasherEditor.Services
                     var uniqueQuadruples = new HashSet<string>(
                         StringComparer.OrdinalIgnoreCase);
                     var emittedQuadruples = 0;
-                    for (var firstIndex = 0;
-                         firstIndex < group.Length &&
-                         emittedQuadruples < MaxCrossRigidQuadrupleFallbacksPerGroup;
-                         firstIndex++)
+                    // Keep the original first-eight candidate choices, but
+                    // sample up to eight more from the opposite end of the
+                    // WSModel order. Otherwise large groups spend every
+                    // candidate on the same early carrier combinations.
+                    foreach (var scanForward in new[] { true, false })
                     {
-                        for (var secondIndex = firstIndex + 1;
-                             secondIndex < group.Length &&
-                             emittedQuadruples < MaxCrossRigidQuadrupleFallbacksPerGroup;
-                             secondIndex++)
+                        var candidates = scanForward
+                            ? group
+                            : group.Reverse().ToArray();
+                        var stageLimit = scanForward
+                            ? MaxCrossRigidQuadrupleFallbacksPerGroup / 2
+                            : MaxCrossRigidQuadrupleFallbacksPerGroup;
+                        for (var firstIndex = 0;
+                             firstIndex < candidates.Length &&
+                             emittedQuadruples < stageLimit;
+                             firstIndex++)
                         {
-                            for (var thirdIndex = secondIndex + 1;
-                                 thirdIndex < group.Length &&
-                                 emittedQuadruples < MaxCrossRigidQuadrupleFallbacksPerGroup;
-                                 thirdIndex++)
+                            for (var secondIndex = firstIndex + 1;
+                                 secondIndex < candidates.Length &&
+                                 emittedQuadruples < stageLimit;
+                                 secondIndex++)
                             {
-                                for (var fourthIndex = thirdIndex + 1;
-                                     fourthIndex < group.Length &&
-                                     emittedQuadruples < MaxCrossRigidQuadrupleFallbacksPerGroup;
-                                     fourthIndex++)
+                                for (var thirdIndex = secondIndex + 1;
+                                     thirdIndex < candidates.Length &&
+                                     emittedQuadruples < stageLimit;
+                                     thirdIndex++)
                                 {
-                                    var first = group[firstIndex];
-                                    var second = group[secondIndex];
-                                    var third = group[thirdIndex];
-                                    var fourth = group[fourthIndex];
-                                    var items = new[]
+                                    for (var fourthIndex = thirdIndex + 1;
+                                         fourthIndex < candidates.Length &&
+                                         emittedQuadruples < stageLimit;
+                                         fourthIndex++)
                                     {
-                                        first, second, third, fourth
-                                    };
-                                    if (items.Select(item =>
-                                            item.Component.RigidPath)
-                                        .Distinct(
-                                            StringComparer.OrdinalIgnoreCase)
-                                        .Count() != 4)
-                                        continue;
+                                        var items = new[]
+                                        {
+                                            candidates[firstIndex],
+                                            candidates[secondIndex],
+                                            candidates[thirdIndex],
+                                            candidates[fourthIndex],
+                                        };
+                                        if (items.Select(item =>
+                                                item.Component.RigidPath)
+                                            .Distinct(
+                                                StringComparer.OrdinalIgnoreCase)
+                                            .Count() != 4)
+                                            continue;
 
-                                    var paths = items.Select(item =>
-                                            Normalize(item.Instance.WsModelPath))
-                                        .ToArray();
-                                    if (paths.Distinct(
-                                            StringComparer.OrdinalIgnoreCase)
-                                        .Count() != 4)
-                                        continue;
+                                        var paths = items.Select(item =>
+                                                Normalize(item.Instance.WsModelPath))
+                                            .ToArray();
+                                        if (paths.Distinct(
+                                                StringComparer.OrdinalIgnoreCase)
+                                            .Count() != 4)
+                                            continue;
 
-                                    Array.Sort(
-                                        paths,
-                                        StringComparer.OrdinalIgnoreCase);
-                                    if (!uniqueQuadruples.Add(
-                                            string.Join("\u001f", paths)))
-                                        continue;
+                                        Array.Sort(
+                                            paths,
+                                            StringComparer.OrdinalIgnoreCase);
+                                        if (!uniqueQuadruples.Add(
+                                                string.Join("\u001f", paths)))
+                                            continue;
 
-                                    emittedQuadruples++;
-                                    yield return (
-                                        items,
-                                        true,
-                                        4,
-                                        group);
+                                        emittedQuadruples++;
+                                        yield return (
+                                            items,
+                                            true,
+                                            4,
+                                            group);
+                                    }
                                 }
                             }
                         }
