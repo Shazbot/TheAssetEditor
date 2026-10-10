@@ -1667,6 +1667,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidRigidHeaderFullLodProfiles.Clear();
             state.CrossRigidAnalysisDiagnosticCounts.Clear();
             state.CrossRigidAnalysisDiagnosticExamples.Clear();
+            state.CrossRigidJointStateCapExclusionsByVmd.Clear();
             state.CrossRigidActivationRewriteOccurrenceSetCounts.Clear();
             state.CrossRigidActivationRewritePlanCounts.Clear();
             state.CrossRigidActivationRewriteExpectedDrawCalls.Clear();
@@ -2211,6 +2212,59 @@ namespace Editors.KitbasherEditor.Services
                             $"{plan.VmdPath} [{plan.AttachmentIdentity}]: " +
                             $"{jointReason}; sources=[" +
                             $"{string.Join(", ", classified.OccurrenceSet.SourceInstances.Select(instance => instance.WsModelPath))}]");
+                        // Keep per-root, per-plan accounting of the
+                        // state-cap failures. Observation counts alone
+                        // exaggerate opportunities repeated across visual
+                        // alternatives and competing subgroup plans.
+                        if (jointReason.Contains(
+                                "Cartesian product exceeds",
+                                StringComparison.Ordinal))
+                        {
+                            var rootPath = Normalize(plan.VmdPath);
+                            if (!state.CrossRigidJointStateCapExclusionsByVmd
+                                    .TryGetValue(rootPath, out var excluded))
+                            {
+                                excluded =
+                                    new CrossRigidJointStateCapExclusionAggregate();
+                                state.CrossRigidJointStateCapExclusionsByVmd.Add(
+                                    rootPath, excluded);
+                            }
+
+                            excluded.OccurrenceSetCount++;
+                            excluded.RewritePlanIds.Add(plan.RewritePlanId);
+                            if (classified.OccurrenceSet.SourceInstances.Length == 2)
+                                excluded.TwoSourceOccurrenceSetCount++;
+                            else
+                                excluded.OtherSourceOccurrenceSetCount++;
+                            if (jointReason.StartsWith(
+                                    "common-ancestor Cartesian product",
+                                    StringComparison.Ordinal))
+                            {
+                                excluded.CommonAncestorOccurrenceSetCount++;
+                            }
+                            else if (jointReason.StartsWith(
+                                         "joint Cartesian product",
+                                         StringComparison.Ordinal))
+                            {
+                                excluded.DirectJointOccurrenceSetCount++;
+                            }
+                            else
+                            {
+                                excluded.OtherCapOccurrenceSetCount++;
+                            }
+
+                            // Deliberately overlap-inclusive: different
+                            // candidate merges can compete for the same
+                            // occurrence and must not be summed as
+                            // independently realizable savings.
+                            excluded.OverlapInclusiveExpectedDraws +=
+                                CalculateExpectedCrossRigidArmyDrawSavings(
+                                    state,
+                                    plan.VmdPath,
+                                    classified.OccurrenceSet.Probability,
+                                    plan.Lods);
+                        }
+
                         // Aggregate the actual reason separately rather
                         // than showing only the first few examples from a
                         // large, undifferentiated rejection category.
@@ -34766,6 +34820,40 @@ namespace Editors.KitbasherEditor.Services
                     }
                 }
 
+                if (state.CrossRigidJointStateCapExclusionsByVmd.Count != 0)
+                {
+                    var excludedByVmd =
+                        state.CrossRigidJointStateCapExclusionsByVmd;
+                    sb.AppendLine(
+                        "Cross-rigid joint state-cap exclusions by VMD " +
+                        "(overlap-inclusive potential, not attainable savings):");
+                    sb.AppendLine(
+                        $"  totals: roots={excludedByVmd.Count:N0}, " +
+                        $"plans={excludedByVmd.Sum(item => item.Value.RewritePlanIds.Count):N0}, " +
+                        $"occurrenceSets={excludedByVmd.Sum(item => item.Value.OccurrenceSetCount):N0}, " +
+                        $"two-source={excludedByVmd.Sum(item => item.Value.TwoSourceOccurrenceSetCount):N0}, " +
+                        $"three-plus/other={excludedByVmd.Sum(item => item.Value.OtherSourceOccurrenceSetCount):N0}, " +
+                        $"grossExpectedDraws={excludedByVmd.Sum(item => item.Value.OverlapInclusiveExpectedDraws):0.###}");
+                    foreach (var (root, excluded) in excludedByVmd
+                                 .OrderByDescending(item =>
+                                     item.Value.OverlapInclusiveExpectedDraws)
+                                 .ThenByDescending(item =>
+                                     item.Value.RewritePlanIds.Count)
+                                 .ThenBy(item => item.Key, StringComparer.Ordinal)
+                                 .Take(20))
+                    {
+                        sb.AppendLine(
+                            $"  {root}: plans={excluded.RewritePlanIds.Count:N0}, " +
+                            $"occurrences={excluded.OccurrenceSetCount:N0}, " +
+                            $"two-source={excluded.TwoSourceOccurrenceSetCount:N0}, " +
+                            $"three-plus/other={excluded.OtherSourceOccurrenceSetCount:N0}, " +
+                            $"commonAncestor={excluded.CommonAncestorOccurrenceSetCount:N0}, " +
+                            $"direct={excluded.DirectJointOccurrenceSetCount:N0}, " +
+                            $"other={excluded.OtherCapOccurrenceSetCount:N0}, " +
+                            $"grossExpectedDraws={excluded.OverlapInclusiveExpectedDraws:0.###}");
+                    }
+                }
+
                 const int maxCrossRigidReportEntries = 40;
                 if (state.CrossRigidGeneratedPayloadAnalysisEntries.Count != 0)
                 {
@@ -37442,6 +37530,19 @@ namespace Editors.KitbasherEditor.Services
             double BaselineExpectedArmyResidentPixels,
             double ProposedExpectedArmyResidentPixels);
 
+        private sealed class CrossRigidJointStateCapExclusionAggregate
+        {
+            public int OccurrenceSetCount { get; set; }
+            public int TwoSourceOccurrenceSetCount { get; set; }
+            public int OtherSourceOccurrenceSetCount { get; set; }
+            public int CommonAncestorOccurrenceSetCount { get; set; }
+            public int DirectJointOccurrenceSetCount { get; set; }
+            public int OtherCapOccurrenceSetCount { get; set; }
+            public double OverlapInclusiveExpectedDraws { get; set; }
+            public HashSet<string> RewritePlanIds { get; } =
+                new(StringComparer.Ordinal);
+        }
+
         private sealed class CrossRigidHeaderProfileAggregate
         {
             public int ObservationCount { get; set; }
@@ -37597,6 +37698,9 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, CrossRigidHeaderProfileAggregate>
                 CrossRigidRigidHeaderFullLodProfiles { get; } =
                     new(StringComparer.Ordinal);
+            public Dictionary<string, CrossRigidJointStateCapExclusionAggregate>
+                CrossRigidJointStateCapExclusionsByVmd { get; } =
+                    new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, int> CrossRigidAnalysisDiagnosticCounts { get; } =
                 new(StringComparer.Ordinal);
             public Dictionary<string, List<string>> CrossRigidAnalysisDiagnosticExamples { get; } =
