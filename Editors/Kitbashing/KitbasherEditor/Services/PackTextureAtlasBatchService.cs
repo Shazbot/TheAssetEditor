@@ -85,7 +85,13 @@ namespace Editors.KitbasherEditor.Services
         // Limit exact generated joint appearance states, not probability precision.
         // Large VMDs need more room than 512 combinations, while the
         // portfolio's geometry and residency budgets still cap output cost.
-        private const int MaxCrossRigidJointStateCombinations = 1024;
+        // An exact joint writer needs every weighted Cartesian state to
+        // preserve the source VMD's selection probabilities. The previous
+        // 1,024-state ceiling excluded otherwise rewrite-safe three-plus
+        // component groups in high-variation VMDs. Permit a bounded wider
+        // search; emitted geometry still passes the full portfolio value
+        // and residency gates, and no probabilities are approximated.
+        private const int MaxCrossRigidJointStateCombinations = 4096;
         // When a full co-rendering group is too complex to rewrite jointly,
         // smaller cross-rigid pairs can retain independent visual choices.
         private const int MaxCrossRigidPairFallbacksPerGroup = 24;
@@ -34534,6 +34540,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Minimum one-VMD payload benefit: " +
                     $"{MinimumCrossRigidSingleVmdExpectedArmyDraw:0.###} expected draws");
+                sb.AppendLine(
+                    $"Cross-rigid exact weighted Cartesian state cap: " +
+                    $"{MaxCrossRigidJointStateCombinations:N0} combinations");
                 sb.AppendLine(
                     $"Canonical joint-parent supersets: " +
                     $"{state.CrossRigidCanonicalJointParentCount:N0} parent(s), " +
