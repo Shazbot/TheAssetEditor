@@ -8448,6 +8448,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidPortfolioContextCohortTrials = 0;
             state.CrossRigidPortfolioLocalInsertionTrials = 0;
             state.CrossRigidPortfolioLocalInsertionImprovements = 0;
+            state.CrossRigidPortfolioLocalPairInsertionTrials = 0;
+            state.CrossRigidPortfolioLocalPairInsertionImprovements = 0;
             state.CrossRigidSharedPayloadFallbackCandidatePlans = 0;
             state.CrossRigidSharedPayloadFallbackCompatibleStates = 0;
             state.CrossRigidSharedPayloadFallbackAcceptedStates = 0;
@@ -9767,6 +9769,126 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // Two compatible challengers can jointly displace an
+            // established owner even when neither wins alone. Earlier pair
+            // trials promoted candidates globally, potentially displacing
+            // unrelated winners before the contested parent was reached.
+            // Insert bounded same-context pairs immediately before a
+            // conflicting selected owner and replay the whole portfolio.
+            const int maxLocalPairOptions = 24;
+            const int maxLocalPairOwners = 2;
+            var localPairTrials = 0;
+            var localPairImprovements = 0;
+            var localPairSeeds = localSeeds
+                .Where(entry =>
+                    !best.SelectedPayloadIds.Contains(
+                        entry.GeneratedPayloadId) &&
+                    conflictProfiles.ContainsKey(entry.GeneratedPayloadId))
+                .ToArray();
+            var localPairContexts = localPairSeeds
+                .ToDictionary(
+                    entry => entry.GeneratedPayloadId,
+                    entry => conflictProfiles[entry.GeneratedPayloadId]
+                        .Occurrences
+                        .SelectMany(occurrence =>
+                            occurrence.JointContextKeyByParentLocation)
+                        .Select(context =>
+                            context.Key + "\u001e" + context.Value)
+                        .ToHashSet(StringComparer.Ordinal),
+                    StringComparer.Ordinal);
+            var localPairOptions = localPairSeeds
+                .SelectMany((first, index) =>
+                    localPairSeeds.Skip(index + 1)
+                        .Where(second =>
+                            localPairContexts[first.GeneratedPayloadId]
+                                .Overlaps(localPairContexts[
+                                    second.GeneratedPayloadId]))
+                        .Select(second => (
+                            First: first,
+                            Second: second,
+                            Benefit: first.ExpectedArmyDrawCallsEliminated +
+                                     second.ExpectedArmyDrawCallsEliminated)))
+                .OrderByDescending(pair => pair.Benefit)
+                .ThenBy(pair => pair.First.GeneratedPayloadId,
+                    StringComparer.Ordinal)
+                .ThenBy(pair => pair.Second.GeneratedPayloadId,
+                    StringComparer.Ordinal)
+                .Take(maxLocalPairOptions)
+                .ToArray();
+            foreach (var pair in localPairOptions)
+            {
+                if (best.SelectedPayloadIds.Contains(
+                        pair.First.GeneratedPayloadId) ||
+                    best.SelectedPayloadIds.Contains(
+                        pair.Second.GeneratedPayloadId))
+                {
+                    continue;
+                }
+
+                var firstProfile =
+                    conflictProfiles[pair.First.GeneratedPayloadId];
+                var secondProfile =
+                    conflictProfiles[pair.Second.GeneratedPayloadId];
+                var owners = bestOrder
+                    .Where(entry =>
+                        best.SelectedPayloadIds.Contains(
+                            entry.GeneratedPayloadId) &&
+                        conflictProfiles.TryGetValue(
+                            entry.GeneratedPayloadId,
+                            out var ownerProfile) &&
+                        (MayCrossRigidPayloadProfilesCompete(
+                             firstProfile, ownerProfile) ||
+                         MayCrossRigidPayloadProfilesCompete(
+                             secondProfile, ownerProfile)))
+                    .Take(maxLocalPairOwners)
+                    .ToArray();
+                foreach (var owner in owners)
+                {
+                    foreach (var promoted in new[]
+                             {
+                                 new[] { pair.First, pair.Second },
+                                 new[] { pair.Second, pair.First },
+                             })
+                    {
+                        var promotedIds = promoted
+                            .Select(entry => entry.GeneratedPayloadId)
+                            .ToHashSet(StringComparer.Ordinal);
+                        var trialOrder = bestOrder
+                            .Where(entry =>
+                                !promotedIds.Contains(
+                                    entry.GeneratedPayloadId))
+                            .ToList();
+                        var ownerIndex = trialOrder.FindIndex(entry =>
+                            entry.GeneratedPayloadId.Equals(
+                                owner.GeneratedPayloadId,
+                                StringComparison.Ordinal));
+                        if (ownerIndex < 0)
+                            continue;
+
+                        trialOrder.InsertRange(ownerIndex, promoted);
+                        var trial = EvaluateCrossRigidPayloadPortfolio(
+                            state,
+                            trialOrder,
+                            conflictProfiles,
+                            invalidProfiles,
+                            sourceVmdDocuments);
+                        localPairTrials++;
+                        evaluated++;
+                        if (IsBetterCrossRigidPayloadPortfolio(
+                                trial, best))
+                        {
+                            best = trial;
+                            bestOrder = trialOrder.ToArray();
+                            localPairImprovements++;
+                        }
+                    }
+                }
+            }
+
+            state.CrossRigidPortfolioLocalPairInsertionTrials =
+                localPairTrials;
+            state.CrossRigidPortfolioLocalPairInsertionImprovements =
+                localPairImprovements;
             state.CrossRigidPortfolioLocalInsertionTrials =
                 localInsertionTrials;
             state.CrossRigidPortfolioLocalInsertionImprovements =
@@ -34437,7 +34559,9 @@ namespace Editors.KitbasherEditor.Services
                     $"pair ordering trials={state.CrossRigidPortfolioPairTrials:N0}, " +
                     $"context cohort trials={state.CrossRigidPortfolioContextCohortTrials:N0}, " +
                     $"local insertion trials={state.CrossRigidPortfolioLocalInsertionTrials:N0}, " +
-                    $"local improvements={state.CrossRigidPortfolioLocalInsertionImprovements:N0}");
+                    $"local improvements={state.CrossRigidPortfolioLocalInsertionImprovements:N0}, " +
+                    $"local pair insertions={state.CrossRigidPortfolioLocalPairInsertionTrials:N0}, " +
+                    $"local pair improvements={state.CrossRigidPortfolioLocalPairInsertionImprovements:N0}");
                 sb.AppendLine(
                     $"Payload candidates: " +
                     $"{state.CrossRigidPayloadSelectionEntries.Count:N0}");
@@ -37636,6 +37760,8 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidPortfolioContextCohortTrials { get; set; }
             public int CrossRigidPortfolioLocalInsertionTrials { get; set; }
             public int CrossRigidPortfolioLocalInsertionImprovements { get; set; }
+            public int CrossRigidPortfolioLocalPairInsertionTrials { get; set; }
+            public int CrossRigidPortfolioLocalPairInsertionImprovements { get; set; }
             public int CrossRigidSharedPayloadFallbackCandidatePlans { get; set; }
             public int CrossRigidSharedPayloadFallbackCompatibleStates { get; set; }
             public int CrossRigidSharedPayloadFallbackAcceptedStates { get; set; }
