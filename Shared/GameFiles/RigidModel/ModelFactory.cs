@@ -108,8 +108,15 @@ namespace Shared.GameFormats.RigidModel
         }
 
         public byte[] Save(RmvFile file)
+            => Save(file, validateByReloading: true, logProgress: true);
+
+        public byte[] Save(
+            RmvFile file,
+            bool validateByReloading,
+            bool logProgress = true)
         {
-            _logger.Here().Information("Converting RmvFile to bytes");
+            if (logProgress)
+                _logger.Here().Information("Converting RmvFile to bytes");
 
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
@@ -117,7 +124,8 @@ namespace Shared.GameFormats.RigidModel
             if (file.LodHeaders.Length != file.Header.LodCount)
                 throw new Exception("Unexpected number of Lods");
 
-            _logger.Here().Information("Creating headers");
+            if (logProgress)
+                _logger.Here().Information("Creating headers");
             writer.Write(ByteHelper.GetBytes(file.Header));
             for (var lodIndex = 0; lodIndex < file.LodHeaders.Length; lodIndex++)
             {
@@ -125,7 +133,8 @@ namespace Shared.GameFormats.RigidModel
                 writer.Write(LodHeaderFactory.Create().Save(file.Header.Version, file.LodHeaders[lodIndex]));
             }
 
-            _logger.Here().Information("Creating meshes");
+            if (logProgress)
+                _logger.Here().Information("Creating meshes");
             for (var lodIndex = 0; lodIndex < file.LodHeaders.Length; lodIndex++)
             {
                 var models = file.ModelList[lodIndex];
@@ -146,15 +155,22 @@ namespace Shared.GameFormats.RigidModel
                 }
             }
 
-            // Reload the model to make sure we created something the game can load. Better to get an error here then later.
             var bytes = ms.ToArray();
 
-            _logger.Here().Information("Attempting to reload model");
-            var reloadedModel = Load(bytes);
-            if (reloadedModel == null)
-                throw new Exception("Failed to save model - Could not load the result");
+            // Most callers want immediate round-trip validation. Large batch workflows that
+            // perform a later full output validation can opt out to avoid loading every model
+            // twice after serialization.
+            if (validateByReloading)
+            {
+                if (logProgress)
+                    _logger.Here().Information("Attempting to reload model");
+                var reloadedModel = Load(bytes);
+                if (reloadedModel == null)
+                    throw new Exception("Failed to save model - Could not load the result");
+            }
 
-            _logger.Here().Information("Converting RmvFile to bytes - Done");
+            if (logProgress)
+                _logger.Here().Information("Converting RmvFile to bytes - Done");
             return bytes;
         }
 

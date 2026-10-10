@@ -179,17 +179,21 @@ namespace Shared.Core.PackFiles
 
         public IPackFileContainer? GetEditablePack() => _packFileContainerSelectedForEdit;
 
-        public void UnloadPackContainer(IPackFileContainer pf)
+        public void UnloadPackContainer(IPackFileContainer pf, bool force = false)
         {
             var container = CastContainer(pf);
-            _logger.Here().Information($"Unload requested for pack file container '{DescribeContainer(container)}'");
-            var e = new BeforePackFileContainerRemovedEvent(container);
-            _globalEventHub?.PublishGlobalEvent(e);
+            _logger.Here().Information($"Unload requested for pack file container '{DescribeContainer(container)}' (Force:{force})");
 
-            if (e.AllowClose == false)
+            if (!force)
             {
-                _logger.Here().Information($"Unload cancelled for pack file container '{DescribeContainer(container)}'");
-                return;
+                var e = new BeforePackFileContainerRemovedEvent(container);
+                _globalEventHub?.PublishGlobalEvent(e);
+
+                if (e.AllowClose == false)
+                {
+                    _logger.Here().Information($"Unload cancelled for pack file container '{DescribeContainer(container)}'");
+                    return;
+                }
             }
 
             if (container is SystemFolderContainer systemFolderContainer)
@@ -255,6 +259,35 @@ namespace Shared.Core.PackFiles
             _logger.Here().Information($"Deleting file '{DescribeFile(container, file)}' from '{DescribeContainer(container)}'");
             _globalEventHub?.PublishGlobalEvent(new PackFileContainerFilesRemovedEvent(container, [file]));
             container.DeleteFile(file);
+        }
+
+        public void DeleteFiles(IPackFileContainer pf, IReadOnlyCollection<string> paths)
+        {
+            var container = CastContainer(pf);
+            if (container.IsReadOnly)
+                throw new Exception("Can not delete files inside readonly pack file");
+            if (paths.Count == 0)
+                return;
+
+            _logger.Here().Information($"Deleting {paths.Count} file(s) from '{DescribeContainer(container)}'");
+
+            // Match DeleteFile's event-order contract: subscribers such as the pack-file tree
+            // resolve each PackFile back to its full path while handling the removal event.
+            // Therefore the files must still exist in the container when the event is published.
+            var filesToRemove = new List<PackFile>(paths.Count);
+            foreach (var path in paths)
+            {
+                var file = container.FindFile(path);
+                if (file != null)
+                    filesToRemove.Add(file);
+            }
+
+            if (filesToRemove.Count != 0)
+                _globalEventHub?.PublishGlobalEvent(
+                    new PackFileContainerFilesRemovedEvent(container, filesToRemove));
+
+            var removedFiles = container.DeleteFiles(paths);
+            _logger.Here().Information($"Deleted {removedFiles.Count} file(s) from '{DescribeContainer(container)}'");
         }
 
         public void MoveFile(IPackFileContainer pf, PackFile file, string newFolderPath)

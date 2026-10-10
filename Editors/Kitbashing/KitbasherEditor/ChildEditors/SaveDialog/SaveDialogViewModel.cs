@@ -33,6 +33,7 @@ namespace KitbasherEditor.ViewModels.SaveDialog
         [ObservableProperty] ComboBoxItem<LodStrategy> _selectedLodStrategy;
         [ObservableProperty] bool _onlySaveVisible = false;
         [ObservableProperty] bool _displayDialogOnNextSave = true;
+        [ObservableProperty] bool _isWsModelStrategyEnabled = true;
         [ObservableProperty] int _numberOfLodsToGenerate;
 
         public SaveDialogViewModel(SceneManager sceneManager, SaveService saveService, IPackFileService pfs, IStandardDialogs packFileUiProvider)
@@ -56,9 +57,12 @@ namespace KitbasherEditor.ViewModels.SaveDialog
             _saveSettings = saveSettings;
             _saveSettings.IsUserInitialized = true;
 
+            _saveSettings.EnforceRequiredMaterialOutput();
+
             OutputPath = _saveSettings.OutputName;
             SelectedMeshStrategy= MeshStrategies.First(x => x.Value == _saveSettings.GeometryOutputType);
             SelectedWsModelStrategy= WsStrategies.First(x => x.Value == _saveSettings.MaterialOutputType);
+            IsWsModelStrategyEnabled = !_saveSettings.RequiresWarhammer3WsModelOutput;
             SelectedLodStrategy = LodStrategies.First(x => x.Value == _saveSettings.LodGenerationMethod);
             OnlySaveVisible = _saveSettings.OnlySaveVisible;
             DisplayDialogOnNextSave = _saveSettings.DisplayDialogOnNextSave;
@@ -99,6 +103,7 @@ namespace KitbasherEditor.ViewModels.SaveDialog
             _saveSettings.DisplayDialogOnNextSave = DisplayDialogOnNextSave;
             _saveSettings.GeometryOutputType = SelectedMeshStrategy.Value;
             _saveSettings.MaterialOutputType = SelectedWsModelStrategy.Value;
+            _saveSettings.EnforceRequiredMaterialOutput();
             _saveSettings.LodGenerationMethod = SelectedLodStrategy.Value;
             _saveSettings.NumberOfLodsToGenerate = NumberOfLodsToGenerate;
         }

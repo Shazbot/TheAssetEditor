@@ -1,3 +1,4 @@
+using System.IO;
 ﻿using GameWorld.Core.Utility;
 using GameWorld.Core.WpfWindow.Events;
 using Microsoft.Xna.Framework.Graphics;
@@ -30,8 +31,17 @@ namespace GameWorld.Core.Services
             _eventHub = eventHub;
             _standardDialogs = standardDialogs;
             _graphicsResourceCreator = graphicsResourceCreator;
-            _eventHub.Register<GraphicDeviceDisposedEvent>(this, x=> ClearTextureCache());
-            _eventHub.Register<PackFileContainerManipulationEvent>(this, x => ClearTextureCache());
+            _eventHub.Register<GraphicDeviceDisposedEvent>(this, x => ClearTextureCache());
+
+            // Adding a brand-new texture path does not invalidate textures that are already
+            // cached. Only clear when an added file could override one of the cached names.
+            _eventHub.Register<PackFileContainerFilesAddedEvent>(this, OnFilesAdded);
+            _eventHub.Register<PackFileContainerFilesUpdatedEvent>(this, x => ClearTextureCache());
+            _eventHub.Register<PackFileContainerFilesRemovedEvent>(this, x => ClearTextureCache());
+            _eventHub.Register<PackFileContainerAddedEvent>(this, x => ClearTextureCache());
+            _eventHub.Register<PackFileContainerRemovedEvent>(this, x => ClearTextureCache());
+            _eventHub.Register<PackFileContainerFolderRemovedEvent>(this, x => ClearTextureCache());
+            _eventHub.Register<PackFileContainerFolderRenamedEvent>(this, x => ClearTextureCache());
         }
 
         public Texture2D? ForceLoadImage(string imagePath, out ImageInformation imageInformation) => _resourceLibrary.ForceLoadImage(imagePath, out imageInformation, _graphicsResourceCreator);
@@ -59,6 +69,22 @@ namespace GameWorld.Core.Services
         }
 
         public Effect GetStaticEffect(ShaderTypes type) => _resourceLibrary.GetStaticEffect(type);
+
+        private void OnFilesAdded(PackFileContainerFilesAddedEvent notification)
+        {
+            if (_cachedTextures.Count == 0 || notification.AddedFiles.Count == 0)
+                return;
+
+            var addedFileNames = notification.AddedFiles
+                .Select(x => x.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var mayOverrideCachedTexture = _cachedTextures.Keys.Any(
+                cachedPath => addedFileNames.Contains(Path.GetFileName(cachedPath)));
+
+            if (mayOverrideCachedTexture)
+                ClearTextureCache();
+        }
 
         public void Dispose()
         {

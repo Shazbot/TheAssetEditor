@@ -560,6 +560,9 @@ namespace Shared.Core.PackFiles.Models.Containers
         public PackFile? DeleteFile(PackFile file) =>
             throw new InvalidOperationException("Cannot modify a cached CA pack file container.");
 
+        public List<PackFile> DeleteFiles(IReadOnlyCollection<string> paths) =>
+            throw new InvalidOperationException("Cannot modify a cached CA pack file container.");
+
         public void DeleteFolder(string folder) =>
             throw new InvalidOperationException("Cannot modify a cached CA pack file container.");
 

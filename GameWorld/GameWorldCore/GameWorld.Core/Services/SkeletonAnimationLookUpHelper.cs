@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Windows.Data;
 using Serilog;
 using Shared.Core.Events;
 using Shared.Core.PackFiles;
@@ -55,17 +56,34 @@ namespace GameWorld.Core.Services
             _packFileService = packFileService;
             _globalEventHub = globalEventHub;
 
+            // These collections are consumed by WPF CollectionViews but populated/refreshed
+            // from background indexing tasks. Tell WPF to synchronize access through the same
+            // lock used by this service so background refreshes cannot throw cross-thread
+            // CollectionView exceptions.
+            BindingOperations.EnableCollectionSynchronization(_skeletonFileNames, _threadLock);
+
             _globalEventHub.Register<PackFileContainerAddedEvent>(this, x => PackfileContainerRefresh(x.Container));
-            _globalEventHub.Register<PackFileContainerFilesAddedEvent>(this, x => PackfileContainerRefresh(x.Container));
+            _globalEventHub.Register<PackFileContainerFilesAddedEvent>(this, x =>
+            {
+                if (x.AddedFiles.Any(IsAnimationFile))
+                    PackfileContainerRefresh(x.Container);
+            });
             _globalEventHub.Register<PackFileContainerFolderRenamedEvent>(this, x => PackfileContainerRefresh(x.Container));
 
             _globalEventHub.Register<PackFileContainerRemovedEvent>(this, x => PackfileContainerRemove(x.Container));
-            _globalEventHub.Register<PackFileContainerFilesRemovedEvent>(this, x => PackfileContainerRemove(x.Container));
+            _globalEventHub.Register<PackFileContainerFilesRemovedEvent>(this, x =>
+            {
+                if (x.RemovedFiles.Any(IsAnimationFile))
+                    PackfileContainerRemove(x.Container);
+            });
             _globalEventHub.Register<PackFileContainerFolderRemovedEvent>(this, x => PackfileContainerRemove(x.Container));
 
             // Initialize in background so startup is not blocked.
             _initialIndexTask = Task.Run(LoadAllContainersInBackground);
         }
+
+        private static bool IsAnimationFile(PackFile file)
+            => file.Extension.Equals(".anim", StringComparison.OrdinalIgnoreCase);
 
         public void Dispose()
         {
@@ -163,7 +181,7 @@ namespace GameWorld.Core.Services
                 foreach (var animation in discovered.AnimationsBySkeletonName)
                 {
                     if (_skeletonNameToAnimationMap.ContainsKey(animation.Key) == false)
-                        _skeletonNameToAnimationMap[animation.Key] = [];
+                        _skeletonNameToAnimationMap[animation.Key] = CreateSynchronizedAnimationCollection();
 
                     foreach (var animationReference in animation.Value)
                     {
@@ -318,6 +336,13 @@ namespace GameWorld.Core.Services
             }
         }
 
+        ObservableCollection<AnimationReference> CreateSynchronizedAnimationCollection()
+        {
+            var collection = new ObservableCollection<AnimationReference>();
+            BindingOperations.EnableCollectionSynchronization(collection, _threadLock);
+            return collection;
+        }
+
         public ObservableCollection<AnimationReference> GetAnimationsForSkeleton(string skeletonName)
         {
             lock (_threadLock)
@@ -333,7 +358,7 @@ namespace GameWorld.Core.Services
                 if (_skeletonNameToAnimationMap.TryGetValue(skeletonName, out var loadedAnimations))
                     return loadedAnimations;
 
-                _skeletonNameToAnimationMap[skeletonName] = [];
+                _skeletonNameToAnimationMap[skeletonName] = CreateSynchronizedAnimationCollection();
                 return _skeletonNameToAnimationMap[skeletonName];
             }
         }
