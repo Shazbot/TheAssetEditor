@@ -6388,6 +6388,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidFactoredSingleCarrierGroupCount = 0;
             state.CrossRigidFactoredPackingSearchImprovements = 0;
             state.CrossRigidFactoredPairLookaheadSeeds = 0;
+            state.CrossRigidPartialCanonicalBeamImprovements = 0;
+            state.CrossRigidPartialCanonicalBeamUnionCandidates = 0;
             state.CrossRigidCanonicalJointParentCount = 0;
             state.CrossRigidCanonicalJointContextsFolded = 0;
             state.CrossRigidCanonicalJointParentConflictCount = 0;
@@ -7209,6 +7211,112 @@ namespace Editors.KitbasherEditor.Services
                 descriptor = current;
                 bestBenefit = currentBenefit;
                 coveredContextCount = currentCoverage;
+            }
+
+            // A greedy expansion can spend the remaining weighted-state
+            // budget on the wrong overlapping context. Keep a bounded
+            // frontier of alternative unions instead of committing to only
+            // the locally highest-benefit expansion. The existing union
+            // validator still enforces dependency structure, exact weights,
+            // and the 1,024-state cap for every candidate.
+            const int maxPartialCanonicalBeamWidth = 64;
+            const int maxPartialCanonicalBeamDepth = 3;
+            var greedyDescriptor = descriptor;
+            var greedyBenefit = bestBenefit;
+            var greedyCoveredCount = coveredContextCount;
+            var beam = candidates
+                .Select(candidate =>
+                {
+                    var (benefit, count) = Score(candidate);
+                    return (
+                        Descriptor: candidate,
+                        Benefit: benefit,
+                        Count: count);
+                })
+                .OrderByDescending(item => item.Benefit)
+                .ThenByDescending(item => item.Count)
+                .ThenBy(item => item.Descriptor.CombinationCount)
+                .Take(maxPartialCanonicalBeamWidth)
+                .ToArray();
+            var visited = new HashSet<string>(
+                beam.Select(item => BuildCrossRigidJointContextKey(
+                    rootVmdPath, item.Descriptor)),
+                StringComparer.Ordinal);
+            for (var depth = 0;
+                 depth < maxPartialCanonicalBeamDepth && beam.Length != 0;
+                 depth++)
+            {
+                var next = new List<(
+                    CrossRigidJointAlwaysPresentRewriteDescriptor Descriptor,
+                    double Benefit,
+                    int Count)>();
+                foreach (var partial in beam)
+                {
+                    foreach (var candidate in candidates)
+                    {
+                        if (IsCrossRigidJointDescriptorStructuralSuperset(
+                                partial.Descriptor, candidate) ||
+                            !TryCombineCrossRigidCanonicalJointContexts(
+                                state,
+                                partial.Descriptor,
+                                candidate,
+                                sourceVmdDocuments,
+                                out var expansion))
+                        {
+                            continue;
+                        }
+
+                        var (benefit, count) = Score(expansion);
+                        if (count <= partial.Count ||
+                            !visited.Add(BuildCrossRigidJointContextKey(
+                                rootVmdPath, expansion)))
+                        {
+                            continue;
+                        }
+
+                        next.Add((expansion, benefit, count));
+                        if (count <= 1 ||
+                            benefit < bestBenefit -
+                                AtlasValueGateExpectedDrawEpsilon ||
+                            (Math.Abs(benefit - bestBenefit) <=
+                                 AtlasValueGateExpectedDrawEpsilon &&
+                             (count < coveredContextCount ||
+                              (count == coveredContextCount &&
+                               descriptor != null &&
+                               expansion.CombinationCount >=
+                                   descriptor.CombinationCount))))
+                        {
+                            continue;
+                        }
+
+                        descriptor = expansion;
+                        bestBenefit = benefit;
+                        coveredContextCount = count;
+                    }
+                }
+
+                state.CrossRigidPartialCanonicalBeamUnionCandidates +=
+                    next.Count;
+                beam = next
+                    .OrderByDescending(item => item.Benefit)
+                    .ThenByDescending(item => item.Count)
+                    .ThenBy(item => item.Descriptor.CombinationCount)
+                    .Take(maxPartialCanonicalBeamWidth)
+                    .ToArray();
+            }
+
+            if (coveredContextCount > 1 &&
+                (bestBenefit > greedyBenefit +
+                     AtlasValueGateExpectedDrawEpsilon ||
+                 (Math.Abs(bestBenefit - greedyBenefit) <=
+                      AtlasValueGateExpectedDrawEpsilon &&
+                  (coveredContextCount > greedyCoveredCount ||
+                   (coveredContextCount == greedyCoveredCount &&
+                    greedyDescriptor != null &&
+                    descriptor.CombinationCount <
+                        greedyDescriptor.CombinationCount)))))
+            {
+                state.CrossRigidPartialCanonicalBeamImprovements++;
             }
 
             return coveredContextCount > 1;
@@ -34256,6 +34364,10 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidCanonicalJointContextsFolded:N0} narrower context(s) folded, " +
                     $"{state.CrossRigidCanonicalJointParentConflictCount:N0} multi-context parent(s) left separate");
                 sb.AppendLine(
+                    $"Partial canonical joint beam search: " +
+                    $"{state.CrossRigidPartialCanonicalBeamUnionCandidates:N0} union candidate(s), " +
+                    $"{state.CrossRigidPartialCanonicalBeamImprovements:N0} improvement(s)");
+                sb.AppendLine(
                     $"Factored independent-root Cartesian contexts: " +
                     $"{state.CrossRigidFactoredJointParentCount:N0} parent(s), " +
                     $"{state.CrossRigidFactoredJointGroupCount:N0} separate context group(s), " +
@@ -37411,6 +37523,8 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidFactoredSingleCarrierGroupCount { get; set; }
             public int CrossRigidFactoredPackingSearchImprovements { get; set; }
             public int CrossRigidFactoredPairLookaheadSeeds { get; set; }
+            public int CrossRigidPartialCanonicalBeamImprovements { get; set; }
+            public int CrossRigidPartialCanonicalBeamUnionCandidates { get; set; }
             public int CrossRigidCanonicalJointParentCount { get; set; }
             public int CrossRigidCanonicalJointContextsFolded { get; set; }
             public int CrossRigidCanonicalJointParentConflictCount { get; set; }
