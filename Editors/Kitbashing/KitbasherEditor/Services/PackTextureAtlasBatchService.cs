@@ -2218,6 +2218,15 @@ namespace Editors.KitbasherEditor.Services
                             $"{plan.VmdPath} [{plan.AttachmentIdentity}]: " +
                             $"{jointReason}; sources=[" +
                             $"{string.Join(", ", classified.OccurrenceSet.SourceInstances.Select(instance => instance.WsModelPath))}]");
+                        const string requiredStatesMarker =
+                            "; requiredWeightedStates=";
+                        var requiredStatesAt =
+                            jointReason.IndexOf(requiredStatesMarker,
+                                StringComparison.Ordinal);
+                        var categorizedJointReason =
+                            requiredStatesAt >= 0
+                                ? jointReason[..requiredStatesAt]
+                                : jointReason;
                         // Keep per-root, per-plan accounting of the
                         // state-cap failures. Observation counts alone
                         // exaggerate opportunities repeated across visual
@@ -2238,6 +2247,31 @@ namespace Editors.KitbasherEditor.Services
 
                             excluded.OccurrenceSetCount++;
                             excluded.RewritePlanIds.Add(plan.RewritePlanId);
+                            if (requiredStatesAt >= 0 &&
+                                long.TryParse(
+                                    jointReason[(requiredStatesAt +
+                                        requiredStatesMarker.Length)..],
+                                    NumberStyles.Integer,
+                                    CultureInfo.InvariantCulture,
+                                    out var requiredWeightedStates))
+                            {
+                                excluded.MaxRequiredWeightedStates =
+                                    Math.Max(
+                                        excluded.MaxRequiredWeightedStates,
+                                        requiredWeightedStates);
+                                if (requiredWeightedStates <= 8192)
+                                    excluded.RequiredUpTo8192++;
+                                else if (requiredWeightedStates <= 16384)
+                                    excluded.RequiredUpTo16384++;
+                                else if (requiredWeightedStates <= 65536)
+                                    excluded.RequiredUpTo65536++;
+                                else
+                                    excluded.RequiredAbove65536++;
+                            }
+                            else
+                            {
+                                excluded.UnknownRequiredStates++;
+                            }
                             if (classified.OccurrenceSet.SourceInstances.Length == 2)
                                 excluded.TwoSourceOccurrenceSetCount++;
                             else
@@ -2276,8 +2310,11 @@ namespace Editors.KitbasherEditor.Services
                         // large, undifferentiated rejection category.
                         RecordCrossRigidAnalysisDiagnostic(
                             state,
-                            $"Joint writer exclusion: {jointReason}",
-                            $"{plan.VmdPath} [{plan.AttachmentIdentity}]");
+                            $"Joint writer exclusion: {categorizedJointReason}",
+                            $"{plan.VmdPath} [{plan.AttachmentIdentity}]" +
+                            (requiredStatesAt >= 0
+                                ? jointReason[requiredStatesAt..]
+                                : string.Empty));
                     }
                 }
 
@@ -3438,10 +3475,33 @@ namespace Editors.KitbasherEditor.Services
                     if (combinationCount >
                         MaxCrossRigidJointStateCombinations)
                     {
+                        // Keep rejecting at the same limit, but measure
+                        // the complete weighted product for the report.
+                        // This is a count only: no extra VMD states are
+                        // generated and no eligibility check is relaxed.
+                        foreach (var remainingSlotIndex in
+                                 slotIndices.Where(index => index > slotIndex))
+                        {
+                            if (parentElement.SelectSingleNode(
+                                    $"SLOT[{remainingSlotIndex}]") is not
+                                XmlElement remainingSlot)
+                                break;
+
+                            var factor = GetCrossRigidJointAlternatives(
+                                    remainingSlot, remainingSlotIndex)
+                                .Sum(alternative => alternative.Multiplicity);
+                            if (factor < 1)
+                                break;
+                            combinationCount =
+                                SaturatingCrossRigidStateProduct(
+                                    combinationCount, factor);
+                        }
+
                         valid = false;
                         candidateFailureReasons.Add(
                             $"joint Cartesian product exceeds " +
-                            $"{MaxCrossRigidJointStateCombinations:N0} combinations");
+                            $"{MaxCrossRigidJointStateCombinations:N0} combinations" +
+                            $"; requiredWeightedStates={combinationCount}");
                         break;
                     }
                 }
@@ -4356,17 +4416,19 @@ namespace Editors.KitbasherEditor.Services
             long combinationCount = 1;
             foreach (var dimension in dimensionsByKey.Values)
             {
-                combinationCount *=
+                combinationCount = SaturatingCrossRigidStateProduct(
+                    combinationCount,
                     dimension.Alternatives.Sum(alternative =>
-                        alternative.Multiplicity);
-                if (combinationCount >
-                    MaxCrossRigidJointStateCombinations)
-                {
-                    reason =
-                        $"common-ancestor Cartesian product exceeds " +
-                        $"{MaxCrossRigidJointStateCombinations:N0} combinations";
-                    return false;
-                }
+                        alternative.Multiplicity));
+            }
+
+            if (combinationCount > MaxCrossRigidJointStateCombinations)
+            {
+                reason =
+                    $"common-ancestor Cartesian product exceeds " +
+                    $"{MaxCrossRigidJointStateCombinations:N0} combinations" +
+                    $"; requiredWeightedStates={combinationCount}";
+                return false;
             }
 
             descriptor =
@@ -13014,6 +13076,15 @@ namespace Editors.KitbasherEditor.Services
 
             return alternatives.ToArray();
         }
+
+        // Diagnostic-only product calculation, saturating rather than
+        // overflowing on unusually large source VMD combinations.
+        private static long SaturatingCrossRigidStateProduct(
+            long current,
+            long factor)
+            => current > long.MaxValue / Math.Max(1, factor)
+                ? long.MaxValue
+                : current * Math.Max(1, factor);
 
         private static int GetCrossRigidJointCombinationMultiplicity(
             IEnumerable<CrossRigidJointAlternative> alternatives)
@@ -34983,6 +35054,12 @@ namespace Editors.KitbasherEditor.Services
                             $"commonAncestor={excluded.CommonAncestorOccurrenceSetCount:N0}, " +
                             $"direct={excluded.DirectJointOccurrenceSetCount:N0}, " +
                             $"other={excluded.OtherCapOccurrenceSetCount:N0}, " +
+                            $"requiredStates=(<=8192:{excluded.RequiredUpTo8192:N0}, " +
+                            $"<=16384:{excluded.RequiredUpTo16384:N0}, " +
+                            $"<=65536:{excluded.RequiredUpTo65536:N0}, " +
+                            $">65536:{excluded.RequiredAbove65536:N0}, " +
+                            $"unknown:{excluded.UnknownRequiredStates:N0}, " +
+                            $"max:{excluded.MaxRequiredWeightedStates:N0}), " +
                             $"grossExpectedDraws={excluded.OverlapInclusiveExpectedDraws:0.###}");
                     }
                 }
@@ -37672,6 +37749,12 @@ namespace Editors.KitbasherEditor.Services
             public int DirectJointOccurrenceSetCount { get; set; }
             public int OtherCapOccurrenceSetCount { get; set; }
             public double OverlapInclusiveExpectedDraws { get; set; }
+            public long MaxRequiredWeightedStates { get; set; }
+            public int RequiredUpTo8192 { get; set; }
+            public int RequiredUpTo16384 { get; set; }
+            public int RequiredUpTo65536 { get; set; }
+            public int RequiredAbove65536 { get; set; }
+            public int UnknownRequiredStates { get; set; }
             public HashSet<string> RewritePlanIds { get; } =
                 new(StringComparer.Ordinal);
         }
