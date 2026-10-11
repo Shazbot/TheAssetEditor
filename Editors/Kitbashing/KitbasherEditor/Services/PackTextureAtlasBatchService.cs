@@ -8560,10 +8560,29 @@ namespace Editors.KitbasherEditor.Services
             {
                 var primaryPlans =
                     primaryPlansByPayload[payload.GeneratedPayloadId];
+                var allPlans =
+                    plansByPayload[payload.GeneratedPayloadId];
                 var isPrimary = primaryPlans.Length != 0;
+                if (isPrimary &&
+                    primaryPlans.Sum(plan =>
+                        plan.ExpectedArmyDrawCallsEliminated) <=
+                    AtlasValueGateExpectedDrawEpsilon &&
+                    allPlans.Sum(plan =>
+                        plan.ExpectedArmyDrawCallsEliminated) >
+                    AtlasValueGateExpectedDrawEpsilon)
+                {
+                    // The primary plans carry no benefit; only suppressed-pair
+                    // fallback plans do. Treat the payload as fallback-only
+                    // everywhere: downstream stages pick the primary or
+                    // supplementary path from the legacy-eligible set.
+                    isPrimary = false;
+                    state.CrossRigidLegacyEligiblePayloadIds.Remove(
+                        payload.GeneratedPayloadId);
+                }
+
                 var relevantPlans = isPrimary
                     ? primaryPlans
-                    : plansByPayload[payload.GeneratedPayloadId];
+                    : allPlans;
                 var expectedDraws = relevantPlans.Sum(plan =>
                     plan.ExpectedArmyDrawCallsEliminated);
                 var generatedGeometryBytes =
@@ -15329,9 +15348,17 @@ namespace Editors.KitbasherEditor.Services
             var previousDistance = 0.0f;
             foreach (var boundary in selectedBoundaries)
             {
-                var sampleDistance =
-                    previousDistance +
-                    ((boundary.Distance - previousDistance) * 0.5f);
+                // Sample just past the near edge so each source shows its
+                // most detailed LOD anywhere in this generated interval. The
+                // source lookup treats distance <= LodDistance + epsilon as
+                // inside that LOD, so stepping 2 * epsilon past the edge
+                // selects the source LOD that starts at the edge.
+                var sampleDistance = previousDistance <= 0.0f
+                    ? 0.0f
+                    : Math.Min(
+                        previousDistance +
+                        (2.0f * CrossRigidLodDistanceEpsilon),
+                        boundary.Distance);
                 var selections = components
                     .Select(component =>
                     {
@@ -15558,7 +15585,11 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            return -1;
+            // Beyond the last source LOD distance the source keeps showing
+            // its last LOD; dropping it would remove the component at range.
+            return Math.Min(
+                rigid.LodHeaders.Length - 1,
+                rigid.ModelList.Length - 1);
         }
 
         private static byte GetCrossRigidReconciledLodQualityLevel(
