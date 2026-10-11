@@ -83,6 +83,7 @@ Rough FPS equivalents, same ratio: current cross-rigid about 0.2 %; T1 ceiling a
 - Report additions: cost curve, missing-component counter, baseline expected draws, ideal-merge tiers with payload, state-cap, atlas-component and baked-variant estimates.
 - `PackTextureAtlasBatchService.cs` split into 16 partial-class files.
 - Writer-created slots nested to respect the engine's five-alternative limit.
+- Cross-rigid merging is now opt-in: a "Cross-rigid merges (experimental)" checkbox, off by default (`crossRigidMerges` on `Process`). Previously it ran whenever mesh merging was enabled. Cross-rigid-only mode still runs it.
 - New tests in `PackTextureAtlasCrossRigidTests.cs`; 244 pass across that class and `PackTextureAtlasValueGateTests`.
 
 ## Recommendations

@@ -871,6 +871,7 @@ namespace Editors.KitbasherEditor.Services
             public bool ShareAtlasesAcrossVmdsEnabled { get; }
             public bool OptimizeGeometryEnabled { get; }
             public bool CrossRigidOnly { get; set; }
+            public bool CrossRigidMergesEnabled { get; set; }
             public bool ExistingAtlasOutputDetected { get; set; }
             public int ExistingGeneratedAtlasCandidateCount { get; set; }
             public bool AtlasAllVmdsEnabled { get; set; }

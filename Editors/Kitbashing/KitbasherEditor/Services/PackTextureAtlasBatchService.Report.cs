@@ -896,6 +896,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Mesh references remapped by content dedupe: {state.ContentCanonicalizedMeshReferences}");
             sb.AppendLine($"Cropped-content hashes computed: {state.AtlasRegionContentHashes.Count}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
+            sb.AppendLine($"Cross-rigid merges: {(state.CrossRigidMergesEnabled ? "YES" : "NO")}");
             sb.AppendLine($"Cross-rigid-only mode: {(state.CrossRigidOnly ? "YES" : "NO")}");
             sb.AppendLine(
                 $"LOD-aware atlas family planning: " +

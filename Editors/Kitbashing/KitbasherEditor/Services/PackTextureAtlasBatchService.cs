@@ -187,6 +187,7 @@ namespace Editors.KitbasherEditor.Services
                 atlasAllVmds,
                 scoreAllGameUnits,
                 crossRigidOnly,
+                crossRigidMerges,
                 cancellationToken,
                 progress) =>
             {
@@ -201,7 +202,8 @@ namespace Editors.KitbasherEditor.Services
                     optimizeGeometry: optimizeGeometry,
                     atlasAllVmds: atlasAllVmds,
                     scoreAllGameUnits: scoreAllGameUnits,
-                    crossRigidOnly: crossRigidOnly);
+                    crossRigidOnly: crossRigidOnly,
+                    crossRigidMerges: crossRigidMerges);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -244,7 +246,8 @@ namespace Editors.KitbasherEditor.Services
             bool atlasAllVmds = false,
             bool scoreAllGameUnits = false,
             bool lodAwareAtlasPlanning = true,
-            bool crossRigidOnly = false)
+            bool crossRigidOnly = false,
+            bool crossRigidMerges = false)
         {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
@@ -287,6 +290,8 @@ namespace Editors.KitbasherEditor.Services
                     optimizeGeometry);
                 state.LodAwareAtlasPlanningEnabled = lodAwareAtlasPlanning;
                 state.CrossRigidOnly = crossRigidOnly;
+                state.CrossRigidMergesEnabled =
+                    crossRigidMerges || crossRigidOnly;
                 state.CancellationToken = cancellationToken;
                 state.Progress = progress;
                 var gameplayContainerSnapshot =
@@ -562,7 +567,9 @@ namespace Editors.KitbasherEditor.Services
                         phaseStopwatch.Elapsed;
                 }
 
-                if (mergeCompatibleMeshes || crossRigidOnly)
+                // Cross-rigid merging is opt-in: it rewrites VMDs and adds
+                // generated geometry for a small measured benefit.
+                if (crossRigidMerges || crossRigidOnly)
                 {
                     phaseStopwatch.Restart();
                     AnalyzeCrossRigidMergeOpportunities(
@@ -580,17 +587,17 @@ namespace Editors.KitbasherEditor.Services
                         progress);
                     state.PhaseDurations["Emit cross-rigid merges"] =
                         phaseStopwatch.Elapsed;
+                }
 
-                    if (!crossRigidOnly)
-                    {
-                        phaseStopwatch.Restart();
-                        MergeCompatibleMeshes(
-                            state,
-                            cancellationToken,
-                            progress);
-                        state.PhaseDurations["Merge compatible meshes"] =
-                            phaseStopwatch.Elapsed;
-                    }
+                if (mergeCompatibleMeshes && !crossRigidOnly)
+                {
+                    phaseStopwatch.Restart();
+                    MergeCompatibleMeshes(
+                        state,
+                        cancellationToken,
+                        progress);
+                    state.PhaseDurations["Merge compatible meshes"] =
+                        phaseStopwatch.Elapsed;
                 }
 
                 if (optimizeGeometry && !crossRigidOnly)
