@@ -1701,6 +1701,9 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidPreviouslySuppressedPairFallbackPlanIds.Clear();
             state.CrossRigidLegacyEligiblePayloadIds.Clear();
             state.CrossRigidPairFallbackPlansEvaluated = 0;
+            state.CrossRigidBaselineExpectedDrawsByVmd.Clear();
+            state.CrossRigidBaselineUnresolvedWsModelCount = 0;
+            state.CrossRigidBaselineRigidsLoaded = 0;
             state.CrossRigidTimingDetails.Clear();
             state.CrossRigidSourceMeshMergeIdentityCache.Clear();
             state.CrossRigidMaterialMergeIdentityCache.Clear();
@@ -1722,6 +1725,9 @@ namespace Editors.KitbasherEditor.Services
                 new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
             var activationClassificationVmdDocuments =
                 new Dictionary<string, XmlDocument>(
+                    StringComparer.OrdinalIgnoreCase);
+            var baselineComponents =
+                new Dictionary<string, CrossRigidAnalysisComponent?>(
                     StringComparer.OrdinalIgnoreCase);
 
             for (var vmdIndex = 0; vmdIndex < vmdRoots.Count; vmdIndex++)
@@ -1765,7 +1771,31 @@ namespace Editors.KitbasherEditor.Services
                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                     .ToArray();
                 if (allWsModels.Length < 2)
+                {
+                    // Nothing to merge, but the root still counts in the
+                    // expected-draw baseline.
+                    var baselineTimer = Stopwatch.GetTimestamp();
+                    var rigidsBefore = rigidCache.Count;
+                    RecordCrossRigidBaselineExpectedDraws(
+                        state,
+                        vmdPath,
+                        expansion,
+                        wsModelPath =>
+                            ResolveCrossRigidBaselineComponent(
+                                state,
+                                vmdPath,
+                                wsModelPath,
+                                traversalContainers,
+                                rigidCache,
+                                baselineComponents));
+                    state.CrossRigidBaselineRigidsLoaded +=
+                        rigidCache.Count - rigidsBefore;
+                    AddCrossRigidTimingDuration(
+                        state,
+                        "Analyze: baseline expected draws",
+                        Stopwatch.GetElapsedTime(baselineTimer));
                     continue;
+                }
 
                 state.CrossRigidAnalysisVmdCount++;
                 state.CrossRigidAnalysisDirectWsModelCount += allWsModels.Length;
@@ -1795,6 +1825,38 @@ namespace Editors.KitbasherEditor.Services
 
                     componentsByWsModel[wsModelPath] = component;
                 }
+
+                var baselineAnalysisTimer = Stopwatch.GetTimestamp();
+                foreach (var wsModelPath in allWsModels)
+                {
+                    // Reuse the components built above; a failed build is
+                    // already a recorded blocker and is not retried.
+                    if (baselineComponents.TryAdd(
+                            wsModelPath,
+                            componentsByWsModel.GetValueOrDefault(
+                                wsModelPath)) &&
+                        !componentsByWsModel.ContainsKey(wsModelPath))
+                    {
+                        state.CrossRigidBaselineUnresolvedWsModelCount++;
+                    }
+                }
+
+                RecordCrossRigidBaselineExpectedDraws(
+                    state,
+                    vmdPath,
+                    expansion,
+                    wsModelPath =>
+                        ResolveCrossRigidBaselineComponent(
+                            state,
+                            vmdPath,
+                            wsModelPath,
+                            traversalContainers,
+                            rigidCache,
+                            baselineComponents));
+                AddCrossRigidTimingDuration(
+                    state,
+                    "Analyze: baseline expected draws",
+                    Stopwatch.GetElapsedTime(baselineAnalysisTimer));
 
                 foreach (var configuration in configurations
                              .Where(configuration =>
@@ -13885,7 +13947,7 @@ namespace Editors.KitbasherEditor.Services
                                     part.PartIndex)
                                 .ToArray();
                             outputModels.Add(
-                                MergeRmvModels(
+                                MergeRmvModelsOwned(
                                     orderedBin
                                         .Select(part => part.Model)
                                         .ToArray()));
@@ -13966,21 +14028,9 @@ namespace Editors.KitbasherEditor.Services
                     Stopwatch.GetElapsedTime(buildTimer));
                 buildTimer = Stopwatch.GetTimestamp();
 
-                // Round-trip once before storing the generated RMV so the new asset owns
-                // independent model/material/vertex objects. The source rigids remain
-                // untouched by later geometry optimization.
-                var factory = ModelFactory.Create();
-                generatedRigid = factory.Load(
-                    factory.Save(
-                        generatedRigid,
-                        validateByReloading: false,
-                        logProgress: false));
-                AddCrossRigidTimingDuration(
-                    state,
-                    "Emit payload: RMV ownership round-trip",
-                    Stopwatch.GetElapsedTime(buildTimer));
-                buildTimer = Stopwatch.GetTimestamp();
-
+                // The generated models were built by MergeRmvModelsOwned, so they
+                // already own independent model/mesh/material/vertex objects and
+                // later geometry optimization cannot touch the source rigids.
                 var generatedWsDocument = new XmlDocument();
                 generatedWsDocument.LoadXml(
                     representative.WsDocument.OuterXml);
@@ -15871,10 +15921,37 @@ namespace Editors.KitbasherEditor.Services
             double visualConfigurationProbability,
             IReadOnlyList<CrossRigidLodAnalysis> lodAnalyses)
         {
-            var model = state.ArmyResidencyModel;
-            if (model == null ||
+            if (state.ArmyResidencyModel == null ||
                 visualConfigurationProbability <= 0 ||
                 lodAnalyses.Count == 0)
+            {
+                return 0;
+            }
+
+            return CalculateExpectedCrossRigidArmyDrawWeight(
+                state,
+                vmdPath,
+                visualConfigurationProbability,
+                lodAnalyses
+                    .Where(lod => lod.DrawsSaved > 0)
+                    .Select(lod =>
+                        (lod.LodProbability, (double)lod.DrawsSaved))
+                    .ToArray());
+        }
+
+        // Army-model weighting shared by the draw savings and the baseline
+        // draws: draws per entity at each scenario LOD, scaled by the share
+        // of entities that use this root VMD in the player/opponent armies.
+        private static double CalculateExpectedCrossRigidArmyDrawWeight(
+            BatchState state,
+            string vmdPath,
+            double visualConfigurationProbability,
+            IReadOnlyList<(double LodProbability, double DrawsPerEntity)>
+                lodDraws)
+        {
+            var model = state.ArmyResidencyModel;
+            if (model == null ||
+                visualConfigurationProbability <= 0)
             {
                 return 0;
             }
@@ -15915,7 +15992,7 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
-                    foreach (var lod in lodAnalyses.Where(lod => lod.DrawsSaved > 0))
+                    foreach (var lod in lodDraws)
                     {
                         double eliminatedDrawsAcrossResolvedUnits = 0;
                         foreach (var unitId in EnumerateRelevantArmyUnitIds(
@@ -15948,7 +16025,7 @@ namespace Editors.KitbasherEditor.Services
                                     visualConfigurationProbability *
                                     directVmdProbability *
                                     entityCount *
-                                    lod.DrawsSaved;
+                                    lod.DrawsPerEntity;
                             }
                         }
 
@@ -15968,6 +16045,186 @@ namespace Editors.KitbasherEditor.Services
                 drawsByCulture,
                 model.PlayerCultureWeights,
                 model.OpponentCultureWeights);
+        }
+
+        // Baseline for the expected-draw metric: the expected mesh-part draws
+        // of the analyzed root VMDs, weighted exactly like the draw savings
+        // (same army model and weighting helper). Per root VMD and scenario
+        // LOD, one entity renders, for each attachment context, the
+        // probability-weighted draws of that context's visual configurations
+        // (the same attachment-local projection the savings use). Each
+        // instance counts its source rigid's draws after same-rigid merging,
+        // the footing the savings are measured against. Contexts holding a
+        // single WSModel are included, unlike the merge analysis.
+        private static CrossRigidAnalysisComponent?
+            ResolveCrossRigidBaselineComponent(
+                BatchState state,
+                string vmdPath,
+                string wsModelPath,
+                IReadOnlyList<IPackFileContainer> traversalContainers,
+                Dictionary<string, RmvFile> rigidCache,
+                Dictionary<string, CrossRigidAnalysisComponent?> cache)
+        {
+            if (cache.TryGetValue(wsModelPath, out var cached))
+                return cached;
+
+            if (!TryBuildCrossRigidAnalysisComponent(
+                    state,
+                    vmdPath,
+                    wsModelPath,
+                    traversalContainers,
+                    rigidCache,
+                    out var component,
+                    out _))
+            {
+                state.CrossRigidBaselineUnresolvedWsModelCount++;
+                cache[wsModelPath] = null;
+                return null;
+            }
+
+            cache[wsModelPath] = component;
+            return component;
+        }
+
+        private static void RecordCrossRigidBaselineExpectedDraws(
+            BatchState state,
+            string vmdPath,
+            CrossRigidAttachmentLocalExpansionResult expansion,
+            Func<string, CrossRigidAnalysisComponent?> resolveComponent)
+        {
+            var baseline = CalculateCrossRigidBaselineExpectedDraws(
+                state,
+                vmdPath,
+                expansion,
+                resolveComponent);
+            state.CrossRigidBaselineExpectedDrawsByVmd[vmdPath] = baseline;
+        }
+
+        private static double CalculateCrossRigidBaselineExpectedDraws(
+            BatchState state,
+            string vmdPath,
+            CrossRigidAttachmentLocalExpansionResult expansion,
+            Func<string, CrossRigidAnalysisComponent?> resolveComponent)
+        {
+            var model = state.ArmyResidencyModel;
+            if (model == null ||
+                GetRelevantArmyUnitIds(
+                        model,
+                        Array.Empty<string>(),
+                        [vmdPath])
+                    .Count == 0)
+            {
+                return 0;
+            }
+
+            var drawsByWsModelAndLod =
+                new Dictionary<(string WsModelPath, int LodIndex), int>();
+            var lodDraws =
+                new List<(double LodProbability, double DrawsPerEntity)>();
+            foreach (var (scenarioLodIndex, lodProbability) in model
+                         .Scenario.LodDistribution
+                         .Where(entry => entry.Value > 0)
+                         .OrderBy(entry => entry.Key))
+            {
+                double drawsPerEntity = 0;
+                foreach (var configurations in
+                         expansion.ConfigurationsByAttachment.Values)
+                {
+                    foreach (var configuration in configurations)
+                    {
+                        if (configuration.Probability <= 0)
+                            continue;
+
+                        var configurationDraws = 0;
+                        foreach (var instance in configuration.Instances)
+                        {
+                            var component =
+                                resolveComponent(instance.WsModelPath);
+                            if (component == null ||
+                                component.Rigid.ModelList.Length == 0)
+                            {
+                                continue;
+                            }
+
+                            var sourceLodIndex = Math.Min(
+                                scenarioLodIndex,
+                                component.Rigid.ModelList.Length - 1);
+                            var key = (component.WsModelPath, sourceLodIndex);
+                            if (!drawsByWsModelAndLod.TryGetValue(
+                                    key,
+                                    out var instanceDraws))
+                            {
+                                instanceDraws =
+                                    CountCrossRigidInstanceInputDraws(
+                                        state,
+                                        component,
+                                        sourceLodIndex);
+                                drawsByWsModelAndLod[key] = instanceDraws;
+                            }
+
+                            configurationDraws += instanceDraws;
+                        }
+
+                        drawsPerEntity +=
+                            configuration.Probability * configurationDraws;
+                    }
+                }
+
+                if (drawsPerEntity > 0)
+                    lodDraws.Add((lodProbability, drawsPerEntity));
+            }
+
+            return CalculateExpectedCrossRigidArmyDrawWeight(
+                state,
+                vmdPath,
+                1.0,
+                lodDraws);
+        }
+
+        // Draws of one WSModel instance at a source LOD after same-rigid
+        // merging: parts sharing a merge identity combine up to the 16-bit
+        // vertex limit, as in AnalyzeCrossRigidLodState's input draws.
+        private static int CountCrossRigidInstanceInputDraws(
+            BatchState state,
+            CrossRigidAnalysisComponent component,
+            int sourceLodIndex)
+        {
+            if (sourceLodIndex < 0 ||
+                sourceLodIndex >= component.Rigid.ModelList.Length ||
+                sourceLodIndex >= component.MaterialAssignments.Length)
+            {
+                return 0;
+            }
+
+            var models = component.Rigid.ModelList[sourceLodIndex];
+            var assignments = component.MaterialAssignments[sourceLodIndex];
+            var vertexCountsByIdentity =
+                new Dictionary<string, List<int>>(StringComparer.Ordinal);
+            for (var partIndex = 0;
+                 partIndex < models.Length &&
+                 partIndex < assignments.Length;
+                 partIndex++)
+            {
+                var identity = GetCrossRigidSourcePartMergeIdentity(
+                    state,
+                    component.RigidPath,
+                    sourceLodIndex,
+                    partIndex,
+                    models[partIndex],
+                    assignments[partIndex]);
+                if (!vertexCountsByIdentity.TryGetValue(
+                        identity,
+                        out var vertexCounts))
+                {
+                    vertexCounts = [];
+                    vertexCountsByIdentity[identity] = vertexCounts;
+                }
+
+                vertexCounts.Add(models[partIndex].Mesh.VertexList.Length);
+            }
+
+            return vertexCountsByIdentity.Values.Sum(
+                CountCrossRigidVertexLimitedMergeBins);
         }
 
         private static string GetCrossRigidWsModelTopologyIdentity(XmlDocument document)
@@ -31134,6 +31391,50 @@ namespace Editors.KitbasherEditor.Services
             };
         }
 
+        // MergeRmvModels returns the source model itself for a single part and
+        // shares CommonVertex instances (a mutable class) for merged parts.
+        // Generated cross-rigid rigids are later modified in place (UV
+        // rewrites, geometry optimization), so they must own their data.
+        private static RmvModel MergeRmvModelsOwned(
+            IReadOnlyList<RmvModel> models)
+        {
+            var merged = MergeRmvModels(models);
+            var aliasesSource = ReferenceEquals(merged, models[0]);
+            return new RmvModel
+            {
+                CommonHeader = merged.CommonHeader,
+                Material = aliasesSource
+                    ? merged.Material.Clone()
+                    : merged.Material,
+                Mesh = new RmvMesh
+                {
+                    VertexList = merged.Mesh.VertexList
+                        .Select(CloneCommonVertex)
+                        .ToArray(),
+                    IndexList = aliasesSource
+                        ? merged.Mesh.IndexList.ToArray()
+                        : merged.Mesh.IndexList,
+                },
+            };
+        }
+
+        private static CommonVertex CloneCommonVertex(CommonVertex vertex)
+        {
+            return new CommonVertex
+            {
+                Position = vertex.Position,
+                Normal = vertex.Normal,
+                BiNormal = vertex.BiNormal,
+                Tangent = vertex.Tangent,
+                Uv = vertex.Uv,
+                Uv1 = vertex.Uv1,
+                Colour = vertex.Colour,
+                BoneIndex = vertex.BoneIndex?.ToArray()!,
+                BoneWeight = vertex.BoneWeight?.ToArray()!,
+                WeightCount = vertex.WeightCount,
+            };
+        }
+
         private static bool TryReadWsMaterialAssignments(
             XmlDocument document,
             RmvFile rmv,
@@ -34856,6 +35157,29 @@ namespace Editors.KitbasherEditor.Services
                     $"Conflict-deduplicated expected draws selected: " +
                     $"{selectedExpectedDraws:0.###} " +
                     $"({(totalExpectedDraws > AtlasValueGateExpectedDrawEpsilon ? selectedExpectedDraws / totalExpectedDraws : 0):P1} of overlap-inclusive candidate total)");
+                var baselineAllRoots =
+                    state.CrossRigidBaselineExpectedDrawsByVmd.Values.Sum();
+                var baselineRewrittenRoots = selectedRewritePlans
+                    .Select(plan => plan.VmdPath)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Sum(vmdPath =>
+                        state.CrossRigidBaselineExpectedDrawsByVmd
+                            .GetValueOrDefault(vmdPath));
+                sb.AppendLine(
+                    $"Baseline expected battle draws (all analyzed VMD roots): " +
+                    $"{baselineAllRoots:0.###}");
+                sb.AppendLine(
+                    $"Baseline expected battle draws (VMD roots with selected rewrites): " +
+                    $"{baselineRewrittenRoots:0.###}");
+                sb.AppendLine(
+                    $"Selected expected draws as share of baseline: " +
+                    $"{(baselineAllRoots > AtlasValueGateExpectedDrawEpsilon ? selectedExpectedDraws / baselineAllRoots : 0):P1} of all analyzed, " +
+                    $"{(baselineRewrittenRoots > AtlasValueGateExpectedDrawEpsilon ? selectedExpectedDraws / baselineRewrittenRoots : 0):P1} of rewritten roots");
+                sb.AppendLine(
+                    $"Baseline WSModels without resolvable geometry (draws omitted): " +
+                    $"{state.CrossRigidBaselineUnresolvedWsModelCount:N0}; " +
+                    $"rigids loaded only for the baseline pass (upper bound): " +
+                    $"{state.CrossRigidBaselineRigidsLoaded:N0}");
                 sb.AppendLine(
                     $"Selected generated geometry payload: " +
                     $"{FormatMiB(selectedGeneratedGeometryBytes)}");
@@ -38080,6 +38404,11 @@ namespace Editors.KitbasherEditor.Services
             public long CrossRigidRawLodDrawsAfter { get; set; }
             public Dictionary<CrossRigidWsModelOccurrenceKey, double>
                 CrossRigidWsModelOccurrenceProbabilities { get; } = [];
+            public Dictionary<string, double>
+                CrossRigidBaselineExpectedDrawsByVmd { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public int CrossRigidBaselineUnresolvedWsModelCount { get; set; }
+            public int CrossRigidBaselineRigidsLoaded { get; set; }
             public List<CrossRigidDisplacedSourceGeometryEntry>
                 CrossRigidDisplacedSourceGeometryEntries { get; } = [];
             public Dictionary<string, int> CrossRigidAnalysisBlockerCounts { get; } =
