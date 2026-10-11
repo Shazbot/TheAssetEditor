@@ -1873,5 +1873,456 @@ namespace Test.KitbashEditor.Services
                 lines,
                 Has.Some.Contains("Shared-atlas (T1) merges would combine 0 distinct material(s) using 0"));
         }
+
+        // ---- T1 payload accounting, state-cap proxy and baked variants ----
+
+        private static object ReadProperty(object target, string name)
+        {
+            return target.GetType()
+                .GetProperty(
+                    name,
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic)!
+                .GetValue(target)!;
+        }
+
+        private static object[] GetAccountedPayloads(object state)
+        {
+            var accounting = ReadProperty(
+                state,
+                "CrossRigidIdealMergeAccounting");
+            return ((IDictionary)ReadProperty(accounting, "Payloads"))
+                .Values
+                .Cast<object>()
+                .Where(payload => (bool)ReadProperty(payload, "IsPayload"))
+                .ToArray();
+        }
+
+        private static object[] GetAccountedContexts(object state)
+        {
+            var accounting = ReadProperty(
+                state,
+                "CrossRigidIdealMergeAccounting");
+            return ((IEnumerable)ReadProperty(accounting, "Contexts"))
+                .Cast<object>()
+                .ToArray();
+        }
+
+        private static void RunAccounting(
+            object state,
+            object expansion,
+            Dictionary<string, object> components)
+        {
+            GetStaticMethod("RecordCrossRigidIdealMergePayloadAccounting")
+                .Invoke(
+                    null,
+                    [state, BaselineVmdPath, expansion, CreateIdealResolver(components)]);
+        }
+
+        private static long ExpectedSingleLodGeometryBytes(int partCount)
+        {
+            var vertexSize = VertexFactory.Create().GetVertexSize(
+                VertexFormat.Weighted,
+                default(RmvFileHeader).Version);
+            // CreateWeightedModel: 4 vertices, 6 indices per part.
+            return partCount * (vertexSize * 4L + sizeof(ushort) * 6L);
+        }
+
+        // The same WSModel set (listed in different order) is reached by
+        // two roots (accounting is run twice for the army's one VMD path):
+        // one payload, savings summed, geometry counted once. A
+        // single-WSModel configuration that saves nothing is not a payload.
+        [Test]
+        public void IdealMerge_PayloadAccounting_SharedWsModelSetIsOnePayload()
+        {
+            var state = CreateIdealState(
+                new Dictionary<string, string>
+                {
+                    [IdealMaterialOne] = BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader", "tex/a.dds"),
+                    [IdealMaterialTwo] = BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader", "tex/b.dds"),
+                });
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(), IdealMaterialOne),
+                (IdealWsTwo, CreateIdealPart(), IdealMaterialTwo));
+
+            RunAccounting(
+                state,
+                CreateExpansion(
+                    CreateVisualConfiguration(1.0, IdealWsOne, IdealWsTwo)),
+                components);
+            RunAccounting(
+                state,
+                CreateExpansion(
+                    CreateVisualConfiguration(0.5, IdealWsTwo, IdealWsOne),
+                    CreateVisualConfiguration(0.5, IdealWsOne)),
+                components);
+
+            var payloads = GetAccountedPayloads(state);
+            Assert.That(payloads, Has.Length.EqualTo(1));
+            Assert.That(
+                (long)ReadProperty(payloads[0], "GeometryBytes"),
+                Is.EqualTo(ExpectedSingleLodGeometryBytes(2)));
+            // Two parts per configuration merge into one draw at every LOD:
+            // saved draws per entity = 1, occurrence probabilities 1.0 + 0.5.
+            Assert.That(
+                (double)ReadProperty(payloads[0], "Saving"),
+                Is.EqualTo(1.5 * ExpectedForConstantDraws(state, 1)).Within(1e-9));
+
+            var contexts = GetAccountedContexts(state);
+            Assert.That(contexts, Has.Length.EqualTo(2));
+            Assert.That(
+                contexts.Select(context =>
+                    (int)ReadProperty(context, "ConfigurationCount")),
+                Is.EquivalentTo([1, 2]));
+            Assert.That(
+                GetStateProperty<object>(
+                    state,
+                    "CrossRigidIdealMergeAccounting")
+                    .GetType()
+                    .GetProperty("ProbabilitySumMax")!
+                    .GetValue(GetStateProperty<object>(
+                        state,
+                        "CrossRigidIdealMergeAccounting")),
+                Is.EqualTo(1.0).Within(1e-9));
+        }
+
+        // Multi-LOD case with two configurations: the payload savings sum
+        // equals the exact T1 saving (baseline - T1) because the army
+        // weighting is linear in per-LOD draws.
+        [Test]
+        public void IdealMerge_PayloadAccounting_SumsToExactT1Saving()
+        {
+            var state = CreateIdealState(
+                new Dictionary<string, string>
+                {
+                    [IdealMaterialOne] = BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader", "tex/a.dds"),
+                    [IdealMaterialTwo] = BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader", "tex/b.dds"),
+                });
+            var components = new Dictionary<string, object>
+            {
+                [IdealWsOne] = CreateBaselineComponent(
+                    IdealWsOne,
+                    [
+                        [CreateIdealPart(), CreateIdealPart()],
+                        [CreateIdealPart()],
+                    ],
+                    [
+                        [IdealMaterialOne, IdealMaterialTwo],
+                        [IdealMaterialOne],
+                    ]),
+                [IdealWsTwo] = CreateBaselineComponent(
+                    IdealWsTwo,
+                    [[CreateIdealPart()], [CreateIdealPart()]],
+                    [[IdealMaterialTwo], [IdealMaterialOne]]),
+            };
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(0.4, IdealWsOne, IdealWsTwo),
+                CreateVisualConfiguration(0.6, IdealWsOne));
+
+            var baseline = RunBaseline(state, expansion, components);
+            var tiers = RunIdeal(state, expansion, components);
+            RunAccounting(state, expansion, components);
+
+            var payloads = GetAccountedPayloads(state);
+            Assert.That(payloads, Has.Length.EqualTo(2));
+            Assert.That(baseline - tiers[1], Is.GreaterThan(0));
+            Assert.That(
+                payloads.Sum(payload => (double)ReadProperty(payload, "Saving")),
+                Is.EqualTo(baseline - tiers[1]).Within(1e-9));
+            // WS1 has 3 parts over its two LODs, WS2 has 2.
+            Assert.That(
+                payloads
+                    .Select(payload => (long)ReadProperty(payload, "GeometryBytes"))
+                    .OrderBy(bytes => bytes),
+                Is.EqualTo(
+                [
+                    ExpectedSingleLodGeometryBytes(3),
+                    ExpectedSingleLodGeometryBytes(5),
+                ]));
+
+            // The report prints the check line and the greedy/bucket blocks.
+            GetStateProperty<Dictionary<string, double>>(
+                state,
+                "CrossRigidBaselineExpectedDrawsByVmd")[BaselineVmdPath] = baseline;
+            GetStateProperty<Dictionary<string, double[]>>(
+                state,
+                "CrossRigidIdealMergeExpectedDrawsByVmd")[BaselineVmdPath] = tiers;
+            var lines = (string[])GetStaticMethod(
+                    "BuildCrossRigidIdealMergeReportLines")
+                .Invoke(null, [state, 0.0])!;
+            Assert.That(
+                lines,
+                Has.Some.Contains("T1 hypothetical payloads: 2 distinct configuration(s)"));
+            Assert.That(lines, Has.Some.Contains("payload savings = "));
+            Assert.That(lines, Has.Some.Contains("growth cap 256 MiB (today's): 2 accepted"));
+            Assert.That(lines, Has.Some.Contains("growth cap unlimited: 2 accepted"));
+            Assert.That(lines, Has.Some.Contains("<=16 configuration(s): 1 context(s) (1 with saving)"));
+            Assert.That(lines, Has.Some.Contains("state-cap proxy"));
+            Assert.That(lines, Has.Some.Contains("Baked-variant estimate"));
+            Assert.That(lines, Has.None.Contains("NaN"));
+        }
+
+        [Test]
+        public void IdealMerge_GreedySelection_AppliesCeilingCapAndOrdering()
+        {
+            const long mib = 1024 * 1024;
+            const double ceiling = 16.0 * mib;
+            var payloads = new (string Key, double Saving, long Bytes)[]
+            {
+                ("a", 10, 10 * mib),  // 1 MiB per draw
+                ("d", 5, 5 * mib),    // 1 MiB per draw, ties with a: key order
+                ("b", 4, 8 * mib),    // 2 MiB per draw
+                ("c", 1, 20 * mib),   // 20 MiB per draw: over the ceiling
+                ("z", 0, 1 * mib),    // no saving
+            };
+
+            (int Accepted, double Saving, long Bytes) Select(long? capMiB)
+            {
+                var result = ((int, double, long))GetStaticMethod(
+                        "SelectCrossRigidIdealMergePayloadsGreedy")
+                    .Invoke(
+                        null,
+                        [
+                            payloads,
+                            ceiling,
+                            capMiB.HasValue ? capMiB.Value * mib : (long?)null,
+                        ])!;
+                return result;
+            }
+
+            Assert.That(Select(null), Is.EqualTo((3, 19.0, 23 * mib)));
+            // a (10) + d (5) fit in 20 MiB; b would reach 23 and is skipped.
+            Assert.That(Select(20), Is.EqualTo((2, 15.0, 15 * mib)));
+            // a does not fit in 5 MiB, so it is skipped and d is accepted.
+            Assert.That(Select(5), Is.EqualTo((1, 5.0, 5 * mib)));
+            Assert.That(Select(0), Is.EqualTo((0, 0.0, 0L)));
+        }
+
+        [Test]
+        public void IdealMerge_ConfigurationCountBuckets()
+        {
+            int Bucket(int count)
+                => (int)GetStaticMethod(
+                        "GetCrossRigidIdealMergeConfigurationBucket")
+                    .Invoke(null, [count])!;
+
+            Assert.That(Bucket(1), Is.EqualTo(0));
+            Assert.That(Bucket(16), Is.EqualTo(0));
+            Assert.That(Bucket(17), Is.EqualTo(1));
+            Assert.That(Bucket(64), Is.EqualTo(1));
+            Assert.That(Bucket(65), Is.EqualTo(2));
+            Assert.That(Bucket(512), Is.EqualTo(2));
+            Assert.That(Bucket(513), Is.EqualTo(3));
+            Assert.That(Bucket(4096), Is.EqualTo(3));
+            Assert.That(Bucket(4097), Is.EqualTo(4));
+            Assert.That(Bucket(16384), Is.EqualTo(4));
+        }
+
+        [Test]
+        public void IdealMerge_ExpansionFailures_AreCountedByReason()
+        {
+            var state = CreateBareBatchState();
+            var record = GetStaticMethod(
+                "RecordCrossRigidIdealMergeExpansionFailure");
+            record.Invoke(null, [state, "Cross-rigid VMD could not be resolved"]);
+            record.Invoke(
+                null,
+                [
+                    state,
+                    "Cross-rigid attachment-local configuration limit exceeded " +
+                    "(16,384 unique configurations at <root>)",
+                ]);
+
+            var accounting = ReadProperty(
+                state,
+                "CrossRigidIdealMergeAccounting");
+            Assert.That(
+                ReadProperty(accounting, "ExpansionFailureCount"),
+                Is.EqualTo(2));
+            Assert.That(
+                ReadProperty(accounting, "ExpansionLimitFailureCount"),
+                Is.EqualTo(1));
+        }
+
+        // ---- Atlas inputs / components of accepted payloads ----
+
+        private static byte[] BuildDxt1Dds(int width, int height)
+        {
+            var data = BuildDxt1Dds();
+            BitConverter.GetBytes(height).CopyTo(data, 12);
+            BitConverter.GetBytes(width).CopyTo(data, 16);
+            return data;
+        }
+
+        [Test]
+        public void IdealMerge_AtlasComponents_ChainTransitivelyAndExcludeSingletons()
+        {
+            var groups = new[]
+            {
+                new[] { "a", "b" },
+                new[] { "b", "c" },
+                new[] { "D", "e" },
+                new[] { "f" },
+                new[] { "x", "X" },
+                new[] { "c", "g", "a" },
+            };
+
+            var components = (List<string[]>)GetStaticMethod(
+                    "BuildCrossRigidIdealMergeAtlasComponents")
+                .Invoke(null, [groups])!;
+
+            Assert.That(components, Has.Count.EqualTo(2));
+            Assert.That(components[0], Is.EqualTo(new[] { "a", "b", "c", "g" }));
+            Assert.That(components[1], Is.EquivalentTo(new[] { "D", "e" }));
+            Assert.That(
+                components.SelectMany(component => component),
+                Has.None.EqualTo("f"));
+        }
+
+        [TestCase(0L, 0)]
+        [TestCase(4096L * 4096, 0)]
+        [TestCase(4096L * 4096 + 1, 1)]
+        [TestCase(4L * 4096 * 4096, 1)]
+        [TestCase(4L * 4096 * 4096 + 1, 2)]
+        public void IdealMerge_PageFitClassification_Boundaries(
+            long area,
+            int expectedClass)
+        {
+            Assert.That(
+                GetStaticMethod("ClassifyCrossRigidIdealMergeAtlasPageFit")
+                    .Invoke(null, [area]),
+                Is.EqualTo(expectedClass));
+        }
+
+        [Test]
+        public void IdealMerge_WorstFitClass_TakesTheWorstComponentOfAPayload()
+        {
+            var worst = GetStaticMethod(
+                "GetCrossRigidIdealMergeWorstFitClass");
+            var classes = new Dictionary<string, int>(
+                StringComparer.OrdinalIgnoreCase)
+            {
+                ["a"] = 0,
+                ["b"] = 0,
+                ["c"] = 2,
+                ["d"] = 1,
+            };
+
+            Assert.That(
+                worst.Invoke(null, [new[] { new[] { "a", "b" }, new[] { "c", "d" } }, classes]),
+                Is.EqualTo(2));
+            Assert.That(
+                worst.Invoke(null, [new[] { new[] { "a", "b" }, new[] { "d" } }, classes]),
+                Is.EqualTo(1));
+            Assert.That(
+                worst.Invoke(null, [new[] { new[] { "A", "b" } }, classes]),
+                Is.EqualTo(0));
+            // No qualifying group: the payload needs no shared atlas.
+            Assert.That(
+                worst.Invoke(null, [Array.Empty<string[]>(), classes]),
+                Is.EqualTo(-1));
+        }
+
+        // Two accepted payloads ({One, Two} and {Three, Four}) share
+        // material m2, so their components merge into one atlas of three
+        // materials whose summed base-colour area decides the class.
+        [TestCase(8, 8, 0)]
+        [TestCase(4096, 4096, 1)]
+        [TestCase(8192, 8192, 2)]
+        public void IdealMerge_AtlasAnalysis_PayloadsSharingAMaterialShareAnAtlas(
+            int width,
+            int height,
+            int expectedClass)
+        {
+            const string wsThree = @"models\ideal_three.wsmodel";
+            const string wsFour = @"models\ideal_four.wsmodel";
+            const string materialThree = @"materials\m3.material";
+            var dds = BuildDxt1Dds(width, height);
+            var files = new Dictionary<string, byte[]>();
+            foreach (var (material, texture) in new[]
+                     {
+                         (IdealMaterialOne, "a"),
+                         (IdealMaterialTwo, "b"),
+                         (materialThree, "c"),
+                     })
+            {
+                files[material] = System.Text.Encoding.UTF8.GetBytes(
+                    BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader",
+                        $"tex/{texture}.dds"));
+                files[$@"tex\{texture}.dds"] = dds;
+            }
+
+            var state = CreateIdealState(files);
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(), IdealMaterialOne),
+                (IdealWsTwo, CreateIdealPart(), IdealMaterialTwo),
+                (wsThree, CreateIdealPart(), IdealMaterialTwo),
+                (wsFour, CreateIdealPart(), materialThree));
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(0.5, IdealWsOne, IdealWsTwo),
+                CreateVisualConfiguration(0.5, wsThree, wsFour));
+            RunAccounting(state, expansion, components);
+
+            var payloads = GetAccountedPayloads(state);
+            Assert.That(payloads, Has.Length.EqualTo(2));
+            var payloadType = GetNestedType("CrossRigidIdealMergePayload");
+            var typed = Array.CreateInstance(payloadType, payloads.Length);
+            for (var index = 0; index < payloads.Length; index++)
+                typed.SetValue(payloads[index], index);
+
+            var summary = GetStaticMethod("AnalyzeCrossRigidIdealMergeAtlas")
+                .Invoke(null, [state, typed])!;
+            var atlasComponents = ((IEnumerable)ReadProperty(summary, "Components"))
+                .Cast<object>()
+                .ToArray();
+
+            Assert.That(atlasComponents, Has.Length.EqualTo(1));
+            var component = atlasComponents[0];
+            Assert.That(
+                ((string[])ReadProperty(component, "Materials")).Length,
+                Is.EqualTo(3));
+            Assert.That(ReadProperty(summary, "MaterialCount"), Is.EqualTo(3));
+            Assert.That(ReadProperty(summary, "TextureCount"), Is.EqualTo(3));
+            Assert.That(ReadProperty(summary, "SizedTextureCount"), Is.EqualTo(3));
+            Assert.That(ReadProperty(component, "PayloadCount"), Is.EqualTo(2));
+            Assert.That(
+                ReadProperty(component, "BaseColourPixels"),
+                Is.EqualTo(3L * width * height));
+            Assert.That(ReadProperty(component, "FitClass"), Is.EqualTo(expectedClass));
+
+            var totalSaving = payloads.Sum(payload =>
+                (double)ReadProperty(payload, "Saving"));
+            Assert.That(totalSaving, Is.GreaterThan(0));
+            var byClass = (double[])ReadProperty(summary, "SavingByFitClass");
+            for (var fit = 0; fit < 3; fit++)
+            {
+                Assert.That(
+                    byClass[fit],
+                    Is.EqualTo(fit == expectedClass ? totalSaving : 0)
+                        .Within(1e-9));
+            }
+
+            Assert.That(
+                (double)ReadProperty(summary, "SavingWithoutAtlas"),
+                Is.EqualTo(0));
+
+            var lines = (string[])GetStaticMethod(
+                    "BuildCrossRigidIdealMergeReportLines")
+                .Invoke(null, [state, 0.0])!;
+            Assert.That(
+                lines,
+                Has.Some.Contains("atlas inputs: 3 material(s), 3 texture(s)"));
+            Assert.That(
+                lines,
+                Has.Some.Contains("minimum shared atlases): 1, largest 3 material(s)"));
+            Assert.That(lines, Has.Some.Contains("5 largest components:"));
+            Assert.That(lines, Has.Some.Contains("same accepted set as the previous cap"));
+        }
     }
 }

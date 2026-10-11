@@ -78,6 +78,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidIdealMergeSharedAtlasTextureCount = 0;
             state.CrossRigidIdealMergeSharedAtlasSizedTextureCount = 0;
             state.CrossRigidIdealMergeSharedAtlasBcnBytes = 0;
+            state.CrossRigidIdealMergeAccounting.Clear();
             state.CrossRigidTimingDetails.Clear();
             state.CrossRigidSourceMeshMergeIdentityCache.Clear();
             state.CrossRigidMaterialMergeIdentityCache.Clear();
@@ -122,6 +123,9 @@ namespace Editors.KitbasherEditor.Services
                     new HashSet<string>(StringComparer.OrdinalIgnoreCase));
                 if (expansion.FailureReason != null)
                 {
+                    RecordCrossRigidIdealMergeExpansionFailure(
+                        state,
+                        expansion.FailureReason);
                     RecordCrossRigidAnalysisBlocker(
                         state,
                         expansion.FailureReason,

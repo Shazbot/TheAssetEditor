@@ -734,6 +734,8 @@ namespace Editors.KitbasherEditor.Services
             public int CrossRigidIdealMergeSharedAtlasSizedTextureCount
                 { get; set; }
             public long CrossRigidIdealMergeSharedAtlasBcnBytes { get; set; }
+            public CrossRigidIdealMergeAccounting
+                CrossRigidIdealMergeAccounting { get; } = new();
             public List<CrossRigidDisplacedSourceGeometryEntry>
                 CrossRigidDisplacedSourceGeometryEntries { get; } = [];
             public Dictionary<string, int> CrossRigidAnalysisBlockerCounts { get; } =
