@@ -16,6 +16,7 @@ namespace Editors.KitbasherEditor.Services
             bool,
             bool,
             bool,
+            bool,
             CancellationToken,
             IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> _worker;
         private readonly CancellationTokenSource _cancellation = new();
@@ -157,6 +158,42 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+            : this((
+                mergeCompatibleMeshes,
+                shareAcrossVmds,
+                optimizeGeometry,
+                atlasAllVmds,
+                scoreAllGameUnits,
+                crossRigidOnly,
+                crossRigidMerges,
+                _,
+                cancellationToken,
+                progress) =>
+                worker(
+                    mergeCompatibleMeshes,
+                    shareAcrossVmds,
+                    optimizeGeometry,
+                    atlasAllVmds,
+                    scoreAllGameUnits,
+                    crossRigidOnly,
+                    crossRigidMerges,
+                    cancellationToken,
+                    progress))
+        {
+        }
+
+        public TextureAtlasProgressWindow(
+            Action<
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                CancellationToken,
+                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
         {
             InitializeComponent();
             _worker = worker;
@@ -177,9 +214,12 @@ namespace Editors.KitbasherEditor.Services
             ScoreAllGameUnitsCheckBox.IsEnabled = false;
             CrossRigidOnlyCheckBox.IsEnabled = false;
             CrossRigidMergesCheckBox.IsEnabled = false;
+            BuildAtlasesCheckBox.IsEnabled = false;
             PhaseText.Text = CrossRigidOnlyCheckBox.IsChecked == true
                 ? "Preparing cross-rigid-only pack..."
-                : "Preparing texture atlas pack...";
+                : BuildAtlasesCheckBox.IsChecked == true
+                    ? "Preparing texture atlas pack..."
+                    : "Preparing optimized pack...";
             ProgressBar.IsIndeterminate = true;
 
             var progress = new PumpingProgress(this);
@@ -194,6 +234,7 @@ namespace Editors.KitbasherEditor.Services
                     ScoreAllGameUnitsCheckBox.IsChecked == true,
                     CrossRigidOnlyCheckBox.IsChecked == true,
                     CrossRigidMergesCheckBox.IsChecked == true,
+                    BuildAtlasesCheckBox.IsChecked == true,
                     _cancellation.Token,
                     progress);
                 _allowClose = true;
@@ -224,13 +265,21 @@ namespace Editors.KitbasherEditor.Services
             UpdateOperationOptionAvailability();
         }
 
+        private void BuildAtlasesCheckBox_OnChanged(
+            object sender,
+            RoutedEventArgs e)
+        {
+            UpdateOperationOptionAvailability();
+        }
+
         private void UpdateOperationOptionAvailability()
         {
             if (MergeMeshesCheckBox == null ||
                 ShareAcrossVmdsCheckBox == null ||
                 OptimizeGeometryCheckBox == null ||
                 CrossRigidOnlyCheckBox == null ||
-                CrossRigidMergesCheckBox == null)
+                CrossRigidMergesCheckBox == null ||
+                BuildAtlasesCheckBox == null)
             {
                 return;
             }
@@ -238,8 +287,14 @@ namespace Editors.KitbasherEditor.Services
             var atlasOptionsEnabled =
                 !_started &&
                 CrossRigidOnlyCheckBox.IsChecked != true;
+            BuildAtlasesCheckBox.IsEnabled = atlasOptionsEnabled;
             MergeMeshesCheckBox.IsEnabled = atlasOptionsEnabled;
-            ShareAcrossVmdsCheckBox.IsEnabled = atlasOptionsEnabled;
+            // Sharing only matters while atlases are built. The VMD population and
+            // scoring options stay enabled: they also scope geometry optimization
+            // and cross-rigid analysis, and weight their results.
+            ShareAcrossVmdsCheckBox.IsEnabled =
+                atlasOptionsEnabled &&
+                BuildAtlasesCheckBox.IsChecked == true;
             OptimizeGeometryCheckBox.IsEnabled = atlasOptionsEnabled;
             // Cross-rigid-only mode always runs the cross-rigid stage.
             CrossRigidMergesCheckBox.IsEnabled = atlasOptionsEnabled;

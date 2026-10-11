@@ -3074,5 +3074,1091 @@ namespace Test.KitbashEditor.Services
                 normalizedAfter[weaponAttachment][string.Empty],
                 Is.EqualTo(1.0 / (weapons + 1)).Within(1e-12));
         }
+
+        // ---- No-atlas run (buildAtlases: false) ---------------------------
+        //
+        // Process() itself needs a healthy WH3 DB resolution and real pack
+        // containers, so these tests drive the stages a no-atlas run executes
+        // (structural analysis, MergeCompatibleMeshes, geometry optimization
+        // and the geometry selection) on a BatchState that has no atlas data.
+
+        private const string NoAtlasRigidPath =
+            "variantmeshes\\test\\pack_a.rigid_model_v2";
+        private const string NoAtlasWsModelPath =
+            "variantmeshes\\test\\pack_a.wsmodel";
+        private const BindingFlags AnyInstance =
+            BindingFlags.Instance |
+            BindingFlags.Public |
+            BindingFlags.NonPublic;
+
+        private static void SetStateProperty(
+            object state,
+            string name,
+            object? value)
+        {
+            state.GetType()
+                .GetProperty(name, AnyInstance)!
+                .SetValue(state, value);
+        }
+
+        private static object CreateNoAtlasState(
+            Func<string, bool>? sourceContains = null,
+            string reportPath = "",
+            bool buildAtlases = false)
+        {
+            var constructor = GetNestedType("BatchState")
+                .GetConstructors(AnyInstance)
+                .Single();
+            var source = new Moq.Mock<Shared.Core.PackFiles.Models.IPackFileContainer>();
+            source
+                .Setup(container => container.ContainsFile(Moq.It.IsAny<string>()))
+                .Returns<string>(path => sourceContains?.Invoke(path) ?? true);
+            var output = new Moq.Mock<Shared.Core.PackFiles.Models.IPackFileContainer>();
+            var packFileService = new Moq.Mock<Shared.Core.PackFiles.IPackFileService>();
+            var state = constructor.Invoke(
+                [
+                    source.Object,
+                    output.Object,
+                    packFileService.Object,
+                    string.Empty,
+                    string.Empty,
+                    reportPath,
+                    true,
+                    true,
+                    true,
+                ]);
+            SetStateProperty(state, "StructuralMergeConsumerDiscoveryComplete", true);
+            SetStateProperty(state, "BuildAtlases", buildAtlases);
+            return state;
+        }
+
+        private static object CreateService()
+        {
+            return Activator.CreateInstance(
+                GetServiceType(),
+                [
+                    new Moq.Mock<Shared.Core.PackFiles.IPackFileService>().Object,
+                    new Moq.Mock<Shared.Core.PackFiles.Utility.IPackFileContainerLoader>().Object,
+                    null!,
+                    new Moq.Mock<Shared.Core.Services.IStandardDialogs>().Object,
+                ])!;
+        }
+
+        private static void InvokeServiceMethod(
+            object service,
+            string name,
+            params object?[] arguments)
+        {
+            GetServiceType()
+                .GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(service, arguments);
+        }
+
+        private static XmlDocument CreateWsModelDocument(
+            string rigidPath,
+            params string[][] materialsByLod)
+        {
+            var xml = new System.Text.StringBuilder();
+            xml.Append("<model><geometry>").Append(rigidPath).Append("</geometry><materials>");
+            for (var lod = 0; lod < materialsByLod.Length; lod++)
+            {
+                for (var part = 0; part < materialsByLod[lod].Length; part++)
+                {
+                    xml.Append($"<material lod_index=\"{lod}\" part_index=\"{part}\">")
+                        .Append(materialsByLod[lod][part])
+                        .Append("</material>");
+                }
+            }
+
+            xml.Append("</materials></model>");
+            var document = new XmlDocument();
+            document.LoadXml(xml.ToString());
+            return document;
+        }
+
+        private static void AddNoAtlasRigid(
+            object state,
+            string rigidPath,
+            string wsModelPath,
+            RmvFile rigid,
+            params string[][] materialsByLod)
+        {
+            GetStateProperty<IDictionary>(state, "RigidModels")[rigidPath] = rigid;
+            GetStateProperty<IDictionary>(state, "WsDocuments")[wsModelPath] =
+                CreateWsModelDocument(rigidPath, materialsByLod);
+        }
+
+        private static object CreateMeshKey(string rigidPath, int lod, int part)
+        {
+            return GetNestedType("MeshKey")
+                .GetConstructors(AnyInstance)
+                .Single()
+                .Invoke([rigidPath, lod, part]);
+        }
+
+        // The stages a no-atlas run executes before and during merging.
+        private static void RunNoAtlasMergeStages(object state)
+        {
+            var service = CreateService();
+            InvokeServiceMethod(service, "AnalyzeCompatibleMeshMerges", state, CancellationToken.None, null);
+            InvokeServiceMethod(service, "MergeCompatibleMeshes", state, CancellationToken.None, null);
+        }
+
+        private static string[][] ReadWsAssignments(XmlDocument document, RmvFile rigid)
+        {
+            var arguments = new object?[] { document, rigid, null, null, false };
+            var succeeded = (bool)GetStaticMethod("TryReadWsMaterialAssignments")
+                .Invoke(null, arguments)!;
+            Assert.That(succeeded, Is.True, (string?)arguments[3]);
+            return (string[][])arguments[2]!;
+        }
+
+        [Test]
+        public void NoAtlas_StructuralPair_IsMergedWithoutAtlasArtifacts()
+        {
+            var state = CreateNoAtlasState();
+            var rigid = CreateSingleLodRigid(
+                RmvVersionEnum.RMV2_V8,
+                CreateWeightedModel(1f),
+                CreateWeightedModel(2f));
+            AddNoAtlasRigid(
+                state,
+                NoAtlasRigidPath,
+                NoAtlasWsModelPath,
+                rigid,
+                ["materials\\shared.material", "materials\\shared.material"]);
+
+            RunNoAtlasMergeStages(state);
+
+            Assert.That(rigid.ModelList[0], Has.Length.EqualTo(1));
+            Assert.That(rigid.ModelList[0][0].Mesh.VertexList, Has.Length.EqualTo(8));
+            Assert.That(
+                rigid.ModelList[0][0].Mesh.IndexList,
+                Is.EqualTo(new ushort[] { 0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7 }));
+            Assert.That(GetStateProperty<int>(state, "StructuralOnlyMergeGroupCount"), Is.EqualTo(1));
+            Assert.That(GetStateProperty<int>(state, "StructuralOnlyMergePartsRemoved"), Is.EqualTo(1));
+            Assert.That(
+                GetStateProperty<int>(state, "StructuralAndAtlasAssistedMergeGroupCount"),
+                Is.Zero);
+            Assert.That(GetStateProperty<int>(state, "AtlasAssistedMergeGroupCount"), Is.Zero);
+            Assert.That(GetStateProperty<int>(state, "AtlasAssistedMergePartsRemoved"), Is.Zero);
+            Assert.That(GetStateProperty<int>(state, "MeshPartsBeforeMerging"), Is.EqualTo(2));
+            Assert.That(GetStateProperty<int>(state, "MeshPartsAfterMerging"), Is.EqualTo(1));
+
+            Assert.That(GetStateProperty<IDictionary>(state, "AtlasBatchByMesh"), Is.Empty);
+            Assert.That(GetStateProperty<IEnumerable>(state, "GeneratedTexturePaths"), Is.Empty);
+            Assert.That(GetStateProperty<IEnumerable>(state, "GeneratedMaterialPaths"), Is.Empty);
+            Assert.That(GetStateProperty<IEnumerable>(state, "ProcessedMeshes"), Is.Empty);
+            Assert.That(
+                GetStateProperty<HashSet<string>>(state, "ModifiedRigids"),
+                Is.EquivalentTo(new[] { NoAtlasRigidPath }));
+            Assert.That(
+                GetStateProperty<HashSet<string>>(state, "ModifiedWsModels"),
+                Is.EquivalentTo(new[] { NoAtlasWsModelPath }));
+
+            // The rewritten WSModel table matches the merged rigid and the rigid
+            // survives the serialize/reload round trip the output validation uses.
+            var wsDocument = (XmlDocument)GetStateProperty<IDictionary>(state, "WsDocuments")[
+                NoAtlasWsModelPath]!;
+            Assert.That(
+                ReadWsAssignments(wsDocument, rigid)[0],
+                Is.EqualTo(new[] { "materials\\shared.material" }));
+            rigid.RecalculateOffsets();
+            var bytes = ModelFactory.Create().Save(
+                rigid,
+                validateByReloading: true,
+                logProgress: false);
+            Assert.That(ModelFactory.Create().Load(bytes).ModelList[0], Has.Length.EqualTo(1));
+        }
+
+        // Two parts whose materials differ can only be combined once atlasing
+        // has pointed both at one generated material and one atlas batch.
+        [Test]
+        public void NoAtlas_PartsThatNeedAtlasing_StayUnmerged()
+        {
+            var state = CreateNoAtlasState();
+            var rigid = CreateSingleLodRigid(
+                RmvVersionEnum.RMV2_V8,
+                CreateWeightedModel(1f),
+                CreateWeightedModel(2f));
+            AddNoAtlasRigid(
+                state,
+                NoAtlasRigidPath,
+                NoAtlasWsModelPath,
+                rigid,
+                ["materials\\skin_a.material", "materials\\skin_b.material"]);
+
+            RunNoAtlasMergeStages(state);
+
+            Assert.That(rigid.ModelList[0], Has.Length.EqualTo(2));
+            Assert.That(GetStateProperty<int>(state, "StructuralOnlyMergeGroupCount"), Is.Zero);
+            Assert.That(GetStateProperty<int>(state, "AtlasAssistedMergeGroupCount"), Is.Zero);
+            Assert.That(GetStateProperty<HashSet<string>>(state, "ModifiedRigids"), Is.Empty);
+        }
+
+        [Test]
+        public void AtlasState_SamePartsThatNeedAtlasing_AreMergedAsAtlasAssisted()
+        {
+            var state = CreateNoAtlasState(buildAtlases: true);
+            var rigid = CreateSingleLodRigid(
+                RmvVersionEnum.RMV2_V8,
+                CreateWeightedModel(1f),
+                CreateWeightedModel(2f));
+            AddNoAtlasRigid(
+                state,
+                NoAtlasRigidPath,
+                NoAtlasWsModelPath,
+                rigid,
+                ["materials\\skin_a.material", "materials\\skin_b.material"]);
+            var service = CreateService();
+            InvokeServiceMethod(service, "AnalyzeCompatibleMeshMerges", state, CancellationToken.None, null);
+
+            // What atlasing does to this rigid: one atlas batch, one generated material.
+            var batches = GetStateProperty<IDictionary>(state, "AtlasBatchByMesh");
+            batches[CreateMeshKey(NoAtlasRigidPath, 0, 0)] = 7;
+            batches[CreateMeshKey(NoAtlasRigidPath, 0, 1)] = 7;
+            var wsDocument = (XmlDocument)GetStateProperty<IDictionary>(state, "WsDocuments")[
+                NoAtlasWsModelPath]!;
+            foreach (XmlNode node in wsDocument.SelectNodes("/model/materials/material")!)
+                node.InnerText = "atlas\\generated.material";
+            InvokeServiceMethod(service, "MergeCompatibleMeshes", state, CancellationToken.None, null);
+
+            Assert.That(rigid.ModelList[0], Has.Length.EqualTo(1));
+            Assert.That(GetStateProperty<int>(state, "AtlasAssistedMergeGroupCount"), Is.EqualTo(1));
+            Assert.That(GetStateProperty<int>(state, "AtlasAssistedMergePartsRemoved"), Is.EqualTo(1));
+            Assert.That(GetStateProperty<int>(state, "StructuralOnlyMergeGroupCount"), Is.Zero);
+            Assert.That(GetStateProperty<int>(state, "StructuralOnlyMergePartsRemoved"), Is.Zero);
+        }
+
+        private static string WriteNoAtlasReport(bool buildAtlases)
+        {
+            var reportPath = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                $"noatlas_report_{Guid.NewGuid():N}.txt");
+            try
+            {
+                var state = CreateNoAtlasState(
+                    reportPath: reportPath,
+                    buildAtlases: buildAtlases);
+                var phases = GetStateProperty<IDictionary>(state, "PhaseDurations");
+                phases["Merge compatible meshes"] = TimeSpan.FromSeconds(1);
+                GetStaticMethod("WriteReport").Invoke(
+                    null,
+                    [state, new List<string>(), true, null]);
+                return System.IO.File.ReadAllText(reportPath);
+            }
+            finally
+            {
+                System.IO.File.Delete(reportPath);
+            }
+        }
+
+        [Test]
+        public void Report_NoAtlasRun_OmitsAtlasSectionsAndKeepsTheRest()
+        {
+            var report = WriteNoAtlasReport(buildAtlases: false);
+
+            Assert.That(report, Does.Contain("Texture atlasing: NO"));
+            Assert.That(
+                report,
+                Does.Contain("Texture atlasing disabled; atlas sections omitted."));
+            Assert.That(report, Does.Not.Contain("Atlas value-gate"));
+            Assert.That(report, Does.Not.Contain("Atlas textures generated"));
+            Assert.That(report, Does.Not.Contain("Atlas batches generated"));
+            Assert.That(report, Does.Not.Contain("LOD-aware atlas"));
+            Assert.That(report, Does.Contain("Cross-rigid merges: NO"));
+            Assert.That(report, Does.Contain("Modified rigid meshes: 0"));
+            Assert.That(report, Does.Contain("Structural-only merge groups applied: 0"));
+            Assert.That(report, Does.Contain("Mesh parts removed by structural-only merges: 0"));
+            Assert.That(report, Does.Not.Contain("Mesh parts removed by atlas-assisted merges"));
+            Assert.That(report, Does.Contain("Phase timings"));
+            Assert.That(report, Does.Contain("Merge compatible meshes"));
+            Assert.That(report, Does.Contain("Validation"));
+        }
+
+        [Test]
+        public void Report_AtlasRun_KeepsAtlasSections()
+        {
+            var report = WriteNoAtlasReport(buildAtlases: true);
+
+            Assert.That(report, Does.Contain("Texture atlasing: YES"));
+            Assert.That(report, Does.Not.Contain("atlas sections omitted"));
+            Assert.That(report, Does.Contain("Atlas value-gate batches accepted: 0"));
+            Assert.That(report, Does.Contain("Atlas textures generated: 0"));
+            Assert.That(report, Does.Contain("Mesh parts removed by atlas-assisted merges: 0"));
+        }
+
+        [Test]
+        public void Report_GeometrySummaryLine_HandlesNoData()
+        {
+            var reportPath = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                $"geometry_report_{Guid.NewGuid():N}.txt");
+            try
+            {
+                var constructor = GetNestedType("BatchState")
+                    .GetConstructors(AnyInstance)
+                    .Single();
+                var container = new Moq.Mock<Shared.Core.PackFiles.Models.IPackFileContainer>().Object;
+                var state = constructor.Invoke(
+                    [
+                        container,
+                        container,
+                        new Moq.Mock<Shared.Core.PackFiles.IPackFileService>().Object,
+                        string.Empty,
+                        string.Empty,
+                        reportPath,
+                        false,
+                        false,
+                        true,
+                    ]);
+                GetStaticMethod("WriteReport").Invoke(
+                    null,
+                    [state, new List<string>(), true, null]);
+                var report = System.IO.File.ReadAllText(reportPath);
+
+                // The report uses the current culture for numbers (decimal separator).
+                Assert.That(
+                    report,
+                    Does.Match(
+                        @"Geometry optimisation: 0 rigid\(s\), vertices 0 -> 0 \(0[.,]0 %\), " +
+                        @"indices 0 -> 0, geometry bytes 0 -> 0"));
+                Assert.That(report, Does.Not.Contain("NaN"));
+            }
+            finally
+            {
+                System.IO.File.Delete(reportPath);
+            }
+        }
+
+        private static RmvModel CreateOptimizableModel(
+            ModelMaterialEnum modelType = ModelMaterialEnum.weighted)
+        {
+            // Four unique vertices plus an exact duplicate of vertex 0 and an
+            // unreferenced vertex; two triangles reference the duplicate.
+            var model = CreateWeightedModel(1f);
+            var vertices = model.Mesh.VertexList.ToList();
+            vertices.Add(vertices[0]);
+            vertices.Add(CreateWeightedModel(9f).Mesh.VertexList[2]);
+            model.Mesh.VertexList = vertices.ToArray();
+            model.Mesh.IndexList = [0, 1, 2, 4, 2, 3];
+            var header = model.CommonHeader;
+            header.ModelTypeFlag = modelType;
+            model.CommonHeader = header;
+            return model;
+        }
+
+        private static object CreateDependencyIndex()
+        {
+            return Activator.CreateInstance(
+                GetNestedType("GameplayMeshDependencyIndex"),
+                AnyInstance,
+                null,
+                [false],
+                null)!;
+        }
+
+        private static void InvokeIndex(object index, string name, params object[] arguments)
+        {
+            index.GetType().GetMethod(name, AnyInstance)!.Invoke(index, arguments);
+        }
+
+        // The geometry-optimization set of a no-atlas run: source-owned rigids
+        // reached by a root in scope, with the structural merge's consumer gate.
+        [Test]
+        public void NoAtlasGeometrySelection_OnlySelectsOwnedInScopeSafeRigids()
+        {
+            const string scopeRoot = "models\\scope.variantmeshdefinition";
+            const string otherRoot = "models\\other.variantmeshdefinition";
+            const string vanillaWsModel = "variantmeshes\\vanilla\\ca.wsmodel";
+            string Rigid(string name) => $"variantmeshes\\test\\{name}.rigid_model_v2";
+
+            var vanillaOwned = Rigid("vanilla_owned");
+            var state = CreateNoAtlasState(
+                sourceContains: path =>
+                    !path.Equals(vanillaOwned, StringComparison.OrdinalIgnoreCase) &&
+                    !path.Equals(vanillaWsModel, StringComparison.OrdinalIgnoreCase));
+            var rigids = new Dictionary<string, RmvFile>
+            {
+                [Rigid("owned_in_scope")] = CreateSingleLodRigid(
+                    RmvVersionEnum.RMV2_V8, CreateOptimizableModel()),
+                [Rigid("owned_out_of_scope")] = CreateSingleLodRigid(
+                    RmvVersionEnum.RMV2_V8, CreateOptimizableModel()),
+                [vanillaOwned] = CreateSingleLodRigid(
+                    RmvVersionEnum.RMV2_V8, CreateOptimizableModel()),
+                [Rigid("immutable_consumer")] = CreateSingleLodRigid(
+                    RmvVersionEnum.RMV2_V8, CreateOptimizableModel()),
+                [Rigid("cloth")] = CreateSingleLodRigid(
+                    RmvVersionEnum.RMV2_V8,
+                    CreateOptimizableModel(ModelMaterialEnum.weighted_cloth)),
+                [Rigid("bad_indices")] = CreateSingleLodRigid(
+                    RmvVersionEnum.RMV2_V8, CreateOptimizableModel()),
+                [Rigid("already_merged")] = CreateSingleLodRigid(
+                    RmvVersionEnum.RMV2_V8, CreateOptimizableModel()),
+            };
+            rigids[Rigid("bad_indices")].ModelList[0][0].Mesh.IndexList = [0, 1, 99];
+            var rigidModels = GetStateProperty<IDictionary>(state, "RigidModels");
+            foreach (var (path, rigid) in rigids)
+                rigidModels[path] = rigid;
+
+            var index = CreateDependencyIndex();
+            foreach (var path in rigids.Keys.Where(path => path != Rigid("owned_out_of_scope")))
+                InvokeIndex(index, "AddRootReference", path, scopeRoot);
+            InvokeIndex(index, "AddRootReference", Rigid("owned_out_of_scope"), otherRoot);
+            InvokeIndex(index, "AddWsModelConsumer", Rigid("immutable_consumer"), vanillaWsModel);
+            SetStateProperty(state, "GameplayMeshDependencyIndex", index);
+            GetStateProperty<HashSet<string>>(state, "ModifiedRigids").Add(Rigid("already_merged"));
+
+            var service = CreateService();
+            var selected = (HashSet<string>)GetServiceType()
+                .GetMethod("SelectNoAtlasGeometryOptimizationRigids", AnyInstance)!
+                .Invoke(
+                    service,
+                    [state, new List<string> { scopeRoot }, CancellationToken.None])!;
+
+            Assert.That(
+                selected,
+                Is.EquivalentTo(new[]
+                {
+                    Rigid("owned_in_scope"),
+                    Rigid("already_merged"),
+                }));
+            var skips = GetStateProperty<Dictionary<string, int>>(
+                state,
+                "GeometrySelectionSkipCounts");
+            Assert.That(skips["immutable gameplay WSModel consumer"], Is.EqualTo(1));
+            Assert.That(skips["cloth model type"], Is.EqualTo(1));
+            Assert.That(skips["invalid index buffer"], Is.EqualTo(1));
+            Assert.That(skips, Has.Count.EqualTo(3));
+            Assert.That(
+                GetStateProperty<int>(state, "GeometryUnmodifiedRigidsSelected"),
+                Is.EqualTo(1));
+
+            var vanillaVertices = rigids[vanillaOwned].ModelList[0][0].Mesh.VertexList;
+            var vanillaIndices = rigids[vanillaOwned].ModelList[0][0].Mesh.IndexList.ToArray();
+            GetServiceType()
+                .GetMethod("OptimizeGeometry", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [state, CancellationToken.None, null, selected]);
+
+            // Only the selection is written; nothing else is touched or marked modified.
+            Assert.That(
+                GetStateProperty<HashSet<string>>(state, "ModifiedRigids"),
+                Is.EquivalentTo(selected));
+            Assert.That(
+                rigids[vanillaOwned].ModelList[0][0].Mesh.VertexList,
+                Is.SameAs(vanillaVertices));
+            Assert.That(rigids[vanillaOwned].ModelList[0][0].Mesh.IndexList, Is.EqualTo(vanillaIndices));
+            Assert.That(
+                rigids[Rigid("owned_out_of_scope")].ModelList[0][0].Mesh.VertexList,
+                Has.Length.EqualTo(6));
+            Assert.That(
+                rigids[Rigid("cloth")].ModelList[0][0].Mesh.VertexList,
+                Has.Length.EqualTo(6));
+
+            // The selected rigid keeps its part count and triangle count; the
+            // duplicate and unreferenced vertices are gone.
+            var optimized = rigids[Rigid("owned_in_scope")];
+            Assert.That(optimized.ModelList[0], Has.Length.EqualTo(1));
+            Assert.That(optimized.ModelList[0][0].Mesh.IndexList, Has.Length.EqualTo(6));
+            Assert.That(optimized.ModelList[0][0].Mesh.VertexList, Has.Length.EqualTo(4));
+            Assert.That(GetStateProperty<int>(state, "GeometryRigidsOptimized"), Is.EqualTo(2));
+            Assert.That(GetStateProperty<long>(state, "GeometryVerticesBefore"), Is.EqualTo(12));
+            Assert.That(GetStateProperty<long>(state, "GeometryVerticesAfter"), Is.EqualTo(8));
+            Assert.That(GetStateProperty<long>(state, "GeometryIndicesBefore"), Is.EqualTo(12));
+            Assert.That(GetStateProperty<long>(state, "GeometryIndicesAfter"), Is.EqualTo(12));
+            Assert.That(
+                GetStateProperty<long>(state, "GeometryBytesBefore"),
+                Is.GreaterThan(GetStateProperty<long>(state, "GeometryBytesAfter")));
+        }
+
+        [Test]
+        public void NoAtlasGeometrySelection_WithoutDependencyIndex_SelectsNothing()
+        {
+            var state = CreateNoAtlasState();
+            var service = CreateService();
+
+            var selected = (HashSet<string>)GetServiceType()
+                .GetMethod("SelectNoAtlasGeometryOptimizationRigids", AnyInstance)!
+                .Invoke(
+                    service,
+                    [state, new List<string> { "models\\scope.variantmeshdefinition" }, CancellationToken.None])!;
+
+            Assert.That(selected, Is.Empty);
+        }
+
+        // ---- LOD audit (report only) ---------------------------------------
+
+        private static RmvModel CreateAuditPart(int vertexCount, int triangleCount)
+        {
+            return new RmvModel
+            {
+                Mesh = new RmvMesh
+                {
+                    VertexList = new CommonVertex[vertexCount],
+                    IndexList = new ushort[triangleCount * 3],
+                },
+            };
+        }
+
+        // One part per LOD unless a LOD lists several (vertices, triangles) parts.
+        private static RmvFile CreateAuditRigid(
+            float[] distances,
+            byte[]? qualities,
+            params (int Vertices, int Triangles)[][] parts)
+        {
+            return new RmvFile
+            {
+                LodHeaders = distances
+                    .Select((distance, index) =>
+                        (RmvLodHeader)new Rmv2LodHeader_V7_V8
+                        {
+                            _lodCameraDistance = distance,
+                            _qualityLvl = qualities?[index] ?? 0,
+                        })
+                    .ToArray(),
+                ModelList = parts
+                    .Select(lod => lod
+                        .Select(part => CreateAuditPart(part.Vertices, part.Triangles))
+                        .ToArray())
+                    .ToArray(),
+            };
+        }
+
+        private static RmvFile CreateTriangleRigid(
+            float[] distances,
+            params int[] trianglesPerLod)
+        {
+            return CreateAuditRigid(
+                distances,
+                null,
+                trianglesPerLod.Select(triangles => new[] { (triangles + 2, triangles) }).ToArray());
+        }
+
+        private static object BuildAuditRigid(string path, bool sourceOwned, RmvFile rigid)
+        {
+            return GetStaticMethod("BuildLodAuditRigid").Invoke(null, [path, sourceOwned, rigid])!;
+        }
+
+        private static T Get<T>(object target, string name)
+        {
+            return (T)target.GetType().GetProperty(name, AnyInstance)!.GetValue(target)!;
+        }
+
+        [Test]
+        public void LodAuditRigid_PerLodStatsComeFromPartsVerticesAndIndices()
+        {
+            var rigid = CreateAuditRigid(
+                [10f, 20f, 30f, 10000f],
+                [0, 0, 1, 2],
+                [(100, 60), (50, 40)],
+                [(80, 50)],
+                [(40, 20), (10, 5), (10, 5)],
+                [(12, 10)]);
+
+            var audit = BuildAuditRigid("a.rigid_model_v2", true, rigid);
+            var lods = Get<IReadOnlyList<object>>(audit, "Lods")
+                .Select(lod => (
+                    Parts: Get<int>(lod, "PartCount"),
+                    Vertices: Get<long>(lod, "Vertices"),
+                    Triangles: Get<long>(lod, "Triangles"),
+                    Distance: Get<float>(lod, "Distance"),
+                    Quality: Get<byte>(lod, "Quality")))
+                .ToArray();
+
+            Assert.That(lods, Is.EqualTo(new[]
+            {
+                (2, 150L, 100L, 10f, (byte)0),
+                (1, 80L, 50L, 20f, (byte)0),
+                (3, 60L, 30L, 30f, (byte)1),
+                (1, 12L, 10L, 10000f, (byte)2),
+            }));
+            Assert.That(Get<string>(audit, "DistanceProfile"), Is.EqualTo("10/20/30/10000"));
+            Assert.That(Get<double?>(audit, "LastToFirstTriangleRatio"), Is.EqualTo(0.1).Within(1e-12));
+            Assert.That(Get<bool>(audit, "LastLodIsHeavy"), Is.False);
+            Assert.That(Get<bool>(audit, "HasLodNotLighterThanPrevious"), Is.False);
+            Assert.That(Get<bool>(audit, "HasFewLods"), Is.False);
+        }
+
+        [TestCase(new[] { 1000, 900, 800, 700 }, true, false, false)]
+        [TestCase(new[] { 1000, 500, 250, 250 }, false, true, false)]
+        [TestCase(new[] { 1000, 500, 250, 249 }, false, false, false)]
+        [TestCase(new[] { 1000, 300, 500, 100 }, false, true, false)]
+        [TestCase(new[] { 1000, 400, 400, 100 }, false, true, false)]
+        [TestCase(new[] { 1000, 400, 100 }, false, false, true)]
+        [TestCase(new[] { 1000 }, true, false, true)]
+        [TestCase(new[] { 0, 0, 0, 0 }, false, true, false)]
+        public void LodAuditRigid_Flags(
+            int[] trianglesPerLod,
+            bool lastLodHeavy,
+            bool notLighter,
+            bool fewLods)
+        {
+            var distances = trianglesPerLod.Select((_, index) => 10f * (index + 1)).ToArray();
+            var audit = BuildAuditRigid(
+                "a.rigid_model_v2",
+                true,
+                CreateTriangleRigid(distances, trianglesPerLod));
+
+            Assert.That(Get<bool>(audit, "LastLodIsHeavy"), Is.EqualTo(lastLodHeavy));
+            Assert.That(Get<bool>(audit, "HasLodNotLighterThanPrevious"), Is.EqualTo(notLighter));
+            Assert.That(Get<bool>(audit, "HasFewLods"), Is.EqualTo(fewLods));
+        }
+
+        [Test]
+        public void LodAuditRigid_NoTrianglesInLodZero_HasNoRatio()
+        {
+            var audit = BuildAuditRigid(
+                "a.rigid_model_v2",
+                true,
+                CreateTriangleRigid([10f, 20f], 0, 5));
+            var empty = BuildAuditRigid(
+                "b.rigid_model_v2",
+                true,
+                CreateAuditRigid([], null));
+
+            Assert.That(Get<double?>(audit, "LastToFirstTriangleRatio"), Is.Null);
+            Assert.That(Get<bool>(audit, "LastLodIsHeavy"), Is.False);
+            Assert.That(Get<double?>(empty, "LastToFirstTriangleRatio"), Is.Null);
+            Assert.That(Get<bool>(empty, "HasFewLods"), Is.True);
+        }
+
+        private static object CreateAuditComponent(
+            string wsModelPath,
+            bool sourceOwnedRigid,
+            RmvFile rigid)
+        {
+            return GetNestedType("CrossRigidAnalysisComponent")
+                .GetConstructors(BindingFlags.Instance | BindingFlags.Public)
+                .Single()
+                .Invoke(
+                [
+                    BaselineVmdPath,
+                    wsModelPath,
+                    wsModelPath + ".rigid_model_v2",
+                    new XmlDocument(),
+                    rigid,
+                    Array.Empty<string[]>(),
+                    string.Empty,
+                    false,
+                    sourceOwnedRigid,
+                ]);
+        }
+
+        private static object CreateAuditResult()
+        {
+            return Activator.CreateInstance(GetNestedType("LodAuditResult"), true)!;
+        }
+
+        private static object AuditRoot(
+            object state,
+            object audit,
+            object expansion,
+            Dictionary<string, object> components,
+            string vmdPath = BaselineVmdPath)
+        {
+            var resolver = typeof(PackTextureAtlasCrossRigidTests)
+                .GetMethod(
+                    nameof(BuildResolver),
+                    BindingFlags.NonPublic | BindingFlags.Static)!
+                .MakeGenericMethod(GetNestedType("CrossRigidAnalysisComponent"))
+                .Invoke(null, [components])!;
+            return GetStaticMethod("AuditLodsForRoot")
+                .Invoke(null, [state, audit, vmdPath, expansion, resolver])!;
+        }
+
+        // WSModel A (two LODs): LOD 0 = 2 parts, 150 vertices, 100 triangles;
+        // LOD 1 = 1 part, 60 vertices, 40 triangles. WSModel B (one LOD) = 1 part,
+        // 30 vertices, 20 triangles. Configurations: 0.25 -> A+B, 0.75 -> A.
+        // Scenario LOD 0: triangles 0.25 * (100 + 20) + 0.75 * 100 = 105,
+        // vertices 0.25 * (150 + 30) + 0.75 * 150 = 157.5, parts 0.25 * 3 + 0.75 * 2 = 2.25.
+        // Scenario LODs 1-3 use A's last LOD (it has only two) and B's only LOD:
+        // triangles 0.25 * (40 + 20) + 0.75 * 40 = 45, vertices 0.25 * 90 + 0.75 * 60 = 67.5,
+        // parts 0.25 * 2 + 0.75 * 1 = 1.25.
+        private static (object State, object Audit, object Root) AuditTwoConfigurationRoot()
+        {
+            var state = CreateArmyState();
+            const string wsA = @"models\a.wsmodel";
+            const string wsB = @"models\b.wsmodel";
+            var components = new Dictionary<string, object>
+            {
+                [wsA] = CreateAuditComponent(
+                    wsA,
+                    true,
+                    CreateAuditRigid(
+                        [10f, 20f, 30f, 10000f],
+                        null,
+                        [(100, 60), (50, 40)],
+                        [(60, 40)])),
+                [wsB] = CreateAuditComponent(
+                    wsB,
+                    false,
+                    CreateAuditRigid([100f, 200f], null, [(30, 20)])),
+            };
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(0.25, wsA, wsB),
+                CreateVisualConfiguration(0.75, wsA));
+            var audit = CreateAuditResult();
+            var root = AuditRoot(state, audit, expansion, components);
+            return (state, audit, root);
+        }
+
+        [Test]
+        public void LodAuditRoot_TwoConfigurations_ExpectedPerEntityValuesAreHandWorked()
+        {
+            var (_, audit, root) = AuditTwoConfigurationRoot();
+
+            Assert.That(Get<IReadOnlyList<int>>(root, "ScenarioLods"), Is.EqualTo(new[] { 0, 1, 2, 3 }));
+            Assert.That(
+                Get<IReadOnlyList<double>>(root, "TrianglesPerEntity"),
+                Is.EqualTo(new[] { 105.0, 45.0, 45.0, 45.0 }).Within(1e-9));
+            Assert.That(
+                Get<IReadOnlyList<double>>(root, "VerticesPerEntity"),
+                Is.EqualTo(new[] { 157.5, 67.5, 67.5, 67.5 }).Within(1e-9));
+            Assert.That(
+                Get<IReadOnlyList<double>>(root, "PartsPerEntity"),
+                Is.EqualTo(new[] { 2.25, 1.25, 1.25, 1.25 }).Within(1e-9));
+            Assert.That(Get<bool>(root, "WeightAvailable"), Is.True);
+
+            // Both rigids are counted once for this root; ownership comes from the component.
+            var rigids = Get<IDictionary>(audit, "Rigids");
+            Assert.That(rigids, Has.Count.EqualTo(2));
+            var rootCounts = Get<IDictionary>(audit, "RootCountByRigid");
+            Assert.That(rootCounts.Values.Cast<int>(), Is.All.EqualTo(1));
+            Assert.That(
+                Get<bool>(rigids[@"models\a.wsmodel.rigid_model_v2"]!, "SourceOwned"),
+                Is.True);
+            Assert.That(
+                Get<bool>(rigids[@"models\b.wsmodel.rigid_model_v2"]!, "SourceOwned"),
+                Is.False);
+            Assert.That(
+                Get<IReadOnlyList<string>>(root, "DistanceProfiles"),
+                Is.EqualTo(new[] { "10/20/30/10000", "100/200" }));
+            Assert.That(
+                Get<IReadOnlyList<string>>(root, "RigidPaths"),
+                Is.EqualTo(new[]
+                {
+                    @"models\a.wsmodel.rigid_model_v2",
+                    @"models\b.wsmodel.rigid_model_v2",
+                }));
+        }
+
+        [Test]
+        public void LodAuditRoot_BattleValuesAreTheArmyWeightTimesPerLodValues()
+        {
+            var (state, _, root) = AuditTwoConfigurationRoot();
+            var triangles = Get<IReadOnlyList<double>>(root, "TrianglesPerEntity");
+            var vertices = Get<IReadOnlyList<double>>(root, "VerticesPerEntity");
+            var battleTriangles = Get<IReadOnlyList<double>>(root, "BattleTriangles");
+            var battleVertices = Get<IReadOnlyList<double>>(root, "BattleVertices");
+
+            var scenarioLods = GetScenarioLods(state);
+            Assert.That(scenarioLods, Has.Length.EqualTo(4));
+            for (var index = 0; index < scenarioLods.Length; index++)
+            {
+                var probability = scenarioLods[index].Probability;
+                var unitWeight = CallWeight(state, 1.0, [(probability, 1.0)]);
+                Assert.That(unitWeight, Is.GreaterThan(0));
+                Assert.That(
+                    battleTriangles[index],
+                    Is.EqualTo(unitWeight * triangles[index]).Within(1e-9));
+                Assert.That(
+                    battleTriangles[index],
+                    Is.EqualTo(CallWeight(state, 1.0, [(probability, triangles[index])])).Within(1e-9));
+                Assert.That(
+                    battleVertices[index],
+                    Is.EqualTo(unitWeight * vertices[index]).Within(1e-9));
+            }
+
+            var units = Get<IReadOnlyList<object>>(root, "Units");
+            Assert.That(units.Select(unit => Get<string>(unit, "UnitId")), Is.EqualTo(new[] { "unit:fallback-test" }));
+            Assert.That(Get<int>(units[0], "Entities"), Is.GreaterThanOrEqualTo(1));
+            Assert.That(Get<int>(root, "UnitCount"), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void LodAuditRoot_RootNoUnitUses_KeepsPerEntityValuesAndHasNoWeight()
+        {
+            var state = CreateArmyState();
+            const string wsA = @"models\a.wsmodel";
+            var components = new Dictionary<string, object>
+            {
+                [wsA] = CreateAuditComponent(
+                    wsA,
+                    true,
+                    CreateAuditRigid([10f, 20f], null, [(10, 8)], [(6, 4)])),
+            };
+            var audit = CreateAuditResult();
+
+            var root = AuditRoot(
+                state,
+                audit,
+                CreateExpansion(CreateVisualConfiguration(1.0, wsA)),
+                components,
+                @"variantmeshes\other.variantmeshdefinition");
+
+            Assert.That(Get<bool>(root, "WeightAvailable"), Is.False);
+            Assert.That(
+                Get<IReadOnlyList<double>>(root, "TrianglesPerEntity"),
+                Is.EqualTo(new[] { 8.0, 4.0, 4.0, 4.0 }));
+            Assert.That(Get<IReadOnlyList<double>>(root, "BattleTriangles"), Is.All.EqualTo(0.0));
+            Assert.That(Get<IReadOnlyList<object>>(root, "Units"), Is.Empty);
+        }
+
+        [Test]
+        public void LodAuditRoot_WithoutArmyModel_UsesDefaultScenarioAndNoWeight()
+        {
+            var state = CreateBareBatchState();
+            const string wsA = @"models\a.wsmodel";
+            var components = new Dictionary<string, object>
+            {
+                [wsA] = CreateAuditComponent(
+                    wsA,
+                    true,
+                    CreateAuditRigid([10f], null, [(10, 8)])),
+            };
+            var audit = CreateAuditResult();
+
+            var root = AuditRoot(
+                state,
+                audit,
+                CreateExpansion(CreateVisualConfiguration(1.0, wsA)),
+                components);
+
+            Assert.That(Get<bool>(root, "WeightAvailable"), Is.False);
+            Assert.That(
+                Get<IReadOnlyList<double>>(root, "TrianglesPerEntity"),
+                Is.EqualTo(new[] { 8.0, 8.0, 8.0, 8.0 }));
+        }
+
+        [Test]
+        public void LodAuditRoot_UnresolvedWsModel_IsSkippedAndCounted()
+        {
+            var state = CreateArmyState();
+            var audit = CreateAuditResult();
+
+            var root = AuditRoot(
+                state,
+                audit,
+                CreateExpansion(CreateVisualConfiguration(1.0, @"models\missing.wsmodel")),
+                new Dictionary<string, object>());
+
+            Assert.That(Get<IReadOnlyList<double>>(root, "TrianglesPerEntity"), Is.All.EqualTo(0.0));
+            Assert.That(Get<int>(audit, "UnresolvedWsModels"), Is.EqualTo(1));
+            Assert.That(Get<IDictionary>(audit, "Rigids"), Is.Empty);
+        }
+
+        [Test]
+        public void LodAuditRoot_PartsWithOneProfile_AreNotMixed()
+        {
+            var state = CreateArmyState();
+            const string wsA = @"models\a.wsmodel";
+            const string wsB = @"models\b.wsmodel";
+            var components = new Dictionary<string, object>
+            {
+                [wsA] = CreateAuditComponent(wsA, true, CreateAuditRigid([10f, 20f], null, [(10, 8)], [(6, 4)])),
+                [wsB] = CreateAuditComponent(wsB, true, CreateAuditRigid([10f, 20f], null, [(9, 7)], [(5, 3)])),
+            };
+
+            var root = AuditRoot(
+                state,
+                CreateAuditResult(),
+                CreateExpansion(CreateVisualConfiguration(1.0, wsA, wsB)),
+                components);
+
+            Assert.That(Get<IReadOnlyList<string>>(root, "DistanceProfiles"), Is.EqualTo(new[] { "10/20" }));
+        }
+
+        private static string BuildLodAuditReport(object state)
+        {
+            var sb = new System.Text.StringBuilder();
+            GetStaticMethod("AppendLodAuditSection").Invoke(null, [sb, state]);
+            return sb.ToString();
+        }
+
+        [Test]
+        public void LodAuditReport_RootsAndRigids_ListThePerEntityAndWeightedFigures()
+        {
+            var (state, audit, _) = AuditTwoConfigurationRoot();
+            SetStateProperty(audit, "RootsRequested", 1);
+            SetStateProperty(state, "LodAudit", audit);
+
+            var report = BuildLodAuditReport(state);
+
+            Assert.That(report, Does.StartWith("LOD audit" + Environment.NewLine + "---------"));
+            Assert.That(report, Does.Contain("Roots audited: 1 / 1 VMD root(s) in scope"));
+            Assert.That(report, Does.Contain("Rigids audited: 2 (source-owned 1, vanilla 1)"));
+            Assert.That(report, Does.Contain("Heaviest unit looks at distance"));
+            Assert.That(report, Does.Contain("triangles per entity: 105 / 45 / 45 / 45"));
+            Assert.That(report, Does.Match(@"last/first 42[.,]9\s?%"));
+            Assert.That(report, Does.Contain("mesh parts per entity at the last LOD 1"));
+            Assert.That(report, Does.Contain("units: unit:fallback-test"));
+            Assert.That(report, Does.Contain("10/20/30/10000 | 100/200"));
+            Assert.That(report, Does.Contain("Heaviest rigids at the last LOD"));
+            Assert.That(report, Does.Contain(@"models\a.wsmodel.rigid_model_v2"));
+            Assert.That(report, Does.Contain("roots 1"));
+            Assert.That(report, Does.Contain("Roots whose parts mix different LOD-distance profiles: 1"));
+            Assert.That(report, Does.Not.Contain("NaN"));
+            Assert.That(report, Does.Not.Contain("Infinity"));
+        }
+
+        [Test]
+        public void LodAuditReport_FlagExamples_AreCappedAtTenWithTheTotalStillCounted()
+        {
+            var state = CreateBareBatchState();
+            var audit = CreateAuditResult();
+            var rigids = Get<IDictionary>(audit, "Rigids");
+            for (var index = 0; index < 12; index++)
+            {
+                var path = $"variantmeshes\\heavy_{index:00}.rigid_model_v2";
+                rigids[path] = BuildAuditRigid(
+                    path,
+                    true,
+                    CreateTriangleRigid([10f, 20f], 1000, 900));
+            }
+
+            rigids["variantmeshes\\vanilla.rigid_model_v2"] = BuildAuditRigid(
+                "variantmeshes\\vanilla.rigid_model_v2",
+                false,
+                CreateTriangleRigid([10f], 1000));
+            SetStateProperty(state, "LodAudit", audit);
+
+            var report = BuildLodAuditReport(state);
+
+            // 12 source-owned rigids: all flagged for a heavy last LOD, a LOD that is
+            // not lighter is false (900 < 1000), and all have fewer than four LODs.
+            Assert.That(report, Does.Contain("Last LOD above 25 % of LOD 0 triangles: 12"));
+            Assert.That(report, Does.Contain("same or more triangles than the previous LOD: 0"));
+            Assert.That(report, Does.Contain("Fewer than 4 LODs: 12"));
+            Assert.That(report, Does.Contain("... and 2 more"));
+            Assert.That(
+                report.Split(Environment.NewLine).Count(line => line.Contains("e.g. variantmeshes")),
+                Is.EqualTo(20));
+            Assert.That(report, Does.Not.Contain("vanilla.rigid_model_v2"));
+            Assert.That(report, Does.Contain("10/20: 12 rigid(s)"));
+            Assert.That(report, Does.Not.Contain("NaN"));
+        }
+
+        [Test]
+        public void LodAuditReport_LongPaths_AreTruncatedInTheMiddleConsistently()
+        {
+            var state = CreateBareBatchState();
+            var audit = CreateAuditResult();
+            var rigids = Get<IDictionary>(audit, "Rigids");
+            var path = "variantmeshes\\wh3_main_long_directory_name\\" +
+                       new string('x', 90) + ".rigid_model_v2";
+            rigids[path] = BuildAuditRigid(path, true, CreateTriangleRigid([10f], 100));
+            SetStateProperty(state, "LodAudit", audit);
+
+            var report = BuildLodAuditReport(state);
+
+            Assert.That(report, Does.Not.Contain(path));
+            // 30 leading characters, "...", then the last 39 characters.
+            Assert.That(
+                report,
+                Does.Contain(
+                    "variantmeshes\\wh3_main_long_di..." +
+                    new string('x', 24) + ".rigid_model_v2"));
+        }
+
+        [Test]
+        public void LodAuditReport_NoData_IsWellFormed()
+        {
+            var state = CreateBareBatchState();
+
+            var notRun = BuildLodAuditReport(state);
+            Assert.That(notRun, Does.Contain("LOD audit did not run."));
+
+            SetStateProperty(state, "LodAudit", CreateAuditResult());
+            var empty = BuildLodAuditReport(state);
+
+            Assert.That(empty, Does.Contain("Roots audited: 0 / 0 VMD root(s) in scope"));
+            Assert.That(empty, Does.Contain("Rigids audited: 0 (source-owned 0, vanilla 0)"));
+            Assert.That(empty, Does.Contain("Expected battle triangles over all roots: 0"));
+            Assert.That(empty, Does.Contain("Heaviest unit looks at distance"));
+            Assert.That(empty, Does.Contain("Heaviest rigids at the last LOD"));
+            Assert.That(empty, Does.Not.Contain("NaN"));
+            Assert.That(empty, Does.Not.Contain("Infinity"));
+        }
+
+        [Test]
+        public void LodAuditReport_RootsWithoutWeight_AreRankedPerEntityAndMarkedNotAvailable()
+        {
+            var state = CreateBareBatchState();
+            const string wsA = @"models\a.wsmodel";
+            var components = new Dictionary<string, object>
+            {
+                [wsA] = CreateAuditComponent(wsA, true, CreateAuditRigid([10f, 20f], null, [(10, 8)], [(6, 4)])),
+            };
+            var audit = CreateAuditResult();
+            AuditRoot(
+                state,
+                audit,
+                CreateExpansion(CreateVisualConfiguration(1.0, wsA)),
+                components);
+            SetStateProperty(state, "LodAudit", audit);
+
+            var report = BuildLodAuditReport(state);
+
+            Assert.That(report, Does.Contain("no root has an army weight"));
+            Assert.That(report, Does.Contain("n/a (no army weight)"));
+            Assert.That(report, Does.Contain("triangles per entity: 8 / 4 / 4 / 4"));
+            Assert.That(report, Does.Not.Contain("NaN"));
+        }
+
+        [Test]
+        public void LodAuditSource_ExhaustedTimeBudget_SkipsRootsInsteadOfRunningLong()
+        {
+            var state = CreateBareBatchState();
+            SetStateProperty(
+                state,
+                "GameplayTraversalContainers",
+                new List<Shared.Core.PackFiles.Models.IPackFileContainer>());
+
+            GetStaticMethod("AuditSourceLods").Invoke(
+                null,
+                [
+                    state,
+                    new List<string> { "models\\a.variantmeshdefinition", "models\\b.variantmeshdefinition" },
+                    CancellationToken.None,
+                    null,
+                    TimeSpan.Zero,
+                ]);
+            var audit = GetStateProperty<object>(state, "LodAudit");
+
+            Assert.That(Get<int>(audit, "RootsRequested"), Is.EqualTo(2));
+            Assert.That(Get<int>(audit, "RootsSkippedForTime"), Is.EqualTo(2));
+            Assert.That(Get<IList>(audit, "Roots"), Is.Empty);
+            Assert.That(Get<string?>(audit, "Failure"), Is.Null);
+            Assert.That(
+                BuildLodAuditReport(state),
+                Does.Contain("skipped after the 0 s time budget: 2"));
+        }
+
+        [Test]
+        public void LodAuditSource_UnresolvableRoot_IsCountedAsAnExpansionFailure()
+        {
+            var state = CreateBareBatchState();
+            SetStateProperty(
+                state,
+                "GameplayTraversalContainers",
+                new List<Shared.Core.PackFiles.Models.IPackFileContainer>());
+
+            GetStaticMethod("AuditSourceLods").Invoke(
+                null,
+                [
+                    state,
+                    new List<string> { "models\\a.variantmeshdefinition" },
+                    CancellationToken.None,
+                    null,
+                    null,
+                ]);
+            var audit = GetStateProperty<object>(state, "LodAudit");
+
+            Assert.That(Get<int>(audit, "ExpansionFailures"), Is.EqualTo(1));
+            Assert.That(Get<int>(audit, "RootsSkippedForTime"), Is.Zero);
+            Assert.That(Get<string?>(audit, "Failure"), Is.Null);
+            Assert.That(Get<IList>(audit, "Roots"), Is.Empty);
+            Assert.That(Get<TimeSpan>(audit, "TimeBudget"), Is.EqualTo(TimeSpan.FromSeconds(15)));
+        }
     }
 }

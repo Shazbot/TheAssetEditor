@@ -95,7 +95,10 @@ namespace Editors.KitbasherEditor.Services
                             rigidPath,
                             lodIndex,
                             group.PartIndices);
-                        RecordMeshMergeOrigin(state, mergeOrigin);
+                        RecordMeshMergeOrigin(
+                            state,
+                            mergeOrigin,
+                            models.Count - 1);
 
                         state.MeshMergeEntries.Add(new MeshMergeReportEntry(
                             rigidPath,
@@ -363,7 +366,10 @@ namespace Editors.KitbasherEditor.Services
                                 rigidPath,
                                 lodIndex,
                                 group.PartIndices);
-                            RecordMeshMergeOrigin(state, mergeOrigin);
+                            RecordMeshMergeOrigin(
+                                state,
+                                mergeOrigin,
+                                models.Count - 1);
 
                             state.MeshMergeEntries.Add(new MeshMergeReportEntry(
                                 rigidPath,
@@ -426,11 +432,18 @@ namespace Editors.KitbasherEditor.Services
         private static void OptimizeGeometry(
             BatchState state,
             CancellationToken cancellationToken,
-            IProgress<TextureAtlasPackProgress>? progress)
+            IProgress<TextureAtlasPackProgress>? progress,
+            IEnumerable<string>? additionalRigidPaths = null)
         {
+            // Rigids rewritten by atlasing or merging are always optimized. The
+            // no-atlas run also passes its own selection of otherwise unmodified
+            // rigids; those only become written files once optimized.
             var rigidPaths = state.ModifiedRigids
+                .Concat(additionalRigidPaths ?? [])
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+            var vertexFactory = VertexFactory.Create();
 
             for (var rigidIndex = 0; rigidIndex < rigidPaths.Count; rigidIndex++)
             {
@@ -451,15 +464,133 @@ namespace Editors.KitbasherEditor.Services
                     foreach (var model in lod)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
+                        var vertexSize = (long)vertexFactory.GetVertexSize(
+                            model.Material.BinaryVertexFormat,
+                            rmv.Header.Version);
                         var statistics = RigidGeometryOptimizer.Optimize(model);
                         state.GeometryMeshesOptimized++;
                         state.GeometryVerticesBefore += statistics.VerticesBefore;
                         state.GeometryVerticesAfter += statistics.VerticesAfter;
                         state.GeometryUnreferencedVerticesRemoved += statistics.UnreferencedVerticesRemoved;
                         state.GeometryDuplicateVerticesRemoved += statistics.DuplicateVerticesRemoved;
+                        state.GeometryIndicesBefore += statistics.IndicesBefore;
+                        state.GeometryIndicesAfter += statistics.IndicesAfter;
+                        state.GeometryBytesBefore +=
+                            vertexSize * statistics.VerticesBefore +
+                            sizeof(ushort) * (long)statistics.IndicesBefore;
+                        state.GeometryBytesAfter +=
+                            vertexSize * statistics.VerticesAfter +
+                            sizeof(ushort) * (long)statistics.IndicesAfter;
                     }
                 }
+
+                state.GeometryRigidsOptimized++;
+                state.ModifiedRigids.Add(rigidPath);
             }
+        }
+
+        // The no-atlas run optimizes more than the rigids a merge rewrote. A rigid
+        // qualifies when the source pack owns it (vanilla/CA rigids are never
+        // written), a root in scope reaches it, and the same consumer-safety gate
+        // the structural merge uses passes: complete consumer discovery and no
+        // immutable (vanilla) WSModel consumer. The optimizer keeps the part count,
+        // part order and triangle count of every model, so WSModel material
+        // indices and direct VMD references stay valid; it only reorders and
+        // deduplicates vertices inside a part. Cloth model types are left alone
+        // because nothing here shows that their vertex order is free to change,
+        // and a rigid whose index buffers the optimizer would reject is skipped
+        // instead of failing the run.
+        private HashSet<string> SelectNoAtlasGeometryOptimizationRigids(
+            BatchState state,
+            IReadOnlyCollection<string> scopeVmdRoots,
+            CancellationToken cancellationToken)
+        {
+            var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var index = state.GameplayMeshDependencyIndex;
+            if (index == null)
+                return selected;
+
+            var scope = scopeVmdRoots
+                .Select(Normalize)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            void Skip(string reason)
+            {
+                state.GeometrySelectionSkipCounts[reason] =
+                    state.GeometrySelectionSkipCounts.GetValueOrDefault(reason) + 1;
+            }
+
+            foreach (var (assetPath, roots) in index.RootsByAssetPath
+                         .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rigidPath = Normalize(assetPath);
+                if (!Path.GetExtension(rigidPath).Equals(
+                        ".rigid_model_v2",
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !state.Source.ContainsFile(rigidPath) ||
+                    !roots.Any(scope.Contains))
+                {
+                    continue;
+                }
+
+                if (!IsGameplayConsumerDiscoverySafeForAsset(state, rigidPath))
+                {
+                    Skip("consumer discovery incomplete");
+                    continue;
+                }
+
+                if (GetImmutableGameplayWsModelConsumersForRigid(state, rigidPath).Count != 0)
+                {
+                    Skip("immutable gameplay WSModel consumer");
+                    continue;
+                }
+
+                RmvFile? rmv;
+                try
+                {
+                    rmv = GetRmv(state, rigidPath);
+                }
+                catch (Exception ex) when (
+                    ex is InvalidDataException or
+                    InvalidOperationException or
+                    ArgumentException or
+                    FormatException)
+                {
+                    Skip("rigid could not be loaded");
+                    continue;
+                }
+
+                if (rmv == null)
+                {
+                    Skip("rigid could not be loaded");
+                    continue;
+                }
+
+                var models = rmv.ModelList.SelectMany(lod => lod).ToList();
+                if (models.Any(model =>
+                        model.CommonHeader.ModelTypeFlag is
+                            ModelMaterialEnum.cloth or
+                            ModelMaterialEnum.weighted_cloth))
+                {
+                    Skip("cloth model type");
+                    continue;
+                }
+
+                if (models.Any(model =>
+                        model.Mesh.IndexList.Length % 3 != 0 ||
+                        model.Mesh.IndexList.Any(
+                            vertexIndex => vertexIndex >= model.Mesh.VertexList.Length)))
+                {
+                    Skip("invalid index buffer");
+                    continue;
+                }
+
+                if (!state.ModifiedRigids.Contains(rigidPath))
+                    state.GeometryUnmodifiedRigidsSelected++;
+                selected.Add(rigidPath);
+            }
+
+            return selected;
         }
 
         private static void AnalyzeMeshMergeBlockers(
@@ -1776,16 +1907,26 @@ namespace Editors.KitbasherEditor.Services
 
         private static void RecordMeshMergeOrigin(
             BatchState state,
-            string mergeOrigin)
+            string mergeOrigin,
+            int partsRemoved)
         {
             if (mergeOrigin.Equals("structural-only", StringComparison.Ordinal))
+            {
                 state.StructuralOnlyMergeGroupCount++;
+                state.StructuralOnlyMergePartsRemoved += partsRemoved;
+            }
             else if (mergeOrigin.Equals(
                          "structural+atlas-assisted",
                          StringComparison.Ordinal))
+            {
                 state.StructuralAndAtlasAssistedMergeGroupCount++;
+                state.StructuralAndAtlasAssistedMergePartsRemoved += partsRemoved;
+            }
             else
+            {
                 state.AtlasAssistedMergeGroupCount++;
+                state.AtlasAssistedMergePartsRemoved += partsRemoved;
+            }
         }
 
         private static string[] GetPreExistingStructuralMergePairs(

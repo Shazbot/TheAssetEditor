@@ -31,6 +31,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
@@ -40,14 +42,31 @@
             Text="Create Texture Atlas Pack" />
 
         <CheckBox
-            x:Name="MergeMeshesCheckBox"
+            x:Name="BuildAtlasesCheckBox"
             Grid.Row="1"
+            Margin="0,12,0,0"
+            Content="Build texture atlases (experimental)"
+            IsChecked="False"
+            Checked="BuildAtlasesCheckBox_OnChanged"
+            Unchecked="BuildAtlasesCheckBox_OnChanged" />
+
+        <TextBlock
+            Grid.Row="2"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="Off by default. Atlasing adds large generated textures (about 150-190 MiB per pack on the reference packs) for a small measured gain (about 2 % fewer soldier-part instances). When off, the tool only merges parts that already share a material and optimizes geometry."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
+        <CheckBox
+            x:Name="MergeMeshesCheckBox"
+            Grid.Row="3"
             Margin="0,12,0,0"
             Content="Merge compatible mesh parts (experimental, improves draw calls)"
             IsChecked="True" />
 
         <TextBlock
-            Grid.Row="2"
+            Grid.Row="4"
             Margin="22,4,0,0"
             MaxWidth="620"
             Text="When enabled, compatible parts within the same rigid and LOD may be combined. This changes mesh part indices; WSModel material indices are rewritten automatically."
@@ -56,13 +75,13 @@
 
         <CheckBox
             x:Name="ShareAcrossVmdsCheckBox"
-            Grid.Row="3"
+            Grid.Row="5"
             Margin="0,12,0,0"
             Content="Share atlases and generated materials across VMDs"
             IsChecked="True" />
 
         <TextBlock
-            Grid.Row="4"
+            Grid.Row="6"
             Margin="22,4,0,0"
             MaxWidth="620"
             Text="When enabled, compatible mesh parts from the selected atlas VMD population are planned together so they can share atlas placements, atlas textures, and generated materials."
@@ -71,13 +90,13 @@
 
         <CheckBox
             x:Name="AtlasAllVmdsCheckBox"
-            Grid.Row="5"
+            Grid.Row="7"
             Margin="0,12,0,0"
             Content="Atlas all VMDs in the pack (include non-gameplay visuals)"
             IsChecked="False" />
 
         <TextBlock
-            Grid.Row="6"
+            Grid.Row="8"
             Margin="22,4,0,0"
             MaxWidth="620"
             Text="Off by default: only VMDs reachable from gameplay units, battle agent visuals, mounts, engines, and child VMD references are atlased. Dependency scanning and safe cleanup still inspect the full pack."
@@ -86,13 +105,13 @@
 
         <CheckBox
             x:Name="ScoreAllGameUnitsCheckBox"
-            Grid.Row="7"
+            Grid.Row="9"
             Margin="0,12,0,0"
             Content="Score atlas value across all game cultures (conservative)"
             IsChecked="False" />
 
         <TextBlock
-            Grid.Row="8"
+            Grid.Row="10"
             Margin="22,4,0,0"
             MaxWidth="620"
             Text="Off by default: the player side is scored from cultures affected by this pack, while the opponent side is sampled uniformly from all resolved game cultures. Unrelated cultures contribute nothing for culture-local assets; same-culture mirrors and proven shared assets are accounted for automatically. Enable this to score the player side across all game cultures too."
@@ -101,28 +120,28 @@
 
         <CheckBox
             x:Name="OptimizeGeometryCheckBox"
-            Grid.Row="9"
+            Grid.Row="11"
             Margin="0,12,0,0"
             Content="Optimize geometry (experimental)"
             IsChecked="True" />
 
         <TextBlock
-            Grid.Row="10"
+            Grid.Row="12"
             Margin="22,4,0,0"
             MaxWidth="620"
-            Text="When enabled, atlased rigid meshes remove unused vertices and degenerate triangles, deduplicate identical vertices, optimize triangle order for the GPU vertex cache, and reorder the vertex buffer for locality."
+            Text="When enabled, atlased or merged rigid meshes remove unused vertices and degenerate triangles, deduplicate identical vertices, optimize triangle order for the GPU vertex cache, and reorder the vertex buffer for locality."
             TextWrapping="Wrap"
             Opacity="0.7" />
 
         <CheckBox
             x:Name="CrossRigidMergesCheckBox"
-            Grid.Row="11"
+            Grid.Row="13"
             Margin="0,12,0,0"
             Content="Cross-rigid merges (experimental)"
             IsChecked="False" />
 
         <TextBlock
-            Grid.Row="12"
+            Grid.Row="14"
             Margin="22,4,0,0"
             MaxWidth="620"
             Text="Off by default. Merges rigids that render together into generated models and rewrites variant mesh definitions to use them. Measured benefit is small (about 0.2 % FPS on the reference pack) for tens of MiB of generated geometry and many generated VMD files."
@@ -131,7 +150,7 @@
 
         <CheckBox
             x:Name="CrossRigidOnlyCheckBox"
-            Grid.Row="13"
+            Grid.Row="15"
             Margin="0,12,0,0"
             Content="Cross-rigid joining only (fast testing)"
             IsChecked="False"
@@ -139,7 +158,7 @@
             Unchecked="CrossRigidOnlyCheckBox_OnChanged" />
 
         <TextBlock
-            Grid.Row="14"
+            Grid.Row="16"
             Margin="22,4,0,0"
             MaxWidth="620"
             Text="Runs cross-rigid analysis and emission against the original pack state. Skips texture atlasing, same-rigid mesh merging, geometry optimization, BCn residency scans, and pruning. Gameplay VMD scope and scenario scoring options still apply; results can differ from a full run because atlasing may create additional merge compatibility."
@@ -148,14 +167,14 @@
 
         <TextBlock
             x:Name="PhaseText"
-            Grid.Row="15"
+            Grid.Row="17"
             Margin="0,16,0,0"
             FontWeight="SemiBold"
             Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="16"
+            Grid.Row="18"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -165,7 +184,7 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="17"
+            Grid.Row="19"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
@@ -173,7 +192,7 @@
             IsIndeterminate="False"
             Value="0" />
 
-        <Grid Grid.Row="18" Margin="0,8,0,0">
+        <Grid Grid.Row="20" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>

@@ -67,6 +67,55 @@ T0 and the tiers were measured in combined mode, on top of atlases already built
 
 Rough FPS equivalents, same ratio: current cross-rigid about 0.2 %; T1 ceiling a bit over 1 %; T4 ceiling about 2–2.5 %.
 
+## Second pack: `ovn_albion.pack`
+
+Combined mode (atlas, same-rigid merge, cross-rigid), run after the slot-limit fix. 68 gameplay-used root VMDs; run time 609 s.
+
+| | `ak_teb3` (combined mode) | `ovn_albion` |
+|---|---|---|
+| Baseline expected draws | 1,124 | 1,570 |
+| Cross-rigid saved | 23.7 (2.1 %) | 7.8 (0.5 %) |
+| Cross-rigid payloads / geometry | 111 / 52.5 MiB | 19 / 24.2 MiB |
+| Source VMDs rewritten | 43 | 4 |
+| T0 ceiling (today's merge identity) | 26.6 (2.4 %) | 11.1 (0.7 %) |
+| Atlas + same-rigid saved | 17.5 (1.6 %) | 39.8 (2.5 %) |
+| New atlas textures | 189.8 MiB | 154.3 MiB |
+
+- **Cross-rigid is worth even less here**: 0.5 % of soldier-part instances, roughly 0.05 % FPS by the frame-rate test's ratio. It is again close to its ceiling.
+- **Atlasing with same-rigid merging does better** than on `ak_teb3` (2.5 % against 1.6 %). Everything the tool does today totals about 3 % of instances, roughly 0.3 % FPS.
+- **Output is sound**: validation passes; 3 writer slots nested (largest 288 alternatives, depth up to 5, all exact), 336 group VMD files; no author-written slots above the five-alternative limit.
+- **Shared-atlas ceilings are higher but still small**: T1 24.1 %, T3 27.3 %, T4 35.5 %; under a 64 / 128 MiB geometry cap 5.8 / 9.4 % (about 0.5 / 0.8 % FPS), needing 10 / 16 small shared atlases that all fit one page, built from about 95 / 143 MiB of source textures.
+
+Both packs lead to the same conclusion: cross-rigid merging is not worthwhile and should stay off by default.
+
+## Atlasing: cost and benefit
+
+| | `ak_teb3` | `ovn_albion` |
+|---|---|---|
+| Soldier-part instances removed (atlas + same-rigid merge) | 1.6 % | 2.5 % |
+| Atlas textures added to the pack (disk) | 189.8 MiB | 154.3 MiB |
+| Expected loaded atlas memory in battle | 6.9 MiB | about 14.9 MiB |
+| Expected source memory no longer loaded | 1.1 MiB | 7.1 MiB |
+| Net expected video memory growth | 5.9 MiB | 7.8 MiB |
+| Atlas planning time | 540-740 s | 402 s |
+
+- **The large cost is pack size and run time, not video memory.** The value gate models, per texture, the probability that it is loaded in a battle before and after atlasing; a vanilla texture the mod no longer references stops counting unless a vanilla unit in the battle needs it. These are scenario averages, not a peak.
+- **The gain is small because same-rigid parts are split by shader, not texture.** In the `ak_teb3` dump a WSModel has on average 2.08 distinct materials at LOD 0 and 1.96 if the four atlasable textures are ignored, so a perfect atlas removes about 6 % of the parts inside a rigid (rough, unweighted, about half the WSModels parsed). Texture differences sit between rigids, which is why the cross-rigid shared-atlas ceiling is much higher.
+- Atlasing is now opt-in ("Build texture atlases (experimental)", off by default). With it off the tool applies structural-only merges and geometry optimisation.
+
+## Where the frame time goes, and the LOD audit
+
+Render-scale test, variant B, about 3,300 soldiers: 30 FPS at 100 % scale, 46 FPS at 50 %, GPU usage 98-100 % at both. Quartering the pixels saved 11.6 ms of a 33.3 ms frame, so roughly half the frame (about 15.5 ms) depends on pixel count and half (about 18 ms) is GPU work on geometry: vertices and soldier-part instances.
+
+LOD audit of `ak_teb3` (172 roots, 287 source-owned and 299 vanilla rigids, 10 s):
+
+- The mod's LODs follow a uniform 100 / 75 / 50 / 25 % triangle pattern; a typical soldier is 9,000-20,000 triangles at LOD 0 and 1,600-4,500 at the last LOD, in 4-10 mesh parts.
+- 227 of 287 source-owned rigids switch at 10 / 20 / 30 m, so in an ordinary battle view nearly every soldier is at the last LOD. The tool's scenario model assumes 25 % of soldiers at each LOD, which overweights LOD 0.
+- 31 rigids use 100 / 200 / 300 / 400 m and 2 crests use 1,000,000 on every LOD; 113 unit looks mix profiles. **These may be the author's intent; LOD geometry and switch distances are out of scope for the tool by the author's decision.**
+- Possible defects to report to the author: `ak_teb_freecomp_legs_estalian_01` has zero triangles at LOD 2 and 3; the `lorenzo_lupo` parts have no LOD reduction.
+
+With LOD geometry and distances out of scope, the geometry-side levers left to the tool are parts per soldier (merging, measured at about 2.7 ms for removing 90 % of them) and nothing else of size.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).
@@ -84,7 +133,9 @@ Rough FPS equivalents, same ratio: current cross-rigid about 0.2 %; T1 ceiling a
 - `PackTextureAtlasBatchService.cs` split into 16 partial-class files.
 - Writer-created slots nested to respect the engine's five-alternative limit.
 - Cross-rigid merging is now opt-in: a "Cross-rigid merges (experimental)" checkbox, off by default (`crossRigidMerges` on `Process`). Previously it ran whenever mesh merging was enabled. Cross-rigid-only mode still runs it.
-- New tests in `PackTextureAtlasCrossRigidTests.cs`; 244 pass across that class and `PackTextureAtlasValueGateTests`.
+- No-atlas mode (`buildAtlases` on `Process`, default in the dialog): skips atlas discovery, planning and building; structural-only merges, geometry optimisation of the merged rigids, pruning and validation still run. On `ak_teb3`: 178 s (about 930 s with atlasing), 38 merge groups, 42 mesh parts removed, validation passes. Extending geometry optimisation to every source-owned gameplay rigid was tried and dropped: 353 extra rigids re-saved for 0.5 % fewer vertices.
+- Report-only LOD audit (`PackTextureAtlasBatchService.LodAudit.cs`): per-rigid and per-unit triangles by LOD, switch distances, flags and rankings.
+- New tests in `PackTextureAtlasCrossRigidTests.cs`; 275 pass across that class and `PackTextureAtlasValueGateTests`.
 
 ## Recommendations
 

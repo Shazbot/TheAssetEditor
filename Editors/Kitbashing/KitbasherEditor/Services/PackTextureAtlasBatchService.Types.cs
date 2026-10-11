@@ -850,6 +850,9 @@ namespace Editors.KitbasherEditor.Services
             public int StructuralOnlyMergeGroupCount { get; set; }
             public int StructuralAndAtlasAssistedMergeGroupCount { get; set; }
             public int AtlasAssistedMergeGroupCount { get; set; }
+            public int StructuralOnlyMergePartsRemoved { get; set; }
+            public int StructuralAndAtlasAssistedMergePartsRemoved { get; set; }
+            public int AtlasAssistedMergePartsRemoved { get; set; }
             public int AtlasProtectedStructuralMeshCount { get; set; }
             public bool LodAwareAtlasPlanningEnabled { get; set; } = true;
             public int LodAwareAtlasFamilyClosures { get; set; }
@@ -872,6 +875,10 @@ namespace Editors.KitbasherEditor.Services
             public bool OptimizeGeometryEnabled { get; }
             public bool CrossRigidOnly { get; set; }
             public bool CrossRigidMergesEnabled { get; set; }
+            public bool BuildAtlases { get; set; } = true;
+            public LodAuditResult? LodAudit { get; set; }
+            // Cross-rigid-only mode never builds atlases, whatever BuildAtlases says.
+            public bool TextureAtlasingActive => BuildAtlases && !CrossRigidOnly;
             public bool ExistingAtlasOutputDetected { get; set; }
             public int ExistingGeneratedAtlasCandidateCount { get; set; }
             public bool AtlasAllVmdsEnabled { get; set; }
@@ -1067,6 +1074,14 @@ namespace Editors.KitbasherEditor.Services
             public long GeometryVerticesRemoved => GeometryVerticesBefore - GeometryVerticesAfter;
             public long GeometryUnreferencedVerticesRemoved { get; set; }
             public long GeometryDuplicateVerticesRemoved { get; set; }
+            public int GeometryRigidsOptimized { get; set; }
+            public long GeometryIndicesBefore { get; set; }
+            public long GeometryIndicesAfter { get; set; }
+            public long GeometryBytesBefore { get; set; }
+            public long GeometryBytesAfter { get; set; }
+            public int GeometryUnmodifiedRigidsSelected { get; set; }
+            public Dictionary<string, int> GeometrySelectionSkipCounts { get; } =
+                new(StringComparer.Ordinal);
             public List<string> RemovedFiles { get; } = [];
             public List<string> ValidationMessages { get; } = [];
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];

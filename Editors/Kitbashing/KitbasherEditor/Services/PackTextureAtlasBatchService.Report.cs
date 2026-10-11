@@ -818,6 +818,11 @@ namespace Editors.KitbasherEditor.Services
                 $"{state.GameplayTraversalContainerResolutions.Count:N0} unique path(s); " +
                 $"{state.GameplayTraversalContainerResolutionScans:N0} scan(s), " +
                 $"{state.GameplayTraversalContainerResolutionCacheHits:N0} cache hit(s)");
+            // Atlas-only summary lines are written to a scratch builder when no atlases
+            // were built, so the report keeps one line instead of hundreds of zeros.
+            var summaryBuilder = sb;
+            var atlasOnlyBuilder = state.TextureAtlasingActive ? sb : new StringBuilder();
+            sb = atlasOnlyBuilder;
             sb.AppendLine(
                 $"Atlas value-gate reachable WSModels: " +
                 $"{state.AtlasValueGateReachableWsModelCount:N0} total " +
@@ -858,9 +863,11 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine(
                 $"Atlas VMD roots with atlased mesh parts: {transformedAtlasRoots:N0} / " +
                 $"{state.AtlasVmdRootCount:N0}");
+            sb = summaryBuilder;
             sb.AppendLine($"Modified rigid meshes: {state.ModifiedRigids.Count:N0}");
             sb.AppendLine($"Modified WSModels: {state.ModifiedWsModels.Count:N0}");
             sb.AppendLine($"Mesh parts skipped: {GetEffectiveSkippedMeshCount(state)}");
+            sb = atlasOnlyBuilder;
             sb.AppendLine(
                 $"Existing Asset Editor atlas output detected: " +
                 $"{(state.ExistingAtlasOutputDetected
@@ -896,8 +903,13 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Mesh references remapped by content dedupe: {state.ContentCanonicalizedMeshReferences}");
             sb.AppendLine($"Cropped-content hashes computed: {state.AtlasRegionContentHashes.Count}");
             sb.AppendLine($"Pack-wide atlas/material sharing: {(state.ShareAtlasesAcrossVmdsEnabled ? "YES" : "NO")}");
+            sb = summaryBuilder;
             sb.AppendLine($"Cross-rigid merges: {(state.CrossRigidMergesEnabled ? "YES" : "NO")}");
+            sb.AppendLine($"Texture atlasing: {(state.TextureAtlasingActive ? "YES" : "NO")}");
             sb.AppendLine($"Cross-rigid-only mode: {(state.CrossRigidOnly ? "YES" : "NO")}");
+            if (!state.TextureAtlasingActive)
+                sb.AppendLine("Texture atlasing disabled; atlas sections omitted.");
+            sb = atlasOnlyBuilder;
             sb.AppendLine(
                 $"LOD-aware atlas family planning: " +
                 $"{(state.LodAwareAtlasPlanningEnabled ? "YES" : "NO")}");
@@ -1266,8 +1278,10 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine(
                 $"Cross-geometry/cross-batch component pairs with high bidirectional VMD-root overlap: " +
                 $"{componentReuse.Pairs.Count(x => x.HighBidirectionalOverlap)}");
+            sb = summaryBuilder;
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
-            sb.AppendLine("Meshes with genuine unresolved secondary textures are skipped.");
+            if (state.TextureAtlasingActive)
+                sb.AppendLine("Meshes with genuine unresolved secondary textures are skipped.");
             sb.AppendLine($"Merge compatible mesh parts: {(state.MergeCompatibleMeshesEnabled ? "YES" : "NO")}");
             if (state.MergeCompatibleMeshesEnabled)
             {
@@ -1286,6 +1300,21 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Atlas-assisted merge groups applied: " +
                     $"{state.AtlasAssistedMergeGroupCount}");
+                // Parts removed = parts before minus parts after, summed over the groups
+                // of each origin. A scenario-expected draw figure per merge group is not
+                // available outside the atlas planner's affinity groups, so none is printed.
+                sb.AppendLine(
+                    $"Mesh parts removed by structural-only merges: " +
+                    $"{state.StructuralOnlyMergePartsRemoved:N0}");
+                if (state.TextureAtlasingActive)
+                {
+                    sb.AppendLine(
+                        $"Mesh parts removed by structural+atlas-assisted merges: " +
+                        $"{state.StructuralAndAtlasAssistedMergePartsRemoved:N0}");
+                    sb.AppendLine(
+                        $"Mesh parts removed by atlas-assisted merges: " +
+                        $"{state.AtlasAssistedMergePartsRemoved:N0}");
+                }
                 sb.AppendLine(
                     $"Pre-atlas structural meshes protected from atlas rewriting: " +
                     $"{state.AtlasProtectedStructuralMeshCount}");
@@ -1312,6 +1341,7 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.GameplayMeshDependencyIndex?.IncompleteRoots.Count ?? 0}");
                 sb.AppendLine($"Mesh parts merged across semantically identical material paths: {state.SemanticMaterialPathMergeParts}");
                 sb.AppendLine($"Mesh merge near-miss blocker occurrences: {state.MeshMergeBlockerCounts.Values.Sum()}");
+                sb = atlasOnlyBuilder;
                 var mergeOpportunities = state.TextureMergeOpportunities.Values.ToList();
                 sb.AppendLine($"Texture-blocked merge opportunities: {mergeOpportunities.Count}");
                 sb.AppendLine($"Texture-blocked merge opportunities whose atlas combination fits: {mergeOpportunities.Count(x => x.Combination.Fits)}");
@@ -1335,6 +1365,7 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Atlas combinations 10-25% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPercent > 10 && x.Combination.AdditionalPercent <= 25)}");
                 sb.AppendLine($"Atlas combinations >25% extra pixels: {mergeOpportunities.Count(x => x.Combination.Fits && x.Combination.AdditionalPercent > 25)}");
                 sb.AppendLine($"Atlas combinations that do not fit: {mergeOpportunities.Count(x => !x.Combination.Fits)}");
+                sb = summaryBuilder;
             }
 
             if (state.MergeCompatibleMeshesEnabled)
@@ -2264,8 +2295,35 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine($"Geometry vertices removed: {state.GeometryVerticesRemoved:N0}");
                 sb.AppendLine($"Unreferenced vertices removed: {state.GeometryUnreferencedVerticesRemoved:N0}");
                 sb.AppendLine($"Duplicate vertices removed: {state.GeometryDuplicateVerticesRemoved:N0}");
+                var geometryVertexChange = state.GeometryVerticesBefore == 0
+                    ? 0.0
+                    : 100.0 * (state.GeometryVerticesAfter - state.GeometryVerticesBefore) /
+                      state.GeometryVerticesBefore;
+                sb.AppendLine(
+                    $"Geometry optimisation: {state.GeometryRigidsOptimized:N0} rigid(s), " +
+                    $"vertices {state.GeometryVerticesBefore:N0} -> {state.GeometryVerticesAfter:N0} " +
+                    $"({geometryVertexChange:+0.0;-0.0;0.0} %), " +
+                    $"indices {state.GeometryIndicesBefore:N0} -> {state.GeometryIndicesAfter:N0}, " +
+                    $"geometry bytes {state.GeometryBytesBefore:N0} -> {state.GeometryBytesAfter:N0}");
+                if (!state.TextureAtlasingActive && !state.CrossRigidOnly)
+                {
+                    sb.AppendLine(
+                        $"Geometry optimisation rigids not modified by a merge: " +
+                        $"{state.GeometryUnmodifiedRigidsSelected:N0}");
+                    sb.AppendLine(
+                        $"Geometry optimisation candidates skipped: " +
+                        (state.GeometrySelectionSkipCounts.Count == 0
+                            ? "(none)"
+                            : string.Join(
+                                ", ",
+                                state.GeometrySelectionSkipCounts
+                                    .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                                    .Select(entry => $"{entry.Key}={entry.Value:N0}"))));
+                }
             }
             sb.AppendLine();
+
+            AppendLodAuditSection(sb, state);
 
             if (state.UnitCategoryResolution != null)
             {

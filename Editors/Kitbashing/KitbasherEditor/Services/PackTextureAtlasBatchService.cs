@@ -188,6 +188,7 @@ namespace Editors.KitbasherEditor.Services
                 scoreAllGameUnits,
                 crossRigidOnly,
                 crossRigidMerges,
+                buildAtlases,
                 cancellationToken,
                 progress) =>
             {
@@ -203,7 +204,8 @@ namespace Editors.KitbasherEditor.Services
                     atlasAllVmds: atlasAllVmds,
                     scoreAllGameUnits: scoreAllGameUnits,
                     crossRigidOnly: crossRigidOnly,
-                    crossRigidMerges: crossRigidMerges);
+                    crossRigidMerges: crossRigidMerges,
+                    buildAtlases: buildAtlases);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -247,7 +249,8 @@ namespace Editors.KitbasherEditor.Services
             bool scoreAllGameUnits = false,
             bool lodAwareAtlasPlanning = true,
             bool crossRigidOnly = false,
-            bool crossRigidMerges = false)
+            bool crossRigidMerges = false,
+            bool buildAtlases = true)
         {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
@@ -292,6 +295,7 @@ namespace Editors.KitbasherEditor.Services
                 state.CrossRigidOnly = crossRigidOnly;
                 state.CrossRigidMergesEnabled =
                     crossRigidMerges || crossRigidOnly;
+                state.BuildAtlases = buildAtlases;
                 state.CancellationToken = cancellationToken;
                 state.Progress = progress;
                 var gameplayContainerSnapshot =
@@ -454,6 +458,10 @@ namespace Editors.KitbasherEditor.Services
                 state.PhaseDurations["Copy source pack"] = phaseStopwatch.Elapsed;
 
                 state.MalformedVmdRoots.AddRange(malformedVmdRoots);
+                // Report-only: reads the source geometry before any stage rewrites it.
+                phaseStopwatch.Restart();
+                AuditSourceLods(state, atlasVmdRoots, cancellationToken, progress);
+                state.PhaseDurations["LOD audit"] = phaseStopwatch.Elapsed;
                 phaseStopwatch.Restart();
                 if (crossRigidOnly)
                 {
@@ -471,7 +479,8 @@ namespace Editors.KitbasherEditor.Services
                 else
                 {
                     BuildWsUsageIndex(state, cancellationToken, progress);
-                    IndexTaintedGameplayWsModels(state, cancellationToken);
+                    if (buildAtlases)
+                        IndexTaintedGameplayWsModels(state, cancellationToken);
                     // Direct rigid consumers constrain atlas rewrites as well as structural
                     // mesh merging. Discover them before atlas candidates even when the
                     // optional structural merge pass is disabled.
@@ -482,38 +491,42 @@ namespace Editors.KitbasherEditor.Services
                     state.PhaseDurations["Index WSModels"] =
                         phaseStopwatch.Elapsed;
 
-                    phaseStopwatch.Restart();
-                    ReportProgress(progress, "Estimating source BCn residency");
-                    state.SourceBcnResidency = CalculateBcnTextureResidency(
-                        state,
-                        source,
-                        originalReachable,
-                        cancellationToken);
-                    state.PhaseDurations["Estimate source BCn residency"] =
-                        phaseStopwatch.Elapsed;
+                    List<AtlasCandidate> discoveredCandidates = [];
+                    if (buildAtlases)
+                    {
+                        phaseStopwatch.Restart();
+                        ReportProgress(progress, "Estimating source BCn residency");
+                        state.SourceBcnResidency = CalculateBcnTextureResidency(
+                            state,
+                            source,
+                            originalReachable,
+                            cancellationToken);
+                        state.PhaseDurations["Estimate source BCn residency"] =
+                            phaseStopwatch.Elapsed;
 
-                    phaseStopwatch.Restart();
-                    var candidateDiscovery = DiscoverAtlasCandidates(
-                        state,
-                        atlasVmdRoots,
-                        shareAtlasesAcrossVmds,
-                        cancellationToken,
-                        progress);
+                        phaseStopwatch.Restart();
+                        var candidateDiscovery = DiscoverAtlasCandidates(
+                            state,
+                            atlasVmdRoots,
+                            shareAtlasesAcrossVmds,
+                            cancellationToken,
+                            progress);
 
-                    // UV0 is shared by every material texture channel. If any real
-                    // secondary texture is unresolved, remapping UV0 while preserving that old
-                    // texture path would make it sample with atlas UVs and corrupt rendering.
-                    // Such meshes are therefore always skipped. The only unresolved sentinel
-                    // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
-                    var discoveredCandidates = ApplyMissingTextureDecision(
-                        state,
-                        candidateDiscovery.Candidates);
-                    state.AtlasValueGateCandidateTexturePaths.Clear();
-                    state.AtlasValueGateCandidateTexturePaths.UnionWith(
-                        GetAtlasValueGateCandidateTexturePaths(discoveredCandidates));
-                    state.AtlasValueGateCandidateTexturePathsInitialized = true;
-                    state.PhaseDurations["Discover atlas candidates"] =
-                        phaseStopwatch.Elapsed;
+                        // UV0 is shared by every material texture channel. If any real
+                        // secondary texture is unresolved, remapping UV0 while preserving that old
+                        // texture path would make it sample with atlas UVs and corrupt rendering.
+                        // Such meshes are therefore always skipped. The only unresolved sentinel
+                        // normalized to "absent" earlier is t_xml_mask/test_mask.dds.
+                        discoveredCandidates = ApplyMissingTextureDecision(
+                            state,
+                            candidateDiscovery.Candidates);
+                        state.AtlasValueGateCandidateTexturePaths.Clear();
+                        state.AtlasValueGateCandidateTexturePaths.UnionWith(
+                            GetAtlasValueGateCandidateTexturePaths(discoveredCandidates));
+                        state.AtlasValueGateCandidateTexturePathsInitialized = true;
+                        state.PhaseDurations["Discover atlas candidates"] =
+                            phaseStopwatch.Elapsed;
+                    }
 
                     if (mergeCompatibleMeshes)
                     {
@@ -526,45 +539,48 @@ namespace Editors.KitbasherEditor.Services
                             phaseStopwatch.Elapsed;
                     }
 
-                    phaseStopwatch.Restart();
-                    if (shareAtlasesAcrossVmds)
+                    if (buildAtlases)
                     {
-                        ProcessPackWideAtlases(
-                            state,
-                            discoveredCandidates,
-                            cancellationToken,
-                            progress);
-                    }
-                    else
-                    {
-                        for (var i = 0; i < atlasVmdRoots.Count; i++)
+                        phaseStopwatch.Restart();
+                        if (shareAtlasesAcrossVmds)
                         {
-                            cancellationToken.ThrowIfCancellationRequested();
-                            var rootCandidates = discoveredCandidates
-                                .Where(x =>
-                                    x.RootVmdPath.Equals(
-                                        atlasVmdRoots[i],
-                                        StringComparison.OrdinalIgnoreCase))
-                                .ToList();
-                            ProcessVmd(
+                            ProcessPackWideAtlases(
                                 state,
-                                atlasVmdRoots[i],
-                                rootCandidates,
+                                discoveredCandidates,
+                                cancellationToken,
+                                progress);
+                        }
+                        else
+                        {
+                            for (var i = 0; i < atlasVmdRoots.Count; i++)
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                var rootCandidates = discoveredCandidates
+                                    .Where(x =>
+                                        x.RootVmdPath.Equals(
+                                            atlasVmdRoots[i],
+                                            StringComparison.OrdinalIgnoreCase))
+                                    .ToList();
+                                ProcessVmd(
+                                    state,
+                                    atlasVmdRoots[i],
+                                    rootCandidates,
+                                    cancellationToken,
+                                    progress);
+                            }
+
+                            ProcessDirectAssetAtlases(
+                                state,
+                                discoveredCandidates
+                                    .Where(IsDirectAssetCandidate)
+                                    .ToList(),
                                 cancellationToken,
                                 progress);
                         }
 
-                        ProcessDirectAssetAtlases(
-                            state,
-                            discoveredCandidates
-                                .Where(IsDirectAssetCandidate)
-                                .ToList(),
-                            cancellationToken,
-                            progress);
+                        state.PhaseDurations["Plan and build atlases"] =
+                            phaseStopwatch.Elapsed;
                     }
-
-                    state.PhaseDurations["Plan and build atlases"] =
-                        phaseStopwatch.Elapsed;
                 }
 
                 // Cross-rigid merging is opt-in: it rewrites VMDs and adds
@@ -603,7 +619,15 @@ namespace Editors.KitbasherEditor.Services
                 if (optimizeGeometry && !crossRigidOnly)
                 {
                     phaseStopwatch.Restart();
-                    OptimizeGeometry(state, cancellationToken, progress);
+                    // Only rigids already rewritten by a merge, an atlas or a
+                    // cross-rigid payload are optimized. Extending this to every
+                    // source-owned gameplay rigid (SelectNoAtlasGeometryOptimizationRigids)
+                    // re-saved 353 extra rigids on the reference pack for 0.5 % fewer
+                    // vertices, so it is not used.
+                    OptimizeGeometry(
+                        state,
+                        cancellationToken,
+                        progress);
                     state.PhaseDurations["Optimize geometry"] = phaseStopwatch.Elapsed;
                 }
 
@@ -635,31 +659,36 @@ namespace Editors.KitbasherEditor.Services
                     state.PhaseDurations["Prune unused assets"] =
                         phaseStopwatch.Elapsed;
 
-                    // The pre-prune dependency scan is needed to decide what to remove, but it
-                    // still contains superseded source textures. Re-scan after pruning so the
-                    // reported output residency and source-retirement accounting describe the
-                    // pack that will actually be saved.
-                    ReportProgress(progress, "Scanning final dependencies");
-                    phaseStopwatch.Restart();
-                    var finalReachable = CollectReachableAssetFiles(
-                        state,
-                        output,
-                        assetDependencyRoots,
-                        cancellationToken,
-                        progress,
-                        "Scanning final dependencies");
-                    state.PhaseDurations["Scan final dependencies"] =
-                        phaseStopwatch.Elapsed;
+                    // Output BCn residency only serves the atlas value accounting, so a run
+                    // without atlases skips the final scan as well.
+                    if (buildAtlases)
+                    {
+                        // The pre-prune dependency scan is needed to decide what to remove, but it
+                        // still contains superseded source textures. Re-scan after pruning so the
+                        // reported output residency and source-retirement accounting describe the
+                        // pack that will actually be saved.
+                        ReportProgress(progress, "Scanning final dependencies");
+                        phaseStopwatch.Restart();
+                        var finalReachable = CollectReachableAssetFiles(
+                            state,
+                            output,
+                            assetDependencyRoots,
+                            cancellationToken,
+                            progress,
+                            "Scanning final dependencies");
+                        state.PhaseDurations["Scan final dependencies"] =
+                            phaseStopwatch.Elapsed;
 
-                    phaseStopwatch.Restart();
-                    ReportProgress(progress, "Estimating output BCn residency");
-                    state.OutputBcnResidency = CalculateBcnTextureResidency(
-                        state,
-                        output,
-                        finalReachable,
-                        cancellationToken);
-                    state.PhaseDurations["Estimate output BCn residency"] =
-                        phaseStopwatch.Elapsed;
+                        phaseStopwatch.Restart();
+                        ReportProgress(progress, "Estimating output BCn residency");
+                        state.OutputBcnResidency = CalculateBcnTextureResidency(
+                            state,
+                            output,
+                            finalReachable,
+                            cancellationToken);
+                        state.PhaseDurations["Estimate output BCn residency"] =
+                            phaseStopwatch.Elapsed;
+                    }
                 }
 
                 phaseStopwatch.Restart();
