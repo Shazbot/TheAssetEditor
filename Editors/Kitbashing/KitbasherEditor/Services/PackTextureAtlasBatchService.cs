@@ -82,6 +82,11 @@ namespace Editors.KitbasherEditor.Services
         private const long MaxCrossRigidGeneratedGeometryGrowthBytes =
             256L * 1024 * 1024; // 256 MiB
         private const double MinimumCrossRigidSingleVmdExpectedArmyDraw = 0.02;
+        // Per-payload ceiling relative to the portfolio budgets above: a
+        // single payload may not cost more than this multiple of the
+        // per-draw budget for its own marginal benefit. The portfolio
+        // budgets still apply cumulatively on top of this ceiling.
+        private const double CrossRigidPerPayloadCostCeilingMultiplier = 1.0;
         // Limit exact generated joint appearance states, not probability precision.
         // Large VMDs need more room than 512 combinations, while the
         // portfolio's geometry and residency budgets still cap output cost.
@@ -8894,6 +8899,26 @@ namespace Editors.KitbasherEditor.Services
                         continue;
                     }
 
+                    // Marginal benefit only shrinks as more payloads are
+                    // selected, so this per-payload rejection is final.
+                    var ceilingDecision =
+                        GetCrossRigidPerPayloadCostCeilingDecision(
+                            candidate,
+                            marginalExpectedDraws);
+                    if (ceilingDecision != null)
+                    {
+                        state.CrossRigidPayloadSelectionEntries.Add(
+                            effectiveCandidate with
+                            {
+                                Decision = ceilingDecision.Value,
+                            });
+                        pendingCandidates.RemoveAt(
+                            candidateIndex);
+                        deferredBudgetDecisionByPayload.Remove(
+                            candidate.GeneratedPayloadId);
+                        continue;
+                    }
+
                     var projectedExpectedDraws =
                         acceptedExpectedDraws +
                         marginalExpectedDraws;
@@ -10059,6 +10084,41 @@ namespace Editors.KitbasherEditor.Services
                     current.GeometryBytes);
         }
 
+        // Shared by the final writer and the portfolio-ordering replay so
+        // both apply the same per-payload ceiling. Returns null when the
+        // payload's own cost per marginal draw is within the ceiling.
+        private static CrossRigidPayloadSelectionDecision?
+            GetCrossRigidPerPayloadCostCeilingDecision(
+                CrossRigidPayloadSelectionEntry candidate,
+                double marginalExpectedDraws)
+        {
+            if (marginalExpectedDraws <=
+                AtlasValueGateExpectedDrawEpsilon)
+            {
+                return null;
+            }
+
+            if (candidate.GeneratedGeometryBytes /
+                marginalExpectedDraws >
+                CrossRigidPerPayloadCostCeilingMultiplier *
+                MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw)
+            {
+                return CrossRigidPayloadSelectionDecision
+                    .PerPayloadPhysicalCostCeilingExceeded;
+            }
+
+            if (candidate.ExpectedResidentGeneratedGeometryBytes /
+                marginalExpectedDraws >
+                CrossRigidPerPayloadCostCeilingMultiplier *
+                MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw)
+            {
+                return CrossRigidPayloadSelectionDecision
+                    .PerPayloadResidentCostCeilingExceeded;
+            }
+
+            return null;
+        }
+
         private static (
             double ExpectedDraws,
             long GeometryBytes,
@@ -10139,6 +10199,14 @@ namespace Editors.KitbasherEditor.Services
                         (candidate.VmdCount == 1 &&
                          marginalDraws <
                          MinimumCrossRigidSingleVmdExpectedArmyDraw))
+                    {
+                        pending.RemoveAt(index);
+                        continue;
+                    }
+
+                    if (GetCrossRigidPerPayloadCostCeilingDecision(
+                            candidate,
+                            marginalDraws) != null)
                     {
                         pending.RemoveAt(index);
                         continue;
@@ -31854,6 +31922,76 @@ namespace Editors.KitbasherEditor.Services
         private static string FormatMiB(double bytes, int decimals = 1)
             => $"{(bytes / (1024.0 * 1024.0)).ToString($"N{decimals}")} MiB";
 
+        private static string[] BuildCrossRigidPayloadCostCurveLines(
+            IEnumerable<CrossRigidPayloadSelectionEntry> acceptedPayloads)
+        {
+            var ordered = acceptedPayloads
+                .OrderBy(entry => entry.PhysicalBytesPerExpectedDraw)
+                .ThenBy(
+                    entry => entry.GeneratedPayloadId,
+                    StringComparer.Ordinal)
+                .ToArray();
+            if (ordered.Length == 0)
+                return ["  (none)"];
+
+            var cumulativeDraws = new double[ordered.Length];
+            var cumulativeBytes = new long[ordered.Length];
+            double runningDraws = 0;
+            long runningBytes = 0;
+            for (var index = 0; index < ordered.Length; index++)
+            {
+                runningDraws +=
+                    ordered[index].MarginalExpectedArmyDrawCallsEliminated;
+                runningBytes += ordered[index].GeneratedGeometryBytes;
+                cumulativeDraws[index] = runningDraws;
+                cumulativeBytes[index] = runningBytes;
+            }
+
+            var lines = new List<string>();
+            foreach (var share in new[] { 0.50, 0.75, 0.90, 0.95, 0.99, 1.0 })
+            {
+                var target = share * runningDraws;
+                var pointIndex = Array.FindIndex(
+                    cumulativeDraws,
+                    draws => draws >= target - (runningDraws * 1e-9));
+                if (pointIndex < 0)
+                    pointIndex = ordered.Length - 1;
+
+                lines.Add(
+                    $"  {share:P0} of marginal draws: " +
+                    $"{pointIndex + 1:N0} payload(s), " +
+                    $"cumulative marginal={cumulativeDraws[pointIndex]:0.###} expected draw(s), " +
+                    $"cumulative physical={FormatMiB(cumulativeBytes[pointIndex])}, " +
+                    $"last payload physical per expected draw=" +
+                    FormatMiB(
+                        ordered[pointIndex].PhysicalBytesPerExpectedDraw,
+                        2));
+            }
+
+            return lines.ToArray();
+        }
+
+        private static int CountCrossRigidPayloadsWithDroppedComponents(
+            IEnumerable<CrossRigidMergeAnalysisEntry> plans)
+        {
+            // A generated LOD with fewer active components than LOD 0 means
+            // a source was dropped at range instead of using its last LOD.
+            return plans
+                .GroupBy(
+                    plan => plan.GeneratedPayloadId,
+                    StringComparer.Ordinal)
+                .Count(group => group.Any(plan =>
+                {
+                    var lod0 = plan.Lods.FirstOrDefault(lod =>
+                        lod.LodIndex == 0);
+                    return lod0 != null &&
+                           plan.Lods.Any(lod =>
+                               lod.LodIndex > 0 &&
+                               lod.ActiveComponentCount <
+                               lod0.ActiveComponentCount);
+                }));
+        }
+
         private static void AppendAtlasValueGateSourceTextureResidencyDiagnostics(
             StringBuilder sb,
             BatchState state)
@@ -34761,6 +34899,16 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 sb.AppendLine(
+                    "Accepted cross-rigid payload cost curve " +
+                    "(ascending physical cost per marginal expected draw):");
+                foreach (var line in
+                         BuildCrossRigidPayloadCostCurveLines(
+                             selectedPayloads))
+                {
+                    sb.AppendLine(line);
+                }
+
+                sb.AppendLine(
                     "Highest physical cost per marginal expected draw " +
                     "among selected payloads (top 12):");
                 foreach (var entry in selectedPayloads
@@ -34874,6 +35022,9 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Rewrite occurrence sets emitted: " +
                     $"{state.CrossRigidRewriteOccurrenceSetsApplied:N0}");
+                sb.AppendLine(
+                    $"Generated payloads with fewer active components than LOD 0 in a later LOD: " +
+                    $"{CountCrossRigidPayloadsWithDroppedComponents(selectedRewritePlans):N0}");
                 sb.AppendLine(
                     $"Scenario-estimated battle draws emitted: " +
                     $"{state.CrossRigidExpectedArmyDrawCallsEmitted:0.###}");
@@ -37710,6 +37861,8 @@ namespace Editors.KitbasherEditor.Services
             PhysicalPerDrawBudgetExceeded,
             RewriteOccurrenceConflict,
             GlobalGrowthCapExceeded,
+            PerPayloadPhysicalCostCeilingExceeded,
+            PerPayloadResidentCostCeilingExceeded,
         }
 
         private sealed record CrossRigidPayloadSelectionEntry(

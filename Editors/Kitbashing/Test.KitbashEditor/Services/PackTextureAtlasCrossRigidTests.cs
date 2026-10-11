@@ -530,5 +530,186 @@ namespace Test.KitbashEditor.Services
             Assert.That(GetEntryValue<int>(entry, "RewritePlanCount"), Is.EqualTo(1));
             Assert.That(LegacyEligibleContains(state, "payload-a"), Is.True);
         }
+
+        private const long MiB = 1024L * 1024;
+
+        private static object CreateSelectionEntry(
+            string payloadId,
+            long geometryBytes,
+            double residentBytes,
+            double marginalDraws,
+            double physicalBytesPerDraw = 0.0)
+        {
+            return CreateRecord(
+                "CrossRigidPayloadSelectionEntry",
+                new Dictionary<string, object?>
+                {
+                    ["GeneratedPayloadId"] = payloadId,
+                    ["GeneratedGeometryBytes"] = geometryBytes,
+                    ["ExpectedResidentGeneratedGeometryBytes"] = residentBytes,
+                    ["MarginalExpectedArmyDrawCallsEliminated"] = marginalDraws,
+                    ["PhysicalBytesPerExpectedDraw"] = physicalBytesPerDraw,
+                });
+        }
+
+        private static string? GetCeilingDecision(
+            long geometryBytes,
+            double residentBytes,
+            double marginalDraws)
+        {
+            var candidate = CreateSelectionEntry(
+                "payload",
+                geometryBytes,
+                residentBytes,
+                marginalDraws);
+            return GetStaticMethod("GetCrossRigidPerPayloadCostCeilingDecision")
+                .Invoke(null, [candidate, marginalDraws])?
+                .ToString();
+        }
+
+        // Ceilings are 1x the portfolio budgets: 16 MiB physical and
+        // 0.5 MiB resident per marginal expected draw.
+        [Test]
+        public void PerPayloadCeiling_CheapPayload_IsNotRejected()
+        {
+            Assert.That(
+                GetCeilingDecision(10 * MiB, 0.1 * MiB, 1.0),
+                Is.Null);
+        }
+
+        [Test]
+        public void PerPayloadCeiling_ExactlyAtCeiling_IsNotRejected()
+        {
+            Assert.That(
+                GetCeilingDecision(16 * MiB, 0.5 * MiB, 1.0),
+                Is.Null);
+        }
+
+        [Test]
+        public void PerPayloadCeiling_OverPhysical_IsRejectedAsPhysical()
+        {
+            Assert.That(
+                GetCeilingDecision(70 * MiB, 0.1 * MiB, 1.0),
+                Is.EqualTo("PerPayloadPhysicalCostCeilingExceeded"));
+            // 0.7 MiB for 0.0049 draws is about 143 MiB per draw.
+            Assert.That(
+                GetCeilingDecision((long)(0.7 * MiB), 0.1 * MiB, 0.0049),
+                Is.EqualTo("PerPayloadPhysicalCostCeilingExceeded"));
+        }
+
+        [Test]
+        public void PerPayloadCeiling_OverResident_IsRejectedAsResident()
+        {
+            Assert.That(
+                GetCeilingDecision(1 * MiB, 3.0 * MiB, 1.0),
+                Is.EqualTo("PerPayloadResidentCostCeilingExceeded"));
+        }
+
+        [Test]
+        public void PerPayloadCeiling_BothExceeded_ReportsPhysicalFirst()
+        {
+            Assert.That(
+                GetCeilingDecision(70 * MiB, 3.0 * MiB, 1.0),
+                Is.EqualTo("PerPayloadPhysicalCostCeilingExceeded"));
+        }
+
+        [Test]
+        public void PerPayloadCeiling_ZeroMarginal_IsNotCeilingDecision()
+        {
+            Assert.That(
+                GetCeilingDecision(1000 * MiB, 1000.0 * MiB, 0.0),
+                Is.Null);
+        }
+
+        private static string[] BuildCurve(params object[] entries)
+        {
+            var list = (IList)Activator.CreateInstance(
+                typeof(List<>).MakeGenericType(
+                    GetNestedType("CrossRigidPayloadSelectionEntry")))!;
+            foreach (var entry in entries)
+                list.Add(entry);
+            return (string[])GetStaticMethod(
+                    "BuildCrossRigidPayloadCostCurveLines")
+                .Invoke(null, [list])!;
+        }
+
+        [Test]
+        public void CostCurve_NoAcceptedPayloads_PrintsNone()
+        {
+            Assert.That(BuildCurve(), Is.EqualTo(new[] { "  (none)" }));
+        }
+
+        // Sorted by physical cost per draw: c (1, draws 5), b (2, draws 3),
+        // a (10, draws 2). Total draws 10, so 50% is reached by c alone
+        // (5), 75% needs b (8 >= 7.5), and 90%+ needs all three.
+        [Test]
+        public void CostCurve_AscendingCost_ReportsPayloadCountAtEachShare()
+        {
+            var lines = BuildCurve(
+                CreateSelectionEntry("a", 20 * MiB, 0, 2.0, 10.0 * MiB),
+                CreateSelectionEntry("b", 6 * MiB, 0, 3.0, 2.0 * MiB),
+                CreateSelectionEntry("c", 5 * MiB, 0, 5.0, 1.0 * MiB));
+
+            Assert.That(lines, Has.Length.EqualTo(6));
+            Assert.That(lines[0], Does.Contain(": 1 payload(s), "));
+            Assert.That(lines[1], Does.Contain(": 2 payload(s), "));
+            Assert.That(lines[2], Does.Contain(": 3 payload(s), "));
+            Assert.That(lines[3], Does.Contain(": 3 payload(s), "));
+            Assert.That(lines[4], Does.Contain(": 3 payload(s), "));
+            Assert.That(lines[5], Does.Contain(": 3 payload(s), "));
+            Assert.That(lines[0], Does.Contain("cumulative marginal=5 "));
+            Assert.That(lines[1], Does.Contain("cumulative marginal=8 "));
+            Assert.That(lines[5], Does.Contain("cumulative marginal=10 "));
+        }
+
+        private static object CreatePlanWithLods(
+            string planId,
+            string payloadId,
+            params int[] activeComponentsPerLod)
+        {
+            var lodType = GetNestedType("CrossRigidLodAnalysis");
+            var lods = Array.CreateInstance(
+                lodType,
+                activeComponentsPerLod.Length);
+            for (var index = 0; index < activeComponentsPerLod.Length; index++)
+            {
+                lods.SetValue(
+                    CreateRecord(
+                        "CrossRigidLodAnalysis",
+                        new Dictionary<string, object?>
+                        {
+                            ["LodIndex"] = index,
+                            ["ActiveComponentCount"] =
+                                activeComponentsPerLod[index],
+                        }),
+                    index);
+            }
+
+            return CreateRecord(
+                "CrossRigidMergeAnalysisEntry",
+                new Dictionary<string, object?>
+                {
+                    ["RewritePlanId"] = planId,
+                    ["GeneratedPayloadId"] = payloadId,
+                    ["Lods"] = lods,
+                });
+        }
+
+        [Test]
+        public void DroppedComponentCount_CountsPayloadsOncePerPayload()
+        {
+            var plans = (IList)Activator.CreateInstance(
+                typeof(List<>).MakeGenericType(
+                    GetNestedType("CrossRigidMergeAnalysisEntry")))!;
+            plans.Add(CreatePlanWithLods("p1", "x", 3, 3, 2));
+            plans.Add(CreatePlanWithLods("p2", "x", 3, 2, 2));
+            plans.Add(CreatePlanWithLods("p3", "y", 3, 3, 3));
+            plans.Add(CreatePlanWithLods("p4", "z", 2, 2));
+
+            Assert.That(
+                GetStaticMethod("CountCrossRigidPayloadsWithDroppedComponents")
+                    .Invoke(null, [plans]),
+                Is.EqualTo(1));
+        }
     }
 }
