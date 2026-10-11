@@ -709,6 +709,31 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public int CrossRigidBaselineUnresolvedWsModelCount { get; set; }
             public int CrossRigidBaselineRigidsLoaded { get; set; }
+            // Report-only "ideal merge" diagnostic: per root VMD, expected
+            // battle draws under each ideal-merge tier T0..T4 (same
+            // weighting as the baseline), plus the caches it uses.
+            public Dictionary<string, double[]>
+                CrossRigidIdealMergeExpectedDrawsByVmd { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<
+                    (string RigidPath, int LodIndex, int PartIndex,
+                        string MaterialPath),
+                    int[]>
+                CrossRigidIdealMergePartIdentityCache { get; } = [];
+            public Dictionary<string, int>
+                CrossRigidIdealMergeIdentityIds { get; } =
+                new(StringComparer.Ordinal);
+            public Dictionary<(string MaterialPath, int Tier), string>
+                CrossRigidIdealMergeMaterialIdentityCache { get; } = [];
+            public Dictionary<string, int[]>
+                CrossRigidIdealMergeConfigurationDrawCache { get; } =
+                new(StringComparer.Ordinal);
+            public HashSet<string> CrossRigidIdealMergeSharedAtlasMaterialPaths
+                { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public int CrossRigidIdealMergeSharedAtlasTextureCount { get; set; }
+            public int CrossRigidIdealMergeSharedAtlasSizedTextureCount
+                { get; set; }
+            public long CrossRigidIdealMergeSharedAtlasBcnBytes { get; set; }
             public List<CrossRigidDisplacedSourceGeometryEntry>
                 CrossRigidDisplacedSourceGeometryEntries { get; } = [];
             public Dictionary<string, int> CrossRigidAnalysisBlockerCounts { get; } =

@@ -1647,6 +1647,12 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidBaselineUnresolvedWsModelCount:N0}; " +
                     $"rigids loaded only for the baseline pass (upper bound): " +
                     $"{state.CrossRigidBaselineRigidsLoaded:N0}");
+                foreach (var line in BuildCrossRigidIdealMergeReportLines(
+                             state,
+                             selectedExpectedDraws))
+                {
+                    sb.AppendLine(line);
+                }
                 sb.AppendLine(
                     $"Selected generated geometry payload: " +
                     $"{FormatMiB(selectedGeneratedGeometryBytes)}");

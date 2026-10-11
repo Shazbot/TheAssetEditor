@@ -69,6 +69,15 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidBaselineExpectedDrawsByVmd.Clear();
             state.CrossRigidBaselineUnresolvedWsModelCount = 0;
             state.CrossRigidBaselineRigidsLoaded = 0;
+            state.CrossRigidIdealMergeExpectedDrawsByVmd.Clear();
+            state.CrossRigidIdealMergeIdentityIds.Clear();
+            state.CrossRigidIdealMergePartIdentityCache.Clear();
+            state.CrossRigidIdealMergeMaterialIdentityCache.Clear();
+            state.CrossRigidIdealMergeConfigurationDrawCache.Clear();
+            state.CrossRigidIdealMergeSharedAtlasMaterialPaths.Clear();
+            state.CrossRigidIdealMergeSharedAtlasTextureCount = 0;
+            state.CrossRigidIdealMergeSharedAtlasSizedTextureCount = 0;
+            state.CrossRigidIdealMergeSharedAtlasBcnBytes = 0;
             state.CrossRigidTimingDetails.Clear();
             state.CrossRigidSourceMeshMergeIdentityCache.Clear();
             state.CrossRigidMaterialMergeIdentityCache.Clear();
@@ -159,6 +168,18 @@ namespace Editors.KitbasherEditor.Services
                         state,
                         "Analyze: baseline expected draws",
                         Stopwatch.GetElapsedTime(baselineTimer));
+                    RecordCrossRigidIdealMergeExpectedDraws(
+                        state,
+                        vmdPath,
+                        expansion,
+                        wsModelPath =>
+                            ResolveCrossRigidBaselineComponent(
+                                state,
+                                vmdPath,
+                                wsModelPath,
+                                traversalContainers,
+                                rigidCache,
+                                baselineComponents));
                     continue;
                 }
 
@@ -222,6 +243,18 @@ namespace Editors.KitbasherEditor.Services
                     state,
                     "Analyze: baseline expected draws",
                     Stopwatch.GetElapsedTime(baselineAnalysisTimer));
+                RecordCrossRigidIdealMergeExpectedDraws(
+                    state,
+                    vmdPath,
+                    expansion,
+                    wsModelPath =>
+                        ResolveCrossRigidBaselineComponent(
+                            state,
+                            vmdPath,
+                            wsModelPath,
+                            traversalContainers,
+                            rigidCache,
+                            baselineComponents));
 
                 foreach (var configuration in configurations
                              .Where(configuration =>
@@ -494,6 +527,7 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            FinalizeCrossRigidIdealMergeTextureCost(state);
             state.CrossRigidTimingDetails["Analyze: enumerate candidates"] =
                 crossRigidAnalysisStage.Elapsed;
             crossRigidAnalysisStage.Restart();

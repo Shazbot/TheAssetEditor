@@ -1233,5 +1233,645 @@ namespace Test.KitbashEditor.Services
 
             Assert.That(baseline, Is.EqualTo(0));
         }
+
+        // ---- Ideal cross-rigid merge tiers (report-only diagnostic) ----
+
+        private const string IdealMaterialOne = @"materials\m1.material";
+        private const string IdealMaterialTwo = @"materials\m2.material";
+        private const string IdealWsOne = @"models\ideal_one.wsmodel";
+        private const string IdealWsTwo = @"models\ideal_two.wsmodel";
+
+        private static string BuildMaterialXml(
+            string shader,
+            string baseColour,
+            string legacyDiffuse = "")
+        {
+            static string Texture(string slot, string source)
+                => $"<texture><slot version=\"2\">{slot}</slot>" +
+                   $"<source>{source}</source></texture>";
+
+            return "<material><name>ignored</name>" +
+                   $"<shader>{shader}</shader><textures>" +
+                   Texture("t_xml_base_colour", baseColour) +
+                   Texture("t_xml_blood_map", "commontextures/bloodmap.dds") +
+                   (legacyDiffuse.Length == 0
+                       ? string.Empty
+                       : Texture("s_diffuse", legacyDiffuse)) +
+                   "</textures><params><param><name>p</name>" +
+                   "<type>float</type><value>1</value></param></params>" +
+                   "</material>";
+        }
+
+        // 8x8 DXT1, one mip: 2x2 blocks * 8 bytes = 32 bytes.
+        private static byte[] BuildDxt1Dds()
+        {
+            var data = new byte[148];
+            BitConverter.GetBytes(0x20534444u).CopyTo(data, 0);
+            BitConverter.GetBytes(124u).CopyTo(data, 4);
+            BitConverter.GetBytes(8).CopyTo(data, 12);
+            BitConverter.GetBytes(8).CopyTo(data, 16);
+            BitConverter.GetBytes(1).CopyTo(data, 28);
+            BitConverter.GetBytes(0x31545844u).CopyTo(data, 84);
+            return data;
+        }
+
+        private static object CreateIdealState(
+            IReadOnlyDictionary<string, byte[]> filesByPath)
+        {
+            var files = filesByPath.ToDictionary(
+                entry => entry.Key.ToLowerInvariant().Replace('/', '\\'),
+                entry => new Shared.Core.PackFiles.Models.PackFile(
+                    "file",
+                    new Shared.Core.PackFiles.Models.FileSources.MemorySource(
+                        entry.Value)));
+            var container =
+                new Moq.Mock<Shared.Core.PackFiles.Models.IPackFileContainer>();
+            container
+                .Setup(item => item.FindFile(Moq.It.IsAny<string>()))
+                .Returns((string path) => files.GetValueOrDefault(path));
+            var packFileService =
+                new Moq.Mock<Shared.Core.PackFiles.IPackFileService>();
+            var state = GetNestedType("BatchState")
+                .GetConstructors(
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic)
+                .Single()
+                .Invoke(
+                [
+                    container.Object,
+                    container.Object,
+                    packFileService.Object,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                ]);
+            var model = typeof(PackTextureAtlasValueGateTests)
+                .GetMethod(
+                    "CreateSyntheticArmyResidencyModelForFallbackTest",
+                    BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, null)!;
+            state.GetType()
+                .GetProperty(
+                    "ArmyResidencyModel",
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic)!
+                .SetValue(state, model);
+            return state;
+        }
+
+        private static object CreateIdealState(
+            IReadOnlyDictionary<string, string> materialXmlByPath)
+        {
+            return CreateIdealState(
+                materialXmlByPath.ToDictionary(
+                    entry => entry.Key,
+                    entry => System.Text.Encoding.UTF8.GetBytes(entry.Value)));
+        }
+
+        private static T GetStateProperty<T>(object state, string name)
+        {
+            return (T)state.GetType()
+                .GetProperty(
+                    name,
+                    BindingFlags.Instance |
+                    BindingFlags.Public |
+                    BindingFlags.NonPublic)!
+                .GetValue(state)!;
+        }
+
+        private static RmvModel CreateIdealPart(
+            int vertexCount = 4,
+            bool cinematic = false)
+        {
+            var model = CreateWeightedModel(1);
+            if (vertexCount != 4)
+                model.Mesh.VertexList = new CommonVertex[vertexCount];
+            if (cinematic)
+            {
+                ((WeightedMaterial)model.Material).BinaryVertexFormat =
+                    VertexFormat.Cinematic;
+            }
+
+            return model;
+        }
+
+        private static Dictionary<string, object> CreateIdealComponents(
+            params (string WsPath, RmvModel Part, string Material)[] items)
+        {
+            return items.ToDictionary(
+                item => item.WsPath,
+                item => CreateBaselineComponent(
+                    item.WsPath,
+                    [[item.Part]],
+                    [[item.Material]]));
+        }
+
+        private static object CreateIdealResolver(
+            Dictionary<string, object> components)
+        {
+            return typeof(PackTextureAtlasCrossRigidTests)
+                .GetMethod(
+                    nameof(BuildResolver),
+                    BindingFlags.NonPublic | BindingFlags.Static)!
+                .MakeGenericMethod(GetNestedType("CrossRigidAnalysisComponent"))
+                .Invoke(null, [components])!;
+        }
+
+        private static double[] RunIdeal(
+            object state,
+            object expansion,
+            Dictionary<string, object> components)
+        {
+            return (double[])GetStaticMethod(
+                    "CalculateCrossRigidIdealMergeExpectedDraws")
+                .Invoke(
+                    null,
+                    [state, BaselineVmdPath, expansion, CreateIdealResolver(components)])!;
+        }
+
+        private static double RunBaseline(
+            object state,
+            object expansion,
+            Dictionary<string, object> components)
+        {
+            return (double)GetStaticMethod(
+                    "CalculateCrossRigidBaselineExpectedDraws")
+                .Invoke(
+                    null,
+                    [state, BaselineVmdPath, expansion, CreateIdealResolver(components)])!;
+        }
+
+        // Expected value of a root whose entity renders `drawsPerEntity`
+        // draws at every scenario LOD (single-LOD rigids clamp).
+        private static double ExpectedForConstantDraws(
+            object state,
+            double drawsPerEntity)
+        {
+            return CallWeight(
+                state,
+                1.0,
+                GetScenarioLods(state)
+                    .Select(lod => (lod.Probability, drawsPerEntity))
+                    .ToArray());
+        }
+
+        private static void AssertTierDraws(
+            object state,
+            double[] actual,
+            params double[] drawsPerEntityByTier)
+        {
+            Assert.That(actual, Has.Length.EqualTo(drawsPerEntityByTier.Length));
+            for (var tier = 0; tier < actual.Length; tier++)
+            {
+                Assert.That(
+                    actual[tier],
+                    Is.EqualTo(
+                            ExpectedForConstantDraws(
+                                state,
+                                drawsPerEntityByTier[tier]))
+                        .Within(1e-9),
+                    $"tier T{tier}");
+            }
+        }
+
+        // Two WSModels in one configuration; materials differ only in the
+        // base-colour source. Baseline and T0 keep two draws, T1+ merge.
+        [Test]
+        public void IdealMerge_AtlasableTextureDifference_MergesFromT1()
+        {
+            var dds = BuildDxt1Dds();
+            var state = CreateIdealState(
+                new Dictionary<string, byte[]>
+                {
+                    [IdealMaterialOne] = System.Text.Encoding.UTF8.GetBytes(
+                        BuildMaterialXml(
+                            "shaders/weighted2_character.xml.shader",
+                            "tex/a_base.dds")),
+                    [IdealMaterialTwo] = System.Text.Encoding.UTF8.GetBytes(
+                        BuildMaterialXml(
+                            "shaders/weighted2_character.xml.shader",
+                            "Tex/B_base.dds")),
+                    [@"tex\a_base.dds"] = dds,
+                    [@"tex\b_base.dds"] = dds,
+                });
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(), IdealMaterialOne),
+                (IdealWsTwo, CreateIdealPart(), IdealMaterialTwo));
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(1.0, IdealWsOne, IdealWsTwo));
+
+            var baseline = RunBaseline(state, expansion, components);
+            var tiers = RunIdeal(state, expansion, components);
+
+            Assert.That(baseline, Is.GreaterThan(0));
+            Assert.That(
+                baseline,
+                Is.EqualTo(ExpectedForConstantDraws(state, 2)).Within(1e-9));
+            AssertTierDraws(state, tiers, 2, 1, 1, 1, 1);
+
+            // Texture-cost side: both materials need to share an atlas; the
+            // two distinct base-colour textures are sized from their headers.
+            GetStaticMethod("FinalizeCrossRigidIdealMergeTextureCost")
+                .Invoke(null, [state]);
+            Assert.That(
+                GetStateProperty<HashSet<string>>(
+                    state,
+                    "CrossRigidIdealMergeSharedAtlasMaterialPaths"),
+                Is.EquivalentTo([IdealMaterialOne, IdealMaterialTwo]));
+            Assert.That(
+                GetStateProperty<int>(
+                    state,
+                    "CrossRigidIdealMergeSharedAtlasTextureCount"),
+                Is.EqualTo(2));
+            Assert.That(
+                GetStateProperty<int>(
+                    state,
+                    "CrossRigidIdealMergeSharedAtlasSizedTextureCount"),
+                Is.EqualTo(2));
+            Assert.That(
+                GetStateProperty<long>(
+                    state,
+                    "CrossRigidIdealMergeSharedAtlasBcnBytes"),
+                Is.EqualTo(64));
+        }
+
+        // Identical materials: the strict identity already merges them, so
+        // no atlas is needed and nothing is reported as sharing one.
+        [Test]
+        public void IdealMerge_IdenticalMaterials_MergeAtT0_WithoutSharedAtlas()
+        {
+            var xml = BuildMaterialXml(
+                "shaders/weighted2_character.xml.shader",
+                "tex/a_base.dds");
+            var state = CreateIdealState(
+                new Dictionary<string, string>
+                {
+                    [IdealMaterialOne] = xml,
+                    [IdealMaterialTwo] = xml,
+                });
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(), IdealMaterialOne),
+                (IdealWsTwo, CreateIdealPart(), IdealMaterialTwo));
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(1.0, IdealWsOne, IdealWsTwo));
+
+            Assert.That(
+                RunBaseline(state, expansion, components),
+                Is.EqualTo(ExpectedForConstantDraws(state, 2)).Within(1e-9));
+            AssertTierDraws(state, RunIdeal(state, expansion, components), 1, 1, 1, 1, 1);
+            Assert.That(
+                GetStateProperty<HashSet<string>>(
+                    state,
+                    "CrossRigidIdealMergeSharedAtlasMaterialPaths"),
+                Is.Empty);
+        }
+
+        // Materials differing only in a legacy s_diffuse source merge at T2
+        // but not at T1.
+        [Test]
+        public void IdealMerge_LegacySlotDifference_MergesAtT2NotT1()
+        {
+            var state = CreateIdealState(
+                new Dictionary<string, string>
+                {
+                    [IdealMaterialOne] = BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader",
+                        "tex/a_base.dds",
+                        "tex/legacy_x.dds"),
+                    [IdealMaterialTwo] = BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader",
+                        "tex/a_base.dds",
+                        "tex/legacy_y.dds"),
+                });
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(), IdealMaterialOne),
+                (IdealWsTwo, CreateIdealPart(), IdealMaterialTwo));
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(1.0, IdealWsOne, IdealWsTwo));
+
+            AssertTierDraws(
+                state,
+                RunIdeal(state, expansion, components),
+                2, 2, 1, 1, 1);
+        }
+
+        // weighted2 vs weighted4: the material shader path and the RMV
+        // vertex format (Weighted vs Cinematic) both differ; only T3 unifies
+        // both sides.
+        [Test]
+        public void IdealMerge_Weighted2VsWeighted4_MergesAtT3NotT2()
+        {
+            var state = CreateIdealState(
+                new Dictionary<string, string>
+                {
+                    [IdealMaterialOne] = BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader",
+                        "tex/a_base.dds"),
+                    [IdealMaterialTwo] = BuildMaterialXml(
+                        "shaders/weighted4_character.xml.shader",
+                        "tex/a_base.dds"),
+                });
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(), IdealMaterialOne),
+                (IdealWsTwo, CreateIdealPart(cinematic: true), IdealMaterialTwo));
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(1.0, IdealWsOne, IdealWsTwo));
+
+            AssertTierDraws(
+                state,
+                RunIdeal(state, expansion, components),
+                2, 2, 2, 1, 1);
+        }
+
+        [Test]
+        public void IdealMerge_RmvIdentity_UnifiesVertexFormatOnlyFromT3()
+        {
+            var weighted2 = CreateIdealPart();
+            var weighted4 = CreateIdealPart(cinematic: true);
+            var rmvIdentity = GetStaticMethod("GetRmvMergeIdentity");
+            var idealIdentity = GetStaticMethod(
+                "GetCrossRigidIdealMergeRmvIdentity");
+
+            Assert.That(
+                rmvIdentity.Invoke(null, [weighted2]),
+                Is.Not.EqualTo(rmvIdentity.Invoke(null, [weighted4])));
+            Assert.That(
+                idealIdentity.Invoke(null, [weighted2, false]),
+                Is.EqualTo(idealIdentity.Invoke(null, [weighted4, false])));
+
+            // Other RMV state stays strict.
+            var otherRenderFlag = CreateIdealPart();
+            var header = otherRenderFlag.CommonHeader;
+            header.RenderFlag = 5;
+            otherRenderFlag.CommonHeader = header;
+            Assert.That(
+                idealIdentity.Invoke(null, [weighted2, false]),
+                Is.Not.EqualTo(idealIdentity.Invoke(null, [otherRenderFlag, false])));
+            Assert.That(
+                idealIdentity.Invoke(null, [weighted2, true]),
+                Is.EqualTo(idealIdentity.Invoke(null, [otherRenderFlag, true])));
+        }
+
+        [Test]
+        public void IdealMerge_MaterialIdentity_RemovesSlotsAndShaderVariantsPerTier()
+        {
+            static XmlDocument Load(string xml)
+            {
+                var document = new XmlDocument();
+                document.LoadXml(xml);
+                return document;
+            }
+
+            string Identity(XmlDocument document, int tier)
+                => (string)GetStaticMethod(
+                        "BuildCrossRigidIdealMergeMaterialIdentity")
+                    .Invoke(null, [document, tier])!;
+
+            var plain = Load(BuildMaterialXml(
+                "shaders/weighted2_character.xml.shader",
+                "tex/a.dds",
+                "tex/x.dds"));
+            var otherBase = Load(BuildMaterialXml(
+                "Shaders\\Weighted2_Character.xml.shader",
+                "tex/b.dds",
+                "tex/x.dds"));
+            var otherLegacy = Load(BuildMaterialXml(
+                "shaders/weighted2_character.xml.shader",
+                "tex/a.dds",
+                "tex/y.dds"));
+            var weighted4 = Load(BuildMaterialXml(
+                "shaders/weighted4_character.xml.shader",
+                "tex/a.dds",
+                "tex/x.dds"));
+            var alpha = Load(BuildMaterialXml(
+                "shaders/weighted4_character_alpha.xml.shader",
+                "tex/a.dds",
+                "tex/x.dds"));
+
+            Assert.That(Identity(plain, 0), Is.Not.EqualTo(Identity(otherBase, 0)));
+            Assert.That(Identity(plain, 1), Is.EqualTo(Identity(otherBase, 1)));
+            Assert.That(Identity(plain, 1), Is.Not.EqualTo(Identity(otherLegacy, 1)));
+            Assert.That(Identity(plain, 2), Is.EqualTo(Identity(otherLegacy, 2)));
+            Assert.That(Identity(plain, 2), Is.Not.EqualTo(Identity(weighted4, 2)));
+            Assert.That(Identity(plain, 3), Is.EqualTo(Identity(weighted4, 3)));
+            Assert.That(Identity(plain, 3), Is.Not.EqualTo(Identity(alpha, 3)));
+            Assert.That(Identity(plain, 4), Is.EqualTo(Identity(alpha, 4)));
+
+            // Non-atlasable textures remain part of every tier's identity.
+            var otherBlood = Load(
+                BuildMaterialXml(
+                    "shaders/weighted2_character.xml.shader",
+                    "tex/a.dds",
+                    "tex/x.dds")
+                    .Replace("bloodmap.dds", "other_blood.dds"));
+            Assert.That(Identity(plain, 4), Is.Not.EqualTo(Identity(otherBlood, 4)));
+        }
+
+        // Five single-part WSModels in one configuration, each added
+        // distinction removed by one more tier: 5, 4, 3, 2, 1 draws. Also
+        // exercises the monotonic self-check on a mixed case.
+        [Test]
+        public void IdealMerge_MixedConfiguration_TiersAreMonotonic()
+        {
+            const string alphaShader =
+                "shaders/weighted4_character_alpha.xml.shader";
+            var materials = new Dictionary<string, string>
+            {
+                [@"materials\a1.material"] = BuildMaterialXml(
+                    "shaders/weighted2_character.xml.shader", "tex/a.dds", "tex/x.dds"),
+                [@"materials\a2.material"] = BuildMaterialXml(
+                    "shaders/weighted2_character.xml.shader", "tex/b.dds", "tex/x.dds"),
+                [@"materials\a3.material"] = BuildMaterialXml(
+                    "shaders/weighted2_character.xml.shader", "tex/a.dds", "tex/y.dds"),
+                [@"materials\a4.material"] = BuildMaterialXml(
+                    "shaders/weighted4_character.xml.shader", "tex/a.dds", "tex/y.dds"),
+                [@"materials\a5.material"] = BuildMaterialXml(
+                    alphaShader, "tex/a.dds", "tex/y.dds"),
+            };
+            var state = CreateIdealState(materials);
+            var items = materials.Keys
+                .Select((material, index) => (
+                    WsPath: $@"models\mixed_{index}.wsmodel",
+                    Part: CreateIdealPart(cinematic: index >= 3),
+                    Material: material))
+                .ToArray();
+            var components = CreateIdealComponents(items);
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(
+                    1.0,
+                    items.Select(item => item.WsPath).ToArray()));
+
+            var baseline = RunBaseline(state, expansion, components);
+            var tiers = RunIdeal(state, expansion, components);
+
+            AssertTierDraws(state, tiers, 5, 4, 3, 2, 1);
+            Assert.That(baseline, Is.EqualTo(ExpectedForConstantDraws(state, 5)).Within(1e-9));
+
+            // Runtime self-check: clean for the real results, flagged when a
+            // tier exceeds its predecessor.
+            GetStateProperty<Dictionary<string, double>>(
+                state,
+                "CrossRigidBaselineExpectedDrawsByVmd")[BaselineVmdPath] = baseline;
+            var byVmd = GetStateProperty<Dictionary<string, double[]>>(
+                state,
+                "CrossRigidIdealMergeExpectedDrawsByVmd");
+            byVmd[BaselineVmdPath] = tiers;
+            var violations = GetStaticMethod(
+                "CountCrossRigidIdealMergeInvariantViolations");
+            Assert.That(violations.Invoke(null, [state]), Is.EqualTo(0));
+
+            byVmd[BaselineVmdPath] = [baseline, baseline, baseline + 1, 0, 0];
+            Assert.That(violations.Invoke(null, [state]), Is.EqualTo(1));
+            byVmd[BaselineVmdPath] = tiers;
+
+            var lines = (string[])GetStaticMethod(
+                    "BuildCrossRigidIdealMergeReportLines")
+                .Invoke(null, [state, 0.0])!;
+            Assert.That(
+                lines[0],
+                Does.StartWith("Ideal cross-rigid merge potential"));
+            Assert.That(
+                lines,
+                Has.Some.Contains("Self-check baseline >= T0 >= T1 >= T2 >= T3 >= T4: OK"));
+            Assert.That(
+                lines,
+                Has.Some.Contains("T4 T3 + alpha variant unified (approximation): expected battle draws="));
+            Assert.That(lines, Has.Some.Contains("Top 10 VMD roots by T1 saving:"));
+            Assert.That(lines, Has.Some.Contains(BaselineVmdPath));
+        }
+
+        // Pooling is per configuration: the same two WSModels in separate
+        // configurations never pool, and configuration probabilities weight.
+        [Test]
+        public void IdealMerge_DoesNotPoolAcrossConfigurations()
+        {
+            var state = CreateIdealState(
+                new Dictionary<string, string>
+                {
+                    [IdealMaterialOne] = BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader", "tex/a.dds"),
+                    [IdealMaterialTwo] = BuildMaterialXml(
+                        "shaders/weighted2_character.xml.shader", "tex/b.dds"),
+                });
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(), IdealMaterialOne),
+                (IdealWsTwo, CreateIdealPart(), IdealMaterialTwo));
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(0.5, IdealWsOne),
+                CreateVisualConfiguration(0.5, IdealWsTwo));
+
+            AssertTierDraws(
+                state,
+                RunIdeal(state, expansion, components),
+                1, 1, 1, 1, 1);
+        }
+
+        [Test]
+        public void IdealMerge_VmdNotUsedByAnyUnit_ContributesNothing()
+        {
+            var state = CreateIdealState(new Dictionary<string, string>());
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(), IdealMaterialOne));
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(1.0, IdealWsOne));
+
+            var tiers = (double[])GetStaticMethod(
+                    "CalculateCrossRigidIdealMergeExpectedDraws")
+                .Invoke(
+                    null,
+                    [
+                        state,
+                        @"variantmeshes\other.variantmeshdefinition",
+                        expansion,
+                        CreateIdealResolver(components),
+                    ])!;
+
+            Assert.That(tiers, Is.EqualTo(new double[5]));
+        }
+
+        // Unreadable materials fall back to their path, so only parts using
+        // the very same path pool.
+        [Test]
+        public void IdealMerge_UnreadableMaterials_PoolOnlyBySamePath()
+        {
+            var state = CreateIdealState(new Dictionary<string, string>());
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(), IdealMaterialOne),
+                (IdealWsTwo, CreateIdealPart(), IdealMaterialTwo));
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(1.0, IdealWsOne, IdealWsTwo));
+
+            AssertTierDraws(
+                state,
+                RunIdeal(state, expansion, components),
+                2, 2, 2, 2, 2);
+        }
+
+        // Pure pooling function with injected identities and the 16-bit
+        // vertex limit.
+        [Test]
+        public void IdealMerge_Pooling_RespectsVertexLimit()
+        {
+            int Count(params (int Identity, int Vertices)[] parts)
+                => (int)GetStaticMethod("CountCrossRigidIdealMergeDraws")
+                    .Invoke(null, [parts])!;
+
+            Assert.That(Count((0, 30000), (0, 30000)), Is.EqualTo(1));
+            Assert.That(Count((0, 40000), (0, 40000)), Is.EqualTo(2));
+            Assert.That(Count((0, 40000), (0, 20000), (0, 20000)), Is.EqualTo(2));
+            Assert.That(Count((0, 70000), (0, 10)), Is.EqualTo(2));
+            Assert.That(Count((0, 10), (1, 10), (0, 10), (1, 10)), Is.EqualTo(2));
+            Assert.That(Count(), Is.EqualTo(0));
+        }
+
+        // End to end: two parts with an identical material would pool at
+        // every tier, but 40000 + 40000 vertices exceed the 16-bit limit.
+        [Test]
+        public void IdealMerge_PartsOverVertexLimit_StayTwoDraws()
+        {
+            var xml = BuildMaterialXml(
+                "shaders/weighted2_character.xml.shader",
+                "tex/a.dds");
+            var state = CreateIdealState(
+                new Dictionary<string, string>
+                {
+                    [IdealMaterialOne] = xml,
+                    [IdealMaterialTwo] = xml,
+                });
+            var components = CreateIdealComponents(
+                (IdealWsOne, CreateIdealPart(40000), IdealMaterialOne),
+                (IdealWsTwo, CreateIdealPart(40000), IdealMaterialTwo));
+            var expansion = CreateExpansion(
+                CreateVisualConfiguration(1.0, IdealWsOne, IdealWsTwo));
+
+            AssertTierDraws(
+                state,
+                RunIdeal(state, expansion, components),
+                2, 2, 2, 2, 2);
+        }
+
+        [Test]
+        public void IdealMerge_ReportLines_AreSafeWithoutData()
+        {
+            var state = CreateBareBatchState();
+
+            var lines = (string[])GetStaticMethod(
+                    "BuildCrossRigidIdealMergeReportLines")
+                .Invoke(null, [state, 3.0])!;
+
+            Assert.That(
+                lines,
+                Has.Some.Contains("Self-check baseline >= T0 >= T1 >= T2 >= T3 >= T4: OK"));
+            Assert.That(lines, Has.None.Contains("NaN"));
+            Assert.That(lines, Has.None.Contains("Infinity"));
+            Assert.That(
+                lines,
+                Has.Some.Contains("Shared-atlas (T1) merges would combine 0 distinct material(s) using 0"));
+        }
     }
 }
