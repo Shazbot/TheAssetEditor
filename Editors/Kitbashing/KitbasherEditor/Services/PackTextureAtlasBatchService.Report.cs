@@ -2324,6 +2324,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine();
 
             AppendLodAuditSection(sb, state);
+            AppendAssetChecksSection(sb, state);
 
             if (state.UnitCategoryResolution != null)
             {

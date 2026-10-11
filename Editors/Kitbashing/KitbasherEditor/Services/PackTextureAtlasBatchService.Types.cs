@@ -877,6 +877,7 @@ namespace Editors.KitbasherEditor.Services
             public bool CrossRigidMergesEnabled { get; set; }
             public bool BuildAtlases { get; set; } = true;
             public LodAuditResult? LodAudit { get; set; }
+            public AssetChecksResult? AssetChecks { get; set; }
             // Cross-rigid-only mode never builds atlases, whatever BuildAtlases says.
             public bool TextureAtlasingActive => BuildAtlases && !CrossRigidOnly;
             public bool ExistingAtlasOutputDetected { get; set; }

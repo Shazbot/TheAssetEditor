@@ -4160,5 +4160,1087 @@ namespace Test.KitbashEditor.Services
             Assert.That(Get<IList>(audit, "Roots"), Is.Empty);
             Assert.That(Get<TimeSpan>(audit, "TimeBudget"), Is.EqualTo(TimeSpan.FromSeconds(15)));
         }
+
+        // ---- Asset checks (report only) ------------------------------------
+
+        private static object Call(string name, params object?[] arguments)
+        {
+            return GetStaticMethod(name).Invoke(null, arguments)!;
+        }
+
+        private static object CreateAlphaStatistics(
+            long texels,
+            int minAlpha,
+            long below255,
+            long below128)
+        {
+            return Activator.CreateInstance(
+                GetNestedType("AssetCheckAlphaStatistics"),
+                texels,
+                minAlpha,
+                below255,
+                below128)!;
+        }
+
+        private static string ClassifyAlpha(long texels, int minAlpha, long below128)
+        {
+            return Call(
+                    "ClassifyAssetCheckAlpha",
+                    CreateAlphaStatistics(texels, minAlpha, below128, below128))
+                .ToString()!;
+        }
+
+        [Test]
+        public void AssetChecksAlphaStatistics_CountMinimumAndSharesIgnoringRowPadding()
+        {
+            // 3 x 2 texels, rows 16 bytes apart. Every byte that is not a texel's alpha,
+            // padding included, holds 7 and must be ignored.
+            var pixels = new byte[28];
+            Array.Fill(pixels, (byte)7);
+            byte[] alphas = [255, 200, 127, 128, 255, 10];
+            for (var texel = 0; texel < alphas.Length; texel++)
+                pixels[(texel / 3) * 16 + (texel % 3) * 4 + 3] = alphas[texel];
+
+            var statistics = Call("ComputeAssetCheckAlphaStatistics", pixels, 3, 2, 16);
+
+            Assert.That(Get<long>(statistics, "Texels"), Is.EqualTo(6));
+            Assert.That(Get<int>(statistics, "MinAlpha"), Is.EqualTo(10));
+            Assert.That(Get<long>(statistics, "Below255"), Is.EqualTo(4));
+            Assert.That(Get<long>(statistics, "Below128"), Is.EqualTo(2));
+        }
+
+        [Test]
+        public void AssetChecksAlphaStatistics_BufferTooSmall_Throws()
+        {
+            var exception = Assert.Throws<TargetInvocationException>(() =>
+                Call("ComputeAssetCheckAlphaStatistics", new byte[15], 2, 2, 8));
+
+            Assert.That(exception!.InnerException, Is.TypeOf<ArgumentException>());
+        }
+
+        [TestCase(100L, 255, 0L, "Opaque")]
+        [TestCase(100L, 250, 0L, "Opaque")]
+        [TestCase(100L, 249, 0L, "MostlyOpaque")]
+        [TestCase(1000L, 0, 0L, "MostlyOpaque")]
+        [TestCase(1001L, 0, 1L, "MostlyOpaque")]
+        [TestCase(1000L, 0, 1L, "UsesAlpha")]
+        [TestCase(2000L, 100, 2L, "UsesAlpha")]
+        [TestCase(2000L, 100, 1L, "MostlyOpaque")]
+        [TestCase(1000000L, 0, 999L, "MostlyOpaque")]
+        [TestCase(1000000L, 0, 1000L, "UsesAlpha")]
+        [TestCase(0L, 255, 0L, "Unreadable")]
+        public void AssetChecksAlphaClassification_Boundaries(
+            long texels,
+            int minAlpha,
+            long below128,
+            string expected)
+        {
+            Assert.That(ClassifyAlpha(texels, minAlpha, below128), Is.EqualTo(expected));
+        }
+
+        private static (bool IsAlpha, bool Candidate, string Twin, string Reason) AssessShader(
+            string shader,
+            params string[] observedShaders)
+        {
+            var assessment = Call(
+                "AssessAssetCheckAlphaShader",
+                shader,
+                new HashSet<string>(observedShaders, StringComparer.OrdinalIgnoreCase));
+            return (
+                Get<bool>(assessment, "IsAlphaShader"),
+                Get<bool>(assessment, "IsCandidate"),
+                Get<string>(assessment, "TwinShader"),
+                Get<string>(assessment, "Reason"));
+        }
+
+        [TestCase("shaders/weighted4_character_alpha.xml.shader", "shaders\\weighted4_character.xml.shader")]
+        [TestCase("Shaders\\Weighted2_Character_Alpha.xml.shader", "shaders\\weighted2_character.xml.shader")]
+        [TestCase("shaders/rigid_character_alpha.xml.shader", "shaders\\rigid_character.xml.shader")]
+        public void AssetChecksShader_PlainAlphaCharacterVariants_AreCandidatesWithTheirTwin(
+            string shader,
+            string twin)
+        {
+            var assessment = AssessShader(shader);
+
+            Assert.That(assessment.IsAlpha, Is.True);
+            Assert.That(assessment.Candidate, Is.True);
+            Assert.That(assessment.Twin, Is.EqualTo(twin));
+        }
+
+        [TestCase("shaders/weighted2_character_alphatint.xml.shader")]
+        [TestCase("shaders/weighted4_character_emissive_alpha.xml.shader")]
+        [TestCase("shaders/weighted4_random_colours_alpha.xml.shader")]
+        [TestCase("shaders/weighted4_faction_colours_skin_alpha.xml.shader")]
+        [TestCase("shaders/weighted4_emissive_flow_alpha.xml.shader")]
+        [TestCase("shaders/weighted4_default_alpha.xml.shader")]
+        public void AssetChecksShader_OtherAlphaVariants_AreNotAssessed(string shader)
+        {
+            var assessment = AssessShader(shader);
+
+            Assert.That(assessment.IsAlpha, Is.True);
+            Assert.That(assessment.Candidate, Is.False);
+            Assert.That(assessment.Reason, Is.Not.Empty);
+        }
+
+        [Test]
+        public void AssetChecksShader_NotAssessedReasonSaysWhetherTheTwinIsInScope()
+        {
+            const string shader = "shaders/weighted4_character_emissive_alpha.xml.shader";
+
+            Assert.That(
+                AssessShader(shader, "shaders\\weighted4_character_emissive.xml.shader").Reason,
+                Does.Contain("twin exists"));
+            Assert.That(AssessShader(shader).Reason, Does.Contain("no non-alpha twin"));
+        }
+
+        [Test]
+        public void AssetChecksShader_NonAlphaShader_IsNotAnAlphaShader()
+        {
+            var assessment = AssessShader("shaders/weighted4_character.xml.shader");
+
+            Assert.That(assessment.IsAlpha, Is.False);
+            Assert.That(assessment.Candidate, Is.False);
+        }
+
+        // 4x4-texel blocks of BC3 (DXT5). The alpha block stores alpha0, alpha1 and 16
+        // three-bit indices; with alpha0 == alpha1 every texel has that alpha, with
+        // alpha0 > alpha1 index 1 selects alpha1 and index 0 alpha0. The colour block is zero.
+        private static byte[] BuildAlphaTexture(
+            int width,
+            int height,
+            byte alpha,
+            bool oneTransparentTexel,
+            byte colourSeed = 0)
+        {
+            var blocks = (width / 4) * (height / 4);
+            var data = new byte[blocks * 16];
+            for (var block = 0; block < blocks; block++)
+            {
+                var offset = block * 16;
+                data[offset] = alpha;
+                data[offset + 1] = alpha;
+                data[offset + 8] = colourSeed;
+            }
+
+            if (oneTransparentTexel)
+            {
+                data[1] = 0;
+                data[2] = 0x01;
+            }
+
+            var dds = new byte[128 + data.Length];
+            "DDS "u8.CopyTo(dds);
+            BitConverter.GetBytes(124).CopyTo(dds, 4);
+            BitConverter.GetBytes(0x1 | 0x2 | 0x4 | 0x1000 | 0x80000).CopyTo(dds, 8);
+            BitConverter.GetBytes(height).CopyTo(dds, 12);
+            BitConverter.GetBytes(width).CopyTo(dds, 16);
+            BitConverter.GetBytes(data.Length).CopyTo(dds, 20);
+            BitConverter.GetBytes(1).CopyTo(dds, 28);
+            BitConverter.GetBytes(32).CopyTo(dds, 76);
+            BitConverter.GetBytes(4).CopyTo(dds, 80);
+            "DXT5"u8.CopyTo(dds.AsSpan(84));
+            BitConverter.GetBytes(0x1000).CopyTo(dds, 108);
+            data.CopyTo(dds, 128);
+            return dds;
+        }
+
+        private static (string Status, int MinAlpha, long Below255, long Texels) DecodeAlpha(
+            byte[] dds)
+        {
+            var result = Call("DecodeAssetCheckAlpha", dds);
+            var statistics = Get<object>(result, "Statistics");
+            return (
+                Get<object>(result, "Status").ToString()!,
+                Get<int>(statistics, "MinAlpha"),
+                Get<long>(statistics, "Below255"),
+                Get<long>(statistics, "Texels"));
+        }
+
+        [Test]
+        public void AssetChecksDecode_FullyOpaqueTexture_IsOpaque()
+        {
+            var result = DecodeAlpha(BuildAlphaTexture(8, 8, 255, false));
+
+            Assert.That(result, Is.EqualTo(("Opaque", 255, 0L, 64L)));
+        }
+
+        [Test]
+        public void AssetChecksDecode_OneTransparentTexelInASmallTexture_UsesAlpha()
+        {
+            var result = DecodeAlpha(BuildAlphaTexture(8, 8, 255, true));
+
+            Assert.That(result.Status, Is.EqualTo("UsesAlpha"));
+            Assert.That(result.MinAlpha, Is.EqualTo(0));
+            Assert.That(result.Below255, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AssetChecksDecode_OneTransparentTexelInALargeTexture_IsMostlyOpaqueNotOpaque()
+        {
+            // 1 of 4096 texels (0.024 %) is below 128: below the 0.1 % limit, but the minimum
+            // alpha of 0 rules out OPAQUE. A low mip would average this texel away.
+            var result = DecodeAlpha(BuildAlphaTexture(64, 64, 255, true));
+
+            Assert.That(result.Status, Is.EqualTo("MostlyOpaque"));
+            Assert.That(result.MinAlpha, Is.EqualTo(0));
+            Assert.That(result.Texels, Is.EqualTo(4096));
+        }
+
+        [Test]
+        public void AssetChecksDecode_TranslucentTexture_UsesAlpha()
+        {
+            Assert.That(DecodeAlpha(BuildAlphaTexture(8, 8, 100, false)).Status, Is.EqualTo("UsesAlpha"));
+        }
+
+        [Test]
+        public void AssetChecksDecode_NotADds_IsUnreadableWithAReason()
+        {
+            var result = Call("DecodeAssetCheckAlpha", new byte[] { 1, 2, 3, 4, 5 });
+
+            Assert.That(Get<object>(result, "Status").ToString(), Is.EqualTo("Unreadable"));
+            Assert.That(Get<string>(result, "Reason"), Does.StartWith("decode failed"));
+        }
+
+        private static XmlDocument LoadMaterial(string xml)
+        {
+            var document = new XmlDocument();
+            document.LoadXml(xml);
+            return document;
+        }
+
+        private static string MaterialXml(
+            string name,
+            string shader,
+            string baseColour,
+            string normal = "tex/n.dds")
+        {
+            return "<material><name>" + name + "</name><shader>" + shader + "</shader>" +
+                   "<textures><texture><slot version=\"2\">t_xml_base_colour</slot><source>" +
+                   baseColour + "</source></texture><texture><slot version=\"2\">t_xml_normal" +
+                   "</slot><source>" + normal + "</source></texture></textures>" +
+                   "<params><param><name>fuzz_amount</name><type>float</type><value>0</value>" +
+                   "</param></params></material>";
+        }
+
+        [Test]
+        public void AssetChecksMaterialIdentity_SwappingTheShaderMatchesTheNonAlphaSibling()
+        {
+            var alpha = LoadMaterial(MaterialXml(
+                "a_alpha_on",
+                "shaders/weighted4_character_alpha.xml.shader",
+                "tex/a.dds"));
+            var plain = LoadMaterial(MaterialXml(
+                "a_alpha_off",
+                "shaders/weighted4_character.xml.shader",
+                "TEX\\A.dds"));
+
+            var asIsAlpha = Call("BuildAssetCheckMaterialIdentity", alpha, null, null);
+            var asIsPlain = Call("BuildAssetCheckMaterialIdentity", plain, null, null);
+            var swapped = Call(
+                "BuildAssetCheckMaterialIdentity",
+                alpha,
+                null,
+                "shaders\\weighted4_character.xml.shader");
+
+            Assert.That(asIsAlpha, Is.Not.EqualTo(asIsPlain));
+            Assert.That(swapped, Is.EqualTo(asIsPlain));
+            Assert.That(
+                asIsPlain,
+                Is.EqualTo("render:" + Call("GetMaterialRenderingIdentity", plain)));
+        }
+
+        [Test]
+        public void AssetChecksMaterialIdentity_DuplicateTexturesAreIdenticalOnlyAfterCanonicalisation()
+        {
+            var first = LoadMaterial(MaterialXml("m1", "shaders/weighted4_character.xml.shader", "tex/a.dds"));
+            var second = LoadMaterial(MaterialXml("m2", "shaders/weighted4_character.xml.shader", "tex/b.dds"));
+            var other = LoadMaterial(MaterialXml("m3", "shaders/weighted4_character.xml.shader", "tex/c.dds"));
+            var canonical = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [@"tex\a.dds"] = @"tex\a.dds",
+                [@"tex\b.dds"] = @"tex\a.dds",
+            };
+
+            Assert.That(
+                Call("BuildAssetCheckMaterialIdentity", first, null, null),
+                Is.Not.EqualTo(Call("BuildAssetCheckMaterialIdentity", second, null, null)));
+            Assert.That(
+                Call("BuildAssetCheckMaterialIdentity", first, canonical, null),
+                Is.EqualTo(Call("BuildAssetCheckMaterialIdentity", second, canonical, null)));
+            Assert.That(
+                Call("BuildAssetCheckMaterialIdentity", first, canonical, null),
+                Is.Not.EqualTo(Call("BuildAssetCheckMaterialIdentity", other, canonical, null)));
+        }
+
+        [Test]
+        public void AssetChecksDuplicateTextures_SameBytesDifferentPaths_Group_SameLengthDifferentBytes_DoNot()
+        {
+            var original = BuildAlphaTexture(8, 8, 255, false);
+            var copy = (byte[])original.Clone();
+            var sameLengthOtherBytes = BuildAlphaTexture(8, 8, 255, false, colourSeed: 9);
+            var otherLength = BuildAlphaTexture(16, 8, 255, false);
+            Assert.That(sameLengthOtherBytes, Has.Length.EqualTo(original.Length));
+
+            (string, long, string) Entry(string path, byte[] bytes) =>
+                (path, (long)bytes.Length, (string)Call("HashAssetCheckContent", bytes));
+
+            var groups = (List<List<string>>)Call(
+                "GroupAssetCheckContent",
+                new List<(string, long, string)>
+                {
+                    Entry(@"tex\b_copy.dds", copy),
+                    Entry(@"tex\a.dds", original),
+                    Entry(@"tex\other_bytes.dds", sameLengthOtherBytes),
+                    Entry(@"tex\other_length.dds", otherLength),
+                });
+
+            Assert.That(groups, Has.Count.EqualTo(1));
+            Assert.That(groups[0], Is.EqualTo(new[] { @"tex\a.dds", @"tex\b_copy.dds" }));
+        }
+
+        [Test]
+        public void AssetChecksUnlockCounter_RemovableIsTheDrawDifferenceUnderTheVertexLimit()
+        {
+            // Three parts of 10 vertices: separate = 3 draws, one identity = 1 draw.
+            Assert.That(
+                Call(
+                    "CountAssetCheckRemovableParts",
+                    new[] { 10, 10, 10 },
+                    new[] { "a", "b", "c" },
+                    new[] { "a", "a", "a" }),
+                Is.EqualTo(2));
+            Assert.That(
+                Call(
+                    "CountAssetCheckRemovableParts",
+                    new[] { 10, 10, 10 },
+                    new[] { "a", "b", "b" },
+                    new[] { "a", "b", "b" }),
+                Is.EqualTo(0));
+            // Merged parts still split at the 16-bit vertex limit: 40,000 + 40,000 needs two.
+            Assert.That(
+                Call(
+                    "CountAssetCheckRemovableParts",
+                    new[] { 40000, 40000, 100 },
+                    new[] { "a", "b", "c" },
+                    new[] { "a", "a", "a" }),
+                Is.EqualTo(1));
+        }
+
+        private static object CreateRmvKeys(string strict, string flagIgnored)
+        {
+            return Activator.CreateInstance(GetNestedType("AssetCheckRmvKeys"), strict, flagIgnored)!;
+        }
+
+        private static object CreatePartMaterial(
+            string asIs,
+            string check1,
+            string check2,
+            string combined)
+        {
+            return Activator.CreateInstance(
+                GetNestedType("AssetCheckPartMaterial"),
+                asIs,
+                check1,
+                check2,
+                combined)!;
+        }
+
+        private static Array ToTypedArray(string nestedTypeName, params object[] items)
+        {
+            var array = Array.CreateInstance(GetNestedType(nestedTypeName), items.Length);
+            for (var index = 0; index < items.Length; index++)
+                array.SetValue(items[index], index);
+            return array;
+        }
+
+        [Test]
+        public void AssetChecksUnit_MeasuresCountOnlyTheMaterialChangeUnderEachRmvTreatment()
+        {
+            // Parts: 0 = alpha material with an opaque texture, 1 = its non-alpha sibling,
+            // 2 = a duplicate-texture sibling, 3 = unrelated.
+            var parts = ToTypedArray(
+                "AssetCheckPartMaterial",
+                CreatePartMaterial("alpha", "plain", "alpha", "plain"),
+                CreatePartMaterial("plain", "plain", "plain", "plain"),
+                CreatePartMaterial("dup", "dup", "plain", "plain"),
+                CreatePartMaterial("other", "other", "other", "other"));
+
+            // Same RMV identity everywhere: check 1 merges 0 and 1, check 2 merges 1 and 2,
+            // both together merge 0, 1 and 2.
+            var same = ToTypedArray(
+                "AssetCheckRmvKeys",
+                CreateRmvKeys("k", "k"),
+                CreateRmvKeys("k", "k"),
+                CreateRmvKeys("k", "k"),
+                CreateRmvKeys("k", "k"));
+            var removable = (int[])Call("EvaluateAssetCheckUnit", new[] { 4, 4, 4, 4 }, same, parts);
+            Assert.That(removable, Is.EqualTo(new[] { 1, 1, 1, 2, 2 }));
+
+            // Part 0 differs from part 1 only by the render flag: the strict RMV identity
+            // blocks check 1, ignoring the flag (tier T4 treatment) lets it through.
+            var flagOnly = ToTypedArray(
+                "AssetCheckRmvKeys",
+                CreateRmvKeys("k0", "k"),
+                CreateRmvKeys("k", "k"),
+                CreateRmvKeys("k", "k"),
+                CreateRmvKeys("k", "k"));
+            removable = (int[])Call("EvaluateAssetCheckUnit", new[] { 4, 4, 4, 4 }, flagOnly, parts);
+            Assert.That(removable, Is.EqualTo(new[] { 0, 1, 1, 1, 2 }));
+
+            // A real RMV difference (shader name, vertex format...) blocks every treatment.
+            var different = ToTypedArray(
+                "AssetCheckRmvKeys",
+                CreateRmvKeys("k0", "kk0"),
+                CreateRmvKeys("k", "k"),
+                CreateRmvKeys("k", "k"),
+                CreateRmvKeys("k", "k"));
+            removable = (int[])Call("EvaluateAssetCheckUnit", new[] { 4, 4, 4, 4 }, different, parts);
+            Assert.That(removable, Is.EqualTo(new[] { 0, 0, 1, 1, 1 }));
+        }
+
+        [Test]
+        public void AssetChecksUnit_WithNoMaterialChange_NeedsNoRmvComparison()
+        {
+            var unchanged = ToTypedArray(
+                "AssetCheckPartMaterial",
+                CreatePartMaterial("a", "a", "a", "a"),
+                CreatePartMaterial("b", "b", "b", "b"));
+            var changed = ToTypedArray(
+                "AssetCheckPartMaterial",
+                CreatePartMaterial("a", "b", "a", "b"),
+                CreatePartMaterial("b", "b", "b", "b"));
+
+            Assert.That(Call("AssetCheckUnitCanMerge", (object)unchanged), Is.EqualTo(false));
+            Assert.That(Call("AssetCheckUnitCanMerge", (object)changed), Is.EqualTo(true));
+        }
+
+        [Test]
+        public void AssetChecksRmvKeys_RenderFlagOnlyChangesTheStrictKey()
+        {
+            var first = CreateWeightedModel(1);
+            var flagged = CreateWeightedModel(1);
+            var header = flagged.CommonHeader;
+            header.RenderFlag = 5;
+            flagged.CommonHeader = header;
+            var otherFormat = CreateWeightedModel(1);
+            ((WeightedMaterial)otherFormat.Material).BinaryVertexFormat = VertexFormat.Cinematic;
+
+            var keys = Call("BuildAssetCheckRmvKeys", first);
+            var flaggedKeys = Call("BuildAssetCheckRmvKeys", flagged);
+            var formatKeys = Call("BuildAssetCheckRmvKeys", otherFormat);
+
+            Assert.That(Get<string>(keys, "Strict"), Is.EqualTo(Call("GetRmvMergeIdentity", first)));
+            Assert.That(Get<string>(keys, "Strict"), Is.Not.EqualTo(Get<string>(flaggedKeys, "Strict")));
+            Assert.That(Get<string>(keys, "FlagIgnored"), Is.EqualTo(Get<string>(flaggedKeys, "FlagIgnored")));
+            Assert.That(Get<string>(keys, "Strict"), Is.Not.EqualTo(Get<string>(formatKeys, "Strict")));
+            Assert.That(Get<string>(keys, "FlagIgnored"), Is.Not.EqualTo(Get<string>(formatKeys, "FlagIgnored")));
+        }
+
+        // ---- Asset checks: whole pass over synthetic packs -------------------
+
+        private const string AlphaShader = "shaders/weighted4_character_alpha.xml.shader";
+        private const string PlainShader = "shaders/weighted4_character.xml.shader";
+
+        private static (object State, object Checks, Dictionary<string, byte[]> Files) RunAssetChecksPass(
+            Func<string, string[][][]?>? rmvKeyStrings = null,
+            TimeSpan? budget = null,
+            Action<Dictionary<string, byte[]>>? changeFiles = null,
+            bool markWsModelsAsReached = true)
+        {
+            var opaque = BuildAlphaTexture(8, 8, 255, false);
+            var files = new Dictionary<string, byte[]>
+            {
+                [@"tex\opaque_a.dds"] = opaque,
+                [@"tex\opaque_b.dds"] = (byte[])opaque.Clone(),
+                [@"tex\opaque_c.dds"] = BuildAlphaTexture(8, 8, 255, false, colourSeed: 9),
+                [@"tex\cutout.dds"] = BuildAlphaTexture(8, 8, 255, true),
+                [@"tex\one_hole.dds"] = BuildAlphaTexture(64, 64, 255, true),
+                [@"mat\alpha_opaque.xml.material"] = Encode(MaterialXml("alpha_opaque", AlphaShader, "tex/opaque_a.dds")),
+                [@"mat\plain_opaque.xml.material"] = Encode(MaterialXml("plain_opaque", PlainShader, "tex/opaque_a.dds")),
+                [@"mat\plain_dup.xml.material"] = Encode(MaterialXml("plain_dup", PlainShader, "tex/opaque_b.dds")),
+                [@"mat\plain_c.xml.material"] = Encode(MaterialXml("plain_c", PlainShader, "tex/opaque_c.dds")),
+                [@"mat\alpha_cutout.xml.material"] = Encode(MaterialXml("alpha_cutout", AlphaShader, "tex/cutout.dds")),
+                [@"mat\alpha_hole.xml.material"] = Encode(MaterialXml("alpha_hole", AlphaShader, "tex/one_hole.dds")),
+                [@"mat\alpha_missing.xml.material"] = Encode(MaterialXml("alpha_missing", AlphaShader, "tex/missing.dds")),
+                [@"mat\emissive.xml.material"] = Encode(MaterialXml(
+                    "emissive",
+                    "shaders/weighted4_character_emissive_alpha.xml.shader",
+                    "tex/opaque_a.dds")),
+                [@"mat\alpha_notex.xml.material"] = Encode(
+                    "<material><name>n</name><shader>" + AlphaShader + "</shader></material>"),
+            };
+            changeFiles?.Invoke(files);
+            var state = CreateAssetChecksState(files);
+            var checks = Activator.CreateInstance(GetNestedType("AssetChecksResult"), true)!;
+            SetStateProperty(state, "AssetChecks", checks);
+
+            const string wsA = @"models\a.wsmodel";
+            const string wsB = @"models\b.wsmodel";
+            string Mat(string name) => @"mat\" + name + ".xml.material";
+            var components = new Dictionary<string, object>
+            {
+                [wsA] = CreateBaselineComponent(
+                    wsA,
+                    [
+                        [CreateWeightedModel(1), CreateWeightedModel(2), CreateWeightedModel(3), CreateWeightedModel(4)],
+                        [CreateWeightedModel(5), CreateWeightedModel(6)],
+                    ],
+                    [
+                        [Mat("alpha_opaque"), Mat("plain_opaque"), Mat("alpha_cutout"), Mat("plain_dup")],
+                        [Mat("alpha_opaque"), Mat("alpha_hole")],
+                    ]),
+                [wsB] = CreateBaselineComponent(
+                    wsB,
+                    [[CreateWeightedModel(1), CreateWeightedModel(2), CreateWeightedModel(3), CreateWeightedModel(4)]],
+                    [[Mat("emissive"), Mat("alpha_missing"), Mat("alpha_notex"), Mat("plain_c")]]),
+            };
+            var audit = CreateAuditResult();
+            SetStateProperty(state, "LodAudit", audit);
+            AuditRoot(
+                state,
+                audit,
+                CreateExpansion(CreateVisualConfiguration(1.0, wsA, wsB)),
+                components);
+            if (markWsModelsAsReached)
+            {
+                foreach (var component in components.Values)
+                    Call("ObserveAssetCheckComponent", state, component);
+            }
+
+            object? provider = null;
+            if (rmvKeyStrings != null)
+                provider = CreateRmvKeyProvider(rmvKeyStrings);
+            Call("RunAssetChecks", state, CancellationToken.None, null, budget, provider);
+            return (state, checks, files);
+        }
+
+        private static byte[] Encode(string xml) => System.Text.Encoding.UTF8.GetBytes(xml);
+
+        // [lod][part] -> (strict, flagIgnored) per rigid.
+        private static object CreateRmvKeyProvider(Func<string, string[][][]?> keyStrings)
+        {
+            var keysType = GetNestedType("AssetCheckRmvKeys");
+            var jagged = keysType.MakeArrayType().MakeArrayType();
+            var method = typeof(PackTextureAtlasCrossRigidTests)
+                .GetMethod(nameof(WrapRmvProvider), BindingFlags.NonPublic | BindingFlags.Static)!
+                .MakeGenericMethod(jagged);
+            return method.Invoke(null, [(Func<string, object?>)(rigidPath =>
+            {
+                var perLod = keyStrings(rigidPath);
+                if (perLod == null)
+                    return null;
+
+                var result = Array.CreateInstance(keysType.MakeArrayType(), perLod.Length);
+                for (var lod = 0; lod < perLod.Length; lod++)
+                {
+                    var lodKeys = Array.CreateInstance(keysType, perLod[lod].Length);
+                    for (var part = 0; part < perLod[lod].Length; part++)
+                    {
+                        lodKeys.SetValue(
+                            CreateRmvKeys(perLod[lod][part][0], perLod[lod][part][1]),
+                            part);
+                    }
+
+                    result.SetValue(lodKeys, lod);
+                }
+
+                return result;
+            })])!;
+        }
+
+        private static Func<string, T?> WrapRmvProvider<T>(Func<string, object?> inner)
+            where T : class
+        {
+            return path => (T?)inner(path);
+        }
+
+        private static string[][][] SameKeys(params int[] partsPerLod)
+        {
+            return partsPerLod
+                .Select(count => Enumerable.Range(0, count).Select(_ => new[] { "k", "k" }).ToArray())
+                .ToArray();
+        }
+
+        private static object CreateAssetChecksState(IReadOnlyDictionary<string, byte[]> sourceFiles)
+        {
+            var packFiles = sourceFiles.ToDictionary(
+                entry => entry.Key.ToLowerInvariant(),
+                entry => new Shared.Core.PackFiles.Models.PackFile(
+                    "file",
+                    new Shared.Core.PackFiles.Models.FileSources.MemorySource(entry.Value)));
+            var source = new Moq.Mock<Shared.Core.PackFiles.Models.IPackFileContainer>();
+            source
+                .Setup(container => container.FindFile(Moq.It.IsAny<string>()))
+                .Returns((string path) => packFiles.GetValueOrDefault(path));
+            source
+                .Setup(container => container.ContainsFile(Moq.It.IsAny<string>()))
+                .Returns((string path) => packFiles.ContainsKey(path));
+            var packFileService = new Moq.Mock<Shared.Core.PackFiles.IPackFileService>();
+            packFileService
+                .Setup(service => service.FindFile(
+                    Moq.It.IsAny<string>(),
+                    Moq.It.IsAny<Shared.Core.PackFiles.Models.IPackFileContainer?>()))
+                .Returns((string path, Shared.Core.PackFiles.Models.IPackFileContainer? _) =>
+                    packFiles.GetValueOrDefault(path));
+            var state = CreateStateFromContainers(source.Object, packFileService.Object);
+            SetStateProperty(
+                state,
+                "GameplayTraversalContainers",
+                new List<Shared.Core.PackFiles.Models.IPackFileContainer>());
+            return state;
+        }
+
+        private static object CreateStateFromContainers(
+            Shared.Core.PackFiles.Models.IPackFileContainer container,
+            Shared.Core.PackFiles.IPackFileService packFileService)
+        {
+            var state = GetNestedType("BatchState")
+                .GetConstructors(AnyInstance)
+                .Single()
+                .Invoke(
+                [
+                    container,
+                    container,
+                    packFileService,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                ]);
+            var model = typeof(PackTextureAtlasValueGateTests)
+                .GetMethod(
+                    "CreateSyntheticArmyResidencyModelForFallbackTest",
+                    BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, null)!;
+            SetStateProperty(state, "ArmyResidencyModel", model);
+            return state;
+        }
+
+        private static object GetMaterial(object checks, string path)
+        {
+            return Get<IDictionary>(checks, "Materials")[path]!;
+        }
+
+        private static string StatusOf(object checks, string name)
+        {
+            return Get<object>(GetMaterial(checks, @"mat\" + name + ".xml.material"), "Status")
+                .ToString()!;
+        }
+
+        [Test]
+        public void AssetChecksPass_ClassifiesAlphaMaterialsFromTheDecodedTexture()
+        {
+            var (_, checks, _) = RunAssetChecksPass(_ => null);
+
+            Assert.That(Get<string?>(checks, "Failure"), Is.Null);
+            Assert.That(StatusOf(checks, "alpha_opaque"), Is.EqualTo("Opaque"));
+            Assert.That(StatusOf(checks, "alpha_cutout"), Is.EqualTo("UsesAlpha"));
+            Assert.That(StatusOf(checks, "alpha_hole"), Is.EqualTo("MostlyOpaque"));
+            Assert.That(StatusOf(checks, "alpha_missing"), Is.EqualTo("Unreadable"));
+            Assert.That(StatusOf(checks, "alpha_notex"), Is.EqualTo("NoAlphaTexture"));
+            Assert.That(StatusOf(checks, "emissive"), Is.EqualTo("NotAssessed"));
+            Assert.That(StatusOf(checks, "plain_opaque"), Is.EqualTo("NotAlphaShader"));
+            Assert.That(
+                Get<int>(GetMaterial(checks, @"mat\alpha_opaque.xml.material"), "MinAlpha"),
+                Is.EqualTo(255));
+            Assert.That(
+                Get<int>(GetMaterial(checks, @"mat\alpha_hole.xml.material"), "MinAlpha"),
+                Is.EqualTo(0));
+            // Each candidate texture is decoded once: opaque_a, cutout, one_hole, missing.
+            Assert.That(Get<int>(checks, "AlphaTexturesToAssess"), Is.EqualTo(4));
+            Assert.That(Get<int>(checks, "AlphaTexturesDecoded"), Is.EqualTo(4));
+            Assert.That(Get<int>(checks, "AlphaTexturesNotAssessed"), Is.Zero);
+        }
+
+        [Test]
+        public void AssetChecksPass_OpaqueAlphaMaterialBecomesMergeableWithItsNonAlphaSibling()
+        {
+            var (_, checks, _) = RunAssetChecksPass(rigid =>
+                rigid.StartsWith("models\\a") ? SameKeys(4, 2) : SameKeys(4));
+
+            // WSModel A, LOD 0: the OPAQUE alpha part merges with plain_opaque (1 part
+            // removable); the cut-out alpha part and the unrelated parts do not. LOD 1 has
+            // alpha_opaque next to alpha_hole (MOSTLY OPAQUE, keeps its alpha shader).
+            Assert.That(Get<long[]>(checks, "PartsRemovable")[0], Is.EqualTo(1));
+            Assert.That(Get<long[]>(checks, "PartsRemovable")[1], Is.EqualTo(1));
+            Assert.That(Get<int[]>(checks, "RigidsAffected")[0], Is.EqualTo(1));
+            Assert.That(Get<int[]>(checks, "UnitsAffected")[0], Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AssetChecksPass_StrictRmvIdentityBlocksTheMergeButTheRenderFlagTreatmentAllowsIt()
+        {
+            var (_, checks, _) = RunAssetChecksPass(rigid =>
+            {
+                var keys = SameKeys(4, 2);
+                if (rigid.StartsWith("models\\a"))
+                    keys[0][0] = ["strict-differs", "k"];
+                return rigid.StartsWith("models\\a") ? keys : SameKeys(4);
+            });
+
+            Assert.That(Get<long[]>(checks, "PartsRemovable")[0], Is.Zero);
+            Assert.That(Get<long[]>(checks, "PartsRemovable")[1], Is.EqualTo(1));
+            Assert.That(Get<int[]>(checks, "RigidsAffected")[0], Is.Zero);
+            Assert.That(Get<int[]>(checks, "RigidsAffected")[1], Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AssetChecksPass_DuplicateTexturesAndMaterialsIdenticalOnlyAfterSharing()
+        {
+            var (_, checks, _) = RunAssetChecksPass(rigid => SameKeys(4, 2));
+
+            // opaque_a / opaque_b are byte-identical; opaque_c has the same length only.
+            Assert.That(Get<int>(checks, "DuplicateGroupCount"), Is.EqualTo(1));
+            Assert.That(Get<int>(checks, "DuplicateFileCount"), Is.EqualTo(2));
+            Assert.That(Get<int>(checks, "RedundantFileCount"), Is.EqualTo(1));
+            Assert.That(Get<long>(checks, "RedundantBytes"), Is.EqualTo(128 + 64));
+            Assert.That(Get<long>(checks, "RedundantBcnBytes"), Is.EqualTo(64));
+            // The four 192-byte textures share a length, so all four are read.
+            Assert.That(Get<int>(checks, "HashedFileCount"), Is.EqualTo(4));
+            var canonical = Get<IDictionary>(checks, "CanonicalTextures");
+            Assert.That(canonical[@"tex\opaque_b.dds"], Is.EqualTo(@"tex\opaque_a.dds"));
+            Assert.That(canonical.Contains(@"tex\opaque_c.dds"), Is.False);
+
+            // As-is nothing is identical; sharing the duplicate texture makes plain_opaque
+            // and plain_dup identical.
+            Assert.That(Get<int>(Get<object>(checks, "AsIsAll"), "Groups"), Is.Zero);
+            var canonicalAll = Get<object>(checks, "CanonicalAll");
+            Assert.That(Get<int>(canonicalAll, "Groups"), Is.EqualTo(1));
+            Assert.That(Get<int>(canonicalAll, "Files"), Is.EqualTo(2));
+            Assert.That(Get<int>(canonicalAll, "Redundant"), Is.EqualTo(1));
+            Assert.That(Get<int>(checks, "NewCanonicalGroupCount"), Is.EqualTo(1));
+            var newGroup = Get<IList>(checks, "NewCanonicalGroups")[0]!;
+            Assert.That(
+                Get<IReadOnlyList<string>>(newGroup, "Paths"),
+                Is.EqualTo(new[] { @"mat\plain_dup.xml.material", @"mat\plain_opaque.xml.material" }));
+            Assert.That(
+                Get<IReadOnlyList<string>>(newGroup, "Differences").Single(),
+                Is.EqualTo(@"t_xml_base_colour: tex\opaque_b.dds | tex\opaque_a.dds"));
+        }
+
+        [Test]
+        public void AssetChecksPass_UnlockCountsForEachCheckAndTheirCombination()
+        {
+            var (_, checks, _) = RunAssetChecksPass(rigid => SameKeys(4, 2));
+            var removable = Get<long[]>(checks, "PartsRemovable");
+
+            // WSModel A LOD 0 parts: alpha_opaque, plain_opaque, alpha_cutout, plain_dup.
+            // Check 1 merges alpha_opaque with plain_opaque; check 2 merges plain_opaque with
+            // plain_dup; together alpha_opaque, plain_opaque and plain_dup become one draw.
+            Assert.That(removable[0], Is.EqualTo(1));
+            Assert.That(removable[2], Is.EqualTo(1));
+            Assert.That(removable[3], Is.EqualTo(2));
+            Assert.That(removable[4], Is.EqualTo(2));
+            Assert.That(Get<int>(checks, "UnitCount"), Is.EqualTo(3));
+            Assert.That(Get<int>(checks, "RigidsLoaded"), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AssetChecksPass_ExpectedInstancesUseTheArmyWeightOfTheLodAudit()
+        {
+            var (state, checks, _) = RunAssetChecksPass(rigid => SameKeys(4, 2));
+            var scenario = GetScenarioLods(state);
+
+            // alpha_opaque is part 0 of A at LOD 0 and at LOD 1, one instance per entity.
+            var expectedOpaque = CallWeight(
+                state,
+                1.0,
+                scenario.Select(entry => (entry.Probability, 1.0)).ToArray());
+            var opaque = ((IDictionary)Get<object>(checks, "Classes"))[ParseStatus("Opaque")]!;
+            Assert.That(expectedOpaque, Is.GreaterThan(0));
+            Assert.That(Get<double>(opaque, "ExpectedInstances"), Is.EqualTo(expectedOpaque).Within(1e-9));
+            Assert.That(Get<int>(opaque, "SourceMaterials"), Is.EqualTo(1));
+            Assert.That(Get<int>(opaque, "MeshPartSlots"), Is.EqualTo(2));
+            Assert.That(Get<int>(opaque, "WsModels"), Is.EqualTo(1));
+            Assert.That(Get<int>(opaque, "Roots"), Is.EqualTo(1));
+            var roots = Get<IList>(checks, "Roots");
+            Assert.That(roots, Has.Count.EqualTo(1));
+            Assert.That(
+                Get<IReadOnlyDictionary<string, double>>(roots[0]!, "InstanceWeightByWsModel"),
+                Is.EqualTo(new Dictionary<string, double>
+                {
+                    [@"models\a.wsmodel"] = 1.0,
+                    [@"models\b.wsmodel"] = 1.0,
+                }));
+
+            // The check-1 unlock (1 draw at source LOD 0 only) is the weight of scenario LOD 0.
+            var expectedSaved = CallWeight(state, 1.0, [(scenario[0].Probability, 1.0)]);
+            Assert.That(
+                Get<double[]>(checks, "ExpectedDrawsSaved")[0],
+                Is.EqualTo(expectedSaved).Within(1e-9));
+
+            // All expected part instances: A has 4 parts at LOD 0 and 2 beyond, B 4 parts.
+            var totalParts = CallWeight(
+                state,
+                1.0,
+                scenario
+                    .Select(entry => (entry.Probability, (entry.Lod == 0 ? 4.0 : 2.0) + 4.0))
+                    .ToArray());
+            Assert.That(
+                Get<double>(checks, "TotalExpectedPartInstances"),
+                Is.EqualTo(totalParts).Within(1e-9));
+
+            var top = Get<IList>(checks, "TopOpaqueMaterials");
+            Assert.That(top, Has.Count.EqualTo(1));
+            Assert.That(Get<string>(top[0]!, "Path"), Is.EqualTo(@"mat\alpha_opaque.xml.material"));
+            Assert.That(Get<string>(top[0]!, "TexturePath"), Is.EqualTo(@"tex\opaque_a.dds"));
+            Assert.That(Get<int>(top[0]!, "MinAlpha"), Is.EqualTo(255));
+            Assert.That(Get<int>(top[0]!, "MeshPartSlots"), Is.EqualTo(2));
+        }
+
+        private static object ParseStatus(string name)
+        {
+            return Enum.Parse(GetNestedType("AssetCheckAlphaStatus"), name);
+        }
+
+        [Test]
+        public void AssetChecksPass_OnlyMaterialsOfReachedWsModelsAreInScope()
+        {
+            var (_, checks, _) = RunAssetChecksPass(
+                rigid => SameKeys(4, 2),
+                markWsModelsAsReached: false);
+
+            Assert.That(Get<IDictionary>(checks, "Materials"), Is.Empty);
+            Assert.That(Get<IDictionary>(checks, "Components"), Is.Empty);
+            Assert.That(Get<string?>(checks, "Failure"), Is.Null);
+        }
+
+        [Test]
+        public void AssetChecksPass_ExhaustedBudget_CountsWhatWasNotAssessedInsteadOfRunningLong()
+        {
+            var (_, checks, _) = RunAssetChecksPass(
+                rigid => SameKeys(4, 2),
+                budget: TimeSpan.Zero);
+
+            Assert.That(Get<string?>(checks, "Failure"), Is.Null);
+            Assert.That(Get<int>(checks, "AlphaTexturesNotAssessed"), Is.EqualTo(4));
+            Assert.That(Get<int>(checks, "AlphaTexturesDecoded"), Is.Zero);
+            Assert.That(StatusOf(checks, "alpha_opaque"), Is.EqualTo("BudgetExhausted"));
+            Assert.That(Get<int>(checks, "HashNotAssessedCount"), Is.EqualTo(4));
+            Assert.That(Get<int>(checks, "DuplicateGroupCount"), Is.Zero);
+            // Nothing was classified or compared, so no unit is known to need a rigid.
+            Assert.That(Get<int>(checks, "UnitsNeedingRmv"), Is.Zero);
+            Assert.That(Get<long[]>(checks, "PartsRemovable"), Is.All.Zero);
+        }
+
+        [Test]
+        public void AssetChecksPass_UnreadableRigid_IsCountedAndDoesNotFailTheRun()
+        {
+            var (_, checks, _) = RunAssetChecksPass(rigid => null);
+
+            Assert.That(Get<string?>(checks, "Failure"), Is.Null);
+            Assert.That(Get<int>(checks, "RigidLoadFailures"), Is.EqualTo(1));
+            Assert.That(Get<int>(checks, "UnitsNotEvaluated"), Is.GreaterThan(0));
+        }
+
+        [Test]
+        public void AssetChecksPass_FailureInsideTheChecks_IsCaughtAndReported()
+        {
+            var state = CreateAssetChecksState(new Dictionary<string, byte[]>());
+            var checks = Activator.CreateInstance(GetNestedType("AssetChecksResult"), true)!;
+            SetStateProperty(state, "AssetChecks", checks);
+            Call(
+                "ObserveAssetCheckComponent",
+                state,
+                CreateBaselineComponent(
+                    @"models\a.wsmodel",
+                    [[CreateWeightedModel(1)]],
+                    [[@"mat\a.xml.material"]]));
+            // A source container whose ownership lookup throws.
+            var failing = new Moq.Mock<Shared.Core.PackFiles.Models.IPackFileContainer>();
+            failing
+                .Setup(container => container.ContainsFile(Moq.It.IsAny<string>()))
+                .Throws(new InvalidOperationException("boom"));
+            var failingState = CreateStateFromContainers(
+                failing.Object,
+                new Moq.Mock<Shared.Core.PackFiles.IPackFileService>().Object);
+            SetStateProperty(failingState, "AssetChecks", checks);
+
+            Call("RunAssetChecks", failingState, CancellationToken.None, null, null, null);
+
+            Assert.That(Get<string?>(checks, "Failure"), Is.EqualTo("InvalidOperationException: boom"));
+            var report = BuildAssetChecksReport(failingState);
+            Assert.That(report, Does.Contain("Asset checks stopped early: InvalidOperationException: boom"));
+        }
+
+        [Test]
+        public void AssetChecksPass_DoesNotTouchSharedCachesOrCounters()
+        {
+            var (state, _, _) = RunAssetChecksPass(rigid => SameKeys(4, 2));
+
+            Assert.That(GetStateProperty<IDictionary>(state, "MaterialDocuments"), Is.Empty);
+            Assert.That(GetStateProperty<IDictionary>(state, "MeshMergeMaterialDiagnostics"), Is.Empty);
+            Assert.That(GetStateProperty<IDictionary>(state, "TextureInspections"), Is.Empty);
+            Assert.That(GetStateProperty<IDictionary>(state, "CrossRigidMaterialMergeIdentityCache"), Is.Empty);
+            Assert.That(GetStateProperty<int>(state, "GameplayTraversalMaterialXmlParseCount"), Is.Zero);
+            Assert.That(GetStateProperty<int>(state, "GameplayTraversalContainerResolutionCacheHits"), Is.Zero);
+            Assert.That(GetStateProperty<int>(state, "GameplayTraversalContainerResolutionScans"), Is.Zero);
+        }
+
+        private static string BuildAssetChecksReport(object state)
+        {
+            var sb = new System.Text.StringBuilder();
+            Call("AppendAssetChecksSection", sb, state);
+            return sb.ToString();
+        }
+
+        [Test]
+        public void AssetChecksReport_WithData_ListsTheFiguresOfBothChecks()
+        {
+            var (state, _, _) = RunAssetChecksPass(rigid => SameKeys(4, 2));
+
+            var report = BuildAssetChecksReport(state);
+
+            Assert.That(report, Does.StartWith("Asset checks" + Environment.NewLine + "------------"));
+            Assert.That(report, Does.Contain("Check 1: alpha materials whose alpha source is opaque"));
+            Assert.That(report, Does.Contain("OPAQUE (min alpha >= 250): 1 (1 / 0)"));
+            Assert.That(report, Does.Contain("MOSTLY OPAQUE (< 0.1 % of texels below 128): 1 (1 / 0)"));
+            Assert.That(report, Does.Contain("USES ALPHA: 1 (1 / 0)"));
+            Assert.That(report, Does.Contain("unreadable texture(s): 1 - texture file not found"));
+            Assert.That(report, Does.Contain("Not assessed: 1 material(s) - no non-alpha twin shader"));
+            Assert.That(report, Does.Contain("1. mat/alpha_opaque.xml.material"));
+            Assert.That(report, Does.Contain("min alpha 255"));
+            Assert.That(report, Does.Contain("Check 2: duplicate textures and materials"));
+            Assert.That(report, Does.Contain("1 group(s), 2 file(s), 1 redundant file(s)"));
+            Assert.That(report, Does.Contain("2 files x 192 B"));
+            Assert.That(report, Does.Contain("Checks 1 and 2 together"));
+            Assert.That(report, Does.Not.Contain("NaN"));
+            Assert.That(report, Does.Not.Contain("Infinity"));
+        }
+
+        [Test]
+        public void AssetChecksReport_NoData_IsWellFormed()
+        {
+            var state = CreateBareBatchState();
+            SetStateProperty(
+                state,
+                "GameplayTraversalContainers",
+                new List<Shared.Core.PackFiles.Models.IPackFileContainer>());
+
+            Assert.That(BuildAssetChecksReport(state), Does.Contain("Asset checks did not run."));
+
+            Call("RunAssetChecks", state, CancellationToken.None, null, null, null);
+            var report = BuildAssetChecksReport(state);
+
+            Assert.That(report, Does.Contain("Check 1: alpha materials"));
+            Assert.That(report, Does.Contain("Check 2: duplicate textures and materials"));
+            Assert.That(report, Does.Contain("Scope: 0 WSModel(s) on 0 rigid(s)"));
+            Assert.That(report, Does.Contain("(none)"));
+            Assert.That(report, Does.Not.Contain("NaN"));
+            Assert.That(report, Does.Not.Contain("Infinity"));
+            Assert.That(report, Does.Not.Contain("stopped early"));
+        }
+
+        [Test]
+        public void AssetChecksLodAudit_SourceTraversalCreatesTheCollectionForTheChecks()
+        {
+            var state = CreateBareBatchState();
+            SetStateProperty(
+                state,
+                "GameplayTraversalContainers",
+                new List<Shared.Core.PackFiles.Models.IPackFileContainer>());
+
+            Call(
+                "AuditSourceLods",
+                state,
+                new List<string> { "models\\a.variantmeshdefinition" },
+                CancellationToken.None,
+                null,
+                null);
+
+            var checks = GetStateProperty<object>(state, "AssetChecks");
+            Assert.That(Get<IDictionary>(checks, "Components"), Is.Empty);
+            Assert.That(Get<IList>(checks, "Roots"), Is.Empty);
+        }
+
+        [Test]
+        public void ParamListClone_KeepsValuesAndIsIndependent()
+        {
+            var source = new ParamList<int>();
+            source.Set(WeightedParamterIds.IntParams_Alpha_index, 1);
+            source.Set(WeightedParamterIds.IntParams_Decal_index, 2);
+
+            var clone = source.Clone();
+
+            Assert.That(clone.Values, Is.EqualTo(source.Values));
+            clone.Set(WeightedParamterIds.IntParams_Alpha_index, 0);
+            Assert.That(
+                source.Get(WeightedParamterIds.IntParams_Alpha_index),
+                Is.EqualTo(1));
+        }
+
+        [Test]
+        public void WeightedMaterialClone_KeepsParameterLists()
+        {
+            var model = CreateWeightedModel(1f);
+            var material = (WeightedMaterial)model.Material;
+            material.IntParams.Set(WeightedParamterIds.IntParams_Alpha_index, 1);
+            material.FloatParams.Set(WeightedParamterIds.FloatParams_UvScaleX, 2f);
+
+            var clone = (WeightedMaterial)material.Clone();
+
+            Assert.That(
+                clone.IntParams.Get(WeightedParamterIds.IntParams_Alpha_index),
+                Is.EqualTo(1));
+            Assert.That(
+                clone.FloatParams.Get(WeightedParamterIds.FloatParams_UvScaleX),
+                Is.EqualTo(2f));
+        }
+
+        [Test]
+        public void RmvMergeIdentity_DiffersWhenEmbeddedAlphaParamDiffers()
+        {
+            var opaque = CreateWeightedModel(1f);
+            var alpha = CreateWeightedModel(1f);
+            ((WeightedMaterial)opaque.Material).IntParams.Set(
+                WeightedParamterIds.IntParams_Alpha_index,
+                0);
+            ((WeightedMaterial)alpha.Material).IntParams.Set(
+                WeightedParamterIds.IntParams_Alpha_index,
+                1);
+            var same = CreateWeightedModel(2f);
+            ((WeightedMaterial)same.Material).IntParams.Set(
+                WeightedParamterIds.IntParams_Alpha_index,
+                0);
+
+            var identity = GetStaticMethod("GetRmvMergeIdentity");
+            var opaqueIdentity = (string)identity.Invoke(null, [opaque])!;
+
+            Assert.That(
+                (string)identity.Invoke(null, [alpha])!,
+                Is.Not.EqualTo(opaqueIdentity));
+            Assert.That(
+                (string)identity.Invoke(null, [same])!,
+                Is.EqualTo(opaqueIdentity));
+        }
+
+        [Test]
+        public void MergeOwned_KeepsEmbeddedMaterialParameters()
+        {
+            foreach (var partCount in new[] { 1, 2 })
+            {
+                var parts = Enumerable
+                    .Range(0, partCount)
+                    .Select(index =>
+                    {
+                        var part = CreateWeightedModel(index + 1f);
+                        ((WeightedMaterial)part.Material).IntParams.Set(
+                            WeightedParamterIds.IntParams_Alpha_index,
+                            1);
+                        return part;
+                    })
+                    .ToArray();
+
+                var merged = MergeOwned(parts);
+
+                Assert.That(
+                    ((WeightedMaterial)merged.Material).IntParams.Get(
+                        WeightedParamterIds.IntParams_Alpha_index),
+                    Is.EqualTo(1),
+                    $"parts={partCount}");
+            }
+        }
     }
 }

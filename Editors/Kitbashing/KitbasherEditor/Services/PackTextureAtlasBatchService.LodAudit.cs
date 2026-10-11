@@ -106,6 +106,7 @@ namespace Editors.KitbasherEditor.Services
         {
             var audit = new LodAuditResult();
             state.LodAudit = audit;
+            state.AssetChecks = new AssetChecksResult();
             var timer = Stopwatch.StartNew();
             try
             {
@@ -173,6 +174,7 @@ namespace Editors.KitbasherEditor.Services
                                 return null;
                             }
 
+                            ObserveAssetCheckComponent(state, component);
                             return component;
                         });
                     // Rigid geometry is large; the audit keeps only per-LOD totals.
@@ -276,6 +278,7 @@ namespace Editors.KitbasherEditor.Services
             var vertices = new double[scenarioLods.Length];
             var parts = new double[scenarioLods.Length];
             var reachedRigids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var instanceWeights = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
             foreach (var configurations in expansion.ConfigurationsByAttachment.Values)
             {
                 foreach (var configuration in configurations)
@@ -290,6 +293,10 @@ namespace Editors.KitbasherEditor.Services
                             continue;
 
                         reachedRigids.Add(rigid.RigidPath);
+                        var wsModelKey = Normalize(instance.WsModelPath);
+                        instanceWeights[wsModelKey] =
+                            instanceWeights.GetValueOrDefault(wsModelKey) +
+                            configuration.Probability;
                         for (var index = 0; index < scenarioLods.Length; index++)
                         {
                             var lod = rigid.Lods[Math.Min(
@@ -303,6 +310,7 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            ObserveAssetCheckRoot(state, vmdPath, instanceWeights);
             foreach (var rigidPath in reachedRigids)
             {
                 audit.RootCountByRigid[rigidPath] =

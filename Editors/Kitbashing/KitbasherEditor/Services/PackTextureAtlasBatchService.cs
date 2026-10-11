@@ -463,6 +463,10 @@ namespace Editors.KitbasherEditor.Services
                 AuditSourceLods(state, atlasVmdRoots, cancellationToken, progress);
                 state.PhaseDurations["LOD audit"] = phaseStopwatch.Elapsed;
                 phaseStopwatch.Restart();
+                // Report-only: materials and textures of the rigids the audit reached.
+                RunAssetChecks(state, cancellationToken, progress);
+                state.PhaseDurations["Asset checks"] = phaseStopwatch.Elapsed;
+                phaseStopwatch.Restart();
                 if (crossRigidOnly)
                 {
                     ReportProgress(
