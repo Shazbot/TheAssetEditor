@@ -97,6 +97,15 @@ namespace Editors.KitbasherEditor.Services
         // search; emitted geometry still passes the full portfolio value
         // and residency gates, and no probabilities are approximated.
         private const int MaxCrossRigidJointStateCombinations = 4096;
+        // The game engine shows at most this many alternatives per SLOT
+        // (RenderDoc captures); extra alternatives are never selected.
+        // More variety has to come from nesting child VMD references.
+        private const int CrossRigidEngineSlotAlternativeLimit = 5;
+        // Tags every SLOT the cross-rigid writer creates so the limit can
+        // be enforced and checked after documents were cloned. Stripped
+        // before the VMDs are loaded and saved.
+        private const string CrossRigidWriterSlotMarkerAttribute =
+            "cross_rigid_writer_slot";
         // When a full co-rendering group is too complex to rewrite jointly,
         // smaller cross-rigid pairs can retain independent visual choices.
         private const int MaxCrossRigidPairFallbacksPerGroup = 24;

@@ -2324,5 +2324,755 @@ namespace Test.KitbashEditor.Services
             Assert.That(lines, Has.Some.Contains("5 largest components:"));
             Assert.That(lines, Has.Some.Contains("same accepted set as the previous cap"));
         }
+
+        // ---- engine slot-alternative limit (nesting through group VMDs) ----
+
+        private const int SlotLimit = 5;
+
+        private static string SlotMarker =>
+            (string)GetServiceType()
+                .GetField(
+                    "CrossRigidWriterSlotMarkerAttribute",
+                    BindingFlags.NonPublic | BindingFlags.Static)!
+                .GetRawConstantValue()!;
+
+        private static string ModelAlternative(int index)
+            => $"<VARIANT_MESH model=\"variantmeshes\\m{index}.wsmodel\" />";
+
+        private static XmlElement BuildSlot(
+            IEnumerable<string> alternativeXml,
+            string slotAttributes = "",
+            string meshAttributes = "")
+        {
+            var document = new XmlDocument();
+            document.LoadXml(
+                $"<VARIANT_MESH{meshAttributes}><SLOT{slotAttributes}>" +
+                string.Concat(alternativeXml) +
+                "</SLOT></VARIANT_MESH>");
+            return (XmlElement)document.DocumentElement!
+                .SelectSingleNode("SLOT")!;
+        }
+
+        private static string NormalizedXml(string xml)
+        {
+            var probe = new XmlDocument();
+            probe.LoadXml(xml);
+            return probe.DocumentElement!.OuterXml;
+        }
+
+        private static string[] ModelAlternatives(int count)
+            => Enumerable.Range(0, count).Select(ModelAlternative).ToArray();
+
+        private static string HashPath(XmlDocument document)
+            => "variantmeshes\\variantmeshdefinitions\\asset_editor\\cross_rigid\\group_" +
+               Convert.ToHexString(
+                       System.Security.Cryptography.SHA256.HashData(
+                           System.Text.Encoding.UTF8.GetBytes(
+                               document.OuterXml)))
+                   .ToLowerInvariant() +
+               ".variantmeshdefinition";
+
+        // Returns the nesting result record, or null when unchanged.
+        private static object? Nest(
+            XmlElement slot,
+            Dictionary<string, XmlDocument> groups,
+            int limit = SlotLimit)
+        {
+            var register = new Func<XmlDocument, string>(document =>
+            {
+                var path = HashPath(document);
+                groups.TryAdd(path, document);
+                return path;
+            });
+            return GetStaticMethod("NestCrossRigidSlotAlternatives")
+                .Invoke(null, [slot, limit, register]);
+        }
+
+        private sealed class SlotWalk
+        {
+            public List<(string Xml, double Probability)> Leaves { get; } = [];
+            public List<XmlElement> Slots { get; } = [];
+            public int MaxDepth { get; set; }
+        }
+
+        private static XmlElement GroupSlot(
+            XmlDocument groupDocument)
+        {
+            Assert.That(groupDocument.DocumentElement!.Name, Is.EqualTo("VARIANT_MESH"));
+            Assert.That(
+                groupDocument.DocumentElement.HasAttribute("model"),
+                Is.False);
+            var children = groupDocument.DocumentElement
+                .ChildNodes.OfType<XmlElement>().ToArray();
+            Assert.That(children, Has.Length.EqualTo(1));
+            Assert.That(children[0].Name, Is.EqualTo("SLOT"));
+            return children[0];
+        }
+
+        // Depth-first walk that follows references into generated groups
+        // and applies uniform selection at every slot.
+        private static SlotWalk Walk(
+            XmlElement slot,
+            Dictionary<string, XmlDocument> groups)
+        {
+            var walk = new SlotWalk();
+            WalkSlot(slot, groups, 1.0, 1, walk);
+            return walk;
+        }
+
+        private static void WalkSlot(
+            XmlElement slot,
+            Dictionary<string, XmlDocument> groups,
+            double probability,
+            int depth,
+            SlotWalk walk)
+        {
+            walk.Slots.Add(slot);
+            walk.MaxDepth = Math.Max(walk.MaxDepth, depth);
+            var alternatives = slot.ChildNodes.OfType<XmlElement>().ToArray();
+            foreach (var alternative in alternatives)
+            {
+                var share = probability / alternatives.Length;
+                if (alternative.Name == "VARIANT_MESH_REFERENCE" &&
+                    groups.TryGetValue(
+                        alternative.GetAttribute("definition"),
+                        out var groupDocument))
+                {
+                    WalkSlot(
+                        GroupSlot(groupDocument),
+                        groups,
+                        share,
+                        depth + 1,
+                        walk);
+                }
+                else
+                {
+                    walk.Leaves.Add((alternative.OuterXml, share));
+                }
+            }
+        }
+
+        private static int CountLeaves(
+            XmlElement slot,
+            Dictionary<string, XmlDocument> groups)
+            => Walk(slot, groups).Leaves.Count;
+
+        // Independent minimum of the number of factors in 2..5.
+        private static int MinimalExactDepth(int count)
+        {
+            if (count == 1)
+                return 0;
+            var best = int.MaxValue;
+            for (var factor = 2; factor <= SlotLimit; factor++)
+            {
+                if (count % factor != 0)
+                    continue;
+                var rest = MinimalExactDepth(count / factor);
+                if (rest != int.MaxValue)
+                    best = Math.Min(best, rest + 1);
+            }
+
+            return best;
+        }
+
+        private static int MinimalLevels(int count)
+        {
+            var levels = 1;
+            long capacity = SlotLimit;
+            while (capacity < count)
+            {
+                levels++;
+                capacity *= SlotLimit;
+            }
+
+            return levels;
+        }
+
+        [Test]
+        public void SlotNesting_AtOrBelowLimit_IsUnchanged(
+            [Values(0, 1, 2, 3, 4, 5)] int count)
+        {
+            var slot = BuildSlot(
+                ModelAlternatives(count),
+                " name=\"head\" attach_point=\"be_prop_0\" probability=\"0.6\"");
+            var before = slot.OwnerDocument.OuterXml;
+            var groups = new Dictionary<string, XmlDocument>();
+
+            var result = Nest(slot, groups);
+
+            Assert.That(result, Is.Null);
+            Assert.That(slot.OwnerDocument.OuterXml, Is.EqualTo(before));
+            Assert.That(groups, Is.Empty);
+        }
+
+        [TestCase(6, 2)]
+        [TestCase(8, 2)]
+        [TestCase(9, 2)]
+        [TestCase(10, 2)]
+        [TestCase(12, 2)]
+        [TestCase(16, 2)]
+        [TestCase(25, 2)]
+        [TestCase(30, 3)]
+        [TestCase(125, 3)]
+        [TestCase(4096, 6)]
+        public void SlotNesting_ExactCounts_PreserveEveryLeafProbabilityAndOrder(
+            int count,
+            int expectedDepth)
+        {
+            var alternatives = ModelAlternatives(count);
+            var slot = BuildSlot(alternatives);
+            var groups = new Dictionary<string, XmlDocument>();
+
+            var result = Nest(slot, groups)!;
+
+            Assert.That(ReadProperty(result, "Exact"), Is.True);
+            Assert.That(
+                (int)ReadProperty(result, "OriginalAlternativeCount"),
+                Is.EqualTo(count));
+            Assert.That(
+                (double)ReadProperty(result, "MaxRelativeProbabilityError"),
+                Is.EqualTo(0.0));
+            Assert.That(MinimalExactDepth(count), Is.EqualTo(expectedDepth));
+            Assert.That(
+                (int)ReadProperty(result, "Depth"),
+                Is.EqualTo(expectedDepth));
+
+            var walk = Walk(slot, groups);
+            Assert.That(walk.MaxDepth, Is.EqualTo(expectedDepth));
+            foreach (var visited in walk.Slots)
+            {
+                Assert.That(
+                    visited.ChildNodes.OfType<XmlElement>().Count(),
+                    Is.LessThanOrEqualTo(SlotLimit));
+            }
+
+            // Depth-first order is the original order, nothing lost/added.
+            Assert.That(
+                walk.Leaves.Select(leaf => leaf.Xml),
+                Is.EqualTo(alternatives.Select(NormalizedXml)));
+            Assert.That(
+                walk.Leaves.Select(leaf => leaf.Probability),
+                Has.All.EqualTo(1.0 / count).Within(1e-12));
+        }
+
+        [Test]
+        public void SlotNesting_DuplicateAlternatives_KeepMultiplicityProbabilities()
+        {
+            var a = ModelAlternative(1);
+            var b = ModelAlternative(2);
+            var c = ModelAlternative(3);
+            var slot = BuildSlot([a, a, a, b, b, c]);
+            var groups = new Dictionary<string, XmlDocument>();
+
+            Nest(slot, groups);
+
+            var probabilityByXml = Walk(slot, groups).Leaves
+                .GroupBy(leaf => leaf.Xml)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Sum(leaf => leaf.Probability));
+            Assert.That(probabilityByXml, Has.Count.EqualTo(3));
+            Assert.That(probabilityByXml[a], Is.EqualTo(1.0 / 2).Within(1e-12));
+            Assert.That(probabilityByXml[b], Is.EqualTo(1.0 / 3).Within(1e-12));
+            Assert.That(probabilityByXml[c], Is.EqualTo(1.0 / 6).Within(1e-12));
+        }
+
+        [TestCase(7)]
+        [TestCase(11)]
+        [TestCase(13)]
+        [TestCase(14)]
+        [TestCase(26)]
+        [TestCase(1009)]
+        public void SlotNesting_InexactCounts_AreBalancedAndLoseNothing(
+            int count)
+        {
+            var alternatives = ModelAlternatives(count);
+            var slot = BuildSlot(alternatives);
+            var groups = new Dictionary<string, XmlDocument>();
+
+            var result = Nest(slot, groups)!;
+
+            Assert.That(ReadProperty(result, "Exact"), Is.False);
+            var walk = Walk(slot, groups);
+            Assert.That(
+                (int)ReadProperty(result, "Depth"),
+                Is.EqualTo(MinimalLevels(count)));
+            Assert.That(walk.MaxDepth, Is.EqualTo(MinimalLevels(count)));
+            Assert.That(walk.Leaves, Has.Count.EqualTo(count));
+            Assert.That(
+                walk.Leaves.Select(leaf => leaf.Xml),
+                Is.EqualTo(alternatives.Select(NormalizedXml)));
+            Assert.That(
+                walk.Leaves.Sum(leaf => leaf.Probability),
+                Is.EqualTo(1.0).Within(1e-12));
+            foreach (var visited in walk.Slots)
+            {
+                var children = visited.ChildNodes.OfType<XmlElement>().ToArray();
+                Assert.That(children.Length, Is.LessThanOrEqualTo(SlotLimit));
+                var sizes = children
+                    .Select(child => child.Name == "VARIANT_MESH_REFERENCE" &&
+                                     groups.ContainsKey(
+                                         child.GetAttribute("definition"))
+                        ? CountLeaves(
+                            GroupSlot(groups[child.GetAttribute("definition")]),
+                            groups)
+                        : 1)
+                    .ToArray();
+                Assert.That(sizes.Max() - sizes.Min(), Is.LessThanOrEqualTo(1));
+            }
+
+            var worstError = walk.Leaves.Max(
+                leaf => Math.Abs(count * leaf.Probability - 1.0));
+            Assert.That(
+                (double)ReadProperty(result, "MaxRelativeProbabilityError"),
+                Is.EqualTo(worstError).Within(1e-12));
+        }
+
+        [Test]
+        public void SlotNesting_SevenAlternatives_ReportsSixthAsMaxRelativeError()
+        {
+            // 7 -> groups of 4 and 3 (the best of 2..5 groups): leaf
+            // probabilities 1/8 and 1/6 against the wanted 1/7. The worst
+            // relative error is 7/6 - 1 = 1/6 (7/8 - 1 = -1/8 is smaller).
+            var slot = BuildSlot(ModelAlternatives(7));
+            var groups = new Dictionary<string, XmlDocument>();
+
+            var result = Nest(slot, groups)!;
+
+            Assert.That(
+                (double)ReadProperty(result, "MaxRelativeProbabilityError"),
+                Is.EqualTo(1.0 / 6.0).Within(1e-12));
+            Assert.That(
+                slot.ChildNodes.OfType<XmlElement>().Count(),
+                Is.EqualTo(2));
+            Assert.That(
+                groups.Values.Select(document =>
+                    GroupSlot(document).ChildNodes.Count).Order(),
+                Is.EqualTo(new[] { 3, 4 }));
+        }
+
+        [Test]
+        public void SlotNesting_CopiesIdentityAttributes_AndKeepsAttachPointOnOuterSlotOnly()
+        {
+            var slot = BuildSlot(
+                ModelAlternatives(12),
+                " name=\"Head\" attach_point=\"be_prop_0\" probability=\"0.6\"" +
+                " use_different_attach_point_parts=\"true\"",
+                " use_different_attach_point_parts=\"true\"");
+            var groups = new Dictionary<string, XmlDocument>();
+
+            Nest(slot, groups);
+
+            Assert.That(slot.GetAttribute("name"), Is.EqualTo("Head"));
+            Assert.That(slot.GetAttribute("attach_point"), Is.EqualTo("be_prop_0"));
+            Assert.That(slot.GetAttribute("probability"), Is.EqualTo("0.6"));
+            Assert.That(
+                slot.GetAttribute("use_different_attach_point_parts"),
+                Is.EqualTo("true"));
+            Assert.That(
+                slot.ChildNodes.OfType<XmlElement>().Select(child => child.Name),
+                Has.All.EqualTo("VARIANT_MESH_REFERENCE"));
+            Assert.That(groups, Is.Not.Empty);
+            foreach (var document in groups.Values)
+            {
+                var inner = GroupSlot(document);
+                Assert.That(inner.GetAttribute("name"), Is.EqualTo("Head"));
+                Assert.That(inner.HasAttribute("attach_point"), Is.False);
+                Assert.That(inner.GetAttribute("probability"), Is.EqualTo("1"));
+                Assert.That(
+                    inner.GetAttribute("use_different_attach_point_parts"),
+                    Is.EqualTo("true"));
+                Assert.That(
+                    document.DocumentElement!.GetAttribute(
+                        "use_different_attach_point_parts"),
+                    Is.EqualTo("true"));
+            }
+        }
+
+        [Test]
+        public void SlotNesting_IsDeterministic()
+        {
+            string Run(out Dictionary<string, XmlDocument> groups)
+            {
+                var slot = BuildSlot(
+                    ModelAlternatives(30),
+                    " name=\"x\" probability=\"1\"");
+                groups = new Dictionary<string, XmlDocument>();
+                Nest(slot, groups);
+                return slot.OwnerDocument.OuterXml;
+            }
+
+            var first = Run(out var firstGroups);
+            var second = Run(out var secondGroups);
+
+            Assert.That(second, Is.EqualTo(first));
+            Assert.That(
+                secondGroups.ToDictionary(entry => entry.Key, entry => entry.Value.OuterXml),
+                Is.EqualTo(firstGroups.ToDictionary(entry => entry.Key, entry => entry.Value.OuterXml)));
+        }
+
+        [Test]
+        public void SlotNesting_UnexpectedChild_Throws()
+        {
+            var slot = BuildSlot(
+                [.. ModelAlternatives(6), "<META_DATA>x</META_DATA>"]);
+
+            var exception = Assert.Throws<TargetInvocationException>(
+                () => Nest(slot, new Dictionary<string, XmlDocument>()));
+
+            Assert.That(exception!.InnerException, Is.InstanceOf<InvalidOperationException>());
+        }
+
+        private static XmlDocument BuildMarkedDocument(
+            int jointCount,
+            int innerCount,
+            int authorCount)
+        {
+            // A writer joint slot whose first three wrappers contain a nested
+            // writer slot (as inner joints do), next to an author slot.
+            var wrappers = Enumerable.Range(0, jointCount)
+                .Select(index =>
+                    "<VARIANT_MESH>" +
+                    $"<SLOT name=\"s{index}\">" +
+                    ModelAlternative(index) +
+                    "</SLOT>" +
+                    (index < 3
+                        ? $"<SLOT {SlotMarker}=\"1\" probability=\"1\">" +
+                          string.Concat(ModelAlternatives(innerCount)) +
+                          "</SLOT>"
+                        : string.Empty) +
+                    "</VARIANT_MESH>");
+            var document = new XmlDocument();
+            document.LoadXml(
+                "<VARIANT_MESH>" +
+                $"<SLOT {SlotMarker}=\"1\" probability=\"1\">" +
+                string.Concat(wrappers) +
+                "</SLOT>" +
+                "<SLOT name=\"author\">" +
+                string.Concat(ModelAlternatives(authorCount)) +
+                "</SLOT>" +
+                "</VARIANT_MESH>");
+            return document;
+        }
+
+        [Test]
+        public void SlotNesting_Pipeline_NestsWriterSlotsOnly_ShareGroupFiles_AndStripsMarkers()
+        {
+            var state = CreateBareBatchState();
+            var documents = GetStateProperty<Dictionary<string, XmlDocument>>(
+                state,
+                "ModifiedVmdDocuments");
+            const string rootA = "variantmeshes\\variantmeshdefinitions\\a.variantmeshdefinition";
+            const string rootB = "variantmeshes\\variantmeshdefinitions\\b.variantmeshdefinition";
+            documents[rootA] = BuildMarkedDocument(12, 8, 7);
+            documents[rootB] = BuildMarkedDocument(12, 8, 7);
+
+            GetStaticMethod("NestCrossRigidWriterSlots").Invoke(null, [state]);
+            GetStaticMethod("DeduplicateCrossRigidGeneratedVmdDocuments")
+                .Invoke(null, [state]);
+
+            var groupPaths = GetStateProperty<HashSet<string>>(
+                state,
+                "CrossRigidGeneratedGroupVmdPaths");
+            var generatedPaths = GetStateProperty<HashSet<string>>(
+                state,
+                "CrossRigidGeneratedVmdPaths");
+            // Joint (12) and inner (8) slots, 3 inner slots per root.
+            Assert.That(
+                GetStateProperty<int>(state, "CrossRigidNestedWriterSlotCount"),
+                Is.EqualTo(8));
+            Assert.That(
+                GetStateProperty<int>(state, "CrossRigidMaxAlternativesBeforeNesting"),
+                Is.EqualTo(12));
+            Assert.That(
+                GetStateProperty<int>(state, "CrossRigidMaxSlotNestingDepth"),
+                Is.EqualTo(2));
+            Assert.That(
+                GetStateProperty<IList>(state, "CrossRigidInexactSlotNestings"),
+                Is.Empty);
+            Assert.That(groupPaths, Is.Not.Empty);
+            Assert.That(groupPaths.IsSubsetOf(generatedPaths), Is.True);
+            Assert.That(
+                GetStateProperty<int>(state, "CrossRigidGroupVmdFilesRequested"),
+                Is.GreaterThan(groupPaths.Count));
+            Assert.That(
+                documents.Keys.Where(path => path.Contains("group_")).ToHashSet(),
+                Is.EquivalentTo(groupPaths));
+
+            // The writer slots respect the limit, the author slot is as written.
+            GetStaticMethod("AssertCrossRigidWriterSlotAlternativeLimit")
+                .Invoke(null, [documents, SlotLimit]);
+            foreach (var root in new[] { rootA, rootB })
+            {
+                var author = (XmlElement)documents[root].SelectSingleNode(
+                    "/VARIANT_MESH/SLOT[@name='author']")!;
+                Assert.That(
+                    author.ChildNodes.OfType<XmlElement>().Count(),
+                    Is.EqualTo(7));
+                Assert.That(
+                    documents[root].SelectSingleNode(
+                        $"/VARIANT_MESH/SLOT[@{SlotMarker}]")!
+                        .ChildNodes.OfType<XmlElement>().Count(),
+                    Is.LessThanOrEqualTo(SlotLimit));
+            }
+
+            // Every reference to a generated group resolves; the identical
+            // roots reference the same group files.
+            foreach (var document in documents.Values)
+            {
+                foreach (var reference in document
+                             .SelectNodes("//VARIANT_MESH_REFERENCE")!
+                             .OfType<XmlElement>())
+                {
+                    Assert.That(
+                        documents.ContainsKey(reference.GetAttribute("definition")),
+                        Is.True);
+                }
+            }
+
+            Assert.That(
+                documents[rootA].SelectSingleNode(
+                    $"/VARIANT_MESH/SLOT[@{SlotMarker}]")!.OuterXml,
+                Is.EqualTo(documents[rootB].SelectSingleNode(
+                    $"/VARIANT_MESH/SLOT[@{SlotMarker}]")!.OuterXml));
+
+            GetStaticMethod("StripCrossRigidWriterSlotMarkers")
+                .Invoke(null, [documents.Values.ToList()]);
+            Assert.That(
+                documents.Values.Select(document => document.OuterXml),
+                Has.None.Contains(SlotMarker));
+        }
+
+        [Test]
+        public void SlotLimitGuard_WriterSlotWithSixAlternatives_Throws()
+        {
+            var document = new XmlDocument();
+            document.LoadXml(
+                $"<VARIANT_MESH><SLOT {SlotMarker}=\"1\">" +
+                string.Concat(ModelAlternatives(6)) +
+                "</SLOT></VARIANT_MESH>");
+            var documents = new Dictionary<string, XmlDocument>
+            {
+                ["variantmeshes\\variantmeshdefinitions\\bad.variantmeshdefinition"] = document,
+            };
+
+            var exception = Assert.Throws<TargetInvocationException>(
+                () => GetStaticMethod("AssertCrossRigidWriterSlotAlternativeLimit")
+                    .Invoke(null, [documents, SlotLimit]));
+
+            Assert.That(exception!.InnerException, Is.InstanceOf<InvalidOperationException>());
+            Assert.That(
+                exception.InnerException!.Message,
+                Does.Contain("bad.variantmeshdefinition").And.Contain("6"));
+        }
+
+        [Test]
+        public void SlotLimitGuard_FiveWriterAlternativesAndOversizedAuthorSlot_DoNotThrow()
+        {
+            var document = new XmlDocument();
+            document.LoadXml(
+                $"<VARIANT_MESH><SLOT {SlotMarker}=\"1\">" +
+                string.Concat(ModelAlternatives(5)) +
+                "</SLOT><SLOT name=\"author\">" +
+                string.Concat(ModelAlternatives(9)) +
+                "</SLOT></VARIANT_MESH>");
+            var documents = new Dictionary<string, XmlDocument> { ["x"] = document };
+
+            Assert.DoesNotThrow(
+                () => GetStaticMethod("AssertCrossRigidWriterSlotAlternativeLimit")
+                    .Invoke(null, [documents, SlotLimit]));
+        }
+
+        // Round trip through the tool's own attachment-local expansion.
+
+        private const string RoundTripBefore =
+            "variantmeshes\\variantmeshdefinitions\\before.variantmeshdefinition";
+        private const string RoundTripAfter =
+            "variantmeshes\\variantmeshdefinitions\\after.variantmeshdefinition";
+
+        private static string WriterJointVmd(int heads, int weapons)
+        {
+            var wrappers = new List<string>();
+            for (var head = 0; head < heads; head++)
+            {
+                // weapon 0 is the absent state of an optional slot.
+                for (var weapon = 0; weapon <= weapons; weapon++)
+                {
+                    wrappers.Add(
+                        "<VARIANT_MESH>" +
+                        "<SLOT name=\"head\" attach_point=\"be_head\" probability=\"1\">" +
+                        $"<VARIANT_MESH model=\"variantmeshes\\head_{head}.wsmodel\" />" +
+                        "</SLOT>" +
+                        (weapon == 0
+                            ? string.Empty
+                            : "<SLOT name=\"weapon\" attach_point=\"be_prop_0\" probability=\"1\">" +
+                              $"<VARIANT_MESH model=\"variantmeshes\\weapon_{weapon}.wsmodel\" />" +
+                              "</SLOT>") +
+                        "</VARIANT_MESH>");
+                }
+            }
+
+            return "<VARIANT_MESH><SLOT probability=\"1\">" +
+                   string.Concat(wrappers) +
+                   "</SLOT></VARIANT_MESH>";
+        }
+
+        private static object CreateRoundTripState(
+            Dictionary<string, string> vmds,
+            IEnumerable<string> wsModels)
+        {
+            var files = new Dictionary<string, Shared.Core.PackFiles.Models.PackFile>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var (path, xml) in vmds)
+            {
+                files[path] = Shared.Core.PackFiles.Models.PackFile.CreateFromBytes(
+                    System.IO.Path.GetFileName(path),
+                    System.Text.Encoding.UTF8.GetBytes(xml));
+            }
+
+            var known = new HashSet<string>(wsModels, StringComparer.OrdinalIgnoreCase);
+            var source = new Moq.Mock<Shared.Core.PackFiles.Models.IPackFileContainer>();
+            source.Setup(container => container.ContainsFile(Moq.It.IsAny<string>()))
+                .Returns((string path) => files.ContainsKey(path) || known.Contains(path));
+            source.Setup(container => container.FindFile(Moq.It.IsAny<string>()))
+                .Returns((string path) => files.GetValueOrDefault(path));
+            var packFileService = new Moq.Mock<Shared.Core.PackFiles.IPackFileService>();
+            packFileService.Setup(service => service.GetAllPackfileContainers())
+                .Returns([]);
+            var batchStateType = GetNestedType("BatchState");
+            var constructor = batchStateType.GetConstructors(
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single();
+            return constructor.Invoke(
+            [
+                source.Object,
+                source.Object,
+                packFileService.Object,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                false,
+                false,
+                false,
+            ]);
+        }
+
+        // attachment -> (rendered model set -> probability)
+        private static Dictionary<string, Dictionary<string, double>> ExpandWithTool(
+            object state,
+            string vmdPath)
+        {
+            var resultType = GetNestedType("CrossRigidAttachmentLocalExpansionResult");
+            var cache = (IDictionary)Activator.CreateInstance(
+                typeof(Dictionary<,>).MakeGenericType(typeof(string), resultType))!;
+            var result = GetStaticMethod(
+                    "GetCrossRigidAttachmentLocalConfigurationsForVmd")
+                .Invoke(null, [state, vmdPath, cache, new HashSet<string>()])!;
+            Assert.That(ReadProperty(result, "FailureReason") as string, Is.Null);
+
+            var byAttachment = new Dictionary<string, Dictionary<string, double>>();
+            foreach (var entry in (IEnumerable)ReadProperty(
+                         result,
+                         "ConfigurationsByAttachment"))
+            {
+                var key = (string)ReadProperty(entry, "Key");
+                var totals = new Dictionary<string, double>();
+                foreach (var configuration in (IEnumerable)ReadProperty(entry, "Value"))
+                {
+                    var signature = string.Join(
+                        "|",
+                        ((IEnumerable)ReadProperty(configuration, "Instances"))
+                        .Cast<object>()
+                        .Select(instance => (string)ReadProperty(instance, "WsModelPath"))
+                        .Order());
+                    totals[signature] = totals.GetValueOrDefault(signature) +
+                                        (double)ReadProperty(configuration, "Probability");
+                }
+
+                byAttachment[key] = totals;
+            }
+
+            return byAttachment;
+        }
+
+        private static string StripNestingSegments(string attachment)
+            => attachment.Replace(
+                "/attach=<inherit>/mesh_parts=<default>/slot_parts=<default>",
+                string.Empty);
+
+        [TestCase(3, 3)]
+        [TestCase(5, 5)]
+        public void SlotNesting_RoundTripThroughToolExpansion_KeepsConfigurationsAndProbabilities(
+            int heads,
+            int weapons)
+        {
+            var beforeXml = WriterJointVmd(heads, weapons);
+            var beforeDocument = new XmlDocument();
+            beforeDocument.LoadXml(beforeXml);
+            var slot = (XmlElement)beforeDocument.DocumentElement!.SelectSingleNode("SLOT")!;
+            var groups = new Dictionary<string, XmlDocument>();
+            Assert.That(slot.ChildNodes.Count, Is.EqualTo(heads * (weapons + 1)));
+            Nest(slot, groups);
+            Assert.That(groups, Is.Not.Empty);
+
+            var vmds = new Dictionary<string, string>
+            {
+                [RoundTripBefore] = beforeXml,
+                [RoundTripAfter] = beforeDocument.OuterXml,
+            };
+            foreach (var (path, document) in groups)
+                vmds[path] = document.OuterXml;
+            var wsModels = Enumerable.Range(0, heads)
+                .Select(index => $"variantmeshes\\head_{index}.wsmodel")
+                .Concat(Enumerable.Range(1, weapons)
+                    .Select(index => $"variantmeshes\\weapon_{index}.wsmodel"));
+            var state = CreateRoundTripState(vmds, wsModels);
+
+            var before = ExpandWithTool(state, RoundTripBefore);
+            var after = ExpandWithTool(state, RoundTripAfter);
+
+            // The reference hop adds the child slot's own identity segment
+            // to every attachment identity, identically for all groups and
+            // nesting levels; disregarding it the expansions are equal.
+            Assert.That(
+                after.Keys.Except(before.Keys),
+                Is.Not.Empty,
+                "nested identities are expected to carry the extra slot segment");
+            var normalizedBefore = before.ToDictionary(
+                entry => StripNestingSegments(entry.Key),
+                entry => entry.Value);
+            var normalizedAfter = after.ToDictionary(
+                entry => StripNestingSegments(entry.Key),
+                entry => entry.Value);
+            Assert.That(
+                normalizedAfter.Keys,
+                Is.EquivalentTo(normalizedBefore.Keys));
+            Assert.That(normalizedBefore, Has.Count.EqualTo(2));
+            foreach (var (attachment, expected) in normalizedBefore)
+            {
+                var actual = normalizedAfter[attachment];
+                Assert.That(actual.Keys, Is.EquivalentTo(expected.Keys));
+                Assert.That(expected.Values.Sum(), Is.EqualTo(1.0).Within(1e-12));
+                foreach (var (signature, probability) in expected)
+                {
+                    Assert.That(
+                        actual[signature],
+                        Is.EqualTo(probability).Within(1e-12),
+                        $"{attachment} {signature}");
+                }
+            }
+
+            // Hand check: the head attachment sees each head with 1/heads.
+            var headAttachment = normalizedBefore.Keys.Single(
+                key => key.Contains("attach=be_head"));
+            Assert.That(
+                normalizedAfter[headAttachment]["variantmeshes\\head_0.wsmodel"],
+                Is.EqualTo(1.0 / heads).Within(1e-12));
+            var weaponAttachment = normalizedBefore.Keys.Single(
+                key => key.Contains("attach=be_prop_0"));
+            Assert.That(
+                normalizedAfter[weaponAttachment][string.Empty],
+                Is.EqualTo(1.0 / (weapons + 1)).Within(1e-12));
+        }
     }
 }

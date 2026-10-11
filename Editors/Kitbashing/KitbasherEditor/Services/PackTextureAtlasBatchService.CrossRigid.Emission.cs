@@ -36,6 +36,13 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidGeneratedWsModelPaths.Clear();
             state.CrossRigidGeneratedVmdPaths.Clear();
             state.CrossRigidGeneratedVmdFilesDeduplicated = 0;
+            state.CrossRigidGeneratedGroupVmdPaths.Clear();
+            state.CrossRigidGroupVmdFilesRequested = 0;
+            state.CrossRigidNestedWriterSlotCount = 0;
+            state.CrossRigidMaxAlternativesBeforeNesting = 0;
+            state.CrossRigidMaxSlotNestingDepth = 0;
+            state.CrossRigidInexactSlotNestings.Clear();
+            state.CrossRigidAuthorSlotsAboveLimit.Clear();
             state.CrossRigidRewrittenRootVmdPaths.Clear();
             state.CrossRigidRetainedSourceAssetPaths.Clear();
             state.CrossRigidEmissionSkipCounts.Clear();
@@ -46,6 +53,8 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidRawLodDrawsBefore = 0;
             state.CrossRigidRawLodDrawsAfter = 0;
             state.CrossRigidOriginalRootSlotsByVmd.Clear();
+            // Counted before emission replaces cached source VMDs.
+            CollectCrossRigidAuthorSlotsAboveLimit(state);
             var emissionTimer = Stopwatch.StartNew();
             var validationElapsed = TimeSpan.Zero;
             var geometryBuildElapsed = TimeSpan.Zero;
@@ -383,7 +392,16 @@ namespace Editors.KitbasherEditor.Services
             var finalizationTimer = Stopwatch.StartNew();
             FinalizeCrossRigidJointProbabilityMultiplicities(
                 jointRewriteContexts.Values);
+            // Nest only after multiplicities are final (they duplicate
+            // wrappers) and before the dedupe, so equal group documents
+            // are recognized and shared like any other generated VMD.
+            NestCrossRigidWriterSlots(state);
             DeduplicateCrossRigidGeneratedVmdDocuments(state);
+            AssertCrossRigidWriterSlotAlternativeLimit(
+                state.ModifiedVmdDocuments,
+                CrossRigidEngineSlotAlternativeLimit);
+            StripCrossRigidWriterSlotMarkers(
+                state.ModifiedVmdDocuments.Values);
 
             if (state.ModifiedVmdDocuments.Count != 0)
             {
@@ -540,6 +558,7 @@ namespace Editors.KitbasherEditor.Services
 
                 state.ModifiedVmdDocuments.Remove(generatedPath);
                 state.CrossRigidGeneratedVmdPaths.Remove(generatedPath);
+                state.CrossRigidGeneratedGroupVmdPaths.Remove(generatedPath);
                 state.CrossRigidGeneratedVmdFilesDeduplicated++;
             }
         }
@@ -593,6 +612,497 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 combination.ProbabilityMultiplicityFinalized = true;
+            }
+        }
+
+        // The engine selects among at most CrossRigidEngineSlotAlternativeLimit
+        // alternatives of a SLOT. A writer joint slot can hold thousands of
+        // combination wrappers, so every writer-created slot above the
+        // limit is nested through generated group child VMDs:
+        //
+        //   <SLOT ...outer attributes...>
+        //     <VARIANT_MESH_REFERENCE definition="...group..." /> (g <= limit)
+        //   </SLOT>
+        //
+        // and each group VMD is <VARIANT_MESH><SLOT ...>alternatives</SLOT>
+        // </VARIANT_MESH>. Every level selects uniformly, so a leaf keeps
+        // its probability exactly when all groups of a level have the same
+        // size. Group files use the mechanism of the other generated child
+        // VMDs: ModifiedVmdDocuments + CrossRigidGeneratedVmdPaths.
+        private sealed record CrossRigidSlotSplitPlan(
+            int[] GroupSizes,
+            CrossRigidSlotSplitPlan?[] ChildPlans,
+            int Depth,
+            double MinLeafProbability,
+            double MaxLeafProbability);
+
+        // Depth counts slot levels, including the outermost slot: six
+        // alternatives (3 groups of 2) have depth 2.
+        private sealed record CrossRigidSlotNestingResult(
+            int OriginalAlternativeCount,
+            int Depth,
+            bool Exact,
+            double MaxRelativeProbabilityError);
+
+        private static bool IsCrossRigidSlotAlternative(
+            XmlElement element)
+            => element.Name == "VARIANT_MESH" ||
+               element.Name == "VARIANT_MESH_REFERENCE";
+
+        private static int CountCrossRigidSlotAlternatives(
+            XmlElement slot)
+            => slot.ChildNodes
+                .OfType<XmlElement>()
+                .Count(IsCrossRigidSlotAlternative);
+
+        // Smallest number of factors (each 2..limit, so 4 = 2 * 2 is
+        // available) whose product is count; among equally short
+        // factorisations the lexicographically largest descending sequence
+        // (larger factors nearer the top). Null when count has a prime
+        // factor above the limit.
+        private static int[]? FindCrossRigidExactSlotFactors(
+            int count,
+            int maxFactor,
+            Dictionary<(int Count, int MaxFactor), int[]?> memo)
+        {
+            if (count == 1)
+                return [];
+
+            if (memo.TryGetValue((count, maxFactor), out var cached))
+                return cached;
+
+            int[]? best = null;
+            for (var factor = Math.Min(maxFactor, count);
+                 factor >= 2;
+                 factor--)
+            {
+                if (count % factor != 0)
+                    continue;
+
+                var tail = FindCrossRigidExactSlotFactors(
+                    count / factor,
+                    factor,
+                    memo);
+                if (tail == null)
+                    continue;
+
+                if (best == null || tail.Length + 1 < best.Length)
+                    best = [factor, .. tail];
+            }
+
+            memo[(count, maxFactor)] = best;
+            return best;
+        }
+
+        private static CrossRigidSlotSplitPlan? BuildCrossRigidExactSplitPlan(
+            int count,
+            int[] factors,
+            int index)
+        {
+            // The last factor is the alternative count of the leaf slot.
+            if (index >= factors.Length - 1)
+                return null;
+
+            var groupCount = factors[index];
+            var groupSize = count / groupCount;
+            var child = BuildCrossRigidExactSplitPlan(
+                groupSize,
+                factors,
+                index + 1);
+            var leafProbability = 1.0 / count;
+            return new CrossRigidSlotSplitPlan(
+                Enumerable.Repeat(groupSize, groupCount).ToArray(),
+                Enumerable.Repeat(child, groupCount).ToArray(),
+                1 + (child?.Depth ?? 1),
+                leafProbability,
+                leafProbability);
+        }
+
+        // Counts with a prime factor above the limit cannot be split into
+        // equal groups. Use the minimal number of slot levels, group sizes
+        // differing by at most one at every level, and among the allowed
+        // group counts the one with the smallest relative probability error.
+        private static CrossRigidSlotSplitPlan? BuildCrossRigidBalancedSplitPlan(
+            int count,
+            int limit,
+            Dictionary<int, CrossRigidSlotSplitPlan?> memo)
+        {
+            if (count <= limit)
+                return null;
+
+            if (memo.TryGetValue(count, out var cached))
+                return cached;
+
+            var levels = 1;
+            long capacity = limit;
+            while (capacity < count)
+            {
+                levels++;
+                capacity *= limit;
+            }
+
+            var groupCapacity = capacity / limit;
+            var minimumGroups = (int)((count + groupCapacity - 1) /
+                                      groupCapacity);
+            CrossRigidSlotSplitPlan? best = null;
+            var bestError = double.MaxValue;
+            for (var groupCount = limit;
+                 groupCount >= Math.Max(2, minimumGroups);
+                 groupCount--)
+            {
+                var sizes = new int[groupCount];
+                var children = new CrossRigidSlotSplitPlan?[groupCount];
+                var minLeaf = double.MaxValue;
+                var maxLeaf = 0.0;
+                var childDepth = 1;
+                for (var index = 0; index < groupCount; index++)
+                {
+                    sizes[index] = count / groupCount +
+                                   (index < count % groupCount ? 1 : 0);
+                    children[index] = BuildCrossRigidBalancedSplitPlan(
+                        sizes[index],
+                        limit,
+                        memo);
+                    childDepth = Math.Max(
+                        childDepth,
+                        children[index]?.Depth ?? 1);
+                    minLeaf = Math.Min(
+                        minLeaf,
+                        (children[index]?.MinLeafProbability ??
+                         1.0 / sizes[index]) / groupCount);
+                    maxLeaf = Math.Max(
+                        maxLeaf,
+                        (children[index]?.MaxLeafProbability ??
+                         1.0 / sizes[index]) / groupCount);
+                }
+
+                var error = Math.Max(
+                    Math.Abs(count * minLeaf - 1.0),
+                    Math.Abs(count * maxLeaf - 1.0));
+                if (best != null && error >= bestError - 1e-12)
+                    continue;
+
+                bestError = error;
+                best = new CrossRigidSlotSplitPlan(
+                    sizes,
+                    children,
+                    1 + childDepth,
+                    minLeaf,
+                    maxLeaf);
+            }
+
+            memo[count] = best;
+            return best;
+        }
+
+        // Pure with respect to the pipeline: nests `slot` in place and hands
+        // every finished group document to registerGroupDocument, which
+        // returns the path the reference must use. Returns null when the
+        // slot already respects the limit (and leaves it untouched).
+        private static CrossRigidSlotNestingResult?
+            NestCrossRigidSlotAlternatives(
+                XmlElement slot,
+                int limit,
+                Func<XmlDocument, string> registerGroupDocument)
+        {
+            ArgumentNullException.ThrowIfNull(slot);
+            ArgumentNullException.ThrowIfNull(registerGroupDocument);
+            if (limit < 2)
+                throw new ArgumentOutOfRangeException(nameof(limit));
+
+            var alternatives = new List<XmlElement>();
+            foreach (var child in slot.ChildNodes.OfType<XmlElement>())
+            {
+                if (!IsCrossRigidSlotAlternative(child))
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot nest SLOT with unexpected <{child.Name}> child.");
+                }
+
+                alternatives.Add(child);
+            }
+
+            var count = alternatives.Count;
+            if (count <= limit)
+                return null;
+
+            var factors = FindCrossRigidExactSlotFactors(
+                count,
+                limit,
+                new());
+            var exact = factors != null;
+            var plan = exact
+                ? BuildCrossRigidExactSplitPlan(count, factors!, 0)
+                : BuildCrossRigidBalancedSplitPlan(count, limit, new());
+            ApplyCrossRigidSlotSplitPlan(
+                slot,
+                alternatives,
+                plan!,
+                registerGroupDocument);
+            return new CrossRigidSlotNestingResult(
+                count,
+                plan!.Depth,
+                exact,
+                exact
+                    ? 0.0
+                    : Math.Max(
+                        Math.Abs(count * plan.MinLeafProbability - 1.0),
+                        Math.Abs(count * plan.MaxLeafProbability - 1.0)));
+        }
+
+        private static void ApplyCrossRigidSlotSplitPlan(
+            XmlElement slot,
+            IReadOnlyList<XmlElement> alternatives,
+            CrossRigidSlotSplitPlan plan,
+            Func<XmlDocument, string> registerGroupDocument)
+        {
+            // The slot's alternatives were direct children of the enclosing
+            // VARIANT_MESH; the group root stands in for that mesh.
+            var enclosingMesh = slot.ParentNode as XmlElement;
+            var ownerDocument = slot.OwnerDocument;
+            while (slot.FirstChild != null)
+                slot.RemoveChild(slot.FirstChild);
+
+            var offset = 0;
+            for (var groupIndex = 0;
+                 groupIndex < plan.GroupSizes.Length;
+                 groupIndex++)
+            {
+                var groupDocument = new XmlDocument();
+                var groupRoot = groupDocument.CreateElement(
+                    "VARIANT_MESH");
+                if (enclosingMesh != null &&
+                    enclosingMesh.HasAttribute(
+                        "use_different_attach_point_parts"))
+                {
+                    groupRoot.SetAttribute(
+                        "use_different_attach_point_parts",
+                        enclosingMesh.GetAttribute(
+                            "use_different_attach_point_parts"));
+                }
+
+                groupDocument.AppendChild(groupRoot);
+
+                // The outer slot alone carries attach_point: slots of a
+                // referenced VMD never repeat the attach point of the
+                // referencing slot, they inherit it.
+                var groupSlot = groupDocument.CreateElement("SLOT");
+                foreach (var attribute in
+                         slot.Attributes.OfType<XmlAttribute>())
+                {
+                    if (attribute.Name == "attach_point" ||
+                        attribute.Name == "probability")
+                    {
+                        continue;
+                    }
+
+                    groupSlot.SetAttribute(
+                        attribute.Name,
+                        attribute.Value);
+                }
+
+                groupSlot.SetAttribute("probability", "1");
+                groupRoot.AppendChild(groupSlot);
+
+                var groupAlternatives = new List<XmlElement>();
+                for (var index = 0;
+                     index < plan.GroupSizes[groupIndex];
+                     index++)
+                {
+                    var imported = (XmlElement)groupDocument.ImportNode(
+                        alternatives[offset + index],
+                        deep: true);
+                    groupSlot.AppendChild(imported);
+                    groupAlternatives.Add(imported);
+                }
+
+                offset += plan.GroupSizes[groupIndex];
+                if (plan.ChildPlans[groupIndex] is { } childPlan)
+                {
+                    ApplyCrossRigidSlotSplitPlan(
+                        groupSlot,
+                        groupAlternatives,
+                        childPlan,
+                        registerGroupDocument);
+                }
+
+                var reference = ownerDocument.CreateElement(
+                    "VARIANT_MESH_REFERENCE");
+                reference.SetAttribute(
+                    "definition",
+                    registerGroupDocument(groupDocument));
+                slot.AppendChild(reference);
+            }
+        }
+
+        private static string BuildCrossRigidGeneratedGroupVmdPath(
+            string groupXml)
+            => Normalize(
+                $"variantmeshes\\variantmeshdefinitions\\asset_editor\\cross_rigid\\group_" +
+                $"{ContentHash(groupXml).ToLowerInvariant()}.variantmeshdefinition");
+
+        // Runs after multiplicity finalization. Element identity does not
+        // survive CloneXmlDocument or wrapper cloning, so writer-created
+        // slots carry CrossRigidWriterSlotMarkerAttribute, which is copied
+        // by every clone. Innermost slots are nested first: an outer slot
+        // copies its alternatives (and the slots inside) into group files.
+        private static void NestCrossRigidWriterSlots(
+            BatchState state)
+        {
+            string RegisterGroupDocument(XmlDocument groupDocument)
+            {
+                state.CrossRigidGroupVmdFilesRequested++;
+                var xml = groupDocument.OuterXml;
+                var groupPath = BuildCrossRigidGeneratedGroupVmdPath(xml);
+                if (state.ModifiedVmdDocuments.TryGetValue(
+                        groupPath,
+                        out var existing))
+                {
+                    // The path is derived from the content, so an equal
+                    // group simply shares the file.
+                    if (!state.CrossRigidGeneratedGroupVmdPaths.Contains(
+                            groupPath) ||
+                        !existing.OuterXml.Equals(
+                            xml,
+                            StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            "Cross-rigid generated group VMD path collides with a different document: " +
+                            groupPath);
+                    }
+
+                    return groupPath;
+                }
+
+                if (state.Source.ContainsFile(groupPath) ||
+                    state.Output.ContainsFile(groupPath))
+                {
+                    throw new InvalidOperationException(
+                        "Deterministic generated group VMD path already exists: " +
+                        groupPath);
+                }
+
+                state.ModifiedVmdDocuments[groupPath] = groupDocument;
+                state.CrossRigidGeneratedVmdPaths.Add(groupPath);
+                state.CrossRigidGeneratedGroupVmdPaths.Add(groupPath);
+                return groupPath;
+            }
+
+            // Group documents created below are already within the limit.
+            var vmdPaths = state.ModifiedVmdDocuments.Keys
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            foreach (var vmdPath in vmdPaths)
+            {
+                var writerSlots = state.ModifiedVmdDocuments[vmdPath]
+                    .SelectNodes(
+                        $"//SLOT[@{CrossRigidWriterSlotMarkerAttribute}]")
+                    ?.OfType<XmlElement>()
+                    .OrderByDescending(GetCrossRigidXmlNodeDepth)
+                    .ToArray() ?? [];
+                foreach (var writerSlot in writerSlots)
+                {
+                    var result = NestCrossRigidSlotAlternatives(
+                        writerSlot,
+                        CrossRigidEngineSlotAlternativeLimit,
+                        RegisterGroupDocument);
+                    if (result == null)
+                        continue;
+
+                    state.CrossRigidNestedWriterSlotCount++;
+                    state.CrossRigidMaxAlternativesBeforeNesting = Math.Max(
+                        state.CrossRigidMaxAlternativesBeforeNesting,
+                        result.OriginalAlternativeCount);
+                    state.CrossRigidMaxSlotNestingDepth = Math.Max(
+                        state.CrossRigidMaxSlotNestingDepth,
+                        result.Depth);
+                    if (!result.Exact)
+                    {
+                        state.CrossRigidInexactSlotNestings.Add(
+                            new CrossRigidInexactSlotNesting(
+                                vmdPath,
+                                result.OriginalAlternativeCount,
+                                result.MaxRelativeProbabilityError));
+                    }
+                }
+            }
+        }
+
+        private static void AssertCrossRigidWriterSlotAlternativeLimit(
+            IEnumerable<KeyValuePair<string, XmlDocument>> documents,
+            int limit)
+        {
+            foreach (var (vmdPath, document) in documents
+                         .OrderBy(
+                             entry => entry.Key,
+                             StringComparer.OrdinalIgnoreCase))
+            {
+                var writerSlots = document.SelectNodes(
+                                      $"//SLOT[@{CrossRigidWriterSlotMarkerAttribute}]")
+                                  ?.OfType<XmlElement>() ?? [];
+                foreach (var writerSlot in writerSlots)
+                {
+                    var count = CountCrossRigidSlotAlternatives(writerSlot);
+                    if (count <= limit)
+                        continue;
+
+                    throw new InvalidOperationException(
+                        "Cross-rigid emission left a writer-created SLOT " +
+                        $"with {count} direct alternatives in {vmdPath}; " +
+                        $"the engine uses at most {limit}. Refusing to " +
+                        "save the pack.");
+                }
+            }
+        }
+
+        private static void StripCrossRigidWriterSlotMarkers(
+            IEnumerable<XmlDocument> documents)
+        {
+            foreach (var document in documents)
+            {
+                var markedSlots = document.SelectNodes(
+                                      $"//SLOT[@{CrossRigidWriterSlotMarkerAttribute}]")
+                                  ?.OfType<XmlElement>().ToArray() ?? [];
+                foreach (var markedSlot in markedSlots)
+                {
+                    markedSlot.RemoveAttribute(
+                        CrossRigidWriterSlotMarkerAttribute);
+                }
+            }
+        }
+
+        // Source VMDs the tool loaded; author-written slots are never
+        // changed, only counted for the report.
+        private static void CollectCrossRigidAuthorSlotsAboveLimit(
+            BatchState state)
+        {
+            void Walk(string vmdPath, VariantMesh mesh)
+            {
+                foreach (var slot in mesh.ChildSlots ?? [])
+                {
+                    var count = (slot.ChildMeshes?.Count ?? 0) +
+                                (slot.ChildReferences?.Count ?? 0);
+                    if (count > CrossRigidEngineSlotAlternativeLimit)
+                    {
+                        state.CrossRigidAuthorSlotsAboveLimit.Add(
+                            new CrossRigidOverLimitSlot(
+                                vmdPath,
+                                slot.Name ?? string.Empty,
+                                count));
+                    }
+
+                    foreach (var child in slot.ChildMeshes ?? [])
+                        Walk(vmdPath, child);
+                }
+            }
+
+            foreach (var (vmdPath, vmd) in state.VmdDocuments
+                         .OrderBy(
+                             entry => entry.Key,
+                             StringComparer.OrdinalIgnoreCase))
+            {
+                if (state.Source.ContainsFile(Normalize(vmdPath)))
+                    Walk(vmdPath, vmd);
             }
         }
 
@@ -1478,6 +1988,9 @@ namespace Editors.KitbasherEditor.Services
             var jointSlot =
                 definingDocument.CreateElement("SLOT");
             jointSlot.SetAttribute("probability", "1");
+            jointSlot.SetAttribute(
+                CrossRigidWriterSlotMarkerAttribute,
+                "1");
             var combinations =
                 new Dictionary<
                     string,
@@ -1690,6 +2203,9 @@ namespace Editors.KitbasherEditor.Services
             var jointSlot =
                 definingDocument.CreateElement("SLOT");
             jointSlot.SetAttribute("probability", "1");
+            jointSlot.SetAttribute(
+                CrossRigidWriterSlotMarkerAttribute,
+                "1");
             var combinations =
                 new Dictionary<
                     string,

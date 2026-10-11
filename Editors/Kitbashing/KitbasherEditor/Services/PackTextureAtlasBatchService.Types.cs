@@ -282,6 +282,16 @@ namespace Editors.KitbasherEditor.Services
             int AlternativeIndex,
             int Multiplicity = 1);
 
+        private sealed record CrossRigidInexactSlotNesting(
+            string VmdPath,
+            int AlternativeCount,
+            double MaxRelativeProbabilityError);
+
+        private sealed record CrossRigidOverLimitSlot(
+            string VmdPath,
+            string SlotName,
+            int AlternativeCount);
+
         private sealed record CrossRigidJointSlotDefinition(
             int SlotIndex,
             XmlElement SlotElement,
@@ -689,6 +699,18 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> CrossRigidGeneratedVmdPaths { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public int CrossRigidGeneratedVmdFilesDeduplicated { get; set; }
+            // Group VMD files created to nest writer slots above the engine
+            // alternative limit. Also members of CrossRigidGeneratedVmdPaths.
+            public HashSet<string> CrossRigidGeneratedGroupVmdPaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public int CrossRigidGroupVmdFilesRequested { get; set; }
+            public int CrossRigidNestedWriterSlotCount { get; set; }
+            public int CrossRigidMaxAlternativesBeforeNesting { get; set; }
+            public int CrossRigidMaxSlotNestingDepth { get; set; }
+            public List<CrossRigidInexactSlotNesting>
+                CrossRigidInexactSlotNestings { get; } = [];
+            public List<CrossRigidOverLimitSlot>
+                CrossRigidAuthorSlotsAboveLimit { get; } = [];
             public HashSet<string> CrossRigidRewrittenRootVmdPaths { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> CrossRigidRetainedSourceAssetPaths { get; } =

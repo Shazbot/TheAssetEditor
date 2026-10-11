@@ -1801,7 +1801,7 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidGeneratedWsModelPaths.Count:N0}");
                 sb.AppendLine(
                     $"Generated copy-on-write VMD files: " +
-                    $"{state.CrossRigidGeneratedVmdPaths.Count:N0}");
+                    $"{state.CrossRigidGeneratedVmdPaths.Count(path => !state.CrossRigidGeneratedGroupVmdPaths.Contains(path)):N0}");
                 sb.AppendLine(
                     $"Identical generated child VMD copies deduplicated: " +
                     $"{state.CrossRigidGeneratedVmdFilesDeduplicated:N0}");
@@ -1822,6 +1822,60 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"Generated payloads with fewer active components than LOD 0 in a later LOD: " +
                     $"{CountCrossRigidPayloadsWithDroppedComponents(selectedRewritePlans):N0}");
+                sb.AppendLine(
+                    $"Engine slot-alternative limit: " +
+                    $"{CrossRigidEngineSlotAlternativeLimit}");
+                sb.AppendLine(
+                    $"Writer joint slots nested to respect the limit: " +
+                    $"{state.CrossRigidNestedWriterSlotCount:N0} " +
+                    $"(max alternatives before nesting " +
+                    $"{state.CrossRigidMaxAlternativesBeforeNesting:N0}, " +
+                    $"max nesting depth {state.CrossRigidMaxSlotNestingDepth:N0})");
+                sb.AppendLine(
+                    $"Generated group VMD files: " +
+                    $"{state.CrossRigidGroupVmdFilesRequested:N0} " +
+                    $"(after dedupe " +
+                    $"{state.CrossRigidGeneratedGroupVmdPaths.Count:N0})");
+                sb.AppendLine(
+                    $"Writer joint slots with inexact nesting " +
+                    $"(alternative count has a prime factor above " +
+                    $"{CrossRigidEngineSlotAlternativeLimit}): " +
+                    $"{state.CrossRigidInexactSlotNestings.Count:N0} " +
+                    $"(max relative probability error " +
+                    $"{(state.CrossRigidInexactSlotNestings.Count == 0 ? 0.0 : state.CrossRigidInexactSlotNestings.Max(entry => entry.MaxRelativeProbabilityError) * 100.0):0.###} %)");
+                foreach (var entry in
+                         state.CrossRigidInexactSlotNestings
+                             .OrderByDescending(item =>
+                                 item.MaxRelativeProbabilityError)
+                             .ThenBy(
+                                 item => item.VmdPath,
+                                 StringComparer.OrdinalIgnoreCase)
+                             .Take(5))
+                {
+                    sb.AppendLine(
+                        $"    - {entry.VmdPath} ({entry.AlternativeCount:N0})");
+                }
+
+                sb.AppendLine(
+                    $"Author-written slots above the limit in source VMDs " +
+                    $"(left unchanged): " +
+                    $"{state.CrossRigidAuthorSlotsAboveLimit.Count:N0}");
+                foreach (var entry in
+                         state.CrossRigidAuthorSlotsAboveLimit
+                             .OrderByDescending(item => item.AlternativeCount)
+                             .ThenBy(
+                                 item => item.VmdPath,
+                                 StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(
+                                 item => item.SlotName,
+                                 StringComparer.Ordinal)
+                             .Take(5))
+                {
+                    sb.AppendLine(
+                        $"    - {entry.VmdPath}, slot '{entry.SlotName}' " +
+                        $"({entry.AlternativeCount:N0})");
+                }
+
                 sb.AppendLine(
                     $"Scenario-estimated battle draws emitted: " +
                     $"{state.CrossRigidExpectedArmyDrawCallsEmitted:0.###}");
