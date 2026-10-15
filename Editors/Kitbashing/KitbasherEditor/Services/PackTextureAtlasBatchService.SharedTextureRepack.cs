@@ -78,6 +78,11 @@ namespace Editors.KitbasherEditor.Services
         // A merged plan stops growing above this many signature sets or rigids.
         private const int SharedRepackMaximumMergedSets = 8;
         private const int SharedRepackMaximumMergedRigids = 16;
+        // Splitting a layout group over smaller pages: at most this many pages, this many
+        // first-page sizes tried per level and this many greedy fills per group.
+        private const int SharedRepackMaximumSplitPages = 4;
+        private const int SharedRepackSplitCandidatesPerLevel = 12;
+        private const int SharedRepackMaximumSplitAttempts = 400;
         private const int SharedRepackMaximumCharts = 4000;
         private const int SharedRepackMaximumComponents = 8000;
         // Pixel equivalence: BC recompression of already compressed content. A flat or smooth
@@ -244,8 +249,27 @@ namespace Editors.KitbasherEditor.Services
             public string Sizes { get; set; } = string.Empty;
         }
 
+        // How the page choice of one layout group went: the single-page layout, the clusters,
+        // and the best split into several smaller pages that was tried.
+        private sealed class SharedRepackSplitInfo
+        {
+            public int Clusters { get; set; }
+            public bool OneCluster { get; set; }
+            public bool Applied { get; set; }
+            public long BeforeBytes { get; set; }
+            public long SingleBytes { get; set; }
+            public string SingleSize { get; set; } = string.Empty;
+            public long BestBytes { get; set; }
+            public string BestSizes { get; set; } = string.Empty;
+            public int BestPages { get; set; }
+            // Why no split was tried (one cluster, already split by the side limit).
+            public string? Note { get; set; }
+            public long Saved => Applied ? SingleBytes - BestBytes : 0;
+        }
+
         private sealed class SharedRepackSetPlan
         {
+            public Dictionary<string, SharedRepackSplitInfo> Splits { get; } = new(StringComparer.Ordinal);
             public List<SharedRepackPage> Pages { get; } = [];
             public List<SharedRepackGroupInfo> Groups { get; } = [];
             public List<SharedRepackTuple> Tuples { get; } = [];
@@ -325,6 +349,7 @@ namespace Editors.KitbasherEditor.Services
             // The sets that joined the seed's plan (label, textures, units), and, when a merged
             // attempt failed first, why.
             public List<(string Label, int Textures, int Units)> MergedSets { get; } = [];
+            public List<SharedRepackSplitInfo> Splits { get; } = [];
             public string? FallbackNote { get; set; }
             // The first rewritten rigid in ordinal order, and every rewritten rigid with its parts.
             public string Rigid { get; init; } = string.Empty;
@@ -2413,7 +2438,9 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var group in active.GroupBy(tuple => tuple.GroupKey).OrderBy(group => group.Key, StringComparer.Ordinal))
                 {
                     var groupTuples = group.OrderBy(tuple => tuple.Index).ToList();
-                    var pages = PackSharedRepackGroup(nameRigid, identity, groupTuples, maximumSide, plan.Pages.Count, out var excludeTuple, out var excludeReason);
+                    var pages = PackSharedRepackGroup(
+                        nameRigid, identity, groupTuples, maximumSide, plan.Pages.Count, result.MinimumGroupSavingBytes,
+                        out var split, out var excludeTuple, out var excludeReason);
                     if (excludeTuple != null)
                     {
                         excludeTuple.Excluded = excludeReason;
@@ -2428,6 +2455,7 @@ namespace Editors.KitbasherEditor.Services
                         break;
                     }
 
+                    plan.Splits[group.Key] = split;
                     var textures = groupTuples.SelectMany(tuple => tuple.Slots.Values)
                         .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                     var before = textures.Sum(texture => entryOf[texture].Layout!.ChainBytes);
@@ -2442,7 +2470,18 @@ namespace Editors.KitbasherEditor.Services
                         Pages = pages.Count,
                         Before = before,
                         After = after,
+                        Status = split.Applied
+                            ? $"built, split into {pages.Count:N0} page(s): {split.BestSizes} (one page would be " +
+                              $"{split.SingleSize}, {split.SingleBytes:N0} bytes)"
+                            : "built",
                     };
+                    // Why the pages are not smaller, for a group that is left untouched.
+                    var splitNote = split.Note != null
+                        ? $"; {split.Note}"
+                        : split.BestPages != 0
+                            ? $"; {split.Clusters:N0} cluster(s), best split into {split.BestPages:N0} page(s) " +
+                              $"{split.BestSizes} = {split.BestBytes:N0} bytes did not pay"
+                            : $"; {split.Clusters:N0} cluster(s), no split into smaller pages found";
                     if (before - after <= 0 || before - after < result.MinimumGroupSavingBytes)
                     {
                         foreach (var tuple in groupTuples)
@@ -2454,13 +2493,13 @@ namespace Editors.KitbasherEditor.Services
                             tuple.Excluded = before - after <= 0
                                 ? chartCoverage >= 0.8
                                     ? $"it uses nearly the whole texture (chart coverage {chartCoverage:P0}); the layout group " +
-                                      $"would go {before:N0} -> {after:N0} bytes [{info.Sizes}]"
+                                      $"would go {before:N0} -> {after:N0} bytes [{info.Sizes}]{splitNote}"
                                     : $"its charts cover {chartCoverage:P0} of the texture but pack into a {canvases} " +
                                       $"reference-pixel layout, so the group would not get smaller " +
-                                      $"({before:N0} -> {after:N0} bytes) [{info.Sizes}]"
+                                      $"({before:N0} -> {after:N0} bytes) [{info.Sizes}]{splitNote}"
                                 : $"its layout group saves {FormatSignedBytes(before - after)} bytes " +
                                   $"({before:N0} -> {after:N0}, chart coverage {chartCoverage:P0}), below the " +
-                                  $"{result.MinimumGroupSavingBytes:N0}-byte group minimum [{info.Sizes}]";
+                                  $"{result.MinimumGroupSavingBytes:N0}-byte group minimum [{info.Sizes}]{splitNote}";
                         }
 
                         gated = true;
@@ -2555,6 +2594,167 @@ namespace Editors.KitbasherEditor.Services
             return plan;
         }
 
+        // Several smaller pages for the clusters of a group: the cheapest (total chained bytes
+        // of all slots, then fewer pages, then the sizes in text order) split into 2 to
+        // SharedRepackMaximumSplitPages pages, every side a power of two within the single-page
+        // canvas. The first page's size is tried for a bounded set of candidates and filled with
+        // whole clusters, largest first; the rest is recursed on. Null when none was found.
+        private static List<List<int>>? FindSharedRepackSplit(
+            IReadOnlyList<(int Width, int Height)> sizes,
+            List<List<int>> clusters,
+            int limitWidth,
+            int limitHeight,
+            Func<int, int, long> pageBytes,
+            out long bestBytes,
+            out List<(int Width, int Height)> bestSizes)
+        {
+            List<List<int>>? best = null;
+            var bestKey = string.Empty;
+            long bestTotal = long.MaxValue;
+            var foundSizes = new List<(int Width, int Height)>();
+            var attempts = 0;
+            long Area(List<int> cluster) => cluster.Sum(index => (long)sizes[index].Width * sizes[index].Height);
+            var ordered = clusters
+                .Select(cluster => cluster
+                    .OrderByDescending(index => sizes[index].Height)
+                    .ThenByDescending(index => sizes[index].Width)
+                    .ThenBy(index => index)
+                    .ToList())
+                .OrderByDescending(Area)
+                .ThenBy(cluster => cluster.Min())
+                .ToList();
+
+            bool TryPage(IEnumerable<List<int>> page, out long bytes, out (int Width, int Height) size)
+            {
+                bytes = 0;
+                size = default;
+                var indexes = page.SelectMany(cluster => cluster).OrderBy(index => index).ToList();
+                if (!TryPackSharedRepackLayout(
+                        indexes.Select(index => sizes[index]).ToList(), limitWidth, limitHeight,
+                        out var width, out var height, out _))
+                {
+                    return false;
+                }
+
+                size = (width, height);
+                bytes = pageBytes(width, height);
+                return true;
+            }
+
+            void Search(
+                List<List<int>> remaining,
+                List<List<List<int>>> pages,
+                List<(int Width, int Height)> pageSizes,
+                long accumulated)
+            {
+                if (accumulated > bestTotal || !TryPage(remaining, out var restBytes, out var restSize))
+                    return;
+
+                if (pages.Count > 0)
+                {
+                    var total = accumulated + restBytes;
+                    var allSizes = pageSizes.Append(restSize).ToList();
+                    var key = string.Join(",", allSizes.Select(size => $"{size.Width}x{size.Height}"));
+                    var count = pages.Count + 1;
+                    if (total < bestTotal ||
+                        (total == bestTotal && (count < best!.Count ||
+                            (count == best.Count && string.CompareOrdinal(key, bestKey) < 0))))
+                    {
+                        bestTotal = total;
+                        bestKey = key;
+                        foundSizes = allSizes;
+                        best = pages.Select(page => page.SelectMany(cluster => cluster).OrderBy(index => index).ToList())
+                            .Append(remaining.SelectMany(cluster => cluster).OrderBy(index => index).ToList())
+                            .ToList();
+                    }
+                }
+
+                if (pages.Count + 2 > SharedRepackMaximumSplitPages || remaining.Count < 2)
+                    return;
+
+                var restArea = (long)restSize.Width * restSize.Height;
+                var candidates = new List<(int Width, int Height)>();
+                for (var width = 16; width <= limitWidth; width <<= 1)
+                {
+                    for (var height = 16; height <= limitHeight; height <<= 1)
+                    {
+                        if ((long)width * height < restArea)
+                            candidates.Add((width, height));
+                    }
+                }
+
+                foreach (var candidate in candidates
+                             .OrderByDescending(item => (long)item.Width * item.Height)
+                             .ThenBy(item => Math.Abs(Log2Exact(item.Width) - Log2Exact(item.Height)))
+                             .ThenByDescending(item => item.Width)
+                             .Take(SharedRepackSplitCandidatesPerLevel))
+                {
+                    if (++attempts > SharedRepackMaximumSplitAttempts)
+                        return;
+
+                    // Whole clusters, largest first, on a shelf of the candidate's size; a
+                    // cluster that does not fit goes to the rest.
+                    var chosen = new List<List<int>>();
+                    var rest = new List<List<int>>();
+                    int x = 0, y = 0, rowHeight = 0;
+                    foreach (var cluster in remaining)
+                    {
+                        int saveX = x, saveY = y, saveRow = rowHeight;
+                        var fits = true;
+                        foreach (var index in cluster)
+                        {
+                            var (width, height) = sizes[index];
+                            if (width > candidate.Width || height > candidate.Height)
+                            {
+                                fits = false;
+                                break;
+                            }
+
+                            if (x + width > candidate.Width)
+                            {
+                                x = 0;
+                                y += rowHeight;
+                                rowHeight = 0;
+                            }
+
+                            if (y + height > candidate.Height)
+                            {
+                                fits = false;
+                                break;
+                            }
+
+                            x += width;
+                            rowHeight = Math.Max(rowHeight, height);
+                        }
+
+                        if (fits)
+                        {
+                            chosen.Add(cluster);
+                        }
+                        else
+                        {
+                            (x, y, rowHeight) = (saveX, saveY, saveRow);
+                            rest.Add(cluster);
+                        }
+                    }
+
+                    if (chosen.Count == 0 || rest.Count == 0 || !TryPage(chosen, out var chosenBytes, out var chosenSize))
+                        continue;
+
+                    Search(
+                        rest,
+                        pages.Append(chosen).ToList(),
+                        pageSizes.Append(chosenSize).ToList(),
+                        accumulated + chosenBytes);
+                }
+            }
+
+            Search(ordered, [], [], 0);
+            bestBytes = bestTotal == long.MaxValue ? 0 : bestTotal;
+            bestSizes = foundSizes;
+            return best;
+        }
+
         // One group's pages. Charts that a part uses together form a cluster and stay on one
         // page. Returns null with a tuple to exclude when a cluster cannot fit at all.
         private static List<SharedRepackPage> PackSharedRepackGroup(
@@ -2563,9 +2763,12 @@ namespace Editors.KitbasherEditor.Services
             List<SharedRepackTuple> groupTuples,
             int maximumSide,
             int firstPageNumber,
+            long minimumGroupSaving,
+            out SharedRepackSplitInfo split,
             out SharedRepackTuple? excludeTuple,
             out string? excludeReason)
         {
+            split = new SharedRepackSplitInfo();
             excludeTuple = null;
             excludeReason = null;
             var first = groupTuples[0];
@@ -2653,12 +2856,65 @@ namespace Editors.KitbasherEditor.Services
             var assignments = new List<List<int>>();
             var allIndexes = Enumerable.Range(0, charts.Count).ToList();
             var sizes = allIndexes.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
-            if (TryPackSharedRepackLayout(sizes, maximumWidth, maximumHeight, out _, out _, out _))
+            split.Clusters = clusters.Count;
+            if (TryPackSharedRepackLayout(sizes, maximumWidth, maximumHeight, out var singleWidth, out var singleHeight, out _))
             {
                 assignments.Add(allIndexes);
+
+                // Power-of-two rounding can leave one page as large as the sources although the
+                // charts cover far less. Whole clusters (a part's charts stay together, nothing
+                // is duplicated) can then go onto several smaller pages.
+                long PageBytes(int width, int height)
+                {
+                    long total = 0;
+                    foreach (var slot in slots)
+                    {
+                        var w = ScaleByExponent(width, exponents[slot].X);
+                        var h = ScaleByExponent(height, exponents[slot].Y);
+                        total += EstimateDdsChainBytes(first.Layouts[slot], w, h, GetFullMipChainLength(w, h));
+                    }
+
+                    return total;
+                }
+
+                var sources = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                foreach (var tuple in groupTuples)
+                {
+                    foreach (var slot in slots)
+                        sources[tuple.Slots[slot]] = tuple.Layouts[slot].ChainBytes;
+                }
+
+                split.BeforeBytes = sources.Values.Sum();
+                split.SingleBytes = PageBytes(singleWidth, singleHeight);
+                split.SingleSize = $"{singleWidth}x{singleHeight}";
+                if (clusters.Count < 2)
+                {
+                    split.OneCluster = true;
+                    split.Note = "one connected cluster: cannot split";
+                }
+                else
+                {
+                    var pagesFound = FindSharedRepackSplit(
+                        sizes, clusters, singleWidth, singleHeight, PageBytes, out var bestBytes, out var bestSizes);
+                    if (pagesFound != null)
+                    {
+                        split.BestBytes = bestBytes;
+                        split.BestSizes = string.Join(" + ", bestSizes.Select(size => $"{size.Width}x{size.Height}"));
+                        split.BestPages = pagesFound.Count;
+                        var singleBuilds = split.BeforeBytes - split.SingleBytes >= minimumGroupSaving;
+                        if (bestBytes < split.SingleBytes &&
+                            split.BeforeBytes - bestBytes >= minimumGroupSaving &&
+                            (!singleBuilds || bestBytes <= split.SingleBytes - minimumGroupSaving))
+                        {
+                            split.Applied = true;
+                            assignments = pagesFound;
+                        }
+                    }
+                }
             }
             else
             {
+                split.Note = "already split by the side limit";
                 foreach (var cluster in clusters)
                 {
                     var placed = false;
@@ -3906,6 +4162,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             built.Groups.AddRange(plan.Groups);
+            built.Splits.AddRange(plan.Splits.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Value));
             built.Outputs.AddRange(plan.Pages.SelectMany(page => page.Outputs));
             built.Materials.AddRange(plan.Pages.SelectMany(page => page.MaterialMap.Values).OrderBy(path => path, StringComparer.Ordinal));
             built.BloodScales.AddRange(plan.Pages.SelectMany(page => page.BloodScales));
@@ -4144,6 +4401,13 @@ namespace Editors.KitbasherEditor.Services
                 $"{result.MergePlansTried:N0} tried, {result.MergePlansBuilt:N0} built, {result.MergePlansFellBack:N0} " +
                 $"fell back to the seed set alone; largest {result.LargestMergeSets:N0} set(s) in " +
                 $"{result.LargestMergeRigids:N0} rigid(s); {result.MergeCapHits:N0} plan(s) hit the cap.");
+            var splits = result.BuiltSets.SelectMany(set => set.Splits).ToList();
+            sb.AppendLine(
+                $"Page splitting (a layout group whose power-of-two page cannot shrink puts whole clusters of charts " +
+                $"on up to {SharedRepackMaximumSplitPages} smaller pages, never duplicating a chart or splitting a mesh part), " +
+                $"in built sets: {splits.Count(item => item.Applied):N0} group(s) split, " +
+                $"{splits.Sum(item => item.Saved):N0} bytes saved over the single-page result, " +
+                $"{splits.Count(item => item.OneCluster):N0} group(s) could not split (one connected cluster).");
             if (result.PartDropReasons.Count != 0)
             {
                 sb.AppendLine("Parts dropped from a set while closing it (a part counts once per set):");

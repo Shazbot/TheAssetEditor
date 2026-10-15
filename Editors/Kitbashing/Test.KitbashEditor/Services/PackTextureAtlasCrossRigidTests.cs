@@ -8640,7 +8640,8 @@ namespace Test.KitbashEditor.Services
             var world = BuildStandardSrWorld(secondLod: false);
             var m1 = SrMaterialPath("m1");
             var m2 = SrMaterialPath("m2");
-            world.AddModel(SrRigid2, SrWs2, SrRoot, SrRigidFactory([(m1, SrBlocks((9, 9)))]), [[m1]]);
+            // The same region as rigid 1's part 0, so both parts sit on one page.
+            world.AddModel(SrRigid2, SrWs2, SrRoot, SrRigidFactory([(m1, SrBlocks((2, 3)))]), [[m1]]);
 
             var result = world.Run();
 
@@ -10492,6 +10493,178 @@ namespace Test.KitbashEditor.Services
                 Does.Contain("merge cap reached: at most 8 sets and 16 rigids per plan"));
             Assert.That(SrValidate(world), Is.Empty);
             Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+        }
+
+        private static readonly Dictionary<string, int> SrBigSeeds = new() { [SrBase] = 1 };
+
+        // One 2048 x 2048 base colour used by two parts in separate regions: part 0 shows
+        // u 0..aWidth and v 0..aHeight, part 1 shows u 0.5..0.95 and v 0..bHeight. Their charts are
+        // far apart, so they are two clusters.
+        private static (SrWorld World, Func<RmvFile> Rigid) BuildSplitSrWorld(
+            double aWidth, double aHeight, double bHeight, int lods = 1)
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_big.dds", 2048, "BC1", true, 1);
+            world.Fixture.AddMaterial(SrMaterialPath("mbig"), (SrBase, "textures\\sr_big.dds"));
+            var mbig = SrMaterialPath("mbig");
+            var a = UvQuad(0.004, 0.004, aWidth, aHeight);
+            var b = UvQuad(0.5, 0.004, 0.95, bHeight);
+            var parts = new[] { (mbig, a), (mbig, b) };
+            var factory = lods == 1 ? SrRigidFactory(parts) : SrRigidFactory(parts, parts);
+            world.AddModel(SrRigid, SrWs, SrRoot, factory, lods == 1 ? [[mbig, mbig]] : [[mbig, mbig], [mbig, mbig]]);
+            return (world, factory);
+        }
+
+        private static List<string> SrPageSizes(object built)
+            => Get<IEnumerable>(built, "Outputs").Cast<object>()
+                .Select(output => $"{Get<int>(output, "Width")}x{Get<int>(output, "Height")}")
+                .OrderBy(size => size, StringComparer.Ordinal)
+                .ToList();
+
+        [Test]
+        public void SharedRepack_TwoIndependentParts_OnePageCannotShrink_BuildAsTwoSmallerPages()
+        {
+            // Single page: 2048 x 2048 (the 1184-high chart needs a 2048 side), as big as the
+            // source. Split: 1024 x 2048 + 1024 x 1024 = 75 % of the pixels.
+            var (world, factory) = BuildSplitSrWorld(0.3, 0.55, 0.45);
+
+            var result = world.Run(minimumGroupSaving: 300_000);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<int>(built, "Pages"), Is.EqualTo(2));
+            Assert.That(SrPageSizes(built), Is.EqualTo(new[] { "1024x1024", "1024x2048" }));
+            Assert.That(Get<int>(built, "Parts"), Is.EqualTo(2));
+            // Each part reads its own page through its own generated material (one source
+            // material, two pages, two generated copies with different names).
+            var material0 = SrWsMaterial(world.State, SrWs, 0, 0);
+            var material1 = SrWsMaterial(world.State, SrWs, 0, 1);
+            Assert.That(material0, Does.Contain("_repack_"));
+            Assert.That(material1, Does.Contain("_repack_"));
+            Assert.That(material0, Is.Not.EqualTo(material1));
+            Assert.That(Get<List<string>>(result, "GeneratedMaterials"), Has.Count.EqualTo(2));
+            Assert.That(Get<List<string>>(result, "GeneratedTextures"), Has.Count.EqualTo(2));
+            var (samples, max) = AssertSrPixels(world, SrRigid, SrWs, factory, SrBigSeeds);
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            // The part count is untouched: splitting only changes the textures.
+            var rigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            Assert.That(rigid.ModelList[0], Has.Length.EqualTo(2));
+            var splits = Get<IEnumerable>(built, "Splits").Cast<object>().ToList();
+            Assert.That(splits.Single(), Has.Property("Applied").True);
+            Assert.That(Get<long>(splits.Single(), "Saved"), Is.GreaterThan(0));
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain("split into 2 page(s): 1024x1024 + 1024x2048 (one page would be 2048x2048,"));
+            Assert.That(report, Does.Contain("1 group(s) split"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_SingleClusterGroup_CannotSplit_AndSaysSo()
+        {
+            // One region seen by a part and by its LOD copy: the same chart, one cluster, one
+            // 2048 x 2048 page.
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_big.dds", 2048, "BC1", true, 1);
+            world.Fixture.AddMaterial(SrMaterialPath("mbig"), (SrBase, "textures\\sr_big.dds"));
+            var mbig = SrMaterialPath("mbig");
+            // A thin diagonal sliver: little coverage, but one chart as big as the texture.
+            float[][] sliver = [[0.004f, 0.004f, 0.95f, 0.95f, 0.95f, 0.90f]];
+            world.AddModel(
+                SrRigid, SrWs, SrRoot, SrRigidFactory([(mbig, sliver)], [(mbig, sliver)]), [[mbig], [mbig]]);
+
+            var result = world.Run(minimumGroupSaving: 300_000);
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            AssertFunnelReconciles(result);
+            Assert.That(SrSkips(result), Does.Contain("one connected cluster: cannot split"));
+            Assert.That(world.Fixture.Output.Keys, Has.None.Contain("_repack_"));
+        }
+
+        [Test]
+        public void SharedRepack_SplitSavingLessThanTheGroupThreshold_IsRejected_AndReportsTheBestSplit()
+        {
+            var (world, _) = BuildSplitSrWorld(0.3, 0.55, 0.45);
+
+            // The split saves about 700 KB over nothing: under a 1 MB group minimum.
+            var result = world.Run(minimumGroupSaving: 1_000_000);
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero, SrSkips(result));
+            AssertFunnelReconciles(result);
+            Assert.That(SrSkips(result), Does.Contain("2 cluster(s), best split into 2 page(s) "));
+            Assert.That(SrSkips(result), Does.Contain("did not pay"));
+            Assert.That(world.Fixture.Output.Keys, Has.None.Contain("_repack_"));
+        }
+
+        [Test]
+        public void SharedRepack_GroupThatAlreadyBuilds_IsSplitWhenStrictlyCheaperByTheThreshold()
+        {
+            // Single page 2048 x 1024 already saves half; two pages 1024 x 1024 + 1024 x 512 save more.
+            var (world, factory) = BuildSplitSrWorld(0.45, 0.45, 0.2);
+
+            var result = world.Run(minimumGroupSaving: 100_000);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<int>(built, "Pages"), Is.EqualTo(2));
+            Assert.That(SrPageSizes(built), Is.EqualTo(new[] { "1024x1024", "1024x512" }));
+            AssertSrPixels(world, SrRigid, SrWs, factory, SrBigSeeds);
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("built, split into 2 page(s): "));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_GroupThatAlreadyBuilds_IsNotSplitWhenTheGainIsUnderTheThreshold()
+        {
+            var (world, _) = BuildSplitSrWorld(0.45, 0.45, 0.2);
+
+            // The split is about 400 KB cheaper; with a 1 MB group minimum it is not taken.
+            var result = world.Run(minimumSaving: 100_000, minimumGroupSaving: 1_000_000);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(SrBuilt(result).Single(), "Pages"), Is.EqualTo(1));
+            Assert.That(SrPageSizes(SrBuilt(result).Single()), Is.EqualTo(new[] { "2048x1024" }));
+        }
+
+        [Test]
+        public void SharedRepack_SplitPages_TwoRunsProduceIdenticalBytes()
+        {
+            var (first, _) = BuildSplitSrWorld(0.3, 0.55, 0.45);
+            var (second, _) = BuildSplitSrWorld(0.3, 0.55, 0.45);
+            first.Run(minimumGroupSaving: 300_000);
+            second.Run(minimumGroupSaving: 300_000);
+
+            var generated = first.Fixture.Output.Keys.Where(key => key.Contains("_repack_")).OrderBy(key => key).ToList();
+            Assert.That(generated, Has.Count.EqualTo(4));
+            Assert.That(
+                second.Fixture.Output.Keys.Where(key => key.Contains("_repack_")).OrderBy(key => key),
+                Is.EqualTo(generated));
+            foreach (var path in generated)
+                Assert.That(second.Fixture.Output[path], Is.EqualTo(first.Fixture.Output[path]), path);
+        }
+
+        [Test]
+        public void SharedRepack_SplitSearch_IsBounded_NeverDuplicatesAChart_AndUsesAtMostFourPages()
+        {
+            // 100 clusters of one chart each, sizes from 64 to 320.
+            var sizes = new List<(int Width, int Height)>();
+            for (var index = 0; index < 100; index++)
+                sizes.Add((64 + index * 7 % 5 * 64, 64 + index * 5 % 4 * 64));
+            var clusters = Enumerable.Range(0, sizes.Count).Select(index => new List<int> { index }).ToList();
+            var arguments = new object?[]
+            {
+                sizes, clusters, 4096, 4096, (Func<int, int, long>)((width, height) => (long)width * height), null, null,
+            };
+
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var pages = (List<List<int>>?)GetStaticMethod("FindSharedRepackSplit").Invoke(null, arguments);
+            watch.Stop();
+
+            Assert.That(watch.Elapsed, Is.LessThan(TimeSpan.FromSeconds(20)));
+            Assert.That(pages, Is.Not.Null);
+            Assert.That(pages!.Count, Is.InRange(2, 4));
+            Assert.That(pages.SelectMany(page => page).OrderBy(index => index), Is.EqualTo(Enumerable.Range(0, sizes.Count)));
         }
     }
 }
