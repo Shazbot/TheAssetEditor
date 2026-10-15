@@ -17,6 +17,8 @@ namespace Editors.KitbasherEditor.Services
             bool,
             bool,
             bool,
+            bool,
+            bool,
             CancellationToken,
             IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> _worker;
         private readonly CancellationTokenSource _cancellation = new();
@@ -194,6 +196,87 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+            : this((
+                mergeCompatibleMeshes,
+                shareAcrossVmds,
+                optimizeGeometry,
+                atlasAllVmds,
+                scoreAllGameUnits,
+                crossRigidOnly,
+                crossRigidMerges,
+                buildAtlases,
+                _,
+                cancellationToken,
+                progress) =>
+                worker(
+                    mergeCompatibleMeshes,
+                    shareAcrossVmds,
+                    optimizeGeometry,
+                    atlasAllVmds,
+                    scoreAllGameUnits,
+                    crossRigidOnly,
+                    crossRigidMerges,
+                    buildAtlases,
+                    cancellationToken,
+                    progress))
+        {
+        }
+
+        public TextureAtlasProgressWindow(
+            Action<
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                CancellationToken,
+                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+            : this((
+                mergeCompatibleMeshes,
+                shareAcrossVmds,
+                optimizeGeometry,
+                atlasAllVmds,
+                scoreAllGameUnits,
+                crossRigidOnly,
+                crossRigidMerges,
+                buildAtlases,
+                downscaleTextures,
+                _,
+                cancellationToken,
+                progress) =>
+                worker(
+                    mergeCompatibleMeshes,
+                    shareAcrossVmds,
+                    optimizeGeometry,
+                    atlasAllVmds,
+                    scoreAllGameUnits,
+                    crossRigidOnly,
+                    crossRigidMerges,
+                    buildAtlases,
+                    downscaleTextures,
+                    cancellationToken,
+                    progress))
+        {
+        }
+
+        public TextureAtlasProgressWindow(
+            Action<
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                CancellationToken,
+                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
         {
             InitializeComponent();
             _worker = worker;
@@ -215,6 +298,8 @@ namespace Editors.KitbasherEditor.Services
             CrossRigidOnlyCheckBox.IsEnabled = false;
             CrossRigidMergesCheckBox.IsEnabled = false;
             BuildAtlasesCheckBox.IsEnabled = false;
+            DownscaleTexturesCheckBox.IsEnabled = false;
+            SharedTextureRepackCheckBox.IsEnabled = false;
             PhaseText.Text = CrossRigidOnlyCheckBox.IsChecked == true
                 ? "Preparing cross-rigid-only pack..."
                 : BuildAtlasesCheckBox.IsChecked == true
@@ -235,6 +320,12 @@ namespace Editors.KitbasherEditor.Services
                     CrossRigidOnlyCheckBox.IsChecked == true,
                     CrossRigidMergesCheckBox.IsChecked == true,
                     BuildAtlasesCheckBox.IsChecked == true,
+                    DownscaleTexturesCheckBox.IsChecked == true &&
+                    CrossRigidOnlyCheckBox.IsChecked != true,
+                    SharedTextureRepackCheckBox.IsChecked == true &&
+                    BuildAtlasesCheckBox.IsChecked != true &&
+                    CrossRigidMergesCheckBox.IsChecked != true &&
+                    CrossRigidOnlyCheckBox.IsChecked != true,
                     _cancellation.Token,
                     progress);
                 _allowClose = true;
@@ -272,6 +363,13 @@ namespace Editors.KitbasherEditor.Services
             UpdateOperationOptionAvailability();
         }
 
+        private void CrossRigidMergesCheckBox_OnChanged(
+            object sender,
+            RoutedEventArgs e)
+        {
+            UpdateOperationOptionAvailability();
+        }
+
         private void UpdateOperationOptionAvailability()
         {
             if (MergeMeshesCheckBox == null ||
@@ -279,7 +377,9 @@ namespace Editors.KitbasherEditor.Services
                 OptimizeGeometryCheckBox == null ||
                 CrossRigidOnlyCheckBox == null ||
                 CrossRigidMergesCheckBox == null ||
-                BuildAtlasesCheckBox == null)
+                BuildAtlasesCheckBox == null ||
+                DownscaleTexturesCheckBox == null ||
+                SharedTextureRepackCheckBox == null)
             {
                 return;
             }
@@ -298,6 +398,16 @@ namespace Editors.KitbasherEditor.Services
             OptimizeGeometryCheckBox.IsEnabled = atlasOptionsEnabled;
             // Cross-rigid-only mode always runs the cross-rigid stage.
             CrossRigidMergesCheckBox.IsEnabled = atlasOptionsEnabled;
+            // Texture downscaling also works next to atlasing (it then only touches
+            // textures the atlases did not replace); only cross-rigid-only mode,
+            // which never writes textures, turns it off.
+            DownscaleTexturesCheckBox.IsEnabled = atlasOptionsEnabled;
+            // The shared texture repack rewrites UVs like atlasing and like the
+            // cross-rigid writer, so it is only available while neither is selected.
+            SharedTextureRepackCheckBox.IsEnabled =
+                atlasOptionsEnabled &&
+                BuildAtlasesCheckBox.IsChecked != true &&
+                CrossRigidMergesCheckBox.IsChecked != true;
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)

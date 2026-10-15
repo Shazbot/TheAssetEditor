@@ -2225,6 +2225,7 @@ namespace Editors.KitbasherEditor.Services
             var globalReference = Percentile(
                 densities.Values.OrderBy(value => value).ToArray(),
                 TexelDensityReferencePercentile);
+            state.TexelDensityGlobalReferences.Add(globalReference);
             var densitiesByRoot = candidates
                 .Where(candidate => densities.ContainsKey(candidate.Key))
                 .GroupBy(candidate => Normalize(candidate.RootVmdPath))
@@ -2250,28 +2251,10 @@ namespace Editors.KitbasherEditor.Services
                 var reference = rootValues is { Length: >= 4 }
                     ? Percentile(rootValues, TexelDensityReferencePercentile)
                     : globalReference;
-                var maximumDensity = Math.Max(
-                    double.Epsilon,
-                    reference * TexelDensityOutlierMultiplier);
-                var requestedScale = Math.Min(1.0, maximumDensity / density);
-                var maxDimension = Math.Max(candidate.Width, candidate.Height);
-                var minimumScaleForSize = maxDimension <= 0
-                    ? 1.0
-                    : Math.Min(
-                        1.0,
-                        MinAtlasResolutionScaleDimension / (double)maxDimension);
-                requestedScale = Math.Clamp(
-                    requestedScale,
-                    Math.Max(MinAtlasResolutionScale, minimumScaleForSize),
-                    1.0);
-
-                // Keep physical atlas sizes mip-friendly. A scale bucket also prevents tiny
-                // density differences from producing unstable output dimensions across runs.
-                var scale = requestedScale <= 0.375
-                    ? 0.25
-                    : requestedScale <= 0.75
-                        ? 0.5
-                        : 1.0;
+                var scale = CalculateTexelDensityResolutionScale(
+                    density,
+                    reference,
+                    Math.Max(candidate.Width, candidate.Height));
 
                 if (scale >= 1.0)
                 {
@@ -2294,6 +2277,36 @@ namespace Editors.KitbasherEditor.Services
             }
 
             return result;
+        }
+
+        // Shared with the standalone texture downscale: the same outlier multiplier,
+        // clamps and buckets decide how far a texture may shrink for a given density.
+        private static double CalculateTexelDensityResolutionScale(
+            double density,
+            double reference,
+            int maxDimension)
+        {
+            var maximumDensity = Math.Max(
+                double.Epsilon,
+                reference * TexelDensityOutlierMultiplier);
+            var requestedScale = Math.Min(1.0, maximumDensity / density);
+            var minimumScaleForSize = maxDimension <= 0
+                ? 1.0
+                : Math.Min(
+                    1.0,
+                    MinAtlasResolutionScaleDimension / (double)maxDimension);
+            requestedScale = Math.Clamp(
+                requestedScale,
+                Math.Max(MinAtlasResolutionScale, minimumScaleForSize),
+                1.0);
+
+            // Keep physical atlas sizes mip-friendly. A scale bucket also prevents tiny
+            // density differences from producing unstable output dimensions across runs.
+            return requestedScale <= 0.375
+                ? 0.25
+                : requestedScale <= 0.75
+                    ? 0.5
+                    : 1.0;
         }
 
         private static bool TryCalculateTexelDensity(

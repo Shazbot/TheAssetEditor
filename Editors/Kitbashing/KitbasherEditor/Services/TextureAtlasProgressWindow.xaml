@@ -33,6 +33,10 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
@@ -138,7 +142,9 @@
             Grid.Row="13"
             Margin="0,12,0,0"
             Content="Cross-rigid merges (experimental)"
-            IsChecked="False" />
+            IsChecked="False"
+            Checked="CrossRigidMergesCheckBox_OnChanged"
+            Unchecked="CrossRigidMergesCheckBox_OnChanged" />
 
         <TextBlock
             Grid.Row="14"
@@ -165,16 +171,46 @@
             TextWrapping="Wrap"
             Opacity="0.7" />
 
+        <CheckBox
+            x:Name="DownscaleTexturesCheckBox"
+            Grid.Row="17"
+            Margin="0,12,0,0"
+            Content="Downscale oversized textures (experimental)"
+            IsChecked="False" />
+
+        <TextBlock
+            Grid.Row="18"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="Off by default. Rewrites textures owned by this pack whose resolution is at least twice what every mesh using them needs. Same path and format, smaller size, so video memory drops; texture files are changed. Works with or without atlasing: with atlasing on, only textures the atlases did not replace are rewritten (atlas textures are never touched). Disabled in cross-rigid-only mode. The report lists every candidate whether or not this is ticked."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
+        <CheckBox
+            x:Name="SharedTextureRepackCheckBox"
+            Grid.Row="19"
+            Margin="0,12,0,0"
+            Content="Repack shared textures (experimental)"
+            IsChecked="False" />
+
+        <TextBlock
+            Grid.Row="20"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="Off by default. For textures that one mod-owned rigid uses only in small regions, writes new smaller textures holding just those regions at the same texel density, rewrites that rigid's UVs, writes new materials and repoints its WSModels; the original files are not edited. Video memory only. Not available together with texture atlasing or cross-rigid merges (they rewrite UVs too). The report lists every candidate and why it was or was not built."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
         <TextBlock
             x:Name="PhaseText"
-            Grid.Row="17"
+            Grid.Row="21"
             Margin="0,16,0,0"
             FontWeight="SemiBold"
             Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="18"
+            Grid.Row="22"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -184,7 +220,7 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="19"
+            Grid.Row="23"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
@@ -192,7 +228,7 @@
             IsIndeterminate="False"
             Value="0" />
 
-        <Grid Grid.Row="20" Margin="0,8,0,0">
+        <Grid Grid.Row="24" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>

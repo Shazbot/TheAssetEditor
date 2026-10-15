@@ -906,6 +906,14 @@ namespace Editors.KitbasherEditor.Services
             sb = summaryBuilder;
             sb.AppendLine($"Cross-rigid merges: {(state.CrossRigidMergesEnabled ? "YES" : "NO")}");
             sb.AppendLine($"Texture atlasing: {(state.TextureAtlasingActive ? "YES" : "NO")}");
+            sb.AppendLine($"Texture downscaling: {(state.DownscaleTextures ? "YES" : "NO")}");
+            sb.AppendLine($"Shared texture repack: {(state.SharedTextureRepackEnabled ? "YES" : "NO")}");
+            if (state.SharedTextureRepackRequested && !state.SharedTextureRepackEnabled)
+            {
+                sb.AppendLine(
+                    "Shared texture repack was requested but ignored: it is not available together " +
+                    "with texture atlasing, cross-rigid merges or cross-rigid-only mode.");
+            }
             sb.AppendLine($"Cross-rigid-only mode: {(state.CrossRigidOnly ? "YES" : "NO")}");
             if (!state.TextureAtlasingActive)
                 sb.AppendLine("Texture atlasing disabled; atlas sections omitted.");
@@ -2325,6 +2333,13 @@ namespace Editors.KitbasherEditor.Services
 
             AppendLodAuditSection(sb, state);
             AppendAssetChecksSection(sb, state);
+            if (!state.CrossRigidOnly)
+            {
+                AppendTextureDownscaleSection(sb, state);
+                AppendVanillaTextureCoverageSection(sb, state);
+                AppendUnitTextureRepackSection(sb, state);
+                AppendSharedTextureRepackSection(sb, state);
+            }
 
             if (state.UnitCategoryResolution != null)
             {

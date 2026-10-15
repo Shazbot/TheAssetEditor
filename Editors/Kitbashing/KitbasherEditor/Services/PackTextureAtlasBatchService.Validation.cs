@@ -1036,6 +1036,9 @@ namespace Editors.KitbasherEditor.Services
                     errors.Add($"VMD root is missing from output: {vmdPath}");
             }
 
+            ValidateDownscaledTextures(state, errors, cancellationToken);
+            ValidateSharedTextureRepack(state, errors, cancellationToken);
+
             if (errors.Count != 0)
             {
                 foreach (var error in errors)

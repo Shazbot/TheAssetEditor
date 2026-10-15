@@ -189,6 +189,8 @@ namespace Editors.KitbasherEditor.Services
                 crossRigidOnly,
                 crossRigidMerges,
                 buildAtlases,
+                downscaleTextures,
+                sharedTextureRepack,
                 cancellationToken,
                 progress) =>
             {
@@ -205,7 +207,9 @@ namespace Editors.KitbasherEditor.Services
                     scoreAllGameUnits: scoreAllGameUnits,
                     crossRigidOnly: crossRigidOnly,
                     crossRigidMerges: crossRigidMerges,
-                    buildAtlases: buildAtlases);
+                    buildAtlases: buildAtlases,
+                    downscaleTextures: downscaleTextures,
+                    sharedTextureRepack: sharedTextureRepack);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -250,7 +254,9 @@ namespace Editors.KitbasherEditor.Services
             bool lodAwareAtlasPlanning = true,
             bool crossRigidOnly = false,
             bool crossRigidMerges = false,
-            bool buildAtlases = true)
+            bool buildAtlases = true,
+            bool downscaleTextures = false,
+            bool sharedTextureRepack = false)
         {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
@@ -296,6 +302,16 @@ namespace Editors.KitbasherEditor.Services
                 state.CrossRigidMergesEnabled =
                     crossRigidMerges || crossRigidOnly;
                 state.BuildAtlases = buildAtlases;
+                // Cross-rigid-only mode never touches textures, whatever the caller asks.
+                state.DownscaleTextures = downscaleTextures && !crossRigidOnly;
+                // The repack rewrites UVs, so it is ignored next to atlasing and cross-rigid
+                // merges (see ResolveSharedTextureRepack).
+                state.SharedTextureRepackRequested = sharedTextureRepack;
+                state.SharedTextureRepackEnabled = ResolveSharedTextureRepack(
+                    sharedTextureRepack,
+                    buildAtlases,
+                    crossRigidMerges,
+                    crossRigidOnly);
                 state.CancellationToken = cancellationToken;
                 state.Progress = progress;
                 var gameplayContainerSnapshot =
@@ -543,6 +559,28 @@ namespace Editors.KitbasherEditor.Services
                             phaseStopwatch.Elapsed;
                     }
 
+                    if (state.SharedTextureRepackEnabled)
+                    {
+                        // Runs where the atlas stage would: after the consumer indexes and
+                        // the structural merge analysis, before the merge and geometry
+                        // optimization, which then see the repacked rigids and materials.
+                        // The two analyses it needs measure the source pack as authored
+                        // (fresh reads), so running them early changes no figure; they get
+                        // a generous budget because an incomplete analysis must not be
+                        // acted on.
+                        RunVanillaTextureCoverage(
+                            state,
+                            cancellationToken,
+                            progress,
+                            budget: SharedRepackAnalysisBudget);
+                        RunUnitTextureRepack(
+                            state,
+                            cancellationToken,
+                            progress,
+                            SharedRepackAnalysisBudget);
+                        RunSharedTextureRepack(state, cancellationToken, progress);
+                    }
+
                     if (buildAtlases)
                     {
                         phaseStopwatch.Restart();
@@ -662,6 +700,7 @@ namespace Editors.KitbasherEditor.Services
                         progress);
                     state.PhaseDurations["Prune unused assets"] =
                         phaseStopwatch.Elapsed;
+                    FinalizeSharedTextureRepack(state);
 
                     // Output BCn residency only serves the atlas value accounting, so a run
                     // without atlases skips the final scan as well.
@@ -693,6 +732,24 @@ namespace Editors.KitbasherEditor.Services
                         state.PhaseDurations["Estimate output BCn residency"] =
                             phaseStopwatch.Elapsed;
                     }
+                }
+
+                if (!crossRigidOnly)
+                {
+                    // Reads the post-atlas, post-merge, post-prune output. Report-only
+                    // unless the downscale option is on.
+                    RunTextureDownscale(state, cancellationToken, progress);
+
+                    // Report-only and independent of the atlas/downscale options: measures
+                    // the source pack as authored, so it runs after them without seeing
+                    // their changes.
+                    // (Already done before the shared texture repack when that is on.)
+                    if (state.VanillaTextureCoverage == null)
+                        RunVanillaTextureCoverage(state, cancellationToken, progress);
+
+                    // Report-only; combines the coverage collection per gameplay root.
+                    if (state.UnitTextureRepack == null)
+                        RunUnitTextureRepack(state, cancellationToken, progress);
                 }
 
                 phaseStopwatch.Restart();
