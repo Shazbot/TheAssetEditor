@@ -1,4 +1,4 @@
-# Cross-rigid merge: findings (2026-10-11)
+# Cross-rigid merge and texture memory: findings (2026-10-11, updated 2026-10-15)
 
 Branch `feature/texture-atlas-consolidation`. Test pack: `!ak_teb3.pack` (dump in `K:\wh3mods\albion\teb`). In-game test assets: `K:\wh3mods\albion\abtest\` (see its `README.txt`).
 
@@ -7,6 +7,8 @@ Branch `feature/texture-atlas-consolidation`. Test pack: `!ak_teb3.pack` (dump i
 - The engine cost that merging reduces is **mesh parts per soldier**. Draw-call count and the number of distinct meshes did not affect frame rate in the test.
 - The best case (10 parts per soldier collapsed to 1, screen full of one unit type) gave about **8 % FPS**. On this pack the tool's cross-rigid merging removes 2.6 % of soldier-part instances, worth roughly **0.2 % FPS** for 69 MiB of added geometry.
 - The cross-rigid writer used to emit joint slots with more than five alternatives; the engine uses only five per slot, so output lost visual variety in-game. **Fixed** by nesting through generated group VMDs (see Open issues, item 1).
+- Texture size is not expected to affect frame rate here (a working conclusion, not measured), so all texture work is judged on **video memory and pack size only**.
+- Of the texture measures, only the shared-texture repack paid off on `ak_teb3`: 32.7 MB saved on four sets. Downscaling is down to 7 candidates (12.6 MB) once lords and heroes are excluded, and the other texture ideas were estimated and not built.
 - Recommendation: do not build the shared-atlas planner or a per-configuration writer; stop extending the cross-rigid search; the slot limit is fixed, but given the payoff consider leaving cross-rigid off by default.
 
 ## How Warhammer 3 draws unit soldiers
@@ -116,11 +118,103 @@ LOD audit of `ak_teb3` (172 roots, 287 source-owned and 299 vanilla rigids, 10 s
 
 With LOD geometry and distances out of scope, the geometry-side levers left to the tool are parts per soldier (merging, measured at about 2.7 ms for removing 90 % of them) and nothing else of size.
 
+## Texture memory
+
+Everything in this section is about video memory and pack size. None of it is expected to change frame rate. Numbers are for `ak_teb3` unless stated.
+
+### Texture size and frame rate
+
+- **Working conclusion: texture size does not affect FPS in this setup.** No A/B test with different texture sizes was run, so there is no direct measurement.
+- **Supporting evidence:** the render-scale test (above) showed about half the frame depends on pixel count and the rest is GPU work on geometry and instances. At battle distance the GPU already samples lower mips, so removing the top mip does not reduce pixel work.
+- All texture work below is therefore judged on memory only.
+
+### Texture downscaling (`PackTextureAtlasBatchService.TextureDownscale.cs`)
+
+- **Report and opt-in option.** "Downscale oversized textures (experimental)" (`downscaleTextures` on `Process`), off by default. The report always lists the candidates, whether or not the option is ticked. Disabled in cross-rigid-only mode.
+- **Rule.** A texture file shrinks to what its users' texel density needs, using the atlas stage's reference density and 0.5 / 0.25 buckets. A candidate is at most 0.5x and both sides stay at least 256 px. Same path and format, so no material changes; mip slicing is used where possible.
+- **Alongside atlasing.** Atlases are built from full-resolution textures first. Atlas textures are never downscaled; only textures the atlases did not replace are rewritten.
+- **Lord/hero rule.** No texture used by a lord or hero is downscaled, and units that cannot be classified count as lord/hero. The first report listed 20 candidates (71.3 MB), three quarters of it one lord's textures; with the rule applied they are gone.
+- **Result.** 7 candidates remain, all morion helmet textures at 2048x1024 to 1024x512, saving 12.6 MB. Another 135 textures are assessed and not oversized.
+
+### Vanilla texture coverage (report only, `PackTextureAtlasBatchService.VanillaTextureCoverage.cs`)
+
+Measures how much of each vanilla texture the pack's parts touch (256x256 cell grid, every LOD). A per-texture crop would replace the vanilla texture with a smaller copy in the pack.
+
+- The pack references 690 vanilla textures (663 MB).
+- Whole-pack upper bounds for cropping:
+
+| Limit | Textures | Saved (at most) | Added to pack | Rewritten |
+|---|---|---|---|---|
+| Under 10 % coverage | 95 | 127 MB | 17 MB | 51 rigids |
+| Under 25 % coverage | 219 | 217 MB | 71 MB | 104 rigids plus 4 vanilla copies |
+
+- Nothing is saved above 25 % coverage, because a half-size crop cannot hold the used area.
+- These are upper bounds. Whether the vanilla texture stays loaded anyway (another unit or mod part uses it) was not computed, because the existing residency model has side effects. Not built.
+
+### Per-unit repack estimate (report only, `PackTextureAtlasBatchService.UnitTextureRepack.cs`)
+
+Estimates repacking textures into atlases per unit, assuming a unit shows every alternative whenever it is on the field.
+
+- **Sharing is heavy.** Only 12 of 392 rigids and 16 of 911 textures are used by a single unit. 528 of 657 units fall in one connected sharing group.
+
+| Option | Idea | Whole pack (all units loaded) | Verdict |
+|---|---|---|---|
+| A | One atlas per unit, with rigid copies | 1.02 GB to 4.2 GB | Negative |
+| B | One atlas per sharing group | Big group's atlas is 273 MB; 607 of 657 units get worse | Negative |
+| C | One atlas per signature (exact set of units using a texture) | 1,021 MB to 721 MB; 348 units better, 309 unchanged, none worse | Never worse |
+| C2 | C, merging signatures with at least 80 % overlap | 3 fewer atlases, 34 units worse | Worthless |
+
+- **Option A details.** 4.1 GB of atlases are added and 1,834 rigid copies are needed. Sibling pairs get worse: Tilean militia variants 50.5 to 53.7 MB, Conquistador variants 53.8 to about 81 MB.
+- **Option C selective builds** (best sets first): 5 groups 68 MB, 10 groups 111 MB, 25 groups 186 MB (43 rigids), 50 groups 247 MB, all 131 groups 301 MB.
+- **Estimates ran optimistic.** They come from a coverage grid with 25 % packing slack; see the built result below.
+
+### Shared texture repack, first increment (`PackTextureAtlasBatchService.SharedTextureRepack.cs`)
+
+Built, opt-in: "Repack shared textures (experimental)" (off by default). New smaller textures hold only the regions a rigid's parts use, at the same texel density; the rigid's UVs are rewritten for all LODs, new materials are written and its WSModels repointed. Original textures are not edited.
+
+- **Scope.** Option C sets confined to one mod-owned rigid. Cannot be combined with atlasing, cross-rigid merges or cross-rigid-only mode (all rewrite UVs).
+- **Chart snapping.** Charts are snapped to 32 px so mips 0-3 are block-copied exactly. This fixed a bug: mip-3 errors came from regions offset by 2 texels against the 4x4 block grid.
+- **Pixel check before writing.** Block-copied levels must match exactly. Re-encoded levels fail if more than 0.5 % of samples are over 96 or the mean is over 12.
+- **Layout.** Layout groups combine tuples with the same slots, formats and ratios. Pages split at 4096. A group needs at least 512 KiB saved and a set at least 2 MiB.
+- **Pass-through.** Auxiliary slots (blood, dither, distortion, distortion noise) pass through, and `blood_uv_scale` is divided by the UV scale. Tiny uniform textures are kept as authored.
+- **Output paths.** Generated vanilla-material copies go under `variantmeshes\asset_editor\repack_materials\`, textures under `textures\asset_editor\atlases\*_repack_*.dds`. The rigid's embedded material is not updated (same as existing atlas practice).
+
+Selection funnel:
+
+| Step | Sets |
+|---|---|
+| Considered | 299 |
+| Estimated saving below threshold | 261 |
+| Not confined to one rigid | 22 |
+| Rigid not eligible | 1 |
+| Dropped by closure (15 parts whose material uses textures outside the set) and related checks | 5 |
+| Failed the bytes gate (near-full coverage) | 6 |
+| Failed the pixel check | 0 |
+| **Built** | **4** |
+
+Built sets:
+
+| Set (rigid) | Before | After |
+|---|---|---|
+| `ak_teb_lupio_demi_body` | 11.18 MB | 5.59 MB |
+| `teb_golden_lion_stuff` (4 tuples, 2 pages) | 17.48 MB | 11.32 MB |
+| `ak_teb_lupio` | 11.18 MB | 0.70 MB |
+| `teb_inquisitor_staff_02` | 11.18 MB | 0.70 MB |
+| **Total** | **51.0 MB** | **18.3 MB** |
+
+- **Saving 32.7 MB.** Zero pixel error on about 101,500 top-mip samples; validation passes; the stage takes 9.2 s.
+- **The estimate was optimistic.** The demigryph body was estimated at 16.8 MB saved and saved 5.6 MB; the lion was estimated at 11.9 MB and saved 6.2 MB.
+- **Checked in-game by the author:** Lupio, the lion and the inquisitor staff look fine. Blood density with blood enabled is not yet checked, and the `blood_uv_scale` rule is an assumption.
+- **What is left:** the 22 multi-rigid sets and the 5 closure-dropped sets. A next increment would have to rewrite several rigids consistently against one shared texture set. Memory only.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).
 2. **The portfolio search no longer improves results** (baseline = best in every run since the per-payload ceiling) and optimises a different gate than the final writer. Kept at the author's request.
 3. **Ten tests in `Test.KitbashEditor` fail** (`LoadAndSave_Rome2_*`, `Warhammer3_SaveKarl_*`, `ArgumentOutOfRangeException: length ('-1')`). Not investigated; ignored at the author's request.
+4. **Blood density is unchecked** after the shared texture repack. The `blood_uv_scale` division is an assumption; check a repacked unit with blood enabled.
+5. **The repack estimate is optimistic.** Built savings were 5.6 of 16.8 MB (demigryph body) and 6.2 of 11.9 MB (lion), so the Option C figures in the per-unit estimate should be read as upper bounds.
+6. **The "stays loaded anyway" probability is not computed** for vanilla texture cropping, so its 127 / 217 MB figures are upper bounds.
 
 ## Changes made this session
 
@@ -139,6 +233,14 @@ With LOD geometry and distances out of scope, the geometry-side levers left to t
 - Fixed `ParamList<T>.Clone()` in `Shared/GameFiles/RigidModel/MaterialHeaders/ParamList.cs`, which returned an empty list. Every cloned rigid material lost its alpha index, UV scale and decal/dirt indices, so merge compatibility ignored them and merged parts were written without them. The merge check is stricter as a result.
 - New tests in `PackTextureAtlasCrossRigidTests.cs`; 329 pass across that class and `PackTextureAtlasValueGateTests`.
 
+### 2026-10-12 to 15: texture memory
+
+- Texture downscale (`PackTextureAtlasBatchService.TextureDownscale.cs`): report plus opt-in "Downscale oversized textures (experimental)", with the lord/hero rule (unclassifiable units count as lord/hero). Off by default.
+- Vanilla texture coverage (`PackTextureAtlasBatchService.VanillaTextureCoverage.cs`): report only.
+- Per-unit repack estimate (`PackTextureAtlasBatchService.UnitTextureRepack.cs`): report only, Options A, B, C, C2 and a selective view.
+- Shared texture repack (`PackTextureAtlasBatchService.SharedTextureRepack.cs`): opt-in, first increment. New "Repack shared textures (experimental)" checkbox in `TextureAtlasProgressWindow.xaml`, off by default and disabled together with atlasing, cross-rigid merges and cross-rigid-only mode.
+- Tests: the `FullyQualifiedName~PackTextureAtlas` filter now runs 504 tests, all passing.
+
 ## Recommendations
 
 1. Do not build the shared-atlas planner or a per-configuration writer.
@@ -146,3 +248,7 @@ With LOD geometry and distances out of scope, the geometry-side levers left to t
 3. The five-alternative limit is fixed; consider leaving cross-rigid off by default anyway, since it adds about 2,000 small VMD files and tens of MiB of geometry for roughly 0.2 % FPS.
 4. Keep same-rigid merging and atlasing; they reduce parts per soldier without rewriting VMDs.
 5. If more performance is wanted, look at per-soldier GPU cost (for example vertex count at distance), which the tool does not address.
+6. Texture work is memory only; do not expect FPS from it.
+7. Keep texture downscaling and shared texture repack opt-in.
+8. Do not build per-texture reverse atlasing or per-unit atlases (Options A and B).
+9. Build the multi-rigid repack increment only if video memory on large pack lists matters.
