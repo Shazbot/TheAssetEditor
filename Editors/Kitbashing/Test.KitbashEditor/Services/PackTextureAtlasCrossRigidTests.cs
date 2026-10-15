@@ -8265,7 +8265,7 @@ namespace Test.KitbashEditor.Services
         private static void AssertFunnelReconciles(object result)
         {
             var considered = Get<int>(result, "SetsConsidered");
-            var accounted = Get<int>(result, "BelowThreshold") + Get<int>(result, "NotSingleRigid") +
+            var accounted = Get<int>(result, "BelowThreshold") +
                             Get<int>(result, "RigidNotEligible") + Get<int>(result, "DroppedByClosure") +
                             Get<int>(result, "NotBuildable") + Get<int>(result, "FailedActualBytes") +
                             Get<int>(result, "FailedPixelCheck") + Get<int>(result, "Built");
@@ -8559,19 +8559,320 @@ namespace Test.KitbashEditor.Services
             return right - left + 1;
         }
 
-        [Test]
-        public void SharedRepack_SecondRigidUsingTheTexture_IsNotConfinedToOneRigid()
+        // The standard rigid (m1 + m2) and a second mod-owned rigid of the same unit using both
+        // materials on other regions of the same textures.
+        private static (SrWorld World, Func<RmvFile> Second) BuildTwoRigidSrWorld()
         {
             var world = BuildStandardSrWorld();
             var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
+            var second = SrRigidFactory([(m1, SrBlocks((9, 9))), (m2, SrBlocks((5, 5)))]);
+            world.AddModel(SrRigid2, SrWs2, SrRoot, second, [[m1, m2]]);
+            return (world, second);
+        }
+
+        private static List<string> SrBuiltRigids(object built)
+            => Get<IEnumerable>(built, "Rigids").Cast<object>()
+                .Select(item => item.ToString()!)
+                .ToList();
+
+        [Test]
+        public void SharedRepack_SecondRigidUsingTheTexture_SetIsBuiltAcrossBothRigids()
+        {
+            var (world, _) = BuildTwoRigidSrWorld();
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "SetsConsidered"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<string>(built, "Rigid"), Is.EqualTo(SrRigid));
+            Assert.That(SrBuiltRigids(built), Is.EqualTo(new[] { $"({SrRigid}, 4)", $"({SrRigid2}, 2)" }));
+            Assert.That(Get<int>(built, "Parts"), Is.EqualTo(6));
+            Assert.That(Get<int>(built, "Tuples"), Is.EqualTo(2));
+            Assert.That(
+                Get<HashSet<string>>(world.State, "ModifiedRigids"),
+                Is.EquivalentTo(new[] { SrRigid, SrRigid2 }));
+            Assert.That(
+                Get<HashSet<string>>(world.State, "ModifiedWsModels"),
+                Is.EquivalentTo(new[] { SrWs, SrWs2 }));
+            Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Is.EquivalentTo(new[] { SrRigid, SrRigid2 }));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_TwoRigidsSharingTextureTuples_UseTheSameGeneratedTextures_AndSampleTheSameColours()
+        {
+            var (world, second) = BuildTwoRigidSrWorld();
+            var first = BuildStandardSrWorld().Rigids[SrRigid];
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            // One generated texture per slot and layout group serves both rigids.
+            Assert.That(world.Fixture.Output.Keys.Count(key => key.Contains("_repack_") && key.EndsWith(".dds")), Is.EqualTo(2));
+            Assert.That(Get<List<string>>(result, "GeneratedTextures"), Has.Count.EqualTo(2));
+            Assert.That(Get<List<string>>(result, "GeneratedMaterials"), Has.Count.EqualTo(2));
+            for (var part = 0; part < 2; part++)
+            {
+                Assert.That(
+                    SrWsMaterial(world.State, SrWs2, 0, part),
+                    Is.EqualTo(SrWsMaterial(world.State, SrWs, 0, part)));
+                Assert.That(SrWsMaterial(world.State, SrWs2, 0, part), Does.Contain("_repack_"));
+            }
+
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart0Seeds, (_, part) => part == 0);
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart1Seeds, (_, part) => part == 1);
+            var (samples, max) = AssertSrPixels(world, SrRigid2, SrWs2, second, SrPart0Seeds, (_, part) => part == 0);
+            AssertSrPixels(world, SrRigid2, SrWs2, second, SrPart1Seeds, (_, part) => part == 1);
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            // The second rigid's regions are charts of the same tuples: four charts in all.
+            Assert.That(Get<int>(SrBuilt(result).Single(), "Charts"), Is.EqualTo(4));
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_MaterialUsedByTwoRigids_ProducesExactlyOneGeneratedMaterial()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
             world.AddModel(SrRigid2, SrWs2, SrRoot, SrRigidFactory([(m1, SrBlocks((9, 9)))]), [[m1]]);
 
             var result = world.Run();
 
-            Assert.That(Get<int>(result, "NotSingleRigid"), Is.GreaterThanOrEqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var materials = Get<List<string>>(result, "GeneratedMaterials");
+            Assert.That(materials, Has.Count.EqualTo(2));
+            Assert.That(materials.Distinct(StringComparer.OrdinalIgnoreCase).Count(), Is.EqualTo(2));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(SrWsMaterial(world.State, SrWs2, 0, 0)));
+            Assert.That(materials, Does.Contain(SrWsMaterial(world.State, SrWs2, 0, 0)));
+            Assert.That(
+                world.Fixture.Output.Keys.Count(key => key.Contains("_repack_") && key.EndsWith(".xml.material")),
+                Is.EqualTo(2));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [TestCase(true, TestName = "SharedRepack_OneRigidVanillaOwned_ItsTexturesLeaveTheSet_AndTheRestBuilds")]
+        [TestCase(false, TestName = "SharedRepack_OneRigidReferencedByAnotherFile_ItsTexturesLeaveTheSet_AndTheRestBuilds")]
+        public void SharedRepack_OneIneligibleRigid_ItsTexturesLeaveTheSet_AndTheRestBuilds(bool vanilla)
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            var m1 = SrMaterialPath("m1");
+            // The second rigid uses only b1 + n1, which part 0 of the first rigid uses too.
+            world.AddModel(
+                SrRigid2, SrWs2, SrRoot, SrRigidFactory([(m1, SrBlocks((9, 9)))]), [[m1]], ownedRigid: !vanilla);
+            if (!vanilla)
+                world.Fixture.AddText("variantmeshes\\notes.txt", "uses " + SrRigid2);
+            var first = BuildStandardSrWorld(false).Rigids[SrRigid];
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            Assert.That(SrBuiltRigids(built), Is.EqualTo(new[] { $"({SrRigid}, 1)" }));
+            var replaced = string.Concat(Get<IEnumerable>(built, "Replaced").Cast<object>());
+            Assert.That(replaced, Does.Contain("sr_b2").And.Contain("sr_n2"));
+            Assert.That(replaced, Does.Not.Contain("sr_b1").And.Not.Contain("sr_n1"));
+            // The texture both rigids use is not repacked: part 0 and the second rigid are untouched.
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(m1));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 1), Does.Contain("_repack_"));
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart1Seeds, (_, part) => part == 1);
+            var rigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            Assert.That(
+                rigid.ModelList[0][0].Mesh.VertexList.Select(vertex => vertex.Uv),
+                Is.EqualTo(first().ModelList[0][0].Mesh.VertexList.Select(vertex => vertex.Uv)));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedRigids"), Is.EquivalentTo(new[] { SrRigid }));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Is.EquivalentTo(new[] { SrWs }));
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain($"rigid {SrRigid2} is not eligible ("));
+            Assert.That(report, Does.Contain("the part's rigid is not eligible: "));
+            Assert.That(report, Does.Contain(vanilla ? "not owned by the source pack" : "notes.txt"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_EveryRigidOfTheSetIneligible_IsCountedUnderRigidNotEligible()
+        {
+            var world = BuildStandardSrWorld();
+            var m1 = SrMaterialPath("m1");
+            world.Fixture.Vanilla[SrRigid] = [0];
+            world.AddModel(SrRigid2, SrWs2, SrRoot, SrRigidFactory([(m1, SrBlocks((9, 9)))]), [[m1]], ownedRigid: false);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "RigidNotEligible"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            AssertFunnelReconciles(result);
+            Assert.That(SrSkips(result), Does.Contain($"{SrRigid}: the rigid overrides a vanilla path"));
+            Assert.That(SrSkips(result), Does.Contain($"{SrRigid2}: the rigid is not owned by the source pack"));
+        }
+
+        [Test]
+        public void SharedRepack_FailureInOneRigid_WritesNothingForEitherRigid()
+        {
+            var (world, second) = BuildTwoRigidSrWorld();
+            var first = BuildStandardSrWorld().Rigids[SrRigid];
+            var sourceBefore = SrSnapshot(world.Fixture.Source);
+
+            object result = null!;
+            WithBeforeCheckHook(
+                plan =>
+                {
+                    // The chart of the second rigid's region: shift it so its pixels are wrong.
+                    var charts = Get<IEnumerable>(Get<IEnumerable>(plan, "Pages").Cast<object>().First(), "Charts")
+                        .Cast<object>().ToList();
+                    var property = charts[^1].GetType().GetProperty("PackX", AnyInstance)!;
+                    property.SetValue(charts[^1], (int)property.GetValue(charts[^1])! + 16);
+                },
+                () => result = world.Run());
+
+            Assert.That(Get<int>(result, "FailedPixelCheck"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
             AssertFunnelReconciles(result);
             Assert.That(world.Fixture.Output.Keys, Has.None.Contain("_repack_"));
             Assert.That(Get<HashSet<string>>(world.State, "ModifiedRigids"), Is.Empty);
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Is.Empty);
+            Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Is.Empty);
+            Assert.That(Get<IDictionary>(world.State, "RigidModels").Contains(SrRigid), Is.False);
+            Assert.That(Get<HashSet<string>>(world.State, "SharedRepackTexturePaths"), Is.Empty);
+            Assert.That(Get<HashSet<string>>(world.State, "SharedRepackMaterialPaths"), Is.Empty);
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(SrMaterialPath("m1")));
+            Assert.That(SrWsMaterial(world.State, SrWs2, 0, 1), Is.EqualTo(SrMaterialPath("m2")));
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+            Assert.That(SrValidate(world), Is.Empty);
+            foreach (var (path, bytes) in sourceBefore)
+                Assert.That(world.Fixture.Source[path], Is.EqualTo(bytes), path);
+            Assert.That(first().ModelList[0].Length, Is.EqualTo(2));
+            Assert.That(second().ModelList[0].Length, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void SharedRepack_ExceptionWhileCheckingASet_WritesNothingAndSkipsTheSet()
+        {
+            var (world, _) = BuildTwoRigidSrWorld();
+
+            object result = null!;
+            WithBeforeCheckHook(_ => throw new InvalidOperationException("boom"), () => result = world.Run());
+
+            Assert.That(Get<int>(result, "NotBuildable"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            AssertFunnelReconciles(result);
+            Assert.That(SrSkips(result), Does.Contain("boom"));
+            Assert.That(world.Fixture.Output.Keys, Has.None.Contain("_repack_"));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedRigids"), Is.Empty);
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Is.Empty);
+            Assert.That(SrWsMaterial(world.State, SrWs2, 0, 0), Is.EqualTo(SrMaterialPath("m1")));
+        }
+
+        // Rigid 1 uses m1 (b1 + n1) and m2 (b2 + n2). Unit 2 uses m1 in rigid 2, so {b1, n1} is
+        // a set of its own spanning two rigids; with unit 3 using m2 in rigid 3 so is {b2, n2}.
+        // Without rigid 3, {b2, n2} is a single-rigid set. Either way rigid 1 is rewritten twice.
+        [TestCase(true, TestName = "SharedRepack_RigidRewrittenByTwoMultiRigidSets_BuildsBothWithDisjointParts")]
+        [TestCase(false, TestName = "SharedRepack_RigidRewrittenByASingleAndAMultiRigidSet_BuildsBothWithDisjointParts")]
+        public void SharedRepack_RigidInTwoSets_BuildsBothWithDisjointParts(bool thirdRigid)
+        {
+            var world = BuildStandardSrWorld();
+            var first = BuildStandardSrWorld().Rigids[SrRigid];
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
+            var rigid2 = SrRigidFactory([(m1, SrBlocks((9, 9)))]);
+            var rigid3 = SrRigidFactory([(m2, SrBlocks((5, 5)))]);
+            world.AddModel(SrRigid2, SrWs2, SrRoot2, rigid2, [[m1]]);
+            if (thirdRigid)
+            {
+                world.AddModel(
+                    "variantmeshes\\wh_main\\sr3.rigid_model_v2", "variantmeshes\\wh_main\\sr3.wsmodel",
+                    "variantmeshes\\wh_variantmodels\\hu1\\emp\\sr3\\sr3.variantmeshdefinition", rigid3, [[m2]]);
+            }
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "SetsConsidered"), Is.EqualTo(2), SrSkips(result));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(2), SrSkips(result));
+            AssertFunnelReconciles(result);
+            var builtSets = SrBuilt(result);
+            Assert.That(
+                builtSets.Select(built => SrBuiltRigids(built).Count),
+                Is.EquivalentTo(thirdRigid ? new[] { 2, 2 } : new[] { 1, 2 }));
+            // The parts are disjoint: part 0 went with {b1, n1}, part 1 with {b2, n2}; the geometry
+            // invariants (positions, indices, UV1, unmoved UV0) held for the doubly rewritten rigid.
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+            Assert.That(
+                builtSets.Sum(built => Get<int>(built, "Parts")),
+                Is.EqualTo(thirdRigid ? 4 + 1 + 1 : 4 + 1));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.Not.EqualTo(SrWsMaterial(world.State, SrWs, 0, 1)));
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart0Seeds, (_, part) => part == 0);
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart1Seeds, (_, part) => part == 1);
+            AssertSrPixels(world, SrRigid2, SrWs2, rigid2, SrPart0Seeds);
+            if (thirdRigid)
+                AssertSrPixels(world, "variantmeshes\\wh_main\\sr3.rigid_model_v2", "variantmeshes\\wh_main\\sr3.wsmodel", rigid3, SrPart1Seeds);
+            Assert.That(
+                Get<HashSet<string>>(world.State, "ModifiedRigids").Count,
+                Is.EqualTo(thirdRigid ? 3 : 2));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_Validation_FailsWhenAGeneratedMaterialIsUsedByAWsModelOfAnUnrewrittenRigid()
+        {
+            var (world, _) = BuildTwoRigidSrWorld();
+            var result = world.Run();
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(SrValidate(world), Is.Empty);
+
+            Get<HashSet<string>>(result, "RepackedRigids").Remove(SrRigid2);
+            var errors = SrValidate(world);
+
+            Assert.That(errors, Has.Some.Contain(SrWs2).And.Contain("was not rewritten"));
+        }
+
+        [Test]
+        public void SharedRepack_TwoRunsOfASetAcrossTwoRigids_ProduceIdenticalBytes()
+        {
+            var (first, _) = BuildTwoRigidSrWorld();
+            var (second, _) = BuildTwoRigidSrWorld();
+            first.Run();
+            second.Run();
+
+            var generated = first.Fixture.Output.Keys.Where(key => key.Contains("_repack_")).OrderBy(key => key).ToList();
+            Assert.That(generated, Has.Count.EqualTo(4));
+            Assert.That(
+                second.Fixture.Output.Keys.Where(key => key.Contains("_repack_")).OrderBy(key => key),
+                Is.EqualTo(generated));
+            foreach (var path in generated)
+                Assert.That(second.Fixture.Output[path], Is.EqualTo(first.Fixture.Output[path]), path);
+            foreach (var rigidPath in new[] { SrRigid, SrRigid2 })
+            {
+                var firstRigid = (RmvFile)Get<IDictionary>(first.State, "RigidModels")[rigidPath]!;
+                var secondRigid = (RmvFile)Get<IDictionary>(second.State, "RigidModels")[rigidPath]!;
+                Assert.That(
+                    secondRigid.ModelList.SelectMany(lod => lod).SelectMany(model => model.Mesh.VertexList.Select(vertex => vertex.Uv)),
+                    Is.EqualTo(firstRigid.ModelList.SelectMany(lod => lod).SelectMany(model => model.Mesh.VertexList.Select(vertex => vertex.Uv))));
+            }
+        }
+
+        [Test]
+        public void SharedRepack_ReportSection_ListsEveryRigidOfAMultiRigidBuiltSet()
+        {
+            var (world, _) = BuildTwoRigidSrWorld();
+            world.Run();
+            SetStateProperty(world.State, "SharedTextureRepackRequested", true);
+            SetStateProperty(world.State, "SharedTextureRepackEnabled", true);
+            GetStaticMethod("FinalizeSharedTextureRepack").Invoke(null, [world.State]);
+
+            var report = BuildSharedRepackSection(world.State);
+
+            Assert.That(report, Does.Contain("whose users are all mod-owned rigids"));
+            Assert.That(report, Does.Not.Contain("Not confined to exactly one rigid"));
+            Assert.That(report, Does.Contain("2 rigid(s) rewritten: " + $"{SrRigid} (4 part(s)), {SrRigid2} (2 part(s))"));
+            Assert.That(report, Does.Contain("Built: 1"));
+            Assert.That(report, Does.Contain("(reconciles)"));
+            Assert.That(report, Does.Contain("2 rigid(s) rewritten."));
         }
 
         [Test]
@@ -8690,8 +8991,9 @@ namespace Test.KitbashEditor.Services
             AssertFunnelReconciles(result);
             Assert.That(Get<int>(result, "SetsConsidered"), Is.EqualTo(3), SrSkips(result));
             Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
-            Assert.That(Get<int>(result, "NotSingleRigid"), Is.EqualTo(1));
-            Assert.That(Get<int>(result, "DroppedByClosure"), Is.EqualTo(1));
+            // The two other sets (n3 alone, b4 alone) span both rigids and each is pulled apart by
+            // the other's texture.
+            Assert.That(Get<int>(result, "DroppedByClosure"), Is.EqualTo(2));
             var reasons = Get<Dictionary<string, int>>(result, "PartDropReasons");
             Assert.That(reasons.Keys, Has.Some.Contain("also uses textures outside the set"));
             var notes = BuildSharedRepackSection(Enabled(world));
@@ -9814,7 +10116,7 @@ namespace Test.KitbashEditor.Services
             var replaced = string.Concat(Get<IEnumerable>(built, "Replaced").Cast<object>());
             Assert.That(replaced, Does.Not.Contain("sr_mask"));
             AssertSrPixels(world, SrRigid, SrWs, BuildStandardSrWorld(false).Rigids[SrRigid], SrPart0Seeds, (_, part) => part == 0);
-            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("kept as authored (tiny uniform): mask"));
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("kept as authored (uniform): mask"));
             Assert.That(SrValidate(world), Is.Empty);
         }
 
@@ -9834,6 +10136,108 @@ namespace Test.KitbashEditor.Services
             Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
             Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(SrMaterialPath("m1")));
             Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("not a uniform colour"));
+        }
+
+        private static byte[] BuildFlatBlackDds(int size)
+        {
+            var bgra = new byte[size * size * 4];
+            for (var offset = 0; offset < bgra.Length; offset += 4)
+                bgra[offset + 3] = 255;
+            var arguments = new object?[] { bgra, size, size, "BC1", true, true, null, null };
+            Assert.That((bool)GetStaticMethod("TryEncodeSharedRepackDds").Invoke(null, arguments)!, Is.True);
+            return (byte[])arguments[6]!;
+        }
+
+        // Part 0 (m1) also binds a 64 x 64 texture in the given slot that another unit (rigid 2)
+        // uses too, so it is outside the set. Returns the world.
+        private static SrWorld BuildOutsideTextureWorld(string slot, byte[] texture)
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            world.Fixture.Vanilla["textures\\sr_outside.dds"] = texture;
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1"),
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (slot, "textures\\sr_outside.dds"));
+            world.Fixture.AddMaterial(SrMaterialPath("m9"), (slot, "textures\\sr_outside.dds"));
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
+            var m9 = SrMaterialPath("m9");
+            world.AddModel(
+                SrRigid, SrWs, SrRoot,
+                SrRigidFactory([(m1, SrBlocks((2, 3), (3, 3))), (m2, SrBlocks((10, 4)))]),
+                [[m1, m2]]);
+            world.AddModel(SrRigid2, SrWs2, SrRoot2, SrRigidFactory([(m9, SrBlocks((1, 1)))]), [[m9]]);
+            return world;
+        }
+
+        [Test]
+        public void SharedRepack_UniformTextureOutsideTheSet_AnySizeBelowTheLimit_DoesNotDropThePart()
+        {
+            var world = BuildOutsideTextureWorld("t_xml_mask", BuildFlatBlackDds(64));
+            var first = BuildStandardSrWorld(false).Rigids[SrRigid];
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<int>(built, "Parts"), Is.EqualTo(2));
+            Assert.That(Get<Dictionary<string, int>>(result, "PartDropReasons"), Is.Empty);
+            var generatedPath = SrWsMaterial(world.State, SrWs, 0, 0);
+            Assert.That(generatedPath, Does.Contain("_repack_"));
+            var generated = Encoding.UTF8.GetString(world.Fixture.Output[generatedPath]);
+            Assert.That(
+                SrSlotNode(generated, "t_xml_mask").SelectSingleNode("source")!.InnerText,
+                Is.EqualTo("textures\\sr_outside.dds"));
+            // The flat texture is never repacked and never counted as replaced.
+            var replaced = string.Concat(Get<IEnumerable>(built, "Replaced").Cast<object>());
+            Assert.That(replaced, Does.Not.Contain("sr_outside"));
+            Assert.That(world.Fixture.Output.Keys, Has.None.Contain("_repack_mask"));
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart0Seeds, (_, part) => part == 0);
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("kept as authored (uniform): mask"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_NonUniformTextureOutsideTheSet_StillDropsThePart_AndOnlyItIsNamed()
+        {
+            // The part also binds a flat texture (material map) that must not be blamed.
+            var world = BuildOutsideTextureWorld("t_xml_mask", BuildContentDds(64, "BC1", true, 5));
+            world.Fixture.Vanilla["textures\\sr_flat.dds"] = BuildFlatBlackDds(256);
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1"),
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                ("t_xml_mask", "textures\\sr_outside.dds"),
+                ("t_xml_material_map", "textures\\sr_flat.dds"));
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            AssertFunnelReconciles(result);
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(SrMaterialPath("m1")));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 1), Does.Contain("_repack_"));
+            Assert.That(
+                Get<Dictionary<string, int>>(result, "PartDropReasons").Keys,
+                Has.Some.Contain("also uses textures outside the set"));
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain("sr_outside.dds, which"));
+            Assert.That(report, Does.Not.Contain("use textures\\sr_flat.dds"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_UniformTextureOverTheDecodeLimit_CountsAsNotUniform()
+        {
+            // 2048 x 2048 flat black: over the 1024 limit it is not decoded, so it blocks the part.
+            var world = BuildOutsideTextureWorld("t_xml_mask", BuildFlatBlackDds(2048));
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(SrMaterialPath("m1")));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 1), Does.Contain("_repack_"));
         }
     }
 }

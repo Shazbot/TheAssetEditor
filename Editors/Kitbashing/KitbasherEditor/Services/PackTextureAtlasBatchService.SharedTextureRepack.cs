@@ -11,21 +11,27 @@ namespace Editors.KitbasherEditor.Services
 {
     public sealed partial class PackTextureAtlasBatchService
     {
-        // Opt-in "Repack shared textures" (increment 1). A mod rigid that keeps a whole large
-        // texture loaded while its parts use a few percent of it gets new, smaller textures
-        // holding only the used regions at the SAME texel density (no downscaling), new UVs
-        // and new materials; the source files are never edited. It only acts on signature
-        // sets of the per-unit repack estimate (Option C) that are confined to one mod-owned
-        // rigid, and re-checks the saving on the ACTUAL bytes before it writes anything.
+        // Opt-in "Repack shared textures". Mod rigids that keep a whole large texture loaded
+        // while their parts use a few percent of it get new, smaller textures holding only the
+        // used regions at the SAME texel density (no downscaling), new UVs and new materials;
+        // the source files are never edited. It acts on signature sets of the per-unit repack
+        // estimate (Option C) whose users are all mod-owned rigids, one generated texture
+        // serving every rigid of the set, and re-checks the saving on the ACTUAL bytes before
+        // it writes anything.
         //
         // Design in short:
-        //  * Parts of the rigid (all LODs) that use the set's textures must be "closed": every
-        //    atlasable texture of every material bound to the part is in the set, the part has
-        //    one texture per slot across its bindings, and every triangle sits inside one
-        //    integer UV tile. Anything else drops the part's textures from the set (until the
-        //    set is closed) and the estimate is recomputed.
-        //  * Parts with the same texture tuple share one UV space. Per tuple the union of all
-        //    its parts' triangles (all LODs) is rasterised conservatively on a grid of
+        //  * Every rigid of the set is checked on its own. The parts (all LODs) of an
+        //    ineligible rigid that use the set's textures are dropped like any other part, so
+        //    their textures leave the set: every user of a repacked texture is rewritten.
+        //  * Parts of the eligible rigids that use the set's textures must be "closed": every
+        //    atlasable texture of every material bound to the part is in the set or is a
+        //    uniform colour (kept as authored), the part has one texture per slot across its
+        //    bindings, and every triangle sits inside one integer UV tile. Anything else drops
+        //    the part's textures from the set (until the set is closed) and the estimate is
+        //    recomputed.
+        //  * Parts with the same texture tuple share one UV space, whatever their rigid. Per
+        //    tuple the union of all its parts' triangles (all LODs, all rigids) is rasterised
+        //    conservatively on a grid of
         //    cells of 8+ source pixels, split into 8-connected components, boxed, padded by
         //    one cell and merged while the padded boxes overlap: the charts.
         //  * All charts of all tuples go into one shared layout (deterministic shelf packer,
@@ -62,9 +68,13 @@ namespace Editors.KitbasherEditor.Services
         // A slot more than 2^4 times smaller than the reference would force a chart grid of
         // 4 << 4 = 64 source pixels or more; such a tuple is left untouched instead.
         private const int SharedRepackMaximumCell = 64;
-        // Textures up to this many pixels per side are "tiny" (the 4x4 masks of vanilla
+        // Member textures up to this many pixels per side are "tiny" (the 4x4 masks of vanilla
         // materials): they are kept as authored when uniform, else the tuple is left untouched.
         private const int SharedRepackTinyTextureSide = 16;
+        // A texture outside the set is only looked at up to this size: a uniform one (a flat
+        // colour such as commontextures\default_black.dds) never blocks a part and is kept as
+        // authored; a larger one counts as not uniform without being decoded.
+        private const int SharedRepackUniformTextureSide = 1024;
         private const int SharedRepackMaximumCharts = 4000;
         private const int SharedRepackMaximumComponents = 8000;
         // Pixel equivalence: BC recompression of already compressed content. A flat or smooth
@@ -99,6 +109,8 @@ namespace Editors.KitbasherEditor.Services
             "a bound material also uses textures outside the set";
         private const string SharedRepackReasonBlockedTexture =
             "a texture cannot be repacked (not BC1/BC3, not a power of two, or an owned override of a vanilla texture)";
+        private const string SharedRepackReasonRigid =
+            "the part's rigid is not eligible: ";
         private const string SharedRepackReasonNoCoverage =
             "the part has no coverage data";
         private const string SharedRepackReasonBadPart =
@@ -274,9 +286,22 @@ namespace Editors.KitbasherEditor.Services
             public double LevelMean => LevelCount == 0 ? 0 : LevelSum / LevelCount;
         }
 
+        // One rigid of a signature set: why it cannot be rewritten (null = eligible), the parts
+        // with a complete WSModel binding and the WSModels bound to it.
+        private sealed class SharedRepackSetRigid
+        {
+            public string Path { get; init; } = string.Empty;
+            public RmvFile? Rigid { get; init; }
+            public string? Reason { get; init; }
+            public List<(string Rigid, int Lod, int Part)> Parts { get; init; } = [];
+            public HashSet<string> WsModels { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        }
+
         private sealed class SharedRepackBuiltSet
         {
+            // The first rewritten rigid in ordinal order, and every rewritten rigid with its parts.
             public string Rigid { get; init; } = string.Empty;
+            public List<(string Rigid, int Parts)> Rigids { get; } = [];
             public string Label { get; init; } = string.Empty;
             public int Units { get; init; }
             public bool? HasCharacter { get; init; }
@@ -320,7 +345,6 @@ namespace Editors.KitbasherEditor.Services
             // The funnel: every considered set ends in exactly one of the buckets below.
             public int SetsConsidered { get; set; }
             public int BelowThreshold { get; set; }
-            public int NotSingleRigid { get; set; }
             public int RigidNotEligible { get; set; }
             public int DroppedByClosure { get; set; }
             public int NotBuildable { get; set; }
@@ -821,6 +845,7 @@ namespace Editors.KitbasherEditor.Services
             var partCache = new Dictionary<(string Rigid, int Lod, int Part), SharedRepackPart>();
             var snapshots = new Dictionary<string, SharedRepackRigidSnapshot>(StringComparer.OrdinalIgnoreCase);
             var movedParts = new Dictionary<string, HashSet<(int Lod, int Part)>>(StringComparer.OrdinalIgnoreCase);
+            var uniformCache = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
             void Skip(string label, string reason)
                 => result.Skips.Add((label, reason));
@@ -936,28 +961,40 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                // 2. One rigid.
-                var rigids = set.Items
+                // 2. The set's rigids. Each is checked on its own: an ineligible one only loses
+                // its parts (they leave the set transitively), the set fails when none is left.
+                var rigidPaths = set.Items
                     .SelectMany(item => item.Entry.ModParts.Concat(item.Entry.VanillaParts))
                     .Select(part => part.Rigid)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(path => path, StringComparer.Ordinal)
                     .ToList();
-                if (rigids.Count != 1)
+                if (rigidPaths.Count == 0)
                 {
-                    result.NotSingleRigid++;
-                    Skip(label, rigids.Count == 0
-                        ? "no part uses the set's textures"
-                        : $"used by {rigids.Count:N0} rigids, not exactly one");
+                    result.DroppedByClosure++;
+                    Skip(label, "no part uses the set's textures");
                     continue;
                 }
 
-                var rigidPath = rigids[0];
-                var (rigid, rigidReason) = GetRigid(rigidPath);
-                if (rigidReason != null || rigid == null)
+                var rigids = new List<SharedRepackSetRigid>();
+                foreach (var rigidPath in rigidPaths)
+                {
+                    var (loaded, rigidReason) = GetRigid(rigidPath);
+                    rigids.Add(new SharedRepackSetRigid
+                    {
+                        Path = rigidPath,
+                        Rigid = rigidReason == null ? loaded : null,
+                        Reason = rigidReason ?? (loaded == null ? "the rigid could not be read" : null),
+                        Parts = partsByRigid.GetValueOrDefault(rigidPath) ?? [],
+                        WsModels = wsByRigid.GetValueOrDefault(rigidPath) ?? [],
+                    });
+                }
+
+                var eligible = rigids.Where(item => item.Rigid != null).ToList();
+                if (eligible.Count == 0)
                 {
                     result.RigidNotEligible++;
-                    Skip(label, $"{rigidPath}: {rigidReason}");
+                    Skip(label, DescribeSharedRepackIneligibleRigids(rigids));
                     continue;
                 }
 
@@ -972,12 +1009,10 @@ namespace Editors.KitbasherEditor.Services
                         coverage,
                         decision,
                         label,
-                        rigidPath,
-                        rigid,
-                        partsByRigid.GetValueOrDefault(rigidPath) ?? [],
-                        wsByRigid.GetValueOrDefault(rigidPath) ?? [],
+                        rigids,
                         setByTexture,
                         GetPart,
+                        texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
                         cancellationToken,
                         out failure,
                         out failureBucket);
@@ -1007,8 +1042,7 @@ namespace Editors.KitbasherEditor.Services
                     result,
                     decision,
                     plan,
-                    rigidPath,
-                    rigid,
+                    eligible.ToDictionary(item => item.Path, item => item.Rigid!, StringComparer.OrdinalIgnoreCase),
                     label,
                     snapshots,
                     movedParts,
@@ -1039,6 +1073,70 @@ namespace Editors.KitbasherEditor.Services
                     movedParts.GetValueOrDefault(path) ?? [],
                     result.ValidationErrors);
             }
+        }
+
+        // One line for a set whose rigids are all ineligible: the first few, each with its reason.
+        private static string DescribeSharedRepackIneligibleRigids(List<SharedRepackSetRigid> rigids)
+        {
+            var text = string.Join("; ", rigids.Take(3).Select(item => $"{item.Path}: {item.Reason}"));
+            return rigids.Count > 3 ? $"{text}; and {rigids.Count - 3:N0} more rigid(s) not eligible" : text;
+        }
+
+        // A texture whose decoded top level is one colour (every channel within 1 of the first
+        // texel). Decoded lazily and once per path; anything over the size limit, unreadable
+        // or unknown counts as not uniform.
+        private static bool IsSharedRepackUniformTexture(
+            BatchState state,
+            VanillaTextureCoverageResult coverage,
+            string texture,
+            Dictionary<string, bool> cache)
+        {
+            if (cache.TryGetValue(texture, out var cached))
+                return cached;
+
+            var uniform = false;
+            try
+            {
+                var layout = coverage.Entries.TryGetValue(texture, out var entry) ? entry.Layout : null;
+                if (layout == null || (layout.Width <= SharedRepackUniformTextureSide &&
+                                       layout.Height <= SharedRepackUniformTextureSide))
+                {
+                    var bytes = ResolveGameplayTraversalContainer(
+                            state.Source, GetGameplayTraversalContainers(state), texture)?
+                        .FindFile(texture)?.DataSource.ReadData();
+                    if (layout == null && bytes != null &&
+                        TryReadDdsLayout(
+                            bytes.AsSpan(0, Math.Min(bytes.Length, TextureDownscaleHeaderPeekBytes)).ToArray(),
+                            out var header))
+                    {
+                        layout = header;
+                    }
+
+                    if (bytes != null && layout != null &&
+                        layout.Width <= SharedRepackUniformTextureSide &&
+                        layout.Height <= SharedRepackUniformTextureSide &&
+                        TryDecodeDdsTopLevel(bytes, out var pixels, out _, out _, out _) &&
+                        pixels.Length >= 4)
+                    {
+                        uniform = true;
+                        for (var offset = 4; offset < pixels.Length && uniform; offset += 4)
+                        {
+                            for (var channel = 0; channel < 4; channel++)
+                            {
+                                if (Math.Abs(pixels[offset + channel] - pixels[channel]) > 1)
+                                    uniform = false;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                uniform = false;
+            }
+
+            cache[texture] = uniform;
+            return uniform;
         }
 
         private static string DescribeSharedRepackSet(UnitRepackSetDecision decision)
@@ -1283,7 +1381,7 @@ namespace Editors.KitbasherEditor.Services
         private string DescribeSharedRepackOutsideTexture(
             BatchState state,
             VanillaTextureCoverageResult coverage,
-            string rigidPath,
+            HashSet<string> setRigids,
             string texture,
             Dictionary<string, UnitRepackSignatureSet> setByTexture,
             Dictionary<string, string> removedBecause,
@@ -1304,7 +1402,7 @@ namespace Editors.KitbasherEditor.Services
 
             var others = entry.ModParts.Concat(entry.VanillaParts)
                 .Select(part => part.Rigid)
-                .Where(path => !path.Equals(rigidPath, StringComparison.OrdinalIgnoreCase))
+                .Where(path => !setRigids.Contains(path))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -1322,18 +1420,19 @@ namespace Editors.KitbasherEditor.Services
             return text.Count == 0 ? "is outside the set" : string.Join(" and ", text);
         }
 
+        private static string DescribeSharedRepackPart(SharedRepackPart part)
+            => $"rigid {part.Key.GeometryPath} lod {part.Key.LodIndex} part {part.Key.PartIndex}";
+
         private SharedRepackSetPlan? PlanSharedRepackSet(
             BatchState state,
             SharedTextureRepackResult result,
             VanillaTextureCoverageResult coverage,
             UnitRepackSetDecision decision,
             string label,
-            string rigidPath,
-            RmvFile rigid,
-            List<(string Rigid, int Lod, int Part)> rigidParts,
-            HashSet<string> wsModels,
+            List<SharedRepackSetRigid> rigids,
             Dictionary<string, UnitRepackSignatureSet> setByTexture,
             Func<string, RmvFile, int, int, SharedRepackPart> getPart,
+            Func<string, bool> isUniform,
             CancellationToken cancellationToken,
             out string? failure,
             out string failureBucket)
@@ -1348,6 +1447,7 @@ namespace Editors.KitbasherEditor.Services
                 item => Normalize(item.Entry.Path),
                 item => item.Entry,
                 StringComparer.OrdinalIgnoreCase);
+            var setRigids = rigids.Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             // Textures that can never be copied exactly leave the set up front.
             var members = new HashSet<string>(slotOf.Keys, StringComparer.OrdinalIgnoreCase);
@@ -1363,19 +1463,76 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            var candidates = rigidParts
-                .Select(key => getPart(rigidPath, rigid, key.Lod, key.Part))
-                .ToList();
-            var dropped = new HashSet<(int Lod, int Part)>();
+            // The parts of the eligible rigids. An ineligible rigid cannot be rewritten, so
+            // each of its parts that uses a texture of the set is a candidate that is dropped
+            // up front (it only knows the set's textures it uses, which is all a drop needs).
+            var candidates = new List<SharedRepackPart>();
+            foreach (var item in rigids.Where(item => item.Rigid != null))
+                candidates.AddRange(item.Parts.Select(key => getPart(item.Path, item.Rigid!, key.Lod, key.Part)));
+            var ineligible = rigids.Where(item => item.Rigid == null)
+                .ToDictionary(item => item.Path, item => item, StringComparer.OrdinalIgnoreCase);
+            var pseudoParts = new Dictionary<string, SortedDictionary<(int Lod, int Part), SharedRepackPart>>(
+                StringComparer.OrdinalIgnoreCase);
+            if (ineligible.Count != 0)
+            {
+                foreach (var (path, entry) in entryOf.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                {
+                    foreach (var key in entry.ModParts.Concat(entry.VanillaParts))
+                    {
+                        if (!ineligible.TryGetValue(key.Rigid, out var item))
+                            continue;
+
+                        if (!pseudoParts.TryGetValue(item.Path, out var byKey))
+                        {
+                            byKey = [];
+                            pseudoParts[item.Path] = byKey;
+                        }
+
+                        if (!byKey.TryGetValue((key.Lod, key.Part), out var part))
+                        {
+                            part = new SharedRepackPart
+                            {
+                                Key = new MeshKey(item.Path, key.Lod, key.Part),
+                                Reason = SharedRepackReasonRigid + item.Reason,
+                            };
+                            byKey[(key.Lod, key.Part)] = part;
+                        }
+
+                        part.Textures.Add(path);
+                    }
+                }
+            }
+
+            var ineligibleNotes = 0;
+            foreach (var item in rigids.Where(item => item.Rigid == null))
+            {
+                var count = 0;
+                if (pseudoParts.TryGetValue(item.Path, out var byKey))
+                {
+                    candidates.AddRange(byKey.Values);
+                    count = byKey.Count;
+                }
+
+                if (ineligibleNotes++ < 3)
+                {
+                    result.ClosureNotes.Add((
+                        label,
+                        $"rigid {item.Path} is not eligible ({item.Reason}); its {count:N0} part(s) " +
+                        "using the set's textures were dropped"));
+                }
+            }
+
+            var dropped = new HashSet<MeshKey>();
             var removedBecause = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var outside = new Dictionary<string, (int Count, string Description)>(StringComparer.OrdinalIgnoreCase);
             void Drop(SharedRepackPart part, string reason)
             {
-                dropped.Add((part.Key.LodIndex, part.Key.PartIndex));
+                dropped.Add(part.Key);
                 result.PartDropReasons[reason] = result.PartDropReasons.GetValueOrDefault(reason) + 1;
                 if (reason == SharedRepackReasonMixed || reason == SharedRepackReasonBlockedTexture)
                 {
-                    foreach (var texture in part.Textures.Where(texture => !members.Contains(texture))
+                    // Uniform colours do not block a part, so they are not what pulled it out.
+                    foreach (var texture in part.Textures.Where(texture => !members.Contains(texture) && !isUniform(texture))
                                  .OrderBy(texture => texture, StringComparer.Ordinal))
                     {
                         var known = outside.TryGetValue(texture, out var existing);
@@ -1384,7 +1541,7 @@ namespace Editors.KitbasherEditor.Services
                             known
                                 ? existing.Description
                                 : DescribeSharedRepackOutsideTexture(
-                                    state, coverage, rigidPath, texture, setByTexture, removedBecause, blocked, entryOf));
+                                    state, coverage, setRigids, texture, setByTexture, removedBecause, blocked, entryOf));
                     }
                 }
 
@@ -1392,10 +1549,25 @@ namespace Editors.KitbasherEditor.Services
                 {
                     removedBecause.TryAdd(
                         texture,
-                        $"lod {part.Key.LodIndex} part {part.Key.PartIndex} was dropped ({reason})");
+                        $"{DescribeSharedRepackPart(part)} was dropped ({reason})");
                 }
 
                 members.ExceptWith(part.Textures);
+            }
+
+            // Why a part's textures outside the set keep it out of it: null when each of them
+            // is a uniform colour, which is kept as authored and so never blocks the part.
+            string? OutsideReason(SharedRepackPart part)
+            {
+                var offending = part.Textures
+                    .Where(texture => !members.Contains(texture) && !isUniform(texture))
+                    .ToList();
+                if (offending.Count == 0)
+                    return null;
+
+                return offending.Any(blocked.Contains)
+                    ? SharedRepackReasonBlockedTexture
+                    : SharedRepackReasonMixed;
             }
 
             var changed = true;
@@ -1404,19 +1576,12 @@ namespace Editors.KitbasherEditor.Services
                 changed = false;
                 foreach (var part in candidates)
                 {
-                    if (dropped.Contains((part.Key.LodIndex, part.Key.PartIndex)) ||
-                        !part.Textures.Overlaps(members))
-                    {
+                    if (dropped.Contains(part.Key) || !part.Textures.Overlaps(members))
                         continue;
-                    }
 
                     string? reason = part.Reason;
                     if (reason == null && !part.Textures.IsSubsetOf(members))
-                    {
-                        reason = part.Textures.Any(blocked.Contains)
-                            ? SharedRepackReasonBlockedTexture
-                            : SharedRepackReasonMixed;
-                    }
+                        reason = OutsideReason(part);
 
                     if (reason == null && !part.GeometryChecked)
                     {
@@ -1447,18 +1612,18 @@ namespace Editors.KitbasherEditor.Services
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var moved = candidates
-                    .Where(part => !dropped.Contains((part.Key.LodIndex, part.Key.PartIndex)) &&
-                                   part.Textures.Overlaps(members))
+                    .Where(part => !dropped.Contains(part.Key) && part.Textures.Overlaps(members))
                     .ToList();
                 if (moved.Count == 0 || members.Count == 0)
                 {
                     NoteOutside();
-                    failure = "no part is left after closing the set (mixed materials, variants, tiling or " +
-                              "non-atlasable slots)";
+                    failure = "no part is left after closing the set (mixed materials, variants, tiling, " +
+                              "non-atlasable slots or ineligible rigids)";
                     return null;
                 }
 
-                // Re-estimate on what is left.
+                // Re-estimate on what is left; the coverage of a texture is the union over all
+                // its users in all rigids.
                 var items = new List<(string Slot, DdsLayout Layout, double Coverage)>();
                 long today = 0;
                 var scratch = CreateVanillaCoverageGrid();
@@ -1467,7 +1632,7 @@ namespace Editors.KitbasherEditor.Services
                     Array.Clear(scratch);
                     foreach (var part in moved.Where(part => part.Textures.Contains(path)))
                     {
-                        var data = coverage.PartData[(rigidPath, part.Key.LodIndex, part.Key.PartIndex)];
+                        var data = coverage.PartData[(part.Key.GeometryPath, part.Key.LodIndex, part.Key.PartIndex)];
                         for (var word = 0; word < scratch.Length; word++)
                             scratch[word] |= data.Grid[word];
                     }
@@ -1488,41 +1653,22 @@ namespace Editors.KitbasherEditor.Services
                     return null;
                 }
 
-                // Charts; a vertex that falls into two charts removes its part.
-                var tinyCache = new Dictionary<string, bool?>(StringComparer.OrdinalIgnoreCase);
-                bool? ClassifyTiny(string texture)
+                // Charts; a vertex that falls into two charts removes its part. Members up to
+                // the tiny size are kept as authored when uniform (else their tuple is left
+                // untouched); every other member is repacked; a texture outside the set is
+                // kept as authored (the closure only lets uniform ones through).
+                bool? ClassifyConstant(string texture)
                 {
-                    if (tinyCache.TryGetValue(texture, out var cached))
-                        return cached;
+                    if (!members.Contains(texture))
+                        return isUniform(texture);
 
-                    bool? answer = null;
                     var layout = entryOf[texture].Layout!;
-                    if (layout.Width <= SharedRepackTinyTextureSide && layout.Height <= SharedRepackTinyTextureSide)
-                    {
-                        var bytes = ResolveGameplayTraversalContainer(
-                                state.Source, GetGameplayTraversalContainers(state), texture)?
-                            .FindFile(texture)?.DataSource.ReadData();
-                        answer = false;
-                        if (bytes != null &&
-                            TryDecodeDdsTopLevel(bytes, out var pixels, out _, out _, out _))
-                        {
-                            answer = true;
-                            for (var offset = 4; offset < pixels.Length && answer == true; offset += 4)
-                            {
-                                for (var channel = 0; channel < 4; channel++)
-                                {
-                                    if (Math.Abs(pixels[offset + channel] - pixels[channel]) > 1)
-                                        answer = false;
-                                }
-                            }
-                        }
-                    }
-
-                    tinyCache[texture] = answer;
-                    return answer;
+                    return layout.Width <= SharedRepackTinyTextureSide && layout.Height <= SharedRepackTinyTextureSide
+                        ? isUniform(texture)
+                        : null;
                 }
 
-                var tuples = BuildSharedRepackTuples(moved, entryOf, ClassifyTiny, out var violating);
+                var tuples = BuildSharedRepackTuples(moved, entryOf, ClassifyConstant, out var violating);
                 if (violating.Count != 0)
                 {
                     foreach (var part in violating)
@@ -1533,11 +1679,12 @@ namespace Editors.KitbasherEditor.Services
                         again = false;
                         foreach (var part in candidates)
                         {
-                            if (!dropped.Contains((part.Key.LodIndex, part.Key.PartIndex)) &&
+                            if (!dropped.Contains(part.Key) &&
                                 part.Textures.Overlaps(members) &&
-                                !part.Textures.IsSubsetOf(members))
+                                !part.Textures.IsSubsetOf(members) &&
+                                OutsideReason(part) is { } reason)
                             {
-                                Drop(part, SharedRepackReasonMixed);
+                                Drop(part, reason);
                                 again = true;
                             }
                         }
@@ -1548,7 +1695,7 @@ namespace Editors.KitbasherEditor.Services
 
                 NoteOutside();
                 return BuildSharedRepackSetPlan(
-                    state, result, coverage, rigidPath, tuples, entryOf, wsModels, label, out failure, out failureBucket);
+                    state, result, coverage, rigids, tuples, entryOf, label, out failure, out failureBucket);
             }
 
             failure = "the set could not be closed";
@@ -1560,7 +1707,7 @@ namespace Editors.KitbasherEditor.Services
         private static List<SharedRepackTuple> BuildSharedRepackTuples(
             List<SharedRepackPart> moved,
             Dictionary<string, VanillaCoverageTexture> entryOf,
-            Func<string, bool?> classifyTiny,
+            Func<string, bool?> classifyConstant,
             out List<SharedRepackPart> violating)
         {
             violating = [];
@@ -1577,7 +1724,10 @@ namespace Editors.KitbasherEditor.Services
                         group.First().Slots,
                         StringComparer.OrdinalIgnoreCase),
                 };
-                tuple.Parts.AddRange(group.OrderBy(part => part.Key.LodIndex).ThenBy(part => part.Key.PartIndex));
+                tuple.Parts.AddRange(group
+                    .OrderBy(part => part.Key.GeometryPath, StringComparer.Ordinal)
+                    .ThenBy(part => part.Key.LodIndex)
+                    .ThenBy(part => part.Key.PartIndex));
                 tuples.Add(tuple);
                 if (tuple.Slots.Count == 0)
                 {
@@ -1585,18 +1735,18 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                // Tiny uniform textures (vanilla's 4x4 masks) cannot be cropped per chart and do
-                // not need to be: they stay as authored. A tiny texture that is not uniform
-                // cannot be repacked.
+                // Uniform textures (vanilla's 4x4 masks, a flat colour outside the set) cannot be
+                // cropped per chart and do not need to be: they stay as authored. A tiny
+                // texture that is not uniform cannot be repacked.
                 foreach (var (slot, texture) in tuple.Slots.ToList())
                 {
-                    var tiny = classifyTiny(texture);
-                    if (tiny == true)
+                    var constant = classifyConstant(texture);
+                    if (constant == true)
                     {
                         tuple.ConstantSlots[slot] = texture;
                         tuple.Slots.Remove(slot);
                     }
-                    else if (tiny == false)
+                    else if (constant == false)
                     {
                         tuple.Excluded = $"its tiny {Path.GetFileName(texture)} is not a uniform colour";
                     }
@@ -1606,7 +1756,7 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 if (tuple.Slots.Count == 0)
                 {
-                    tuple.Excluded = "every texture is a tiny uniform one (nothing to repack)";
+                    tuple.Excluded = "every texture is a uniform one (nothing to repack)";
                     continue;
                 }
 
@@ -1774,9 +1924,11 @@ namespace Editors.KitbasherEditor.Services
                 for (var cellIndex = 0; cellIndex < grid.Length; cellIndex++)
                     tuple.CellChart[cellIndex] = label[cellIndex] < 0 ? -1 : chartOfRoot[Find(label[cellIndex])];
 
-                // Assign every vertex the chart of its triangles; all must agree.
+                // Assign every vertex the chart of its triangles; all must agree. (A part's
+                // assignment from an earlier round of the closure is void.)
                 foreach (var part in tuple.Parts)
                 {
+                    Array.Fill(part.VertexChart, -1);
                     var indices = part.Model!.Mesh.IndexList;
                     var bad = false;
                     for (var index = 0; index < indices.Length && !bad; index += 3)
@@ -1853,7 +2005,7 @@ namespace Editors.KitbasherEditor.Services
             var constants = tuples.SelectMany(tuple => tuple.ConstantSlots.Keys).Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(slot => slot, StringComparer.Ordinal).ToList();
             if (constants.Count != 0)
-                parts.Add("kept as authored (tiny uniform): " + string.Join(", ", constants.Select(slot => slot.Replace("t_xml_", string.Empty))));
+                parts.Add("kept as authored (uniform): " + string.Join(", ", constants.Select(slot => slot.Replace("t_xml_", string.Empty))));
             return string.Join("; ", parts);
         }
 
@@ -1861,7 +2013,7 @@ namespace Editors.KitbasherEditor.Services
             => string.Join(
                 "; ",
                 tuple.Layouts.Select(pair => $"{pair.Key.Replace("t_xml_", string.Empty)} {pair.Value.Width}x{pair.Value.Height}")
-                    .Concat(tuple.ConstantSlots.Select(pair => $"{pair.Key.Replace("t_xml_", string.Empty)} tiny uniform kept")));
+                    .Concat(tuple.ConstantSlots.Select(pair => $"{pair.Key.Replace("t_xml_", string.Empty)} uniform kept")));
 
         private static string DescribeSharedRepackTuple(SharedRepackTuple tuple)
             => string.Join(" + ", tuple.Slots.Values.Select(path => Path.GetFileName(path)));
@@ -1874,10 +2026,9 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             SharedTextureRepackResult result,
             VanillaTextureCoverageResult coverage,
-            string rigidPath,
+            List<SharedRepackSetRigid> rigids,
             List<SharedRepackTuple> tuples,
             Dictionary<string, VanillaCoverageTexture> entryOf,
-            HashSet<string> wsModels,
             string label,
             out string? failure,
             out string failureBucket)
@@ -1887,6 +2038,19 @@ namespace Editors.KitbasherEditor.Services
             var plan = new SharedRepackSetPlan();
             plan.Tuples.AddRange(tuples);
             var gated = false;
+            var wsByRigid = rigids.ToDictionary(item => item.Path, item => item.WsModels, StringComparer.OrdinalIgnoreCase);
+
+            // The generated names come from the first rigid (ordinal) with a part in this plan
+            // and a hash over all of them, so a set spanning several rigids is named by the whole
+            // set. For a set of one rigid the identity is that rigid's path.
+            var planRigids = tuples
+                .SelectMany(tuple => tuple.Parts)
+                .Select(part => part.Key.GeometryPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToList();
+            var nameRigid = planRigids[0];
+            var identity = string.Join("|", planRigids);
 
             // Tuples that share a texture form one component.
             var parent = Enumerable.Range(0, tuples.Count).ToArray();
@@ -1960,7 +2124,7 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var group in active.GroupBy(tuple => tuple.GroupKey).OrderBy(group => group.Key, StringComparer.Ordinal))
                 {
                     var groupTuples = group.OrderBy(tuple => tuple.Index).ToList();
-                    var pages = PackSharedRepackGroup(rigidPath, groupTuples, maximumSide, plan.Pages.Count, out var excludeTuple, out var excludeReason);
+                    var pages = PackSharedRepackGroup(nameRigid, identity, groupTuples, maximumSide, plan.Pages.Count, out var excludeTuple, out var excludeReason);
                     if (excludeTuple != null)
                     {
                         excludeTuple.Excluded = excludeReason;
@@ -2057,36 +2221,44 @@ namespace Editors.KitbasherEditor.Services
             }
 
             // Materials and WSModel repoints per page.
+            var reserved = new HashSet<string>(state.SharedRepackMaterialPaths, StringComparer.OrdinalIgnoreCase);
             foreach (var page in plan.Pages)
             {
-                if (!BuildSharedRepackPageMaterials(state, rigidPath, page, wsModels, out failure))
+                if (!BuildSharedRepackPageMaterials(state, page, wsByRigid, reserved, out failure))
                     return null;
             }
 
-            // Every WSModel of the rigid must bind every moved (lod, part), or it would
-            // sample the new UVs with an embedded material.
-            foreach (var ws in wsModels.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            // Every WSModel of a rigid must bind every moved (lod, part) of that rigid, or it
+            // would sample the new UVs with an embedded material.
+            foreach (var rigidGroup in plan.Pages.SelectMany(page => page.Parts)
+                         .GroupBy(part => part.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                         .OrderBy(group => group.Key, StringComparer.Ordinal))
             {
-                var document = GetWsDocument(state, ws);
-                if (document == null)
+                foreach (var ws in (wsByRigid.GetValueOrDefault(rigidGroup.Key) ?? [])
+                             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
                 {
-                    failure = $"WSModel {ws} could not be read";
-                    return null;
-                }
-
-                var bound = document.SelectNodes("/model/materials/material")?.Cast<XmlNode>()
-                    .Select(node => TryParseIndex(node, "lod_index", out var lod) &&
-                                    TryParseIndex(node, "part_index", out var partIndex)
-                        ? (lod, partIndex)
-                        : (-1, -1))
-                    .ToHashSet() ?? [];
-                foreach (var part in plan.Pages.SelectMany(page => page.Parts))
-                {
-                    if (!bound.Contains((part.Key.LodIndex, part.Key.PartIndex)))
+                    var document = GetWsDocument(state, ws);
+                    if (document == null)
                     {
-                        failure = $"WSModel {ws} does not bind lod {part.Key.LodIndex} part " +
-                                  $"{part.Key.PartIndex}, which would then use the new UVs with its embedded material";
+                        failure = $"WSModel {ws} could not be read";
                         return null;
+                    }
+
+                    var bound = document.SelectNodes("/model/materials/material")?.Cast<XmlNode>()
+                        .Select(node => TryParseIndex(node, "lod_index", out var lod) &&
+                                        TryParseIndex(node, "part_index", out var partIndex)
+                            ? (lod, partIndex)
+                            : (-1, -1))
+                        .ToHashSet() ?? [];
+                    foreach (var part in rigidGroup)
+                    {
+                        if (!bound.Contains((part.Key.LodIndex, part.Key.PartIndex)))
+                        {
+                            failure = $"WSModel {ws} does not bind lod {part.Key.LodIndex} part " +
+                                      $"{part.Key.PartIndex} of {rigidGroup.Key}, which would then use the new " +
+                                      "UVs with its embedded material";
+                            return null;
+                        }
                     }
                 }
             }
@@ -2097,7 +2269,8 @@ namespace Editors.KitbasherEditor.Services
         // One group's pages. Charts that a part uses together form a cluster and stay on one
         // page. Returns null with a tuple to exclude when a cluster cannot fit at all.
         private static List<SharedRepackPage> PackSharedRepackGroup(
-            string rigidPath,
+            string nameRigid,
+            string identity,
             List<SharedRepackTuple> groupTuples,
             int maximumSide,
             int firstPageNumber,
@@ -2240,10 +2413,10 @@ namespace Editors.KitbasherEditor.Services
             {
                 var pageSizes = assignment.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
                 TryPackSharedRepackLayout(pageSizes, maximumWidth, maximumHeight, out var width, out var height, out var positions);
-                var hash = StableHash($"{rigidPath}|{groupTextures}|{first.GroupKey}|{pages.Count}");
+                var hash = StableHash($"{identity}|{groupTextures}|{first.GroupKey}|{pages.Count}");
                 var page = new SharedRepackPage
                 {
-                    Rigid = rigidPath,
+                    Rigid = nameRigid,
                     Hash = hash,
                     GroupKey = first.GroupKey,
                     Index = firstPageNumber + pages.Count,
@@ -2278,7 +2451,7 @@ namespace Editors.KitbasherEditor.Services
                     {
                         Slot = slot,
                         Path = Normalize(
-                            $@"{AtlasDirectory}\{SafeName(Path.GetFileNameWithoutExtension(rigidPath))}_{hash}_repack_{channel.Suffix}.dds"),
+                            $@"{AtlasDirectory}\{SafeName(Path.GetFileNameWithoutExtension(nameRigid))}_{hash}_repack_{channel.Suffix}.dds"),
                         Format = layout.Format,
                         Srgb = layout.IsSrgb,
                         Dx10 = groupTuples.Any(tuple => tuple.Layouts[slot].IsDx10) || layout.IsSrgb,
@@ -2324,12 +2497,14 @@ namespace Editors.KitbasherEditor.Services
             return pages;
         }
 
-        // Generated copies of the page's bound materials and the WSModel nodes to repoint.
+        // Generated copies of the page's bound materials and the WSModel nodes to repoint. A
+        // source material used by parts of several rigids gets one copy per page. Names already
+        // taken by an earlier page or set (reserved) are never reused.
         private bool BuildSharedRepackPageMaterials(
             BatchState state,
-            string rigidPath,
             SharedRepackPage page,
-            HashSet<string> wsModels,
+            Dictionary<string, HashSet<string>> wsByRigid,
+            HashSet<string> reserved,
             out string? failure)
         {
             failure = null;
@@ -2382,51 +2557,65 @@ namespace Editors.KitbasherEditor.Services
                         directory,
                         $"{SafeName(stem)}_repack_{StableHash(page.Hash + "|" + material + (salt == 0 ? string.Empty : "|" + salt))}.xml.material"));
                     if (!state.Source.ContainsFile(newPath) && !OverridesVanillaPath(state, newPath) &&
-                        !page.MaterialMap.ContainsValue(newPath))
+                        !reserved.Contains(newPath))
                     {
                         break;
                     }
                 }
 
+                if (reserved.Contains(newPath))
+                {
+                    failure = $"no free name for the generated copy of material {material}";
+                    return false;
+                }
+
+                reserved.Add(newPath);
                 page.MaterialMap[material] = newPath;
                 page.MaterialDocuments[material] = document;
             }
 
-            foreach (var ws in wsModels.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            // Each rigid's own WSModels, in rigid order.
+            foreach (var rigidGroup in page.Parts
+                         .GroupBy(part => part.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                         .OrderBy(group => group.Key, StringComparer.Ordinal))
             {
-                var document = GetWsDocument(state, ws);
-                if (document == null)
+                foreach (var ws in (wsByRigid.GetValueOrDefault(rigidGroup.Key) ?? [])
+                             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
                 {
-                    failure = $"WSModel {ws} could not be read";
-                    return false;
-                }
-
-                var nodes = document.SelectNodes("/model/materials/material");
-                if (nodes == null)
-                    continue;
-
-                foreach (XmlNode node in nodes)
-                {
-                    if (!TryParseIndex(node, "lod_index", out var lod) ||
-                        !TryParseIndex(node, "part_index", out var partIndex))
+                    var document = GetWsDocument(state, ws);
+                    if (document == null)
                     {
-                        continue;
-                    }
-
-                    var part = page.Parts.FirstOrDefault(item =>
-                        item.Key.LodIndex == lod && item.Key.PartIndex == partIndex);
-                    if (part == null)
-                        continue;
-
-                    var current = Normalize(node.InnerText);
-                    if (!page.MaterialMap.ContainsKey(current))
-                    {
-                        failure = $"WSModel {ws} binds {current} for a moved part, which is not one of its materials";
+                        failure = $"WSModel {ws} could not be read";
                         return false;
                     }
 
-                    page.WsRepoints.Add((node, current));
-                    page.WsModels.Add(ws);
+                    var nodes = document.SelectNodes("/model/materials/material");
+                    if (nodes == null)
+                        continue;
+
+                    foreach (XmlNode node in nodes)
+                    {
+                        if (!TryParseIndex(node, "lod_index", out var lod) ||
+                            !TryParseIndex(node, "part_index", out var partIndex))
+                        {
+                            continue;
+                        }
+
+                        var part = rigidGroup.FirstOrDefault(item =>
+                            item.Key.LodIndex == lod && item.Key.PartIndex == partIndex);
+                        if (part == null)
+                            continue;
+
+                        var current = Normalize(node.InnerText);
+                        if (!page.MaterialMap.ContainsKey(current))
+                        {
+                            failure = $"WSModel {ws} binds {current} for a moved part, which is not one of its materials";
+                            return false;
+                        }
+
+                        page.WsRepoints.Add((node, current));
+                        page.WsModels.Add(ws);
+                    }
                 }
             }
 
@@ -3182,13 +3371,15 @@ namespace Editors.KitbasherEditor.Services
                 problems.Add($"mean mip 2/3 error {levelMean:0.0} exceeds {SharedRepackLevelMeanLimit:0}");
         }
 
+        // All or nothing: every page is composed and pixel-checked and every rewrite is
+        // prepared in memory first; only then is anything written or changed. Any failure on
+        // the way returns null and leaves the output, the rigids and the WSModels untouched.
         private SharedRepackBuiltSet? ApplySharedRepackSetPlan(
             BatchState state,
             SharedTextureRepackResult result,
             UnitRepackSetDecision decision,
             SharedRepackSetPlan plan,
-            string rigidPath,
-            RmvFile rigid,
+            Dictionary<string, RmvFile> rigids,
             string label,
             Dictionary<string, SharedRepackRigidSnapshot> snapshots,
             Dictionary<string, HashSet<(int Lod, int Part)>> movedParts,
@@ -3202,52 +3393,130 @@ namespace Editors.KitbasherEditor.Services
             var sources = new SharedRepackSourceCache(path =>
                 ResolveGameplayTraversalContainer(state.Source, containers, path)?.FindFile(path)?.DataSource.ReadData());
             var generated = new SharedRepackSourceCache(_ => null);
+            var stats = new SharedRepackPixelStats();
+            var rewrites = new List<(SharedRepackPart Part, Microsoft.Xna.Framework.Vector2[] Uv)>();
+            var materialFiles = new List<(string Path, byte[] Data)>();
 
-            // 1. Compose and check, all in memory; nothing is changed yet.
-            foreach (var page in plan.Pages)
+            try
             {
-                foreach (var output in page.Outputs)
+                // 1. Compose and check, all in memory; nothing is changed yet.
+                foreach (var page in plan.Pages)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (!TryComposeSharedRepackOutput(page, output, sources, out var error))
+                    foreach (var output in page.Outputs)
                     {
-                        failure = $"{output.Slot}: {error}";
-                        return null;
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (!TryComposeSharedRepackOutput(page, output, sources, out var error))
+                        {
+                            failure = $"{output.Slot}: {error}";
+                            return null;
+                        }
+
+                        var problem = CheckSharedRepackDds(output.Data, output);
+                        if (problem != null)
+                        {
+                            failure = $"generated {output.Slot} texture {problem}";
+                            return null;
+                        }
+
+                        generated.FromBytes(output.Path, output.Data);
+                    }
+                }
+
+                SharedRepackBeforeCheckHook?.Invoke(plan);
+                var problems = new List<string>();
+                foreach (var page in plan.Pages)
+                    CheckSharedRepackPage(page, sources, generated, stats, problems);
+                if (problems.Count != 0)
+                {
+                    pixelFailure = true;
+                    failure = $"failed the pixel check: {problems[0]} (top-level max {stats.TopMax:0}, mean " +
+                              $"{stats.TopMean:0.00}; mip 2/3 max {stats.LevelMax:0}, mean {stats.LevelMean:0.00})";
+                    result.PixelFailures.Add((label, string.Join("; ", problems) + Environment.NewLine +
+                        string.Join(Environment.NewLine, stats.Worst.Take(5).Select(sample => "      worst: " + sample))));
+                    return null;
+                }
+
+                // 2. Prepare: the new UVs, the material files, and the claims on names and parts.
+                var claimedParts = new HashSet<MeshKey>();
+                var claimedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var page in plan.Pages)
+                {
+                    foreach (var output in page.Outputs)
+                    {
+                        if (state.SharedRepackTexturePaths.Contains(output.Path) || !claimedPaths.Add(output.Path))
+                        {
+                            failure = $"the generated texture name {output.Path} is already taken";
+                            return null;
+                        }
                     }
 
-                    var problem = CheckSharedRepackDds(output.Data, output);
-                    if (problem != null)
+                    foreach (var (material, document) in page.MaterialDocuments.OrderBy(pair => pair.Key, StringComparer.Ordinal))
                     {
-                        failure = $"generated {output.Slot} texture {problem}";
-                        return null;
+                        var newPath = page.MaterialMap[material];
+                        if (state.SharedRepackMaterialPaths.Contains(newPath) || !claimedPaths.Add(newPath))
+                        {
+                            failure = $"the generated material name {newPath} is already taken";
+                            return null;
+                        }
+
+                        materialFiles.Add((newPath, Encoding.UTF8.GetBytes(document.OuterXml)));
                     }
 
-                    generated.FromBytes(output.Path, output.Data);
+                    foreach (var tuple in page.Tuples)
+                    {
+                        foreach (var part in page.Parts.Where(part => tuple.Parts.Contains(part)))
+                        {
+                            // Signatures partition the textures, so the parts of two sets are
+                            // disjoint; a part moved twice would be sampled with the wrong UVs.
+                            if (!claimedParts.Add(part.Key) ||
+                                movedParts.GetValueOrDefault(part.Key.GeometryPath)?.Contains(
+                                    (part.Key.LodIndex, part.Key.PartIndex)) == true)
+                            {
+                                var message = $"Shared repack would move {DescribeSharedRepackPart(part)} twice";
+                                result.ValidationErrors.Add(message);
+                                failure = message;
+                                return null;
+                            }
+
+                            if (!rigids.ContainsKey(part.Key.GeometryPath))
+                            {
+                                failure = $"{DescribeSharedRepackPart(part)} belongs to a rigid that is not rewritable";
+                                return null;
+                            }
+
+                            var vertices = part.Model!.Mesh.VertexList;
+                            var uv = new Microsoft.Xna.Framework.Vector2[vertices.Length];
+                            for (var vertex = 0; vertex < vertices.Length; vertex++)
+                            {
+                                if (!part.Used[vertex])
+                                {
+                                    uv[vertex] = vertices[vertex].Uv;
+                                    continue;
+                                }
+
+                                var (u, v) = ComputeSharedRepackUv(page, tuple, part, vertex);
+                                uv[vertex] = new Microsoft.Xna.Framework.Vector2(u, v);
+                            }
+
+                            rewrites.Add((part, uv));
+                        }
+                    }
                 }
             }
-
-            SharedRepackBeforeCheckHook?.Invoke(plan);
-            var stats = new SharedRepackPixelStats();
-            var problems = new List<string>();
-            foreach (var page in plan.Pages)
-                CheckSharedRepackPage(page, sources, generated, stats, problems);
-            if (problems.Count != 0)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                pixelFailure = true;
-                failure = $"failed the pixel check: {problems[0]} (top-level max {stats.TopMax:0}, mean " +
-                          $"{stats.TopMean:0.00}; mip 2/3 max {stats.LevelMax:0}, mean {stats.LevelMean:0.00})";
-                result.PixelFailures.Add((label, string.Join("; ", problems) + Environment.NewLine +
-                    string.Join(Environment.NewLine, stats.Worst.Take(5).Select(sample => "      worst: " + sample))));
+                pixelFailure = false;
+                failure = $"internal error while composing or checking ({ex.GetType().Name}: {ex.Message})";
                 return null;
             }
 
-            // 2. Apply: write files, rewrite UVs, repoint WSModels.
-            if (!snapshots.ContainsKey(rigidPath))
-                snapshots[rigidPath] = SnapshotSharedRepackRigid(rigid);
-            if (!movedParts.TryGetValue(rigidPath, out var movedSet))
+            // 3. Apply: write files, rewrite UVs, repoint WSModels.
+            foreach (var path in rewrites.Select(item => item.Part.Key.GeometryPath).Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                movedSet = [];
-                movedParts[rigidPath] = movedSet;
+                if (!snapshots.ContainsKey(path))
+                    snapshots[path] = SnapshotSharedRepackRigid(rigids[path]);
+                if (!movedParts.ContainsKey(path))
+                    movedParts[path] = [];
             }
 
             foreach (var page in plan.Pages)
@@ -3259,44 +3528,45 @@ namespace Editors.KitbasherEditor.Services
                     result.GeneratedTextures.Add(output.Path);
                 }
 
-                foreach (var (material, document) in page.MaterialDocuments.OrderBy(pair => pair.Key, StringComparer.Ordinal))
-                {
-                    var newPath = page.MaterialMap[material];
-                    WriteFile(state.Output, newPath, Encoding.UTF8.GetBytes(document.OuterXml));
-                    state.SharedRepackMaterialPaths.Add(newPath);
-                    result.GeneratedMaterials.Add(newPath);
-                }
-
-                foreach (var tuple in page.Tuples)
-                {
-                    foreach (var part in page.Parts.Where(part => tuple.Parts.Contains(part)))
-                    {
-                        var vertices = part.Model!.Mesh.VertexList;
-                        for (var vertex = 0; vertex < vertices.Length; vertex++)
-                        {
-                            if (!part.Used[vertex])
-                                continue;
-
-                            var (u, v) = ComputeSharedRepackUv(page, tuple, part, vertex);
-                            vertices[vertex].Uv = new Microsoft.Xna.Framework.Vector2(u, v);
-                        }
-
-                        movedSet.Add((part.Key.LodIndex, part.Key.PartIndex));
-                        state.SharedRepackParts.Add(part.Key);
-                    }
-                }
-
                 foreach (var (node, material) in page.WsRepoints)
                     node.InnerText = page.MaterialMap[material];
                 foreach (var ws in page.WsModels)
                     state.ModifiedWsModels.Add(ws);
             }
 
-            state.RigidModels[rigidPath] = rigid;
-            state.ModifiedRigids.Add(rigidPath);
-            result.RepackedRigids.Add(rigidPath);
+            foreach (var (path, data) in materialFiles)
+            {
+                WriteFile(state.Output, path, data);
+                state.SharedRepackMaterialPaths.Add(path);
+                result.GeneratedMaterials.Add(path);
+            }
 
-            // 3. What was written is what was planned.
+            foreach (var (part, uv) in rewrites)
+            {
+                var vertices = part.Model!.Mesh.VertexList;
+                for (var vertex = 0; vertex < vertices.Length; vertex++)
+                {
+                    if (part.Used[vertex])
+                        vertices[vertex].Uv = uv[vertex];
+                }
+
+                movedParts[part.Key.GeometryPath].Add((part.Key.LodIndex, part.Key.PartIndex));
+                state.SharedRepackParts.Add(part.Key);
+            }
+
+            var rewritten = rewrites
+                .GroupBy(item => item.Part.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => (Rigid: group.Key, Parts: group.Count()))
+                .ToList();
+            foreach (var (path, _) in rewritten)
+            {
+                state.RigidModels[path] = rigids[path];
+                state.ModifiedRigids.Add(path);
+                result.RepackedRigids.Add(path);
+            }
+
+            // What was written is what was planned.
             foreach (var output in plan.Pages.SelectMany(page => page.Outputs))
             {
                 var written = state.Output.FindFile(output.Path)?.DataSource.ReadData();
@@ -3306,7 +3576,7 @@ namespace Editors.KitbasherEditor.Services
 
             var built = new SharedRepackBuiltSet
             {
-                Rigid = rigidPath,
+                Rigid = rewritten[0].Rigid,
                 Label = label,
                 Units = decision.SignatureSize,
                 HasCharacter = decision.HasCharacter,
@@ -3329,6 +3599,7 @@ namespace Editors.KitbasherEditor.Services
                 SkippedSamples = stats.Skipped,
                 EdgeSkippedSamples = stats.EdgeSkipped,
             };
+            built.Rigids.AddRange(rewritten);
             foreach (var (path, bytes) in plan.Replaced.OrderBy(pair => pair.Key, StringComparer.Ordinal))
             {
                 var owned = decision.Set.Items.First(item => Normalize(item.Entry.Path).Equals(path, StringComparison.OrdinalIgnoreCase)).Entry.IsOwned;
@@ -3431,15 +3702,49 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // A generated material may only be referenced by WSModels of rewritten rigids: any
+            // other user would sample the original UVs with the new textures.
+            var generatedMaterials = new HashSet<string>(result.GeneratedMaterials, StringComparer.OrdinalIgnoreCase);
+            if (generatedMaterials.Count != 0)
+            {
+                var geometryOfWs = (state.VanillaTextureCoverage?.Bindings ?? [])
+                    .Where(binding => binding.Geometry.Length != 0)
+                    .GroupBy(binding => binding.WsModelPath, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Select(binding => binding.Geometry).Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                        StringComparer.OrdinalIgnoreCase);
+                foreach (var (ws, document) in state.WsDocuments.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                {
+                    var users = document.SelectNodes("/model/materials/material")?.Cast<XmlNode>()
+                        .Select(node => Normalize(node.InnerText))
+                        .Where(generatedMaterials.Contains)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(path => path, StringComparer.Ordinal)
+                        .ToList() ?? [];
+                    if (users.Count == 0)
+                        continue;
+
+                    var geometries = geometryOfWs.GetValueOrDefault(ws) ?? [];
+                    var other = geometries.FirstOrDefault(geometry => !result.RepackedRigids.Contains(geometry));
+                    if (geometries.Count == 0 || other != null)
+                    {
+                        errors.Add(
+                            $"Generated repack material {users[0]} is referenced by WSModel {ws} of rigid " +
+                            $"{other ?? "(unknown)"}, which was not rewritten");
+                    }
+                }
+            }
+
             if (errors.Count == before && result.BuiltSets.Count != 0)
             {
                 state.ValidationMessages.Add(
-                    $"PASS: {result.BuiltSets.Count} shared texture repack set(s): " +
-                    $"{result.GeneratedTextures.Count} generated texture(s) decode with the planned size, " +
-                    $"format and a complete mip chain, {result.GeneratedMaterials.Count} generated " +
-                    $"material(s) resolve, geometry invariants hold, and {result.Samples:N0} sampled texel(s) " +
-                    $"match the source (max error {result.MaxError:0}, mean " +
-                    $"{(result.ErrorCount == 0 ? 0 : result.ErrorSum / result.ErrorCount):0.00}).");
+                    $"PASS: {result.BuiltSets.Count} shared texture repack set(s) over {result.RepackedRigids.Count} " +
+                    $"rewritten rigid(s): {result.GeneratedTextures.Count} generated texture(s) decode with the " +
+                    $"planned size, format and a complete mip chain, {result.GeneratedMaterials.Count} generated " +
+                    $"material(s) resolve and are only used by WSModels of rewritten rigids, geometry invariants " +
+                    $"hold, and {result.Samples:N0} sampled texel(s) match the source (max error " +
+                    $"{result.MaxError:0}, mean {(result.ErrorCount == 0 ? 0 : result.ErrorSum / result.ErrorCount):0.00}).");
             }
         }
 
@@ -3468,9 +3773,12 @@ namespace Editors.KitbasherEditor.Services
             }
 
             sb.AppendLine(
-                "Mode: REWRITES the pack. For each selected signature set confined to one mod-owned rigid, new " +
+                "Mode: REWRITES the pack. For each selected signature set whose users are all mod-owned rigids, new " +
                 "smaller textures hold only the regions its parts use (same texel density, no downscaling), the " +
-                "rigid's UVs are rewritten for all LODs, new materials are written and its WSModels repointed. " +
+                "UVs of every rigid using them are rewritten for all LODs, new materials are written and the " +
+                "rigids' WSModels repointed. A rigid that cannot be rewritten only loses its parts: their textures " +
+                "leave the set. A texture of any size that is one flat colour is kept as authored and never blocks " +
+                "a part. A set is written completely or not at all. " +
                 "Original textures and materials are not edited. Video memory only. Pass-through slots (" +
                 string.Join(", ", SharedRepackPassThroughSlots) + ") are kept unchanged in the generated " +
                 "materials; any other non-atlasable slot makes a part ineligible, named per slot below. " +
@@ -3492,18 +3800,17 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine("Selection funnel (every set ends in exactly one line below):");
             sb.AppendLine($"  Signature sets considered: {result.SetsConsidered:N0}");
             sb.AppendLine($"  Estimated saving below the threshold: {result.BelowThreshold:N0}");
-            sb.AppendLine($"  Not confined to exactly one rigid: {result.NotSingleRigid:N0}");
             sb.AppendLine(
-                $"  Rigid not eligible (not owned, overrides vanilla, direct reference, WSModel not owned or " +
+                $"  Every rigid not eligible (not owned, overrides vanilla, direct reference, WSModel not owned or " +
                 $"overriding, modified by another stage, unreadable): {result.RigidNotEligible:N0}");
             sb.AppendLine(
-                $"  Dropped by closure, variants, tiling or the re-estimate: {result.DroppedByClosure:N0}");
+                $"  Dropped by closure, variants, tiling, ineligible rigids or the re-estimate: {result.DroppedByClosure:N0}");
             sb.AppendLine($"  Not buildable (format, size, charts, layout, decode): {result.NotBuildable:N0}");
             sb.AppendLine($"  Failed the actual-bytes gate (group or set): {result.FailedActualBytes:N0}");
             sb.AppendLine($"  Failed the pixel check (nothing written): {result.FailedPixelCheck:N0}");
             sb.AppendLine($"  Built: {result.Built:N0}");
             sb.AppendLine($"  (tuples excluded by the sizing invariant, expected 0: {result.SizingErrors:N0})");
-            var accounted = result.BelowThreshold + result.NotSingleRigid + result.RigidNotEligible +
+            var accounted = result.BelowThreshold + result.RigidNotEligible +
                             result.DroppedByClosure + result.NotBuildable + result.FailedActualBytes +
                             result.FailedPixelCheck + result.Built;
             sb.AppendLine(
@@ -3522,7 +3829,9 @@ namespace Editors.KitbasherEditor.Services
 
             if (result.ClosureNotes.Count != 0)
             {
-                sb.AppendLine("Why a material was pulled outside a set (texture and who else uses it):");
+                sb.AppendLine(
+                    "Why parts left a set (an ineligible rigid, or the texture that pulled a material outside it " +
+                    "and who else uses it):");
                 foreach (var group in result.ClosureNotes.GroupBy(note => note.Label))
                 {
                     sb.AppendLine($"  {group.Key}");
@@ -3542,7 +3851,10 @@ namespace Editors.KitbasherEditor.Services
             {
                 sb.AppendLine($"  Set {set.Label}");
                 sb.AppendLine(
-                    $"    rigid {set.Rigid}; units in signature {set.Units:N0}, lord/hero: " +
+                    $"    {set.Rigids.Count:N0} rigid(s) rewritten: " +
+                    string.Join(", ", set.Rigids.Select(item => $"{item.Rigid} ({item.Parts:N0} part(s))")));
+                sb.AppendLine(
+                    $"    units in signature {set.Units:N0}, lord/hero: " +
                     $"{(set.HasCharacter == null ? "unknown" : set.HasCharacter.Value ? "yes" : "no")}; " +
                     $"{set.Parts:N0} part(s) (all LODs), {set.Tuples:N0} texture tuple(s), {set.Charts:N0} chart(s), " +
                     $"layout {set.LayoutWidth}x{set.LayoutHeight}");
@@ -3628,7 +3940,8 @@ namespace Editors.KitbasherEditor.Services
 
             sb.AppendLine(
                 "Not covered by this increment: material variants that disagree on a texture, tiled UVs, " +
-                "rigids used by more than one set of units outside the pack, deleting the old textures.");
+                "rigids used by more than one set of units outside the pack, merging different signature sets, " +
+                "deleting the old textures.");
             sb.AppendLine();
         }
     }
