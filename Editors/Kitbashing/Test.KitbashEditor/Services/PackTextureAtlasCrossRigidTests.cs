@@ -8265,7 +8265,7 @@ namespace Test.KitbashEditor.Services
         private static void AssertFunnelReconciles(object result)
         {
             var considered = Get<int>(result, "SetsConsidered");
-            var accounted = Get<int>(result, "BelowThreshold") +
+            var accounted = Get<int>(result, "BelowThreshold") + Get<int>(result, "MergedIntoOther") +
                             Get<int>(result, "RigidNotEligible") + Get<int>(result, "DroppedByClosure") +
                             Get<int>(result, "NotBuildable") + Get<int>(result, "FailedActualBytes") +
                             Get<int>(result, "FailedPixelCheck") + Get<int>(result, "Built");
@@ -8965,14 +8965,14 @@ namespace Test.KitbashEditor.Services
                 Is.EqualTo(2L * 1024 * 1024));
         }
 
-        // Part 2 uses base b1 with a normal that another unit also uses (so it is in a
-        // different signature set): b1 leaves the set, which takes part 0 (b1 + n1) with it;
-        // the second material pair is closed and is still built.
+        // Part 2 uses base b1 with a normal that cannot be repacked (48 pixels, not a power of
+        // two; an unrepackable texture is never merged): b1 leaves the set, which takes part 0
+        // (b1 + n1) with it; the second material pair is closed and is still built.
         [Test]
         public void SharedRepack_MixedMaterial_DropsItsTexturesTransitively_AndTheRestStillBuilds()
         {
             var world = BuildStandardSrWorld(secondLod: false);
-            world.AddTexture("textures\\sr_n3.dds", 512, "BC3", false, 6);
+            world.AddTexture("textures\\sr_n3.dds", 48, "BC3", false, 6);
             world.AddTexture("textures\\sr_b4.dds", 1024, "BC1", true, 7);
             world.Fixture.AddMaterial(SrMaterialPath("m3"), (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n3.dds"));
             world.Fixture.AddMaterial(SrMaterialPath("m4"), (SrBase, "textures\\sr_b4.dds"), (SrNormal, "textures\\sr_n3.dds"));
@@ -8991,14 +8991,15 @@ namespace Test.KitbashEditor.Services
             AssertFunnelReconciles(result);
             Assert.That(Get<int>(result, "SetsConsidered"), Is.EqualTo(3), SrSkips(result));
             Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
-            // The two other sets (n3 alone, b4 alone) span both rigids and each is pulled apart by
-            // the other's texture.
-            Assert.That(Get<int>(result, "DroppedByClosure"), Is.EqualTo(2));
+            // n3 alone is tiny (below the threshold, never merged: it cannot be repacked) and b4
+            // alone is pulled apart by it.
+            Assert.That(Get<int>(result, "BelowThreshold"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "DroppedByClosure"), Is.EqualTo(1));
             var reasons = Get<Dictionary<string, int>>(result, "PartDropReasons");
             Assert.That(reasons.Keys, Has.Some.Contain("also uses textures outside the set"));
             var notes = BuildSharedRepackSection(Enabled(world));
             Assert.That(notes, Does.Contain("sr_n3.dds, which is in a different signature set (2 unit(s)"));
-            Assert.That(notes, Does.Contain("is also used by rigid " + SrRigid2));
+            Assert.That(notes, Does.Contain("the texture cannot be repacked, so the set was not merged"));
             var built = SrBuilt(result).Single();
             var replaced = Get<IEnumerable>(built, "Replaced").Cast<object>().Select(item => item.ToString()).ToList();
             Assert.That(replaced, Has.Count.EqualTo(2));
@@ -10203,7 +10204,8 @@ namespace Test.KitbashEditor.Services
         public void SharedRepack_NonUniformTextureOutsideTheSet_StillDropsThePart_AndOnlyItIsNamed()
         {
             // The part also binds a flat texture (material map) that must not be blamed.
-            var world = BuildOutsideTextureWorld("t_xml_mask", BuildContentDds(64, "BC1", true, 5));
+            // 48 pixels: not a power of two, so no signature set can take it in.
+            var world = BuildOutsideTextureWorld("t_xml_mask", BuildContentDds(48, "BC1", true, 5));
             world.Fixture.Vanilla["textures\\sr_flat.dds"] = BuildFlatBlackDds(256);
             world.Fixture.AddMaterial(
                 SrMaterialPath("m1"),
@@ -10230,14 +10232,266 @@ namespace Test.KitbashEditor.Services
         [Test]
         public void SharedRepack_UniformTextureOverTheDecodeLimit_CountsAsNotUniform()
         {
-            // 2048 x 2048 flat black: over the 1024 limit it is not decoded, so it blocks the part.
+            // 2048 x 2048 flat black: over the 1024 limit it is not decoded, so it is not kept as
+            // authored; its signature set is merged in and it is repacked like any texture.
             var world = BuildOutsideTextureWorld("t_xml_mask", BuildFlatBlackDds(2048));
 
             var result = world.Run();
 
             Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "MergedIntoOther"), Is.EqualTo(1), SrSkips(result));
+            var generated = Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]);
+            Assert.That(
+                SrSlotNode(generated, "t_xml_mask").SelectSingleNode("source")!.InnerText,
+                Does.Contain("_repack_mask"));
+            AssertFunnelReconciles(result);
+        }
+
+        // Rigid 1 (unit 1) uses m1 (b1 + n1) and m2 (b2 + n2); rigid 2 (unit 2) uses only the
+        // normal map n1. So {b1, b2, n2} is one signature set and {n1} another, and part 0 of
+        // rigid 1 has a material whose base colour and normal belong to different sets.
+        private static (SrWorld World, Func<RmvFile> First, Func<RmvFile> Second) BuildMergeSrWorld()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            world.Fixture.AddMaterial(SrMaterialPath("mn"), (SrNormal, "textures\\sr_n1.dds"));
+            var mn = SrMaterialPath("mn");
+            var second = SrRigidFactory([(mn, SrBlocks((9, 9)))]);
+            world.AddModel(SrRigid2, SrWs2, SrRoot2, second, [[mn]]);
+            return (world, BuildStandardSrWorld(false).Rigids[SrRigid], second);
+        }
+
+        private static readonly Dictionary<string, int> SrNormalOnlySeeds = new() { [SrNormal] = 2 };
+
+        [Test]
+        public void SharedRepack_SetsConnectedThroughAMaterial_AreMergedAndBuilt_AcrossRigids()
+        {
+            var (world, first, second) = BuildMergeSrWorld();
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "SetsConsidered"), Is.EqualTo(2));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "MergedIntoOther"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "MergePlansTried"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "MergePlansBuilt"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "MergePlansFellBack"), Is.Zero);
+            Assert.That(Get<int>(result, "LargestMergeSets"), Is.EqualTo(2));
+            Assert.That(Get<int>(result, "LargestMergeRigids"), Is.EqualTo(2));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            Assert.That(SrBuiltRigids(built), Is.EqualTo(new[] { $"({SrRigid}, 2)", $"({SrRigid2}, 1)" }));
+            Assert.That(Get<IEnumerable>(built, "MergedSets").Cast<object>().Count(), Is.EqualTo(1));
+            // Colours: part 0 samples the base from set one's texture and the normal from set two's.
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart0Seeds, (_, part) => part == 0);
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart1Seeds, (_, part) => part == 1);
+            var (samples, _) = AssertSrPixels(world, SrRigid2, SrWs2, second, SrNormalOnlySeeds);
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(
+                Get<HashSet<string>>(world.State, "ModifiedRigids"),
+                Is.EquivalentTo(new[] { SrRigid, SrRigid2 }));
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_ReportSection_ListsTheMergedSetsAndThePlanSummary()
+        {
+            var (world, _, _) = BuildMergeSrWorld();
+            world.Run();
+            SetStateProperty(world.State, "SharedTextureRepackRequested", true);
+            SetStateProperty(world.State, "SharedTextureRepackEnabled", true);
+            GetStaticMethod("FinalizeSharedTextureRepack").Invoke(null, [world.State]);
+
+            var report = BuildSharedRepackSection(world.State);
+
+            Assert.That(report, Does.Contain("Merged into another set's plan: 1"));
+            Assert.That(report, Does.Contain("1 tried, 1 built, 0 fell back"));
+            Assert.That(report, Does.Contain("largest 2 set(s) in 2 rigid(s); 0 plan(s) hit the cap"));
+            Assert.That(report, Does.Contain("merged signature sets (1 joined the seed):"));
+            Assert.That(report, Does.Contain("sr_n1.dds (1 texture(s), 2 unit(s)): 1 texture(s), 2 unit(s)"));
+            Assert.That(report, Does.Contain($"{SrRigid} (2 part(s)), {SrRigid2} (1 part(s))"));
+            Assert.That(report, Does.Contain("(reconciles)"));
+            Assert.That(report, Does.Contain("merged into another set's plan (textures\\sr_b1.dds"));
+        }
+
+        [Test]
+        public void SharedRepack_TuplesWithTexturesOfDifferentSignatureSets_AreNeverOnTheSamePage()
+        {
+            var (world, _, _) = BuildMergeSrWorld();
+            var groupKeys = new List<string>();
+            var pageKeys = new List<List<string>>();
+
+            WithBeforeCheckHook(
+                plan =>
+                {
+                    groupKeys.AddRange(Get<IEnumerable>(plan, "Tuples").Cast<object>().Select(tuple => Get<string>(tuple, "GroupKey")));
+                    foreach (var page in Get<IEnumerable>(plan, "Pages").Cast<object>())
+                    {
+                        pageKeys.Add(Get<IEnumerable>(page, "Tuples").Cast<object>()
+                            .Select(tuple => Get<string>(tuple, "GroupKey")).Distinct().ToList());
+                    }
+                },
+                () => world.Run());
+
+            // (b1, n1) is base: set one, normal: set two; (b2, n2) is set one for both.
+            Assert.That(groupKeys.Distinct().Count(), Is.GreaterThanOrEqualTo(3));
+            Assert.That(pageKeys, Is.Not.Empty);
+            Assert.That(pageKeys.Select(keys => keys.Count), Has.All.EqualTo(1));
+        }
+
+        [Test]
+        public void SharedRepack_Validation_FailsWhenAGeneratedTextureReplacesTexturesOfTwoSignatureSets()
+        {
+            var (world, _, _) = BuildMergeSrWorld();
+            WithBeforeCheckHook(
+                plan =>
+                {
+                    var output = HookOutputs(plan).First(item => Get<string>(item, "Slot") == SrBase);
+                    Get<List<string>>(output, "Sources").Add("textures\\sr_n1.dds");
+                },
+                () => world.Run());
+
+            var errors = SrValidate(world);
+
+            Assert.That(errors, Has.Some.Contain("signature set(s), not exactly one"));
+        }
+
+        [Test]
+        public void SharedRepack_MergedPlanFailingThePixelCheck_WritesNothing_SeedRunsAlone_AndTheReleasedSetRunsOnItsOwn()
+        {
+            var (world, first, _) = BuildMergeSrWorld();
+            var calls = 0;
+            object result = null!;
+
+            WithBeforeCheckHook(
+                plan =>
+                {
+                    if (calls++ != 0)
+                        return;
+
+                    var chart = Get<IEnumerable>(Get<IEnumerable>(plan, "Pages").Cast<object>().First(), "Charts")
+                        .Cast<object>().First();
+                    var property = chart.GetType().GetProperty("PackX", AnyInstance)!;
+                    property.SetValue(chart, (int)property.GetValue(chart)! + 16);
+                },
+                () => result = world.Run());
+
+            // The merged attempt (call 1) failed; the seed alone (call 2) was checked and built.
+            // The released set was then planned on its own, not merged: part 0 of rigid 1 uses a
+            // texture of the processed seed set and was not rewritten, so its normal map stays.
+            Assert.That(calls, Is.EqualTo(2));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "MergedIntoOther"), Is.Zero);
+            Assert.That(Get<int>(result, "DroppedByClosure"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "FailedPixelCheck"), Is.Zero);
+            Assert.That(Get<int>(result, "MergePlansTried"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "MergePlansBuilt"), Is.Zero);
+            Assert.That(Get<int>(result, "MergePlansFellBack"), Is.EqualTo(1));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<string>(built, "FallbackNote"), Does.Contain("merged attempt").And.Contain("pixel check").And.EndWith("built alone"));
+            Assert.That(Get<IEnumerable>(built, "MergedSets").Cast<object>(), Is.Empty);
+            Assert.That(SrBuiltRigids(built), Is.EqualTo(new[] { $"({SrRigid}, 1)" }));
+            // Nothing of the failed merged plan: part 0 keeps its material, only m2' exists.
             Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(SrMaterialPath("m1")));
             Assert.That(SrWsMaterial(world.State, SrWs, 0, 1), Does.Contain("_repack_"));
+            Assert.That(Get<HashSet<string>>(world.State, "SharedRepackMaterialPaths"), Has.Count.EqualTo(1));
+            Assert.That(Get<HashSet<string>>(world.State, "SharedRepackTexturePaths"), Has.Count.EqualTo(2));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedRigids"), Is.EquivalentTo(new[] { SrRigid }));
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart1Seeds, (_, part) => part == 1);
+            Assert.That(Get<IEnumerable>(result, "PixelFailures").Cast<object>().Count(), Is.EqualTo(1));
+            // The released set meets b1 again, but its set was processed: outside, dropped.
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain("in a different signature set (1 unit(s), 3 texture(s)) that was already processed"));
+            Assert.That(report, Does.Contain("the merged attempt with 1 other signature set(s) failed"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_MergedPlans_TwoRunsProduceIdenticalBytes()
+        {
+            var (first, _, _) = BuildMergeSrWorld();
+            var (second, _, _) = BuildMergeSrWorld();
+            first.Run();
+            second.Run();
+
+            var generated = first.Fixture.Output.Keys.Where(key => key.Contains("_repack_")).OrderBy(key => key).ToList();
+            Assert.That(generated, Is.Not.Empty);
+            Assert.That(
+                second.Fixture.Output.Keys.Where(key => key.Contains("_repack_")).OrderBy(key => key),
+                Is.EqualTo(generated));
+            foreach (var path in generated)
+                Assert.That(second.Fixture.Output[path], Is.EqualTo(first.Fixture.Output[path]), path);
+            foreach (var rigidPath in new[] { SrRigid, SrRigid2 })
+            {
+                var firstRigid = (RmvFile)Get<IDictionary>(first.State, "RigidModels")[rigidPath]!;
+                var secondRigid = (RmvFile)Get<IDictionary>(second.State, "RigidModels")[rigidPath]!;
+                Assert.That(
+                    secondRigid.ModelList.SelectMany(lod => lod).SelectMany(model => model.Mesh.VertexList.Select(vertex => vertex.Uv)),
+                    Is.EqualTo(firstRigid.ModelList.SelectMany(lod => lod).SelectMany(model => model.Mesh.VertexList.Select(vertex => vertex.Uv))));
+            }
+        }
+
+        // Unit k uses rigid k with X_k = (b_k, n_k) and the connector Y_k = (b_k, n_(k+1)), so the
+        // signature sets {b_k} and {n_k, n_(k+1) side} form one long chain of connected sets.
+        private static SrWorld BuildChainSrWorld(int links)
+        {
+            var world = new SrWorld();
+            for (var k = 0; k < links; k++)
+            {
+                world.AddTexture($"textures\\sr_cb{k}.dds", 1024, "BC1", true, 1);
+                world.AddTexture($"textures\\sr_cn{k}.dds", 512, "BC3", false, 2);
+            }
+
+            for (var k = 0; k < links; k++)
+            {
+                world.Fixture.AddMaterial(
+                    SrMaterialPath($"x{k}"), (SrBase, $"textures\\sr_cb{k}.dds"), (SrNormal, $"textures\\sr_cn{k}.dds"));
+                if (k + 1 < links)
+                {
+                    world.Fixture.AddMaterial(
+                        SrMaterialPath($"y{k}"), (SrBase, $"textures\\sr_cb{k}.dds"), (SrNormal, $"textures\\sr_cn{k + 1}.dds"));
+                }
+            }
+
+            for (var k = 0; k < links; k++)
+            {
+                var x = SrMaterialPath($"x{k}");
+                var y = SrMaterialPath($"y{k}");
+                var parts = k + 1 < links
+                    ? new[] { (x, SrBlocks((2, 3))), (y, SrBlocks((5, 5))) }
+                    : new[] { (x, SrBlocks((2, 3))) };
+                world.AddModel(
+                    $"variantmeshes\\wh_main\\ch{k}.rigid_model_v2",
+                    $"variantmeshes\\wh_main\\ch{k}.wsmodel",
+                    $"variantmeshes\\wh_variantmodels\\hu1\\emp\\ch{k}\\ch{k}.variantmeshdefinition",
+                    SrRigidFactory(parts),
+                    [parts.Select(part => part.Item1).ToArray()]);
+            }
+
+            return world;
+        }
+
+        [Test]
+        public void SharedRepack_ChainOfSetsAboveTheCap_StopsMergingAndDropsTheRest()
+        {
+            var world = BuildChainSrWorld(10);
+
+            var result = world.Run(minimumSaving: 50_000, minimumGroupSaving: 5_000);
+
+            AssertFunnelReconciles(result);
+            // The cap stops every plan at 8 sets; the parts that would have pulled in a ninth
+            // drop, and the drop takes the rest of the chain with it, as without merging.
+            Assert.That(Get<int>(result, "MergeCapHits"), Is.GreaterThanOrEqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "LargestMergeSets"), Is.EqualTo(8));
+            Assert.That(Get<int>(result, "LargestMergeRigids"), Is.LessThanOrEqualTo(16));
+            foreach (var built in SrBuilt(result))
+                Assert.That(Get<IEnumerable>(built, "MergedSets").Cast<object>().Count(), Is.LessThanOrEqualTo(7));
+            Assert.That(
+                BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("merge cap reached: at most 8 sets and 16 rigids per plan"));
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
         }
     }
 }

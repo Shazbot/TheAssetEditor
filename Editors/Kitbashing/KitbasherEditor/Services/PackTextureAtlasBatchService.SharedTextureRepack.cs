@@ -75,6 +75,9 @@ namespace Editors.KitbasherEditor.Services
         // colour such as commontextures\default_black.dds) never blocks a part and is kept as
         // authored; a larger one counts as not uniform without being decoded.
         private const int SharedRepackUniformTextureSide = 1024;
+        // A merged plan stops growing above this many signature sets or rigids.
+        private const int SharedRepackMaximumMergedSets = 8;
+        private const int SharedRepackMaximumMergedRigids = 16;
         private const int SharedRepackMaximumCharts = 4000;
         private const int SharedRepackMaximumComponents = 8000;
         // Pixel equivalence: BC recompression of already compressed content. A flat or smooth
@@ -203,6 +206,8 @@ namespace Editors.KitbasherEditor.Services
             // Top mip levels whose chart rectangles were copied block for block.
             public int BlockCopiedLevels { get; set; }
             public DdsLayout Template { get; set; } = null!;
+            // The source textures this output replaces (all of one signature set).
+            public List<string> Sources { get; } = [];
         }
 
         // One output texture set: a layout group, or a page of it when the charts do not
@@ -297,8 +302,30 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> WsModels { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         }
 
+        // What one planning attempt of a seed set may do and what it ended up with. With Allow
+        // set, a part whose material also uses textures of an unprocessed signature set pulls
+        // that set into the plan (Joined, Component); without it the seed is planned alone.
+        private sealed class SharedRepackMergeContext
+        {
+            public int Seed { get; init; }
+            public bool Allow { get; init; }
+            public List<UnitRepackSetDecision> Decisions { get; init; } = [];
+            public Dictionary<UnitRepackSignatureSet, int> IndexOfSet { get; init; } = [];
+            // Whether the set at this decision index may still join (not processed, not taken).
+            public Func<int, bool> IsAvailable { get; init; } = _ => false;
+            public Func<string, SharedRepackSetRigid> MakeRigid { get; init; } = null!;
+            public List<SharedRepackSetRigid> Rigids { get; } = [];
+            public List<UnitRepackSetDecision> Component { get; } = [];
+            public List<int> Joined { get; } = [];
+            public bool CapHit { get; set; }
+        }
+
         private sealed class SharedRepackBuiltSet
         {
+            // The sets that joined the seed's plan (label, textures, units), and, when a merged
+            // attempt failed first, why.
+            public List<(string Label, int Textures, int Units)> MergedSets { get; } = [];
+            public string? FallbackNote { get; set; }
             // The first rewritten rigid in ordinal order, and every rewritten rigid with its parts.
             public string Rigid { get; init; } = string.Empty;
             public List<(string Rigid, int Parts)> Rigids { get; } = [];
@@ -346,12 +373,21 @@ namespace Editors.KitbasherEditor.Services
             public int SetsConsidered { get; set; }
             public int BelowThreshold { get; set; }
             public int RigidNotEligible { get; set; }
+            public int MergedIntoOther { get; set; }
             public int DroppedByClosure { get; set; }
             public int NotBuildable { get; set; }
             public int FailedActualBytes { get; set; }
             public int FailedPixelCheck { get; set; }
             // Tuples excluded because a planned size broke the sizing invariant (should stay 0).
             public int SizingErrors { get; set; }
+            // Merged plans: attempts with at least one joined set, how they ended, the largest
+            // one tried and the plans that hit the cap.
+            public int MergePlansTried { get; set; }
+            public int MergePlansBuilt { get; set; }
+            public int MergePlansFellBack { get; set; }
+            public int MergeCapHits { get; set; }
+            public int LargestMergeSets { get; set; }
+            public int LargestMergeRigids { get; set; }
             public int Built => BuiltSets.Count;
 
             public List<(string Label, string Reason)> Skips { get; } = [];
@@ -944,6 +980,33 @@ namespace Editors.KitbasherEditor.Services
                 return cached;
             }
 
+            // Signature sets that joined another set's (built) plan, by decision index, with that
+            // plan's label.
+            var consumed = new Dictionary<int, string>();
+            var indexOfSet = new Dictionary<UnitRepackSignatureSet, int>();
+            for (var index = 0; index < decisions.Count; index++)
+                indexOfSet[decisions[index].Set] = index;
+            var setRigidCache = new Dictionary<string, SharedRepackSetRigid>(StringComparer.OrdinalIgnoreCase);
+
+            SharedRepackSetRigid SetRigid(string rigidPath)
+            {
+                if (!setRigidCache.TryGetValue(rigidPath, out var item))
+                {
+                    var (loaded, rigidReason) = GetRigid(rigidPath);
+                    item = new SharedRepackSetRigid
+                    {
+                        Path = rigidPath,
+                        Rigid = rigidReason == null ? loaded : null,
+                        Reason = rigidReason ?? (loaded == null ? "the rigid could not be read" : null),
+                        Parts = partsByRigid.GetValueOrDefault(rigidPath) ?? [],
+                        WsModels = wsByRigid.GetValueOrDefault(rigidPath) ?? [],
+                    };
+                    setRigidCache[rigidPath] = item;
+                }
+
+                return item;
+            }
+
             for (var decisionIndex = 0; decisionIndex < decisions.Count; decisionIndex++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -951,6 +1014,14 @@ namespace Editors.KitbasherEditor.Services
                 var set = decision.Set;
                 var label = DescribeSharedRepackSet(decision);
                 ReportProgress(progress, "Shared texture repack", decisionIndex + 1, decisions.Count, label);
+
+                // A set that joined an earlier plan is not looked at again.
+                if (consumed.TryGetValue(decisionIndex, out var takenBy))
+                {
+                    result.MergedIntoOther++;
+                    Skip(label, $"merged into another set's plan ({takenBy})");
+                    continue;
+                }
 
                 // 1. Estimate.
                 if (decision.Saving <= 0 || decision.Saving < result.MinimumSavingBytes)
@@ -976,90 +1047,138 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                var rigids = new List<SharedRepackSetRigid>();
-                foreach (var rigidPath in rigidPaths)
-                {
-                    var (loaded, rigidReason) = GetRigid(rigidPath);
-                    rigids.Add(new SharedRepackSetRigid
-                    {
-                        Path = rigidPath,
-                        Rigid = rigidReason == null ? loaded : null,
-                        Reason = rigidReason ?? (loaded == null ? "the rigid could not be read" : null),
-                        Parts = partsByRigid.GetValueOrDefault(rigidPath) ?? [],
-                        WsModels = wsByRigid.GetValueOrDefault(rigidPath) ?? [],
-                    });
-                }
-
-                var eligible = rigids.Where(item => item.Rigid != null).ToList();
-                if (eligible.Count == 0)
+                var rigids = rigidPaths.Select(SetRigid).ToList();
+                if (rigids.All(item => item.Rigid == null))
                 {
                     result.RigidNotEligible++;
                     Skip(label, DescribeSharedRepackIneligibleRigids(rigids));
                     continue;
                 }
 
-                SharedRepackSetPlan? plan = null;
-                string? failure = null;
-                string failureBucket = "closure";
-                try
+                // 3. Plan, compose and check in memory, then write and rewrite. The first attempt
+                // may merge unprocessed signature sets that share a material with this one; if
+                // a merged attempt fails anywhere, nothing of it was written and the seed is
+                // retried alone, with the joined sets released.
+                SharedRepackMergeContext NewContext(bool allowMerge)
                 {
-                    plan = PlanSharedRepackSet(
-                        state,
-                        result,
-                        coverage,
-                        decision,
-                        label,
-                        rigids,
-                        setByTexture,
-                        GetPart,
-                        texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
-                        cancellationToken,
-                        out failure,
-                        out failureBucket);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    plan = null;
-                    failure = $"internal error while planning ({ex.GetType().Name}: {ex.Message})";
-                    failureBucket = "build";
+                    var context = new SharedRepackMergeContext
+                    {
+                        Seed = decisionIndex,
+                        Allow = allowMerge,
+                        Decisions = decisions,
+                        IndexOfSet = indexOfSet,
+                        IsAvailable = index => index > decisionIndex && !consumed.ContainsKey(index),
+                        MakeRigid = SetRigid,
+                    };
+                    context.Rigids.AddRange(rigids);
+                    return context;
                 }
 
-                if (plan == null)
+                (SharedRepackBuiltSet? Built, string? Failure, string Bucket, SharedRepackMergeContext Context) Attempt(
+                    bool allowMerge)
                 {
-                    if (failureBucket == "bytes")
+                    var context = NewContext(allowMerge);
+                    SharedRepackSetPlan? plan;
+                    string? failure;
+                    string failureBucket;
+                    try
+                    {
+                        plan = PlanSharedRepackSet(
+                            state,
+                            result,
+                            coverage,
+                            context,
+                            label,
+                            setByTexture,
+                            GetPart,
+                            texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
+                            cancellationToken,
+                            out failure,
+                            out failureBucket);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        plan = null;
+                        failure = $"internal error while planning ({ex.GetType().Name}: {ex.Message})";
+                        failureBucket = "build";
+                    }
+
+                    if (plan == null)
+                        return (null, failure ?? "unknown", failureBucket, context);
+
+                    var built = ApplySharedRepackSetPlan(
+                        state,
+                        result,
+                        context,
+                        plan,
+                        context.Rigids.Where(item => item.Rigid != null)
+                            .ToDictionary(item => item.Path, item => item.Rigid!, StringComparer.OrdinalIgnoreCase),
+                        context.Joined.Count == 0 ? label : label + " [merged plan]",
+                        snapshots,
+                        movedParts,
+                        cancellationToken,
+                        out var buildFailure,
+                        out var pixelFailure);
+                    return built != null
+                        ? (built, null, "built", context)
+                        : (null, buildFailure ?? "unknown", pixelFailure ? "pixel" : "build", context);
+                }
+
+                var dropsBefore = new Dictionary<string, int>(result.PartDropReasons, StringComparer.Ordinal);
+                var notesBefore = result.ClosureNotes.Count;
+                var sizingBefore = (result.SizingErrors, result.SizingLog.Count);
+                var attempt = Attempt(true);
+                string? fallbackNote = null;
+                if (attempt.Context.CapHit)
+                    result.MergeCapHits++;
+                if (attempt.Context.Joined.Count != 0)
+                {
+                    result.MergePlansTried++;
+                    result.LargestMergeSets = Math.Max(result.LargestMergeSets, attempt.Context.Component.Count);
+                    result.LargestMergeRigids = Math.Max(result.LargestMergeRigids, attempt.Context.Rigids.Count);
+                    if (attempt.Built != null)
+                    {
+                        result.MergePlansBuilt++;
+                        foreach (var index in attempt.Context.Joined)
+                            consumed[index] = label;
+                    }
+                    else
+                    {
+                        result.MergePlansFellBack++;
+                        fallbackNote = $"the merged attempt with {attempt.Context.Joined.Count:N0} other signature " +
+                                       $"set(s) failed ({attempt.Failure}); ";
+                        result.PartDropReasons.Clear();
+                        foreach (var (reason, count) in dropsBefore)
+                            result.PartDropReasons[reason] = count;
+                        // Only the cap notes of the failed attempt are kept; they explain parts that
+                        // the attempt could not take in.
+                        var attemptNotes = result.ClosureNotes.Skip(notesBefore).ToList();
+                        result.ClosureNotes.RemoveRange(notesBefore, attemptNotes.Count);
+                        result.ClosureNotes.AddRange(attemptNotes
+                            .Where(note => note.Note.Contains("merge cap reached", StringComparison.Ordinal))
+                            .Select(note => (note.Label + " [merged attempt]", note.Note)));
+                        result.SizingErrors = sizingBefore.SizingErrors;
+                        result.SizingLog.RemoveRange(sizingBefore.Item2, result.SizingLog.Count - sizingBefore.Item2);
+                        attempt = Attempt(false);
+                    }
+                }
+
+                if (attempt.Built == null)
+                {
+                    if (attempt.Bucket == "bytes")
                         result.FailedActualBytes++;
-                    else if (failureBucket == "build")
+                    else if (attempt.Bucket == "pixel")
+                        result.FailedPixelCheck++;
+                    else if (attempt.Bucket == "build")
                         result.NotBuildable++;
                     else
                         result.DroppedByClosure++;
-                    Skip(label, failure ?? "unknown");
+                    Skip(label, fallbackNote == null ? attempt.Failure! : fallbackNote + "alone: " + attempt.Failure);
                     continue;
                 }
 
-                // 3. Compose and check in memory, then write and rewrite.
-                var built = ApplySharedRepackSetPlan(
-                    state,
-                    result,
-                    decision,
-                    plan,
-                    eligible.ToDictionary(item => item.Path, item => item.Rigid!, StringComparer.OrdinalIgnoreCase),
-                    label,
-                    snapshots,
-                    movedParts,
-                    cancellationToken,
-                    out var buildFailure,
-                    out var pixelFailure);
-                if (built == null)
-                {
-                    if (pixelFailure)
-                        result.FailedPixelCheck++;
-                    else
-                        result.NotBuildable++;
-                    Skip(label, buildFailure ?? "unknown");
-                    continue;
-                }
-
-                result.BuiltSets.Add(built);
+                attempt.Built.FallbackNote = fallbackNote == null ? null : fallbackNote + "built alone";
+                result.BuiltSets.Add(attempt.Built);
             }
 
             // Geometry invariants of every rewritten rigid, against the snapshots.
@@ -1384,6 +1503,7 @@ namespace Editors.KitbasherEditor.Services
             HashSet<string> setRigids,
             string texture,
             Dictionary<string, UnitRepackSignatureSet> setByTexture,
+            Func<string, string> describeSetState,
             Dictionary<string, string> removedBecause,
             HashSet<string> blocked,
             Dictionary<string, VanillaCoverageTexture> entryOf)
@@ -1408,9 +1528,15 @@ namespace Editors.KitbasherEditor.Services
                 .ToList();
             var text = new List<string>();
             if (setByTexture.TryGetValue(texture, out var set))
-                text.Add($"is in a different signature set ({set.Units.Length:N0} unit(s), {set.Items.Count:N0} texture(s))");
+            {
+                text.Add($"is in a different signature set ({set.Units.Length:N0} unit(s), " +
+                         $"{set.Items.Count:N0} texture(s)){describeSetState(texture)}");
+            }
             else if (!entry.IsRepackable)
+            {
                 text.Add($"is not repackable ({entry.NotCroppableReason ?? "unmeasured"})");
+            }
+
             if (others.Count != 0)
             {
                 text.Add($"is also used by rigid {others[0]}" +
@@ -1423,13 +1549,18 @@ namespace Editors.KitbasherEditor.Services
         private static string DescribeSharedRepackPart(SharedRepackPart part)
             => $"rigid {part.Key.GeometryPath} lod {part.Key.LodIndex} part {part.Key.PartIndex}";
 
+        private static string GetSharedRepackSetKey(UnitRepackSignatureSet set)
+            => string.Join(",", set.Units);
+
+        // Plans the seed set of the context. With merging on, a part that is otherwise
+        // eligible but uses a texture of another, still unprocessed signature set pulls that
+        // set (all its textures and users, in every rigid) into the plan, up to the cap.
         private SharedRepackSetPlan? PlanSharedRepackSet(
             BatchState state,
             SharedTextureRepackResult result,
             VanillaTextureCoverageResult coverage,
-            UnitRepackSetDecision decision,
+            SharedRepackMergeContext merge,
             string label,
-            List<SharedRepackSetRigid> rigids,
             Dictionary<string, UnitRepackSignatureSet> setByTexture,
             Func<string, RmvFile, int, int, SharedRepackPart> getPart,
             Func<string, bool> isUniform,
@@ -1439,95 +1570,135 @@ namespace Editors.KitbasherEditor.Services
         {
             failure = null;
             failureBucket = "closure";
-            var slotOf = decision.Set.Items.ToDictionary(
-                item => Normalize(item.Entry.Path),
-                item => item.Slot,
-                StringComparer.OrdinalIgnoreCase);
-            var entryOf = decision.Set.Items.ToDictionary(
-                item => Normalize(item.Entry.Path),
-                item => item.Entry,
-                StringComparer.OrdinalIgnoreCase);
-            var setRigids = rigids.Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            // Textures that can never be copied exactly leave the set up front.
-            var members = new HashSet<string>(slotOf.Keys, StringComparer.OrdinalIgnoreCase);
+            var rigids = merge.Rigids;
+            var slotOf = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var entryOf = new Dictionary<string, VanillaCoverageTexture>(StringComparer.OrdinalIgnoreCase);
+            var members = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var blocked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var path in slotOf.Keys)
-            {
-                var entry = entryOf[path];
-                if (GetSharedRepackBlockedTextureReason(entry.Layout) != null ||
-                    (entry.IsOwned && OverridesVanillaPath(state, path)))
-                {
-                    blocked.Add(path);
-                    members.Remove(path);
-                }
-            }
+            var setRigids = rigids.Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var inComponent = new HashSet<int> { merge.Seed };
+            var cappedTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            merge.Component.Add(merge.Decisions[merge.Seed]);
 
             // The parts of the eligible rigids. An ineligible rigid cannot be rewritten, so
             // each of its parts that uses a texture of the set is a candidate that is dropped
             // up front (it only knows the set's textures it uses, which is all a drop needs).
             var candidates = new List<SharedRepackPart>();
-            foreach (var item in rigids.Where(item => item.Rigid != null))
-                candidates.AddRange(item.Parts.Select(key => getPart(item.Path, item.Rigid!, key.Lod, key.Part)));
-            var ineligible = rigids.Where(item => item.Rigid == null)
-                .ToDictionary(item => item.Path, item => item, StringComparer.OrdinalIgnoreCase);
+            var droppedParts = new List<SharedRepackPart>();
+            var ineligible = new Dictionary<string, SharedRepackSetRigid>(StringComparer.OrdinalIgnoreCase);
             var pseudoParts = new Dictionary<string, SortedDictionary<(int Lod, int Part), SharedRepackPart>>(
                 StringComparer.OrdinalIgnoreCase);
-            if (ineligible.Count != 0)
+
+            bool IsBlockedTexture(VanillaCoverageTexture entry, string path)
+                => GetSharedRepackBlockedTextureReason(entry.Layout) != null ||
+                   (entry.IsOwned && OverridesVanillaPath(state, path));
+
+            void AddRigid(SharedRepackSetRigid item)
             {
-                foreach (var (path, entry) in entryOf.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                setRigids.Add(item.Path);
+                if (item.Rigid != null)
+                    candidates.AddRange(item.Parts.Select(key => getPart(item.Path, item.Rigid!, key.Lod, key.Part)));
+                else
+                    ineligible[item.Path] = item;
+            }
+
+            void AddSet(UnitRepackSetDecision added)
+            {
+                foreach (var item in added.Set.Items)
                 {
-                    foreach (var key in entry.ModParts.Concat(entry.VanillaParts))
+                    var path = Normalize(item.Entry.Path);
+                    slotOf[path] = item.Slot;
+                    entryOf[path] = item.Entry;
+                    // Textures that can never be copied exactly stay out of the set.
+                    if (IsBlockedTexture(item.Entry, path))
+                        blocked.Add(path);
+                    else
+                        members.Add(path);
+                }
+
+                foreach (var rigidPath in added.Set.Items
+                             .SelectMany(item => item.Entry.ModParts.Concat(item.Entry.VanillaParts))
+                             .Select(part => part.Rigid)
+                             .Distinct(StringComparer.OrdinalIgnoreCase)
+                             .OrderBy(path => path, StringComparer.Ordinal))
+                {
+                    if (!setRigids.Contains(rigidPath))
                     {
-                        if (!ineligible.TryGetValue(key.Rigid, out var item))
-                            continue;
+                        var item = merge.MakeRigid(rigidPath);
+                        rigids.Add(item);
+                        AddRigid(item);
+                    }
+                }
 
-                        if (!pseudoParts.TryGetValue(item.Path, out var byKey))
+                // The set's users in the ineligible rigids.
+                if (ineligible.Count != 0)
+                {
+                    foreach (var item in added.Set.Items.OrderBy(item => Normalize(item.Entry.Path), StringComparer.Ordinal))
+                    {
+                        foreach (var key in item.Entry.ModParts.Concat(item.Entry.VanillaParts))
                         {
-                            byKey = [];
-                            pseudoParts[item.Path] = byKey;
-                        }
+                            if (!ineligible.TryGetValue(key.Rigid, out var bad))
+                                continue;
 
-                        if (!byKey.TryGetValue((key.Lod, key.Part), out var part))
-                        {
-                            part = new SharedRepackPart
+                            if (!pseudoParts.TryGetValue(bad.Path, out var byKey))
                             {
-                                Key = new MeshKey(item.Path, key.Lod, key.Part),
-                                Reason = SharedRepackReasonRigid + item.Reason,
-                            };
-                            byKey[(key.Lod, key.Part)] = part;
-                        }
+                                byKey = [];
+                                pseudoParts[bad.Path] = byKey;
+                            }
 
-                        part.Textures.Add(path);
+                            if (!byKey.TryGetValue((key.Lod, key.Part), out var part))
+                            {
+                                part = new SharedRepackPart
+                                {
+                                    Key = new MeshKey(bad.Path, key.Lod, key.Part),
+                                    Reason = SharedRepackReasonRigid + bad.Reason,
+                                };
+                                byKey[(key.Lod, key.Part)] = part;
+                                candidates.Add(part);
+                            }
+
+                            part.Textures.Add(Normalize(item.Entry.Path));
+                        }
                     }
                 }
             }
 
-            var ineligibleNotes = 0;
-            foreach (var item in rigids.Where(item => item.Rigid == null))
-            {
-                var count = 0;
-                if (pseudoParts.TryGetValue(item.Path, out var byKey))
-                {
-                    candidates.AddRange(byKey.Values);
-                    count = byKey.Count;
-                }
-
-                if (ineligibleNotes++ < 3)
-                {
-                    result.ClosureNotes.Add((
-                        label,
-                        $"rigid {item.Path} is not eligible ({item.Reason}); its {count:N0} part(s) " +
-                        "using the set's textures were dropped"));
-                }
-            }
+            foreach (var item in rigids)
+                AddRigid(item);
+            AddSet(merge.Decisions[merge.Seed]);
 
             var dropped = new HashSet<MeshKey>();
             var removedBecause = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var outside = new Dictionary<string, (int Count, string Description)>(StringComparer.OrdinalIgnoreCase);
+
+            string DescribeSetState(string texture)
+            {
+                if (!setByTexture.TryGetValue(texture, out var other) || !merge.IndexOfSet.TryGetValue(other, out var index))
+                    return string.Empty;
+                if (inComponent.Contains(index))
+                    return " that was merged into this plan";
+                var otherEntry = other.Items.First(item => Normalize(item.Entry.Path).Equals(texture, StringComparison.OrdinalIgnoreCase)).Entry;
+                if (IsBlockedTexture(otherEntry, texture))
+                {
+                    return " but the texture cannot be repacked, so the set was not merged (" +
+                           (GetSharedRepackBlockedTextureReason(otherEntry.Layout) ?? "an owned override of a vanilla texture") + ")";
+                }
+
+                if (cappedTextures.Contains(texture))
+                {
+                    return $" (merge cap reached: at most {SharedRepackMaximumMergedSets} sets and " +
+                           $"{SharedRepackMaximumMergedRigids} rigids per plan)";
+                }
+
+                if (!merge.IsAvailable(index))
+                    return " that was already processed";
+                return merge.Allow ? string.Empty : " (merging is off for this attempt)";
+            }
+
             void Drop(SharedRepackPart part, string reason)
             {
                 dropped.Add(part.Key);
+                droppedParts.Add(part);
                 result.PartDropReasons[reason] = result.PartDropReasons.GetValueOrDefault(reason) + 1;
                 if (reason == SharedRepackReasonMixed || reason == SharedRepackReasonBlockedTexture)
                 {
@@ -1541,7 +1712,8 @@ namespace Editors.KitbasherEditor.Services
                             known
                                 ? existing.Description
                                 : DescribeSharedRepackOutsideTexture(
-                                    state, coverage, setRigids, texture, setByTexture, removedBecause, blocked, entryOf));
+                                    state, coverage, setRigids, texture, setByTexture, DescribeSetState,
+                                    removedBecause, blocked, entryOf));
                     }
                 }
 
@@ -1570,18 +1742,107 @@ namespace Editors.KitbasherEditor.Services
                     : SharedRepackReasonMixed;
             }
 
+            // The unprocessed signature sets that hold all the offending textures, or null
+            // when one of them cannot be merged (blocked, unknown, in this plan already, or
+            // already processed).
+            List<int>? FindJoins(List<string> offending)
+            {
+                var joins = new SortedSet<int>();
+                foreach (var texture in offending)
+                {
+                    if (blocked.Contains(texture) ||
+                        !setByTexture.TryGetValue(texture, out var other) ||
+                        !merge.IndexOfSet.TryGetValue(other, out var index) ||
+                        inComponent.Contains(index) ||
+                        !merge.IsAvailable(index))
+                    {
+                        return null;
+                    }
+
+                    var entry = other.Items.First(item => Normalize(item.Entry.Path).Equals(texture, StringComparison.OrdinalIgnoreCase)).Entry;
+                    if (IsBlockedTexture(entry, texture))
+                        return null;
+                    joins.Add(index);
+                }
+
+                return joins.ToList();
+            }
+
             var changed = true;
             while (changed)
             {
                 changed = false;
-                foreach (var part in candidates)
+                // By index: merging a set appends the parts of its rigids.
+                for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
                 {
+                    var part = candidates[candidateIndex];
                     if (dropped.Contains(part.Key) || !part.Textures.Overlaps(members))
                         continue;
 
                     string? reason = part.Reason;
                     if (reason == null && !part.Textures.IsSubsetOf(members))
-                        reason = OutsideReason(part);
+                    {
+                        var offending = part.Textures
+                            .Where(texture => !members.Contains(texture) && !isUniform(texture))
+                            .ToList();
+                        var joins = offending.Count != 0 && merge.Allow ? FindJoins(offending) : null;
+                        if (joins != null)
+                        {
+                            // Otherwise eligible only if its geometry passes as well.
+                            if (!part.GeometryChecked)
+                                part.Reason = AnalyzeSharedRepackGeometry(part);
+                            reason = part.Reason;
+                        }
+
+                        if (reason == null && joins != null)
+                        {
+                            var rigidPaths = new HashSet<string>(setRigids, StringComparer.OrdinalIgnoreCase);
+                            foreach (var index in joins)
+                            {
+                                rigidPaths.UnionWith(merge.Decisions[index].Set.Items
+                                    .SelectMany(item => item.Entry.ModParts.Concat(item.Entry.VanillaParts))
+                                    .Select(key => key.Rigid));
+                            }
+
+                            if (inComponent.Count + joins.Count > SharedRepackMaximumMergedSets ||
+                                rigidPaths.Count > SharedRepackMaximumMergedRigids)
+                            {
+                                merge.CapHit = true;
+                                cappedTextures.UnionWith(offending);
+                                reason = SharedRepackReasonMixed;
+                            }
+                            else
+                            {
+                                foreach (var index in joins)
+                                {
+                                    inComponent.Add(index);
+                                    merge.Joined.Add(index);
+                                    merge.Component.Add(merge.Decisions[index]);
+                                    AddSet(merge.Decisions[index]);
+                                }
+
+                                // Parts dropped earlier also take the new set's textures along.
+                                foreach (var droppedPart in droppedParts)
+                                {
+                                    foreach (var texture in droppedPart.Textures.Where(members.Contains))
+                                    {
+                                        removedBecause.TryAdd(
+                                            texture,
+                                            $"{DescribeSharedRepackPart(droppedPart)} was dropped");
+                                    }
+
+                                    members.ExceptWith(droppedPart.Textures);
+                                }
+
+                                changed = true;
+                                continue;
+                            }
+                        }
+                        else if (reason == null)
+                        {
+                            reason = OutsideReason(part);
+                        }
+                    }
 
                     if (reason == null && !part.GeometryChecked)
                     {
@@ -1597,8 +1858,22 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            var ineligibleNoted = false;
             void NoteOutside()
             {
+                if (!ineligibleNoted)
+                {
+                    ineligibleNoted = true;
+                    foreach (var item in ineligible.Values.OrderBy(item => item.Path, StringComparer.Ordinal).Take(3))
+                    {
+                        result.ClosureNotes.Add((
+                            label,
+                            $"rigid {item.Path} is not eligible ({item.Reason}); its " +
+                            $"{(pseudoParts.TryGetValue(item.Path, out var byKey) ? byKey.Count : 0):N0} part(s) " +
+                            "using the set's textures were dropped"));
+                    }
+                }
+
                 foreach (var (texture, (count, description)) in outside
                              .OrderBy(pair => pair.Key, StringComparer.Ordinal).Take(6))
                 {
@@ -1668,7 +1943,10 @@ namespace Editors.KitbasherEditor.Services
                         : null;
                 }
 
-                var tuples = BuildSharedRepackTuples(moved, entryOf, ClassifyConstant, out var violating);
+                string SetKeyOf(string texture)
+                    => setByTexture.TryGetValue(texture, out var owner) ? GetSharedRepackSetKey(owner) : string.Empty;
+
+                var tuples = BuildSharedRepackTuples(moved, entryOf, ClassifyConstant, SetKeyOf, out var violating);
                 if (violating.Count != 0)
                 {
                     foreach (var part in violating)
@@ -1695,7 +1973,7 @@ namespace Editors.KitbasherEditor.Services
 
                 NoteOutside();
                 return BuildSharedRepackSetPlan(
-                    state, result, coverage, rigids, tuples, entryOf, label, out failure, out failureBucket);
+                    state, result, coverage, rigids, tuples, entryOf, label, merge, out failure, out failureBucket);
             }
 
             failure = "the set could not be closed";
@@ -1708,6 +1986,7 @@ namespace Editors.KitbasherEditor.Services
             List<SharedRepackPart> moved,
             Dictionary<string, VanillaCoverageTexture> entryOf,
             Func<string, bool?> classifyConstant,
+            Func<string, string> setKeyOf,
             out List<SharedRepackPart> violating)
         {
             violating = [];
@@ -1793,11 +2072,14 @@ namespace Editors.KitbasherEditor.Services
                     NextPowerOfTwo(Math.Max(reference.Width, reference.Height) / SharedRepackMaximumCellsPerSide));
                 tuple.Cell = cell;
                 tuple.Align = Math.Max(cell, SharedRepackChartAlignment << downshift);
+                // The signature set of each slot's texture is part of the key: a generated texture
+                // then only ever replaces source textures that exactly the same units load.
                 tuple.GroupKey = $"{cell}|" + string.Join(
                     ";",
                     tuple.Layouts.Select(pair =>
                         $"{pair.Key}:{pair.Value.Format}:{pair.Value.IsSrgb}:" +
-                        $"{tuple.SourceExponent[pair.Key].X}:{tuple.SourceExponent[pair.Key].Y}"));
+                        $"{tuple.SourceExponent[pair.Key].X}:{tuple.SourceExponent[pair.Key].Y}:" +
+                        $"{setKeyOf(tuple.Slots[pair.Key])}"));
                 if (reference.Width % cell != 0 || reference.Height % cell != 0)
                 {
                     tuple.Excluded = $"its {reference.Width}x{reference.Height} texture is too small for the " +
@@ -2030,6 +2312,7 @@ namespace Editors.KitbasherEditor.Services
             List<SharedRepackTuple> tuples,
             Dictionary<string, VanillaCoverageTexture> entryOf,
             string label,
+            SharedRepackMergeContext merge,
             out string? failure,
             out string failureBucket)
         {
@@ -2051,6 +2334,12 @@ namespace Editors.KitbasherEditor.Services
                 .ToList();
             var nameRigid = planRigids[0];
             var identity = string.Join("|", planRigids);
+            if (merge.Component.Count > 1)
+            {
+                // A merged plan is named by every rigid and every set label in it.
+                identity += "#" + string.Join(
+                    "|", merge.Component.Select(DescribeSharedRepackSet).OrderBy(text => text, StringComparer.Ordinal));
+            }
 
             // Tuples that share a texture form one component.
             var parent = Enumerable.Range(0, tuples.Count).ToArray();
@@ -2459,6 +2748,11 @@ namespace Editors.KitbasherEditor.Services
                         ExponentY = exponents[slot].Y,
                         Template = layout,
                     };
+                    output.Sources.AddRange(page.Tuples
+                        .Where(tuple => tuple.Slots.ContainsKey(slot))
+                        .Select(tuple => tuple.Slots[slot])
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(path => path, StringComparer.Ordinal));
                     output.Width = ScaleByExponent(width, output.ExponentX);
                     output.Height = ScaleByExponent(height, output.ExponentY);
                     output.MipLevels = GetFullMipChainLength(output.Width, output.Height);
@@ -3377,7 +3671,7 @@ namespace Editors.KitbasherEditor.Services
         private SharedRepackBuiltSet? ApplySharedRepackSetPlan(
             BatchState state,
             SharedTextureRepackResult result,
-            UnitRepackSetDecision decision,
+            SharedRepackMergeContext merge,
             SharedRepackSetPlan plan,
             Dictionary<string, RmvFile> rigids,
             string label,
@@ -3574,13 +3868,14 @@ namespace Editors.KitbasherEditor.Services
                     result.ValidationErrors.Add($"Written repack texture differs from the checked one: {output.Path}");
             }
 
+            var decision = merge.Decisions[merge.Seed];
             var built = new SharedRepackBuiltSet
             {
                 Rigid = rewritten[0].Rigid,
                 Label = label,
                 Units = decision.SignatureSize,
                 HasCharacter = decision.HasCharacter,
-                EstimatedSaving = decision.Saving,
+                EstimatedSaving = merge.Component.Sum(item => item.Saving),
                 After = plan.Pages.Sum(page => page.BytesAfter),
                 Tuples = plan.Pages.SelectMany(page => page.Tuples).Distinct().Count(),
                 Charts = plan.Pages.Sum(page => page.Charts.Count),
@@ -3600,9 +3895,12 @@ namespace Editors.KitbasherEditor.Services
                 EdgeSkippedSamples = stats.EdgeSkipped,
             };
             built.Rigids.AddRange(rewritten);
+            built.MergedSets.AddRange(merge.Component.Skip(1).Select(item =>
+                (DescribeSharedRepackSet(item), item.Set.Items.Count, item.SignatureSize)));
             foreach (var (path, bytes) in plan.Replaced.OrderBy(pair => pair.Key, StringComparer.Ordinal))
             {
-                var owned = decision.Set.Items.First(item => Normalize(item.Entry.Path).Equals(path, StringComparison.OrdinalIgnoreCase)).Entry.IsOwned;
+                var owned = merge.Component.SelectMany(item => item.Set.Items)
+                    .First(item => Normalize(item.Entry.Path).Equals(path, StringComparison.OrdinalIgnoreCase)).Entry.IsOwned;
                 built.Replaced.Add((path, owned, bytes));
                 built.Before += bytes;
             }
@@ -3655,11 +3953,32 @@ namespace Editors.KitbasherEditor.Services
 
             var before = errors.Count;
             errors.AddRange(result.ValidationErrors);
+            var signatureSetOf = new Dictionary<string, UnitRepackSignatureSet>(StringComparer.OrdinalIgnoreCase);
+            foreach (var signatureSet in state.UnitTextureRepack?.SetsC ?? [])
+            {
+                foreach (var item in signatureSet.Items)
+                    signatureSetOf[Normalize(item.Entry.Path)] = signatureSet;
+            }
+
             foreach (var set in result.BuiltSets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 foreach (var output in set.Outputs)
                 {
+                    // No unit may load more than before: a generated texture replaces only
+                    // source textures that exactly the same units load.
+                    var owners = output.Sources
+                        .Select(source => signatureSetOf.GetValueOrDefault(source))
+                        .Distinct()
+                        .ToList();
+                    if (owners.Count != 1 || owners[0] == null)
+                    {
+                        errors.Add(
+                            $"Generated repack texture {output.Path} replaces source textures of " +
+                            $"{(owners.Contains(null) ? "an unknown signature set and " : string.Empty)}" +
+                            $"{owners.Count(owner => owner != null):N0} signature set(s), not exactly one");
+                    }
+
                     var file = state.Output.FindFile(output.Path);
                     if (file == null)
                     {
@@ -3778,7 +4097,9 @@ namespace Editors.KitbasherEditor.Services
                 "UVs of every rigid using them are rewritten for all LODs, new materials are written and the " +
                 "rigids' WSModels repointed. A rigid that cannot be rewritten only loses its parts: their textures " +
                 "leave the set. A texture of any size that is one flat colour is kept as authored and never blocks " +
-                "a part. A set is written completely or not at all. " +
+                "a part. A material whose textures belong to different signature sets pulls the other sets into " +
+                "one plan (never a set that was already processed); a plan is written completely or not at all, " +
+                "and a failed merged plan falls back to its seed set alone. " +
                 "Original textures and materials are not edited. Video memory only. Pass-through slots (" +
                 string.Join(", ", SharedRepackPassThroughSlots) + ") are kept unchanged in the generated " +
                 "materials; any other non-atlasable slot makes a part ineligible, named per slot below. " +
@@ -3800,6 +4121,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine("Selection funnel (every set ends in exactly one line below):");
             sb.AppendLine($"  Signature sets considered: {result.SetsConsidered:N0}");
             sb.AppendLine($"  Estimated saving below the threshold: {result.BelowThreshold:N0}");
+            sb.AppendLine($"  Merged into another set's plan: {result.MergedIntoOther:N0}");
             sb.AppendLine(
                 $"  Every rigid not eligible (not owned, overrides vanilla, direct reference, WSModel not owned or " +
                 $"overriding, modified by another stage, unreadable): {result.RigidNotEligible:N0}");
@@ -3810,12 +4132,18 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"  Failed the pixel check (nothing written): {result.FailedPixelCheck:N0}");
             sb.AppendLine($"  Built: {result.Built:N0}");
             sb.AppendLine($"  (tuples excluded by the sizing invariant, expected 0: {result.SizingErrors:N0})");
-            var accounted = result.BelowThreshold + result.RigidNotEligible +
+            var accounted = result.BelowThreshold + result.MergedIntoOther + result.RigidNotEligible +
                             result.DroppedByClosure + result.NotBuildable + result.FailedActualBytes +
                             result.FailedPixelCheck + result.Built;
             sb.AppendLine(
                 $"  Check: {accounted:N0} accounted of {result.SetsConsidered:N0} considered " +
                 (accounted == result.SetsConsidered ? "(reconciles)" : "(DOES NOT RECONCILE)"));
+            sb.AppendLine(
+                $"Merged plans (a set whose material shares textures with unprocessed sets takes them in, up to " +
+                $"{SharedRepackMaximumMergedSets} sets and {SharedRepackMaximumMergedRigids} rigids): " +
+                $"{result.MergePlansTried:N0} tried, {result.MergePlansBuilt:N0} built, {result.MergePlansFellBack:N0} " +
+                $"fell back to the seed set alone; largest {result.LargestMergeSets:N0} set(s) in " +
+                $"{result.LargestMergeRigids:N0} rigid(s); {result.MergeCapHits:N0} plan(s) hit the cap.");
             if (result.PartDropReasons.Count != 0)
             {
                 sb.AppendLine("Parts dropped from a set while closing it (a part counts once per set):");
@@ -3853,6 +4181,15 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"    {set.Rigids.Count:N0} rigid(s) rewritten: " +
                     string.Join(", ", set.Rigids.Select(item => $"{item.Rigid} ({item.Parts:N0} part(s))")));
+                if (set.MergedSets.Count != 0)
+                {
+                    sb.AppendLine($"    merged signature sets ({set.MergedSets.Count:N0} joined the seed):");
+                    foreach (var (mergedLabel, textures, units) in set.MergedSets)
+                        sb.AppendLine($"      {mergedLabel}: {textures:N0} texture(s), {units:N0} unit(s)");
+                }
+
+                if (set.FallbackNote != null)
+                    sb.AppendLine($"    {set.FallbackNote}");
                 sb.AppendLine(
                     $"    units in signature {set.Units:N0}, lord/hero: " +
                     $"{(set.HasCharacter == null ? "unknown" : set.HasCharacter.Value ? "yes" : "no")}; " +
@@ -3940,7 +4277,7 @@ namespace Editors.KitbasherEditor.Services
 
             sb.AppendLine(
                 "Not covered by this increment: material variants that disagree on a texture, tiled UVs, " +
-                "rigids used by more than one set of units outside the pack, merging different signature sets, " +
+                "rigids used by more than one set of units outside the pack, merging sets that no material connects, " +
                 "deleting the old textures.");
             sb.AppendLine();
         }
