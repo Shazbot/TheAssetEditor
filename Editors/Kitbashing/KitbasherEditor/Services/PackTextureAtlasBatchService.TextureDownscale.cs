@@ -284,6 +284,9 @@ namespace Editors.KitbasherEditor.Services
             public List<string> RewriteFailures { get; } = [];
             public int Sliced { get; set; }
             public int Reencoded { get; set; }
+            // Textures an earlier stage sized with the early estimate whose late decision differs.
+            public List<string> EarlyMismatches { get; } = [];
+            public int EarlyComparedTextures { get; set; }
         }
 
         // ---------------------------------------------------------------------------
@@ -1997,6 +2000,7 @@ namespace Editors.KitbasherEditor.Services
                     cancellationToken,
                     progress);
                 result.Plan = PlanTextureDownscale(inputs);
+                CompareEarlyDownscaleEstimate(state, result);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -2015,6 +2019,80 @@ namespace Editors.KitbasherEditor.Services
             result.RewriteElapsed = stopwatch.Elapsed;
             state.PhaseDurations["Texture downscale rewrite"] = result.RewriteElapsed;
         }
+
+        // Analysis on the source state, before atlasing (see BatchState.TextureDownscaleEarly).
+        // Same inputs and rules as the late run; the only differences are that nothing has been
+        // atlased, merged or pruned yet and that no atlas stage density reference exists, so the
+        // reference is derived from the assessed parts. Failures never fail the run: the stages
+        // that would use the estimate then size textures at full resolution.
+        private void RunEarlyTextureDownscale(
+            BatchState state,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress,
+            Func<string, RmvFile?>? loadRigid = null)
+        {
+            var result = new TextureDownscaleResult { Requested = true };
+            state.TextureDownscaleEarly = result;
+            state.DownscaleEarlyCandidates.Clear();
+            state.DownscaleTargetScale.Clear();
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                ReportProgress(progress, "Texture downscale early estimate");
+                var inputs = CollectTextureDownscaleInputs(
+                    state,
+                    loadRigid ?? (path => LoadTextureDownscaleRigid(state, path)),
+                    null,
+                    cancellationToken,
+                    progress);
+                result.Plan = PlanTextureDownscale(inputs);
+                foreach (var candidate in result.Plan.Candidates)
+                {
+                    var path = Normalize(candidate.Path);
+                    state.DownscaleEarlyCandidates[path] = candidate;
+                    state.DownscaleTargetScale[path] = candidate.Scale;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                result.Failure = $"{ex.GetType().Name}: {ex.Message}";
+                state.DownscaleEarlyCandidates.Clear();
+                state.DownscaleTargetScale.Clear();
+            }
+
+            result.AnalysisElapsed = stopwatch.Elapsed;
+            state.PhaseDurations["Texture downscale early estimate"] = result.AnalysisElapsed;
+        }
+
+        // The late decision against the early estimate, for the textures an earlier stage sized
+        // with it. A texture the repack replaced is not compared: the late run cannot judge it.
+        private static void CompareEarlyDownscaleEstimate(BatchState state, TextureDownscaleResult late)
+        {
+            if (state.TextureDownscaleEarly?.Plan == null || late.Plan == null)
+                return;
+
+            var lateScale = late.Plan.Candidates.ToDictionary(
+                candidate => Normalize(candidate.Path),
+                candidate => candidate.Scale,
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var path in state.DownscaleEarlyUsedByGate
+                         .Except(state.DownscaleEarlyUsedByRepack, StringComparer.OrdinalIgnoreCase)
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                late.EarlyComparedTextures++;
+                var earlyValue = state.DownscaleTargetScale.GetValueOrDefault(path, 1.0);
+                var lateValue = lateScale.GetValueOrDefault(path, 1.0);
+                if (Math.Abs(earlyValue - lateValue) > 1e-9)
+                {
+                    late.EarlyMismatches.Add(
+                        $"{path}: early estimate {FormatDownscaleScale(earlyValue)}, late decision " +
+                        $"{FormatDownscaleScale(lateValue)}");
+                }
+            }
+        }
+
+        private static string FormatDownscaleScale(double scale)
+            => scale >= 1.0 ? "full size" : scale.ToString("0.##", CultureInfo.InvariantCulture) + "x";
 
         private void ApplyTextureDownscale(
             BatchState state,
@@ -2195,6 +2273,20 @@ namespace Editors.KitbasherEditor.Services
                     $"The time budget ran out: {plan.RigidsSkippedForTime:N0} rigid(s) were not " +
                     "read and every texture that depends on them is listed as not assessable. " +
                     "The candidate list below is incomplete.");
+            }
+
+            var early = state.TextureDownscaleEarly;
+            if (early != null)
+            {
+                sb.AppendLine(
+                    early.Plan == null
+                        ? $"Early estimate (before atlasing, used by the atlas value gate and the shared texture repack): failed ({early.Failure}); those stages sized textures at full resolution."
+                        : $"Early estimate (before atlasing, used by the atlas value gate and the shared texture repack): {early.Plan.Candidates.Count:N0} candidate(s) in {early.AnalysisElapsed.TotalMilliseconds:N0} ms; " +
+                          $"{state.DownscaleEarlyUsedByGate.Count:N0} texture(s) sized by the gate and {state.DownscaleEarlyUsedByRepack.Count:N0} by the repack. " +
+                          $"This late run on the output is authoritative; of the {result.EarlyComparedTextures:N0} gate-sized texture(s) compared, " +
+                          $"{result.EarlyMismatches.Count:N0} differ.");
+                foreach (var mismatch in result.EarlyMismatches.Take(TextureDownscaleListLimit))
+                    sb.AppendLine("  early/late mismatch: " + mismatch);
             }
 
             if (plan.ReferenceDensity.HasValue)

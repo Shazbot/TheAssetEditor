@@ -571,6 +571,15 @@ namespace Editors.KitbasherEditor.Services
                             phaseStopwatch.Elapsed;
                     }
 
+                    // The downscale analysis on the source state, for the stages that size
+                    // textures before the late (authoritative) downscale run on the output.
+                    if (state.DownscaleTextures &&
+                        (buildAtlases || state.SharedTextureRepackEnabled))
+                    {
+                        phaseStopwatch.Restart();
+                        RunEarlyTextureDownscale(state, cancellationToken, progress);
+                    }
+
                     if (state.SharedTextureRepackEnabled)
                     {
                         // The two analyses the repack needs run here, before atlasing: they

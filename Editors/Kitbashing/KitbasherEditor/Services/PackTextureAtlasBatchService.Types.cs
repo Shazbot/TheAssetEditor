@@ -897,6 +897,20 @@ namespace Editors.KitbasherEditor.Services
             public List<double> TexelDensityGlobalReferences { get; } = [];
             public bool DownscaleTextures { get; set; }
             public TextureDownscaleResult? TextureDownscale { get; set; }
+            // The downscale analysis run on the source state before atlasing, when downscale is on
+            // and a stage that sizes textures (atlas value gate, shared repack) will use it. The
+            // late run on the output stays authoritative for what is rewritten.
+            public TextureDownscaleResult? TextureDownscaleEarly { get; set; }
+            public Dictionary<string, TextureDownscaleCandidate> DownscaleEarlyCandidates { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            // Texture path -> the scale (0.5 or 0.25) the early analysis chose; absent means 1.
+            public Dictionary<string, double> DownscaleTargetScale { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            // Textures whose early estimate an earlier stage used for its own sizing.
+            public HashSet<string> DownscaleEarlyUsedByGate { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> DownscaleEarlyUsedByRepack { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             // Opt-in exact texture compaction (uniform shrink, opaque BC2/BC3 to BC1).
             public bool CompactTextures { get; set; }
             // Effective only together with CompactTextures.

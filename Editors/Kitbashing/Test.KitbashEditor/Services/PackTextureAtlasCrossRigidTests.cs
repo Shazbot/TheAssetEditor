@@ -9315,6 +9315,73 @@ namespace Test.KitbashEditor.Services
             Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Does.Not.Contain(SrRigid2));
         }
 
+        // --- Early downscale estimate ----------------------------------------------------
+
+        private static object RunEarlyDownscale(object service, object state, DownscaleFixture fixture)
+        {
+            Func<string, RmvFile?> loader = path => fixture.Rigids.GetValueOrDefault(path);
+            GetServiceType()
+                .GetMethod("RunEarlyTextureDownscale", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(service, [state, CancellationToken.None, null, loader]);
+            return Get<object>(state, "TextureDownscaleEarly");
+        }
+
+        [Test]
+        public void Downscale_EarlyEstimate_ProducesTheTargetScalesTheLateRunUsesAndWritesNothing()
+        {
+            var fixture = BuildStandardDownscaleFixture();
+            var (service, state) = CreateStandardDownscaleState(fixture, downscale: true);
+            var before = fixture.Output.ToDictionary(entry => entry.Key, entry => entry.Value);
+
+            var early = RunEarlyDownscale(service, state, fixture);
+
+            Assert.That(Get<string?>(early, "Failure"), Is.Null);
+            var scales = Get<Dictionary<string, double>>(state, "DownscaleTargetScale");
+            Assert.That(scales.Keys.Order(), Is.EqualTo(new[] { "textures\\t_agg.dds", "textures\\t_half.dds", "textures\\t_reenc.dds" }));
+            Assert.That(scales["textures\\t_half.dds"], Is.EqualTo(0.5));
+            Assert.That(scales.ContainsKey("textures\\t_full.dds"), Is.False);
+            Assert.That(Get<bool>(early, "Applied"), Is.False);
+            foreach (var (path, bytes) in before)
+                Assert.That(fixture.Output[path], Is.SameAs(bytes), path);
+            Assert.That(fixture.Output.Count, Is.EqualTo(before.Count));
+
+            // The late run agrees with the early one on the source state.
+            var late = RunDownscale(service, state, fixture);
+            Assert.That(
+                Candidates(late).ToDictionary(item => Get<string>(item, "Path"), item => Get<double>(item, "Scale")),
+                Is.EqualTo(scales));
+        }
+
+        [Test]
+        public void Downscale_EarlyEstimateThatDiffersFromTheLateDecision_IsReported()
+        {
+            var fixture = BuildStandardDownscaleFixture();
+            var (service, state) = CreateStandardDownscaleState(fixture, downscale: true);
+            RunEarlyDownscale(service, state, fixture);
+            // As if an earlier stage had sized t_half at 0.25 and t_full at 0.5 while the late
+            // run (still 0.5 and full size) decides otherwise; t_agg agrees.
+            var scales = Get<Dictionary<string, double>>(state, "DownscaleTargetScale");
+            scales["textures\\t_half.dds"] = 0.25;
+            scales["textures\\t_full.dds"] = 0.5;
+            var used = Get<HashSet<string>>(state, "DownscaleEarlyUsedByGate");
+            used.UnionWith(["textures\\t_half.dds", "textures\\t_full.dds", "textures\\t_agg.dds"]);
+
+            var late = RunDownscale(service, state, fixture);
+
+            Assert.That(Get<int>(late, "EarlyComparedTextures"), Is.EqualTo(3));
+            Assert.That(
+                Get<List<string>>(late, "EarlyMismatches"),
+                Is.EqualTo(new[]
+                {
+                    "textures\\t_full.dds: early estimate 0.5x, late decision full size",
+                    "textures\\t_half.dds: early estimate 0.25x, late decision 0.5x",
+                }));
+            var report = new System.Text.StringBuilder();
+            GetServiceType().GetMethod("AppendTextureDownscaleSection", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [report, state]);
+            Assert.That(report.ToString(), Does.Contain("early/late mismatch: textures\\t_half.dds"));
+        }
+
         // --- Shared texture repack outputs as generated files ------------------------------
 
         private const string RepackTexture = "textures\\asset_editor\\atlases\\sr_repack_x.dds";
