@@ -47,7 +47,7 @@ namespace GameWorld.Core.Rendering.Materials.Serialization
 
         public string ProsessMaterial(string modelFilePath, string meshName, UiVertexFormat meshVertexFormat, CapabilityMaterial material)
         {
-            if (material.PreserveSourceWsModelMaterialOnSave &&
+            if (material.ShouldPreserveSourceWsModelMaterialOnSave &&
                 !string.IsNullOrWhiteSpace(material.SourceWsModelMaterialPath))
             {
                 return material.SourceWsModelMaterialPath;

@@ -35,7 +35,28 @@ namespace GameWorld.Core.Rendering.Materials.Shaders
         // to decide whether UV0 may be safely rewritten.
         public string? SourceWsModelMaterialPath { get; set; }
         public string? SourceWsModelShaderPath { get; set; }
-        public bool PreserveSourceWsModelMaterialOnSave { get; set; }
+
+        // Save the original WSModel material instead of serialising this one, but only while the
+        // material is still what it was when the flag was set. Setting the flag snapshots the
+        // material; any later change to a capability (textures, parameters) makes it serialise
+        // normally. A clone is a new material and does not carry the flag.
+        private bool _preserveSourceWsModelMaterialOnSave;
+        private CapabilityMaterial? _preservedSnapshot;
+
+        public bool PreserveSourceWsModelMaterialOnSave
+        {
+            get => _preserveSourceWsModelMaterialOnSave;
+            set
+            {
+                _preserveSourceWsModelMaterialOnSave = value;
+                _preservedSnapshot = value ? Clone() : null;
+            }
+        }
+
+        public bool ShouldPreserveSourceWsModelMaterialOnSave =>
+            _preserveSourceWsModelMaterialOnSave &&
+            _preservedSnapshot != null &&
+            AreEqual(_preservedSnapshot).Result;
 
         public bool UsesEmissiveShader =>
             Type == CapabilityMaterialsEnum.MetalRoughPbr_Emissive ||
@@ -121,7 +142,6 @@ namespace GameWorld.Core.Rendering.Materials.Shaders
             copy.Capabilities = CloneCapabilities();
             copy.SourceWsModelMaterialPath = SourceWsModelMaterialPath;
             copy.SourceWsModelShaderPath = SourceWsModelShaderPath;
-            copy.PreserveSourceWsModelMaterialOnSave = PreserveSourceWsModelMaterialOnSave;
             return copy;
         }
 
