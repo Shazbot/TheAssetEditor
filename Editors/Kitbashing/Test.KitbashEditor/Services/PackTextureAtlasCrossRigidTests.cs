@@ -10666,5 +10666,509 @@ namespace Test.KitbashEditor.Services
             Assert.That(pages!.Count, Is.InRange(2, 4));
             Assert.That(pages.SelectMany(page => page).OrderBy(index => index), Is.EqualTo(Enumerable.Range(0, sizes.Count)));
         }
+
+        // --- Exact texture compaction -----------------------------------------------------
+
+        private const string CxTexture = "textures\\cx.dds";
+        private const string CxMaterial = "materials\\cx.xml.material";
+
+        private static byte[] CxBc1Block(ushort c0, ushort c1, uint indices)
+        {
+            var block = new byte[8];
+            BitConverter.GetBytes(c0).CopyTo(block, 0);
+            BitConverter.GetBytes(c1).CopyTo(block, 2);
+            BitConverter.GetBytes(indices).CopyTo(block, 4);
+            return block;
+        }
+
+        private static byte[] CxBc3Block(byte a0, byte a1, ulong alphaIndices, byte[] colour)
+        {
+            var block = new byte[16];
+            block[0] = a0;
+            block[1] = a1;
+            for (var index = 0; index < 6; index++)
+                block[2 + index] = (byte)(alphaIndices >> (8 * index));
+            colour.CopyTo(block, 8);
+            return block;
+        }
+
+        // Independent decoder: texels as (r, g, b, a) packed from the low byte up.
+        private static uint[] CxDecode(string format, byte[] block)
+        {
+            var colour = format == "BC1" ? block : block[8..];
+            int c0 = colour[0] | (colour[1] << 8);
+            int c1 = colour[2] | (colour[3] << 8);
+            (int R, int G, int B) Expand(int c)
+            {
+                var r = (c >> 11) & 31;
+                var g = (c >> 5) & 63;
+                var b = c & 31;
+                return ((r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2));
+            }
+
+            var p0 = Expand(c0);
+            var p1 = Expand(c1);
+            var palette = new (int R, int G, int B, int A)[4];
+            palette[0] = (p0.R, p0.G, p0.B, 255);
+            palette[1] = (p1.R, p1.G, p1.B, 255);
+            if (format != "BC1" || c0 > c1)
+            {
+                palette[2] = ((2 * p0.R + p1.R) / 3, (2 * p0.G + p1.G) / 3, (2 * p0.B + p1.B) / 3, 255);
+                palette[3] = ((p0.R + 2 * p1.R) / 3, (p0.G + 2 * p1.G) / 3, (p0.B + 2 * p1.B) / 3, 255);
+            }
+            else
+            {
+                palette[2] = ((p0.R + p1.R) / 2, (p0.G + p1.G) / 2, (p0.B + p1.B) / 2, 255);
+                palette[3] = (0, 0, 0, 0);
+            }
+
+            var alpha = new int[16];
+            Array.Fill(alpha, 255);
+            if (format == "BC3")
+            {
+                int a0 = block[0], a1 = block[1];
+                var table = new int[8];
+                table[0] = a0;
+                table[1] = a1;
+                if (a0 > a1)
+                {
+                    for (var k = 1; k <= 6; k++)
+                        table[1 + k] = ((7 - k) * a0 + k * a1) / 7;
+                }
+                else
+                {
+                    for (var k = 1; k <= 4; k++)
+                        table[1 + k] = ((5 - k) * a0 + k * a1) / 5;
+                    table[6] = 0;
+                    table[7] = 255;
+                }
+
+                ulong bits = 0;
+                for (var index = 0; index < 6; index++)
+                    bits |= (ulong)block[2 + index] << (8 * index);
+                for (var texel = 0; texel < 16; texel++)
+                    alpha[texel] = table[(int)((bits >> (3 * texel)) & 7)];
+            }
+            else if (format == "BC2")
+            {
+                var bits = BitConverter.ToUInt64(block, 0);
+                for (var texel = 0; texel < 16; texel++)
+                    alpha[texel] = (int)((bits >> (4 * texel)) & 15) * 17;
+            }
+
+            var indices = BitConverter.ToUInt32(colour, 4);
+            var texels = new uint[16];
+            for (var texel = 0; texel < 16; texel++)
+            {
+                var entry = palette[(int)((indices >> (2 * texel)) & 3)];
+                var a = format == "BC1" ? entry.A : alpha[texel];
+                texels[texel] = (uint)(entry.R | (entry.G << 8) | (entry.B << 16) | (a << 24));
+            }
+
+            return texels;
+        }
+
+        // A DDS whose blocks come from the factory (level, block index).
+        private static byte[] CxBuild(
+            int width,
+            int height,
+            int mips,
+            string format,
+            bool dx10,
+            bool srgb,
+            Func<int, int, byte[]> blockFactory,
+            int dxgiFormat = 0)
+        {
+            var dds = BuildBcDds(width, height, mips, format, dx10, srgb, dxgiFormat);
+            var bytesPerBlock = format == "BC1" ? 8 : 16;
+            var offset = dx10 ? 148 : 128;
+            for (var level = 0; level < mips; level++)
+            {
+                var blocks = Math.Max(1, (Math.Max(1, width >> level) + 3) / 4) *
+                             Math.Max(1, (Math.Max(1, height >> level) + 3) / 4);
+                for (var block = 0; block < blocks; block++)
+                {
+                    blockFactory(level, block).CopyTo(dds, offset);
+                    offset += bytesPerBlock;
+                }
+            }
+
+            return dds;
+        }
+
+        // Every texel of every valid position of every level of a DDS, as decoded texels.
+        private static List<uint> CxTexels(byte[] dds)
+        {
+            var layout = GetLayout(dds);
+            var format = Get<string>(layout, "Format");
+            var bytesPerBlock = Get<int>(layout, "BytesPerBlock");
+            var width = Get<int>(layout, "Width");
+            var height = Get<int>(layout, "Height");
+            var offset = Get<int>(layout, "HeaderSize");
+            var texels = new List<uint>();
+            for (var level = 0; level < Get<int>(layout, "MipCount"); level++)
+            {
+                var w = Math.Max(1, width >> level);
+                var h = Math.Max(1, height >> level);
+                var blocksWide = (w + 3) / 4;
+                var blocksHigh = (h + 3) / 4;
+                for (var by = 0; by < blocksHigh; by++)
+                {
+                    for (var bx = 0; bx < blocksWide; bx++)
+                    {
+                        var decoded = CxDecode(format, dds[offset..(offset + bytesPerBlock)]);
+                        offset += bytesPerBlock;
+                        for (var y = 0; y < Math.Min(4, h - by * 4); y++)
+                        {
+                            for (var x = 0; x < Math.Min(4, w - bx * 4); x++)
+                                texels.Add(decoded[y * 4 + x]);
+                        }
+                    }
+                }
+            }
+
+            return texels;
+        }
+
+        private static DownscaleFixture CxFixture(byte[] dds, string path = CxTexture)
+        {
+            var fixture = new DownscaleFixture();
+            fixture.Add(path, dds);
+            fixture.AddMaterial(CxMaterial, ("t_xml_base_colour", path));
+            return fixture;
+        }
+
+        private static (object Service, object State) CxRun(
+            DownscaleFixture fixture,
+            bool enabled = true,
+            Action<object>? configure = null)
+        {
+            var (service, state) = CreateDownscaleState(fixture, false);
+            SetStateProperty(state, "CompactTextures", enabled);
+            configure?.Invoke(state);
+            GetServiceType()
+                .GetMethod("RunTextureCompaction", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(service, [state, CancellationToken.None, null]);
+            return (service, state);
+        }
+
+        private static object CxResult(object state) => Get<object>(state, "TextureCompaction");
+
+        private static int CxCompacted(object state)
+            => Get<IEnumerable>(CxResult(state), "Compacted").Cast<object>().Count();
+
+        private static Dictionary<string, int> CxSkipped(object state)
+            => Get<Dictionary<string, int>>(CxResult(state), "Skipped");
+
+        private static List<string> CxValidate(object state)
+        {
+            var errors = new List<string>();
+            GetStaticMethod("ValidateTextureCompaction").Invoke(null, [state, errors, CancellationToken.None]);
+            return errors;
+        }
+
+        private static string CxReport(object state)
+        {
+            var builder = new StringBuilder();
+            GetStaticMethod("AppendTextureCompactionSection").Invoke(null, [builder, state]);
+            return builder.ToString();
+        }
+
+        // c0 = c1 = 0x1234 decodes to rgb (16, 69, 165).
+        private const uint CxFlatRgb = 16u | (69u << 8) | (165u << 16);
+
+        private static byte[] CxFlatBlock(string format)
+            => format == "BC1"
+                ? CxBc1Block(0x1234, 0x1234, 0)
+                : CxBc3Block(200, 200, 0, CxBc1Block(0x1234, 0x1234, 0));
+
+        [TestCase("BC3", false, false, TestName = "Compaction_UniformBc3_Legacy_BecomesFourByFour")]
+        [TestCase("BC1", false, false, TestName = "Compaction_UniformBc1_Legacy_BecomesFourByFour")]
+        [TestCase("BC3", true, true, TestName = "Compaction_UniformBc3_Dx10Srgb_BecomesFourByFour")]
+        public void Compaction_UniformTexture_BecomesFourByFour_WithTheSameColour(string format, bool dx10, bool srgb)
+        {
+            var source = CxBuild(1024, 1024, 11, format, dx10, srgb, (_, _) => CxFlatBlock(format));
+            var fixture = CxFixture(source);
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(1));
+            var output = fixture.Output[CxTexture];
+            var (width, height, mips, outFormat, outSrgb, outDx10, chain) = ReadDds(output);
+            Assert.That((width, height, mips), Is.EqualTo((4, 4, 3)));
+            Assert.That((outFormat, outSrgb, outDx10), Is.EqualTo((format, srgb, dx10)));
+            Assert.That(output.Length, Is.EqualTo((dx10 ? 148 : 128) + chain));
+            Assert.That(output.Length, Is.LessThan(source.Length / 1000));
+            var texels = CxTexels(output);
+            Assert.That(texels, Has.Count.EqualTo(16 + 4 + 1));
+            var alpha = format == "BC1" ? 255u : 200u;
+            Assert.That(texels, Has.All.EqualTo(CxFlatRgb | (alpha << 24)));
+            // The same block, verbatim, in every level.
+            var blockSize = format == "BC1" ? 8 : 16;
+            var headerSize = dx10 ? 148 : 128;
+            for (var level = 0; level < 3; level++)
+            {
+                Assert.That(
+                    output[(headerSize + level * blockSize)..(headerSize + (level + 1) * blockSize)],
+                    Is.EqualTo(CxFlatBlock(format)));
+            }
+
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_UniformAtTheTopButNotAtALowerMip_IsNotShrunk()
+        {
+            var source = CxBuild(
+                1024, 1024, 11, "BC1", true, true,
+                (level, block) => level == 3 && block == 5
+                    ? CxBc1Block(0x1235, 0x1235, 0)
+                    : CxFlatBlock("BC1"));
+            var fixture = CxFixture(source);
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("nothing exact to gain"));
+        }
+
+        // Blocks of every colour mode: c0 > c1, c0 < c1 and c0 == c1, with scattered indices;
+        // alpha 255 through the 8-alpha mode or through index 7 of the 6-alpha mode.
+        private static byte[] CxOpaqueBlock(int level, int block, string format)
+        {
+            var indices = unchecked((uint)((block + 1) * 2654435761u + level * 97));
+            var colour = (block % 3) switch
+            {
+                0 => CxBc1Block(0xF800, 0x001F, indices),
+                1 => CxBc1Block(0x001F, 0xF800, indices),
+                _ => CxBc1Block(0x07E0, 0x07E0, indices),
+            };
+            if (format == "BC2")
+            {
+                var bytes = new byte[16];
+                Array.Fill(bytes, (byte)0xFF, 0, 8);
+                colour.CopyTo(bytes, 8);
+                return bytes;
+            }
+
+            return block % 2 == 0
+                ? CxBc3Block(255, 255, 0xFFFFFFFFFFFFUL, colour)
+                : CxBc3Block(255, 100, 0, colour);
+        }
+
+        [TestCase("BC3", false, false, 0, TestName = "Compaction_OpaqueBc3_Legacy_BecomesBc1")]
+        [TestCase("BC3", true, true, 0, TestName = "Compaction_OpaqueBc3_Dx10Srgb_BecomesBc1")]
+        [TestCase("BC3", true, false, 0, TestName = "Compaction_OpaqueBc3_Dx10Unorm_BecomesBc1")]
+        [TestCase("BC2", true, true, 75, TestName = "Compaction_OpaqueBc2_Dx10Srgb_BecomesBc1")]
+        public void Compaction_OpaqueBc3_BecomesBc1_AndDecodesIdenticallyAtEveryLevel(
+            string format, bool dx10, bool srgb, int dxgi)
+        {
+            var source = CxBuild(
+                64, 64, 7, format, dx10, srgb, (level, block) => CxOpaqueBlock(level, block, format), dxgi);
+            var fixture = CxFixture(source);
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(1), string.Join(";", CxSkipped(state).Keys));
+            var output = fixture.Output[CxTexture];
+            var (width, height, mips, outFormat, outSrgb, outDx10, chain) = ReadDds(output);
+            Assert.That((width, height, mips), Is.EqualTo((64, 64, 7)));
+            Assert.That((outFormat, outSrgb, outDx10), Is.EqualTo(("BC1", srgb, dx10)));
+            Assert.That(output.Length, Is.EqualTo((dx10 ? 148 : 128) + chain));
+            Assert.That(output.Length, Is.LessThan(source.Length));
+            if (dx10)
+                Assert.That(BitConverter.ToInt32(output, 128), Is.EqualTo(srgb ? 72 : 71));
+            else
+                Assert.That(System.Text.Encoding.ASCII.GetString(output, 84, 4), Is.EqualTo("DXT1"));
+            Assert.That(BitConverter.ToInt32(output, 20), Is.EqualTo(16 * 16 * 8));
+            // Texel for texel, RGBA, every level, including the swapped and equal-endpoint blocks.
+            var before = CxTexels(source);
+            var after = CxTexels(output);
+            Assert.That(before, Has.All.Matches<uint>(texel => texel >> 24 == 255));
+            Assert.That(after, Is.EqualTo(before));
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_Bc3WithOneTexelOfAlpha254_IsUntouched()
+        {
+            var source = CxBuild(
+                64, 64, 7, "BC3", true, true,
+                (level, block) => level == 0 && block == 7
+                    ? CxBc3Block(255, 254, 1UL, CxBc1Block(0x07E0, 0x07E0, 0x1B))
+                    : CxOpaqueBlock(level, block, "BC3"));
+            var fixture = CxFixture(source);
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("nothing exact to gain"));
+        }
+
+        [Test]
+        public void Compaction_Bc3SixAlphaModeWithIndexSix_IsUntouched_EvenWithBothEndpoints255()
+        {
+            // a0 = a1 = 255 selects the 6-alpha mode; texel 0 has index 6, alpha 0.
+            var source = CxBuild(
+                64, 64, 7, "BC3", true, true,
+                (level, block) => level == 0 && block == 3
+                    ? CxBc3Block(255, 255, 6UL, CxBc1Block(0x07E0, 0x07E0, 0x1B))
+                    : CxOpaqueBlock(level, block, "BC3"));
+            var fixture = CxFixture(source);
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+        }
+
+        [Test]
+        public void Compaction_NormalMapLikeBc3_WhereAlphaCarriesData_IsUntouched()
+        {
+            var source = CxBuild(
+                64, 64, 7, "BC3", true, false,
+                (level, block) => CxBc3Block(
+                    (byte)(200 - block % 50), (byte)(40 + block % 30), unchecked((ulong)block * 0x9E3779B97F4A7C15UL),
+                    CxBc1Block((ushort)(0x8410 + block), (ushort)(0x7BEF - block), (uint)(block * 31))));
+            var fixture = CxFixture(source);
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+        }
+
+        [Test]
+        public void Compaction_SkipReasons_AreCountedAndTheFilesStayAsTheyWere()
+        {
+            var flat = CxBuild(256, 256, 9, "BC1", true, true, (_, _) => CxFlatBlock("BC1"));
+            var fixture = new DownscaleFixture();
+            foreach (var name in new[] { "ok", "ui", "orphan", "generated", "downscaled", "vanilla" })
+                fixture.Add($"textures\\{name}.dds", flat);
+            fixture.Add("textures\\generated_extra.dds", flat);
+            fixture.AddMaterial(
+                "materials\\cx.xml.material",
+                ("t_xml_base_colour", "textures\\ok.dds"),
+                ("t_xml_normal", "textures\\ui.dds"),
+                ("t_xml_mask", "textures\\generated.dds"),
+                ("t_xml_material_map", "textures\\downscaled.dds"));
+            fixture.AddText("ui\\screen.txt", "icon textures\\ui.dds");
+            // A texture that exists only in the output (not a source texture).
+            fixture.Output["textures\\only_output.dds"] = flat;
+            // A BC7 texture is not decoded.
+            fixture.AddTexture("textures\\bc7.dds", 256, 1, "BC3", dx10: true, dxgiFormat: 98);
+            fixture.AddMaterial("materials\\bc7.xml.material", ("t_xml_base_colour", "textures\\bc7.dds"));
+
+            var (_, state) = CxRun(
+                fixture,
+                configure: batch =>
+                {
+                    Get<HashSet<string>>(batch, "GeneratedTexturePaths").Add("textures\\generated.dds");
+                    var downscale = Activator.CreateInstance(GetNestedType("TextureDownscaleResult"))!;
+                    var candidate = GetNestedType("TextureDownscaleCandidate").GetConstructors().Single().Invoke(
+                    [
+                        "textures\\downscaled.dds", 256, 256, 128, 128, 0.5, "BC1", "BC1", true, true, true, 1,
+                        100L, 50L, 1, 1, "x", 1.0,
+                    ]);
+                    Get<IList>(downscale, "Rewritten").Add(candidate);
+                    SetStateProperty(batch, "TextureDownscale", downscale);
+                });
+
+            var result = CxResult(state);
+            var skipped = CxSkipped(state);
+            Assert.That(CxCompacted(state), Is.EqualTo(1));
+            Assert.That(skipped.Single(item => item.Key.Contains("non-material")).Value, Is.EqualTo(1));
+            Assert.That(skipped.Single(item => item.Key.Contains("not referenced by any material")).Value, Is.EqualTo(3));
+            Assert.That(skipped.Single(item => item.Key.Contains("atlas or repack")).Value, Is.EqualTo(1));
+            Assert.That(skipped.Single(item => item.Key.Contains("downscaled")).Value, Is.EqualTo(1));
+            Assert.That(skipped.Single(item => item.Key.Contains("not a texture of the source pack")).Value, Is.EqualTo(1));
+            Assert.That(skipped.Single(item => item.Key.Contains("BC7")).Value, Is.EqualTo(1));
+            foreach (var name in new[] { "ui", "orphan", "generated", "downscaled", "generated_extra" })
+                Assert.That(fixture.Output[$"textures\\{name}.dds"], Is.EqualTo(flat), name);
+            Assert.That(fixture.Output["textures\\ok.dds"].Length, Is.LessThan(flat.Length));
+            // Everything is accounted for.
+            Assert.That(Get<int>(result, "Considered"), Is.EqualTo(CxCompacted(state) + skipped.Values.Sum()));
+            Assert.That(CxReport(state), Does.Contain("(reconciles)"));
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_OptionOff_RunsNothing_AndTheReportSaysSo()
+        {
+            var source = CxBuild(1024, 1024, 11, "BC3", true, true, (_, _) => CxFlatBlock("BC3"));
+            var fixture = CxFixture(source);
+
+            var (_, state) = CxRun(fixture, enabled: false);
+
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(Get<bool>(CxResult(state), "Requested"), Is.False);
+            Assert.That(CxReport(state), Does.Contain("Exact texture compaction: NO").And.Contain("Off (opt-in)"));
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_TwoRuns_ProduceIdenticalBytes()
+        {
+            byte[] Run(out string report)
+            {
+                var fixture = new DownscaleFixture();
+                fixture.Add("textures\\a.dds", CxBuild(256, 256, 9, "BC3", true, true, (_, _) => CxFlatBlock("BC3")));
+                fixture.Add("textures\\b.dds", CxBuild(64, 64, 7, "BC3", false, false, (l, b) => CxOpaqueBlock(l, b, "BC3")));
+                fixture.AddMaterial(
+                    CxMaterial, ("t_xml_base_colour", "textures\\a.dds"), ("t_xml_normal", "textures\\b.dds"));
+                var (_, state) = CxRun(fixture);
+                report = CxReport(state);
+                return fixture.Output["textures\\a.dds"].Concat(fixture.Output["textures\\b.dds"]).ToArray();
+            }
+
+            var first = Run(out var firstReport);
+            var second = Run(out var secondReport);
+
+            Assert.That(second, Is.EqualTo(first));
+            Assert.That(secondReport.Split('\n').Where(line => !line.StartsWith("Analysis time")), Is.EqualTo(
+                firstReport.Split('\n').Where(line => !line.StartsWith("Analysis time"))));
+        }
+
+        [Test]
+        public void Compaction_Report_ListsOutcomesBytesAndReconciles()
+        {
+            var fixture = new DownscaleFixture();
+            fixture.Add("textures\\flat.dds", CxBuild(512, 512, 10, "BC3", true, true, (_, _) => CxFlatBlock("BC3")));
+            fixture.Add("textures\\opaque.dds", CxBuild(64, 64, 7, "BC3", true, true, (l, b) => CxOpaqueBlock(l, b, "BC3")));
+            fixture.AddTexture("textures\\busy.dds", 64, 7, "BC3");
+            fixture.AddMaterial(
+                CxMaterial,
+                ("t_xml_base_colour", "textures\\flat.dds"),
+                ("t_xml_normal", "textures\\opaque.dds"),
+                ("t_xml_mask", "textures\\busy.dds"));
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(2));
+            var report = CxReport(state);
+            Assert.That(report, Does.Contain("Uniform, shrunk to 4x4: 1"));
+            Assert.That(report, Does.Contain("BC2/BC3 transcoded to BC1: 1"));
+            Assert.That(report, Does.Contain("Skipped: 1"));
+            Assert.That(report, Does.Contain("(reconciles)"));
+            Assert.That(report, Does.Contain("textures\\flat.dds: uniform, 512x512 BC3_SRGB DX10 -> 4x4 BC3"));
+            Assert.That(report, Does.Contain("textures\\opaque.dds: opaque, 64x64 BC3_SRGB DX10 -> 64x64 BC1"));
+            Assert.That(report, Does.Contain("total saved"));
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_Validation_FailsWhenACompactedTextureIsCorruptedLater()
+        {
+            var source = CxBuild(64, 64, 7, "BC3", true, true, (l, b) => CxOpaqueBlock(l, b, "BC3"));
+            var fixture = CxFixture(source);
+            var (_, state) = CxRun(fixture);
+            Assert.That(CxValidate(state), Is.Empty);
+
+            fixture.Output[CxTexture][148 + 3] ^= 0xFF;
+
+            Assert.That(CxValidate(state), Has.Some.Contain(CxTexture));
+        }
     }
 }

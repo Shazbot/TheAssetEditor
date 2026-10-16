@@ -37,6 +37,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
@@ -201,16 +203,31 @@
             TextWrapping="Wrap"
             Opacity="0.7" />
 
+        <CheckBox
+            x:Name="CompactTexturesCheckBox"
+            Grid.Row="21"
+            Margin="0,12,0,0"
+            Content="Compact textures exactly (experimental)"
+            IsChecked="False" />
+
+        <TextBlock
+            Grid.Row="22"
+            Margin="22,4,0,0"
+            MaxWidth="620"
+            Text="Off by default. Lossless, run last: a texture of this pack that is one flat colour in every texel of every mip level shrinks to 4x4, and a BC2/BC3 texture that is fully opaque at every level becomes BC1 (half the bytes). Every result is decoded and compared texel for texel before it is written; anything referenced outside a material (UI, VMD, text), unreferenced, or written by another stage is left alone. Same path and sRGB-ness. Disabled in cross-rigid-only mode."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
         <TextBlock
             x:Name="PhaseText"
-            Grid.Row="21"
+            Grid.Row="23"
             Margin="0,16,0,0"
             FontWeight="SemiBold"
             Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="22"
+            Grid.Row="24"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -220,7 +237,7 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="23"
+            Grid.Row="25"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
@@ -228,7 +245,7 @@
             IsIndeterminate="False"
             Value="0" />
 
-        <Grid Grid.Row="24" Margin="0,8,0,0">
+        <Grid Grid.Row="26" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>

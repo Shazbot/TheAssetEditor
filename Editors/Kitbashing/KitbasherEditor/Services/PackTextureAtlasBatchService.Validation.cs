@@ -1038,6 +1038,7 @@ namespace Editors.KitbasherEditor.Services
 
             ValidateDownscaledTextures(state, errors, cancellationToken);
             ValidateSharedTextureRepack(state, errors, cancellationToken);
+            ValidateTextureCompaction(state, errors, cancellationToken);
 
             if (errors.Count != 0)
             {

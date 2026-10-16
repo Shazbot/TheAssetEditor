@@ -908,6 +908,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"Texture atlasing: {(state.TextureAtlasingActive ? "YES" : "NO")}");
             sb.AppendLine($"Texture downscaling: {(state.DownscaleTextures ? "YES" : "NO")}");
             sb.AppendLine($"Shared texture repack: {(state.SharedTextureRepackEnabled ? "YES" : "NO")}");
+            sb.AppendLine($"Exact texture compaction: {(state.CompactTextures ? "YES" : "NO")}");
             if (state.SharedTextureRepackRequested && !state.SharedTextureRepackEnabled)
             {
                 sb.AppendLine(
@@ -2339,6 +2340,7 @@ namespace Editors.KitbasherEditor.Services
                 AppendVanillaTextureCoverageSection(sb, state);
                 AppendUnitTextureRepackSection(sb, state);
                 AppendSharedTextureRepackSection(sb, state);
+                AppendTextureCompactionSection(sb, state);
             }
 
             if (state.UnitCategoryResolution != null)

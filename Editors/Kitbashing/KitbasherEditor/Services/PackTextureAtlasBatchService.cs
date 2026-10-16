@@ -191,6 +191,7 @@ namespace Editors.KitbasherEditor.Services
                 buildAtlases,
                 downscaleTextures,
                 sharedTextureRepack,
+                compactTextures,
                 cancellationToken,
                 progress) =>
             {
@@ -209,7 +210,8 @@ namespace Editors.KitbasherEditor.Services
                     crossRigidMerges: crossRigidMerges,
                     buildAtlases: buildAtlases,
                     downscaleTextures: downscaleTextures,
-                    sharedTextureRepack: sharedTextureRepack);
+                    sharedTextureRepack: sharedTextureRepack,
+                    compactTextures: compactTextures);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -256,7 +258,8 @@ namespace Editors.KitbasherEditor.Services
             bool crossRigidMerges = false,
             bool buildAtlases = true,
             bool downscaleTextures = false,
-            bool sharedTextureRepack = false)
+            bool sharedTextureRepack = false,
+            bool compactTextures = false)
         {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
@@ -304,6 +307,7 @@ namespace Editors.KitbasherEditor.Services
                 state.BuildAtlases = buildAtlases;
                 // Cross-rigid-only mode never touches textures, whatever the caller asks.
                 state.DownscaleTextures = downscaleTextures && !crossRigidOnly;
+                state.CompactTextures = compactTextures && !crossRigidOnly;
                 // The repack rewrites UVs, so it is ignored next to atlasing and cross-rigid
                 // merges (see ResolveSharedTextureRepack).
                 state.SharedTextureRepackRequested = sharedTextureRepack;
@@ -739,6 +743,10 @@ namespace Editors.KitbasherEditor.Services
                     // Reads the post-atlas, post-merge, post-prune output. Report-only
                     // unless the downscale option is on.
                     RunTextureDownscale(state, cancellationToken, progress);
+
+                    // Last writer: lossless compaction of what is in the output now. Does
+                    // nothing unless its option is on.
+                    RunTextureCompaction(state, cancellationToken, progress);
 
                     // Report-only and independent of the atlas/downscale options: measures
                     // the source pack as authored, so it runs after them without seeing

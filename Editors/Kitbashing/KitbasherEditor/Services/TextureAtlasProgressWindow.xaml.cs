@@ -19,6 +19,7 @@ namespace Editors.KitbasherEditor.Services
             bool,
             bool,
             bool,
+            bool,
             CancellationToken,
             IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> _worker;
         private readonly CancellationTokenSource _cancellation = new();
@@ -277,6 +278,51 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 CancellationToken,
                 IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+            : this((
+                mergeCompatibleMeshes,
+                shareAcrossVmds,
+                optimizeGeometry,
+                atlasAllVmds,
+                scoreAllGameUnits,
+                crossRigidOnly,
+                crossRigidMerges,
+                buildAtlases,
+                downscaleTextures,
+                sharedTextureRepack,
+                _,
+                cancellationToken,
+                progress) =>
+                worker(
+                    mergeCompatibleMeshes,
+                    shareAcrossVmds,
+                    optimizeGeometry,
+                    atlasAllVmds,
+                    scoreAllGameUnits,
+                    crossRigidOnly,
+                    crossRigidMerges,
+                    buildAtlases,
+                    downscaleTextures,
+                    sharedTextureRepack,
+                    cancellationToken,
+                    progress))
+        {
+        }
+
+        public TextureAtlasProgressWindow(
+            Action<
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                CancellationToken,
+                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
         {
             InitializeComponent();
             _worker = worker;
@@ -300,6 +346,7 @@ namespace Editors.KitbasherEditor.Services
             BuildAtlasesCheckBox.IsEnabled = false;
             DownscaleTexturesCheckBox.IsEnabled = false;
             SharedTextureRepackCheckBox.IsEnabled = false;
+            CompactTexturesCheckBox.IsEnabled = false;
             PhaseText.Text = CrossRigidOnlyCheckBox.IsChecked == true
                 ? "Preparing cross-rigid-only pack..."
                 : BuildAtlasesCheckBox.IsChecked == true
@@ -325,6 +372,8 @@ namespace Editors.KitbasherEditor.Services
                     SharedTextureRepackCheckBox.IsChecked == true &&
                     BuildAtlasesCheckBox.IsChecked != true &&
                     CrossRigidMergesCheckBox.IsChecked != true &&
+                    CrossRigidOnlyCheckBox.IsChecked != true,
+                    CompactTexturesCheckBox.IsChecked == true &&
                     CrossRigidOnlyCheckBox.IsChecked != true,
                     _cancellation.Token,
                     progress);
@@ -379,7 +428,8 @@ namespace Editors.KitbasherEditor.Services
                 CrossRigidMergesCheckBox == null ||
                 BuildAtlasesCheckBox == null ||
                 DownscaleTexturesCheckBox == null ||
-                SharedTextureRepackCheckBox == null)
+                SharedTextureRepackCheckBox == null ||
+                CompactTexturesCheckBox == null)
             {
                 return;
             }
@@ -402,6 +452,9 @@ namespace Editors.KitbasherEditor.Services
             // textures the atlases did not replace); only cross-rigid-only mode,
             // which never writes textures, turns it off.
             DownscaleTexturesCheckBox.IsEnabled = atlasOptionsEnabled;
+            // Exact compaction runs last on the output's bytes and works next to every other
+            // option; only cross-rigid-only mode, which never writes textures, turns it off.
+            CompactTexturesCheckBox.IsEnabled = atlasOptionsEnabled;
             // The shared texture repack rewrites UVs like atlasing and like the
             // cross-rigid writer, so it is only available while neither is selected.
             SharedTextureRepackCheckBox.IsEnabled =

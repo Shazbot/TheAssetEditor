@@ -895,6 +895,9 @@ namespace Editors.KitbasherEditor.Services
             public List<double> TexelDensityGlobalReferences { get; } = [];
             public bool DownscaleTextures { get; set; }
             public TextureDownscaleResult? TextureDownscale { get; set; }
+            // Opt-in exact texture compaction (uniform shrink, opaque BC2/BC3 to BC1).
+            public bool CompactTextures { get; set; }
+            public TextureCompactionResult? TextureCompaction { get; set; }
             public VanillaTextureCoverageResult? VanillaTextureCoverage { get; set; }
             public UnitTextureRepackResult? UnitTextureRepack { get; set; }
             // Opt-in shared texture repack. Requested is what the caller asked for;
