@@ -11937,15 +11937,15 @@ namespace Test.KitbashEditor.Services
 
             var forced = (HashSet<int>?)GetStaticMethod("GetForceOpaqueAlphaSourceIds").Invoke(
                 null,
-                [state, Shared.GameFormats.RigidModel.Types.TextureType.BaseColour, sourcePaths, bytes, constants]);
+                [state, DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB, sourcePaths, bytes, constants]);
 
             Assert.That(forced, Is.EquivalentTo(new[] { 0, 3 }));
 
-            // Only the BC1 channels need it: the BC3 normal atlas keeps its alpha.
+            // A BC3 batch keeps every source's alpha as is: nothing is forced opaque.
             Assert.That(
                 GetStaticMethod("GetForceOpaqueAlphaSourceIds").Invoke(
                     null,
-                    [state, Shared.GameFormats.RigidModel.Types.TextureType.Normal, sourcePaths, bytes, constants]),
+                    [state, DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB, sourcePaths, bytes, constants]),
                 Is.Null);
         }
 
@@ -11957,7 +11957,7 @@ namespace Test.KitbashEditor.Services
                 null,
                 [
                     state,
-                    Shared.GameFormats.RigidModel.Types.TextureType.BaseColour,
+                    DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB,
                     new Dictionary<int, string> { [0] = "a.dds", [1] = "b.dds" },
                     new Dictionary<int, byte[]>
                     {
@@ -11985,7 +11985,7 @@ namespace Test.KitbashEditor.Services
                 null,
                 [
                     state,
-                    Shared.GameFormats.RigidModel.Types.TextureType.BaseColour,
+                    DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB,
                     paths,
                     bytes,
                     new Dictionary<int, Editors.ImportExport.TextureAtlas.TextureAtlasConstantColor>(),
@@ -12096,7 +12096,7 @@ namespace Test.KitbashEditor.Services
                 Is.EqualTo("Opaque"));
         }
 
-        private static string? DiscoveryAlphaCheck(
+        private static HashSet<string> DiscoveryKeepAlpha(
             string shader,
             byte[] baseColour,
             byte[]? materialMap = null)
@@ -12115,7 +12115,7 @@ namespace Test.KitbashEditor.Services
             document.LoadXml(
                 $"<material><shader>shaders\\{shader}.xml.shader</shader><textures>{textures}</textures></material>");
             var state = CreateIdealState(files);
-            return (string?)GetStaticMethod("CheckAtlasAlphaLoss").Invoke(
+            return (HashSet<string>)GetStaticMethod("GetKeepAlphaChannels").Invoke(
                 null,
                 [
                     state,
@@ -12127,26 +12127,141 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
-        public void AtlasAlpha_Discovery_OpaqueAndBc1MaterialsAreKept_AlphaShaderMaterialIsSkipped()
+        public void AtlasAlpha_Discovery_OnlyMaterialsThatNeedTheirAlphaGetKeepAlpha()
         {
             // Case a: nothing to lose, whatever the shader.
-            Assert.That(DiscoveryAlphaCheck("weighted4_character_alpha", BuildAlphaDds("BC3", 255)), Is.Null);
-            Assert.That(DiscoveryAlphaCheck("weighted4_character_alpha", BuildAlphaDds("BC1", 255)), Is.Null);
+            Assert.That(DiscoveryKeepAlpha("weighted4_character_alpha", BuildAlphaDds("BC3", 255)), Is.Empty);
+            Assert.That(DiscoveryKeepAlpha("weighted4_character_alpha", BuildAlphaDds("BC1", 255)), Is.Empty);
 
-            // Case b: alpha present, the shader never reads it, so the atlas flattens it.
-            Assert.That(DiscoveryAlphaCheck("weighted4_character", BuildAlphaDds("BC3", 0)), Is.Null);
+            // Case b: alpha present, the shader never reads it, so the BC1 atlas flattens it.
+            Assert.That(DiscoveryKeepAlpha("weighted4_character", BuildAlphaDds("BC3", 0)), Is.Empty);
 
-            // Case c: the shader reads alpha, so the material keeps its textures.
-            var reason = DiscoveryAlphaCheck("weighted4_character_alpha", BuildAlphaDds("BC3", 0));
-            Assert.That(reason, Is.Not.Null.And.Contains("weighted4_character_alpha"));
+            // Case c: the shader reads alpha, so the slot is kept as BC3 instead of skipping.
+            Assert.That(
+                DiscoveryKeepAlpha("weighted4_character_alpha", BuildAlphaDds("BC3", 0)),
+                Is.EquivalentTo(new[] { "t_xml_base_colour" }));
 
             // Alpha in a secondary BC1 channel is checked as well, against that slot.
             Assert.That(
-                DiscoveryAlphaCheck("weighted4_character", BuildAlphaDds("BC3", 255), BuildAlphaDds("BC3", 0)),
-                Is.Null);
+                DiscoveryKeepAlpha("weighted4_character", BuildAlphaDds("BC3", 255), BuildAlphaDds("BC3", 0)),
+                Is.Empty);
             Assert.That(
-                DiscoveryAlphaCheck("weighted4_character_ethereal", BuildAlphaDds("BC3", 255), BuildAlphaDds("BC3", 0)),
-                Is.Not.Null.And.Contains("t_xml_material_map"));
+                DiscoveryKeepAlpha("weighted4_character_ethereal", BuildAlphaDds("BC3", 255), BuildAlphaDds("BC3", 0)),
+                Is.EquivalentTo(new[] { "t_xml_material_map" }));
+        }
+
+        private static object CreateKeepAlphaCandidate(params string[] slots)
+        {
+            var constructor = GetNestedType("AtlasCandidate").GetConstructors(AnyInstance)
+                .OrderByDescending(item => item.GetParameters().Length)
+                .First();
+            var values = constructor.GetParameters()
+                .Select(parameter => parameter.ParameterType.IsValueType
+                    ? Activator.CreateInstance(parameter.ParameterType)
+                    : null)
+                .ToArray();
+            var candidate = constructor.Invoke(values);
+            var keepAlpha = Get<HashSet<string>>(candidate, "KeepAlphaChannels");
+            foreach (var slot in slots)
+                keepAlpha.Add(slot);
+            return candidate;
+        }
+
+        private static System.Collections.IList ToCandidateList(params object[] candidates)
+        {
+            var list = (System.Collections.IList)Activator.CreateInstance(
+                typeof(List<>).MakeGenericType(GetNestedType("AtlasCandidate")))!;
+            foreach (var candidate in candidates)
+                list.Add(candidate);
+            return list;
+        }
+
+        [Test]
+        public void AtlasAlpha_NeedsAlphaAndOpaqueCandidatesAreNeverBatchedTogether()
+        {
+            // The batch planner closes batches by atlas capacity only and no shader identity is
+            // part of its key, so the split by keep-alpha slots has to happen before planning.
+            var opaqueA = CreateKeepAlphaCandidate();
+            var opaqueB = CreateKeepAlphaCandidate();
+            var alphaBase = CreateKeepAlphaCandidate("t_xml_base_colour");
+            var alphaBoth = CreateKeepAlphaCandidate("t_xml_base_colour", "t_xml_material_map");
+
+            var groups = ((System.Collections.IEnumerable)GetStaticMethod("SplitCandidatesByKeepAlpha")
+                .Invoke(null, [ToCandidateList(alphaBase, opaqueA, alphaBoth, opaqueB)])!)
+                .Cast<System.Collections.IList>()
+                .ToList();
+
+            Assert.That(groups, Has.Count.EqualTo(3));
+            Assert.That(groups.Select(group => group.Count), Is.EquivalentTo(new[] { 2, 1, 1 }));
+            foreach (var group in groups)
+            {
+                var signatures = group.Cast<object>()
+                    .Select(candidate => string.Join(",", Get<HashSet<string>>(candidate, "KeepAlphaChannels").Order()))
+                    .Distinct();
+                Assert.That(signatures.Count(), Is.EqualTo(1));
+            }
+
+            // All-opaque input stays a single group, untouched.
+            var only = ToCandidateList(opaqueA, opaqueB);
+            var single = (System.Collections.IList)GetStaticMethod("SplitCandidatesByKeepAlpha").Invoke(null, [only])!;
+            Assert.That(single, Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void AtlasAlpha_AnyKeepAlphaMemberMakesTheChannelBc3_OthersStayBc1()
+        {
+            object Format(IList list, string slot, Shared.GameFormats.RigidModel.Types.TextureType type)
+                => GetStaticMethod("GetAtlasChannelFormat").Invoke(null, [list, slot, type])!;
+
+            var mixed = ToCandidateList(CreateKeepAlphaCandidate(), CreateKeepAlphaCandidate("t_xml_base_colour"));
+            var opaque = ToCandidateList(CreateKeepAlphaCandidate(), CreateKeepAlphaCandidate());
+
+            Assert.That(Format(mixed, "t_xml_base_colour", Shared.GameFormats.RigidModel.Types.TextureType.BaseColour),
+                Is.EqualTo(DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB));
+            Assert.That(Format(mixed, "t_xml_material_map", Shared.GameFormats.RigidModel.Types.TextureType.MaterialMap),
+                Is.EqualTo(DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB));
+            Assert.That(Format(opaque, "t_xml_base_colour", Shared.GameFormats.RigidModel.Types.TextureType.BaseColour),
+                Is.EqualTo(DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB));
+            Assert.That(Format(mixed, "t_xml_normal", Shared.GameFormats.RigidModel.Types.TextureType.Normal),
+                Is.EqualTo(DirectXTexNet.DXGI_FORMAT.BC3_UNORM));
+            Assert.That(GetStaticMethod("GetAtlasBytesPerBlock").Invoke(null, [DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB]), Is.EqualTo(8));
+            Assert.That(GetStaticMethod("GetAtlasBytesPerBlock").Invoke(null, [DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB]), Is.EqualTo(16));
+        }
+
+        [Test]
+        public void AtlasAlpha_Bc3AtlasWriterKeepsAlphaWithoutQuantising()
+        {
+            using var writer = Editors.ImportExport.Importing.Importers.PngToDds.PngToDdsImporter
+                .CreateRawBgraMipChainWriter(
+                    8,
+                    8,
+                    1,
+                    Shared.GameFormats.RigidModel.Types.TextureType.BaseColour,
+                    Shared.Core.Settings.GameTypeEnum.Warhammer3,
+                    ddsFormatOverride: DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB);
+            var pixels = new byte[8 * 8 * 4];
+            for (var texel = 0; texel < 64; texel++)
+            {
+                pixels[texel * 4] = 40;
+                pixels[texel * 4 + 1] = 80;
+                pixels[texel * 4 + 2] = 120;
+                pixels[texel * 4 + 3] = (byte)(texel < 32 ? 100 : 200);
+            }
+
+            writer.WriteMip(0, pixels);
+            var dds = writer.Complete("atlas.dds").DataSource.ReadData();
+
+            Assert.That(ClassifyAlpha(dds), Is.EqualTo("HasAlpha"));
+            var layout = ReadDds(dds);
+            Assert.That(layout.Format, Is.EqualTo("BC3"));
+            Assert.That(layout.Srgb, Is.True);
+
+            // 100 and 200 are both far from a 0.5 cut: neither collapsed to 0 or 255.
+            using var stream = new System.IO.MemoryStream(dds);
+            using var image = Pfim.Pfimage.FromStream(stream);
+            var alphas = Enumerable.Range(0, 64).Select(texel => image.Data[texel * 4 + 3]).Distinct().ToList();
+            Assert.That(alphas, Has.All.InRange((byte)90, (byte)210));
+            Assert.That(alphas.Count, Is.GreaterThan(1));
         }
     }
 }

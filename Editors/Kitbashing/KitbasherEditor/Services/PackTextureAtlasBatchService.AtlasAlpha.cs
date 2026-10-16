@@ -16,11 +16,13 @@ namespace Editors.KitbasherEditor.Services
         // The WH3 BaseColour and MaterialMap atlases are BC1_UNORM_SRGB, which has no alpha
         // channel beyond a 1-bit cut: a source texel with alpha < 128 would be encoded as
         // transparent black. Per source texture in such a channel:
-        //  * BC1 source, or every texel opaque: nothing changes;
+        //  * BC1 source, or every texel opaque: nothing changes (BC1 atlas);
         //  * non-opaque alpha that no shader using it reads: the source is added to the
-        //    force-opaque set, so its alpha is 255 before encoding;
+        //    force-opaque set, so its alpha is 255 before the BC1 encode;
         //  * non-opaque alpha that a shader reads, or an unknown shader/slot/format: the material
-        //    is not atlased (discovery skip) and keeps its original textures.
+        //    gets a keep-alpha flag for the slot. Candidates are batched by their keep-alpha
+        //    slots, and a batch with any such member encodes that channel as BC3_UNORM_SRGB
+        //    with every source's alpha kept as is.
         internal enum TextureAlphaState
         {
             Opaque,
@@ -136,8 +138,8 @@ namespace Editors.KitbasherEditor.Services
             return alpha;
         }
 
-        // Null when the texture can be atlased (its alpha is opaque, or no shader reads it and it
-        // is forced opaque); else why the material must keep its own textures.
+        // Null when a BC1 atlas is enough (the alpha is opaque, or no shader reads it and it is
+        // forced opaque); else why the slot needs a BC3 atlas that keeps the alpha.
         internal static string? CheckAtlasAlphaSafety(
             TextureAlphaState alpha,
             string? shaderPath,
@@ -148,7 +150,7 @@ namespace Editors.KitbasherEditor.Services
 
             if (alpha == TextureAlphaState.Unknown)
             {
-                return $"{slot} has a DDS format whose alpha cannot be verified, and the BC1 " +
+                return $"{slot} has a DDS format whose alpha cannot be verified, and a BC1 " +
                        "atlas would turn any alpha below 128 into transparent black.";
             }
 
@@ -180,12 +182,14 @@ namespace Editors.KitbasherEditor.Services
             return null;
         }
 
-        private static string? CheckAtlasAlphaLoss(
+        // The BC1-target slots of a material whose alpha the atlas has to keep (so BC3).
+        private static HashSet<string> GetKeepAlphaChannels(
             BatchState state,
             XmlDocument materialDoc,
             HashSet<string> resolvedChannels,
             Dictionary<string, TextureAtlasConstantColor> constantChannels)
         {
+            var keepAlpha = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var shader = materialDoc.SelectSingleNode("/material/shader")?.InnerText;
             foreach (var channel in AtlasChannels)
             {
@@ -212,24 +216,58 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                var reason = CheckAtlasAlphaSafety(alpha, shader, channel.Slot);
-                if (reason != null)
-                    return reason;
+                if (CheckAtlasAlphaSafety(alpha, shader, channel.Slot) != null)
+                    keepAlpha.Add(channel.Slot);
             }
 
-            return null;
+            return keepAlpha;
         }
 
-        // Discovery already refused every material whose shader could read the alpha, so a
-        // source that still has alpha here only needs it flattened before the BC1 encode.
+        // Materials that need different atlas formats never share a batch or a page: each group
+        // goes through batch planning and execution on its own.
+        private static List<List<AtlasCandidate>> SplitCandidatesByKeepAlpha(
+            List<AtlasCandidate> candidates)
+        {
+            if (candidates.All(candidate => candidate.KeepAlphaChannels.Count == 0))
+                return [candidates];
+
+            return candidates
+                .GroupBy(candidate => string.Join(
+                    ",",
+                    candidate.KeepAlphaChannels.OrderBy(slot => slot, StringComparer.OrdinalIgnoreCase)),
+                    StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => group.ToList())
+                .ToList();
+        }
+
+        // BC3 when any member needs the channel's alpha kept; else the game's format for it.
+        private static DXGI_FORMAT GetAtlasChannelFormat(
+            IEnumerable<AtlasCandidate> candidates,
+            string slot,
+            TextureType type)
+        {
+            var format = DDSFormatHelper.GetDDSFormat(GameTypeEnum.Warhammer3, type);
+            return format == DXGI_FORMAT.BC1_UNORM_SRGB &&
+                   candidates.Any(candidate => candidate.KeepAlphaChannels.Contains(slot))
+                ? DXGI_FORMAT.BC3_UNORM_SRGB
+                : format;
+        }
+
+        private static int GetAtlasBytesPerBlock(DXGI_FORMAT format)
+            => format is DXGI_FORMAT.BC1_UNORM or DXGI_FORMAT.BC1_UNORM_SRGB ? 8 : 16;
+
+        // Only a BC1 atlas needs its alpha flattened. Discovery already gave every material
+        // whose shader could read the alpha a BC3 channel, so a source that still has alpha in a
+        // BC1 batch only needs it set to 255 before the encode.
         private static HashSet<int>? GetForceOpaqueAlphaSourceIds(
             BatchState state,
-            TextureType type,
+            DXGI_FORMAT format,
             IReadOnlyDictionary<int, string> sourcePaths,
             IReadOnlyDictionary<int, byte[]> textureBytes,
             IReadOnlyDictionary<int, TextureAtlasConstantColor> constantSources)
         {
-            if (!IsBc1AtlasTarget(type))
+            if (format != DXGI_FORMAT.BC1_UNORM_SRGB)
                 return null;
 
             HashSet<int>? forced = null;

@@ -1562,7 +1562,12 @@ namespace Editors.KitbasherEditor.Services
             UvIslandNormalization? UvIslandNormalization,
             double AtlasResolutionScale,
             bool RequiresMaskAtlas = false,
-            bool ClearMaskBlueChannel = false);
+            bool ClearMaskBlueChannel = false)
+        {
+            // BC1-target slots (BaseColour, MaterialMap) whose alpha has to survive: the atlas
+            // for such a slot is BC3 instead of BC1.
+            public HashSet<string> KeepAlphaChannels { get; init; } = [];
+        }
 
         private enum Faction3MaskCanonicalization
         {

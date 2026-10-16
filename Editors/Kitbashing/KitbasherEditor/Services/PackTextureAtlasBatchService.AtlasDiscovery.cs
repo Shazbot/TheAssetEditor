@@ -811,20 +811,23 @@ namespace Editors.KitbasherEditor.Services
             candidates = ApplyTexelDensityScaling(state, candidates);
             candidates = AlignSharedUvIslandCuts(state, candidates);
 
-            var batches = CreateBatches(
-                state,
-                candidates,
-                packWide: false,
-                cancellationToken: cancellationToken,
-                progress: progress);
+            foreach (var formatGroup in SplitCandidatesByKeepAlpha(candidates))
+            {
+                var batches = CreateBatches(
+                    state,
+                    formatGroup,
+                    packWide: false,
+                    cancellationToken: cancellationToken,
+                    progress: progress);
 
-            ProcessAtlasBatches(
-                state,
-                rootVmdPath,
-                rootVmdPath,
-                batches,
-                cancellationToken,
-                progress);
+                ProcessAtlasBatches(
+                    state,
+                    rootVmdPath,
+                    rootVmdPath,
+                    batches,
+                    cancellationToken,
+                    progress);
+            }
         }
 
         private void ProcessDirectAssetAtlases(
@@ -841,19 +844,22 @@ namespace Editors.KitbasherEditor.Services
 
             candidates = ApplyTexelDensityScaling(state, candidates);
             candidates = AlignSharedUvIslandCuts(state, candidates);
-            var batches = CreateBatches(
-                state,
-                candidates,
-                packWide: false,
-                cancellationToken: cancellationToken,
-                progress: progress);
-            ProcessAtlasBatches(
-                state,
-                "direct-engine-assets",
-                "Direct engine assets",
-                batches,
-                cancellationToken,
-                progress);
+            foreach (var formatGroup in SplitCandidatesByKeepAlpha(candidates))
+            {
+                var batches = CreateBatches(
+                    state,
+                    formatGroup,
+                    packWide: false,
+                    cancellationToken: cancellationToken,
+                    progress: progress);
+                ProcessAtlasBatches(
+                    state,
+                    "direct-engine-assets",
+                    "Direct engine assets",
+                    batches,
+                    cancellationToken,
+                    progress);
+            }
         }
 
         private static bool IsDirectAssetCandidate(AtlasCandidate candidate)
@@ -876,25 +882,28 @@ namespace Editors.KitbasherEditor.Services
             candidates = ApplyTexelDensityScaling(state, candidates);
             candidates = AlignSharedUvIslandCuts(state, candidates);
 
-            var stopwatch = Stopwatch.StartNew();
-            var batches = CreateBatches(
-                state,
-                candidates,
-                packWide: true,
-                cancellationToken: cancellationToken,
-                progress: progress);
-            AddPhaseDuration(state, "Plan atlas batches", stopwatch.Elapsed);
-
-            stopwatch.Restart();
             var packName = Path.GetFileNameWithoutExtension(state.SourcePath);
-            ProcessAtlasBatches(
-                state,
-                $"pack:{packName}",
-                "Pack-wide",
-                batches,
-                cancellationToken,
-                progress);
-            AddPhaseDuration(state, "Execute atlas batches", stopwatch.Elapsed);
+            foreach (var formatGroup in SplitCandidatesByKeepAlpha(candidates))
+            {
+                var stopwatch = Stopwatch.StartNew();
+                var batches = CreateBatches(
+                    state,
+                    formatGroup,
+                    packWide: true,
+                    cancellationToken: cancellationToken,
+                    progress: progress);
+                AddPhaseDuration(state, "Plan atlas batches", stopwatch.Elapsed);
+
+                stopwatch.Restart();
+                ProcessAtlasBatches(
+                    state,
+                    $"pack:{packName}",
+                    "Pack-wide",
+                    batches,
+                    cancellationToken,
+                    progress);
+                AddPhaseDuration(state, "Execute atlas batches", stopwatch.Elapsed);
+            }
         }
 
         private void ProcessAtlasBatches(
@@ -1277,6 +1286,7 @@ namespace Editors.KitbasherEditor.Services
                     sourceDimensions,
                     PackAtlasMaxSize);
 
+                var atlasFormat = GetAtlasChannelFormat(candidates, channel.Slot, channel.Type);
                 var fileName = $"{atlasStem}_{channel.Suffix}.dds";
                 using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
                     outputDimensions.Width,
@@ -1286,7 +1296,8 @@ namespace Editors.KitbasherEditor.Services
                         outputDimensions.Height),
                     channel.Type,
                     GameTypeEnum.Warhammer3,
-                    collectCompressionStatistics: AtlasProfilingEnabled);
+                    collectCompressionStatistics: AtlasProfilingEnabled,
+                    ddsFormatOverride: atlasFormat);
 
                 var rasterStatistics = AtlasProfilingEnabled
                     ? new TextureAtlasBuildStatistics()
@@ -1305,7 +1316,7 @@ namespace Editors.KitbasherEditor.Services
                     textureBytes,
                     forceOpaqueAlphaSourceIds: GetForceOpaqueAlphaSourceIds(
                         state,
-                        channel.Type,
+                        atlasFormat,
                         sourcePaths,
                         textureBytes,
                         constantSources),
@@ -1352,7 +1363,7 @@ namespace Editors.KitbasherEditor.Services
                         outputDimensions.Width,
                         outputDimensions.Height,
                         channel.Type,
-                        DDSFormatHelper.GetDDSFormat(GameTypeEnum.Warhammer3, channel.Type),
+                        atlasFormat,
                         rasterElapsed,
                         compressionElapsed,
                         usesLargeBcSplitCompression,
@@ -1444,6 +1455,8 @@ namespace Editors.KitbasherEditor.Services
         {
             var channel = AtlasChannels.Single(candidate =>
                 candidate.Slot.Equals(channelSlot, StringComparison.OrdinalIgnoreCase));
+            // Every page compared here comes from one format group, so BC1 and BC3 never mix and
+            // the ratio between a combined page and the pages it replaces does not depend on it.
             var bytesPerBlock = channel.Type is TextureType.BaseColour or TextureType.MaterialMap
                 ? 8
                 : 16;
@@ -1950,16 +1963,11 @@ namespace Editors.KitbasherEditor.Services
                 return null;
             }
 
-            var alphaLossReason = CheckAtlasAlphaLoss(
+            var keepAlphaChannels = GetKeepAlphaChannels(
                 state,
                 materialDoc,
                 resolvedChannels,
                 constantChannels);
-            if (alphaLossReason != null)
-            {
-                skipReason = alphaLossReason;
-                return null;
-            }
 
             var width = primaryWidth
                 ?? throw new InvalidOperationException("Base-colour dimensions were not resolved.");
@@ -2010,7 +2018,10 @@ namespace Editors.KitbasherEditor.Services
                 uvIslandNormalization,
                 AtlasResolutionScale: 1.0,
                 RequiresMaskAtlas: requiresMaskAtlas,
-                ClearMaskBlueChannel: clearMaskBlueChannel);
+                ClearMaskBlueChannel: clearMaskBlueChannel)
+            {
+                KeepAlphaChannels = keepAlphaChannels,
+            };
         }
 
         private static bool IsEmbeddedAtlasTextureTypeSafe(TextureType textureType)

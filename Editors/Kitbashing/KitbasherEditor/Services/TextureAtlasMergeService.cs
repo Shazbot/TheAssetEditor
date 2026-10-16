@@ -108,8 +108,7 @@ namespace Editors.KitbasherEditor.Services
                     errors.Error(
                         "Selection",
                         "No compatible group of at least two non-emissive meshes could be texture-atlased. " +
-                        "Meshes that cannot safely share an atlas (including meshes whose BaseColour or " +
-                        "MaterialMap has transparency the BC1 atlas would lose) are left unchanged.");
+                        "Meshes that cannot safely share an atlas are left unchanged.");
                     return false;
                 }
 
@@ -158,15 +157,6 @@ namespace Editors.KitbasherEditor.Services
                 // secondary texture still points at an unresolved original path would make
                 // that channel sample with atlas UVs. Skip the entire mesh instead.
                 if (HasUnsafeMissingSecondaryTexture(mesh.Material, primaryTextureType))
-                {
-                    untouchedMeshes.Add(mesh);
-                    continue;
-                }
-
-                // The BC1 target formats have no usable alpha. The shader of a CapabilityMaterial
-                // is not known well enough to prove that nothing reads a texture's alpha, so a
-                // mesh with non-opaque (or unverifiable) alpha in a BC1 channel keeps its textures.
-                if (HasUnsafeBc1AtlasAlpha(mesh.Material))
                 {
                     untouchedMeshes.Add(mesh);
                     continue;
@@ -237,6 +227,7 @@ namespace Editors.KitbasherEditor.Services
                     plan,
                     sourceDimensions);
 
+                var ddsFormat = GetAtlasDdsFormat(textureType, textureBytes.Values);
                 var fileName = $"{atlasStem}_{GetTextureSuffix(textureType)}.dds";
                 using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
                     outputDimensions.Width,
@@ -245,7 +236,8 @@ namespace Editors.KitbasherEditor.Services
                         outputDimensions.Width,
                         outputDimensions.Height),
                     textureType,
-                    _applicationSettingsService.CurrentSettings.CurrentGame);
+                    _applicationSettingsService.CurrentSettings.CurrentGame,
+                    ddsFormatOverride: ddsFormat);
 
                 _ = TextureAtlasBuilder.BuildMipPixels(
                     plan,
@@ -327,26 +319,22 @@ namespace Editors.KitbasherEditor.Services
             return false;
         }
 
-        private bool HasUnsafeBc1AtlasAlpha(CapabilityMaterial material)
+        // The BC1 target formats have no usable alpha. The shader of a CapabilityMaterial is not
+        // known well enough to prove that nothing reads a texture's alpha, so one source with
+        // non-opaque (or unverifiable) alpha makes the whole channel's atlas BC3.
+        private DXGI_FORMAT GetAtlasDdsFormat(
+            TextureType textureType,
+            IEnumerable<byte[]> sourceTextures)
         {
-            var game = _applicationSettingsService.CurrentSettings.CurrentGame;
-            foreach (var input in GetAtlasTextureInputs(material))
-            {
-                if (!IsTextureUsed(input) ||
-                    DDSFormatHelper.GetDDSFormat(game, input.Type) != DXGI_FORMAT.BC1_UNORM_SRGB ||
-                    !TryReadTextureBytes(input, out var bytes))
-                {
-                    continue;
-                }
-
-                if (PackTextureAtlasBatchService.ClassifyTextureAlpha(bytes) !=
-                    PackTextureAtlasBatchService.TextureAlphaState.Opaque)
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            var format = DDSFormatHelper.GetDDSFormat(
+                _applicationSettingsService.CurrentSettings.CurrentGame,
+                textureType);
+            return format == DXGI_FORMAT.BC1_UNORM_SRGB &&
+                   sourceTextures.Any(bytes =>
+                       PackTextureAtlasBatchService.ClassifyTextureAlpha(bytes) !=
+                       PackTextureAtlasBatchService.TextureAlphaState.Opaque)
+                ? DXGI_FORMAT.BC3_UNORM_SRGB
+                : format;
         }
 
         private void NormalizeIgnorableMissingMasks(CapabilityMaterial material)

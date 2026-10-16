@@ -781,6 +781,7 @@ namespace Editors.KitbasherEditor.Services
                     sourceDimensions,
                     PackAtlasMaxSize);
 
+                var atlasFormat = GetAtlasChannelFormat(candidates, channel.Slot, channel.Type);
                 var fileName = $"{atlasStem}_{channel.Suffix}.dds";
                 using var mipWriter = PngToDdsImporter.CreateRawBgraMipChainWriter(
                     outputDimensions.Width,
@@ -790,7 +791,8 @@ namespace Editors.KitbasherEditor.Services
                         outputDimensions.Height),
                     channel.Type,
                     GameTypeEnum.Warhammer3,
-                    collectCompressionStatistics: AtlasProfilingEnabled);
+                    collectCompressionStatistics: AtlasProfilingEnabled,
+                    ddsFormatOverride: atlasFormat);
 
                 var rasterStatistics = AtlasProfilingEnabled
                     ? new TextureAtlasBuildStatistics()
@@ -809,7 +811,7 @@ namespace Editors.KitbasherEditor.Services
                     textureBytes,
                     forceOpaqueAlphaSourceIds: GetForceOpaqueAlphaSourceIds(
                         state,
-                        channel.Type,
+                        atlasFormat,
                         sourcePaths,
                         textureBytes,
                         constantSources),
@@ -856,7 +858,7 @@ namespace Editors.KitbasherEditor.Services
                         outputDimensions.Width,
                         outputDimensions.Height,
                         channel.Type,
-                        DDSFormatHelper.GetDDSFormat(GameTypeEnum.Warhammer3, channel.Type),
+                        atlasFormat,
                         rasterElapsed,
                         compressionElapsed,
                         usesLargeBcSplitCompression,

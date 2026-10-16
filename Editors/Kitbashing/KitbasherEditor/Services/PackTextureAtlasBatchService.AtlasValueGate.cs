@@ -5518,9 +5518,8 @@ namespace Editors.KitbasherEditor.Services
                         sharedPlan.Plan,
                         sourceDimensions,
                         PackAtlasMaxSize);
-                    var bytesPerBlock = channel.Type is TextureType.BaseColour or TextureType.MaterialMap
-                        ? 8
-                        : 16;
+                    var bytesPerBlock = GetAtlasBytesPerBlock(
+                        GetAtlasChannelFormat(candidates, channel.Slot, channel.Type));
                     var channelBytes = CalculateBcnMipChainBytes(
                         outputDimensions.Width,
                         outputDimensions.Height,

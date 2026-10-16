@@ -68,8 +68,16 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             int mipLevelCount,
             TextureType textureType,
             GameTypeEnum gameType,
-            bool collectCompressionStatistics = false)
-            => new(width, height, mipLevelCount, textureType, gameType, collectCompressionStatistics);
+            bool collectCompressionStatistics = false,
+            DXGI_FORMAT? ddsFormatOverride = null)
+            => new(
+                width,
+                height,
+                mipLevelCount,
+                textureType,
+                gameType,
+                collectCompressionStatistics,
+                ddsFormatOverride);
 
         public sealed class RawBgraMipChainWriter : IDisposable
         {
@@ -80,6 +88,7 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             private readonly int _height;
             private readonly int _mipLevelCount;
             private readonly bool _collectCompressionStatistics;
+            private readonly DXGI_FORMAT? _ddsFormatOverride;
             private bool _disposed;
 
             internal RawBgraMipChainWriter(
@@ -88,7 +97,8 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                 int mipLevelCount,
                 TextureType textureType,
                 GameTypeEnum gameType,
-                bool collectCompressionStatistics)
+                bool collectCompressionStatistics,
+                DXGI_FORMAT? ddsFormatOverride)
             {
                 if (width <= 0)
                     throw new ArgumentOutOfRangeException(nameof(width));
@@ -114,6 +124,7 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                 _height = height;
                 _mipLevelCount = mipLevelCount;
                 _collectCompressionStatistics = collectCompressionStatistics;
+                _ddsFormatOverride = ddsFormatOverride;
             }
 
             public RawBgraMipChainCompressionStatistics? LastCompressionStatistics { get; private set; }
@@ -122,7 +133,8 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             {
                 get
                 {
-                    var ddsFormat = DDSFormatHelper.GetDDSFormat(_gameType, _textureType);
+                    var ddsFormat = _ddsFormatOverride
+                        ?? DDSFormatHelper.GetDDSFormat(_gameType, _textureType);
                     return ShouldUseLargeBcSplitCompression(
                         ddsFormat,
                         _width,
@@ -174,7 +186,8 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                     width: _width,
                     height: _height,
                     mipLevelCount: _mipLevelCount,
-                    collectStatistics: _collectCompressionStatistics);
+                    collectStatistics: _collectCompressionStatistics,
+                    ddsFormatOverride: _ddsFormatOverride);
                 LastCompressionStatistics = result.Statistics;
                 return result.PackFile;
             }
@@ -302,9 +315,11 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             int width,
             int height,
             int mipLevelCount,
-            bool collectStatistics)
+            bool collectStatistics,
+            DXGI_FORMAT? ddsFormatOverride = null)
         {
-            var ddsFormat = DDSFormatHelper.GetDDSFormat(gameType, textureType);
+            var ddsFormat = ddsFormatOverride
+                ?? DDSFormatHelper.GetDDSFormat(gameType, textureType);
             RawBgraMipChainCompressionStatistics? statistics = null;
             ScratchImage ddsImage;
 
