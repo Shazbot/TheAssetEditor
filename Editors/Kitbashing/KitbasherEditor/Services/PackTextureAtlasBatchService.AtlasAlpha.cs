@@ -180,8 +180,17 @@ namespace Editors.KitbasherEditor.Services
             XmlDocument materialDoc,
             HashSet<string> resolvedChannels,
             Dictionary<string, TextureAtlasConstantColor> constantChannels)
+            => GetKeepAlphaReasons(state, materialDoc, resolvedChannels, constantChannels).Keys
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // The same slots with the reason each one needs its alpha kept.
+        private static Dictionary<string, string> GetKeepAlphaReasons(
+            BatchState state,
+            XmlDocument materialDoc,
+            HashSet<string> resolvedChannels,
+            Dictionary<string, TextureAtlasConstantColor> constantChannels)
         {
-            var keepAlpha = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var keepAlpha = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var shader = materialDoc.SelectSingleNode("/material/shader")?.InnerText;
             foreach (var channel in AtlasChannels)
             {
@@ -208,8 +217,9 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                if (CheckAtlasAlphaSafety(alpha, shader, channel.Slot) != null)
-                    keepAlpha.Add(channel.Slot);
+                var reason = CheckAtlasAlphaSafety(alpha, shader, channel.Slot);
+                if (reason != null)
+                    keepAlpha.Add(channel.Slot, reason);
             }
 
             return keepAlpha;
@@ -262,6 +272,26 @@ namespace Editors.KitbasherEditor.Services
                 state.AtlasValueGateCandidateAffectedUnitCount = _affectedUnits;
             }
         }
+
+        private static void CountKeepAlphaFormatGroups(BatchState state, List<List<AtlasCandidate>> groups)
+        {
+            if (groups.Count == 0 || groups.All(group => group.Count == 0))
+                return;
+
+            state.KeepAlphaFormatGroupsPlanned += groups.Count;
+            state.KeepAlphaFormatGroupsWithAlpha += groups.Count(
+                group => group.Any(candidate => candidate.KeepAlphaChannels.Count != 0));
+        }
+
+        // The first reason a member of the group needs the slot's alpha kept, else null.
+        private static string? GetKeepAlphaReason(IEnumerable<AtlasCandidate> candidates, string slot)
+            => candidates
+                .Where(candidate => candidate.KeepAlphaChannels.Contains(slot))
+                .OrderBy(candidate => candidate.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(candidate => candidate.Key.LodIndex)
+                .ThenBy(candidate => candidate.Key.PartIndex)
+                .Select(candidate => candidate.KeepAlphaReasons.GetValueOrDefault(slot) ?? "alpha must be kept")
+                .FirstOrDefault();
 
         // BC3 when any member needs the channel's alpha kept; else the game's format for it.
         private static DXGI_FORMAT GetAtlasChannelFormat(

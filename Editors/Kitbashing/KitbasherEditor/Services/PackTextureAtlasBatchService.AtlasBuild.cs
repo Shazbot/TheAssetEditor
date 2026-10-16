@@ -870,6 +870,13 @@ namespace Editors.KitbasherEditor.Services
                 generatedPaths[channel.Slot] = atlasPath;
                 state.GeneratedTexturePaths.Add(atlasPath);
                 state.GeneratedTextureDimensions[atlasPath] = outputDimensions;
+                state.GeneratedTextureFormats[atlasPath] = new GeneratedTextureFormat(
+                    channel.Slot,
+                    atlasFormat,
+                    atlasFormat == DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB &&
+                    IsBc1AtlasTarget(channel.Type)
+                        ? GetKeepAlphaReason(candidates, channel.Slot)
+                        : null);
             }
 
             RecordAtlasPhysicalPageResidency(state, candidates, generatedPaths);

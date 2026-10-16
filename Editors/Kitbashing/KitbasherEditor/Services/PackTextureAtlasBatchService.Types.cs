@@ -865,6 +865,14 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, (int Width, int Height)> GeneratedTextureDimensions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            // What each atlas texture was written as: its channel slot, the format passed to the
+            // writer and, for a channel written as BC3 to keep alpha, the first reason.
+            public Dictionary<string, GeneratedTextureFormat> GeneratedTextureFormats { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            // How many keep-alpha format groups the atlas runs planned, and how many of them need
+            // alpha kept in at least one slot.
+            public int KeepAlphaFormatGroupsPlanned { get; set; }
+            public int KeepAlphaFormatGroupsWithAlpha { get; set; }
             public List<GeneratedTextureTimingEntry> GeneratedTextureTimings { get; } = [];
             public List<AtlasPlacementBatchDiagnostic> AtlasPlacementDiagnostics { get; } = [];
             public List<AtlasPhysicalPageDiagnostic> AtlasPhysicalPageDiagnostics { get; } = [];
@@ -1603,6 +1611,8 @@ namespace Editors.KitbasherEditor.Services
             // BC1-target slots (BaseColour, MaterialMap) whose alpha has to survive: the atlas
             // for such a slot is BC3 instead of BC1.
             public HashSet<string> KeepAlphaChannels { get; init; } = [];
+            // Why each of those slots needs its alpha kept (the first CheckAtlasAlphaSafety reason).
+            public Dictionary<string, string> KeepAlphaReasons { get; init; } = new(StringComparer.OrdinalIgnoreCase);
         }
 
         private enum Faction3MaskCanonicalization
@@ -2093,6 +2103,11 @@ namespace Editors.KitbasherEditor.Services
             int ShiftedIslandCount,
             AtlasCrop OriginalCrop,
             AtlasCrop NormalizedCrop);
+
+        private sealed record GeneratedTextureFormat(
+            string Slot,
+            DirectXTexNet.DXGI_FORMAT Format,
+            string? KeepAlphaReason);
 
         private sealed record AtlasedMeshReportEntry(
             string RootVmdPath,

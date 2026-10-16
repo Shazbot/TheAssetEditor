@@ -725,6 +725,25 @@ namespace Editors.KitbasherEditor.Services
                 worstRoot.Value);
         }
 
+        // How many BC1-target atlas channels (base colour, material map) were written as BC3 because
+        // their alpha had to be kept, and how the keep-alpha split of the candidates went.
+        private static void AppendKeepAlphaSummary(StringBuilder sb, BatchState state)
+        {
+            var bc1Targets = state.GeneratedTextureFormats.Values
+                .Where(item => AtlasChannels.Any(channel =>
+                    channel.Slot.Equals(item.Slot, StringComparison.OrdinalIgnoreCase) && IsBc1AtlasTarget(channel.Type)))
+                .ToList();
+            var kept = bc1Targets.Where(item => item.Format == DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB).ToList();
+            int Count(string slot) => kept.Count(item => item.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase));
+            sb.AppendLine(
+                $"Atlas channels written as BC3 to keep alpha: {kept.Count} of {bc1Targets.Count} BC1-target " +
+                $"channels (base colour {Count("t_xml_base_colour")}, material map {Count("t_xml_material_map")})");
+            sb.AppendLine(
+                $"Keep-alpha format groups: {state.KeepAlphaFormatGroupsWithAlpha} needing alpha kept of " +
+                $"{state.KeepAlphaFormatGroupsPlanned} planned (candidates are split by the slots whose alpha " +
+                "must be kept before batching)");
+        }
+
         private static void WriteReport(
             BatchState state,
             IReadOnlyList<string> vmdRoots,
@@ -874,6 +893,7 @@ namespace Editors.KitbasherEditor.Services
                     ? $"YES ({state.ExistingGeneratedAtlasCandidateCount:N0} existing candidate(s) preserved; new candidates remained eligible)"
                     : "NO")}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
+            AppendKeepAlphaSummary(sb, state);
             sb.AppendLine(
                 $"Shared physical atlas-page evaluations: {state.SharedAtlasPageSharingEvaluations}");
             sb.AppendLine(
@@ -3282,9 +3302,20 @@ namespace Editors.KitbasherEditor.Services
             foreach (var path in state.GeneratedTexturePaths.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
             {
                 if (state.GeneratedTextureDimensions.TryGetValue(path, out var dimensions))
-                    sb.AppendLine($"{path} ({dimensions.Width}x{dimensions.Height})");
+                {
+                    var written = state.GeneratedTextureFormats.GetValueOrDefault(path);
+                    sb.AppendLine(
+                        $"{path} ({dimensions.Width}x{dimensions.Height}" +
+                        (written == null ? string.Empty : $", {written.Format}") +
+                        ")" +
+                        (written?.KeepAlphaReason == null
+                            ? string.Empty
+                            : $" [BC3: alpha kept: {written.KeepAlphaReason}]"));
+                }
                 else
+                {
                     sb.AppendLine(path);
+                }
             }
             if (state.GeneratedTexturePaths.Count == 0)
                 sb.AppendLine("(none)");

@@ -9387,6 +9387,100 @@ namespace Test.KitbashEditor.Services
             Assert.That(merge.Entries, Is.EqualTo(plainMerge.Entries));
         }
 
+        // --- Report: keep-alpha channels and atlas formats -----------------------------------
+
+        private static string WriteAtlasFormatReport(Action<object> configure)
+        {
+            var reportPath = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                $"atlas_format_report_{Guid.NewGuid():N}.txt");
+            try
+            {
+                var state = CreateNoAtlasState(reportPath: reportPath, buildAtlases: true);
+                configure(state);
+                GetStaticMethod("WriteReport").Invoke(null, [state, new List<string>(), true, null]);
+                return System.IO.File.ReadAllText(reportPath);
+            }
+            finally
+            {
+                System.IO.File.Delete(reportPath);
+            }
+        }
+
+        private static void AddGeneratedAtlas(
+            object state,
+            string path,
+            string slot,
+            DirectXTexNet.DXGI_FORMAT format,
+            string? keepAlphaReason,
+            int width = 1024,
+            int height = 512)
+        {
+            Get<HashSet<string>>(state, "GeneratedTexturePaths").Add(path);
+            Get<IDictionary>(state, "GeneratedTextureDimensions")[path] = (width, height);
+            Get<IDictionary>(state, "GeneratedTextureFormats")[path] =
+                Activator.CreateInstance(GetNestedType("GeneratedTextureFormat"), [slot, format, keepAlphaReason])!;
+        }
+
+        [Test]
+        public void Report_KeepAlphaAtlas_CountsTheBc3ChannelsAndAnnotatesTheList()
+        {
+            var reason = AlphaSafety("HasAlpha", "weighted4_character_alpha", "t_xml_base_colour")!;
+            var report = WriteAtlasFormatReport(state =>
+            {
+                AddGeneratedAtlas(state, "textures\\asset_editor\\atlases\\a0_base_colour.dds", "t_xml_base_colour",
+                    DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB, reason);
+                AddGeneratedAtlas(state, "textures\\asset_editor\\atlases\\a0_material_map.dds", "t_xml_material_map",
+                    DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB, null);
+                AddGeneratedAtlas(state, "textures\\asset_editor\\atlases\\a0_normal.dds", "t_xml_normal",
+                    DirectXTexNet.DXGI_FORMAT.BC3_UNORM, null);
+                SetStateProperty(state, "KeepAlphaFormatGroupsPlanned", 3);
+                SetStateProperty(state, "KeepAlphaFormatGroupsWithAlpha", 1);
+            });
+
+            var lines = report.Split('\n').Select(line => line.TrimEnd('\r')).ToList();
+            Assert.That(lines, Does.Contain("Atlas textures generated: 3"));
+            Assert.That(lines, Does.Contain("Atlas channels written as BC3 to keep alpha: 1 of 2 BC1-target channels (base colour 1, material map 0)"));
+            Assert.That(
+                lines.Single(line => line.StartsWith("Keep-alpha format groups:")),
+                Does.StartWith("Keep-alpha format groups: 1 needing alpha kept of 3 planned"));
+            Assert.That(
+                lines,
+                Does.Contain($"textures\\asset_editor\\atlases\\a0_base_colour.dds (1024x512, BC3_UNORM_SRGB) [BC3: alpha kept: {reason}]"));
+            Assert.That(lines, Does.Contain("textures\\asset_editor\\atlases\\a0_material_map.dds (1024x512, BC1_UNORM_SRGB)"));
+            Assert.That(lines, Does.Contain("textures\\asset_editor\\atlases\\a0_normal.dds (1024x512, BC3_UNORM)"));
+        }
+
+        [Test]
+        public void Report_NoKeepAlphaCandidates_PrintsZeroAndBc1Formats()
+        {
+            var report = WriteAtlasFormatReport(state =>
+            {
+                AddGeneratedAtlas(state, "textures\\asset_editor\\atlases\\a1_base_colour.dds", "t_xml_base_colour",
+                    DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB, null);
+            });
+
+            var lines = report.Split('\n').Select(line => line.TrimEnd('\r')).ToList();
+            Assert.That(lines, Does.Contain("Atlas channels written as BC3 to keep alpha: 0 of 1 BC1-target channels (base colour 0, material map 0)"));
+            Assert.That(lines, Does.Contain("Keep-alpha format groups: 0 needing alpha kept of 0 planned (candidates are split by the slots whose alpha must be kept before batching)"));
+            Assert.That(lines, Does.Contain("textures\\asset_editor\\atlases\\a1_base_colour.dds (1024x512, BC1_UNORM_SRGB)"));
+            Assert.That(report, Does.Not.Contain("[BC3: alpha kept"));
+        }
+
+        [Test]
+        public void KeepAlphaReason_IsTheFirstMembersReasonForThatSlot()
+        {
+            var first = CreateKeepAlphaCandidate("t_xml_base_colour");
+            Get<IDictionary>(first, "KeepAlphaReasons")["t_xml_base_colour"] = "shader X reads alpha";
+            var none = CreateKeepAlphaCandidate();
+
+            var reason = GetStaticMethod("GetKeepAlphaReason").Invoke(null, [ToCandidateList(none, first), "t_xml_base_colour"]);
+            var absent = GetStaticMethod("GetKeepAlphaReason").Invoke(null, [ToCandidateList(none, first), "t_xml_material_map"]);
+
+            Assert.That(reason, Is.EqualTo("shader X reads alpha"));
+            Assert.That(absent, Is.Null);
+        }
+
         // --- Shared repack density follows the downscale option ----------------------------
 
         // As if the early downscale analysis had chosen `scale` (mip slicing) for the texture.

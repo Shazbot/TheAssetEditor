@@ -812,6 +812,7 @@ namespace Editors.KitbasherEditor.Services
             candidates = AlignSharedUvIslandCuts(state, candidates);
 
             var formatGroups = SplitCandidatesByKeepAlpha(candidates);
+            CountKeepAlphaFormatGroups(state, formatGroups);
             var gateTotals = new FormatGroupGateTotals(state, formatGroups.Count);
             foreach (var formatGroup in formatGroups)
             {
@@ -849,6 +850,7 @@ namespace Editors.KitbasherEditor.Services
             candidates = ApplyTexelDensityScaling(state, candidates);
             candidates = AlignSharedUvIslandCuts(state, candidates);
             var formatGroups = SplitCandidatesByKeepAlpha(candidates);
+            CountKeepAlphaFormatGroups(state, formatGroups);
             var gateTotals = new FormatGroupGateTotals(state, formatGroups.Count);
             foreach (var formatGroup in formatGroups)
             {
@@ -892,6 +894,7 @@ namespace Editors.KitbasherEditor.Services
 
             var packName = Path.GetFileNameWithoutExtension(state.SourcePath);
             var formatGroups = SplitCandidatesByKeepAlpha(candidates);
+            CountKeepAlphaFormatGroups(state, formatGroups);
             var gateTotals = new FormatGroupGateTotals(state, formatGroups.Count);
             foreach (var formatGroup in formatGroups)
             {
@@ -1387,6 +1390,13 @@ namespace Editors.KitbasherEditor.Services
                 generatedPaths[channel.Slot] = atlasPath;
                 state.GeneratedTexturePaths.Add(atlasPath);
                 state.GeneratedTextureDimensions[atlasPath] = outputDimensions;
+                state.GeneratedTextureFormats[atlasPath] = new GeneratedTextureFormat(
+                    channel.Slot,
+                    atlasFormat,
+                    atlasFormat == DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB &&
+                    IsBc1AtlasTarget(channel.Type)
+                        ? GetKeepAlphaReason(candidates, channel.Slot)
+                        : null);
             }
 
             RecordAtlasPhysicalPageResidency(state, candidates, generatedPaths);
@@ -1975,7 +1985,7 @@ namespace Editors.KitbasherEditor.Services
                 return null;
             }
 
-            var keepAlphaChannels = GetKeepAlphaChannels(
+            var keepAlphaReasons = GetKeepAlphaReasons(
                 state,
                 materialDoc,
                 resolvedChannels,
@@ -2032,7 +2042,8 @@ namespace Editors.KitbasherEditor.Services
                 RequiresMaskAtlas: requiresMaskAtlas,
                 ClearMaskBlueChannel: clearMaskBlueChannel)
             {
-                KeepAlphaChannels = keepAlphaChannels,
+                KeepAlphaChannels = keepAlphaReasons.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase),
+                KeepAlphaReasons = keepAlphaReasons,
             };
         }
 
