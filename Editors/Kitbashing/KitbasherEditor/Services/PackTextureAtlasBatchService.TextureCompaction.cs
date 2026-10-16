@@ -19,13 +19,13 @@ namespace Editors.KitbasherEditor.Services
         //  * a BC2/BC3 texture whose alpha is 255 everywhere becomes BC1 with the same colour
         //    blocks (BC2/BC3 colour blocks decode in 4-colour mode, so a block with c0 < c1 has its
         //    endpoints swapped and its indices remapped, one with c0 == c1 gets indices 0).
-        // Textures read by anything but a material slot, and textures another stage wrote, are
-        // left alone.
+        // Textures read by anything but a material slot are left alone. Textures the atlas or the
+        // shared repack wrote are compacted like source textures (they are in the output, exact
+        // and verified the same way); they are not source files, so the ownership and
+        // vanilla-override checks do not apply to them.
         private const int TextureCompactionListLimit = 40;
         private const int TextureCompactionExampleLimit = 3;
 
-        private const string TextureCompactionReasonGenerated =
-            "written by the atlas or repack stage in this run";
         private const string TextureCompactionReasonDownscaled = "downscaled in this run";
         private const string TextureCompactionReasonNotOwned = "not a texture of the source pack";
         private const string TextureCompactionReasonNonMaterial =
@@ -57,6 +57,8 @@ namespace Editors.KitbasherEditor.Services
             public bool RigidEmbeddedOnly { get; set; }
             // BC1 transcode of a texture whose alpha is not 255 but that no shader reads, and
             // who reads which slot ("t_xml_base_colour by weighted2_character").
+            // Written by the atlas or the shared repack in this run, not a source texture.
+            public bool Generated { get; init; }
             public bool AlphaDropped { get; init; }
             public string AlphaUses { get; init; } = string.Empty;
             public long Saved => BytesBefore - BytesAfter;
@@ -775,19 +777,14 @@ namespace Editors.KitbasherEditor.Services
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var path = textures[index];
-                if (generated.Contains(path))
-                {
-                    Skip(TextureCompactionReasonGenerated, path);
-                    continue;
-                }
-
+                var isGenerated = generated.Contains(path);
                 if (downscaled.Contains(path))
                 {
                     Skip(TextureCompactionReasonDownscaled, path);
                     continue;
                 }
 
-                if (!state.Source.ContainsFile(path))
+                if (!isGenerated && !state.Source.ContainsFile(path))
                 {
                     Skip(TextureCompactionReasonNotOwned, path);
                     continue;
@@ -815,8 +812,9 @@ namespace Editors.KitbasherEditor.Services
                             rigidsByTexture.GetValueOrDefault(path)?.ToList() ?? [],
                             RigidReason,
                             materialUses.GetValueOrDefault(path) ?? [],
-                            vanillaKnown);
-                    CompactTexture(state, result, path, !materialReferences.Contains(path), alphaRule, Skip);
+                            vanillaKnown,
+                            isGenerated);
+                    CompactTexture(state, result, path, !materialReferences.Contains(path), isGenerated, alphaRule, Skip);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -830,6 +828,7 @@ namespace Editors.KitbasherEditor.Services
             TextureCompactionResult result,
             string path,
             bool rigidEmbeddedOnly,
+            bool generated,
             TextureCompactionAlphaRule? alphaRule,
             TextureCompactionSkip skip)
         {
@@ -892,6 +891,7 @@ namespace Editors.KitbasherEditor.Services
                     BytesAfter = replacement.LongLength,
                     Colour = colour,
                     RigidEmbeddedOnly = rigidEmbeddedOnly,
+                    Generated = generated,
                 });
                 return;
             }
@@ -948,6 +948,7 @@ namespace Editors.KitbasherEditor.Services
                 BytesAfter = transcoded.LongLength,
                 SourceBytes = bytes,
                 RigidEmbeddedOnly = rigidEmbeddedOnly,
+                Generated = generated,
                 AlphaDropped = dropAlpha,
                 AlphaUses = alphaUses,
             });
@@ -986,7 +987,10 @@ namespace Editors.KitbasherEditor.Services
             List<string> Rigids,
             Func<string, string?> RigidReason,
             List<(string Material, string? Shader, string Slot)> Uses,
-            bool VanillaKnown);
+            bool VanillaKnown,
+            // An atlas or repack output: its users are the generated materials in the output (all
+            // read here), and it cannot override a vanilla texture, so the vanilla doubts do not apply.
+            bool Generated = false);
 
         // Null when no shader of any user reads the texture's alpha; else the first reason it
         // cannot be dropped. Every doubt blocks: unknown shader, unbound slot, a rigid-embedded
@@ -1014,9 +1018,9 @@ namespace Editors.KitbasherEditor.Services
 
             if (rule.Uses.Count == 0)
                 return "no xml material uses it";
-            if (!rule.VanillaKnown)
+            if (!rule.Generated && !rule.VanillaKnown)
                 return "the vanilla game data is not loaded (cannot tell whether it overrides a vanilla texture)";
-            if (OverridesVanillaPath(state, path))
+            if (!rule.Generated && OverridesVanillaPath(state, path))
                 return "overrides a vanilla texture (vanilla materials may read its alpha)";
 
             foreach (var (_, shader, slot) in rule.Uses)
@@ -1153,7 +1157,7 @@ namespace Editors.KitbasherEditor.Services
             }
 
             sb.AppendLine(
-                "Mode: REWRITES owned textures that a material references (an xml material slot or a " +
+                "Mode: REWRITES owned textures (and the atlas and repack outputs of this run) that a material references (an xml material slot or a " +
                 "rigid's embedded material), last, on the output's bytes. A " +
                 "texture whose every texel of every mip level is one exact RGBA becomes 4x4 with a full chain " +
                 "(one source block copied into each level); a BC2/BC3 texture whose alpha is 255 at every " +
@@ -1189,6 +1193,12 @@ namespace Editors.KitbasherEditor.Services
                 sb.AppendLine(
                     $"  BC2/BC3 transcoded to BC1, alpha not read by any user's shader: {dropped.Count:N0}");
             }
+            var generatedCompacted = result.Compacted.Where(entry => entry.Generated).ToList();
+            sb.AppendLine(
+                $"    of which atlas or repack outputs: {generatedCompacted.Count:N0} (saves " +
+                $"{generatedCompacted.Sum(item => item.Saved):N0} bytes; source textures: " +
+                $"{result.Compacted.Count - generatedCompacted.Count:N0}, saves " +
+                $"{result.Compacted.Where(entry => !entry.Generated).Sum(item => item.Saved):N0} bytes)");
             sb.AppendLine($"  Failed verification or writing (kept as they were): {result.Failed.Count:N0}");
             sb.AppendLine($"  Skipped: {skipped:N0}");
             foreach (var (reason, count) in result.Skipped
@@ -1241,6 +1251,7 @@ namespace Editors.KitbasherEditor.Services
                         $"{entry.NewWidth}x{entry.NewHeight} {entry.NewFormat}, " +
                         $"{entry.BytesBefore:N0} -> {entry.BytesAfter:N0} bytes" +
                         (entry.RigidEmbeddedOnly ? " [rigid-embedded only]" : string.Empty) +
+                        (entry.Generated ? " [atlas or repack output]" : string.Empty) +
                         (entry.AlphaDropped ? $" [{entry.AlphaUses}]" : string.Empty));
                 }
 

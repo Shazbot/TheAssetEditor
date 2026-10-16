@@ -11483,20 +11483,114 @@ namespace Test.KitbashEditor.Services
 
             var result = CxResult(state);
             var skipped = CxSkipped(state);
-            Assert.That(CxCompacted(state), Is.EqualTo(1));
+            // ok and the generated texture (an atlas output is compacted like a source texture).
+            Assert.That(CxCompacted(state), Is.EqualTo(2));
             Assert.That(skipped.Single(item => item.Key.Contains("non-material")).Value, Is.EqualTo(1));
             Assert.That(skipped.Single(item => item.Key.Contains("not referenced by any material")).Value, Is.EqualTo(3));
-            Assert.That(skipped.Single(item => item.Key.Contains("atlas or repack")).Value, Is.EqualTo(1));
             Assert.That(skipped.Single(item => item.Key.Contains("downscaled")).Value, Is.EqualTo(1));
             Assert.That(skipped.Single(item => item.Key.Contains("not a texture of the source pack")).Value, Is.EqualTo(1));
             Assert.That(skipped.Single(item => item.Key.Contains("BC7")).Value, Is.EqualTo(1));
-            foreach (var name in new[] { "ui", "orphan", "generated", "downscaled", "generated_extra" })
+            foreach (var name in new[] { "ui", "orphan", "downscaled", "generated_extra" })
                 Assert.That(fixture.Output[$"textures\\{name}.dds"], Is.EqualTo(flat), name);
             Assert.That(fixture.Output["textures\\ok.dds"].Length, Is.LessThan(flat.Length));
+            Assert.That(fixture.Output["textures\\generated.dds"].Length, Is.LessThan(flat.Length));
             // Everything is accounted for.
             Assert.That(Get<int>(result, "Considered"), Is.EqualTo(CxCompacted(state) + skipped.Values.Sum()));
             Assert.That(CxReport(state), Does.Contain("(reconciles)"));
             Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        // --- Atlas and repack outputs are compacted too ---------------------------------------
+
+        private static (DownscaleFixture Fixture, object State) CxRunGenerated(
+            byte[] texture,
+            string collection,
+            string shader = "weighted4_character",
+            string slot = "t_xml_base_colour",
+            bool dropAlpha = false)
+        {
+            // Only in the output: a generated texture is not a file of the source pack.
+            var fixture = new DownscaleFixture();
+            fixture.Output[CxTexture] = texture;
+            fixture.AddText(CxMaterial, CxMaterialWith(shader, (slot, CxTexture)));
+            var (_, state) = CxRun(
+                fixture,
+                configure: batch =>
+                {
+                    SetStateProperty(batch, "DropUnreadAlpha", dropAlpha);
+                    Get<HashSet<string>>(batch, collection).Add(CxTexture);
+                });
+            return (fixture, state);
+        }
+
+        [TestCase("GeneratedTexturePaths", TestName = "Compaction_OpaqueBc3AtlasPage_BecomesBc1")]
+        [TestCase("SharedRepackTexturePaths", TestName = "Compaction_OpaqueBc3RepackTexture_BecomesBc1")]
+        public void Compaction_GeneratedOpaqueBc3_BecomesBc1_AndVerifies(string collection)
+        {
+            var source = CxBuild(64, 64, 7, "BC3", true, true, (level, block) => CxOpaqueBlock(level, block, "BC3"));
+
+            var (fixture, state) = CxRunGenerated(source, collection);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(1), string.Join(";", CxSkipped(state).Keys));
+            var output = fixture.Output[CxTexture];
+            Assert.That(ReadDds(output).Format, Is.EqualTo("BC1"));
+            Assert.That(CxTexels(output), Is.EqualTo(CxTexels(source)));
+            Assert.That(Get<bool>(Get<IEnumerable>(CxResult(state), "Compacted").Cast<object>().Single(), "Generated"), Is.True);
+            Assert.That(CxValidate(state), Is.Empty);
+            Assert.That(CxReport(state), Does.Contain("of which atlas or repack outputs: 1").And.Contain("[atlas or repack output]"));
+        }
+
+        [Test]
+        public void Compaction_GeneratedBc3ThatKeepsRealAlpha_IsLeftAlone()
+        {
+            var source = CxAlphaTexture();
+
+            // Rule off: nothing exact to gain.
+            var (fixture, state) = CxRunGenerated(source, "GeneratedTexturePaths");
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("nothing exact to gain"));
+
+            // Rule on, a shader that reads the alpha of the slot: refused.
+            var (fixtureRead, stateRead) = CxRunGenerated(
+                source, "GeneratedTexturePaths", "weighted4_character_alpha", dropAlpha: true);
+            Assert.That(CxCompacted(stateRead), Is.Zero);
+            Assert.That(fixtureRead.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(CxSkipped(stateRead).Keys, Has.Some.Contain("reads alpha of t_xml_base_colour"));
+        }
+
+        [Test]
+        public void Compaction_GeneratedBc3WhoseMaterialsNeverReadTheAlpha_DropsItWithoutTheVanillaDoubts()
+        {
+            var source = CxAlphaTexture();
+
+            // No vanilla data is loaded here, which blocks a source texture; a generated one cannot
+            // override a vanilla texture, so its generated materials' shaders decide.
+            var (fixture, state) = CxRunGenerated(source, "GeneratedTexturePaths", dropAlpha: true);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(1), string.Join(";", CxSkipped(state).Keys));
+            AssertCxRgbKept(source, fixture.Output[CxTexture]);
+            Assert.That(CxReport(state), Does.Contain("[t_xml_base_colour by weighted4_character]"));
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_OfRepackTextures_DoesNotFailTheRepackValidation()
+        {
+            var world = BuildStandardSrWorld();
+            var result = world.Run();
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            SetStateProperty(world.State, "CompactTextures", true);
+            GetServiceType()
+                .GetMethod("RunTextureCompaction", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(world.Service, [world.State, CancellationToken.None, null]);
+
+            // The opaque BC3 normal atlas became BC1: no longer the planned format, still valid.
+            var compacted = Get<IEnumerable>(CxResult(world.State), "Compacted").Cast<object>().ToList();
+            Assert.That(compacted, Is.Not.Empty);
+            Assert.That(compacted.All(entry => Get<bool>(entry, "Generated")), Is.True);
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(CxValidate(world.State), Is.Empty);
         }
 
         [Test]

@@ -4469,6 +4469,10 @@ namespace Editors.KitbasherEditor.Services
 
             var before = errors.Count;
             errors.AddRange(result.ValidationErrors);
+            var compactedRepackTextures = (state.TextureCompaction?.Compacted ?? [])
+                .Where(entry => entry.Generated)
+                .Select(entry => Normalize(entry.Path))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var signatureSetOf = new Dictionary<string, UnitRepackSignatureSet>(StringComparer.OrdinalIgnoreCase);
             foreach (var signatureSet in state.UnitTextureRepack?.SetsC ?? [])
             {
@@ -4501,6 +4505,11 @@ namespace Editors.KitbasherEditor.Services
                         errors.Add($"Generated repack texture is missing from output: {output.Path}");
                         continue;
                     }
+
+                    // A texture the compaction stage shrank or transcoded (exactly, verified by
+                    // ValidateTextureCompaction) no longer has the planned format or size.
+                    if (compactedRepackTextures.Contains(Normalize(output.Path)))
+                        continue;
 
                     var problem = CheckSharedRepackDds(file.DataSource.ReadData(), output);
                     if (problem != null)
