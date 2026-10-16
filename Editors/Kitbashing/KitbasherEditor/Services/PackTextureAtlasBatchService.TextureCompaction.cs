@@ -992,6 +992,32 @@ namespace Editors.KitbasherEditor.Services
             // read here), and it cannot override a vanilla texture, so the vanilla doubts do not apply.
             bool Generated = false);
 
+        // Why the alpha of `slot` may be sampled by a user with this shader (a name as
+        // GetCompactionShaderName returns it), else null: the one rule the compaction's drop-unread-
+        // alpha and the atlas' BC1/BC3 choice share. Callers keep their own policy and wording. Every
+        // doubt counts as a read: no table, a shader the table does not list, a slot the shader does
+        // not bind, or a channel set that includes alpha.
+        private enum AlphaReadDoubt
+        {
+            TableUnavailable,
+            UnknownShader,
+            UnboundSlot,
+            ReadsAlpha,
+        }
+
+        private static AlphaReadDoubt? GetAlphaReadDoubt(Wh3ShaderChannelTable? table, string? shader, string slot)
+        {
+            if (table == null)
+                return AlphaReadDoubt.TableUnavailable;
+            if (shader == null || !table.Shaders.TryGetValue(shader, out var slots))
+                return AlphaReadDoubt.UnknownShader;
+            if (!slots.TryGetValue(slot, out var channels))
+                return AlphaReadDoubt.UnboundSlot;
+            return channels.Contains('a', StringComparison.OrdinalIgnoreCase)
+                ? AlphaReadDoubt.ReadsAlpha
+                : null;
+        }
+
         // Null when no shader of any user reads the texture's alpha; else the first reason it
         // cannot be dropped. Every doubt blocks: unknown shader, unbound slot, a rigid-embedded
         // user, a possible vanilla user.
@@ -1025,12 +1051,16 @@ namespace Editors.KitbasherEditor.Services
 
             foreach (var (_, shader, slot) in rule.Uses)
             {
-                if (shader == null || !rule.Table.Shaders.TryGetValue(shader, out var slots))
-                    return $"shader {shader ?? "(none)"} not in the channel table";
-                if (!slots.TryGetValue(slot, out var channels))
-                    return $"slot {slot} is not bound by shader {shader}";
-                if (channels.Contains('a', StringComparison.OrdinalIgnoreCase))
-                    return $"shader {shader} reads alpha of {slot}";
+                switch (GetAlphaReadDoubt(rule.Table, shader, slot))
+                {
+                    case AlphaReadDoubt.TableUnavailable:
+                    case AlphaReadDoubt.UnknownShader:
+                        return $"shader {shader ?? "(none)"} not in the channel table";
+                    case AlphaReadDoubt.UnboundSlot:
+                        return $"slot {slot} is not bound by shader {shader}";
+                    case AlphaReadDoubt.ReadsAlpha:
+                        return $"shader {shader} reads alpha of {slot}";
+                }
             }
 
             uses = string.Join(

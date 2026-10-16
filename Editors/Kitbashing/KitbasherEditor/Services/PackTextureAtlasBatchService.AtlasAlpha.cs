@@ -156,27 +156,19 @@ namespace Editors.KitbasherEditor.Services
 
             var shader = GetCompactionShaderName(shaderPath);
             var (table, error) = Wh3ShaderChannels.Value;
-            if (table == null)
+            switch (GetAlphaReadDoubt(table, shader, slot))
             {
-                return $"{slot} has non-opaque alpha that the BC1 atlas cannot keep, and the shader " +
-                       $"channel table is not available to prove that nothing reads it ({error}).";
-            }
-
-            if (shader == null || !table.Shaders.TryGetValue(shader, out var slots))
-            {
-                return $"{slot} has non-opaque alpha that the BC1 atlas cannot keep, and shader " +
-                       $"{shader ?? "(none)"} is not in the channel table.";
-            }
-
-            if (!slots.TryGetValue(slot, out var channels))
-            {
-                return $"{slot} has non-opaque alpha that the BC1 atlas cannot keep, and the slot " +
-                       $"is not bound by shader {shader}.";
-            }
-
-            if (channels.Contains('a', StringComparison.OrdinalIgnoreCase))
-            {
-                return $"Shader {shader} reads the alpha of {slot}, which the BC1 atlas cannot keep.";
+                case AlphaReadDoubt.TableUnavailable:
+                    return $"{slot} has non-opaque alpha that the BC1 atlas cannot keep, and the shader " +
+                           $"channel table is not available to prove that nothing reads it ({error}).";
+                case AlphaReadDoubt.UnknownShader:
+                    return $"{slot} has non-opaque alpha that the BC1 atlas cannot keep, and shader " +
+                           $"{shader ?? "(none)"} is not in the channel table.";
+                case AlphaReadDoubt.UnboundSlot:
+                    return $"{slot} has non-opaque alpha that the BC1 atlas cannot keep, and the slot " +
+                           $"is not bound by shader {shader}.";
+                case AlphaReadDoubt.ReadsAlpha:
+                    return $"Shader {shader} reads the alpha of {slot}, which the BC1 atlas cannot keep.";
             }
 
             return null;
