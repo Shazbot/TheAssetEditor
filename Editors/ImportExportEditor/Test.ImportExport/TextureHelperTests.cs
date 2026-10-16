@@ -97,5 +97,51 @@ namespace Test.ImportExport
             // Blender wants the DDS red channel in blue and the DDS blue channel in red; green stays.
             Assert.That((blenderPixel.R, blenderPixel.G, blenderPixel.B, blenderPixel.A), Is.EqualTo((50, 100, 200, 255)));
         }
+
+        [Test]
+        public void RawBgraMipChainWriter_HeightNotMultipleOfFour_KeepsTheBottomRows()
+        {
+            // Large enough for the striped compression path, which only handles whole block rows.
+            const int width = 4096;
+            const int height = 4098;
+            using var writer = Editors.ImportExport.Importing.Importers.PngToDds.PngToDdsImporter
+                .CreateRawBgraMipChainWriter(
+                    width,
+                    height,
+                    2,
+                    Shared.GameFormats.RigidModel.Types.TextureType.BaseColour,
+                    Shared.Core.Settings.GameTypeEnum.Warhammer3);
+            Assert.That(writer.UsesLargeBcSplitCompression, Is.False);
+
+            byte[] Solid(int w, int h)
+            {
+                var pixels = new byte[w * h * 4];
+                for (var index = 0; index < pixels.Length; index += 4)
+                {
+                    pixels[index] = 50;
+                    pixels[index + 1] = 100;
+                    pixels[index + 2] = 200;
+                    pixels[index + 3] = 255;
+                }
+
+                return pixels;
+            }
+
+            writer.WriteMip(0, Solid(width, height));
+            writer.WriteMip(1, Solid(width / 2, height / 2));
+            var dds = writer.Complete("tall.dds").DataSource.ReadData();
+
+            using var stream = new MemoryStream(dds);
+            using var image = Pfim.Pfimage.FromStream(stream);
+            Assert.That(image.Height, Is.EqualTo(height));
+            foreach (var row in new[] { height - 3, height - 1 })
+            {
+                var offset = row * image.Stride + (width / 2) * 4;
+                // BGRA, sRGB round trip through BC1: close to (50, 100, 200).
+                Assert.That(image.Data[offset], Is.EqualTo(50).Within(6));
+                Assert.That(image.Data[offset + 1], Is.EqualTo(100).Within(6));
+                Assert.That(image.Data[offset + 2], Is.EqualTo(200).Within(6));
+            }
+        }
     }
 }

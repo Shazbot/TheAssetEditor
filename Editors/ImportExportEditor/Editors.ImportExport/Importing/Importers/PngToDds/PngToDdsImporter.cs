@@ -276,14 +276,23 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
             var wicFlags = processForGame
                 ? WIC_FLAGS.DEFAULT_SRGB
                 : IsLinearTexture(textureType) ? WIC_FLAGS.IGNORE_SRGB : WIC_FLAGS.DEFAULT_SRGB;
-            var scratchImagePng = TexHelper.Instance.LoadFromWICFile(inputPath, wicFlags);
+            using var scratchImagePng = TexHelper.Instance.LoadFromWICFile(inputPath, wicFlags);
 
             var processedImage = processForGame
                 ? ImageProcessorFactory.CreateImageProcessor(textureType).Transform(scratchImagePng)
                 : scratchImagePng;
 
-            using var imageWithMips = processedImage.GenerateMipMaps(TEX_FILTER_FLAGS.DEFAULT, 0);
-            return CompressAndSave(imageWithMips, textureType, gameType, outFileName);
+            try
+            {
+                using var imageWithMips = processedImage.GenerateMipMaps(TEX_FILTER_FLAGS.DEFAULT, 0);
+                return CompressAndSave(imageWithMips, textureType, gameType, outFileName);
+            }
+            finally
+            {
+                // The processors return a new image; without processing it is the loaded one.
+                if (!ReferenceEquals(processedImage, scratchImagePng))
+                    processedImage.Dispose();
+            }
         }
 
         private static PackFile CompressAndSave(
@@ -382,6 +391,11 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
                 DXGI_FORMAT.BC3_UNORM or
                 DXGI_FORMAT.BC3_UNORM_SRGB;
             if (!isBc1OrBc3)
+                return false;
+
+            // The stripes are whole 4x4 blocks: a size that is not a multiple of 4 would lose the
+            // partial block row/column, so it takes the regular single-call compression.
+            if (width % 4 != 0 || height % 4 != 0)
                 return false;
 
             const long minimumPixels = 4096L * 4096;
