@@ -1194,6 +1194,7 @@ namespace Editors.KitbasherEditor.Services
                 if (textureNodes == null)
                     continue;
 
+                var sourceTextures = repack ? GetRepackSourceMaterialTextures(state, materialPath) : null;
                 foreach (XmlNode textureNode in textureNodes)
                 {
                     var texturePath = Normalize(
@@ -1203,6 +1204,22 @@ namespace Editors.KitbasherEditor.Services
 
                     if (!CanResolveAfterRewrite(state, texturePath))
                     {
+                        // A texture the repack carried over unchanged from a source material that
+                        // already named a file nothing provides (a CA authoring leftover) never
+                        // resolved: kept as authored, like any other reference nothing can load.
+                        // A texture the repack wrote itself, or one that resolved before the run
+                        // and is gone now, is an error.
+                        if (repack &&
+                            !state.SharedRepackTexturePaths.Contains(texturePath) &&
+                            sourceTextures != null &&
+                            sourceTextures.TryGetValue(GetTextureSlot(textureNode), out var sourceTexture) &&
+                            sourceTexture.Equals(texturePath, StringComparison.OrdinalIgnoreCase) &&
+                            !ResolvedBeforeTheRun(state, texturePath))
+                        {
+                            state.SharedRepackKeptMissingTextures.Add((materialPath, texturePath));
+                            continue;
+                        }
+
                         errors.Add(
                             repack
                                 ? $"Generated repack material texture no longer resolves: {materialPath} -> {texturePath}"
@@ -1211,6 +1228,42 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
         }
+
+        // The textures (slot -> normalized path) of the material a repack material was copied from.
+        // Null when that material cannot be found or read, which keeps the strict check.
+        private static Dictionary<string, string>? GetRepackSourceMaterialTextures(
+            BatchState state,
+            string repackMaterialPath)
+        {
+            if (!state.SharedRepackMaterialSources.TryGetValue(repackMaterialPath, out var sourceMaterial))
+                return null;
+
+            try
+            {
+                var file = ResolveGameplayTraversalContainer(
+                        state.Source, GetGameplayTraversalContainers(state), sourceMaterial)?
+                    .FindFile(sourceMaterial);
+                if (file == null)
+                    return null;
+
+                var textures = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (XmlNode node in LoadXml(file).SelectNodes("/material/textures/texture") ?? EmptyXmlNodeList)
+                    textures[GetTextureSlot(node)] = Normalize(node.SelectSingleNode("source")?.InnerText ?? node.InnerText);
+
+                return textures;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return null;
+            }
+        }
+
+        // Whether a texture path resolved before this run: the output started as a copy of the
+        // source pack, so the source pack and every loaded (vanilla or other) pack decide.
+        private bool ResolvedBeforeTheRun(BatchState state, string path)
+            => state.Source.ContainsFile(path) ||
+               GetGameplayTraversalContainers(state).Any(container => container.ContainsFile(path)) ||
+               _packFileService.FindFile(path) != null;
 
         private static void ValidateUnchangedModelPathSet(
             BatchState state,

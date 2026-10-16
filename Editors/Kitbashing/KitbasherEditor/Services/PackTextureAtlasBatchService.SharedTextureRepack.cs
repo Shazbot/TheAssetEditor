@@ -4195,6 +4195,7 @@ namespace Editors.KitbasherEditor.Services
             var stats = new SharedRepackPixelStats();
             var rewrites = new List<(SharedRepackPart Part, Microsoft.Xna.Framework.Vector2[] Uv)>();
             var materialFiles = new List<(string Path, byte[] Data)>();
+            var materialSources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             try
             {
@@ -4259,6 +4260,7 @@ namespace Editors.KitbasherEditor.Services
                         }
 
                         materialFiles.Add((newPath, Encoding.UTF8.GetBytes(document.OuterXml)));
+                        materialSources[newPath] = material;
                     }
 
                     foreach (var tuple in page.Tuples)
@@ -4347,6 +4349,7 @@ namespace Editors.KitbasherEditor.Services
             {
                 WriteFile(state.Output, path, data);
                 state.SharedRepackMaterialPaths.Add(path);
+                state.SharedRepackMaterialSources[path] = materialSources[path];
                 result.GeneratedMaterials.Add(path);
             }
 
@@ -4644,6 +4647,17 @@ namespace Editors.KitbasherEditor.Services
                 $"copied from the sources wherever the chart rectangles are block aligned at that mip level; the " +
                 $"first level below that is seeded from the source's own mip. Every check runs before anything is " +
                 $"written.");
+            if (state.SharedRepackKeptMissingTextures.Count != 0)
+            {
+                sb.AppendLine(
+                    $"Textures already missing in the source material (kept as authored, not an error): " +
+                    $"{state.SharedRepackKeptMissingTextures.Count:N0}. The atlas stage skips a mesh whose secondary " +
+                    "texture cannot be resolved (UV0 is shared); the repack carries the reference over unchanged, as it " +
+                    "was never loadable, and does not fail the run over it.");
+                foreach (var (material, texture) in state.SharedRepackKeptMissingTextures.Take(5))
+                    sb.AppendLine($"  {material} -> {texture} (already missing in the source material (kept as authored))");
+            }
+
             if (state.DownscaleEarlyCandidates.Count != 0 || state.SharedRepackScaledSourceFailures.Count != 0)
             {
                 sb.AppendLine(

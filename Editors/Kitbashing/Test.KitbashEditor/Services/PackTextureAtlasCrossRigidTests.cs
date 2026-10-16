@@ -9617,6 +9617,68 @@ namespace Test.KitbashEditor.Services
             Assert.That(errors, Has.Count.EqualTo(3));
         }
 
+        private static (DownscaleFixture Fixture, object Service, object State) BuildRepackPassThroughState(
+            bool texturePresentInSource)
+        {
+            var fixture = new DownscaleFixture();
+            fixture.AddTexture(RepackTexture, 256, 9);
+            const string passThrough = "textures\\ca_leftover_mask.dds";
+            if (texturePresentInSource)
+                fixture.AddTexture(passThrough, 256, 9);
+            const string source = "materials\\sr_m_source.xml.material";
+            fixture.AddMaterial(source, ("t_xml_base_colour", "textures\\sr_orig.dds"), ("t_xml_mask", passThrough));
+            fixture.AddMaterial(RepackMaterial, ("t_xml_base_colour", RepackTexture), ("t_xml_mask", passThrough));
+            var (service, state) = CreateDownscaleState(fixture, false, buildAtlases: false);
+            AddToSet(state, "SharedRepackMaterialPaths", RepackMaterial);
+            AddToSet(state, "SharedRepackTexturePaths", RepackTexture);
+            Get<IDictionary>(state, "SharedRepackMaterialSources")[RepackMaterial] = source;
+            return (fixture, service, state);
+        }
+
+        [Test]
+        public void Validation_RepackMaterial_PassThroughTextureAlreadyMissingInTheSource_IsNotAnError()
+        {
+            var (_, service, state) = BuildRepackPassThroughState(texturePresentInSource: false);
+
+            var errors = RunGeneratedMaterialValidation(service, state);
+
+            Assert.That(errors, Is.Empty);
+            Assert.That(
+                Get<IList>(state, "SharedRepackKeptMissingTextures").Count,
+                Is.EqualTo(1));
+            SetStateProperty(state, "SharedTextureRepackEnabled", true);
+            SetStateProperty(state, "SharedTextureRepack", Activator.CreateInstance(GetNestedType("SharedTextureRepackResult")));
+            Assert.That(
+                BuildSharedRepackSection(state),
+                Does.Contain("already missing in the source material (kept as authored)")
+                    .And.Contain("ca_leftover_mask.dds"));
+        }
+
+        [Test]
+        public void Validation_RepackMaterial_PassThroughTextureThatExistedInTheSourceButIsGone_IsStillAnError()
+        {
+            var (fixture, service, state) = BuildRepackPassThroughState(texturePresentInSource: true);
+            fixture.Output.Remove("textures\\ca_leftover_mask.dds");
+
+            var errors = RunGeneratedMaterialValidation(service, state);
+
+            Assert.That(errors, Has.Count.EqualTo(1));
+            Assert.That(errors[0], Does.Contain("Generated repack material texture no longer resolves"));
+            Assert.That(Get<IList>(state, "SharedRepackKeptMissingTextures"), Is.Empty);
+        }
+
+        [Test]
+        public void Validation_RepackMaterial_GeneratedTextureMissing_IsAlwaysAnError()
+        {
+            var (fixture, service, state) = BuildRepackPassThroughState(texturePresentInSource: false);
+            fixture.Output.Remove(RepackTexture);
+            fixture.Source.Remove(RepackTexture);
+
+            var errors = RunGeneratedMaterialValidation(service, state);
+
+            Assert.That(errors, Has.Some.Contain($"-> {RepackTexture}"));
+        }
+
         [Test]
         public void SharedRepack_Outputs_AreRegisteredSeparatelyFromTheAtlasOutputs()
         {
