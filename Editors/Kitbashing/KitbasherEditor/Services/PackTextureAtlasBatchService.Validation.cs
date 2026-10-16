@@ -1007,55 +1007,7 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
-            var validationMaterials = state.GeneratedMaterialPaths
-                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            for (var materialIndex = 0; materialIndex < validationMaterials.Count; materialIndex++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var materialPath = validationMaterials[materialIndex];
-                ReportProgress(
-                    progress,
-                    "Validating atlas materials",
-                    materialIndex + 1,
-                    validationMaterials.Count,
-                    materialPath);
-                var file = state.Output.FindFile(materialPath);
-                if (file == null)
-                {
-                    errors.Add($"Generated atlas material is missing: {materialPath}");
-                    continue;
-                }
-
-                XmlDocument materialDoc;
-                try
-                {
-                    materialDoc = LoadXml(file);
-                }
-                catch (Exception ex)
-                {
-                    errors.Add($"Generated atlas material XML is invalid: {materialPath} ({ex.Message})");
-                    continue;
-                }
-
-                var textureNodes = materialDoc.SelectNodes("/material/textures/texture");
-                if (textureNodes == null)
-                    continue;
-
-                foreach (XmlNode textureNode in textureNodes)
-                {
-                    var texturePath = Normalize(
-                        textureNode.SelectSingleNode("source")?.InnerText ?? textureNode.InnerText);
-                    if (string.IsNullOrWhiteSpace(texturePath) || IsTexturePlaceholder(texturePath))
-                        continue;
-
-                    if (!CanResolveAfterRewrite(state, texturePath))
-                    {
-                        errors.Add(
-                            $"Generated material texture no longer resolves: {materialPath} -> {texturePath}");
-                    }
-                }
-            }
+            ValidateGeneratedMaterials(state, errors, cancellationToken, progress);
 
             foreach (var atlasPath in state.GeneratedTexturePaths)
             {
@@ -1190,6 +1142,73 @@ namespace Editors.KitbasherEditor.Services
                 // If the source baseline cannot be established reliably, retain strict
                 // validation and let the rewritten-output mismatch remain fatal.
                 return false;
+            }
+        }
+
+        // The atlas stage's materials and the shared texture repack's: each must exist, parse and
+        // only name textures that still resolve. A repack material that is missing or invalid is
+        // already reported by ValidateSharedTextureRepack, so only its textures are checked here.
+        private void ValidateGeneratedMaterials(
+            BatchState state,
+            List<string> errors,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
+        {
+            var validationMaterials = state.GeneratedMaterialPaths
+                .Select(path => (Path: path, Repack: false))
+                .Concat(state.SharedRepackMaterialPaths.Select(path => (Path: path, Repack: true)))
+                .OrderBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            for (var materialIndex = 0; materialIndex < validationMaterials.Count; materialIndex++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (materialPath, repack) = validationMaterials[materialIndex];
+                var label = repack ? "repack" : "atlas";
+                ReportProgress(
+                    progress,
+                    "Validating generated materials",
+                    materialIndex + 1,
+                    validationMaterials.Count,
+                    materialPath);
+                var file = state.Output.FindFile(materialPath);
+                if (file == null)
+                {
+                    if (!repack)
+                        errors.Add($"Generated atlas material is missing: {materialPath}");
+                    continue;
+                }
+
+                XmlDocument materialDoc;
+                try
+                {
+                    materialDoc = LoadXml(file);
+                }
+                catch (Exception ex)
+                {
+                    if (!repack)
+                        errors.Add($"Generated atlas material XML is invalid: {materialPath} ({ex.Message})");
+                    continue;
+                }
+
+                var textureNodes = materialDoc.SelectNodes("/material/textures/texture");
+                if (textureNodes == null)
+                    continue;
+
+                foreach (XmlNode textureNode in textureNodes)
+                {
+                    var texturePath = Normalize(
+                        textureNode.SelectSingleNode("source")?.InnerText ?? textureNode.InnerText);
+                    if (string.IsNullOrWhiteSpace(texturePath) || IsTexturePlaceholder(texturePath))
+                        continue;
+
+                    if (!CanResolveAfterRewrite(state, texturePath))
+                    {
+                        errors.Add(
+                            repack
+                                ? $"Generated repack material texture no longer resolves: {materialPath} -> {texturePath}"
+                                : $"Generated material texture no longer resolves: {materialPath} -> {texturePath}");
+                    }
+                }
             }
         }
 

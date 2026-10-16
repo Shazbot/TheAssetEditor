@@ -45,6 +45,8 @@ namespace Editors.KitbasherEditor.Services
             "may be referenced by an unreadable material or file";
         private const string TextureDownscaleReasonGeneratedMaterial =
             "referenced by an atlas-generated material (UV0 remapped, user not assessable)";
+        private const string TextureDownscaleReasonRepackMaterial =
+            "referenced by a shared-texture-repack material (UVs remapped, user not assessable)";
         private const string TextureDownscaleReasonMaterialOverridesVanilla =
             "a referencing material overrides a vanilla material (vanilla users unknown)";
         private const string TextureDownscaleReasonNoUser =
@@ -123,6 +125,7 @@ namespace Editors.KitbasherEditor.Services
             string Path,
             bool Readable,
             bool Generated,
+            bool GeneratedByRepack,
             bool OverridesVanilla,
             IReadOnlyList<(string Slot, string Texture)> Textures);
 
@@ -198,6 +201,9 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> GeneratedTextures { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            // The part of GeneratedTextures the shared texture repack wrote.
+            public HashSet<string> RepackGeneratedTextures { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> VanillaOverrideTextures { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
 
@@ -238,6 +244,7 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasRemovedAllUsers { get; set; }
             public int AssessedWithReducedUserSet { get; set; }
             public int GeneratedUntouched { get; set; }
+            public int RepackGeneratedUntouched { get; set; }
             public int Unreferenced { get; set; }
             public int NeedsFullResolution { get; set; }
             public int TexturesConsidered { get; set; }
@@ -1000,6 +1007,10 @@ namespace Editors.KitbasherEditor.Services
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             inputs.GeneratedTextures.UnionWith(state.GeneratedTexturePaths.Select(Normalize));
             inputs.GeneratedTextures.UnionWith(state.SharedRepackTexturePaths.Select(Normalize));
+            inputs.RepackGeneratedTextures.UnionWith(state.SharedRepackTexturePaths.Select(Normalize));
+            var repackMaterials = state.SharedRepackMaterialPaths
+                .Select(Normalize)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var (rawPath, file) in state.Output.GetAllFiles())
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1014,6 +1025,7 @@ namespace Editors.KitbasherEditor.Services
                 {
                     inputs.MaterialsScanned++;
                     var generated = generatedMaterials.Contains(path);
+                    var generatedByRepack = repackMaterials.Contains(path);
                     var overridesVanilla = OverridesVanilla(path);
                     try
                     {
@@ -1034,13 +1046,13 @@ namespace Editors.KitbasherEditor.Services
                         }
 
                         inputs.Materials[path] = new TextureDownscaleMaterial(
-                            path, true, generated, overridesVanilla, textures);
+                            path, true, generated, generatedByRepack, overridesVanilla, textures);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         inputs.UnreadableMaterials++;
                         inputs.Materials[path] = new TextureDownscaleMaterial(
-                            path, false, generated, overridesVanilla, []);
+                            path, false, generated, generatedByRepack, overridesVanilla, []);
                         inputs.UnreadableReferencedTextures.UnionWith(
                             ExtractDownscaleTextureTokens(file));
                     }
@@ -1683,7 +1695,10 @@ namespace Editors.KitbasherEditor.Services
                 TextFilesScanned = inputs.TextFilesScanned,
                 BudgetExhausted = inputs.BudgetExhausted,
                 Budget = inputs.Budget,
-                GeneratedUntouched = inputs.GeneratedTextures.Count,
+                GeneratedUntouched = inputs.GeneratedTextures.Count(
+                    texture => !inputs.RepackGeneratedTextures.Contains(texture)),
+                RepackGeneratedUntouched = inputs.GeneratedTextures.Count(
+                    texture => inputs.RepackGeneratedTextures.Contains(texture)),
                 CharacterRuleUnavailableReason = inputs.CharacterRuleUnavailableReason,
                 CharacterWsModels = inputs.GameplayLinksByWsModel.Values
                     .Count(link => link.Kind == TextureDownscaleRootKind.Character),
@@ -1797,7 +1812,11 @@ namespace Editors.KitbasherEditor.Services
                     var materialUses = inputs.UsesByMaterial.GetValueOrDefault(materialPath) ?? [];
                     string? reason = null;
                     var detail = materialPath;
-                    if (material.Generated)
+                    if (material.GeneratedByRepack)
+                    {
+                        reason = TextureDownscaleReasonRepackMaterial;
+                    }
+                    else if (material.Generated)
                     {
                         reason = TextureDownscaleReasonGeneratedMaterial;
                     }
@@ -1945,6 +1964,7 @@ namespace Editors.KitbasherEditor.Services
             => reason switch
             {
                 TextureDownscaleReasonGeneratedMaterial => 0,
+                TextureDownscaleReasonRepackMaterial => 0,
                 TextureDownscaleReasonMaterialOverridesVanilla => 1,
                 TextureDownscaleReasonNoUser => 2,
                 _ => 3,
@@ -2255,6 +2275,9 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine(
                 $"Generated atlas textures (never touched, not counted above): " +
                 $"{plan.GeneratedUntouched:N0}");
+            sb.AppendLine(
+                $"Shared-repack textures (written by the repack, never touched, not counted above): " +
+                $"{plan.RepackGeneratedUntouched:N0}");
             sb.AppendLine("Reasons a texture is not eligible (not-owned textures included):");
             foreach (var reason in plan.IneligibleReasons
                          .OrderByDescending(entry => entry.Value)

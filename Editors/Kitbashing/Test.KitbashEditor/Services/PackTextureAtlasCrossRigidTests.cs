@@ -9315,6 +9315,104 @@ namespace Test.KitbashEditor.Services
             Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Does.Not.Contain(SrRigid2));
         }
 
+        // --- Shared texture repack outputs as generated files ------------------------------
+
+        private const string RepackTexture = "textures\\asset_editor\\atlases\\sr_repack_x.dds";
+        private const string RepackMaterial = "materials\\sr_m_repack_x.xml.material";
+
+        [Test]
+        public void Downscale_RepackMaterialsAndTextures_AreListedWithTheirOwnReasonAndNotRewritten()
+        {
+            var fixture = BuildStandardDownscaleFixture();
+            fixture.AddTexture("textures\\t_rp_kept.dds", 1024, 11);
+            fixture.AddTexture(RepackTexture, 1024, 11);
+            fixture.AddMaterial(
+                RepackMaterial,
+                ("t_xml_base_colour", RepackTexture),
+                ("t_xml_mask", "textures\\t_rp_kept.dds"));
+            var (service, state) = CreateStandardDownscaleState(fixture, downscale: true);
+            AddToSet(state, "SharedRepackTexturePaths", RepackTexture);
+            AddToSet(state, "SharedRepackMaterialPaths", RepackMaterial);
+            var before = fixture.Output.ToDictionary(entry => entry.Key, entry => entry.Value);
+
+            var result = RunDownscale(service, state, fixture);
+            var plan = Get<object>(result, "Plan");
+
+            var reason = DownscaleReason("TextureDownscaleReasonRepackMaterial");
+            Assert.That(reason, Does.Contain("shared-texture-repack"));
+            Assert.That(Reasons(result).GetValueOrDefault(reason), Is.EqualTo(1));
+            Assert.That(
+                Get<Dictionary<string, List<string>>>(plan, "IneligibleExamples")[reason].Single(),
+                Does.Contain("t_rp_kept.dds"));
+            // The repack texture is counted on its own line, the atlas figure is unchanged.
+            Assert.That(Get<int>(plan, "RepackGeneratedUntouched"), Is.EqualTo(1));
+            Assert.That(Get<int>(plan, "GeneratedUntouched"), Is.EqualTo(1));
+            Assert.That(Candidates(result).Select(candidate => Get<string>(candidate, "Path")), Does.Not.Contain(RepackTexture));
+            Assert.That(Candidates(result).Select(candidate => Get<string>(candidate, "Path")), Does.Not.Contain("textures\\t_rp_kept.dds"));
+            foreach (var untouched in new[] { RepackTexture, RepackMaterial, "textures\\t_rp_kept.dds" })
+                Assert.That(fixture.Output[untouched], Is.SameAs(before[untouched]), untouched);
+        }
+
+        private static List<string> RunGeneratedMaterialValidation(object service, object state)
+        {
+            var errors = new List<string>();
+            GetServiceType()
+                .GetMethod("ValidateGeneratedMaterials", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(service, [state, errors, CancellationToken.None, null]);
+            return errors;
+        }
+
+        [Test]
+        public void Validation_CoversRepackMaterialsLikeAtlasMaterials()
+        {
+            var fixture = new DownscaleFixture();
+            fixture.AddTexture("textures\\t_ok.dds", 256, 9);
+            fixture.AddTexture(RepackTexture, 256, 9);
+            fixture.AddMaterial(RepackMaterial, ("t_xml_base_colour", RepackTexture), ("t_xml_mask", "textures\\t_ok.dds"));
+            fixture.AddMaterial("materials\\sr_m_repack_bad.xml.material", ("t_xml_base_colour", "textures\\gone.dds"));
+            fixture.AddMaterial("materials\\sr_m_atlas_bad.xml.material", ("t_xml_base_colour", "textures\\gone_too.dds"));
+            var (service, state) = CreateDownscaleState(fixture, false, buildAtlases: false);
+            AddToSet(state, "SharedRepackMaterialPaths", RepackMaterial);
+
+            Assert.That(RunGeneratedMaterialValidation(service, state), Is.Empty);
+
+            AddToSet(state, "SharedRepackMaterialPaths", "materials\\sr_m_repack_bad.xml.material");
+            AddToSet(state, "GeneratedMaterialPaths", "materials\\sr_m_atlas_bad.xml.material");
+            // A repack material that vanished is ValidateSharedTextureRepack's finding, not a duplicate here.
+            AddToSet(state, "SharedRepackMaterialPaths", "materials\\sr_m_repack_missing.xml.material");
+            AddToSet(state, "GeneratedMaterialPaths", "materials\\sr_m_atlas_missing.xml.material");
+
+            var errors = RunGeneratedMaterialValidation(service, state);
+
+            Assert.That(errors, Has.Some.EqualTo(
+                "Generated repack material texture no longer resolves: materials\\sr_m_repack_bad.xml.material -> textures\\gone.dds"));
+            Assert.That(errors, Has.Some.EqualTo(
+                "Generated material texture no longer resolves: materials\\sr_m_atlas_bad.xml.material -> textures\\gone_too.dds"));
+            Assert.That(errors, Has.Some.EqualTo(
+                "Generated atlas material is missing: materials\\sr_m_atlas_missing.xml.material"));
+            Assert.That(errors.Any(error => error.Contains("sr_m_repack_missing")), Is.False);
+            Assert.That(errors, Has.Count.EqualTo(3));
+        }
+
+        [Test]
+        public void SharedRepack_Outputs_AreRegisteredSeparatelyFromTheAtlasOutputs()
+        {
+            var world = BuildStandardSrWorld();
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(
+                Get<HashSet<string>>(world.State, "SharedRepackMaterialPaths"),
+                Is.EquivalentTo(Get<List<string>>(result, "GeneratedMaterials")));
+            Assert.That(
+                Get<HashSet<string>>(world.State, "SharedRepackTexturePaths"),
+                Is.EquivalentTo(Get<List<string>>(result, "GeneratedTextures")));
+            // The report's atlas counts and lists read these sets: repack outputs stay out.
+            Assert.That(Get<HashSet<string>>(world.State, "GeneratedMaterialPaths"), Is.Empty);
+            Assert.That(Get<HashSet<string>>(world.State, "GeneratedTexturePaths"), Is.Empty);
+        }
+
         [Test]
         public void SharedRepack_OptionOff_ReportSaysSoAndNothingIsRun()
         {
