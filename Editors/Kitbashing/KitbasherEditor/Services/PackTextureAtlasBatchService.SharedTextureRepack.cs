@@ -916,55 +916,19 @@ namespace Editors.KitbasherEditor.Services
                 if (rigidCache.TryGetValue(rigidPath, out var cached))
                     return cached;
 
-                rigidReferrers ??= IndexSharedRepackRigidReferrers(state, cancellationToken);
-                string? reason = null;
+                rigidReferrers ??= state.RigidReferrerIndex ??=
+                    IndexSharedRepackRigidReferrers(state, cancellationToken);
                 RmvFile? rigid = null;
-                if (!state.Source.ContainsFile(rigidPath))
-                    reason = "the rigid is not owned by the source pack";
-                else if (OverridesVanillaPath(state, rigidPath))
-                    reason = "the rigid overrides a vanilla path";
-                else if (HasDirectGameplayRigidConsumer(state, rigidPath))
-                    reason = "the rigid is referenced directly (without a WSModel) by a VMD or other gameplay file";
-                else if (!IsGameplayConsumerDiscoverySafeForAsset(state, rigidPath))
-                    reason = "gameplay consumer discovery for the rigid is incomplete";
-                else if (state.ModifiedRigids.Contains(rigidPath) && !result.RepackedRigids.Contains(rigidPath))
-                    reason = "the rigid was already modified by another stage";
-                else if (state.CrossRigidGeneratedRigidPaths.Contains(rigidPath))
-                    reason = "the rigid is a generated cross-rigid model";
-                else
-                {
-                    var immutable = GetImmutableGameplayWsModelConsumersForRigid(state, rigidPath);
-                    var bound = wsByRigid.GetValueOrDefault(rigidPath) ?? [];
-                    var others = (rigidReferrers.GetValueOrDefault(rigidPath) ?? [])
-                        .Where(path => !bound.Contains(path))
-                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    if (immutable.Count != 0)
-                    {
-                        reason = $"a WSModel outside the source pack uses the rigid ({immutable.First()})";
-                    }
-                    else if (others.Count != 0)
-                    {
-                        reason = $"{others[0]} refers to the rigid other than as a readable WSModel binding";
-                    }
-                    else
-                    {
-                        foreach (var ws in bound.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
-                        {
-                            if (!state.Source.ContainsFile(ws))
-                            {
-                                reason = $"WSModel {ws} is not owned by the source pack";
-                                break;
-                            }
-
-                            if (OverridesVanillaPath(state, ws))
-                            {
-                                reason = $"WSModel {ws} overrides a vanilla path";
-                                break;
-                            }
-                        }
-                    }
-                }
+                var reason = GetRigidNotOnlyThroughOwnedWsModelsReason(
+                    state,
+                    rigidPath,
+                    wsByRigid.GetValueOrDefault(rigidPath) ?? [],
+                    rigidReferrers,
+                    () => state.ModifiedRigids.Contains(rigidPath) && !result.RepackedRigids.Contains(rigidPath)
+                        ? "the rigid was already modified by another stage"
+                        : state.CrossRigidGeneratedRigidPaths.Contains(rigidPath)
+                            ? "the rigid is a generated cross-rigid model"
+                            : null);
 
                 if (reason == null)
                 {
@@ -1281,6 +1245,51 @@ namespace Editors.KitbasherEditor.Services
 
             cache[texture] = uniform;
             return uniform;
+        }
+
+        // Why a rigid cannot be treated as drawn only through WSModels of the source pack (the
+        // game then ignores its embedded material and rewrites of its UVs or textures reach
+        // every user), else null. Shared by the shared texture repack and the exact texture
+        // compaction. `beforeWsModelChecks` is a check only the caller has, run after the
+        // gameplay checks. `referrers` is IndexSharedRepackRigidReferrers.
+        private static string? GetRigidNotOnlyThroughOwnedWsModelsReason(
+            BatchState state,
+            string rigidPath,
+            HashSet<string> boundWsModels,
+            Dictionary<string, HashSet<string>> referrers,
+            Func<string?>? beforeWsModelChecks = null)
+        {
+            if (!state.Source.ContainsFile(rigidPath))
+                return "the rigid is not owned by the source pack";
+            if (OverridesVanillaPath(state, rigidPath))
+                return "the rigid overrides a vanilla path";
+            if (HasDirectGameplayRigidConsumer(state, rigidPath))
+                return "the rigid is referenced directly (without a WSModel) by a VMD or other gameplay file";
+            if (!IsGameplayConsumerDiscoverySafeForAsset(state, rigidPath))
+                return "gameplay consumer discovery for the rigid is incomplete";
+            var extra = beforeWsModelChecks?.Invoke();
+            if (extra != null)
+                return extra;
+
+            var immutable = GetImmutableGameplayWsModelConsumersForRigid(state, rigidPath);
+            var others = (referrers.GetValueOrDefault(rigidPath) ?? [])
+                .Where(path => !boundWsModels.Contains(path))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (immutable.Count != 0)
+                return $"a WSModel outside the source pack uses the rigid ({immutable.First()})";
+            if (others.Count != 0)
+                return $"{others[0]} refers to the rigid other than as a readable WSModel binding";
+
+            foreach (var ws in boundWsModels.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!state.Source.ContainsFile(ws))
+                    return $"WSModel {ws} is not owned by the source pack";
+                if (OverridesVanillaPath(state, ws))
+                    return $"WSModel {ws} overrides a vanilla path";
+            }
+
+            return null;
         }
 
         private static string DescribeSharedRepackSet(UnitRepackSetDecision decision)

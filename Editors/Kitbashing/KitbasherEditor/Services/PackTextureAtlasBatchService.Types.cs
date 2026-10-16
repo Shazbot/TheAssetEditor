@@ -899,6 +899,9 @@ namespace Editors.KitbasherEditor.Services
             public bool CompactTextures { get; set; }
             // Effective only together with CompactTextures.
             public bool DropUnreadAlpha { get; set; }
+            // Source files that mention a rigid path (built once, shared by the shared texture
+            // repack and the exact texture compaction).
+            public Dictionary<string, HashSet<string>>? RigidReferrerIndex { get; set; }
             public TextureCompactionResult? TextureCompaction { get; set; }
             public VanillaTextureCoverageResult? VanillaTextureCoverage { get; set; }
             public UnitTextureRepackResult? UnitTextureRepack { get; set; }

@@ -11439,7 +11439,8 @@ namespace Test.KitbashEditor.Services
 
             Assert.That(CxCompacted(state), Is.Zero);
             Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
-            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("named by a rigid's embedded material"));
+            Assert.That(CxSkipped(state).Keys, Has.Some.EqualTo(
+                    "named by a rigid not drawn only through owned WSModels: the rigid is not used through any WSModel"));
         }
 
         [Test]
@@ -11525,6 +11526,161 @@ namespace Test.KitbashEditor.Services
             fixture.Output[CxTexture][148 + 4] ^= 0xFF;
 
             Assert.That(CxValidate(state), Has.Some.Contain(CxTexture));
+        }
+
+        // A rigid naming CxTexture, bound by an owned WSModel that uses the xml material.
+        private static void CxAddRigidThroughWsModel(
+            DownscaleFixture fixture,
+            string rigid,
+            string wsModel)
+        {
+            fixture.Add(rigid, CxRigidBytes((Shared.GameFormats.RigidModel.Types.TextureType.Diffuse, CxTexture)));
+            fixture.AddText(wsModel, CreateWsModelDocument(rigid, [[CxMaterial]]).OuterXml);
+        }
+
+        private static void CxAddDirectConsumer(object state, string rigid)
+        {
+            var index = Get<object>(state, "GameplayMeshDependencyIndex");
+            ((IDictionary)Get<object>(index, "DirectConsumersByRigid"))[rigid] =
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "variantmeshes\\wh_main\\direct.variantmeshdefinition" };
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_TextureNamedByARigidDrawnOnlyThroughAnOwnedWsModel_IsDropped()
+        {
+            var source = CxAlphaTexture();
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour", source);
+            CxAddRigidThroughWsModel(fixture, CxRigid, "variantmeshes\\wh_main\\cx.wsmodel");
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(1), string.Join(";", CxSkipped(state).Keys));
+            AssertCxRgbKept(source, fixture.Output[CxTexture]);
+            Assert.That(
+                CxReport(state),
+                Does.Contain("[t_xml_base_colour by weighted2_character; also named by 1 rigid(s) drawn only through WSModels]"));
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_RigidReferencedDirectlyByAVmd_IsSkipped()
+        {
+            var source = CxAlphaTexture();
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour", source);
+            CxAddRigidThroughWsModel(fixture, CxRigid, "variantmeshes\\wh_main\\cx.wsmodel");
+
+            var (_, state) = CxRunAlpha(fixture, configure: batch => CxAddDirectConsumer(batch, CxRigid));
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("referenced directly (without a WSModel)"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_RigidNothingReferences_IsSkipped()
+        {
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour");
+            fixture.Add(CxRigid, CxRigidBytes((Shared.GameFormats.RigidModel.Types.TextureType.Diffuse, CxTexture)));
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("the rigid is not used through any WSModel"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_RigidOverridingAVanillaPath_IsSkipped()
+        {
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour");
+            CxAddRigidThroughWsModel(fixture, CxRigid, "variantmeshes\\wh_main\\cx.wsmodel");
+            fixture.Vanilla[CxRigid] = [1];
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("the rigid overrides a vanilla path"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_RigidReferencedByATextFile_IsSkipped()
+        {
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour");
+            CxAddRigidThroughWsModel(fixture, CxRigid, "variantmeshes\\wh_main\\cx.wsmodel");
+            fixture.AddText("variantmeshes\\notes.txt", "uses " + CxRigid);
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state).Keys, Has.Some.EqualTo(
+                    "named by a rigid not drawn only through owned WSModels: another file refers to the rigid other than as a WSModel binding"));
+            Assert.That(
+                Get<Dictionary<string, List<string>>>(CxResult(state), "SkippedExamples").Values.SelectMany(item => item),
+                Has.Some.Contain("notes.txt refers to the rigid"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_TwoRigidsNameTheTexture_OneDirect_IsSkipped()
+        {
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour");
+            var other = "variantmeshes\\wh_main\\cx_copy.rigid_model_v2";
+            CxAddRigidThroughWsModel(fixture, CxRigid, "variantmeshes\\wh_main\\cx.wsmodel");
+            CxAddRigidThroughWsModel(fixture, other, "variantmeshes\\wh_main\\cx_copy.wsmodel");
+
+            var (_, state) = CxRunAlpha(fixture, configure: batch => CxAddDirectConsumer(batch, other));
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("referenced directly (without a WSModel)"));
+            Assert.That(CxSkipped(state).Keys, Has.None.Contain(other));
+            Assert.That(
+                Get<Dictionary<string, List<string>>>(CxResult(state), "SkippedExamples").Values.SelectMany(item => item),
+                Has.Some.Contain($"(rigid {other}: the rigid is referenced directly"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_RigidWithoutGameplayDiscovery_BlocksInsteadOfAllowing()
+        {
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour");
+            CxAddRigidThroughWsModel(fixture, CxRigid, "variantmeshes\\wh_main\\cx.wsmodel");
+
+            var (_, state) = CxRunAlpha(
+                fixture,
+                configure: batch =>
+                {
+                    SetStateProperty(batch, "StructuralMergeConsumerDiscoveryComplete", false);
+                    SetStateProperty(batch, "GameplayMeshDependencyIndex", null);
+                });
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("gameplay consumer discovery for the rigid is incomplete"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_RigidBlocks_ShareOneSkipLinePerCause_WithThePathsInTheExamples()
+        {
+            var fixture = new DownscaleFixture();
+            for (var index = 1; index <= 2; index++)
+            {
+                var texture = $"textures\\cx{index}.dds";
+                fixture.Add(texture, CxAlphaTexture());
+                fixture.AddText(
+                    $"materials\\cx{index}.xml.material",
+                    CxMaterialWith("weighted2_character", ("t_xml_base_colour", texture)));
+                fixture.Add(
+                    $"variantmeshes\\wh_main\\cx{index}.rigid_model_v2",
+                    CxRigidBytes((Shared.GameFormats.RigidModel.Types.TextureType.Diffuse, texture)));
+            }
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            const string key =
+                "named by a rigid not drawn only through owned WSModels: the rigid is not used through any WSModel";
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state)[key], Is.EqualTo(2));
+            var examples = Get<Dictionary<string, List<string>>>(CxResult(state), "SkippedExamples")[key];
+            Assert.That(examples, Has.Count.EqualTo(2));
+            Assert.That(examples[0], Does.Contain("textures\\cx1.dds (rigid variantmeshes\\wh_main\\cx1.rigid_model_v2: "));
+            Assert.That(examples[1], Does.Contain("cx2.rigid_model_v2"));
+            Assert.That(CxReport(state), Does.Contain($"2 x {key}"));
         }
     }
 }

@@ -587,6 +587,8 @@ namespace Editors.KitbasherEditor.Services
             // Per texture: every xml material slot that names it, with the material's shader.
             var materialUses = new Dictionary<string, List<(string Material, string? Shader, string Slot)>>(
                 StringComparer.OrdinalIgnoreCase);
+            // Per texture: the output rigids whose embedded materials name it.
+            var rigidsByTexture = new Dictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
             Wh3ShaderChannelTable? channelTable = null;
             if (state.DropUnreadAlpha)
             {
@@ -655,8 +657,20 @@ namespace Editors.KitbasherEditor.Services
                                 foreach (var texture in model.Material?.GetAllTextures() ?? [])
                                 {
                                     var embedded = Normalize(texture.Path);
-                                    if (IsTextureDownscaleTexturePath(embedded))
-                                        rigidReferences.Add(embedded);
+                                    if (!IsTextureDownscaleTexturePath(embedded))
+                                        continue;
+
+                                    rigidReferences.Add(embedded);
+                                    if (state.DropUnreadAlpha)
+                                    {
+                                        if (!rigidsByTexture.TryGetValue(embedded, out var naming))
+                                        {
+                                            naming = new SortedSet<string>(StringComparer.Ordinal);
+                                            rigidsByTexture[embedded] = naming;
+                                        }
+
+                                        naming.Add(path);
+                                    }
                                 }
                             }
                         }
@@ -683,7 +697,7 @@ namespace Editors.KitbasherEditor.Services
                 .Select(item => Normalize(item.Path))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            void Skip(string reason, string path)
+            void Skip(string reason, string path, string? detail = null)
             {
                 result.Skipped[reason] = result.Skipped.GetValueOrDefault(reason) + 1;
                 if (!result.SkippedExamples.TryGetValue(reason, out var examples))
@@ -693,7 +707,7 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 if (examples.Count < TextureCompactionExampleLimit)
-                    examples.Add(path);
+                    examples.Add(detail == null ? path : $"{path} ({detail})");
             }
 
             var containers = GetGameplayTraversalContainers(state);
@@ -701,6 +715,56 @@ namespace Editors.KitbasherEditor.Services
             // texture cannot be ruled out.
             var vanillaKnown = containers.Any(container =>
                 container.IsCaPackFile && !ReferenceEquals(container, state.Source));
+            // Whether a rigid that names a texture is drawn only through WSModels of the source pack
+            // (the game then ignores its embedded material). The WSModel bindings and the
+            // referrer index are built once, and only if a candidate needs them. Anything that
+            // cannot be answered blocks.
+            Dictionary<string, HashSet<string>>? wsByRigid = null;
+            var rigidVerdicts = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            string? RigidReason(string rigidPath)
+            {
+                if (rigidVerdicts.TryGetValue(rigidPath, out var cached))
+                    return cached;
+
+                string? reason;
+                try
+                {
+                    if (wsByRigid == null)
+                    {
+                        wsByRigid = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                        var bindings = state.VanillaTextureCoverage?.Bindings
+                                       ?? EnumerateSourceWsModelBindings(
+                                           state.Source.GetAllFiles(), cancellationToken).Bindings;
+                        foreach (var binding in bindings)
+                        {
+                            if (binding.Kind == SourceWsModelBindingKind.UnreadableWsModel || binding.Geometry.Length == 0)
+                                continue;
+
+                            if (!wsByRigid.TryGetValue(binding.Geometry, out var bound))
+                            {
+                                bound = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                wsByRigid[binding.Geometry] = bound;
+                            }
+
+                            bound.Add(binding.WsModelPath);
+                        }
+                    }
+
+                    var referrers = state.RigidReferrerIndex ??=
+                        IndexSharedRepackRigidReferrers(state, cancellationToken);
+                    var boundWsModels = wsByRigid.GetValueOrDefault(rigidPath) ?? [];
+                    reason = GetRigidNotOnlyThroughOwnedWsModelsReason(state, rigidPath, boundWsModels, referrers)
+                             ?? (boundWsModels.Count == 0 ? "the rigid is not used through any WSModel" : null);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    reason = $"its WSModel usage could not be determined ({ex.GetType().Name})";
+                }
+
+                rigidVerdicts[rigidPath] = reason;
+                return reason;
+            }
+
             textures.Sort(StringComparer.Ordinal);
             result.Considered = textures.Count;
             result.XmlReferenced = textures.Count(texture => materialReferences.Contains(texture));
@@ -748,7 +812,8 @@ namespace Editors.KitbasherEditor.Services
                         ? null
                         : new TextureCompactionAlphaRule(
                             channelTable,
-                            rigidReferences.Contains(path),
+                            rigidsByTexture.GetValueOrDefault(path)?.ToList() ?? [],
+                            RigidReason,
                             materialUses.GetValueOrDefault(path) ?? [],
                             vanillaKnown);
                     CompactTexture(state, result, path, !materialReferences.Contains(path), alphaRule, Skip);
@@ -766,7 +831,7 @@ namespace Editors.KitbasherEditor.Services
             string path,
             bool rigidEmbeddedOnly,
             TextureCompactionAlphaRule? alphaRule,
-            Action<string, string> skip)
+            TextureCompactionSkip skip)
         {
             var bytes = state.Output.FindFile(path)?.DataSource.ReadData();
             if (bytes == null ||
@@ -843,10 +908,10 @@ namespace Editors.KitbasherEditor.Services
                     return;
                 }
 
-                var refusal = CheckUnreadAlpha(state, path, alphaRule, out alphaUses);
+                var refusal = CheckUnreadAlpha(state, path, alphaRule, out alphaUses, out var refusalDetail);
                 if (refusal != null)
                 {
-                    skip(refusal, path);
+                    skip(refusal, path, refusalDetail);
                     return;
                 }
 
@@ -888,9 +953,38 @@ namespace Editors.KitbasherEditor.Services
             });
         }
 
+        private delegate void TextureCompactionSkip(string reason, string path, string? detail = null);
+
+        private const string TextureCompactionRigidPrefix =
+            "named by a rigid not drawn only through owned WSModels: ";
+
+        // The rigid check's reasons carry paths; the skip key is a fixed category and the
+        // path-bearing text goes into the example.
+        private static string CategoriseCompactionRigidReason(string reason)
+        {
+            string category =
+                reason.StartsWith("the rigid is not owned", StringComparison.Ordinal) ||
+                reason == "the rigid overrides a vanilla path" ||
+                reason.StartsWith("the rigid is referenced directly", StringComparison.Ordinal) ||
+                reason.StartsWith("gameplay consumer discovery", StringComparison.Ordinal) ||
+                reason == "the rigid is not used through any WSModel"
+                    ? reason
+                    : reason.StartsWith("a WSModel outside the source pack", StringComparison.Ordinal)
+                        ? "a WSModel outside the source pack uses the rigid"
+                        : reason.Contains("refers to the rigid other than as a readable WSModel binding", StringComparison.Ordinal)
+                            ? "another file refers to the rigid other than as a WSModel binding"
+                            : reason.StartsWith("WSModel ", StringComparison.Ordinal)
+                                ? "a bound WSModel is not owned by the source pack or overrides a vanilla path"
+                                : reason.StartsWith("its WSModel usage could not be determined", StringComparison.Ordinal)
+                                    ? "its WSModel usage could not be determined"
+                                    : "the rigid cannot be treated as drawn only through WSModels";
+            return TextureCompactionRigidPrefix + category;
+        }
+
         private sealed record TextureCompactionAlphaRule(
             Wh3ShaderChannelTable Table,
-            bool NamedByRigid,
+            List<string> Rigids,
+            Func<string, string?> RigidReason,
             List<(string Material, string? Shader, string Slot)> Uses,
             bool VanillaKnown);
 
@@ -901,11 +995,23 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             string path,
             TextureCompactionAlphaRule rule,
-            out string uses)
+            out string uses,
+            out string? detail)
         {
             uses = string.Empty;
-            if (rule.NamedByRigid)
-                return "named by a rigid's embedded material (shader unknown)";
+            detail = null;
+            // A rigid's embedded material says nothing about the shader unless the game uses it,
+            // which it does not for a rigid drawn through a WSModel: those xml materials decide.
+            foreach (var rigid in rule.Rigids)
+            {
+                var rigidReason = rule.RigidReason(rigid);
+                if (rigidReason != null)
+                {
+                    detail = $"rigid {rigid}: {rigidReason}";
+                    return CategoriseCompactionRigidReason(rigidReason);
+                }
+            }
+
             if (rule.Uses.Count == 0)
                 return "no xml material uses it";
             if (!rule.VanillaKnown)
@@ -932,6 +1038,8 @@ namespace Editors.KitbasherEditor.Services
                         ", ",
                         group.Select(use => use.Shader!).Distinct(StringComparer.Ordinal)
                             .OrderBy(shader => shader, StringComparer.Ordinal))));
+            if (rule.Rigids.Count != 0)
+                uses += $"; also named by {rule.Rigids.Count:N0} rigid(s) drawn only through WSModels";
             return null;
         }
 
