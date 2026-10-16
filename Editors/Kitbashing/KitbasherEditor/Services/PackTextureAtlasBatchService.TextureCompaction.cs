@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Xml;
 using Shared.Core.PackFiles.Models;
+using Shared.GameFormats.RigidModel;
 
 namespace Editors.KitbasherEditor.Services
 {
@@ -27,7 +28,8 @@ namespace Editors.KitbasherEditor.Services
         private const string TextureCompactionReasonNotOwned = "not a texture of the source pack";
         private const string TextureCompactionReasonNonMaterial =
             "referenced by a non-material file (UI, VMD, WSModel or other text)";
-        private const string TextureCompactionReasonUnreferenced = "not referenced by any material";
+        private const string TextureCompactionReasonUnreferenced =
+            "not referenced by any material (xml material or rigid-embedded)";
         private const string TextureCompactionReasonUnreadable = "unreadable or unsupported DDS layout";
         private const string TextureCompactionReasonTruncated = "shorter than its header declares";
         private const string TextureCompactionReasonNoSaving =
@@ -49,6 +51,8 @@ namespace Editors.KitbasherEditor.Services
             public uint Colour { get; init; }
             // The bytes a transcode started from, for the validation pass.
             public byte[]? SourceBytes { get; set; }
+            // Only a rigid's embedded material names it, no xml material does.
+            public bool RigidEmbeddedOnly { get; set; }
             public long Saved => BytesBefore - BytesAfter;
         }
 
@@ -58,6 +62,13 @@ namespace Editors.KitbasherEditor.Services
             public string? Failure { get; set; }
             public TimeSpan Elapsed { get; set; }
             public int Considered { get; set; }
+            // Of the DDS files in the output: named by an xml material slot, by a rigid's
+            // embedded material, and by the latter only.
+            public int XmlReferenced { get; set; }
+            public int RigidReferenced { get; set; }
+            public int RigidOnlyReferenced { get; set; }
+            public int RigidsRead { get; set; }
+            public int RigidsUnreadable { get; set; }
             public List<TextureCompactionEntry> Compacted { get; } = [];
             public List<(string Path, string Reason)> Failed { get; } = [];
             public Dictionary<string, int> Skipped { get; } = new(StringComparer.Ordinal);
@@ -495,6 +506,7 @@ namespace Editors.KitbasherEditor.Services
             // texture (an unreadable material counts as such a file).
             var materialReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var otherReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var rigidReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var textures = new List<string>();
             foreach (var (rawPath, file) in state.Output.GetAllFiles())
             {
@@ -522,6 +534,36 @@ namespace Editors.KitbasherEditor.Services
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
+                        otherReferences.UnionWith(ExtractDownscaleTextureTokens(file));
+                    }
+                }
+                else if (path.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+                {
+                    // The embedded materials of the rigid, every texture type (the old WH2
+                    // Diffuse, Specular, GlossMap slots included). A rigid that does not parse
+                    // is treated like an unreadable material: whatever texture paths its bytes
+                    // contain count as references outside a material.
+                    try
+                    {
+                        var rigid = ModelFactory.Create().Load(file.DataSource.ReadData());
+                        foreach (var lod in rigid.ModelList ?? [])
+                        {
+                            foreach (var model in lod)
+                            {
+                                foreach (var texture in model.Material?.GetAllTextures() ?? [])
+                                {
+                                    var embedded = Normalize(texture.Path);
+                                    if (IsTextureDownscaleTexturePath(embedded))
+                                        rigidReferences.Add(embedded);
+                                }
+                            }
+                        }
+
+                        result.RigidsRead++;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        result.RigidsUnreadable++;
                         otherReferences.UnionWith(ExtractDownscaleTextureTokens(file));
                     }
                 }
@@ -554,6 +596,10 @@ namespace Editors.KitbasherEditor.Services
 
             textures.Sort(StringComparer.Ordinal);
             result.Considered = textures.Count;
+            result.XmlReferenced = textures.Count(texture => materialReferences.Contains(texture));
+            result.RigidReferenced = textures.Count(texture => rigidReferences.Contains(texture));
+            result.RigidOnlyReferenced = textures.Count(
+                texture => rigidReferences.Contains(texture) && !materialReferences.Contains(texture));
             for (var index = 0; index < textures.Count; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -582,7 +628,7 @@ namespace Editors.KitbasherEditor.Services
                     continue;
                 }
 
-                if (!materialReferences.Contains(path))
+                if (!materialReferences.Contains(path) && !rigidReferences.Contains(path))
                 {
                     Skip(TextureCompactionReasonUnreferenced, path);
                     continue;
@@ -591,7 +637,7 @@ namespace Editors.KitbasherEditor.Services
                 ReportProgress(progress, "Compacting textures", index + 1, textures.Count, path);
                 try
                 {
-                    CompactTexture(state, result, path, Skip);
+                    CompactTexture(state, result, path, !materialReferences.Contains(path), Skip);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -604,6 +650,7 @@ namespace Editors.KitbasherEditor.Services
             BatchState state,
             TextureCompactionResult result,
             string path,
+            bool rigidEmbeddedOnly,
             Action<string, string> skip)
         {
             var bytes = state.Output.FindFile(path)?.DataSource.ReadData();
@@ -664,6 +711,7 @@ namespace Editors.KitbasherEditor.Services
                     BytesBefore = bytes.LongLength,
                     BytesAfter = replacement.LongLength,
                     Colour = colour,
+                    RigidEmbeddedOnly = rigidEmbeddedOnly,
                 });
                 return;
             }
@@ -703,6 +751,7 @@ namespace Editors.KitbasherEditor.Services
                 BytesBefore = bytes.LongLength,
                 BytesAfter = transcoded.LongLength,
                 SourceBytes = bytes,
+                RigidEmbeddedOnly = rigidEmbeddedOnly,
             });
         }
 
@@ -809,7 +858,8 @@ namespace Editors.KitbasherEditor.Services
             }
 
             sb.AppendLine(
-                "Mode: REWRITES owned textures that a material references, last, on the output's bytes. A " +
+                "Mode: REWRITES owned textures that a material references (an xml material slot or a " +
+                "rigid's embedded material), last, on the output's bytes. A " +
                 "texture whose every texel of every mip level is one exact RGBA becomes 4x4 with a full chain " +
                 "(one source block copied into each level); a BC2/BC3 texture whose alpha is 255 at every " +
                 "texel of every level becomes BC1 (colour blocks kept, endpoints swapped and indices " +
@@ -840,6 +890,10 @@ namespace Editors.KitbasherEditor.Services
                 $"  Check: {accounted:N0} accounted of {result.Considered:N0} " +
                 (accounted == result.Considered ? "(reconciles)" : "(DOES NOT RECONCILE)"));
             sb.AppendLine(
+                $"Referenced by xml material slots: {result.XmlReferenced:N0}; by rigid-embedded materials: " +
+                $"{result.RigidReferenced:N0} ({result.RigidOnlyReferenced:N0} only there); rigids read: " +
+                $"{result.RigidsRead:N0} (unreadable {result.RigidsUnreadable:N0}).");
+            sb.AppendLine(
                 $"Bytes, uniform: {uniform.Sum(item => item.BytesBefore):N0} -> {uniform.Sum(item => item.BytesAfter):N0} " +
                 $"(saves {uniform.Sum(item => item.Saved):N0}); transcoded: {transcoded.Sum(item => item.BytesBefore):N0} -> " +
                 $"{transcoded.Sum(item => item.BytesAfter):N0} (saves {transcoded.Sum(item => item.Saved):N0}); " +
@@ -867,7 +921,8 @@ namespace Editors.KitbasherEditor.Services
                         $"  {entry.Path}: {(entry.IsUniform ? "uniform" : "opaque")}, " +
                         $"{entry.Source.Width}x{entry.Source.Height} {DescribeCompactionFormat(entry.Source)} -> " +
                         $"{entry.NewWidth}x{entry.NewHeight} {entry.NewFormat}, " +
-                        $"{entry.BytesBefore:N0} -> {entry.BytesAfter:N0} bytes");
+                        $"{entry.BytesBefore:N0} -> {entry.BytesAfter:N0} bytes" +
+                        (entry.RigidEmbeddedOnly ? " [rigid-embedded only]" : string.Empty));
                 }
 
                 if (ordered.Count > TextureCompactionListLimit)

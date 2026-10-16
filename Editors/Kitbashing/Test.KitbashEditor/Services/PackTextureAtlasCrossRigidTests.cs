@@ -11170,5 +11170,99 @@ namespace Test.KitbashEditor.Services
 
             Assert.That(CxValidate(state), Has.Some.Contain(CxTexture));
         }
+
+        // A rigid whose embedded material names the given textures (old WH2 slot types).
+        private static byte[] CxRigidBytes(params (Shared.GameFormats.RigidModel.Types.TextureType Type, string Path)[] textures)
+        {
+            var model = CreateWeightedModel(1f);
+            foreach (var (type, path) in textures)
+                model.Material.SetTexture(type, path);
+            var rigid = CreateSingleLodRigid(RmvVersionEnum.RMV2_V8, model);
+            rigid.RecalculateOffsets();
+            return ModelFactory.Create().Save(rigid, validateByReloading: true, logProgress: false);
+        }
+
+        private const string CxRigid = "variantmeshes\\wh_main\\cx.rigid_model_v2";
+
+        [Test]
+        public void Compaction_RigidEmbeddedOnlyOpaqueBc3_IsTranscoded_AndMarkedInTheReport()
+        {
+            var source = CxBuild(64, 64, 7, "BC3", true, true, (l, b) => CxOpaqueBlock(l, b, "BC3"));
+            var fixture = new DownscaleFixture();
+            fixture.Add("textures\\shield.dds", source);
+            fixture.Add(CxRigid, CxRigidBytes((Shared.GameFormats.RigidModel.Types.TextureType.Diffuse, "textures\\shield.dds")));
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(1), string.Join(";", CxSkipped(state).Keys));
+            var output = fixture.Output["textures\\shield.dds"];
+            Assert.That(ReadDds(output).Format, Is.EqualTo("BC1"));
+            Assert.That(CxTexels(output), Is.EqualTo(CxTexels(source)));
+            var report = CxReport(state);
+            Assert.That(report, Does.Contain("[rigid-embedded only]"));
+            Assert.That(report, Does.Contain("(reconciles)"));
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_RigidEmbeddedOnlyUniformTexture_Shrinks()
+        {
+            var source = CxBuild(256, 256, 9, "BC1", false, false, (_, _) => CxFlatBlock("BC1"));
+            var fixture = new DownscaleFixture();
+            fixture.Add("textures\\gloss.dds", source);
+            fixture.Add(CxRigid, CxRigidBytes((Shared.GameFormats.RigidModel.Types.TextureType.Gloss, "textures\\gloss.dds")));
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(1));
+            Assert.That(ReadDds(fixture.Output["textures\\gloss.dds"]).Width, Is.EqualTo(4));
+        }
+
+        [Test]
+        public void Compaction_TextureNamedByARigidAndATextFile_IsStillSkippedAsNonMaterial()
+        {
+            var source = CxBuild(256, 256, 9, "BC1", false, false, (_, _) => CxFlatBlock("BC1"));
+            var fixture = new DownscaleFixture();
+            fixture.Add("textures\\both.dds", source);
+            fixture.Add(CxRigid, CxRigidBytes((Shared.GameFormats.RigidModel.Types.TextureType.Diffuse, "textures\\both.dds")));
+            fixture.AddText("variantmeshes\\wh_main\\cx.variantmeshdefinition", "<x>textures\\both.dds</x>");
+
+            var (_, state) = CxRun(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output["textures\\both.dds"], Is.EqualTo(source));
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("non-material"));
+        }
+
+        [Test]
+        public void Compaction_ReferenceCountsLine_CountsXmlRigidAndRigidOnlyTextures_AndUnreadableRigids()
+        {
+            var flat = CxBuild(256, 256, 9, "BC1", false, false, (_, _) => CxFlatBlock("BC1"));
+            var fixture = new DownscaleFixture();
+            fixture.Add("textures\\xml_only.dds", flat);
+            fixture.Add("textures\\both.dds", flat);
+            fixture.Add("textures\\rigid_only.dds", flat);
+            fixture.Add("textures\\nobody.dds", flat);
+            fixture.Add("textures\\from_bad_rigid.dds", flat);
+            fixture.AddMaterial(
+                CxMaterial, ("t_xml_base_colour", "textures\\xml_only.dds"), ("t_xml_normal", "textures\\both.dds"));
+            fixture.Add(
+                CxRigid,
+                CxRigidBytes((Shared.GameFormats.RigidModel.Types.TextureType.Diffuse, "textures\\both.dds"), (Shared.GameFormats.RigidModel.Types.TextureType.Gloss, "textures\\rigid_only.dds")));
+            fixture.Add(
+                "variantmeshes\\wh_main\\broken.rigid_model_v2",
+                System.Text.Encoding.UTF8.GetBytes("not a rigid textures\\from_bad_rigid.dds"));
+
+            var (_, state) = CxRun(fixture);
+
+            var report = CxReport(state);
+            Assert.That(
+                report,
+                Does.Contain("Referenced by xml material slots: 2; by rigid-embedded materials: 2 (1 only there); rigids read: 1 (unreadable 1)."));
+            Assert.That(CxCompacted(state), Is.EqualTo(3));
+            Assert.That(CxSkipped(state).Single(item => item.Key.Contains("non-material")).Value, Is.EqualTo(1));
+            Assert.That(CxSkipped(state).Single(item => item.Key.Contains("rigid-embedded")).Value, Is.EqualTo(1));
+            Assert.That(report, Does.Contain("(reconciles)"));
+        }
     }
 }
