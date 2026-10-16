@@ -12273,6 +12273,89 @@ namespace Test.KitbashEditor.Services
             Assert.That(Get<int>(state, "AtlasValueGateCandidateAffectedUnitCount"), Is.EqualTo(9));
         }
 
+        // --- Pruning and vanilla overrides ------------------------------------------------
+
+        private static (object State, HashSet<string> ToRemove) CreatePruneState(
+            bool vanillaLoaded,
+            string[] outputPaths,
+            string[] vanillaPaths,
+            params string[] toRemove)
+        {
+            var source = new Moq.Mock<Shared.Core.PackFiles.Models.IPackFileContainer>();
+            source.Setup(item => item.IsCaPackFile).Returns(false);
+            source.Setup(item => item.ContainsFile(Moq.It.IsAny<string>()))
+                .Returns<string>(path => outputPaths.Contains(path, StringComparer.OrdinalIgnoreCase));
+            var containers = new List<Shared.Core.PackFiles.Models.IPackFileContainer> { source.Object };
+            if (vanillaLoaded)
+            {
+                var vanilla = new Moq.Mock<Shared.Core.PackFiles.Models.IPackFileContainer>();
+                vanilla.Setup(item => item.IsCaPackFile).Returns(true);
+                vanilla.Setup(item => item.ContainsFile(Moq.It.IsAny<string>()))
+                    .Returns<string>(path => vanillaPaths.Contains(path, StringComparer.OrdinalIgnoreCase));
+                containers.Add(vanilla.Object);
+            }
+
+            var state = GetNestedType("BatchState")
+                .GetConstructors(AnyInstance)
+                .Single()
+                .Invoke(
+                [
+                    source.Object,
+                    source.Object,
+                    new Moq.Mock<Shared.Core.PackFiles.IPackFileService>().Object,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    false,
+                    false,
+                ]);
+            state.GetType().GetProperty("GameplayTraversalContainers")!.SetValue(state, containers);
+            return (state, new HashSet<string>(toRemove, StringComparer.OrdinalIgnoreCase));
+        }
+
+        private static List<(string Path, string Reason)> KeptByPruning(object state)
+            => (List<(string Path, string Reason)>)state.GetType().GetProperty("PruneKeptFiles")!.GetValue(state)!;
+
+        [Test]
+        public void Prune_UnreachableVanillaOverrideIsKept_ModOnlyPathIsStillPruned()
+        {
+            var (state, toRemove) = CreatePruneState(
+                vanillaLoaded: true,
+                outputPaths: ["variantmeshes\\wsmodels\\override.wsmodel", "variantmeshes\\wsmodels\\modonly.wsmodel"],
+                vanillaPaths: ["variantmeshes\\wsmodels\\override.wsmodel"],
+                "variantmeshes\\wsmodels\\override.wsmodel",
+                "variantmeshes\\wsmodels\\modonly.wsmodel");
+
+            GetStaticMethod("KeepVanillaOverrides").Invoke(null, [state, toRemove]);
+
+            Assert.That(toRemove, Is.EquivalentTo(new[] { "variantmeshes\\wsmodels\\modonly.wsmodel" }));
+            Assert.That(KeptByPruning(state), Has.Count.EqualTo(1));
+            Assert.That(KeptByPruning(state)[0].Path, Is.EqualTo("variantmeshes\\wsmodels\\override.wsmodel"));
+            Assert.That(KeptByPruning(state)[0].Reason, Is.EqualTo("overrides a vanilla file"));
+        }
+
+        [Test]
+        public void Prune_WithoutVanillaData_KeepsEverythingThatCouldBeAnOverride()
+        {
+            var atlas = @"textures\asset_editor\atlases\old_base_colour.dds";
+            var (state, toRemove) = CreatePruneState(
+                vanillaLoaded: false,
+                outputPaths: ["variantmeshes\\a.wsmodel", "textures\\b.dds", atlas],
+                vanillaPaths: [],
+                "variantmeshes\\a.wsmodel",
+                "textures\\b.dds",
+                atlas);
+
+            GetStaticMethod("KeepVanillaOverrides").Invoke(null, [state, toRemove]);
+
+            // Only the tool's own generated atlas can be pruned without knowing the vanilla data.
+            Assert.That(toRemove, Is.EquivalentTo(new[] { atlas }));
+            Assert.That(KeptByPruning(state).Select(item => item.Path), Is.EquivalentTo(
+                new[] { "variantmeshes\\a.wsmodel", "textures\\b.dds" }));
+            Assert.That(KeptByPruning(state).All(item => item.Reason.Contains("not loaded")), Is.True);
+        }
+
         [Test]
         public void AtlasAlpha_Bc3AtlasWriterKeepsAlphaWithoutQuantising()
         {

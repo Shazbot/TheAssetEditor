@@ -1289,6 +1289,8 @@ namespace Editors.KitbasherEditor.Services
                 $"{componentReuse.Pairs.Count(x => x.HighBidirectionalOverlap)}");
             sb = summaryBuilder;
             sb.AppendLine($"Superseded asset files removed: {state.RemovedFiles.Count}");
+            if (state.PruneKeptFiles.Count != 0)
+                sb.AppendLine($"Unreachable files kept by pruning: {state.PruneKeptFiles.Count}");
             if (state.TextureAtlasingActive)
                 sb.AppendLine("Meshes with genuine unresolved secondary textures are skipped.");
             sb.AppendLine($"Merge compatible mesh parts: {(state.MergeCompatibleMeshesEnabled ? "YES" : "NO")}");
@@ -3283,6 +3285,14 @@ namespace Editors.KitbasherEditor.Services
             foreach (var path in state.RemovedFiles.OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                 sb.AppendLine(path);
             if (state.RemovedFiles.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Kept by pruning");
+            sb.AppendLine("---------------");
+            foreach (var (path, reason) in state.PruneKeptFiles.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
+                sb.AppendLine($"{path}: {reason}");
+            if (state.PruneKeptFiles.Count == 0)
                 sb.AppendLine("(none)");
             sb.AppendLine();
 

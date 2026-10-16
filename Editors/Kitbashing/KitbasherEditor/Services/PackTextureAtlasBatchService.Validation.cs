@@ -227,6 +227,10 @@ namespace Editors.KitbasherEditor.Services
                 }
             }
 
+            // Done before the reference protection: a kept override stays in the pack and its
+            // own references must then keep their targets alive.
+            KeepVanillaOverrides(state, toRemove);
+
             var protectStopwatch = Stopwatch.StartNew();
             ProtectStillReferencedAssets(
                 state.Output,
@@ -252,6 +256,35 @@ namespace Editors.KitbasherEditor.Services
             _packFileService.DeleteFiles(state.Output, removePaths);
             AddPhaseDuration(state, "Delete pruned assets", deleteStopwatch.Elapsed);
             state.RemovedFiles.AddRange(removePaths);
+        }
+
+        // Vanilla wsmodels, VMDs and materials can still name a path the mod overrides, so an
+        // override that stopped being reachable from the mod's own roots must stay. Every doubt
+        // blocks, as in texture compaction: without the vanilla data loaded nothing that could
+        // be an override is pruned. Generated atlas files are the tool's own and cannot be one.
+        private static void KeepVanillaOverrides(BatchState state, HashSet<string> toRemove)
+        {
+            var vanillaKnown = GetGameplayTraversalContainers(state).Any(container =>
+                container.IsCaPackFile && !ReferenceEquals(container, state.Source));
+            foreach (var path in toRemove.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList())
+            {
+                if (path.StartsWith(AtlasDirectory, StringComparison.OrdinalIgnoreCase) ||
+                    !state.Output.ContainsFile(path))
+                {
+                    continue;
+                }
+
+                var reason = !vanillaKnown
+                    ? "vanilla game data is not loaded, so an override of a vanilla file cannot be ruled out"
+                    : OverridesVanillaPath(state, path)
+                        ? "overrides a vanilla file"
+                        : null;
+                if (reason == null)
+                    continue;
+
+                toRemove.Remove(path);
+                state.PruneKeptFiles.Add((path, reason));
+            }
         }
 
         private static void ProtectStillReferencedAssets(

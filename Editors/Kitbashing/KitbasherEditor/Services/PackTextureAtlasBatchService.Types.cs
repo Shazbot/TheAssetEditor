@@ -1109,6 +1109,7 @@ namespace Editors.KitbasherEditor.Services
             public Dictionary<string, int> GeometrySelectionSkipCounts { get; } =
                 new(StringComparer.Ordinal);
             public List<string> RemovedFiles { get; } = [];
+            public List<(string Path, string Reason)> PruneKeptFiles { get; } = [];
             public List<string> ValidationMessages { get; } = [];
             public List<AtlasedMeshReportEntry> AtlasedMeshes { get; } = [];
             public Dictionary<MeshKey, List<SkipDetail>> SkipDetails { get; } = [];
