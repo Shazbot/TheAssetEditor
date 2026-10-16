@@ -490,6 +490,9 @@ namespace Editors.KitbasherEditor.Services
                 // Report-only: materials and textures of the rigids the audit reached.
                 RunAssetChecks(state, cancellationToken, progress);
                 state.PhaseDurations["Asset checks"] = phaseStopwatch.Elapsed;
+                // Report-only: needs the rigids and exposure the LOD audit collected.
+                if (!crossRigidOnly)
+                    RunBoneWeightAudit(state, cancellationToken, progress, null, null);
                 phaseStopwatch.Restart();
                 if (crossRigidOnly)
                 {

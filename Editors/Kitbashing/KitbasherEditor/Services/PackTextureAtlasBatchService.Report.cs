@@ -2334,6 +2334,7 @@ namespace Editors.KitbasherEditor.Services
 
             AppendLodAuditSection(sb, state);
             AppendAssetChecksSection(sb, state);
+            AppendBoneWeightAuditSection(sb, state);
             if (!state.CrossRigidOnly)
             {
                 AppendTextureDownscaleSection(sb, state);

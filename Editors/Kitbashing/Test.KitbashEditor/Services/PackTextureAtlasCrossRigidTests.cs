@@ -11682,5 +11682,192 @@ namespace Test.KitbashEditor.Services
             Assert.That(examples[1], Does.Contain("cx2.rigid_model_v2"));
             Assert.That(CxReport(state), Does.Contain($"2 x {key}"));
         }
+
+        // --- Bone weight audit -------------------------------------------------------------
+
+        private static string BwClass(byte[] index, byte[] weight)
+            => GetStaticMethod("ClassifyBoneWeights").Invoke(null, [index, weight])!.ToString()!;
+
+        [TestCase(new byte[] { 255, 0, 0, 7 }, new byte[] { 1, 2, 3, 4 }, "Exact", TestName = "BoneWeights_255_0_0_IsExact_SingleBone")]
+        [TestCase(new byte[] { 128, 127, 0, 7 }, new byte[] { 1, 2, 3, 4 }, "Exact", TestName = "BoneWeights_128_127_0_IsExact_NoImplicitWeight")]
+        [TestCase(new byte[] { 100, 0, 0, 7 }, new byte[] { 1, 2, 3, 4 }, "Exact", TestName = "BoneWeights_100_0_0_IsExact_PlusImplicitFourth")]
+        [TestCase(new byte[] { 100, 100, 0, 7 }, new byte[] { 1, 2, 3, 4 }, "NeedsFour", TestName = "BoneWeights_100_100_0_NeedsFour_BecauseOfTheImplicitFourth")]
+        [TestCase(new byte[] { 100, 100, 54, 7 }, new byte[] { 1, 2, 3, 4 }, "NeedsFour", TestName = "BoneWeights_100_100_54_NeedsFour_SumIs254")]
+        [TestCase(new byte[] { 127, 126, 2, 7 }, new byte[] { 1, 2, 3, 4 }, "Near", TestName = "BoneWeights_127_126_2_IsNear")]
+        [TestCase(new byte[] { 100, 100, 0, 7 }, new byte[] { 5, 5, 3, 4 }, "Exact", TestName = "BoneWeights_SameBoneInTwoSlots_CountsOnce")]
+        [TestCase(new byte[] { 0, 0, 0, 7 }, new byte[] { 1, 2, 3, 4 }, "Exact", TestName = "BoneWeights_AllZero_IsTheImplicitFourthAlone")]
+        [TestCase(new byte[] { 100, 100, 0, 255 }, new byte[] { 1, 1, 3, 4 }, "Exact", TestName = "BoneWeights_StoredFourthByteIsIgnored_SameBoneImplicit")]
+        public void BoneWeights_ClassifyAVertexFromItsBytes(byte[] weights, byte[] bones, string expected)
+            => Assert.That(BwClass(bones, weights), Is.EqualTo(expected));
+
+        private static RmvModel BwModel(VertexFormat format, params (byte[] Bones, byte[] Weights)[] vertices)
+        {
+            var model = CreateWeightedModel(1f);
+            ((WeightedMaterial)model.Material).BinaryVertexFormat = format;
+            model.Mesh.VertexList = vertices.Select(vertex => new CommonVertex
+            {
+                Position = new Vector4(0, 0, 0, 1),
+                BoneIndex = vertex.Bones,
+                // The weights as the reader makes them: byte / 255.
+                BoneWeight = vertex.Weights.Select(weight => weight / 255.0f).ToArray(),
+                WeightCount = 4,
+            }).ToArray();
+            model.Mesh.IndexList = [0, 0, 0];
+            return model;
+        }
+
+        private static readonly (byte[] Bones, byte[] Weights) BwExact = ([1, 2, 3, 4], [255, 0, 0, 0]);
+        private static readonly (byte[] Bones, byte[] Weights) BwNear = ([1, 2, 3, 4], [127, 126, 2, 0]);
+        private static readonly (byte[] Bones, byte[] Weights) BwNeedsFour = ([1, 2, 3, 4], [100, 100, 0, 0]);
+
+        private static (object Service, object State) BwState(
+            Dictionary<string, RmvModel[][]> rigids,
+            Dictionary<string, string> shaderByPart)
+        {
+            var (service, state) = CreateDownscaleState(new DownscaleFixture(), false);
+            var checks = Activator.CreateInstance(GetNestedType("AssetChecksResult"))!;
+            SetStateProperty(state, "AssetChecks", checks);
+            foreach (var (path, lods) in rigids)
+            {
+                Get<IDictionary>(checks, "Rigids")[path] = GetNestedType("AssetCheckRigid").GetConstructors().Single().Invoke(
+                    [path, true, lods.Select(lod => lod.Select(model => model.Mesh.VertexList.Length).ToArray()).ToArray()]);
+                var assignments = lods.Select((lod, lodIndex) => lod
+                    .Select((_, part) => $"materials\\{System.IO.Path.GetFileNameWithoutExtension(path)}_{lodIndex}_{part}.xml.material")
+                    .ToArray()).ToArray();
+                Get<IDictionary>(checks, "Components")[path + ".ws"] = GetNestedType("AssetCheckComponent")
+                    .GetConstructors().Single().Invoke([path + ".ws", path, true, true, assignments]);
+                foreach (var material in assignments.SelectMany(lod => lod))
+                {
+                    var entry = GetNestedType("AssetCheckMaterial").GetConstructors().Single().Invoke([material, true]);
+                    entry.GetType().GetProperty("Shader")!.SetValue(
+                        entry, shaderByPart.GetValueOrDefault(material, "shaders\\weighted4_character.xml.shader"));
+                    Get<IDictionary>(checks, "Materials")[material] = entry;
+                }
+            }
+
+            return (service, state);
+        }
+
+        private static object BwRun(
+            object state,
+            Dictionary<string, RmvModel[][]> rigids,
+            TimeSpan? budget = null,
+            Func<string, RmvFile?>? loader = null)
+        {
+            loader ??= path => rigids.TryGetValue(path, out var lods) ? new RmvFile { ModelList = lods } : null;
+            GetStaticMethod("RunBoneWeightAudit").Invoke(null, [state, CancellationToken.None, null, loader, budget]);
+            return Get<object>(state, "BoneWeightAudit");
+        }
+
+        private static List<object> BwMeshes(object result)
+            => Get<IEnumerable>(result, "Meshes").Cast<object>().ToList();
+
+        private static string BwReport(object state)
+        {
+            var builder = new StringBuilder();
+            GetStaticMethod("AppendBoneWeightAuditSection").Invoke(null, [builder, state]);
+            return builder.ToString();
+        }
+
+        [Test]
+        public void BoneWeightAudit_MeshWithOneBadVertex_IsNotConvertible_AndNearOnlyIsSeparate()
+        {
+            var rigids = new Dictionary<string, RmvModel[][]>
+            {
+                ["models\\a.rigid_model_v2"] = [[
+                    BwModel(VertexFormat.Cinematic, BwExact, BwExact),
+                    BwModel(VertexFormat.Cinematic, BwExact, BwNeedsFour),
+                    BwModel(VertexFormat.Cinematic, BwExact, BwNear),
+                ]],
+            };
+            var (_, state) = BwState(rigids, []);
+
+            var result = BwRun(state, rigids);
+
+            var meshes = BwMeshes(result);
+            Assert.That(meshes.Select(mesh => Get<bool>(mesh, "Convertible")), Is.EqualTo(new[] { true, false, false }));
+            Assert.That(meshes.Select(mesh => Get<bool>(mesh, "NearOnly")), Is.EqualTo(new[] { false, false, true }));
+            Assert.That(Get<int>(meshes[1], "NeedsFour"), Is.EqualTo(1));
+            Assert.That(Get<int>(meshes[2], "Near"), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void BoneWeightAudit_ReportListsTotalsClassesShadersAndReconciles()
+        {
+            var rigids = new Dictionary<string, RmvModel[][]>
+            {
+                ["models\\a.rigid_model_v2"] = [
+                    [BwModel(VertexFormat.Cinematic, BwExact, BwExact), BwModel(VertexFormat.Cinematic, BwNeedsFour)],
+                    [BwModel(VertexFormat.Cinematic, BwExact), BwModel(VertexFormat.Weighted, BwExact)],
+                ],
+                ["models\\b.rigid_model_v2"] = [[BwModel(VertexFormat.Static)]],
+            };
+            var (_, state) = BwState(rigids, []);
+
+            var result = BwRun(state, rigids);
+            var report = BwReport(state);
+
+            Assert.That(BwMeshes(result), Has.Count.EqualTo(5));
+            Assert.That(report, Does.Contain("Cinematic: 3 mesh(es), 4 vertices"));
+            Assert.That(report, Does.Contain("Weighted: 1 mesh(es), 1 vertices"));
+            Assert.That(report, Does.Contain("Static: 1 mesh(es), 0 vertices"));
+            Assert.That(report, Does.Contain("convertible (all vertices EXACT) 2; NEAR-only"));
+            Assert.That(report, Does.Contain("needs 4 1; unreadable 0. Check: 3 of 3 (reconciles)"));
+            Assert.That(report, Does.Contain("Vertex bytes saved by converting the convertible meshes (4 per vertex): 12"));
+            Assert.That(report, Does.Contain("weighted4_character -> weighted2_character: 2 mesh(es), 3 vertices;"));
+            Assert.That(report, Does.Contain("slot->channel map"));
+            Assert.That(report, Does.Contain("models\\a.rigid_model_v2: 2 mesh(es), 3 vertices, LOD(s) 0,1"));
+            Assert.That(report, Does.Contain("not computed (the army residency model is not available)"));
+        }
+
+        [Test]
+        public void BoneWeightAudit_EmbeddedMaterialRigid_UsesTheMaterialTypeAsShader()
+        {
+            var rigids = new Dictionary<string, RmvModel[][]>
+            {
+                ["models\\a.rigid_model_v2"] = [[BwModel(VertexFormat.Cinematic, BwExact)]],
+            };
+            var (_, state) = BwState(rigids, []);
+            Get<IDictionary>(Get<object>(state, "AssetChecks"), "Components").Clear();
+
+            BwRun(state, rigids);
+
+            Assert.That(BwReport(state), Does.Contain("embedded:weighted: 1 mesh(es), 1 vertices; embedded material, no shader to pair"));
+        }
+
+        [Test]
+        public void BoneWeightAudit_UnreadableAndUnreachedRigids_AreCountedNotGuessed()
+        {
+            var rigids = new Dictionary<string, RmvModel[][]>
+            {
+                ["models\\a.rigid_model_v2"] = [[BwModel(VertexFormat.Cinematic, BwExact)]],
+                ["models\\b.rigid_model_v2"] = [[BwModel(VertexFormat.Cinematic, BwExact), BwModel(VertexFormat.Cinematic, BwExact)]],
+            };
+            var (_, state) = BwState(rigids, []);
+            var unreadable = BwRun(state, rigids, loader: _ => null);
+            Assert.That(Get<int>(unreadable, "RigidsUnreadable"), Is.EqualTo(2));
+            Assert.That(Get<int>(unreadable, "MeshesUnreadableRigid"), Is.EqualTo(3));
+
+            var (_, second) = BwState(rigids, []);
+            var notReached = BwRun(second, rigids, budget: TimeSpan.Zero);
+            Assert.That(Get<int>(notReached, "RigidsNotReached"), Is.EqualTo(2));
+            Assert.That(Get<int>(notReached, "MeshesNotReached"), Is.EqualTo(3));
+            Assert.That(BwReport(second), Does.Contain("not reached within the 0 s budget 2 (3 mesh(es))"));
+        }
+
+        [Test]
+        public void BoneWeightAudit_VertexWithoutFourBones_MakesTheMeshUnreadable()
+        {
+            var rigids = new Dictionary<string, RmvModel[][]>
+            {
+                ["models\\a.rigid_model_v2"] = [[BwModel(VertexFormat.Cinematic, ([1, 2], [255, 0]))]],
+            };
+            var (_, state) = BwState(rigids, []);
+
+            var result = BwRun(state, rigids);
+
+            Assert.That(Get<bool>(BwMeshes(result).Single(), "Unreadable"), Is.True);
+            Assert.That(BwReport(state), Does.Contain("unreadable 1. Check: 1 of 1 (reconciles)"));
+        }
     }
 }

@@ -118,6 +118,33 @@ LOD audit of `ak_teb3` (172 roots, 287 source-owned and 299 vanilla rigids, 10 s
 
 With LOD geometry and distances out of scope, the geometry-side levers left to the tool are parts per soldier (merging, measured at about 2.7 ms for removing 90 % of them) and nothing else of size.
 
+### Bone weights per vertex (report only, `PackTextureAtlasBatchService.BoneWeightAudit.cs`)
+
+The idea: convert 4-weight vertices (`Cinematic`, `weighted4_*` shaders) to 2-weight (`Weighted`, `weighted2_*`) where the skinning result is the same. That halves the bone-matrix fetches per vertex and saves 4 bytes per vertex.
+
+What the shaders do, from the Patch 8.1 vertex-shader disassembly:
+
+- **`weighted2`** reads one weight byte w0 and uses 1 − w0 for the second bone; the stored second byte is ignored.
+- **`weighted4`** reads three weight bytes and ignores the fourth. A fourth, implicit bone gets 1 − (w0+w1+w2) whenever b0+b1+b2 <= 254.
+- So a vertex converts exactly when at most 2 distinct bones have an effective weight, counting the implicit one.
+
+`ak_teb3` (all 287 source-owned rigids, 1.3 s):
+
+| | Meshes | Vertices |
+|---|---|---|
+| 4-weight, all LODs | 1,049 | 1.17 M (LOD 0 and 1: 1,033 meshes, 1.13 M vertices) |
+| 2-weight (LOD 2 and below, CA's convention) | 1,091 | 663 k |
+| 4-weight vertices that convert exactly, one by one | – | 837 k (72 %) |
+| 4-weight meshes where every vertex converts | 278 | 153 k (13 %) |
+| Same, weighted by expected battle part instances | – | 13.0 % |
+
+- **Memory:** 617 KB of vertex data.
+- **Shader twins:** most convertible meshes use `weighted4_character(_alpha)`, whose `weighted2_` twins have the same texture channels. Four small families have twins whose channels differ (`character_emissive`, `default_alpha`, `random_colours`, `tinted_metal_skin`); one has no twin in the dump.
+- **Verdict: not worth building.**
+  - 4-weight geometry exists only at LOD 0 and 1, and most soldiers switch to their last LOD at 30 m, so in an ordinary battle view little of it is drawn.
+  - Of what is drawn, 13 % would lose half its skinning fetches, which is likely well under 1 % FPS.
+  - The rewrite (vertex formats plus material shaders) would carry more risk than any texture stage.
+
 ## Texture memory
 
 Everything in this section is about video memory and pack size. None of it is expected to change frame rate. Numbers are for `ak_teb3` unless stated.
@@ -350,7 +377,8 @@ RGB stays bit-exact and is verified at every level; only the alpha is dropped.
 - Page splitting puts whole clusters on up to 4 smaller power-of-two pages.
 - Exact texture compaction (`PackTextureAtlasBatchService.TextureCompaction.cs`): new opt-in checkbox. It counts xml material slots and the texture lists embedded in rigids as references.
 - Shader channel table (`Wh3ShaderTextureChannels.json`, generator in `Tools/ShaderChannels/`) and the opt-in "Drop texture alpha no shader reads" rule. The repack's rigid checks were moved into a shared helper (`GetRigidNotOnlyThroughOwnedWsModelsReason`).
-- Tests: the `FullyQualifiedName~PackTextureAtlas` filter now runs 575 tests, all passing.
+- Bone weight audit (`PackTextureAtlasBatchService.BoneWeightAudit.cs`): report only, runs in every mode except cross-rigid-only.
+- Tests: the `FullyQualifiedName~PackTextureAtlas` filter now runs 589 tests, all passing.
 
 ## Recommendations
 
@@ -358,7 +386,7 @@ RGB stays bit-exact and is verified at every level; only the alpha is dropped.
 2. Stop extending the cross-rigid search.
 3. The five-alternative limit is fixed; consider leaving cross-rigid off by default anyway, since it adds about 2,000 small VMD files and tens of MiB of geometry for roughly 0.2 % FPS.
 4. Keep same-rigid merging and atlasing; they reduce parts per soldier without rewriting VMDs.
-5. If more performance is wanted, look at per-soldier GPU cost (for example vertex count at distance), which the tool does not address.
+5. If more performance is wanted, look at per-soldier GPU cost (for example vertex count at distance), which the tool does not address. Reducing 4 bone weights to 2 was measured and rejected (see "Bone weights per vertex").
 6. Texture work is memory only; do not expect FPS from it.
 7. Keep texture downscaling, shared texture repack and exact compaction opt-in.
 8. Do not build per-texture reverse atlasing or per-unit atlases (Options A and B).
