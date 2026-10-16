@@ -9315,6 +9315,78 @@ namespace Test.KitbashEditor.Services
             Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Does.Not.Contain(SrRigid2));
         }
 
+        // --- Repack and the same-rigid mesh merge ---------------------------------------------
+
+        // One rigid, one LOD, two parts that share the material m1.
+        private static SrWorld BuildSharedMaterialSrWorld()
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1);
+            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2);
+            world.Fixture.AddMaterial(SrMaterialPath("m1"), (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n1.dds"));
+            var m1 = SrMaterialPath("m1");
+            world.AddModel(
+                SrRigid,
+                SrWs,
+                SrRoot,
+                MergeableSrRigid(SrRigidFactory([(m1, SrBlocks((2, 3))), (m1, SrBlocks((10, 4)))])),
+                [[m1, m1]]);
+            return world;
+        }
+
+        // The parts get the header and material the merge compares (CreateUvPart has neither).
+        private static Func<RmvFile> MergeableSrRigid(Func<RmvFile> factory)
+            => () =>
+            {
+                var rigid = factory();
+                foreach (var part in rigid.ModelList.SelectMany(lod => lod))
+                {
+                    var header = RmvCommonHeader.CreateDefault();
+                    header.ModelTypeFlag = ModelMaterialEnum.weighted;
+                    part.CommonHeader = header;
+                    part.Material = new WeightedMaterial();
+                }
+
+                return rigid;
+            };
+
+        private static (int Before, int After, int Entries) RunSrMerge(SrWorld world)
+        {
+            var rigids = Get<IDictionary>(world.State, "RigidModels");
+            if (!rigids.Contains(SrRigid))
+                rigids[SrRigid] = world.Rigids[SrRigid]();
+            GetServiceType()
+                .GetMethod("MergeCompatibleMeshes", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(world.Service, [world.State, CancellationToken.None, null]);
+            return (
+                Get<int>(world.State, "MeshPartsBeforeMerging"),
+                Get<int>(world.State, "MeshPartsAfterMerging"),
+                Get<IList>(world.State, "MeshMergeEntries").Count);
+        }
+
+        [Test]
+        public void SharedRepack_PartsThatSharedAMaterial_StillShareOneGeneratedMaterial_AndStillMerge()
+        {
+            // Without the repack.
+            var plain = BuildSharedMaterialSrWorld();
+            plain.Analyse();
+            var plainMerge = RunSrMerge(plain);
+
+            var world = BuildSharedMaterialSrWorld();
+            var result = world.Run(minimumSaving: 10_000, minimumGroupSaving: 1_000);
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var first = SrWsMaterial(world.State, SrWs, 0, 0);
+            var second = SrWsMaterial(world.State, SrWs, 0, 1);
+            Assert.That(first, Does.Contain("_repack_"));
+            Assert.That(second, Is.EqualTo(first));
+
+            var merge = RunSrMerge(world);
+
+            Assert.That(plainMerge.Before - plainMerge.After, Is.EqualTo(1), "the fixture's parts merge without the repack");
+            Assert.That(merge.Before - merge.After, Is.EqualTo(plainMerge.Before - plainMerge.After));
+            Assert.That(merge.Entries, Is.EqualTo(plainMerge.Entries));
+        }
+
         // --- Shared repack density follows the downscale option ----------------------------
 
         // As if the early downscale analysis had chosen `scale` (mip slicing) for the texture.
