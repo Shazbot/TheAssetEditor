@@ -192,6 +192,7 @@ namespace Editors.KitbasherEditor.Services
                 downscaleTextures,
                 sharedTextureRepack,
                 compactTextures,
+                dropUnreadAlpha,
                 cancellationToken,
                 progress) =>
             {
@@ -211,7 +212,8 @@ namespace Editors.KitbasherEditor.Services
                     buildAtlases: buildAtlases,
                     downscaleTextures: downscaleTextures,
                     sharedTextureRepack: sharedTextureRepack,
-                    compactTextures: compactTextures);
+                    compactTextures: compactTextures,
+                    dropUnreadAlpha: dropUnreadAlpha);
             });
 
             if (System.Windows.Application.Current?.MainWindow != null)
@@ -259,7 +261,8 @@ namespace Editors.KitbasherEditor.Services
             bool buildAtlases = true,
             bool downscaleTextures = false,
             bool sharedTextureRepack = false,
-            bool compactTextures = false)
+            bool compactTextures = false,
+            bool dropUnreadAlpha = false)
         {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
@@ -308,6 +311,7 @@ namespace Editors.KitbasherEditor.Services
                 // Cross-rigid-only mode never touches textures, whatever the caller asks.
                 state.DownscaleTextures = downscaleTextures && !crossRigidOnly;
                 state.CompactTextures = compactTextures && !crossRigidOnly;
+                state.DropUnreadAlpha = dropUnreadAlpha && state.CompactTextures;
                 // The repack rewrites UVs, so it is ignored next to atlasing and cross-rigid
                 // merges (see ResolveSharedTextureRepack).
                 state.SharedTextureRepackRequested = sharedTextureRepack;

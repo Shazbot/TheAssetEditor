@@ -11264,5 +11264,267 @@ namespace Test.KitbashEditor.Services
             Assert.That(CxSkipped(state).Single(item => item.Key.Contains("rigid-embedded")).Value, Is.EqualTo(1));
             Assert.That(report, Does.Contain("(reconciles)"));
         }
+
+        // --- Dropping alpha no shader reads ------------------------------------------------
+
+        // Real, varying alpha (8-alpha mode, 200 down to 40) over the colour blocks of the
+        // opaque fixture.
+        private static byte[] CxAlphaBlock(int level, int block)
+            => CxBc3Block(
+                200, 40, unchecked((ulong)(block + 1) * 0x9E3779B97F4A7C15UL) & 0xFFFFFFFFFFFFUL,
+                CxOpaqueBlock(level, block, "BC3")[8..16]);
+
+        private static byte[] CxAlphaTexture(bool dx10 = true, bool srgb = true)
+            => CxBuild(64, 64, 7, "BC3", dx10, srgb, CxAlphaBlock);
+
+        private static string CxMaterialWith(string shader, params (string Slot, string Texture)[] textures)
+            => DownscaleMaterialXml(textures).Replace(
+                "shaders\\weighted2_character.xml.shader", shader == null ? string.Empty : $"shaders\\{shader}.xml.shader");
+
+        private static (object Service, object State) CxRunAlpha(
+            DownscaleFixture fixture,
+            bool dropAlpha = true,
+            Action<object>? configure = null)
+            => CxRun(
+                fixture,
+                configure: state =>
+                {
+                    SetStateProperty(state, "DropUnreadAlpha", dropAlpha);
+                    configure?.Invoke(state);
+                });
+
+        private static DownscaleFixture CxAlphaFixture(string shader, string slot, byte[]? texture = null)
+        {
+            var fixture = new DownscaleFixture();
+            fixture.Add(CxTexture, texture ?? CxAlphaTexture());
+            fixture.AddText(CxMaterial, CxMaterialWith(shader, (slot, CxTexture)));
+            return fixture;
+        }
+
+        private static void AssertCxRgbKept(byte[] source, byte[] output)
+        {
+            var before = CxTexels(source);
+            var after = CxTexels(output);
+            Assert.That(after, Has.Count.EqualTo(before.Count));
+            for (var index = 0; index < before.Count; index++)
+            {
+                Assert.That(after[index] & 0x00FFFFFFu, Is.EqualTo(before[index] & 0x00FFFFFFu), $"texel {index}");
+                Assert.That(after[index] >> 24, Is.EqualTo(255u));
+            }
+
+            Assert.That(before.Any(texel => texel >> 24 != 255), Is.True, "the source really has alpha");
+        }
+
+        [TestCase(true, true, TestName = "Compaction_UnreadAlpha_BaseColourOfWeighted2Character_DropsAlpha_Dx10Srgb")]
+        [TestCase(false, false, TestName = "Compaction_UnreadAlpha_BaseColourOfWeighted2Character_DropsAlpha_Legacy")]
+        public void Compaction_UnreadAlpha_BaseColourReadAsRgb_BecomesBc1_WithTheSameRgb(bool dx10, bool srgb)
+        {
+            var source = CxAlphaTexture(dx10, srgb);
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour", source);
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(1), string.Join(";", CxSkipped(state).Keys));
+            var output = fixture.Output[CxTexture];
+            var (width, height, mips, format, outSrgb, outDx10, chain) = ReadDds(output);
+            Assert.That((width, height, mips, format, outSrgb, outDx10), Is.EqualTo((64, 64, 7, "BC1", srgb, dx10)));
+            Assert.That(output.Length, Is.EqualTo((dx10 ? 148 : 128) + chain));
+            AssertCxRgbKept(source, output);
+            var report = CxReport(state);
+            Assert.That(report, Does.Contain("Drop unread alpha: YES"));
+            Assert.That(report, Does.Contain("alpha not read by any user's shader: 1"));
+            Assert.That(report, Does.Contain("alpha unread").And.Contain("[t_xml_base_colour by weighted2_character]"));
+            Assert.That(report, Does.Contain("alpha dropped:"));
+            Assert.That(report, Does.Contain("(reconciles)"));
+            Assert.That(CxValidate(state), Is.Empty);
+            Assert.That(
+                Get<IEnumerable>(state, "ValidationMessages").Cast<object>().Select(item => item.ToString()),
+                Has.Some.Contain("1 alpha-dropped texture(s) match the source RGB"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_SamePictureAlsoUsedByAnAlphaShader_IsSkipped()
+        {
+            var source = CxAlphaTexture();
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour", source);
+            fixture.AddText(
+                "materials\\cx_alpha.xml.material",
+                CxMaterialWith("weighted2_character_alpha", ("t_xml_base_colour", CxTexture)));
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(
+                CxSkipped(state).Keys,
+                Has.Some.Contain("shader weighted2_character_alpha reads alpha of t_xml_base_colour"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_MaterialMapOfWeighted4CharacterAlpha_ReadsOnlyRg_AndDropsAlpha()
+        {
+            var source = CxAlphaTexture(true, false);
+            var fixture = CxAlphaFixture("weighted4_character_alpha", "t_xml_material_map", source);
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(1), string.Join(";", CxSkipped(state).Keys));
+            AssertCxRgbKept(source, fixture.Output[CxTexture]);
+            Assert.That(CxReport(state), Does.Contain("[t_xml_material_map by weighted4_character_alpha]"));
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_NormalMapWithAlpha_IsSkipped_BecauseNormalIsReadAsGa()
+        {
+            var source = CxAlphaTexture(true, false);
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_normal", source);
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("reads alpha of t_xml_normal"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_UnknownShader_IsSkipped()
+        {
+            var fixture = CxAlphaFixture("no_such_shader", "t_xml_base_colour");
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("shader no_such_shader not in the channel table"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_MissingShaderElement_CountsAsUnknown()
+        {
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour");
+            fixture.AddText(
+                CxMaterial,
+                "<material><textures><texture><slot>t_xml_base_colour</slot><source>" + CxTexture +
+                "</source></texture></textures></material>");
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("shader (none) not in the channel table"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_SlotTheShaderDoesNotBind_IsSkipped()
+        {
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_not_a_real_slot");
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(
+                CxSkipped(state).Keys,
+                Has.Some.Contain("slot t_xml_not_a_real_slot is not bound by shader weighted2_character"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_AlsoNamedByARigid_IsSkipped()
+        {
+            var source = CxAlphaTexture();
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour", source);
+            fixture.Add(
+                CxRigid,
+                CxRigidBytes((Shared.GameFormats.RigidModel.Types.TextureType.Diffuse, CxTexture)));
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("named by a rigid's embedded material"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_PathOverridingAVanillaTexture_IsSkipped()
+        {
+            var source = CxAlphaTexture();
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour", source);
+            fixture.Vanilla[CxTexture] = [1];
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("overrides a vanilla texture"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_WithoutVanillaGameData_CannotRuleOutAnOverride_AndIsSkipped()
+        {
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour");
+
+            var (_, state) = CxRunAlpha(
+                fixture,
+                configure: batch => SetStateProperty(
+                    batch, "GameplayTraversalContainers", new List<Shared.Core.PackFiles.Models.IPackFileContainer>()));
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("vanilla game data is not loaded"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_OptionOff_DoesNotTranscode_AndAddsOnlyTheNoLine()
+        {
+            var source = CxAlphaTexture();
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour", source);
+
+            var (_, state) = CxRunAlpha(fixture, dropAlpha: false);
+
+            Assert.That(CxCompacted(state), Is.Zero);
+            Assert.That(fixture.Output[CxTexture], Is.EqualTo(source));
+            Assert.That(CxSkipped(state).Keys, Has.Some.Contain("nothing exact to gain"));
+            var report = CxReport(state);
+            Assert.That(report, Does.Contain("Drop unread alpha: NO"));
+            Assert.That(report, Does.Not.Contain("alpha not read by any user"));
+            Assert.That(report, Does.Not.Contain("alpha dropped"));
+            Assert.That(report, Does.Not.Contain("alpha unread"));
+            Assert.That(report, Does.Not.Contain("channel"));
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_CountsReconcile_WithDroppedSkippedAndOpaqueTextures()
+        {
+            var fixture = new DownscaleFixture();
+            fixture.Add("textures\\drop.dds", CxAlphaTexture());
+            fixture.Add("textures\\normal.dds", CxAlphaTexture(true, false));
+            fixture.Add("textures\\opaque.dds", CxBuild(64, 64, 7, "BC3", true, true, (l, b) => CxOpaqueBlock(l, b, "BC3")));
+            fixture.AddText(
+                "materials\\a.xml.material",
+                CxMaterialWith(
+                    "weighted2_character",
+                    ("t_xml_base_colour", "textures\\drop.dds"),
+                    ("t_xml_normal", "textures\\normal.dds"),
+                    ("t_xml_mask", "textures\\opaque.dds")));
+
+            var (_, state) = CxRunAlpha(fixture);
+
+            Assert.That(CxCompacted(state), Is.EqualTo(2));
+            var report = CxReport(state);
+            Assert.That(report, Does.Contain("BC2/BC3 transcoded to BC1: 1"));
+            Assert.That(report, Does.Contain("alpha not read by any user's shader: 1"));
+            Assert.That(report, Does.Contain("Skipped: 1"));
+            Assert.That(report, Does.Contain("shader weighted2_character reads alpha of t_xml_normal"));
+            Assert.That(report, Does.Contain("(reconciles)"));
+            Assert.That(CxValidate(state), Is.Empty);
+        }
+
+        [Test]
+        public void Compaction_UnreadAlpha_Validation_FailsWhenTheRgbOfADroppedTextureChanges()
+        {
+            var fixture = CxAlphaFixture("weighted2_character", "t_xml_base_colour");
+            var (_, state) = CxRunAlpha(fixture);
+            Assert.That(CxValidate(state), Is.Empty);
+
+            fixture.Output[CxTexture][148 + 4] ^= 0xFF;
+
+            Assert.That(CxValidate(state), Has.Some.Contain(CxTexture));
+        }
     }
 }

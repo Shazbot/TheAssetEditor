@@ -897,6 +897,8 @@ namespace Editors.KitbasherEditor.Services
             public TextureDownscaleResult? TextureDownscale { get; set; }
             // Opt-in exact texture compaction (uniform shrink, opaque BC2/BC3 to BC1).
             public bool CompactTextures { get; set; }
+            // Effective only together with CompactTextures.
+            public bool DropUnreadAlpha { get; set; }
             public TextureCompactionResult? TextureCompaction { get; set; }
             public VanillaTextureCoverageResult? VanillaTextureCoverage { get; set; }
             public UnitTextureRepackResult? UnitTextureRepack { get; set; }

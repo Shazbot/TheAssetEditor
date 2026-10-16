@@ -1,6 +1,8 @@
 ﻿using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Xml;
 using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;
@@ -53,6 +55,10 @@ namespace Editors.KitbasherEditor.Services
             public byte[]? SourceBytes { get; set; }
             // Only a rigid's embedded material names it, no xml material does.
             public bool RigidEmbeddedOnly { get; set; }
+            // BC1 transcode of a texture whose alpha is not 255 but that no shader reads, and
+            // who reads which slot ("t_xml_base_colour by weighted2_character").
+            public bool AlphaDropped { get; init; }
+            public string AlphaUses { get; init; } = string.Empty;
             public long Saved => BytesBefore - BytesAfter;
         }
 
@@ -69,10 +75,78 @@ namespace Editors.KitbasherEditor.Services
             public int RigidOnlyReferenced { get; set; }
             public int RigidsRead { get; set; }
             public int RigidsUnreadable { get; set; }
+            // The shader channel table the drop-unread-alpha rule used (null: not loaded).
+            public string? ChannelTableSource { get; set; }
+            public string? ChannelTableError { get; set; }
             public List<TextureCompactionEntry> Compacted { get; } = [];
             public List<(string Path, string Reason)> Failed { get; } = [];
             public Dictionary<string, int> Skipped { get; } = new(StringComparer.Ordinal);
             public Dictionary<string, List<string>> SkippedExamples { get; } = new(StringComparer.Ordinal);
+        }
+
+        // The channels each unit shader samples per texture slot, generated from the game's
+        // compiled pixel shaders (Tools/ShaderChannels/extract_shader_channels.py) and embedded.
+        private sealed class Wh3ShaderChannelTable
+        {
+            public string Source { get; init; } = string.Empty;
+            public Dictionary<string, Dictionary<string, string>> Shaders { get; init; } =
+                new(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static readonly Lazy<(Wh3ShaderChannelTable? Table, string? Error)> Wh3ShaderChannels =
+            new(LoadWh3ShaderChannelTable);
+
+        private static (Wh3ShaderChannelTable? Table, string? Error) LoadWh3ShaderChannelTable()
+        {
+            try
+            {
+                var assembly = typeof(PackTextureAtlasBatchService).Assembly;
+                var resourceName = assembly.GetManifestResourceNames().FirstOrDefault(name =>
+                    name.EndsWith("Wh3ShaderTextureChannels.json", StringComparison.OrdinalIgnoreCase));
+                if (resourceName == null)
+                    return (null, "the embedded shader channel table was not found");
+
+                using var stream = assembly.GetManifestResourceStream(resourceName);
+                if (stream == null)
+                    return (null, "the embedded shader channel table could not be opened");
+
+                using var document = JsonDocument.Parse(stream);
+                var table = new Wh3ShaderChannelTable
+                {
+                    Source = document.RootElement.TryGetProperty("source", out var source)
+                        ? source.GetString() ?? string.Empty
+                        : string.Empty,
+                };
+                foreach (var shader in document.RootElement.GetProperty("shaders").EnumerateObject())
+                {
+                    var slots = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var slot in shader.Value.EnumerateObject())
+                        slots[slot.Name] = slot.Value.GetString() ?? string.Empty;
+                    table.Shaders[shader.Name] = slots;
+                }
+
+                return table.Shaders.Count == 0
+                    ? (null, "the embedded shader channel table is empty")
+                    : (table, null);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return (null, $"the embedded shader channel table could not be read ({ex.GetType().Name}: {ex.Message})");
+            }
+        }
+
+        // "shaders\\weighted2_character.xml.shader" -> "weighted2_character".
+        private static string? GetCompactionShaderName(string? shader)
+        {
+            if (string.IsNullOrWhiteSpace(shader))
+                return null;
+
+            var name = Normalize(shader);
+            if (name.StartsWith("shaders\\", StringComparison.Ordinal))
+                name = name["shaders\\".Length..];
+            if (name.EndsWith(".xml.shader", StringComparison.Ordinal))
+                name = name[..^".xml.shader".Length];
+            return name.Length == 0 ? null : name;
         }
 
         // ---------------------------------------------------------------------------
@@ -402,7 +476,8 @@ namespace Editors.KitbasherEditor.Services
             byte[] source,
             DdsLayout sourceLayout,
             byte[] result,
-            DdsLayout resultLayout)
+            DdsLayout resultLayout,
+            bool ignoreAlpha = false)
         {
             if (resultLayout.Format != "BC1" ||
                 resultLayout.Width != sourceLayout.Width ||
@@ -450,9 +525,11 @@ namespace Editors.KitbasherEditor.Services
                             for (var x = 0; x < columns; x++)
                             {
                                 var texel = y * 4 + x;
-                                if ((before[texel] >> 24) != 255)
+                                if (!ignoreAlpha && (before[texel] >> 24) != 255)
                                     return $"source is not opaque at level {level}, block ({bx},{by}), texel ({x},{y})";
-                                if (before[texel] != after[texel])
+                                // With the alpha dropped only the colour is compared.
+                                var difference = before[texel] ^ after[texel];
+                                if ((ignoreAlpha ? difference & 0x00FFFFFFu : difference) != 0)
                                 {
                                     return $"differs at level {level}, block ({bx},{by}), texel ({x},{y}): " +
                                            $"{before[texel]:X8} -> {after[texel]:X8}";
@@ -507,6 +584,18 @@ namespace Editors.KitbasherEditor.Services
             var materialReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var otherReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var rigidReferences = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Per texture: every xml material slot that names it, with the material's shader.
+            var materialUses = new Dictionary<string, List<(string Material, string? Shader, string Slot)>>(
+                StringComparer.OrdinalIgnoreCase);
+            Wh3ShaderChannelTable? channelTable = null;
+            if (state.DropUnreadAlpha)
+            {
+                var (table, error) = Wh3ShaderChannels.Value;
+                channelTable = table;
+                result.ChannelTableSource = table?.Source;
+                result.ChannelTableError = error;
+            }
+
             var textures = new List<string>();
             foreach (var (rawPath, file) in state.Output.GetAllFiles())
             {
@@ -521,14 +610,27 @@ namespace Editors.KitbasherEditor.Services
                     try
                     {
                         var document = LoadXml(file);
+                        var shader = GetCompactionShaderName(document.SelectSingleNode("/material/shader")?.InnerText);
                         var nodes = document.SelectNodes("/material/textures/texture");
                         if (nodes != null)
                         {
                             foreach (XmlNode node in nodes)
                             {
                                 var texture = Normalize(node.SelectSingleNode("source")?.InnerText ?? node.InnerText);
-                                if (IsTextureDownscaleTexturePath(texture))
-                                    materialReferences.Add(texture);
+                                if (!IsTextureDownscaleTexturePath(texture))
+                                    continue;
+
+                                materialReferences.Add(texture);
+                                if (state.DropUnreadAlpha)
+                                {
+                                    if (!materialUses.TryGetValue(texture, out var uses))
+                                    {
+                                        uses = [];
+                                        materialUses[texture] = uses;
+                                    }
+
+                                    uses.Add((path, shader, GetTextureSlot(node)));
+                                }
                             }
                         }
                     }
@@ -594,6 +696,11 @@ namespace Editors.KitbasherEditor.Services
                     examples.Add(path);
             }
 
+            var containers = GetGameplayTraversalContainers(state);
+            // Whether the vanilla game data is loaded at all: without it an override of a vanilla
+            // texture cannot be ruled out.
+            var vanillaKnown = containers.Any(container =>
+                container.IsCaPackFile && !ReferenceEquals(container, state.Source));
             textures.Sort(StringComparer.Ordinal);
             result.Considered = textures.Count;
             result.XmlReferenced = textures.Count(texture => materialReferences.Contains(texture));
@@ -637,7 +744,14 @@ namespace Editors.KitbasherEditor.Services
                 ReportProgress(progress, "Compacting textures", index + 1, textures.Count, path);
                 try
                 {
-                    CompactTexture(state, result, path, !materialReferences.Contains(path), Skip);
+                    var alphaRule = channelTable == null
+                        ? null
+                        : new TextureCompactionAlphaRule(
+                            channelTable,
+                            rigidReferences.Contains(path),
+                            materialUses.GetValueOrDefault(path) ?? [],
+                            vanillaKnown);
+                    CompactTexture(state, result, path, !materialReferences.Contains(path), alphaRule, Skip);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -651,6 +765,7 @@ namespace Editors.KitbasherEditor.Services
             TextureCompactionResult result,
             string path,
             bool rigidEmbeddedOnly,
+            TextureCompactionAlphaRule? alphaRule,
             Action<string, string> skip)
         {
             var bytes = state.Output.FindFile(path)?.DataSource.ReadData();
@@ -716,10 +831,26 @@ namespace Editors.KitbasherEditor.Services
                 return;
             }
 
+            var dropAlpha = false;
+            string alphaUses = string.Empty;
             if (layout.Format == "BC1" || !AreAllTexelsOpaque(bytes, layout))
             {
-                skip(TextureCompactionReasonNoSaving, path);
-                return;
+                // Alpha that is really there: only the opt-in rule can still shrink it, when
+                // nothing that uses the texture reads its alpha.
+                if (layout.Format == "BC1" || alphaRule == null)
+                {
+                    skip(TextureCompactionReasonNoSaving, path);
+                    return;
+                }
+
+                var refusal = CheckUnreadAlpha(state, path, alphaRule, out alphaUses);
+                if (refusal != null)
+                {
+                    skip(refusal, path);
+                    return;
+                }
+
+                dropAlpha = true;
             }
 
             if (!TryBuildOpaqueBc1(bytes, layout, out var transcoded))
@@ -731,7 +862,7 @@ namespace Editors.KitbasherEditor.Services
             var resultLayout = ReadCompactionLayout(transcoded);
             var transcodeProblem = resultLayout == null
                 ? "has an unreadable header"
-                : VerifyCompactionTranscode(bytes, layout, transcoded, resultLayout);
+                : VerifyCompactionTranscode(bytes, layout, transcoded, resultLayout, ignoreAlpha: dropAlpha);
             if (transcodeProblem != null)
             {
                 result.Failed.Add((path, $"BC1 transcode {transcodeProblem}"));
@@ -752,7 +883,56 @@ namespace Editors.KitbasherEditor.Services
                 BytesAfter = transcoded.LongLength,
                 SourceBytes = bytes,
                 RigidEmbeddedOnly = rigidEmbeddedOnly,
+                AlphaDropped = dropAlpha,
+                AlphaUses = alphaUses,
             });
+        }
+
+        private sealed record TextureCompactionAlphaRule(
+            Wh3ShaderChannelTable Table,
+            bool NamedByRigid,
+            List<(string Material, string? Shader, string Slot)> Uses,
+            bool VanillaKnown);
+
+        // Null when no shader of any user reads the texture's alpha; else the first reason it
+        // cannot be dropped. Every doubt blocks: unknown shader, unbound slot, a rigid-embedded
+        // user, a possible vanilla user.
+        private static string? CheckUnreadAlpha(
+            BatchState state,
+            string path,
+            TextureCompactionAlphaRule rule,
+            out string uses)
+        {
+            uses = string.Empty;
+            if (rule.NamedByRigid)
+                return "named by a rigid's embedded material (shader unknown)";
+            if (rule.Uses.Count == 0)
+                return "no xml material uses it";
+            if (!rule.VanillaKnown)
+                return "the vanilla game data is not loaded (cannot tell whether it overrides a vanilla texture)";
+            if (OverridesVanillaPath(state, path))
+                return "overrides a vanilla texture (vanilla materials may read its alpha)";
+
+            foreach (var (_, shader, slot) in rule.Uses)
+            {
+                if (shader == null || !rule.Table.Shaders.TryGetValue(shader, out var slots))
+                    return $"shader {shader ?? "(none)"} not in the channel table";
+                if (!slots.TryGetValue(slot, out var channels))
+                    return $"slot {slot} is not bound by shader {shader}";
+                if (channels.Contains('a', StringComparison.OrdinalIgnoreCase))
+                    return $"shader {shader} reads alpha of {slot}";
+            }
+
+            uses = string.Join(
+                "; ",
+                rule.Uses
+                    .GroupBy(use => use.Slot, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(group => group.Key, StringComparer.Ordinal)
+                    .Select(group => $"{group.Key} by " + string.Join(
+                        ", ",
+                        group.Select(use => use.Shader!).Distinct(StringComparer.Ordinal)
+                            .OrderBy(shader => shader, StringComparer.Ordinal))));
+            return null;
         }
 
         private static DdsLayout? ReadCompactionLayout(byte[] dds)
@@ -824,7 +1004,8 @@ namespace Editors.KitbasherEditor.Services
                         ? VerifyCompactionUniform(bytes, layout, entry.Colour)
                         : entry.SourceBytes == null
                             ? "has no source bytes to compare with"
-                            : VerifyCompactionTranscode(entry.SourceBytes, entry.Source, bytes, layout);
+                            : VerifyCompactionTranscode(
+                                entry.SourceBytes, entry.Source, bytes, layout, ignoreAlpha: entry.AlphaDropped);
                 }
 
                 if (problem != null)
@@ -834,10 +1015,15 @@ namespace Editors.KitbasherEditor.Services
             if (errors.Count == before)
             {
                 var uniform = result.Compacted.Count(entry => entry.IsUniform);
+                var alphaDropped = result.Compacted.Count(entry => entry.AlphaDropped);
                 state.ValidationMessages.Add(
-                    $"PASS: {uniform:N0} uniform and {result.Compacted.Count - uniform:N0} BC1-transcoded " +
+                    $"PASS: {uniform:N0} uniform and {result.Compacted.Count - uniform - alphaDropped:N0} BC1-transcoded " +
                     "texture(s) decode texel for texel to the source colours at every mip level, with valid " +
-                    "headers and complete chains at their original paths.");
+                    "headers and complete chains at their original paths." +
+                    (alphaDropped == 0
+                        ? string.Empty
+                        : $" {alphaDropped:N0} alpha-dropped texture(s) match the source RGB texel for texel at " +
+                          "every level (their alpha is read by no shader of any user)."));
             }
         }
 
@@ -850,6 +1036,7 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine("------------------------");
             var result = state.TextureCompaction;
             sb.AppendLine($"Exact texture compaction: {(state.CompactTextures ? "YES" : "NO")}");
+            sb.AppendLine($"Drop unread alpha: {(state.DropUnreadAlpha ? "YES" : "NO")}");
             if (result == null || !result.Requested)
             {
                 sb.AppendLine("Off (opt-in). No texture was changed.");
@@ -865,16 +1052,35 @@ namespace Editors.KitbasherEditor.Services
                 "texel of every level becomes BC1 (colour blocks kept, endpoints swapped and indices " +
                 "remapped where c0 < c1). Each result is decoded and compared texel for texel before it is " +
                 "written; nothing unverified is written. Same path, same sRGB-ness and header kind.");
+            if (state.DropUnreadAlpha)
+            {
+                sb.AppendLine(
+                    result.ChannelTableError == null
+                        ? "Drop unread alpha: a BC2/BC3 texture whose alpha is not 255 everywhere becomes BC1 (colour " +
+                          "blocks kept bit for bit, alpha dropped) when it is only used by xml materials whose shader " +
+                          "never samples the alpha of its slot, it is not named by a rigid's embedded material and it " +
+                          "does not override a vanilla texture. Channels per shader and slot come from the game's " +
+                          $"compiled pixel shaders: {result.ChannelTableSource}. A shader or slot the table does not " +
+                          "list blocks the texture."
+                        : $"Drop unread alpha is on but the rule did nothing: {result.ChannelTableError}.");
+            }
+
             if (result.Failure != null)
                 sb.AppendLine($"The stage stopped early: {result.Failure}. Files written before that were verified.");
 
             var uniform = result.Compacted.Where(entry => entry.IsUniform).ToList();
-            var transcoded = result.Compacted.Where(entry => !entry.IsUniform).ToList();
+            var transcoded = result.Compacted.Where(entry => !entry.IsUniform && !entry.AlphaDropped).ToList();
+            var dropped = result.Compacted.Where(entry => entry.AlphaDropped).ToList();
             var skipped = result.Skipped.Values.Sum();
-            var accounted = uniform.Count + transcoded.Count + result.Failed.Count + skipped;
+            var accounted = uniform.Count + transcoded.Count + dropped.Count + result.Failed.Count + skipped;
             sb.AppendLine($"DDS files in the output: {result.Considered:N0}. They split exactly into:");
             sb.AppendLine($"  Uniform, shrunk to 4x4: {uniform.Count:N0}");
             sb.AppendLine($"  BC2/BC3 transcoded to BC1: {transcoded.Count:N0}");
+            if (state.DropUnreadAlpha)
+            {
+                sb.AppendLine(
+                    $"  BC2/BC3 transcoded to BC1, alpha not read by any user's shader: {dropped.Count:N0}");
+            }
             sb.AppendLine($"  Failed verification or writing (kept as they were): {result.Failed.Count:N0}");
             sb.AppendLine($"  Skipped: {skipped:N0}");
             foreach (var (reason, count) in result.Skipped
@@ -897,6 +1103,10 @@ namespace Editors.KitbasherEditor.Services
                 $"Bytes, uniform: {uniform.Sum(item => item.BytesBefore):N0} -> {uniform.Sum(item => item.BytesAfter):N0} " +
                 $"(saves {uniform.Sum(item => item.Saved):N0}); transcoded: {transcoded.Sum(item => item.BytesBefore):N0} -> " +
                 $"{transcoded.Sum(item => item.BytesAfter):N0} (saves {transcoded.Sum(item => item.Saved):N0}); " +
+                (state.DropUnreadAlpha
+                    ? $"alpha dropped: {dropped.Sum(item => item.BytesBefore):N0} -> {dropped.Sum(item => item.BytesAfter):N0} " +
+                      $"(saves {dropped.Sum(item => item.Saved):N0}); "
+                    : string.Empty) +
                 $"total saved {result.Compacted.Sum(item => item.Saved):N0} bytes.");
             if (result.Failed.Count != 0)
             {
@@ -918,11 +1128,12 @@ namespace Editors.KitbasherEditor.Services
                 foreach (var entry in ordered.Take(TextureCompactionListLimit))
                 {
                     sb.AppendLine(
-                        $"  {entry.Path}: {(entry.IsUniform ? "uniform" : "opaque")}, " +
+                        $"  {entry.Path}: {(entry.IsUniform ? "uniform" : entry.AlphaDropped ? "alpha unread" : "opaque")}, " +
                         $"{entry.Source.Width}x{entry.Source.Height} {DescribeCompactionFormat(entry.Source)} -> " +
                         $"{entry.NewWidth}x{entry.NewHeight} {entry.NewFormat}, " +
                         $"{entry.BytesBefore:N0} -> {entry.BytesAfter:N0} bytes" +
-                        (entry.RigidEmbeddedOnly ? " [rigid-embedded only]" : string.Empty));
+                        (entry.RigidEmbeddedOnly ? " [rigid-embedded only]" : string.Empty) +
+                        (entry.AlphaDropped ? $" [{entry.AlphaUses}]" : string.Empty));
                 }
 
                 if (ordered.Count > TextureCompactionListLimit)

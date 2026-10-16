@@ -39,6 +39,8 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock
@@ -208,7 +210,9 @@
             Grid.Row="21"
             Margin="0,12,0,0"
             Content="Compact textures exactly (experimental)"
-            IsChecked="False" />
+            IsChecked="False"
+            Checked="CompactTexturesCheckBox_OnChanged"
+            Unchecked="CompactTexturesCheckBox_OnChanged" />
 
         <TextBlock
             Grid.Row="22"
@@ -218,16 +222,31 @@
             TextWrapping="Wrap"
             Opacity="0.7" />
 
+        <CheckBox
+            x:Name="DropUnreadAlphaCheckBox"
+            Grid.Row="23"
+            Margin="22,8,0,0"
+            Content="Drop texture alpha no shader reads (experimental)"
+            IsChecked="False" />
+
+        <TextBlock
+            Grid.Row="24"
+            Margin="44,4,0,0"
+            MaxWidth="598"
+            Text="Off by default; needs the option above. A BC2/BC3 texture whose alpha is not 255 everywhere but that no shader of any material using it samples (from a table of the game's compiled pixel shaders) becomes BC1 with its colours untouched. Skipped when a rigid's embedded material names it, when it overrides a vanilla texture, or when a shader or slot is not in the table."
+            TextWrapping="Wrap"
+            Opacity="0.7" />
+
         <TextBlock
             x:Name="PhaseText"
-            Grid.Row="23"
+            Grid.Row="25"
             Margin="0,16,0,0"
             FontWeight="SemiBold"
             Text="Ready" />
 
         <TextBlock
             x:Name="ItemText"
-            Grid.Row="24"
+            Grid.Row="26"
             Margin="0,8,0,0"
             MinHeight="36"
             MaxWidth="640"
@@ -237,7 +256,7 @@
 
         <ProgressBar
             x:Name="ProgressBar"
-            Grid.Row="25"
+            Grid.Row="27"
             Height="20"
             Margin="0,12,0,0"
             Minimum="0"
@@ -245,7 +264,7 @@
             IsIndeterminate="False"
             Value="0" />
 
-        <Grid Grid.Row="26" Margin="0,8,0,0">
+        <Grid Grid.Row="28" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
