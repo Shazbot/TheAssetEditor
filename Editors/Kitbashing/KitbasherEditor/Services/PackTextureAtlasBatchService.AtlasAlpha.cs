@@ -241,6 +241,36 @@ namespace Editors.KitbasherEditor.Services
                 .ToList();
         }
 
+        // The value gate overwrites these two counters on every run. With several format groups in
+        // one Process* call they are totalled across the groups instead (batches are disjoint;
+        // units can be shared between groups, so the unit count is the largest group's, a lower
+        // bound). A single group is left exactly as the gate wrote it.
+        private sealed class FormatGroupGateTotals(BatchState state, int groupCount)
+        {
+            private int _orderedBatches;
+            private int _affectedUnits;
+
+            public void BeforeGroup()
+            {
+                if (groupCount <= 1)
+                    return;
+
+                state.AtlasValueGateCoverageOrderedBatchCount = 0;
+                state.AtlasValueGateCandidateAffectedUnitCount = 0;
+            }
+
+            public void AfterGroup()
+            {
+                if (groupCount <= 1)
+                    return;
+
+                _orderedBatches += state.AtlasValueGateCoverageOrderedBatchCount;
+                _affectedUnits = Math.Max(_affectedUnits, state.AtlasValueGateCandidateAffectedUnitCount);
+                state.AtlasValueGateCoverageOrderedBatchCount = _orderedBatches;
+                state.AtlasValueGateCandidateAffectedUnitCount = _affectedUnits;
+            }
+        }
+
         // BC3 when any member needs the channel's alpha kept; else the game's format for it.
         private static DXGI_FORMAT GetAtlasChannelFormat(
             IEnumerable<AtlasCandidate> candidates,

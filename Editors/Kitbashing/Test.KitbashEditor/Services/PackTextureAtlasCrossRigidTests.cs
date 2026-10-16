@@ -12228,6 +12228,51 @@ namespace Test.KitbashEditor.Services
             Assert.That(GetStaticMethod("GetAtlasBytesPerBlock").Invoke(null, [DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB]), Is.EqualTo(16));
         }
 
+        private static void RunGateTotals(
+            object state,
+            int groupCount,
+            params (int OrderedBatches, int AffectedUnits)[] gateResultsPerGroup)
+        {
+            var totals = Activator.CreateInstance(
+                GetNestedType("FormatGroupGateTotals"),
+                AnyInstance,
+                null,
+                [state, groupCount],
+                null)!;
+            void Set(string name, int value)
+                => state.GetType().GetProperty(name, AnyInstance)!.SetValue(state, value);
+            foreach (var (orderedBatches, affectedUnits) in gateResultsPerGroup)
+            {
+                totals.GetType().GetMethod("BeforeGroup")!.Invoke(totals, null);
+                // What the value gate writes during the group.
+                Set("AtlasValueGateCoverageOrderedBatchCount", orderedBatches);
+                Set("AtlasValueGateCandidateAffectedUnitCount", affectedUnits);
+                totals.GetType().GetMethod("AfterGroup")!.Invoke(totals, null);
+            }
+        }
+
+        [Test]
+        public void AtlasAlpha_FormatGroups_ValueGateCountersAreTotalledAcrossGroups()
+        {
+            var state = CreateBareBatchState();
+
+            RunGateTotals(state, 2, (3, 10), (2, 14));
+
+            Assert.That(Get<int>(state, "AtlasValueGateCoverageOrderedBatchCount"), Is.EqualTo(5));
+            Assert.That(Get<int>(state, "AtlasValueGateCandidateAffectedUnitCount"), Is.EqualTo(14));
+        }
+
+        [Test]
+        public void AtlasAlpha_SingleFormatGroup_LeavesValueGateCountersAsTheGateWroteThem()
+        {
+            var state = CreateBareBatchState();
+
+            RunGateTotals(state, 1, (7, 9));
+
+            Assert.That(Get<int>(state, "AtlasValueGateCoverageOrderedBatchCount"), Is.EqualTo(7));
+            Assert.That(Get<int>(state, "AtlasValueGateCandidateAffectedUnitCount"), Is.EqualTo(9));
+        }
+
         [Test]
         public void AtlasAlpha_Bc3AtlasWriterKeepsAlphaWithoutQuantising()
         {

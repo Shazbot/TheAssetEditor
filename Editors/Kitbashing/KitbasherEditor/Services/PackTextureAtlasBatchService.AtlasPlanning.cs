@@ -176,7 +176,7 @@ namespace Editors.KitbasherEditor.Services
             var pixelOptimized = OptimizeMaxSizeBatchesForPixelArea(state, batches);
             if (packWide)
             {
-                state.ExpectedArmyResidentPixelsBeforeLocality =
+                state.ExpectedArmyResidentPixelsBeforeLocality +=
                     CalculateExpectedArmyResidentPixels(state, pixelOptimized);
             }
 
@@ -191,7 +191,7 @@ namespace Editors.KitbasherEditor.Services
 
             if (packWide)
             {
-                state.ExpectedArmyResidentPixelsAfterLocality =
+                state.ExpectedArmyResidentPixelsAfterLocality +=
                     CalculateExpectedArmyResidentPixels(state, localityOptimized);
             }
 
@@ -226,7 +226,7 @@ namespace Editors.KitbasherEditor.Services
             }
             if (packWide)
             {
-                state.ExpectedArmyResidentPixelsAfterMergeAware =
+                state.ExpectedArmyResidentPixelsAfterMergeAware +=
                     CalculateExpectedArmyResidentPixels(state, valueOptimized);
             }
 

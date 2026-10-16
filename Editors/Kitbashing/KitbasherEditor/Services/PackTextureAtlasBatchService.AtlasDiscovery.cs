@@ -811,8 +811,11 @@ namespace Editors.KitbasherEditor.Services
             candidates = ApplyTexelDensityScaling(state, candidates);
             candidates = AlignSharedUvIslandCuts(state, candidates);
 
-            foreach (var formatGroup in SplitCandidatesByKeepAlpha(candidates))
+            var formatGroups = SplitCandidatesByKeepAlpha(candidates);
+            var gateTotals = new FormatGroupGateTotals(state, formatGroups.Count);
+            foreach (var formatGroup in formatGroups)
             {
+                gateTotals.BeforeGroup();
                 var batches = CreateBatches(
                     state,
                     formatGroup,
@@ -827,6 +830,7 @@ namespace Editors.KitbasherEditor.Services
                     batches,
                     cancellationToken,
                     progress);
+                gateTotals.AfterGroup();
             }
         }
 
@@ -844,8 +848,11 @@ namespace Editors.KitbasherEditor.Services
 
             candidates = ApplyTexelDensityScaling(state, candidates);
             candidates = AlignSharedUvIslandCuts(state, candidates);
-            foreach (var formatGroup in SplitCandidatesByKeepAlpha(candidates))
+            var formatGroups = SplitCandidatesByKeepAlpha(candidates);
+            var gateTotals = new FormatGroupGateTotals(state, formatGroups.Count);
+            foreach (var formatGroup in formatGroups)
             {
+                gateTotals.BeforeGroup();
                 var batches = CreateBatches(
                     state,
                     formatGroup,
@@ -859,6 +866,7 @@ namespace Editors.KitbasherEditor.Services
                     batches,
                     cancellationToken,
                     progress);
+                gateTotals.AfterGroup();
             }
         }
 
@@ -883,8 +891,11 @@ namespace Editors.KitbasherEditor.Services
             candidates = AlignSharedUvIslandCuts(state, candidates);
 
             var packName = Path.GetFileNameWithoutExtension(state.SourcePath);
-            foreach (var formatGroup in SplitCandidatesByKeepAlpha(candidates))
+            var formatGroups = SplitCandidatesByKeepAlpha(candidates);
+            var gateTotals = new FormatGroupGateTotals(state, formatGroups.Count);
+            foreach (var formatGroup in formatGroups)
             {
+                gateTotals.BeforeGroup();
                 var stopwatch = Stopwatch.StartNew();
                 var batches = CreateBatches(
                     state,
@@ -903,6 +914,7 @@ namespace Editors.KitbasherEditor.Services
                     cancellationToken,
                     progress);
                 AddPhaseDuration(state, "Execute atlas batches", stopwatch.Elapsed);
+                gateTotals.AfterGroup();
             }
         }
 
