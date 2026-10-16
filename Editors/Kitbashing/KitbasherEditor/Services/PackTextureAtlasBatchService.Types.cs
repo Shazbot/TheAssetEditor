@@ -916,6 +916,11 @@ namespace Editors.KitbasherEditor.Services
             public HashSet<string> SharedRepackTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> SharedRepackMaterialPaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<MeshKey> SharedRepackParts { get; } = [];
+            // What texture atlasing changed, for the shared texture repack that runs after it: the
+            // rigids it rewrote (UVs, repointed WSModel material) and the parts it rewrote. An
+            // atlased part no longer references its original textures.
+            public HashSet<string> AtlasChangedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<(string Rigid, int Lod, int Part)> AtlasChangedParts { get; } = [];
             public int AtlasValueGateBatchesAccepted { get; set; }
             public int AtlasValueGateBatchesRejected { get; set; }
             public int AtlasValueGateTextureOnlyMergeBatchesAccepted { get; set; }

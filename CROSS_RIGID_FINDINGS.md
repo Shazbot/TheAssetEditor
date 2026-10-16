@@ -199,7 +199,7 @@ Estimates repacking textures into atlases per unit, assuming a unit shows every 
 
 Built, opt-in: "Repack shared textures (experimental)" (off by default). New smaller textures hold only the regions a rigid's parts use, at the same texel density; the rigid's UVs are rewritten for all LODs, new materials are written and its WSModels repointed. Original textures are not edited.
 
-- **Scope.** Option C sets confined to one mod-owned rigid. Cannot be combined with atlasing, cross-rigid merges or cross-rigid-only mode (all rewrite UVs).
+- **Scope.** Option C sets confined to one mod-owned rigid. Cannot be combined with cross-rigid merges or cross-rigid-only mode. It can run together with atlasing: atlasing runs first, a rigid atlasing changed in any way is left out of the repack (reason "the rigid was changed by texture atlasing"), and an atlased part no longer counts as a user of the textures it used, so each part and texture is changed by at most one of the two. The thresholds and the actual-bytes re-check are unchanged. The same tracking (`AtlasChangedRigids`/`AtlasChangedParts`) could also cover cross-rigid merges, but that is not implemented.
 - **Chart snapping.** Charts are snapped to 32 px so mips 0-3 are block-copied exactly. This fixed a bug: mip-3 errors came from regions offset by 2 texels against the 4x4 block grid.
 - **Pixel check before writing.** Block-copied levels must match exactly. Re-encoded levels fail if more than 0.5 % of samples are over 96 or the mean is over 12.
 - **Layout.** Layout groups combine tuples with the same slots, formats and ratios. Pages split at 4096. A group needs at least 512 KiB saved and a set at least 2 MiB.
@@ -367,7 +367,7 @@ RGB stays bit-exact and is verified at every level; only the alpha is dropped.
 - Texture downscale (`PackTextureAtlasBatchService.TextureDownscale.cs`): report plus opt-in "Downscale oversized textures (experimental)", with the lord/hero rule (unclassifiable units count as lord/hero). Off by default.
 - Vanilla texture coverage (`PackTextureAtlasBatchService.VanillaTextureCoverage.cs`): report only.
 - Per-unit repack estimate (`PackTextureAtlasBatchService.UnitTextureRepack.cs`): report only, Options A, B, C, C2 and a selective view.
-- Shared texture repack (`PackTextureAtlasBatchService.SharedTextureRepack.cs`): opt-in, first increment. New "Repack shared textures (experimental)" checkbox in `TextureAtlasProgressWindow.xaml`, off by default and disabled together with atlasing, cross-rigid merges and cross-rigid-only mode.
+- Shared texture repack (`PackTextureAtlasBatchService.SharedTextureRepack.cs`): opt-in, first increment. New "Repack shared textures (experimental)" checkbox in `TextureAtlasProgressWindow.xaml`, off by default and disabled together with cross-rigid merges and cross-rigid-only mode (it works next to atlasing).
 - Tests: the `FullyQualifiedName~PackTextureAtlas` filter now runs 504 tests, all passing.
 
 ### 2026-10-15 to 16: multi-rigid repack and exact compaction

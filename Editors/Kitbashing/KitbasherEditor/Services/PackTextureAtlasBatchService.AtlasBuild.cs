@@ -1032,6 +1032,11 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 state.ModifiedRigids.Add(candidate.Key.GeometryPath);
+                state.AtlasChangedRigids.Add(Normalize(candidate.Key.GeometryPath));
+                state.AtlasChangedParts.Add((
+                    Normalize(candidate.Key.GeometryPath),
+                    candidate.Key.LodIndex,
+                    candidate.Key.PartIndex));
                 state.ProcessedMeshes.Add(candidate.Key);
             }
             AddPhaseDuration(state, "Rewrite mesh UVs and materials", rewriteStopwatch.Elapsed);

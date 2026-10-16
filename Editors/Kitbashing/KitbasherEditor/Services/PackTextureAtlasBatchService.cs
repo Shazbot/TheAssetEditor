@@ -312,8 +312,9 @@ namespace Editors.KitbasherEditor.Services
                 state.DownscaleTextures = downscaleTextures && !crossRigidOnly;
                 state.CompactTextures = compactTextures && !crossRigidOnly;
                 state.DropUnreadAlpha = dropUnreadAlpha && state.CompactTextures;
-                // The repack rewrites UVs, so it is ignored next to atlasing and cross-rigid
-                // merges (see ResolveSharedTextureRepack).
+                // The repack rewrites UVs, so it is ignored next to cross-rigid merges (see
+                // ResolveSharedTextureRepack); next to atlasing it runs after it and leaves
+                // the rigids atlasing changed alone.
                 state.SharedTextureRepackRequested = sharedTextureRepack;
                 state.SharedTextureRepackEnabled = ResolveSharedTextureRepack(
                     sharedTextureRepack,
@@ -572,13 +573,11 @@ namespace Editors.KitbasherEditor.Services
 
                     if (state.SharedTextureRepackEnabled)
                     {
-                        // Runs where the atlas stage would: after the consumer indexes and
-                        // the structural merge analysis, before the merge and geometry
-                        // optimization, which then see the repacked rigids and materials.
-                        // The two analyses it needs measure the source pack as authored
-                        // (fresh reads), so running them early changes no figure; they get
-                        // a generous budget because an incomplete analysis must not be
-                        // acted on.
+                        // The two analyses the repack needs run here, before atlasing: they
+                        // measure the source pack as authored (fresh reads), so running them
+                        // early changes no figure; they get a generous budget because an
+                        // incomplete analysis must not be acted on. The repack itself runs
+                        // after the atlas stage (below).
                         RunVanillaTextureCoverage(
                             state,
                             cancellationToken,
@@ -589,7 +588,6 @@ namespace Editors.KitbasherEditor.Services
                             cancellationToken,
                             progress,
                             SharedRepackAnalysisBudget);
-                        RunSharedTextureRepack(state, cancellationToken, progress);
                     }
 
                     if (buildAtlases)
@@ -633,6 +631,14 @@ namespace Editors.KitbasherEditor.Services
 
                         state.PhaseDurations["Plan and build atlases"] =
                             phaseStopwatch.Elapsed;
+                    }
+
+                    if (state.SharedTextureRepackEnabled)
+                    {
+                        // Where the atlas stage ran: before the merge and geometry optimization,
+                        // which then see the repacked rigids and materials. A rigid atlasing
+                        // changed is not repacked (state.AtlasChangedRigids).
+                        RunSharedTextureRepack(state, cancellationToken, progress);
                     }
                 }
 

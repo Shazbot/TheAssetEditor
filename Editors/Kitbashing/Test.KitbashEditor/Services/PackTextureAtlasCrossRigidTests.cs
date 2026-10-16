@@ -9142,11 +9142,13 @@ namespace Test.KitbashEditor.Services
 
         [TestCase(true, false, false, false, true)]
         [TestCase(false, false, false, false, false)]
-        [TestCase(true, true, false, false, false)]
+        [TestCase(true, true, false, false, true)]
+        [TestCase(false, true, false, false, false)]
+        [TestCase(true, true, true, false, false)]
         [TestCase(true, false, true, false, false)]
         [TestCase(true, false, false, true, false)]
         [TestCase(true, true, true, true, false)]
-        public void SharedRepack_OptionResolution_IgnoredNextToAtlasingAndCrossRigid(
+        public void SharedRepack_OptionResolution_AllowedNextToAtlasing_IgnoredNextToCrossRigid(
             bool requested,
             bool buildAtlases,
             bool crossRigidMerges,
@@ -9157,6 +9159,67 @@ namespace Test.KitbashEditor.Services
                 .Invoke(null, [requested, buildAtlases, crossRigidMerges, crossRigidOnly])!;
 
             Assert.That(resolved, Is.EqualTo(expected));
+        }
+
+        private static void MarkAtlasChanged(object state, string rigid, params (int Lod, int Part)[] parts)
+        {
+            Get<HashSet<string>>(state, "AtlasChangedRigids").Add(rigid);
+            var changedParts = Get<HashSet<(string Rigid, int Lod, int Part)>>(state, "AtlasChangedParts");
+            foreach (var (lod, part) in parts)
+                changedParts.Add((rigid, lod, part));
+        }
+
+        [Test]
+        public void SharedRepack_RigidChangedByAtlasing_IsLeftOutWithAClearReason()
+        {
+            var world = BuildStandardSrWorld();
+            world.Analyse();
+            MarkAtlasChanged(world.State, SrRigid, (0, 0), (0, 1), (1, 0), (1, 1));
+
+            var result = world.Run(analyse: false);
+
+            Assert.That(Get<int>(result, "RigidNotEligible"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            Assert.That(SrSkips(result), Does.Contain($"{SrRigid}: the rigid was changed by texture atlasing"));
+            Assert.That(Get<HashSet<string>>(result, "RigidsChangedByAtlasing"), Is.EquivalentTo(new[] { SrRigid }));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Is.Empty);
+            AssertFunnelReconciles(result);
+        }
+
+        [Test]
+        public void SharedRepack_AtlasedPartsOfAnotherRigid_DoNotBlockTheUntouchedRigid()
+        {
+            var (world, _) = BuildTwoRigidSrWorld();
+            world.Analyse();
+            // Every part of the second rigid was atlased: it no longer uses the set's textures.
+            MarkAtlasChanged(world.State, SrRigid2, (0, 0), (0, 1));
+
+            var result = world.Run(analyse: false);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Is.EquivalentTo(new[] { SrRigid }));
+            Assert.That(Get<HashSet<string>>(result, "RigidsChangedByAtlasing"), Is.EquivalentTo(new[] { SrRigid2 }));
+            Assert.That(Get<int>(result, "AtlasedUsersIgnored"), Is.GreaterThan(0));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedRigids"), Is.EquivalentTo(new[] { SrRigid }));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Is.EquivalentTo(new[] { SrWs }));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_ChangedRigidsUnatlasedPartStillUsesTheTexture_BlocksThatTexture()
+        {
+            var (world, _) = BuildTwoRigidSrWorld();
+            world.Analyse();
+            // Only part 0 of the second rigid was atlased; its part 1 still loads the m2 textures.
+            MarkAtlasChanged(world.State, SrRigid2, (0, 0));
+
+            var result = world.Run(analyse: false);
+
+            Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Does.Not.Contain(SrRigid2));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Does.Not.Contain(SrWs2));
+            Assert.That(
+                Get<IDictionary>(result, "PartDropReasons").Keys.Cast<string>(),
+                Has.Some.Contain("the rigid was changed by texture atlasing"));
         }
 
         [Test]

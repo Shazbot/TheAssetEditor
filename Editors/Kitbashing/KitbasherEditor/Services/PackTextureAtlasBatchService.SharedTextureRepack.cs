@@ -117,6 +117,8 @@ namespace Editors.KitbasherEditor.Services
             "a bound material also uses textures outside the set";
         private const string SharedRepackReasonBlockedTexture =
             "a texture cannot be repacked (not BC1/BC3, not a power of two, or an owned override of a vanilla texture)";
+        private const string SharedRepackReasonAtlasChangedRigid =
+            "the rigid was changed by texture atlasing";
         private const string SharedRepackReasonRigid =
             "the part's rigid is not eligible: ";
         private const string SharedRepackReasonNoCoverage =
@@ -398,6 +400,10 @@ namespace Editors.KitbasherEditor.Services
             public int SetsConsidered { get; set; }
             public int BelowThreshold { get; set; }
             public int RigidNotEligible { get; set; }
+            // Rigids of considered sets that were left out because texture atlasing changed them,
+            // and the atlased parts that no longer count as users of the set's textures.
+            public HashSet<string> RigidsChangedByAtlasing { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public int AtlasedUsersIgnored { get; set; }
             public int MergedIntoOther { get; set; }
             public int DroppedByClosure { get; set; }
             public int NotBuildable { get; set; }
@@ -437,13 +443,15 @@ namespace Editors.KitbasherEditor.Services
             public bool Finalized { get; set; }
         }
 
-        // The option is ignored (not an error) next to anything else that rewrites UVs.
+        // The option is ignored (not an error) next to the cross-rigid writer, which rewrites UVs
+        // of rigids this stage cannot account for. Texture atlasing is allowed: it runs first, and
+        // the rigids it changed are left out of the repack (see AtlasChangedRigids).
         private static bool ResolveSharedTextureRepack(
             bool requested,
             bool buildAtlases,
             bool crossRigidMerges,
             bool crossRigidOnly)
-            => requested && !buildAtlases && !crossRigidMerges && !crossRigidOnly;
+            => requested && !crossRigidMerges && !crossRigidOnly;
 
         // ---------------------------------------------------------------------------
         // Pure geometry and layout helpers.
@@ -924,7 +932,9 @@ namespace Editors.KitbasherEditor.Services
                     rigidPath,
                     wsByRigid.GetValueOrDefault(rigidPath) ?? [],
                     rigidReferrers,
-                    () => state.ModifiedRigids.Contains(rigidPath) && !result.RepackedRigids.Contains(rigidPath)
+                    () => state.AtlasChangedRigids.Contains(rigidPath)
+                        ? SharedRepackReasonAtlasChangedRigid
+                        : state.ModifiedRigids.Contains(rigidPath) && !result.RepackedRigids.Contains(rigidPath)
                         ? "the rigid was already modified by another stage"
                         : state.CrossRigidGeneratedRigidPaths.Contains(rigidPath)
                             ? "the rigid is a generated cross-rigid model"
@@ -982,6 +992,8 @@ namespace Editors.KitbasherEditor.Services
                 if (!setRigidCache.TryGetValue(rigidPath, out var item))
                 {
                     var (loaded, rigidReason) = GetRigid(rigidPath);
+                    if (rigidReason == SharedRepackReasonAtlasChangedRigid)
+                        result.RigidsChangedByAtlasing.Add(rigidPath);
                     item = new SharedRepackSetRigid
                     {
                         Path = rigidPath,
@@ -1673,6 +1685,15 @@ namespace Editors.KitbasherEditor.Services
                         {
                             if (!ineligible.TryGetValue(key.Rigid, out var bad))
                                 continue;
+
+                            // An atlased part uses the atlas, not this texture: it is not a user
+                            // that has to be rewritten (or that keeps the texture loaded). The
+                            // rigid's other parts still are, and are dropped below.
+                            if (state.AtlasChangedParts.Contains((Normalize(key.Rigid), key.Lod, key.Part)))
+                            {
+                                result.AtlasedUsersIgnored++;
+                                continue;
+                            }
 
                             if (!pseudoParts.TryGetValue(bad.Path, out var byKey))
                             {
@@ -4343,8 +4364,9 @@ namespace Editors.KitbasherEditor.Services
             {
                 sb.AppendLine(
                     state.SharedTextureRepackRequested
-                        ? "Requested but ignored: not available together with texture atlasing, cross-rigid " +
-                          "merges or cross-rigid-only mode (they rewrite UVs too). No pack file was changed."
+                        ? "Requested but ignored: not available together with cross-rigid merges or " +
+                          "cross-rigid-only mode (they rewrite UVs of rigids the repack cannot account for). " +
+                          "No pack file was changed."
                         : "Off (opt-in). No pack file was changed.");
                 sb.AppendLine();
                 return;
@@ -4390,7 +4412,15 @@ namespace Editors.KitbasherEditor.Services
             sb.AppendLine($"  Merged into another set's plan: {result.MergedIntoOther:N0}");
             sb.AppendLine(
                 $"  Every rigid not eligible (not owned, overrides vanilla, direct reference, WSModel not owned or " +
-                $"overriding, modified by another stage, unreadable): {result.RigidNotEligible:N0}");
+                $"overriding, changed by texture atlasing, modified by another stage, unreadable): {result.RigidNotEligible:N0}");
+            if (state.TextureAtlasingActive)
+            {
+                sb.AppendLine(
+                    $"Texture atlasing ran first: {result.RigidsChangedByAtlasing.Count:N0} rigid(s) it changed were " +
+                    $"left out of the repack (reason \"{SharedRepackReasonAtlasChangedRigid}\"); " +
+                    $"{result.AtlasedUsersIgnored:N0} atlased part(s) no longer count as users of the textures " +
+                    $"they used (they use the atlas), while a changed rigid's other parts still do and are dropped.");
+            }
             sb.AppendLine(
                 $"  Dropped by closure, variants, tiling, ineligible rigids or the re-estimate: {result.DroppedByClosure:N0}");
             sb.AppendLine($"  Not buildable (format, size, charts, layout, decode): {result.NotBuildable:N0}");

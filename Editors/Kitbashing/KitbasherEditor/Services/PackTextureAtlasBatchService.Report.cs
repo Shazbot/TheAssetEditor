@@ -913,7 +913,15 @@ namespace Editors.KitbasherEditor.Services
             {
                 sb.AppendLine(
                     "Shared texture repack was requested but ignored: it is not available together " +
-                    "with texture atlasing, cross-rigid merges or cross-rigid-only mode.");
+                    "with cross-rigid merges or cross-rigid-only mode.");
+            }
+            else if (state.SharedTextureRepackEnabled && state.TextureAtlasingActive)
+            {
+                var repack = state.SharedTextureRepack;
+                sb.AppendLine(
+                    "Texture atlasing and shared texture repack both ran (atlasing first; every part and " +
+                    "texture is changed by at most one of them). Repack candidates dropped because atlasing " +
+                    $"changed their rigid: {(repack?.RigidsChangedByAtlasing.Count ?? 0):N0} rigid(s).");
             }
             sb.AppendLine($"Cross-rigid-only mode: {(state.CrossRigidOnly ? "YES" : "NO")}");
             if (!state.TextureAtlasingActive)

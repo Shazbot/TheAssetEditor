@@ -201,7 +201,7 @@
             Grid.Row="20"
             Margin="22,4,0,0"
             MaxWidth="620"
-            Text="Off by default. For textures that one mod-owned rigid uses only in small regions, writes new smaller textures holding just those regions at the same texel density, rewrites that rigid's UVs, writes new materials and repoints its WSModels; the original files are not edited. Video memory only. Not available together with texture atlasing or cross-rigid merges (they rewrite UVs too). The report lists every candidate and why it was or was not built."
+            Text="Off by default. For textures that one mod-owned rigid uses only in small regions, writes new smaller textures holding just those regions at the same texel density, rewrites that rigid's UVs, writes new materials and repoints its WSModels; the original files are not edited. Video memory only. Works next to texture atlasing: it runs after it and leaves every rigid atlasing changed alone, so each part and texture is changed by at most one of the two. Not available together with cross-rigid merges (they rewrite UVs too). The report lists every candidate and why it was or was not built."
             TextWrapping="Wrap"
             Opacity="0.7" />
 
