@@ -912,16 +912,26 @@ namespace Editors.KitbasherEditor.Services
             if (state.SharedTextureRepackRequested && !state.SharedTextureRepackEnabled)
             {
                 sb.AppendLine(
-                    "Shared texture repack was requested but ignored: it is not available together " +
-                    "with cross-rigid merges or cross-rigid-only mode.");
+                    "Shared texture repack was requested but ignored: it is not available in " +
+                    "cross-rigid-only mode (which never writes textures).");
             }
-            else if (state.SharedTextureRepackEnabled && state.TextureAtlasingActive)
+            else if (state.SharedTextureRepackEnabled &&
+                     (state.TextureAtlasingActive || state.CrossRigidMergesEnabled))
             {
                 var repack = state.SharedTextureRepack;
                 sb.AppendLine(
-                    "Texture atlasing and shared texture repack both ran (atlasing first; every part and " +
-                    "texture is changed by at most one of them). Repack candidates dropped because atlasing " +
-                    $"changed their rigid: {(repack?.RigidsChangedByAtlasing.Count ?? 0):N0} rigid(s).");
+                    "Shared texture repack ran after " +
+                    string.Join(
+                        " and ",
+                        new[]
+                        {
+                            state.TextureAtlasingActive ? "texture atlasing" : null,
+                            state.CrossRigidMergesEnabled ? "cross-rigid merges" : null,
+                        }.OfType<string>()) +
+                    " (every part and texture is changed by at most one of them). Repack candidates dropped: " +
+                    $"{(repack?.RigidsChangedByAtlasing.Count ?? 0):N0} rigid(s) changed by atlasing, " +
+                    $"{(repack?.RigidsChangedByCrossRigid.Count ?? 0):N0} rigid(s) changed by cross-rigid merging; " +
+                    $"{(repack?.SetsBlockedByMergedUsers.Count ?? 0):N0} set(s) blocked by merged-rigid users.");
             }
             sb.AppendLine($"Cross-rigid-only mode: {(state.CrossRigidOnly ? "YES" : "NO")}");
             if (!state.TextureAtlasingActive)

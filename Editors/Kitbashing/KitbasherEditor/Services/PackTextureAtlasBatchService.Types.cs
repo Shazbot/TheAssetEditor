@@ -921,6 +921,9 @@ namespace Editors.KitbasherEditor.Services
             // atlased part no longer references its original textures.
             public HashSet<string> AtlasChangedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<(string Rigid, int Lod, int Part)> AtlasChangedParts { get; } = [];
+            // Source rigids the cross-rigid writer built generated models from (their geometry is
+            // copied, the files are kept): the shared texture repack leaves them alone.
+            public HashSet<string> CrossRigidChangedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public int AtlasValueGateBatchesAccepted { get; set; }
             public int AtlasValueGateBatchesRejected { get; set; }
             public int AtlasValueGateTextureOnlyMergeBatchesAccepted { get; set; }

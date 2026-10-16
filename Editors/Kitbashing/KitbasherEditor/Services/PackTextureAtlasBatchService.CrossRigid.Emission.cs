@@ -45,6 +45,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidAuthorSlotsAboveLimit.Clear();
             state.CrossRigidRewrittenRootVmdPaths.Clear();
             state.CrossRigidRetainedSourceAssetPaths.Clear();
+            state.CrossRigidChangedRigids.Clear();
             state.CrossRigidEmissionSkipCounts.Clear();
             state.CrossRigidEmissionSkipExamples.Clear();
             state.CrossRigidRewritePlansApplied = 0;
@@ -387,6 +388,14 @@ namespace Editors.KitbasherEditor.Services
                     $"{state.CrossRigidSelectedRewriteOccurrenceKeys.Count}, " +
                     $"skip reasons={string.Join(", ", state.CrossRigidEmissionSkipCounts.Select(entry => $"{entry.Key}: {entry.Value}"))}). " +
                     "See cross-rigid emission skip diagnostics in the report.");
+            }
+
+            // The writer copies the source geometry into generated rigids and keeps the source
+            // files; the rigids it relied on are what later stages must not rewrite.
+            foreach (var retained in state.CrossRigidRetainedSourceAssetPaths)
+            {
+                if (retained.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+                    state.CrossRigidChangedRigids.Add(retained);
             }
 
             var finalizationTimer = Stopwatch.StartNew();

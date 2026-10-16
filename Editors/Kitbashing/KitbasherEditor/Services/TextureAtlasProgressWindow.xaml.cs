@@ -420,7 +420,6 @@ namespace Editors.KitbasherEditor.Services
                     DownscaleTexturesCheckBox.IsChecked == true &&
                     CrossRigidOnlyCheckBox.IsChecked != true,
                     SharedTextureRepackCheckBox.IsChecked == true &&
-                    CrossRigidMergesCheckBox.IsChecked != true &&
                     CrossRigidOnlyCheckBox.IsChecked != true,
                     CompactTexturesCheckBox.IsChecked == true &&
                     CrossRigidOnlyCheckBox.IsChecked != true,
@@ -519,12 +518,10 @@ namespace Editors.KitbasherEditor.Services
             DropUnreadAlphaCheckBox.IsEnabled =
                 atlasOptionsEnabled &&
                 CompactTexturesCheckBox.IsChecked == true;
-            // The shared texture repack works next to atlasing (it runs after it and leaves the
-            // rigids atlasing changed alone); it is not available together with the cross-rigid
-            // writer, which rewrites UVs of rigids it cannot account for.
-            SharedTextureRepackCheckBox.IsEnabled =
-                atlasOptionsEnabled &&
-                CrossRigidMergesCheckBox.IsChecked != true;
+            // The shared texture repack works next to atlasing and cross-rigid merges (it runs
+            // after them and only acts on what they did not change); cross-rigid-only mode
+            // never writes textures, which is why atlasOptionsEnabled is false there.
+            SharedTextureRepackCheckBox.IsEnabled = atlasOptionsEnabled;
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)

@@ -312,9 +312,9 @@ namespace Editors.KitbasherEditor.Services
                 state.DownscaleTextures = downscaleTextures && !crossRigidOnly;
                 state.CompactTextures = compactTextures && !crossRigidOnly;
                 state.DropUnreadAlpha = dropUnreadAlpha && state.CompactTextures;
-                // The repack rewrites UVs, so it is ignored next to cross-rigid merges (see
-                // ResolveSharedTextureRepack); next to atlasing it runs after it and leaves
-                // the rigids atlasing changed alone.
+                // The repack writes textures, so it is ignored in cross-rigid-only mode (see
+                // ResolveSharedTextureRepack); next to atlasing and cross-rigid merges it runs
+                // after them and leaves what they changed alone.
                 state.SharedTextureRepackRequested = sharedTextureRepack;
                 state.SharedTextureRepackEnabled = ResolveSharedTextureRepack(
                     sharedTextureRepack,
@@ -577,7 +577,7 @@ namespace Editors.KitbasherEditor.Services
                         // measure the source pack as authored (fresh reads), so running them
                         // early changes no figure; they get a generous budget because an
                         // incomplete analysis must not be acted on. The repack itself runs
-                        // after the atlas stage (below).
+                        // after the atlas and cross-rigid stages (below).
                         RunVanillaTextureCoverage(
                             state,
                             cancellationToken,
@@ -632,14 +632,6 @@ namespace Editors.KitbasherEditor.Services
                         state.PhaseDurations["Plan and build atlases"] =
                             phaseStopwatch.Elapsed;
                     }
-
-                    if (state.SharedTextureRepackEnabled)
-                    {
-                        // Where the atlas stage ran: before the merge and geometry optimization,
-                        // which then see the repacked rigids and materials. A rigid atlasing
-                        // changed is not repacked (state.AtlasChangedRigids).
-                        RunSharedTextureRepack(state, cancellationToken, progress);
-                    }
                 }
 
                 // Cross-rigid merging is opt-in: it rewrites VMDs and adds
@@ -662,6 +654,16 @@ namespace Editors.KitbasherEditor.Services
                         progress);
                     state.PhaseDurations["Emit cross-rigid merges"] =
                         phaseStopwatch.Elapsed;
+                }
+
+                if (state.SharedTextureRepackEnabled)
+                {
+                    // After atlasing and cross-rigid merging, before the merge and geometry
+                    // optimization, which then see the repacked rigids and materials. It only
+                    // acts on what the earlier stages did not change: atlas-changed and
+                    // cross-rigid rigids are skipped, and the rigids the cross-rigid writer
+                    // generated block the sets whose textures they still use.
+                    RunSharedTextureRepack(state, cancellationToken, progress);
                 }
 
                 if (mergeCompatibleMeshes && !crossRigidOnly)
