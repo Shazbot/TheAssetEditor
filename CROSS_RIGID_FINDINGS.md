@@ -269,6 +269,43 @@ Opt-in, "Compact textures exactly (experimental)", off by default and disabled i
 - **Checked in-game by the author on `ak_teb3`:** no visible change.
 - **Part of the saving is pack size only.** The game ignores a rigid's embedded textures when the rigid has a WSModel, and some rigids are not used at all (for example `ak_grave_de_sword_2h_*` and `ak_kf_lupio`). Rewriting those textures is harmless, just useless.
 
+### Which texture channels the shaders read (`Wh3ShaderTextureChannels.json`)
+
+The game's compiled shader cache is on the `shaders` branch of the dump repo `K:\projects\wh3dump` (Patch 8.1, build of 12/07/2026). `Tools/ShaderChannels/extract_shader_channels.py` builds the table from it:
+
+- it extracts the compiled pixel shaders of the `weighted2_*`, `weighted4_*` and `rigid_*` shaders (4,932 blobs, 425 shaders);
+- it disassembles them with `fxc.exe /dumpbin` from the Windows SDK;
+- for each `t_xml_*` slot it records the channels any permutation samples.
+
+The table is embedded in the tool. Rerun the script after a game patch.
+
+| Slot | Channels read |
+|---|---|
+| `base_colour`, non-alpha shaders (`*_character`, `*_default`, `*_faction_colours`, `*_random_colours`) | RGB |
+| `base_colour`, `*_alpha` and `alphatint` shaders, `weighted4_character_emissive` | RGBA |
+| `material_map`, every shader | RG |
+| `normal`, every shader | GA (alpha holds X) |
+| `mask` | RGBA, or not bound (`random_colours`, `faction_colours`, `default`) |
+
+### Dropping alpha no shader reads (same file, opt-in)
+
+"Drop texture alpha no shader reads (experimental)", available only while compaction is ticked. A BC2/BC3 texture with real alpha becomes BC1 when:
+
+- every user is an xml material whose shader is in the table, binds the texture's slot and does not read its alpha;
+- every rigid that names it is drawn only through owned WSModels, checked with the same rules as the repack;
+- it does not override a vanilla texture, and the vanilla game data is loaded.
+
+RGB stays bit-exact and is verified at every level; only the alpha is dropped.
+
+- **`ak_teb3`:** 12 textures, 24.8 → 12.4 MB (saves 12.4 MB). They are the morion guard and brass base colours, `ak_teb_lupio_kf_base`, `ak_teb_gambeson_base` and two knight leg base colours, all used by `weighted2_character`/`weighted4_character`.
+- **Correctly kept back:**
+  - 22 textures whose alpha is read (alpha-shader base colours, normals, masks);
+  - 34 named by rigids that VMDs reference directly (mostly campaign ships);
+  - 30 named by rigids whose consumer discovery is incomplete;
+  - 1 vanilla override.
+- **Checked in-game by the author** (morions, Lupio, the gambeson): no visible change. That supports the assumption that the material's shader is the one the game uses.
+- **Compaction total on `ak_teb3` with the option:** 58.9 MB (24.1 MB flat, 22.4 MB opaque, 12.4 MB unread alpha).
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).
@@ -279,6 +316,7 @@ Opt-in, "Compact textures exactly (experimental)", off by default and disabled i
 6. **The "stays loaded anyway" probability is not computed** for vanilla texture cropping, so its 127 / 217 MB figures are upper bounds.
 7. **Repack savings on vanilla textures are upper bounds.** Vanilla units in the same battle keep the original textures loaded.
 8. **BC7 textures are not compacted.** There is no exact BC7 decoder in the codebase (21 textures on `ak_teb3`, 10 on `ovn_albion`).
+9. **The shader channel table is tied to one game build** (Patch 8.1). Regenerate it after a patch that changes shaders. `weighted2_random_colours_alpha` is missing from the dump, so textures it uses are never alpha-dropped.
 
 ## Changes made this session
 
@@ -311,7 +349,8 @@ Opt-in, "Compact textures exactly (experimental)", off by default and disabled i
 - Signature sets that share a material are merged into one plan (up to 8 sets and 16 rigids, with a fallback to the seed set).
 - Page splitting puts whole clusters on up to 4 smaller power-of-two pages.
 - Exact texture compaction (`PackTextureAtlasBatchService.TextureCompaction.cs`): new opt-in checkbox. It counts xml material slots and the texture lists embedded in rigids as references.
-- Tests: the `FullyQualifiedName~PackTextureAtlas` filter now runs 553 tests, all passing.
+- Shader channel table (`Wh3ShaderTextureChannels.json`, generator in `Tools/ShaderChannels/`) and the opt-in "Drop texture alpha no shader reads" rule. The repack's rigid checks were moved into a shared helper (`GetRigidNotOnlyThroughOwnedWsModelsReason`).
+- Tests: the `FullyQualifiedName~PackTextureAtlas` filter now runs 575 tests, all passing.
 
 ## Recommendations
 
@@ -323,5 +362,5 @@ Opt-in, "Compact textures exactly (experimental)", off by default and disabled i
 6. Texture work is memory only; do not expect FPS from it.
 7. Keep texture downscaling, shared texture repack and exact compaction opt-in.
 8. Do not build per-texture reverse atlasing or per-unit atlases (Options A and B).
-9. Exact compaction is the cheapest memory win, with no visual risk. Enable it whenever a pack is processed.
+9. Exact compaction is the cheapest memory win, with no visual risk. Enable it whenever a pack is processed. Dropping unread alpha is equally safe as long as the shader table matches the game build.
 10. Do not copy vanilla rigids to unlock more repack sets; only 3 rigids block sets today.
