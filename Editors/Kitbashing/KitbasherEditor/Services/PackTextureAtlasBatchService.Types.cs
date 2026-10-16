@@ -825,6 +825,7 @@ namespace Editors.KitbasherEditor.Services
             public List<string> DirectAssetSkipMessages { get; } = [];
             public Dictionary<string, RmvFile> RigidModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, TextureInspection> TextureInspections { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, TextureAlphaState> TextureAlphaStates { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<AtlasRegionContentHashKey, string> AtlasRegionContentHashes { get; } = [];
             public Dictionary<MeshKey, List<WsUsage>> Usages { get; } = [];
             public HashSet<MeshKey> ProcessedMeshes { get; } = [];

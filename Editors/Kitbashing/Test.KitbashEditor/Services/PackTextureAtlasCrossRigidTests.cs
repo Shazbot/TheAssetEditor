@@ -11869,5 +11869,201 @@ namespace Test.KitbashEditor.Services
             Assert.That(Get<bool>(BwMeshes(result).Single(), "Unreadable"), Is.True);
             Assert.That(BwReport(state), Does.Contain("unreadable 1. Check: 1 of 1 (reconciles)"));
         }
+
+        // --- BC1 atlas alpha safety -------------------------------------------------------
+
+        private static byte[] BuildAlphaDds(string format, byte alpha)
+        {
+            // One 4x4 block. BC3: alpha0 = alpha1 = alpha with all indices 0, so every texel
+            // has exactly this alpha. BC1 is left as the fixture's block bytes.
+            var dds = BuildBcDds(4, 4, 1, format, dx10: true, srgb: true);
+            if (format != "BC1")
+            {
+                dds[148] = alpha;
+                dds[149] = alpha;
+                for (var index = 150; index < 156; index++)
+                    dds[index] = 0;
+            }
+
+            return dds;
+        }
+
+        private static string ClassifyAlpha(byte[] dds)
+            => GetStaticMethod("ClassifyTextureAlpha").Invoke(null, [dds])!.ToString()!;
+
+        private static object AlphaState(string name)
+            => Enum.Parse(
+                GetServiceType().GetNestedType("TextureAlphaState", BindingFlags.NonPublic)!,
+                name);
+
+        private static string? AlphaSafety(string alpha, string? shader, string slot)
+            => (string?)GetStaticMethod("CheckAtlasAlphaSafety")
+                .Invoke(null, [AlphaState(alpha), shader, slot]);
+
+        [Test]
+        public void AtlasAlpha_Classify_Bc1AndOpaqueBc3AreNotChanged_Bc3WithAlphaIsFlagged()
+        {
+            Assert.That(ClassifyAlpha(BuildAlphaDds("BC1", 255)), Is.EqualTo("Opaque"));
+            Assert.That(ClassifyAlpha(BuildAlphaDds("BC3", 255)), Is.EqualTo("Opaque"));
+            Assert.That(ClassifyAlpha(BuildAlphaDds("BC3", 0)), Is.EqualTo("HasAlpha"));
+            Assert.That(ClassifyAlpha(BuildAlphaDds("BC3", 200)), Is.EqualTo("HasAlpha"));
+            Assert.That(ClassifyAlpha([1, 2, 3]), Is.EqualTo("Unknown"));
+        }
+
+        [Test]
+        public void AtlasAlpha_NonOpaqueSourceNoShaderReadsIt_IsAtlasedWithAlphaForcedOpaque()
+        {
+            // Case b: weighted4_character samples base colour as rgb and the material map as rg.
+            Assert.That(
+                AlphaSafety("HasAlpha", @"shaders\weighted4_character.xml.shader", "t_xml_base_colour"),
+                Is.Null);
+            Assert.That(
+                AlphaSafety("HasAlpha", "weighted4_character", "t_xml_material_map"),
+                Is.Null);
+
+            var state = CreateBareBatchState();
+            var sourcePaths = new Dictionary<int, string> { [0] = "a.dds", [1] = "b.dds", [2] = "c.dds" };
+            var bytes = new Dictionary<int, byte[]>
+            {
+                [0] = BuildAlphaDds("BC3", 0),
+                [1] = BuildAlphaDds("BC3", 255),
+                [2] = BuildAlphaDds("BC1", 255),
+            };
+            var constants = new Dictionary<int, Editors.ImportExport.TextureAtlas.TextureAtlasConstantColor>
+            {
+                [3] = new(1, 2, 3, 0),
+                [4] = new(1, 2, 3, 255),
+            };
+
+            var forced = (HashSet<int>?)GetStaticMethod("GetForceOpaqueAlphaSourceIds").Invoke(
+                null,
+                [state, Shared.GameFormats.RigidModel.Types.TextureType.BaseColour, sourcePaths, bytes, constants]);
+
+            Assert.That(forced, Is.EquivalentTo(new[] { 0, 3 }));
+
+            // Only the BC1 channels need it: the BC3 normal atlas keeps its alpha.
+            Assert.That(
+                GetStaticMethod("GetForceOpaqueAlphaSourceIds").Invoke(
+                    null,
+                    [state, Shared.GameFormats.RigidModel.Types.TextureType.Normal, sourcePaths, bytes, constants]),
+                Is.Null);
+        }
+
+        [Test]
+        public void AtlasAlpha_OpaqueSources_ForceNothing()
+        {
+            var state = CreateBareBatchState();
+            var forced = GetStaticMethod("GetForceOpaqueAlphaSourceIds").Invoke(
+                null,
+                [
+                    state,
+                    Shared.GameFormats.RigidModel.Types.TextureType.BaseColour,
+                    new Dictionary<int, string> { [0] = "a.dds", [1] = "b.dds" },
+                    new Dictionary<int, byte[]>
+                    {
+                        [0] = BuildAlphaDds("BC3", 255),
+                        [1] = BuildAlphaDds("BC1", 255),
+                    },
+                    new Dictionary<int, Editors.ImportExport.TextureAtlas.TextureAtlasConstantColor>(),
+                ]);
+
+            Assert.That(forced, Is.Null);
+        }
+
+        [Test]
+        public void AtlasAlpha_AlphaIsDecodedOncePerTexturePath()
+        {
+            var state = CreateBareBatchState();
+            var bytes = new Dictionary<int, byte[]>
+            {
+                [0] = BuildAlphaDds("BC3", 0),
+                [1] = BuildAlphaDds("BC3", 0),
+            };
+            var paths = new Dictionary<int, string> { [0] = "Shared.dds", [1] = "shared.DDS" };
+
+            GetStaticMethod("GetForceOpaqueAlphaSourceIds").Invoke(
+                null,
+                [
+                    state,
+                    Shared.GameFormats.RigidModel.Types.TextureType.BaseColour,
+                    paths,
+                    bytes,
+                    new Dictionary<int, Editors.ImportExport.TextureAtlas.TextureAtlasConstantColor>(),
+                ]);
+
+            Assert.That(Get<System.Collections.IDictionary>(state, "TextureAlphaStates").Count, Is.EqualTo(1));
+        }
+
+        [TestCase("weighted4_character_alpha", "t_xml_base_colour")]
+        [TestCase(@"shaders\weighted4_character_alpha.xml.shader", "t_xml_base_colour")]
+        [TestCase("no_such_shader", "t_xml_base_colour")]
+        [TestCase(null, "t_xml_base_colour")]
+        [TestCase("weighted4_character", "t_xml_not_bound_slot")]
+        public void AtlasAlpha_NonOpaqueSourceThatMayBeRead_IsRefusedWithAReason(string? shader, string slot)
+        {
+            var reason = AlphaSafety("HasAlpha", shader, slot);
+
+            Assert.That(reason, Is.Not.Null.And.Contains(slot));
+        }
+
+        [Test]
+        public void AtlasAlpha_OpaqueOrUnverifiableSource_ShaderIsIrrelevantOrRefused()
+        {
+            Assert.That(AlphaSafety("Opaque", "weighted4_character_alpha", "t_xml_base_colour"), Is.Null);
+            Assert.That(AlphaSafety("Unknown", "weighted4_character", "t_xml_base_colour"), Is.Not.Null);
+        }
+
+        private static string? DiscoveryAlphaCheck(
+            string shader,
+            byte[] baseColour,
+            byte[]? materialMap = null)
+        {
+            var files = new Dictionary<string, byte[]> { ["textures\\base.dds"] = baseColour };
+            var textures = "<texture><slot>t_xml_base_colour</slot><source>textures\\base.dds</source></texture>";
+            var resolved = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "t_xml_base_colour" };
+            if (materialMap != null)
+            {
+                files["textures\\map.dds"] = materialMap;
+                textures += "<texture><slot>t_xml_material_map</slot><source>textures\\map.dds</source></texture>";
+                resolved.Add("t_xml_material_map");
+            }
+
+            var document = new XmlDocument();
+            document.LoadXml(
+                $"<material><shader>shaders\\{shader}.xml.shader</shader><textures>{textures}</textures></material>");
+            var state = CreateIdealState(files);
+            return (string?)GetStaticMethod("CheckAtlasAlphaLoss").Invoke(
+                null,
+                [
+                    state,
+                    document,
+                    resolved,
+                    new Dictionary<string, Editors.ImportExport.TextureAtlas.TextureAtlasConstantColor>(
+                        StringComparer.OrdinalIgnoreCase),
+                ]);
+        }
+
+        [Test]
+        public void AtlasAlpha_Discovery_OpaqueAndBc1MaterialsAreKept_AlphaShaderMaterialIsSkipped()
+        {
+            // Case a: nothing to lose, whatever the shader.
+            Assert.That(DiscoveryAlphaCheck("weighted4_character_alpha", BuildAlphaDds("BC3", 255)), Is.Null);
+            Assert.That(DiscoveryAlphaCheck("weighted4_character_alpha", BuildAlphaDds("BC1", 255)), Is.Null);
+
+            // Case b: alpha present, the shader never reads it, so the atlas flattens it.
+            Assert.That(DiscoveryAlphaCheck("weighted4_character", BuildAlphaDds("BC3", 0)), Is.Null);
+
+            // Case c: the shader reads alpha, so the material keeps its textures.
+            var reason = DiscoveryAlphaCheck("weighted4_character_alpha", BuildAlphaDds("BC3", 0));
+            Assert.That(reason, Is.Not.Null.And.Contains("weighted4_character_alpha"));
+
+            // Alpha in a secondary BC1 channel is checked as well, against that slot.
+            Assert.That(
+                DiscoveryAlphaCheck("weighted4_character", BuildAlphaDds("BC3", 255), BuildAlphaDds("BC3", 0)),
+                Is.Null);
+            Assert.That(
+                DiscoveryAlphaCheck("weighted4_character_ethereal", BuildAlphaDds("BC3", 255), BuildAlphaDds("BC3", 0)),
+                Is.Not.Null.And.Contains("t_xml_material_map"));
+        }
     }
 }

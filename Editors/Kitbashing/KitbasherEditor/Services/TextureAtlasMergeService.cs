@@ -1,4 +1,6 @@
+using DirectXTexNet;
 using Editors.ImportExport.Importing.Importers.PngToDds;
+using Editors.ImportExport.Importing.Importers.PngToDds.Helpers;
 using Editors.ImportExport.TextureAtlas;
 using GameWorld.Core.Rendering.Materials.Capabilities;
 using GameWorld.Core.Rendering.Materials.Capabilities.Utility;
@@ -106,7 +108,8 @@ namespace Editors.KitbasherEditor.Services
                     errors.Error(
                         "Selection",
                         "No compatible group of at least two non-emissive meshes could be texture-atlased. " +
-                        "Meshes that cannot safely share an atlas are left unchanged.");
+                        "Meshes that cannot safely share an atlas (including meshes whose BaseColour or " +
+                        "MaterialMap has transparency the BC1 atlas would lose) are left unchanged.");
                     return false;
                 }
 
@@ -155,6 +158,15 @@ namespace Editors.KitbasherEditor.Services
                 // secondary texture still points at an unresolved original path would make
                 // that channel sample with atlas UVs. Skip the entire mesh instead.
                 if (HasUnsafeMissingSecondaryTexture(mesh.Material, primaryTextureType))
+                {
+                    untouchedMeshes.Add(mesh);
+                    continue;
+                }
+
+                // The BC1 target formats have no usable alpha. The shader of a CapabilityMaterial
+                // is not known well enough to prove that nothing reads a texture's alpha, so a
+                // mesh with non-opaque (or unverifiable) alpha in a BC1 channel keeps its textures.
+                if (HasUnsafeBc1AtlasAlpha(mesh.Material))
                 {
                     untouchedMeshes.Add(mesh);
                     continue;
@@ -310,6 +322,28 @@ namespace Editors.KitbasherEditor.Services
                     continue;
 
                 return true;
+            }
+
+            return false;
+        }
+
+        private bool HasUnsafeBc1AtlasAlpha(CapabilityMaterial material)
+        {
+            var game = _applicationSettingsService.CurrentSettings.CurrentGame;
+            foreach (var input in GetAtlasTextureInputs(material))
+            {
+                if (!IsTextureUsed(input) ||
+                    DDSFormatHelper.GetDDSFormat(game, input.Type) != DXGI_FORMAT.BC1_UNORM_SRGB ||
+                    !TryReadTextureBytes(input, out var bytes))
+                {
+                    continue;
+                }
+
+                if (PackTextureAtlasBatchService.ClassifyTextureAlpha(bytes) !=
+                    PackTextureAtlasBatchService.TextureAlphaState.Opaque)
+                {
+                    return true;
+                }
             }
 
             return false;

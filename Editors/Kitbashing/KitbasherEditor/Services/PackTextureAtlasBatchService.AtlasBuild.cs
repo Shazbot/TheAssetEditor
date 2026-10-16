@@ -709,6 +709,7 @@ namespace Editors.KitbasherEditor.Services
                 var textureBytes = new Dictionary<int, byte[]>();
                 var textureBytesByPath = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
                 var constantSources = new Dictionary<int, TextureAtlasConstantColor>();
+                var sourcePaths = new Dictionary<int, string>();
                 var omitted = new HashSet<int>();
 
                 foreach (var source in sharedBatch.Sources)
@@ -734,6 +735,7 @@ namespace Editors.KitbasherEditor.Services
                         }
 
                         textureBytes[source.Id] = bytes;
+                        sourcePaths[source.Id] = sourcePath;
                     }
                     else if (representative.ConstantChannels.TryGetValue(
                                  channel.Slot,
@@ -805,7 +807,12 @@ namespace Editors.KitbasherEditor.Services
                 _ = TextureAtlasBuilder.BuildMipPixels(
                     plan,
                     textureBytes,
-                    forceOpaqueAlphaSourceIds: null,
+                    forceOpaqueAlphaSourceIds: GetForceOpaqueAlphaSourceIds(
+                        state,
+                        channel.Type,
+                        sourcePaths,
+                        textureBytes,
+                        constantSources),
                     omittedSourceIds: omitted,
                     cancellationToken: cancellationToken,
                     heartbeat: () =>
