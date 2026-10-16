@@ -4626,6 +4626,102 @@ namespace Test.KitbashEditor.Services
                 Is.True);
         }
 
+        // --- Source cost with downscale on -------------------------------------------------
+
+        private static Type GetGateServiceType()
+            => Assembly.Load("Editors.KitbasherEditor").GetType(
+                "Editors.KitbasherEditor.Services.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+
+        private static object CreateGateStateWithEarlyDownscale(
+            bool withCandidate,
+            long bytesBefore,
+            long bytesAfter,
+            long sourceBcnBytes)
+        {
+            var source = new Mock<IPackFileContainer>();
+            var state = CreateTraversalBatchState(source.Object, []);
+            var type = GetGateServiceType();
+            if (withCandidate)
+            {
+                var candidate = Activator.CreateInstance(
+                    type.GetNestedType("TextureDownscaleCandidate", BindingFlags.NonPublic)!,
+                    ["textures\\big.dds", 2048, 2048, 1024, 1024, 0.5, "BC1", "BC1", true, true, true, 1,
+                     bytesBefore, bytesAfter, 1, 1, "test", 1.0])!;
+                ((IDictionary)state.GetType().GetProperty("DownscaleEarlyCandidates")!.GetValue(state)!)
+                    ["textures\\big.dds"] = candidate;
+            }
+
+            var summary = Activator.CreateInstance(
+                type.GetNestedType("BcnTextureResidencySummary", BindingFlags.NonPublic)!,
+                [0, 0, 0, 0, sourceBcnBytes, 0.0, 0L, 0.0,
+                 new Dictionary<string, int>(), new Dictionary<string, long>()])!;
+            state.GetType().GetProperty("SourceBcnResidency")!.SetValue(state, summary);
+            return state;
+        }
+
+        private static long GateSourceTextureBytes(object state, string path, long authored)
+            => (long)GetGateServiceType()
+                .GetMethod("GetAtlasValueGateSourceTextureBytes", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [state, path, authored])!;
+
+        private static long GateSourceBcnBytes(object state)
+            => (long)GetGateServiceType()
+                .GetMethod("GetAtlasValueGateSourceBcnBytes", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [state])!;
+
+        [Test]
+        public void ValueGate_DownscaleOn_BatchThatBeatsFullSizeSourcesButNotDownscaledOnesIsRejected()
+        {
+            const long authored = 1_400_000;
+            const long generated = 1_000_000;
+            var downscaleOn = CreateGateStateWithEarlyDownscale(true, authored, 350_000, 400L * 1024 * 1024);
+
+            var retiredFull = authored;
+            var retiredScaled = GateSourceTextureBytes(downscaleOn, "textures\\big.dds", authored);
+            string Decide(long retired)
+                => GetValueGateBudgetDecision(
+                    scenarioResolved: true,
+                    rawDrawsEliminated: 4,
+                    expectedArmyDrawsEliminated: 0,
+                    globalCostBytes: generated - retired,
+                    expectedCostBytes: 0,
+                    acceptedNetBcnBytes: 0,
+                    proposedNetBcnBytes: generated - retired,
+                    sourceBcnBytes: 400L * 1024 * 1024);
+
+            // The atlas (1.0 MB) replaces a 1.4 MB source: a net saving at full size ...
+            Assert.That(Decide(retiredFull), Is.EqualTo("Accept"));
+            // ... but the downscale would have shrunk that source to 0.35 MB, so the same atlas costs bytes.
+            Assert.That(retiredScaled, Is.EqualTo(350_000));
+            Assert.That(Decide(retiredScaled), Is.EqualTo("ScenarioResolvedZeroBenefit"));
+            Assert.That(
+                (HashSet<string>)downscaleOn.GetType().GetProperty("DownscaleEarlyUsedByGate")!.GetValue(downscaleOn)!,
+                Is.EquivalentTo(new[] { "textures\\big.dds" }));
+        }
+
+        [Test]
+        public void ValueGate_DownscaleOff_SourceCostIsTheAuthoredSize()
+        {
+            var downscaleOff = CreateGateStateWithEarlyDownscale(false, 0, 0, 400L * 1024 * 1024);
+
+            Assert.That(GateSourceTextureBytes(downscaleOff, "textures\\big.dds", 1_400_000), Is.EqualTo(1_400_000));
+            Assert.That(GateSourceBcnBytes(downscaleOff), Is.EqualTo(400L * 1024 * 1024));
+            Assert.That(
+                (HashSet<string>)downscaleOff.GetType().GetProperty("DownscaleEarlyUsedByGate")!.GetValue(downscaleOff)!,
+                Is.Empty);
+        }
+
+        [Test]
+        public void ValueGate_DownscaleOn_GrowthCapBaselineLosesTheEarlySavings()
+        {
+            var downscaleOn = CreateGateStateWithEarlyDownscale(true, 1_400_000, 350_000, 400L * 1024 * 1024);
+
+            Assert.That(GateSourceBcnBytes(downscaleOn), Is.EqualTo(400L * 1024 * 1024 - 1_050_000));
+            // A texture without an early candidate is priced as authored.
+            Assert.That(GateSourceTextureBytes(downscaleOn, "textures\\other.dds", 777), Is.EqualTo(777));
+        }
+
         [Test]
         public void ValueGate_ScenarioResolvedZeroBenefitRejectsPositiveBcnCost()
         {

@@ -1541,7 +1541,7 @@ namespace Editors.KitbasherEditor.Services
                 var combinedGrowthWithinCap = true;
                 if (textureOnlyMarginalGroupCount > 0)
                 {
-                    var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+                    var sourceBcnBytes = GetAtlasValueGateSourceBcnBytes(state);
                     if (sourceBcnBytes > 0)
                     {
                         var projectedNetGrowth =
@@ -2324,7 +2324,7 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
-            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var sourceBcnBytes = GetAtlasValueGateSourceBcnBytes(state);
             var acceptedNetBcnBytes = state.AtlasValueGateNetBcnBytesAccepted;
             if (!baseAlreadyAccepted)
                 acceptedNetBcnBytes += baseResidency.NetBcnBytes;
@@ -2982,7 +2982,7 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
-            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var sourceBcnBytes = GetAtlasValueGateSourceBcnBytes(state);
             var decision = EvaluateMarginalAtlasValueGateBudget(
                 scenarioResolved,
                 baseSavings.Raw,
@@ -3069,7 +3069,7 @@ namespace Editors.KitbasherEditor.Services
             var expectedCost = GetChargeableAtlasValueGateBytes(
                 residency.ExpectedArmyGeneratedBcnBytes,
                 residency.ExpectedArmyRetiredSourceBcnBytes);
-            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var sourceBcnBytes = GetAtlasValueGateSourceBcnBytes(state);
             var budgetDecision = EvaluateAtlasValueGateBudget(
                 scenarioResolved,
                 rawDrawsEliminated,
@@ -3207,7 +3207,7 @@ namespace Editors.KitbasherEditor.Services
                 GetPackLocalOnlyRetirementCreditBytes(
                     residency.PackReferenceRetiredSourceTextureCount,
                     residency.RetiredSourceTextureCount);
-            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var sourceBcnBytes = GetAtlasValueGateSourceBcnBytes(state);
             var budgetDecision = EvaluateTextureOnlyMergeAtlasValueGateBudget(
                 scenarioResolved,
                 prospectiveTextureMergeDraws,
@@ -3355,7 +3355,7 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
-            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var sourceBcnBytes = GetAtlasValueGateSourceBcnBytes(state);
             if (sourceBcnBytes > 0)
             {
                 var projectedNetGrowth =
@@ -3615,7 +3615,7 @@ namespace Editors.KitbasherEditor.Services
                 return false;
             }
 
-            var sourceBcnBytes = state.SourceBcnResidency?.BcnBytes ?? 0;
+            var sourceBcnBytes = GetAtlasValueGateSourceBcnBytes(state);
             if (sourceBcnBytes > 0)
             {
                 var projectedNetGrowth =
@@ -5386,7 +5386,7 @@ namespace Editors.KitbasherEditor.Services
                 }
 
                 result[texturePath] = new AtlasValueGateSourceTexture(
-                    bcn.Bytes,
+                    GetAtlasValueGateSourceTextureBytes(state, texturePath, bcn.Bytes),
                     source.IsOwnedBySourcePack,
                     directVmdTextures.Contains(texturePath),
                     directSourcePackVmdTextures.Contains(texturePath),
@@ -5459,6 +5459,37 @@ namespace Editors.KitbasherEditor.Services
             }
 
             state.AtlasValueGateSourceTexturesByReference = texturesByReference;
+        }
+
+        // The source side of every gate comparison. With downscale on, a texture is priced at the
+        // size the early downscale analysis chose for it (the file the downscale would leave), so
+        // an atlas is not credited with savings the downscale gives anyway. With downscale off
+        // there are no early candidates and both helpers return the as-authored figures.
+        private static long GetAtlasValueGateSourceTextureBytes(
+            BatchState state,
+            string texturePath,
+            long authoredBytes)
+        {
+            if (state.DownscaleEarlyCandidates.Count == 0 ||
+                !state.DownscaleEarlyCandidates.TryGetValue(Normalize(texturePath), out var candidate))
+            {
+                return authoredBytes;
+            }
+
+            state.DownscaleEarlyUsedByGate.Add(Normalize(texturePath));
+            return Math.Min(authoredBytes, candidate.BytesAfter);
+        }
+
+        // The whole source pack's BCn residency (the growth cap's baseline), less what the early
+        // downscale would save on it.
+        private static long GetAtlasValueGateSourceBcnBytes(BatchState state)
+        {
+            var authored = state.SourceBcnResidency?.BcnBytes ?? 0;
+            if (authored <= 0 || state.DownscaleEarlyCandidates.Count == 0)
+                return authored;
+
+            var saved = state.DownscaleEarlyCandidates.Values.Sum(candidate => candidate.BytesSaved);
+            return Math.Max(0, authored - saved);
         }
 
         private static bool TryGetGeneratedAtlasBcnCost(
