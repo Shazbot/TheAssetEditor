@@ -344,6 +344,9 @@ namespace Editors.KitbasherEditor.Services
             // Whether the set at this decision index may still join (not processed, not taken).
             public Func<int, bool> IsAvailable { get; init; } = _ => false;
             public Func<string, SharedRepackSetRigid> MakeRigid { get; init; } = null!;
+            // A texture's coverage entry at the density the repack builds it (its early
+            // downscale scale, else as authored).
+            public Func<VanillaCoverageTexture, VanillaCoverageTexture> Effective { get; init; } = entry => entry;
             // Parts of the rigids the cross-rigid writer generated, with the textures of their
             // materials: users the pre-pass sets do not contain.
             public List<(string Rigid, int Lod, int Part, HashSet<string> Textures)> MergedUsers { get; init; } = [];
@@ -413,6 +416,9 @@ namespace Editors.KitbasherEditor.Services
             public int AtlasedUsersIgnored { get; set; }
             // Rigids left out because the cross-rigid writer built generated models from them,
             // and the sets (labels) whose textures a generated cross-rigid rigid still uses.
+            // Source textures built at their early downscale scale (the repack's density follows
+            // the downscale option), with the scale.
+            public Dictionary<string, double> ScaledSourceTextures { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> RigidsChangedByCrossRigid { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> SetsBlockedByMergedUsers { get; } = new(StringComparer.Ordinal);
             public int MergedIntoOther { get; set; }
@@ -834,6 +840,90 @@ namespace Editors.KitbasherEditor.Services
             state.PhaseDurations["Shared texture repack"] = result.Elapsed;
         }
 
+        // A texture the early downscale analysis chose a scale for, as the downscale would write it
+        // (mip slicing or re-encode, checked like the late run checks it). The repack builds from
+        // this, so the same density, block-copy and chart rules apply at the smaller size and the
+        // result is the texture the downscale would have produced, repacked. Null: build from the
+        // file as authored (no early scale, or the scaled bytes could not be built).
+        private static SharedRepackScaledSource? GetSharedRepackScaledSource(BatchState state, string path)
+        {
+            path = Normalize(path);
+            if (!state.DownscaleEarlyCandidates.TryGetValue(path, out var candidate))
+                return null;
+            if (state.SharedRepackScaledSources.TryGetValue(path, out var cached))
+                return cached;
+
+            SharedRepackScaledSource? built = null;
+            try
+            {
+                var bytes = ResolveGameplayTraversalContainer(
+                        state.Source, GetGameplayTraversalContainers(state), path)?
+                    .FindFile(path)?.DataSource.ReadData();
+                if (bytes != null &&
+                    TryReadDdsLayout(
+                        bytes.AsSpan(0, Math.Min(bytes.Length, TextureDownscaleHeaderPeekBytes)).ToArray(),
+                        out var layout))
+                {
+                    byte[] rewritten;
+                    string error;
+                    var ok = candidate.UseSlicing
+                        ? TrySliceDdsMips(bytes, layout, candidate.SkipLevels, out rewritten, out error)
+                        : TryReencodeDds(
+                            bytes, layout, candidate.NewWidth, candidate.NewHeight,
+                            candidate.IsSrgb, out rewritten, out error);
+                    if (ok)
+                    {
+                        var problem = CheckDownscaledDds(rewritten, candidate);
+                        if (problem != null)
+                        {
+                            ok = false;
+                            error = $"result {problem}";
+                        }
+                    }
+
+                    if (ok && TryReadDdsLayout(
+                            rewritten.AsSpan(0, Math.Min(rewritten.Length, TextureDownscaleHeaderPeekBytes)).ToArray(),
+                            out var scaledLayout))
+                    {
+                        built = new SharedRepackScaledSource(rewritten, scaledLayout, candidate.Scale);
+                    }
+                    else
+                    {
+                        state.SharedRepackScaledSourceFailures.Add($"{path}: {(ok ? "unreadable header" : error)}");
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                state.SharedRepackScaledSourceFailures.Add($"{path}: {ex.GetType().Name}: {ex.Message}");
+            }
+
+            state.SharedRepackScaledSources[path] = built;
+            return built;
+        }
+
+        private static VanillaCoverageTexture GetSharedRepackEffectiveEntry(BatchState state, VanillaCoverageTexture entry)
+        {
+            var scaled = GetSharedRepackScaledSource(state, entry.Path);
+            if (scaled == null)
+                return entry;
+
+            var path = Normalize(entry.Path);
+            if (!state.SharedRepackEffectiveEntries.TryGetValue(path, out var shadow))
+            {
+                shadow = new VanillaCoverageTexture(entry.Path)
+                {
+                    Layout = scaled.Layout,
+                    IsOwned = entry.IsOwned,
+                };
+                state.SharedRepackEffectiveEntries[path] = shadow;
+            }
+
+            return shadow;
+        }
+
+        private sealed record SharedRepackScaledSource(byte[] Dds, DdsLayout Layout, double Scale);
+
         private static bool OverridesVanillaPath(BatchState state, string path)
         {
             foreach (var container in GetGameplayTraversalContainers(state))
@@ -880,7 +970,11 @@ namespace Editors.KitbasherEditor.Services
                 return;
             }
 
-            var decisions = BuildUnitRepackSetDecisions(units)
+            var decisions = BuildUnitRepackSetDecisionsAtDensity(
+                    units,
+                    state.DownscaleEarlyCandidates.Count == 0
+                        ? null
+                        : entry => GetSharedRepackEffectiveEntry(state, entry).Layout!)
                 .OrderByDescending(decision => decision.Saving)
                 .ThenBy(decision => decision.ExampleTexture, StringComparer.Ordinal)
                 .ToList();
@@ -1095,6 +1189,7 @@ namespace Editors.KitbasherEditor.Services
                         IsAvailable = index => index > decisionIndex && !consumed.ContainsKey(index),
                         MakeRigid = SetRigid,
                         MergedUsers = mergedUsers,
+                        Effective = entry => GetSharedRepackEffectiveEntry(state, entry),
                     };
                     context.Rigids.AddRange(rigids);
                     return context;
@@ -1729,7 +1824,7 @@ namespace Editors.KitbasherEditor.Services
             var mergedUserParts = new Dictionary<(string Rigid, int Lod, int Part), SharedRepackPart>();
 
             bool IsBlockedTexture(VanillaCoverageTexture entry, string path)
-                => GetSharedRepackBlockedTextureReason(entry.Layout) != null ||
+                => GetSharedRepackBlockedTextureReason(merge.Effective(entry).Layout) != null ||
                    (entry.IsOwned && OverridesVanillaPath(state, path));
 
             void AddRigid(SharedRepackSetRigid item)
@@ -1747,7 +1842,7 @@ namespace Editors.KitbasherEditor.Services
                 {
                     var path = Normalize(item.Entry.Path);
                     slotOf[path] = item.Slot;
-                    entryOf[path] = item.Entry;
+                    entryOf[path] = merge.Effective(item.Entry);
                     // Textures that can never be copied exactly stay out of the set.
                     if (IsBlockedTexture(item.Entry, path))
                         blocked.Add(path);
@@ -1859,7 +1954,7 @@ namespace Editors.KitbasherEditor.Services
                 if (IsBlockedTexture(otherEntry, texture))
                 {
                     return " but the texture cannot be repacked, so the set was not merged (" +
-                           (GetSharedRepackBlockedTextureReason(otherEntry.Layout) ?? "an owned override of a vanilla texture") + ")";
+                           (GetSharedRepackBlockedTextureReason(merge.Effective(otherEntry).Layout) ?? "an owned override of a vanilla texture") + ")";
                 }
 
                 if (cappedTextures.Contains(texture))
@@ -4094,6 +4189,7 @@ namespace Editors.KitbasherEditor.Services
             pixelFailure = false;
             var containers = GetGameplayTraversalContainers(state);
             var sources = new SharedRepackSourceCache(path =>
+                GetSharedRepackScaledSource(state, path)?.Dds ??
                 ResolveGameplayTraversalContainer(state.Source, containers, path)?.FindFile(path)?.DataSource.ReadData());
             var generated = new SharedRepackSourceCache(_ => null);
             var stats = new SharedRepackPixelStats();
@@ -4229,6 +4325,16 @@ namespace Editors.KitbasherEditor.Services
                     WriteFile(state.Output, output.Path, output.Data);
                     state.SharedRepackTexturePaths.Add(output.Path);
                     result.GeneratedTextures.Add(output.Path);
+                }
+
+                foreach (var texture in page.Tuples.SelectMany(tuple => tuple.Slots.Values).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    var scaled = GetSharedRepackScaledSource(state, texture);
+                    if (scaled == null)
+                        continue;
+
+                    result.ScaledSourceTextures[Normalize(texture)] = scaled.Scale;
+                    state.DownscaleEarlyUsedByRepack.Add(Normalize(texture));
                 }
 
                 foreach (var (node, material) in page.WsRepoints)
@@ -4529,6 +4635,19 @@ namespace Editors.KitbasherEditor.Services
                 $"copied from the sources wherever the chart rectangles are block aligned at that mip level; the " +
                 $"first level below that is seeded from the source's own mip. Every check runs before anything is " +
                 $"written.");
+            if (state.DownscaleEarlyCandidates.Count != 0 || state.SharedRepackScaledSourceFailures.Count != 0)
+            {
+                sb.AppendLine(
+                    "Density follows the downscale option: a texture the early downscale analysis chose a scale for " +
+                    "is repacked as the downscale would have written it (its source mips from that level, so the " +
+                    "block-copy and chart rules hold there), and the estimate, threshold and actual-bytes check use " +
+                    $"those sizes. Built from a scaled texture: {result.ScaledSourceTextures.Count:N0} " +
+                    $"({string.Join(", ", result.ScaledSourceTextures.GroupBy(pair => pair.Value).OrderByDescending(group => group.Key).Select(group => $"{group.Count():N0} at {group.Key:0.##}x"))}); " +
+                    $"scaled version could not be built (full density used): {state.SharedRepackScaledSourceFailures.Count:N0}.");
+                foreach (var failure in state.SharedRepackScaledSourceFailures.Take(5))
+                    sb.AppendLine("  " + failure);
+            }
+
             sb.AppendLine("Selection funnel (every set ends in exactly one line below):");
             sb.AppendLine($"  Signature sets considered: {result.SetsConsidered:N0}");
             sb.AppendLine($"  Estimated saving below the threshold: {result.BelowThreshold:N0}");

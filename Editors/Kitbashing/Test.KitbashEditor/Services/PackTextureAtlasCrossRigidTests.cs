@@ -9315,6 +9315,90 @@ namespace Test.KitbashEditor.Services
             Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Does.Not.Contain(SrRigid2));
         }
 
+        // --- Shared repack density follows the downscale option ----------------------------
+
+        // As if the early downscale analysis had chosen `scale` (mip slicing) for the texture.
+        private static void AddEarlyDownscale(object state, string path, int size, double scale)
+        {
+            var skip = (int)Math.Round(Math.Log2(1.0 / scale));
+            var newSize = size >> skip;
+            var candidate = Activator.CreateInstance(
+                GetNestedType("TextureDownscaleCandidate"),
+                [path, size, size, newSize, newSize, scale, "BC1", "BC1", true, true, true, skip,
+                 0L, 0L, 1, 1, "test", 1.0])!;
+            Get<IDictionary>(state, "DownscaleEarlyCandidates")[path] = candidate;
+            Get<IDictionary>(state, "DownscaleTargetScale")[path] = scale;
+        }
+
+        private static long SrGeneratedTextureBytes(SrWorld world)
+            => world.Fixture.Output
+                .Where(pair => pair.Key.Contains("_repack_") && pair.Key.EndsWith(".dds"))
+                .Sum(pair => (long)pair.Value.Length);
+
+        [Test]
+        public void SharedRepack_DownscaleOn_BuildsAtTheEarlyScaleAndKeepsThePixelsRight()
+        {
+            var full = BuildStandardSrWorld();
+            var fullResult = full.Run(minimumSaving: 10_000, minimumGroupSaving: 1_000);
+            Assert.That(Get<int>(fullResult, "Built"), Is.EqualTo(1), SrSkips(fullResult));
+
+            var world = BuildStandardSrWorld();
+            world.Analyse();
+            AddEarlyDownscale(world.State, "textures\\sr_b1.dds", 1024, 0.5);
+            AddEarlyDownscale(world.State, "textures\\sr_b2.dds", 1024, 0.5);
+
+            var result = world.Run(analyse: false, minimumSaving: 10_000, minimumGroupSaving: 1_000);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            AssertFunnelReconciles(result);
+            Assert.That(
+                Get<Dictionary<string, double>>(result, "ScaledSourceTextures"),
+                Is.EquivalentTo(new Dictionary<string, double>
+                {
+                    ["textures\\sr_b1.dds"] = 0.5,
+                    ["textures\\sr_b2.dds"] = 0.5,
+                }));
+            Assert.That(
+                Get<HashSet<string>>(world.State, "DownscaleEarlyUsedByRepack"),
+                Is.EquivalentTo(new[] { "textures\\sr_b1.dds", "textures\\sr_b2.dds" }));
+            // Half the texel density: the generated base colour is far smaller than at full density.
+            Assert.That(SrGeneratedTextureBytes(world), Is.LessThan(SrGeneratedTextureBytes(full)));
+            // The saving is measured against the scaled sources (two 512 BC1 chains + two 512 BC3
+            // normals), not the 1024 originals.
+            var built = SrBuilt(result).Single();
+            var sourceBytes = Get<long>(built, "Before");
+            var fullSourceBytes = Get<long>(SrBuilt(fullResult).Single(), "Before");
+            Assert.That(sourceBytes, Is.LessThan(fullSourceBytes));
+            Assert.That(Get<long>(built, "After"), Is.LessThan(sourceBytes));
+            // The repacked pixels and the block-copied levels still verify.
+            var first = BuildStandardSrWorld().Rigids[SrRigid];
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart0Seeds, (_, part) => part == 0);
+            AssertSrPixels(world, SrRigid, SrWs, first, SrPart1Seeds, (_, part) => part == 1);
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "PixelFailures").Cast<object>(), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_DownscaleOff_IsUnchangedByTheDensityCode()
+        {
+            var a = BuildStandardSrWorld();
+            var b = BuildStandardSrWorld();
+            b.Analyse();
+            // Nothing in the early maps (downscale off): the same bytes as the plain run.
+            var resultA = a.Run(minimumSaving: 10_000, minimumGroupSaving: 1_000);
+            var resultB = b.Run(analyse: false, minimumSaving: 10_000, minimumGroupSaving: 1_000);
+
+            Assert.That(Get<int>(resultB, "Built"), Is.EqualTo(Get<int>(resultA, "Built")));
+            Assert.That(Get<Dictionary<string, double>>(resultB, "ScaledSourceTextures"), Is.Empty);
+            Assert.That(
+                b.Fixture.Output.Where(pair => pair.Key.Contains("_repack_")).OrderBy(pair => pair.Key).Select(pair => pair.Key),
+                Is.EqualTo(a.Fixture.Output.Where(pair => pair.Key.Contains("_repack_")).OrderBy(pair => pair.Key).Select(pair => pair.Key)));
+            foreach (var (path, bytes) in a.Fixture.Output.Where(pair => pair.Key.Contains("_repack_")))
+                Assert.That(b.Fixture.Output[path], Is.EqualTo(bytes), path);
+            Assert.That(BuildSharedRepackSection(a.State), Does.Not.Contain("Density follows the downscale option"));
+        }
+
         // --- Early downscale estimate ----------------------------------------------------
 
         private static object RunEarlyDownscale(object service, object state, DownscaleFixture fixture)

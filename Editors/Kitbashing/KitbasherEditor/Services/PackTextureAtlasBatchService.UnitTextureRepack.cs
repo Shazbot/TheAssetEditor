@@ -1136,8 +1136,16 @@ namespace Editors.KitbasherEditor.Services
 
         private static readonly int[] UnitRepackCumulativeLimits = [1, 5, 10, 25, 50, 100];
 
+        // `layoutOf`, when given, replaces each texture's layout for the sizes of the decision
+        // (the shared repack at a downscaled density); the atlas estimate is then recomputed from
+        // those layouts and the set's coverage.
         private static List<UnitRepackSetDecision> BuildUnitRepackSetDecisions(
             UnitTextureRepackResult result)
+            => BuildUnitRepackSetDecisionsAtDensity(result, null);
+
+        private static List<UnitRepackSetDecision> BuildUnitRepackSetDecisionsAtDensity(
+            UnitTextureRepackResult result,
+            Func<VanillaCoverageTexture, DdsLayout>? layoutOf)
         {
             var decisions = new List<UnitRepackSetDecision>();
             foreach (var set in result.SetsC)
@@ -1147,8 +1155,13 @@ namespace Editors.KitbasherEditor.Services
                     Set = set,
                     Textures = set.Items.Count,
                     SignatureSize = set.Units.Length,
-                    Today = set.Items.Sum(item => item.Entry.Layout!.ChainBytes),
-                    Rounded = set.Rounded,
+                    Today = layoutOf == null
+                        ? set.Items.Sum(item => item.Entry.Layout!.ChainBytes)
+                        : set.Items.Sum(item => layoutOf(item.Entry).ChainBytes),
+                    Rounded = layoutOf == null
+                        ? set.Rounded
+                        : EstimateRepackAtlases(set.Items.Select(
+                            item => (item.Slot, layoutOf(item.Entry), item.Coverage))).Sum(atlas => atlas.Rounded),
                     Removable = set.Items
                         .Where(item => result.RemovableEntries.Contains(item.Entry))
                         .Sum(item => item.Entry.Layout!.ChainBytes),

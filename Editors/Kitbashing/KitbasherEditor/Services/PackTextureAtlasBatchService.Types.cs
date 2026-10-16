@@ -911,6 +911,14 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> DownscaleEarlyUsedByRepack { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            // The shared repack's view of a texture at its early downscale scale (the bytes the
+            // downscale would write), the matching coverage entries, and the textures it could
+            // not build that for (they stay at full density).
+            public Dictionary<string, SharedRepackScaledSource?> SharedRepackScaledSources { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, VanillaCoverageTexture> SharedRepackEffectiveEntries { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public List<string> SharedRepackScaledSourceFailures { get; } = [];
             // Opt-in exact texture compaction (uniform shrink, opaque BC2/BC3 to BC1).
             public bool CompactTextures { get; set; }
             // Effective only together with CompactTextures.
