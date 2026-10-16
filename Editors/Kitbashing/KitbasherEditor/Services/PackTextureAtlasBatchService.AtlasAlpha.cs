@@ -1,7 +1,11 @@
+using System.Buffers.Binary;
+using System.IO;
 using System.Xml;
 using DirectXTexNet;
 using Editors.ImportExport.Importing.Importers.PngToDds.Helpers;
 using Editors.ImportExport.TextureAtlas;
+using Pfim;
+using PfimImageFormat = Pfim.ImageFormat;
 using Shared.Core.Settings;
 using Shared.GameFormats.RigidModel.Types;
 
@@ -27,28 +31,93 @@ namespace Editors.KitbasherEditor.Services
         private static bool IsBc1AtlasTarget(TextureType type)
             => DDSFormatHelper.GetDDSFormat(GameTypeEnum.Warhammer3, type) == DXGI_FORMAT.BC1_UNORM_SRGB;
 
+        // Sources the atlas builder can decode are BC1/2/3/7 and 32-bit RGBA (it decodes through
+        // Pfim into BGRA); BC4/BC5 and the formats without an alpha channel never carry alpha.
         internal static TextureAlphaState ClassifyTextureAlpha(byte[] dds)
         {
             try
             {
                 var layout = ReadCompactionLayout(dds);
-                if (layout == null)
-                    return TextureAlphaState.Unknown;
-
-                return layout.Format switch
+                if (layout != null)
                 {
-                    // BC1 is already 1-bit alpha at most, so re-encoding to BC1 changes nothing.
-                    "BC1" => TextureAlphaState.Opaque,
-                    "BC2" or "BC3" => AreAllTexelsOpaque(dds, layout)
-                        ? TextureAlphaState.Opaque
-                        : TextureAlphaState.HasAlpha,
-                    _ => TextureAlphaState.Unknown,
-                };
+                    switch (layout.Format)
+                    {
+                        // BC1 is already 1-bit alpha at most, so re-encoding to BC1 changes nothing.
+                        case "BC1":
+                        case "BC4":
+                        case "BC5":
+                            return TextureAlphaState.Opaque;
+                        case "BC2":
+                        case "BC3":
+                            return AreAllTexelsOpaque(dds, layout)
+                                ? TextureAlphaState.Opaque
+                                : TextureAlphaState.HasAlpha;
+                    }
+                }
+
+                if (HasNoAlphaChannel(dds))
+                    return TextureAlphaState.Opaque;
+
+                // BC7 and uncompressed formats: the decoder the atlas builder uses.
+                using var stream = new MemoryStream(dds);
+                using var image = Pfimage.FromStream(stream);
+                switch (image.Format)
+                {
+                    case PfimImageFormat.Rgba32:
+                        return IsMipZeroAlphaOpaque(image)
+                            ? TextureAlphaState.Opaque
+                            : TextureAlphaState.HasAlpha;
+                    case PfimImageFormat.Rgb8:
+                    case PfimImageFormat.Rgb24:
+                    case PfimImageFormat.R5g5b5:
+                    case PfimImageFormat.R5g6b5:
+                        return TextureAlphaState.Opaque;
+                    default:
+                        return TextureAlphaState.Unknown;
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 return TextureAlphaState.Unknown;
             }
+        }
+
+        // Uncompressed DDS whose pixel format declares no alpha bits (for example B8G8R8X8, whose
+        // unused byte is not alpha), by legacy header flags or by DXGI format.
+        private static bool HasNoAlphaChannel(byte[] dds)
+        {
+            if (dds.Length < 148 ||
+                BinaryPrimitives.ReadUInt32LittleEndian(dds.AsSpan(0, 4)) != 0x20534444)
+            {
+                return false;
+            }
+
+            const uint alphaPixels = 0x1;
+            const uint rgb = 0x40;
+            const uint dx10 = 0x30315844;
+            var flags = BinaryPrimitives.ReadUInt32LittleEndian(dds.AsSpan(80, 4));
+            if (BinaryPrimitives.ReadUInt32LittleEndian(dds.AsSpan(84, 4)) == dx10)
+            {
+                var dxgi = BinaryPrimitives.ReadUInt32LittleEndian(dds.AsSpan(128, 4));
+                return dxgi is 88; // B8G8R8X8_UNORM
+            }
+
+            return (flags & rgb) != 0 && (flags & alphaPixels) == 0;
+        }
+
+        private static bool IsMipZeroAlphaOpaque(IImage image)
+        {
+            for (var y = 0; y < image.Height; y++)
+            {
+                var row = y * image.Stride;
+                for (var x = 0; x < image.Width; x++)
+                {
+                    if (image.Data[row + x * 4 + 3] != byte.MaxValue)
+                        return false;
+                }
+            }
+
+            return true;
         }
 
         // One decode per texture path per run.

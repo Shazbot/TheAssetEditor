@@ -12013,6 +12013,89 @@ namespace Test.KitbashEditor.Services
             Assert.That(AlphaSafety("Unknown", "weighted4_character", "t_xml_base_colour"), Is.Not.Null);
         }
 
+        // A 4x4 DDS made by DirectXTex: BGRA texels of the given alpha, optionally BC7 encoded.
+        private static byte[] BuildDirectXTexDds(
+            DirectXTexNet.DXGI_FORMAT format,
+            byte alpha,
+            bool compressToBc7 = false)
+        {
+            var texels = new byte[4 * 4 * 4];
+            for (var index = 0; index < 16; index++)
+            {
+                texels[index * 4] = (byte)(index * 9);
+                texels[index * 4 + 1] = (byte)(255 - index * 7);
+                texels[index * 4 + 2] = 90;
+                texels[index * 4 + 3] = alpha;
+            }
+
+            using var source = DirectXTexNet.TexHelper.Instance.Initialize2D(
+                format, 4, 4, 1, 1, DirectXTexNet.CP_FLAGS.NONE);
+            System.Runtime.InteropServices.Marshal.Copy(texels, 0, source.GetImage(0).Pixels, texels.Length);
+            var image = source;
+            DirectXTexNet.ScratchImage? compressed = null;
+            try
+            {
+                if (compressToBc7)
+                {
+                    compressed = source.Compress(
+                        DirectXTexNet.DXGI_FORMAT.BC7_UNORM,
+                        DirectXTexNet.TEX_COMPRESS_FLAGS.DEFAULT,
+                        0.5f);
+                    image = compressed;
+                }
+
+                using var stream = image.SaveToDDSMemory(DirectXTexNet.DDS_FLAGS.NONE);
+                var bytes = new byte[stream.Length];
+                stream.ReadExactly(bytes);
+                return bytes;
+            }
+            finally
+            {
+                compressed?.Dispose();
+            }
+        }
+
+        [Test]
+        public void AtlasAlpha_Classify_UncompressedBgra_ScansTheAlpha()
+        {
+            Assert.That(
+                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8A8_UNORM, 255)),
+                Is.EqualTo("Opaque"));
+            Assert.That(
+                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8A8_UNORM, 10)),
+                Is.EqualTo("HasAlpha"));
+            Assert.That(
+                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.R8G8B8A8_UNORM, 10)),
+                Is.EqualTo("HasAlpha"));
+        }
+
+        [Test]
+        public void AtlasAlpha_Classify_Bc7_ScansTheAlpha()
+        {
+            Assert.That(
+                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8A8_UNORM, 255, compressToBc7: true)),
+                Is.EqualTo("Opaque"));
+            Assert.That(
+                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8A8_UNORM, 10, compressToBc7: true)),
+                Is.EqualTo("HasAlpha"));
+        }
+
+        [Test]
+        public void AtlasAlpha_Classify_FormatsWithoutAlphaAreOpaque()
+        {
+            // BC5 (dxgi 83) and BC4 (dxgi 80) have no alpha channel.
+            Assert.That(
+                ClassifyAlpha(BuildBcDds(4, 4, 1, "BC5", dx10: true, srgb: false, dxgiFormat: 83)),
+                Is.EqualTo("Opaque"));
+            Assert.That(
+                ClassifyAlpha(BuildBcDds(4, 4, 1, "BC4", dx10: true, srgb: false, dxgiFormat: 80)),
+                Is.EqualTo("Opaque"));
+            // B8G8R8X8: the fourth byte is padding, here 0.
+            Assert.That(
+                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8X8_UNORM, 0)),
+                Is.EqualTo("Opaque"));
+        }
+
         private static string? DiscoveryAlphaCheck(
             string shader,
             byte[] baseColour,
