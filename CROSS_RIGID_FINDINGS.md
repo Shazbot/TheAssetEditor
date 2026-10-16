@@ -1,4 +1,4 @@
-# Cross-rigid merge and texture memory: findings (2026-10-11, updated 2026-10-15)
+# Cross-rigid merge and texture memory: findings (2026-10-11, updated 2026-10-16)
 
 Branch `feature/texture-atlas-consolidation`. Test pack: `!ak_teb3.pack` (dump in `K:\wh3mods\albion\teb`). In-game test assets: `K:\wh3mods\albion\abtest\` (see its `README.txt`).
 
@@ -205,7 +205,69 @@ Built sets:
 - **Saving 32.7 MB.** Zero pixel error on about 101,500 top-mip samples; validation passes; the stage takes 9.2 s.
 - **The estimate was optimistic.** The demigryph body was estimated at 16.8 MB saved and saved 5.6 MB; the lion was estimated at 11.9 MB and saved 6.2 MB.
 - **Checked in-game by the author:** Lupio, the lion and the inquisitor staff look fine. Blood density with blood enabled is not yet checked, and the `blood_uv_scale` rule is an assumption.
-- **What is left:** the 22 multi-rigid sets and the 5 closure-dropped sets. A next increment would have to rewrite several rigids consistently against one shared texture set. Memory only.
+- **What was left:** the 22 multi-rigid sets and the 5 closure-dropped sets. Built in the next increment, below.
+
+### Shared texture repack, multi-rigid (same file)
+
+The repack now takes any signature set whose users are all mod-owned rigids, and rewrites every rigid using its textures consistently against one set of new textures.
+
+- **Flat textures.** A texture of any size that is one flat colour is kept as authored and no longer blocks a part.
+- **Merged plans.** When a material's textures belong to several signature sets, those sets are pulled into one plan, up to 8 sets and 16 rigids.
+  - A plan is written completely or not at all.
+  - A failed merged plan falls back to its seed set alone.
+  - Validation checks that no unit loads more texture bytes than before.
+- **Page splitting.** A layout group whose power-of-two page cannot shrink puts whole clusters of charts on up to 4 smaller pages. A chart is never duplicated and a mesh part is never split.
+
+Results (validation passes, zero pixel error on every sample):
+
+| | `ak_teb3` | `ovn_albion` |
+|---|---|---|
+| Signature sets considered | 299 | 211 |
+| Below the 2 MiB estimate threshold | 254 | 155 |
+| Merged into another set's plan | 10 | 16 |
+| Dropped by closure, variants, tiling or ineligible rigids | 12 | 20 |
+| Failed the bytes gate (near-full coverage) | 16 | 6 |
+| **Built** | **7 sets, 12 rigids** | **14 sets, 28 rigids** |
+| Texture bytes replaced → new | 76.5 → 25.2 MB | 172.3 → 43.3 MB |
+| **Saved** | **51.4 MB** | **129.0 MB** |
+| Of which from merged plans | 0 | 8.4 MB (Chaos lord capes) |
+| Of which from page splitting | 2.8 MB | 2.1 MB |
+| Pixel samples checked | 190,536 | 1,054,264 |
+| Stage time | 14.7 s | 21.5 s |
+
+- **Most rounding losses are single-cluster groups.** A group whose charts form one connected cluster cannot split (7 groups on `ak_teb3`, 18 on `ovn_albion`).
+- **Many repacked textures are vanilla.** A vanilla unit in the same battle keeps the original loaded, so these savings are whole-pack upper bounds.
+  - Copying vanilla rigids to unlock more sets was not done.
+  - Only 3 such blockers exist: the two demigryph rigids and `brt_men_at_arms_helmet_01`.
+
+### Exact texture compaction (`PackTextureAtlasBatchService.TextureCompaction.cs`)
+
+Opt-in, "Compact textures exactly (experimental)", off by default and disabled in cross-rigid-only mode. It runs last, on the output's DDS files, and rewrites textures in place (same path, same sRGB-ness, same header kind).
+
+- **Flat textures.** A texture whose every texel at every mip level is one exact RGBA becomes 4x4 with a 3-level chain.
+- **Opaque BC2/BC3.** A BC2/BC3 texture whose alpha is 255 at every texel becomes BC1. The colour blocks are kept; where c0 < c1 the endpoints are swapped and the indices remapped, and equal endpoints get index 0.
+- **Verified before writing.** Every result is decoded and compared texel for texel at every level before it is written, and validation checks it again.
+- **What counts as a reference.** Only textures the pack owns that a material references are eligible: an xml material slot, or the texture list embedded in a rigid's material.
+  - The embedded lists include the old WH2 slots (diffuse, specular, gloss map).
+  - A texture also named by a UI, VMD, WSModel or other non-material file is skipped.
+  - An unreadable rigid's texture paths count as non-material references.
+- **Not covered.** Textures written by the atlas, repack or downscale stages are skipped, and so is BC7 (no exact decoder in the codebase).
+
+| | `ak_teb3` | `ovn_albion` |
+|---|---|---|
+| DDS files in the output | 533 | 701 |
+| Flat, shrunk to 4x4 | 6 (24.1 MB saved) | 13 (18.2 MB saved) |
+| Opaque BC3 → BC1 | 37 (22.4 MB saved) | 13 (38.8 MB saved) |
+| **Saved** | **46.5 MB** | **57.0 MB** |
+| Referenced only by a rigid's embedded material | 120 | 115 |
+| Skipped as BC7 | 21 | 10 |
+| Stage time | 4.3 s | 6.1 s |
+
+- **Largest items.**
+  - `ak_teb3`: `lorenzo_mask.dds`, a flat 4096x4096 BC3 (22.4 MB → 176 bytes), and the green dragon's body and wing textures (5.6 → 2.8 MB each).
+  - `ovn_albion`: `mask_alb_shield.dds` and `alb_truthsayer_body_mask.dds`, both opaque 4096x4096 BC3 (22.4 → 11.2 MB each).
+- **Checked in-game by the author on `ak_teb3`:** no visible change.
+- **Part of the saving is pack size only.** The game ignores a rigid's embedded textures when the rigid has a WSModel, and some rigids are not used at all (for example `ak_grave_de_sword_2h_*` and `ak_kf_lupio`). Rewriting those textures is harmless, just useless.
 
 ## Open issues
 
@@ -215,6 +277,8 @@ Built sets:
 4. **Blood density is unchecked** after the shared texture repack. The `blood_uv_scale` division is an assumption; check a repacked unit with blood enabled.
 5. **The repack estimate is optimistic.** Built savings were 5.6 of 16.8 MB (demigryph body) and 6.2 of 11.9 MB (lion), so the Option C figures in the per-unit estimate should be read as upper bounds.
 6. **The "stays loaded anyway" probability is not computed** for vanilla texture cropping, so its 127 / 217 MB figures are upper bounds.
+7. **Repack savings on vanilla textures are upper bounds.** Vanilla units in the same battle keep the original textures loaded.
+8. **BC7 textures are not compacted.** There is no exact BC7 decoder in the codebase (21 textures on `ak_teb3`, 10 on `ovn_albion`).
 
 ## Changes made this session
 
@@ -241,6 +305,14 @@ Built sets:
 - Shared texture repack (`PackTextureAtlasBatchService.SharedTextureRepack.cs`): opt-in, first increment. New "Repack shared textures (experimental)" checkbox in `TextureAtlasProgressWindow.xaml`, off by default and disabled together with atlasing, cross-rigid merges and cross-rigid-only mode.
 - Tests: the `FullyQualifiedName~PackTextureAtlas` filter now runs 504 tests, all passing.
 
+### 2026-10-15 to 16: multi-rigid repack and exact compaction
+
+- Shared texture repack extended to sets that span several mod-owned rigids. Flat textures of any size pass through.
+- Signature sets that share a material are merged into one plan (up to 8 sets and 16 rigids, with a fallback to the seed set).
+- Page splitting puts whole clusters on up to 4 smaller power-of-two pages.
+- Exact texture compaction (`PackTextureAtlasBatchService.TextureCompaction.cs`): new opt-in checkbox. It counts xml material slots and the texture lists embedded in rigids as references.
+- Tests: the `FullyQualifiedName~PackTextureAtlas` filter now runs 553 tests, all passing.
+
 ## Recommendations
 
 1. Do not build the shared-atlas planner or a per-configuration writer.
@@ -249,6 +321,7 @@ Built sets:
 4. Keep same-rigid merging and atlasing; they reduce parts per soldier without rewriting VMDs.
 5. If more performance is wanted, look at per-soldier GPU cost (for example vertex count at distance), which the tool does not address.
 6. Texture work is memory only; do not expect FPS from it.
-7. Keep texture downscaling and shared texture repack opt-in.
+7. Keep texture downscaling, shared texture repack and exact compaction opt-in.
 8. Do not build per-texture reverse atlasing or per-unit atlases (Options A and B).
-9. Build the multi-rigid repack increment only if video memory on large pack lists matters.
+9. Exact compaction is the cheapest memory win, with no visual risk. Enable it whenever a pack is processed.
+10. Do not copy vanilla rigids to unlock more repack sets; only 3 rigids block sets today.
