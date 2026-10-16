@@ -1,5 +1,6 @@
 using System.Xml;
 using Shared.GameFormats;
+using Shared.GameFormats.Vmd;
 
 namespace Test.KitbashEditor.Services
 {
@@ -157,6 +158,55 @@ namespace Test.KitbashEditor.Services
                     xml,
                     ParseDocument,
                     out _));
+        }
+
+        [Test]
+        public void Parse_RethrownFailureKeepsTheOriginalStackTrace()
+        {
+            var exception = Assert.Throws<XmlException>(() =>
+                XmlCompatibilityParser.Parse(
+                    "<model><broken</model>",
+                    ParseDocument,
+                    out _))!;
+
+            Assert.That(exception.StackTrace, Does.Contain(nameof(ParseDocument)));
+        }
+
+        private const string WellFormedVmd = "<VARIANT_MESH model=\"a.rigid_model_v2\"></VARIANT_MESH>";
+        private const string VmdWithTrailingText = WellFormedVmd + "\r\n--a note outside the root";
+
+        [Test]
+        public void VmdLoad_StrictWellFormed_Loads()
+        {
+            var vmd = VariantMeshDefinitionLoader.Load(WellFormedVmd, out var repairs, strict: true);
+
+            Assert.That(vmd, Is.Not.Null);
+            Assert.That(repairs, Is.Empty);
+            Assert.That(VariantMeshDefinitionLoader.Load(WellFormedVmd, strict: true), Is.Not.Null);
+        }
+
+        [Test]
+        public void VmdLoad_NonStrictMalformed_IsRepairedAndReported()
+        {
+            var vmd = VariantMeshDefinitionLoader.Load(VmdWithTrailingText, out var repairs);
+
+            Assert.That(vmd, Is.Not.Null);
+            Assert.That(repairs, Has.Count.EqualTo(1));
+            Assert.That(VariantMeshDefinitionLoader.Load(VmdWithTrailingText), Is.Not.Null);
+        }
+
+        [Test]
+        public void VmdLoad_StrictMalformed_ThrowsAndListsTheRepairs()
+        {
+            var fromOverload = Assert.Throws<XmlException>(() =>
+                VariantMeshDefinitionLoader.Load(VmdWithTrailingText, out _, strict: true))!;
+            var fromShort = Assert.Throws<XmlException>(() =>
+                VariantMeshDefinitionLoader.Load(VmdWithTrailingText, strict: true))!;
+
+            VariantMeshDefinitionLoader.Load(VmdWithTrailingText, out var repairs);
+            Assert.That(repairs, Is.Not.Empty);
+            Assert.That(fromOverload.Message, Does.Contain(repairs[0]));
+            Assert.That(fromShort.Message, Does.Contain(repairs[0]));
         }
 
         private static XmlDocument ParseDocument(string xml)

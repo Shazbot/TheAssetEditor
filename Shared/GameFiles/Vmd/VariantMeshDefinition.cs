@@ -18,10 +18,21 @@ namespace Shared.GameFormats.Vmd
             out IReadOnlyList<string> compatibilityRepairs,
             bool strict = false)
         {
-            return XmlCompatibilityParser.Parse(
+            var vmd = XmlCompatibilityParser.Parse(
                 fileContent,
                 content => Deserialize(content, strict),
                 out compatibilityRepairs);
+
+            // The compatibility parser repairs malformed text instead of rejecting it. A strict
+            // caller (validation before saving) must still be told the text needed repairing.
+            if (strict && compatibilityRepairs.Count != 0)
+            {
+                throw new XmlException(
+                    "The VMD is not well-formed XML and would need repairs: " +
+                    string.Join(" ", compatibilityRepairs));
+            }
+
+            return vmd;
         }
 
         public static VariantMesh Load(PackFile pf, bool strict = false)

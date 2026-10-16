@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Text.RegularExpressions;
 using System.Xml;
 
@@ -80,7 +82,8 @@ namespace Shared.GameFormats
                     }
                 }
 
-                throw lastFailure;
+                ExceptionDispatchInfo.Capture(lastFailure).Throw();
+                throw new UnreachableException();
             }
         }
 
