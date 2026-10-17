@@ -15,7 +15,7 @@ namespace Shared.Core.PackFiles.Models.Containers
         InMemory
     }
 
-    internal class CachedPackFileContainer : IPackFileContainerInternal, IDisposable
+    internal class CachedPackFileContainer : IPackFileContainerInternal, IBulkReadPackFileContainer, IDisposable
     {
         private static readonly ILogger _logger = Logging.CreateStatic(typeof(CachedPackFileContainer));
         private const int CurrentSchemaVersion = 4;
@@ -346,6 +346,46 @@ namespace Shared.Core.PackFiles.Models.Containers
             _db.Dispose();
             _keepAliveConnection?.Dispose();
             _keepAliveConnection = null;
+        }
+
+        /// <summary>
+        /// Keeps one connection to the cache database open until the scope is disposed. The cache is
+        /// opened without pooling (so the file can be deleted as soon as a container is done with it),
+        /// which makes every lookup open and close the database: about 3 ms each. A batch job that
+        /// asks thousands of times holds the connection for its duration instead.
+        /// </summary>
+        public IDisposable BeginBulkRead()
+        {
+            lock (_dbLock)
+            {
+                var db = _db;
+                db.Database.OpenConnection();
+                return new BulkReadScope(db, _dbLock);
+            }
+        }
+
+        private sealed class BulkReadScope(CacheDbContext db, object dbLock) : IDisposable
+        {
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                lock (dbLock)
+                {
+                    if (_disposed)
+                        return;
+
+                    _disposed = true;
+                    try
+                    {
+                        db.Database.CloseConnection();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // The container was disposed first; its context already closed the connection.
+                    }
+                }
+            }
         }
 
         public int GetFileCount()

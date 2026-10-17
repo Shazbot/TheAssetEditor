@@ -264,6 +264,61 @@ namespace Editors.KitbasherEditor.Services
             bool compactTextures = false,
             bool dropUnreadAlpha = false)
         {
+            // The game packs are queried thousands of times by the stages below: hold their
+            // database connections open for the run instead of opening one per lookup.
+            var bulkReadScopes = (_packFileService.GetAllPackfileContainers() ?? [])
+                .OfType<IBulkReadPackFileContainer>()
+                .Select(container => container.BeginBulkRead())
+                .ToList();
+            try
+            {
+                return ProcessCore(
+                    sourcePath: sourcePath,
+                    outputPath: outputPath,
+                    atlasMeshesWithMissingTextures: atlasMeshesWithMissingTextures,
+                    cancellationToken: cancellationToken,
+                    progress: progress,
+                    mergeCompatibleMeshes: mergeCompatibleMeshes,
+                    shareAtlasesAcrossVmds: shareAtlasesAcrossVmds,
+                    optimizeGeometry: optimizeGeometry,
+                    atlasAllVmds: atlasAllVmds,
+                    scoreAllGameUnits: scoreAllGameUnits,
+                    lodAwareAtlasPlanning: lodAwareAtlasPlanning,
+                    crossRigidOnly: crossRigidOnly,
+                    crossRigidMerges: crossRigidMerges,
+                    buildAtlases: buildAtlases,
+                    downscaleTextures: downscaleTextures,
+                    sharedTextureRepack: sharedTextureRepack,
+                    compactTextures: compactTextures,
+                dropUnreadAlpha: dropUnreadAlpha);
+            }
+            finally
+            {
+                foreach (var scope in bulkReadScopes)
+                    scope.Dispose();
+            }
+        }
+
+        private BatchResult ProcessCore(
+            string sourcePath,
+            string outputPath,
+            bool? atlasMeshesWithMissingTextures = false,
+            CancellationToken cancellationToken = default,
+            IProgress<TextureAtlasPackProgress>? progress = null,
+            bool mergeCompatibleMeshes = false,
+            bool shareAtlasesAcrossVmds = true,
+            bool optimizeGeometry = false,
+            bool atlasAllVmds = false,
+            bool scoreAllGameUnits = false,
+            bool lodAwareAtlasPlanning = true,
+            bool crossRigidOnly = false,
+            bool crossRigidMerges = false,
+            bool buildAtlases = true,
+            bool downscaleTextures = false,
+            bool sharedTextureRepack = false,
+            bool compactTextures = false,
+            bool dropUnreadAlpha = false)
+        {
             // Kept for API compatibility with existing callers. Atlasing meshes with genuine
             // unresolved secondary textures is no longer allowed because UV0 is shared.
             _ = atlasMeshesWithMissingTextures;
