@@ -47,11 +47,17 @@ namespace Shared.GameFormats.Vmd
             return Load(vmdContent, out compatibilityRepairs, strict);
         }
 
+        // The (Type, XmlRootAttribute) constructor is not cached by the framework: building a new
+        // serializer per load regenerates and JIT-compiles a reader assembly every time (about 40 ms
+        // per VMD). One instance is shared; Deserialize is thread safe and the strict path's event
+        // handler stays per call.
+        private static readonly Lazy<XmlSerializer> VariantMeshSerializer = new(
+            () => new XmlSerializer(typeof(VariantMesh), new XmlRootAttribute("VARIANT_MESH")),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+
         private static VariantMesh Deserialize(string fileContent, bool strict)
         {
-            var xRoot = new XmlRootAttribute("VARIANT_MESH");
-
-            var xmlserializer = new XmlSerializer(typeof(VariantMesh), xRoot);
+            var xmlserializer = VariantMeshSerializer.Value;
             using var stringReader = new StringReader(fileContent);
             using var reader = XmlReader.Create(stringReader);
 

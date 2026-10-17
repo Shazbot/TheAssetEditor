@@ -186,6 +186,21 @@ namespace Test.KitbashEditor.Services
         }
 
         [Test]
+        public void VmdLoad_SharedSerializer_IsSafeAcrossThreadsAndBetweenStrictAndLenientLoads()
+        {
+            var loaded = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+            Parallel.For(0, 64, index =>
+            {
+                var vmd = VariantMeshDefinitionLoader.Load(WellFormedVmd, strict: index % 2 == 0);
+                loaded.Add(vmd.ModelReference);
+            });
+
+            Assert.That(loaded, Has.Count.EqualTo(64));
+            Assert.That(loaded.Distinct(), Is.EqualTo(new[] { "a.rigid_model_v2" }));
+        }
+
+        [Test]
         public void VmdLoad_NonStrictMalformed_IsRepairedAndReported()
         {
             var vmd = VariantMeshDefinitionLoader.Load(VmdWithTrailingText, out var repairs);
