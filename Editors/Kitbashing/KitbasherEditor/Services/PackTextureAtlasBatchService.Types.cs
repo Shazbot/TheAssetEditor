@@ -1173,6 +1173,9 @@ namespace Editors.KitbasherEditor.Services
                 [];
             public Dictionary<string, string> CrossRigidMaterialMergeIdentityCache { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, CrossRigidLodAnalysis[]>
+                CrossRigidLodAnalysisCache { get; } =
+                new(StringComparer.Ordinal);
             public Dictionary<(MeshKey Mesh, string MaterialPath, string Boundary), CrossRigidPartIdentity>
                 CrossRigidSourcePartIdentityCache { get; } = [];
             public TimeSpan TotalElapsed { get; set; }

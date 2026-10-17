@@ -903,6 +903,38 @@ namespace Editors.KitbasherEditor.Services
                 IReadOnlyList<CrossRigidAnalysisInstanceComponent> instances,
                 CancellationToken cancellationToken)
         {
+            // The analysis depends only on the ordered source components, so
+            // the same combination reached through other VMDs / attachments
+            // reuses it. The analyses are immutable records.
+            var cacheKey = string.Join(
+                "\u001e",
+                instances.Select(item =>
+                    string.Join(
+                        "\u001f",
+                        item.Component.WsModelPath,
+                        item.Component.RigidPath)));
+            if (!state.CrossRigidLodAnalysisCache.TryGetValue(
+                    cacheKey,
+                    out var cachedAnalyses))
+            {
+                cachedAnalyses =
+                    BuildCrossRigidLodAnalysesUncached(
+                        state,
+                        instances,
+                        cancellationToken).ToArray();
+                state.CrossRigidLodAnalysisCache[cacheKey] =
+                    cachedAnalyses;
+            }
+
+            return [.. cachedAnalyses];
+        }
+
+        private static List<CrossRigidLodAnalysis>
+            BuildCrossRigidLodAnalysesUncached(
+                BatchState state,
+                IReadOnlyList<CrossRigidAnalysisInstanceComponent> instances,
+                CancellationToken cancellationToken)
+        {
             var components = instances
                 .Select(item => item.Component)
                 .GroupBy(
