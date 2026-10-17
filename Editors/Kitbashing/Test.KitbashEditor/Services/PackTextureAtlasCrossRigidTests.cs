@@ -9481,6 +9481,87 @@ namespace Test.KitbashEditor.Services
             Assert.That(absent, Is.Null);
         }
 
+        // --- Atlasing runs after cross-rigid merging ---------------------------------------------
+
+        private static object CreateAtlasCandidateFor(string rigidPath, int part)
+        {
+            var type = GetNestedType("AtlasCandidate");
+            var constructor = type.GetConstructors(AnyInstance).OrderByDescending(item => item.GetParameters().Length).First();
+            var values = constructor.GetParameters()
+                .Select(parameter => parameter.ParameterType.IsValueType
+                    ? Activator.CreateInstance(parameter.ParameterType)
+                    : null)
+                .ToArray();
+            var parameters = constructor.GetParameters();
+            void Set(string name, object? value)
+                => values[Array.FindIndex(parameters, item => item.Name == name)] = value;
+            Set("Key", Activator.CreateInstance(GetNestedType("MeshKey"), [rigidPath, 0, part]));
+            Set("RootVmdPath", "root.variantmeshdefinition");
+            Set("Usages", Activator.CreateInstance(typeof(List<>).MakeGenericType(GetNestedType("WsUsage"))));
+            Set("ResolvedChannels", new HashSet<string>());
+            Set("ConstantChannels", new Dictionary<string, Editors.ImportExport.TextureAtlas.TextureAtlasConstantColor>());
+            Set("MaterialDocument", new XmlDocument());
+            return constructor.Invoke(values);
+        }
+
+        [Test]
+        public void Atlas_RigidsTheCrossRigidWriterBuiltFrom_AreNotCandidates_AndTheSkipSaysWhy()
+        {
+            var state = CreateBareBatchState();
+            Get<HashSet<string>>(state, "CrossRigidChangedRigids").Add("variantmeshes\\wh_main\\a.rigid_model_v2");
+            var changed = CreateAtlasCandidateFor("variantmeshes\\wh_main\\a.rigid_model_v2", 0);
+            var untouched = CreateAtlasCandidateFor("variantmeshes\\wh_main\\b.rigid_model_v2", 0);
+
+            var kept = (IList)GetStaticMethod("ExcludeCrossRigidChangedAtlasCandidates")
+                .Invoke(null, [state, ToCandidateList(changed, untouched)])!;
+
+            Assert.That(kept, Has.Count.EqualTo(1));
+            Assert.That(Get<object>(kept[0]!, "Key").ToString(), Does.Contain("b.rigid_model_v2"));
+            Assert.That(Get<int>(state, "AtlasCandidatesExcludedByCrossRigid"), Is.EqualTo(1));
+            var details = Get<IDictionary>(state, "SkipDetails").Values.Cast<IEnumerable>().SelectMany(list => list.Cast<object>()).ToList();
+            Assert.That(details, Has.Count.EqualTo(1));
+            Assert.That(Get<string>(details[0], "Reason"), Does.Contain("the rigid was changed by cross-rigid merging"));
+        }
+
+        [Test]
+        public void Atlas_WithoutCrossRigidChanges_KeepsEveryCandidate()
+        {
+            var state = CreateBareBatchState();
+            var candidates = ToCandidateList(
+                CreateAtlasCandidateFor("variantmeshes\\wh_main\\a.rigid_model_v2", 0),
+                CreateAtlasCandidateFor("variantmeshes\\wh_main\\b.rigid_model_v2", 0));
+
+            var kept = GetStaticMethod("ExcludeCrossRigidChangedAtlasCandidates").Invoke(null, [state, candidates]);
+
+            Assert.That(kept, Is.SameAs(candidates));
+            Assert.That(Get<int>(state, "AtlasCandidatesExcludedByCrossRigid"), Is.Zero);
+        }
+
+        [Test]
+        public void AtlasGate_TextureStillNamedByAGeneratedCrossRigidWsModel_HasThatConsumer_AndIsNeverRetired()
+        {
+            var fixture = new DownscaleFixture();
+            fixture.AddTexture("textures\\t_kept.dds", 256, 9);
+            fixture.AddMaterial("materials\\m_kept.xml.material", ("t_xml_base_colour", "textures\\t_kept.dds"));
+            var (_, state) = CreateDownscaleState(fixture, false, buildAtlases: true);
+            const string generatedWs = "variantmeshes\\asset_editor\\cross_rigid\\g.wsmodel";
+            Get<IDictionary>(state, "WsDocuments")[generatedWs] = CreateWsModelDocument(
+                "variantmeshes\\asset_editor\\cross_rigid\\g.rigid_model_v2",
+                [["materials\\m_kept.xml.material"]]);
+            Get<HashSet<string>>(state, "CrossRigidGeneratedWsModelPaths").Add(generatedWs);
+
+            var index = (IDictionary)GetStaticMethod("BuildAtlasValueGateSourceTextureIndex")
+                .Invoke(null, [state, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "textures\\t_kept.dds" }])!;
+
+            var texture = index["textures\\t_kept.dds"]!;
+            var references = Get<IEnumerable>(texture, "References").Cast<object>().ToList();
+            Assert.That(references, Has.Count.EqualTo(1));
+            Assert.That(Get<string>(references[0], "ConsumerAssetPath"), Is.EqualTo(generatedWs));
+            // Nothing rewrites that reference, so retiring the texture is never credited, and it
+            // counts as a pack consumer like a source WSModel would.
+            Assert.That(Get<IEnumerable>(texture, "PackReferences").Cast<object>().Count(), Is.EqualTo(1));
+        }
+
         // --- Shared repack density follows the downscale option ----------------------------
 
         // As if the early downscale analysis had chosen `scale` (mip slicing) for the texture.

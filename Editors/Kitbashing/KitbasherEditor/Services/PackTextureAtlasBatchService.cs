@@ -494,6 +494,8 @@ namespace Editors.KitbasherEditor.Services
                 // Report-only: needs the rigids and exposure the LOD audit collected.
                 if (!crossRigidOnly)
                     RunBoneWeightAudit(state, cancellationToken, progress, null, null);
+                // Discovered before the cross-rigid stage (on the source state), processed after it.
+                List<AtlasCandidate> discoveredCandidates = [];
                 phaseStopwatch.Restart();
                 if (crossRigidOnly)
                 {
@@ -523,7 +525,6 @@ namespace Editors.KitbasherEditor.Services
                     state.PhaseDurations["Index WSModels"] =
                         phaseStopwatch.Elapsed;
 
-                    List<AtlasCandidate> discoveredCandidates = [];
                     if (buildAtlases)
                     {
                         phaseStopwatch.Restart();
@@ -598,49 +599,6 @@ namespace Editors.KitbasherEditor.Services
                             progress,
                             SharedRepackAnalysisBudget);
                     }
-
-                    if (buildAtlases)
-                    {
-                        phaseStopwatch.Restart();
-                        if (shareAtlasesAcrossVmds)
-                        {
-                            ProcessPackWideAtlases(
-                                state,
-                                discoveredCandidates,
-                                cancellationToken,
-                                progress);
-                        }
-                        else
-                        {
-                            for (var i = 0; i < atlasVmdRoots.Count; i++)
-                            {
-                                cancellationToken.ThrowIfCancellationRequested();
-                                var rootCandidates = discoveredCandidates
-                                    .Where(x =>
-                                        x.RootVmdPath.Equals(
-                                            atlasVmdRoots[i],
-                                            StringComparison.OrdinalIgnoreCase))
-                                    .ToList();
-                                ProcessVmd(
-                                    state,
-                                    atlasVmdRoots[i],
-                                    rootCandidates,
-                                    cancellationToken,
-                                    progress);
-                            }
-
-                            ProcessDirectAssetAtlases(
-                                state,
-                                discoveredCandidates
-                                    .Where(IsDirectAssetCandidate)
-                                    .ToList(),
-                                cancellationToken,
-                                progress);
-                        }
-
-                        state.PhaseDurations["Plan and build atlases"] =
-                            phaseStopwatch.Elapsed;
-                    }
                 }
 
                 // Cross-rigid merging is opt-in: it rewrites VMDs and adds
@@ -662,6 +620,55 @@ namespace Editors.KitbasherEditor.Services
                         cancellationToken,
                         progress);
                     state.PhaseDurations["Emit cross-rigid merges"] =
+                        phaseStopwatch.Elapsed;
+                }
+
+                // Atlasing runs after cross-rigid merging, which keeps first pick of the meshes:
+                // the rigids the cross-rigid writer built from are not atlas candidates, and the
+                // generated cross-rigid WSModels count as users of the textures they still name.
+                if (buildAtlases && !crossRigidOnly)
+                {
+                    phaseStopwatch.Restart();
+                    discoveredCandidates = ExcludeCrossRigidChangedAtlasCandidates(
+                        state,
+                        discoveredCandidates);
+                    if (shareAtlasesAcrossVmds)
+                    {
+                        ProcessPackWideAtlases(
+                            state,
+                            discoveredCandidates,
+                            cancellationToken,
+                            progress);
+                    }
+                    else
+                    {
+                        for (var i = 0; i < atlasVmdRoots.Count; i++)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            var rootCandidates = discoveredCandidates
+                                .Where(x =>
+                                    x.RootVmdPath.Equals(
+                                        atlasVmdRoots[i],
+                                        StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                            ProcessVmd(
+                                state,
+                                atlasVmdRoots[i],
+                                rootCandidates,
+                                cancellationToken,
+                                progress);
+                        }
+
+                        ProcessDirectAssetAtlases(
+                            state,
+                            discoveredCandidates
+                                .Where(IsDirectAssetCandidate)
+                                .ToList(),
+                            cancellationToken,
+                            progress);
+                    }
+
+                    state.PhaseDurations["Plan and build atlases"] =
                         phaseStopwatch.Elapsed;
                 }
 

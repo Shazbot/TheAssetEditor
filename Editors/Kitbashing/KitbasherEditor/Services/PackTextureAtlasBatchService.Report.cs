@@ -894,6 +894,12 @@ namespace Editors.KitbasherEditor.Services
                     : "NO")}");
             sb.AppendLine($"Atlas textures generated: {state.GeneratedTexturePaths.Count}");
             AppendKeepAlphaSummary(sb, state);
+            if (state.CrossRigidMergesEnabled)
+            {
+                sb.AppendLine(
+                    $"Atlas candidates left out because cross-rigid merging changed their rigid (atlasing runs after it): " +
+                    $"{state.AtlasCandidatesExcludedByCrossRigid:N0}");
+            }
             sb.AppendLine(
                 $"Shared physical atlas-page evaluations: {state.SharedAtlasPageSharingEvaluations}");
             sb.AppendLine(

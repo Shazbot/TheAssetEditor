@@ -4727,7 +4727,11 @@ namespace Editors.KitbasherEditor.Services
             AtlasValueGateSourceReference reference)
         {
             var consumerPath = Normalize(reference.ConsumerAssetPath);
-            return consumerPath.Length != 0 && state.Source.ContainsFile(consumerPath);
+            // A WSModel the cross-rigid writer generated lives in the output pack and is never
+            // rewritten by atlasing: it keeps the textures it names resident like a source WSModel.
+            return consumerPath.Length != 0 &&
+                   (state.Source.ContainsFile(consumerPath) ||
+                    state.CrossRigidGeneratedWsModelPaths.Contains(consumerPath));
         }
 
         private static Dictionary<string, AtlasValueGateSourceTexture>
@@ -5284,6 +5288,38 @@ namespace Editors.KitbasherEditor.Services
                 state,
                 "Index direct rigid texture consumers",
                 directRigidIndexStopwatch.Elapsed);
+
+            // The WSModels the cross-rigid writer generated bind the source parts' ORIGINAL
+            // materials, so they are consumers of those materials' textures. They are not in
+            // any pack yet (only in the WSModel documents), so they are indexed from there. Atlasing
+            // never rewrites them, so a texture they name is never retired.
+            foreach (var generatedWsModel in state.CrossRigidGeneratedWsModelPaths
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                state.CancellationToken.ThrowIfCancellationRequested();
+                var generatedDocument = GetWsDocument(state, generatedWsModel);
+                if (generatedDocument == null)
+                    continue;
+
+                var generatedEntry = new VanillaWsModelConsumerEntry
+                {
+                    GeometryPath = Normalize(generatedDocument.SelectSingleNode("/model/geometry")?.InnerText),
+                };
+                foreach (XmlNode materialNode in generatedDocument.SelectNodes("/model/materials/material") ?? EmptyXmlNodeList)
+                {
+                    generatedEntry.Materials.Add(new VanillaWsModelMaterialBinding
+                    {
+                        MaterialPath = Normalize(materialNode.InnerText),
+                        LodIndex = TryParseIndex(materialNode, "lod_index", out var lod) ? lod : null,
+                        PartIndex = TryParseIndex(materialNode, "part_index", out var part) ? part : null,
+                    });
+                }
+
+                AddWsModelTextureReferences(
+                    Normalize(generatedWsModel),
+                    generatedEntry,
+                    sourceMaterialOnly: false);
+            }
 
             var directVmdIndexStopwatch = Stopwatch.StartNew();
             var directVmdTextures = new HashSet<string>(

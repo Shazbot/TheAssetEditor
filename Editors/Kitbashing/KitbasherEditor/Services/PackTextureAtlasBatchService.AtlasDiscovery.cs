@@ -201,6 +201,43 @@ namespace Editors.KitbasherEditor.Services
             state.MeshMergeSkipMessages.Add(message);
         }
 
+        private const string AtlasSkipReasonCrossRigidChangedRigid =
+            "the rigid was changed by cross-rigid merging, which has first pick of its meshes";
+
+        // Atlasing runs after the cross-rigid stage and leaves its work alone: the source rigids
+        // the writer built generated models from are not atlas candidates (their parts keep the
+        // materials the generated WSModels name too).
+        private static List<AtlasCandidate> ExcludeCrossRigidChangedAtlasCandidates(
+            BatchState state,
+            List<AtlasCandidate> candidates)
+        {
+            if (state.CrossRigidChangedRigids.Count == 0)
+                return candidates;
+
+            var kept = new List<AtlasCandidate>(candidates.Count);
+            foreach (var candidate in candidates)
+            {
+                if (!state.CrossRigidChangedRigids.Contains(Normalize(candidate.Key.GeometryPath)))
+                {
+                    kept.Add(candidate);
+                    continue;
+                }
+
+                RecordSkip(
+                    state,
+                    candidate.RootVmdPath,
+                    candidate.Key,
+                    candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                    AtlasSkipReasonCrossRigidChangedRigid);
+                state.AtlasCandidatesExcludedByCrossRigid++;
+            }
+
+            state.AtlasValueGateCandidateTexturePaths.Clear();
+            state.AtlasValueGateCandidateTexturePaths.UnionWith(
+                GetAtlasValueGateCandidateTexturePaths(kept));
+            return kept;
+        }
+
         private static void IndexTaintedGameplayWsModels(
             BatchState state,
             CancellationToken cancellationToken)

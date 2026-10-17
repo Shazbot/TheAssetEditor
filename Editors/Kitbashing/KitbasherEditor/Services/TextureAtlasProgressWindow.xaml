@@ -62,7 +62,7 @@
             Grid.Row="2"
             Margin="22,4,0,0"
             MaxWidth="620"
-            Text="Off by default. Atlasing adds large generated textures (about 150-190 MiB per pack on the reference packs) for a small measured gain (about 2 % fewer soldier-part instances). When off, the tool only merges parts that already share a material and optimizes geometry."
+            Text="Off by default. Atlasing adds large generated textures (about 150-190 MiB per pack on the reference packs) for a small measured gain (about 2 % fewer soldier-part instances). When on, atlasing runs after cross-rigid merging (which keeps first pick of its meshes) and leaves the rigids that merging built from alone. When off, the tool only merges parts that already share a material and optimizes geometry."
             TextWrapping="Wrap"
             Opacity="0.7" />
 
@@ -171,7 +171,7 @@
             Grid.Row="16"
             Margin="22,4,0,0"
             MaxWidth="620"
-            Text="Runs cross-rigid analysis and emission against the original pack state. Skips texture atlasing, same-rigid mesh merging, geometry optimization, BCn residency scans, and pruning. Gameplay VMD scope and scenario scoring options still apply; results can differ from a full run because atlasing may create additional merge compatibility."
+            Text="Runs cross-rigid analysis and emission against the original pack state. Skips texture atlasing, same-rigid mesh merging, geometry optimization, BCn residency scans, and pruning. Gameplay VMD scope and scenario scoring options still apply. Atlasing runs after cross-rigid merging in a full run, so it does not change what cross-rigid merging selects."
             TextWrapping="Wrap"
             Opacity="0.7" />
 

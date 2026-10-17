@@ -871,6 +871,8 @@ namespace Editors.KitbasherEditor.Services
                 new(StringComparer.OrdinalIgnoreCase);
             // How many keep-alpha format groups the atlas runs planned, and how many of them need
             // alpha kept in at least one slot.
+            // Atlas candidates dropped because the cross-rigid writer built from their rigid.
+            public int AtlasCandidatesExcludedByCrossRigid { get; set; }
             public int KeepAlphaFormatGroupsPlanned { get; set; }
             public int KeepAlphaFormatGroupsWithAlpha { get; set; }
             public List<GeneratedTextureTimingEntry> GeneratedTextureTimings { get; } = [];

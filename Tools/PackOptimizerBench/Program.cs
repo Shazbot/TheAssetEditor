@@ -15,7 +15,7 @@ using Shared.Core.Settings;
 // Headless runner for PackTextureAtlasBatchService.Process, for measuring the batch tool's runtime
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
-//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>]
+//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true]
 //
 // The output pack, the report and the fingerprint are written to <out>\<tag>\ (default
 // K:\projects\assedfork-bench\run), never next to the source pack.
@@ -33,6 +33,7 @@ internal static class Program
         var gameDirectory = options.GetValueOrDefault("game-dir", DefaultGameDirectory);
         var outputRoot = options.GetValueOrDefault("out", DefaultOutputRoot);
         var tag = options.GetValueOrDefault("tag", "run");
+        var buildAtlases = options.GetValueOrDefault("atlases", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
 
         var runDirectory = Path.Combine(outputRoot, tag);
         if (Path.GetFullPath(runDirectory).StartsWith(@"K:\wh3mods", StringComparison.OrdinalIgnoreCase) ||
@@ -96,7 +97,7 @@ internal static class Program
             lodAwareAtlasPlanning: true,
             crossRigidOnly: false,
             crossRigidMerges: true,
-            buildAtlases: false,
+            buildAtlases: buildAtlases,
             downscaleTextures: true,
             sharedTextureRepack: true,
             compactTextures: true,
