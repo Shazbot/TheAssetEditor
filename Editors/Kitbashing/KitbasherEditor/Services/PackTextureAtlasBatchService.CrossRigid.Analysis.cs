@@ -82,6 +82,7 @@ namespace Editors.KitbasherEditor.Services
             state.CrossRigidTimingDetails.Clear();
             state.CrossRigidSourceMeshMergeIdentityCache.Clear();
             state.CrossRigidMaterialMergeIdentityCache.Clear();
+            state.CrossRigidSourcePartIdentityCache.Clear();
             var crossRigidAnalysisStage = Stopwatch.StartNew();
 
             var rigidCache = new Dictionary<string, RmvFile>(

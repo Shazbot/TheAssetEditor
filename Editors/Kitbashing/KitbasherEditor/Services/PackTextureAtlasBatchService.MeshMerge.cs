@@ -1720,6 +1720,21 @@ namespace Editors.KitbasherEditor.Services
             int partIndex,
             RmvModel model,
             string materialPath)
+            => GetCrossRigidSourcePartIdentity(
+                state,
+                rigidPath,
+                lodIndex,
+                partIndex,
+                model,
+                materialPath).Identity;
+
+        private static CrossRigidPartIdentity GetCrossRigidSourcePartIdentity(
+            BatchState state,
+            string rigidPath,
+            int lodIndex,
+            int partIndex,
+            RmvModel model,
+            string materialPath)
         {
             // The same source part is inspected repeatedly across attachment
             // alternatives, LOD states and VMD roots. RMV identity serializes
@@ -1755,13 +1770,25 @@ namespace Editors.KitbasherEditor.Services
 
             // Evaluate the logical atlas boundary on each use: it may vary
             // between physical mesh states and is not covered by either cache.
-            return string.Join(
-                "\u001e",
-                GetAtlasBatchMergeBoundaryIdentity(
-                    state,
-                    meshKey),
-                modelIdentity,
-                materialIdentity);
+            var boundaryIdentity = GetAtlasBatchMergeBoundaryIdentity(
+                state,
+                meshKey);
+            var identityKey = (meshKey, normalizedMaterialPath, boundaryIdentity);
+            if (!state.CrossRigidSourcePartIdentityCache.TryGetValue(
+                    identityKey,
+                    out var partIdentity))
+            {
+                partIdentity = new CrossRigidPartIdentity(
+                    string.Join(
+                        "\u001e",
+                        boundaryIdentity,
+                        modelIdentity,
+                        materialIdentity));
+                state.CrossRigidSourcePartIdentityCache[identityKey] =
+                    partIdentity;
+            }
+
+            return partIdentity;
         }
 
         private static string GetRmvMergeIdentityForMerge(

@@ -1173,6 +1173,8 @@ namespace Editors.KitbasherEditor.Services
                 [];
             public Dictionary<string, string> CrossRigidMaterialMergeIdentityCache { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<(MeshKey Mesh, string MaterialPath, string Boundary), CrossRigidPartIdentity>
+                CrossRigidSourcePartIdentityCache { get; } = [];
             public TimeSpan TotalElapsed { get; set; }
 
             public BatchState(
@@ -2123,6 +2125,18 @@ namespace Editors.KitbasherEditor.Services
             string RootVmdPath,
             string WsModelPath,
             string Reason);
+
+        private sealed class CrossRigidPartIdentity(string identity)
+        {
+            private string? _hash;
+
+            public string Identity { get; } = identity;
+
+            // Computed on first use: the strict identity can be a couple of
+            // kilobytes and is hashed once per distinct source part instead
+            // of once per LOD analysis that touches it.
+            public string Hash => _hash ??= ContentHash(Identity);
+        }
 
         private readonly record struct MeshKey(string GeometryPath, int LodIndex, int PartIndex)
         {

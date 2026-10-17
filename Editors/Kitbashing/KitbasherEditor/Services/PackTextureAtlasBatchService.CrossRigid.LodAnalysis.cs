@@ -1342,6 +1342,9 @@ namespace Editors.KitbasherEditor.Services
                     List<CrossRigidAnalysisMeshPart>>(
                     StringComparer.Ordinal);
             var vertexFactory = VertexFactory.Create();
+            var identityHashSources =
+                new Dictionary<string, CrossRigidPartIdentity>(
+                    StringComparer.Ordinal);
             long generatedVertices = 0;
             long generatedGeometryBytes = 0;
 
@@ -1381,20 +1384,22 @@ namespace Editors.KitbasherEditor.Services
                             (long)sizeof(ushort) *
                             model.Mesh.IndexList.Length);
 
-                    var identity =
-                        GetCrossRigidSourcePartMergeIdentity(
+                    var partIdentity =
+                        GetCrossRigidSourcePartIdentity(
                             state,
                             component.RigidPath,
                             sourceLodIndex,
                             partIndex,
                             model,
                             materialAssignments[partIndex]);
+                    var identity = partIdentity.Identity;
                     if (!partsByIdentity.TryGetValue(
                             identity,
                             out var parts))
                     {
                         parts = [];
                         partsByIdentity[identity] = parts;
+                        identityHashSources[identity] = partIdentity;
                     }
 
                     parts.Add(
@@ -1425,7 +1430,7 @@ namespace Editors.KitbasherEditor.Services
                 outputDraws += outputBins;
                 outputLayoutParts.Add(string.Join(
                     ":",
-                    ContentHash(identity),
+                    identityHashSources[identity].Hash,
                     outputBins,
                     string.Join(
                         ",",
