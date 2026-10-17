@@ -105,6 +105,9 @@ internal static class Program
         processStopwatch.Stop();
         Console.WriteLine($"Process finished in {processStopwatch.Elapsed.TotalSeconds:0.0} s (report: {result.ReportPath}).");
         Console.WriteLine(
+            $"Game-pack lookups: {Shared.Core.PackFiles.Models.Containers.PackFileLookupDiagnostics.Lookups:N0}, " +
+            $"cache hits {Shared.Core.PackFiles.Models.Containers.PackFileLookupDiagnostics.Hits:N0}");
+        Console.WriteLine(
             $"GC: gen0 {GC.CollectionCount(0)}, gen1 {GC.CollectionCount(1)}, gen2 {GC.CollectionCount(2)}, " +
             $"pause {GC.GetTotalPauseDuration().TotalSeconds:0.0} s, allocated {GC.GetTotalAllocatedBytes() / (1024 * 1024):N0} MiB, " +
             $"peak working set {Process.GetCurrentProcess().PeakWorkingSet64 / (1024 * 1024):N0} MiB, " +

@@ -23,6 +23,12 @@ namespace Shared.Core.PackFiles.Models.Containers
         private CacheDbContext _db;
         private readonly DbContextOptions<CacheDbContext> _dbOptions;
         private readonly object _dbLock = new();
+        // Path lookups by normalised path, positive and negative. The cache database is read-only
+        // after it is built (Save() rebuilds it and clears this), a game-pack lookup costs a
+        // database round trip, and the same paths are asked for again and again. Only the row is
+        // cached: every FindFile still returns a fresh PackFile, so callers can never share one.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CachedFileEntity?> _lookupCache =
+            new(StringComparer.Ordinal);
         private SqliteConnection? _keepAliveConnection;
 
         public CacheStorageMode StorageMode { get; }
@@ -168,6 +174,7 @@ namespace Shared.Core.PackFiles.Models.Containers
             PackFileSettings.GameVersion = source.PackFileSettings.GameVersion;
 
             // Recreate _db so this instance can be queried after Save()
+            _lookupCache.Clear();
             _db.Dispose();
             _db = new CacheDbContext(_dbOptions);
             _db.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
@@ -398,23 +405,30 @@ namespace Shared.Core.PackFiles.Models.Containers
 
         public PackFile? FindFile(string path)
         {
-            var lowerPath = PathNormalization.NormalizeFileName(path);
+            var entry = FindEntry(PathNormalization.NormalizeFileName(path));
+            return entry != null ? ToPackFile(entry) : null;
+        }
+
+        public bool ContainsFile(string path)
+            => FindEntry(PathNormalization.NormalizeFileName(path)) != null;
+
+        private CachedFileEntity? FindEntry(string lowerPath)
+        {
+            if (_lookupCache.TryGetValue(lowerPath, out var cached))
+            {
+                PackFileLookupDiagnostics.Record(hit: true);
+                return cached;
+            }
+
             CachedFileEntity? entry;
             lock (_dbLock)
             {
                 entry = _db.Files.FirstOrDefault(f => f.RelativePath == lowerPath);
             }
 
-            return entry != null ? ToPackFile(entry) : null;
-        }
-
-        public bool ContainsFile(string path)
-        {
-            var lowerPath = PathNormalization.NormalizeFileName(path);
-            lock (_dbLock)
-            {
-                return _db.Files.Any(f => f.RelativePath == lowerPath);
-            }
+            PackFileLookupDiagnostics.Record(hit: false);
+            _lookupCache[lowerPath] = entry;
+            return entry;
         }
 
         public string? GetFullPath(PackFile file)
