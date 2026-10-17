@@ -659,6 +659,31 @@ namespace Editors.KitbasherEditor.Services
             CrossRigidVisualInstance,
             string> CrossRigidInstanceNormalizedWsModelPaths = new();
 
+        private static readonly ConditionalWeakTable<
+            CrossRigidVisualConfiguration,
+            HashSet<string>> CrossRigidConfigurationWsModelPaths = new();
+
+        private static HashSet<string> GetCrossRigidConfigurationWsModelPaths(
+            CrossRigidVisualConfiguration configuration)
+            => CrossRigidConfigurationWsModelPaths.GetValue(
+                configuration,
+                static configuration =>
+                {
+                    var paths = new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+                    foreach (var occurrenceSet in configuration.OccurrenceSets)
+                    {
+                        foreach (var instance in occurrenceSet.Instances)
+                        {
+                            paths.Add(
+                                GetCrossRigidInstanceNormalizedWsModelPath(
+                                    instance));
+                        }
+                    }
+
+                    return paths;
+                });
+
         private static string GetCrossRigidInstanceNormalizedWsModelPath(
             CrossRigidVisualInstance instance)
             => CrossRigidInstanceNormalizedWsModelPaths.GetValue(

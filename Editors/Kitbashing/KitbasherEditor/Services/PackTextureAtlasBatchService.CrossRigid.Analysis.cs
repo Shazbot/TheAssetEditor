@@ -4584,6 +4584,16 @@ namespace Editors.KitbasherEditor.Services
             foreach (var count in expectedCounts.Values)
                 expectedTotal += count;
 
+            // A configuration can only yield a matching state when every
+            // expected WSModel occurs in at least one of its states.
+            var configurationPaths =
+                GetCrossRigidConfigurationWsModelPaths(configuration);
+            foreach (var expectedPath in expectedCounts.Keys)
+            {
+                if (!configurationPaths.Contains(expectedPath))
+                    return Array.Empty<CrossRigidRewriteOccurrenceSet>();
+            }
+
             foreach (var occurrenceSet in configuration.OccurrenceSets)
             {
                 // Cheap pre-filter: the selected instances can only match the
