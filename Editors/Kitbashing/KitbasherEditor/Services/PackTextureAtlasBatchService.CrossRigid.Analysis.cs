@@ -4579,13 +4579,34 @@ namespace Editors.KitbasherEditor.Services
                 IReadOnlyDictionary<string, int> expectedCounts)
         {
             var result = new List<CrossRigidRewriteOccurrenceSet>();
+            var expectedTotal = 0;
+            foreach (var count in expectedCounts.Values)
+                expectedTotal += count;
 
             foreach (var occurrenceSet in configuration.OccurrenceSets)
             {
+                // Cheap pre-filter: the selected instances can only match the
+                // expected multiplicities if their total matches. This avoids
+                // allocating for the (vast majority of) non-matching states.
+                var matching = 0;
+                foreach (var instance in occurrenceSet.Instances)
+                {
+                    if (expectedCounts.ContainsKey(
+                            GetCrossRigidInstanceNormalizedWsModelPath(
+                                instance)))
+                    {
+                        matching++;
+                    }
+                }
+
+                if (matching != expectedTotal)
+                    continue;
+
                 var selected = occurrenceSet.Instances
                     .Where(instance =>
                         expectedCounts.ContainsKey(
-                            Normalize(instance.WsModelPath)))
+                            GetCrossRigidInstanceNormalizedWsModelPath(
+                                instance)))
                     .ToArray();
                 var actualCounts =
                     BuildCrossRigidWsModelMultiplicity(
@@ -4605,9 +4626,7 @@ namespace Editors.KitbasherEditor.Services
                         occurrenceSet.Probability,
                         selected
                             .OrderBy(
-                                instance =>
-                                    BuildCrossRigidOccurrenceProvenanceSignature(
-                                        [instance]),
+                                BuildCrossRigidInstanceProvenanceSignature,
                                 StringComparer.Ordinal)
                             .ToArray()));
             }

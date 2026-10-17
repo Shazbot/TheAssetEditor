@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -648,21 +649,43 @@ namespace Editors.KitbasherEditor.Services
                 .ToArray();
         }
 
+        // Instances are immutable and shared by reference across thousands of
+        // configurations, so their single-instance signature is computed once.
+        private static readonly ConditionalWeakTable<
+            CrossRigidVisualInstance,
+            string> CrossRigidInstanceProvenanceSignatures = new();
+
+        private static readonly ConditionalWeakTable<
+            CrossRigidVisualInstance,
+            string> CrossRigidInstanceNormalizedWsModelPaths = new();
+
+        private static string GetCrossRigidInstanceNormalizedWsModelPath(
+            CrossRigidVisualInstance instance)
+            => CrossRigidInstanceNormalizedWsModelPaths.GetValue(
+                instance,
+                static instance => Normalize(instance.WsModelPath));
+
+        private static string BuildCrossRigidInstanceProvenanceSignature(
+            CrossRigidVisualInstance instance)
+            => CrossRigidInstanceProvenanceSignatures.GetValue(
+                instance,
+                static instance => string.Join(
+                    "\u001f",
+                    instance.WsModelPath,
+                    instance.DefiningVmdPath,
+                    instance.ModelXmlPath,
+                    instance.ActivationSignature,
+                    string.Join(
+                        "\u001d",
+                        instance.ReferenceChain.Select(hop =>
+                            $"{hop.OwnerVmdPath}|{hop.ReferenceXmlPath}|{hop.ReferencedVmdPath}"))));
+
         private static string BuildCrossRigidOccurrenceProvenanceSignature(
             IEnumerable<CrossRigidVisualInstance> instances)
             => string.Join(
                 "\u001e",
                 instances
-                    .Select(instance => string.Join(
-                        "\u001f",
-                        instance.WsModelPath,
-                        instance.DefiningVmdPath,
-                        instance.ModelXmlPath,
-                        instance.ActivationSignature,
-                        string.Join(
-                            "\u001d",
-                            instance.ReferenceChain.Select(hop =>
-                                $"{hop.OwnerVmdPath}|{hop.ReferenceXmlPath}|{hop.ReferencedVmdPath}"))))
+                    .Select(BuildCrossRigidInstanceProvenanceSignature)
                     .OrderBy(value => value, StringComparer.Ordinal));
 
         private static string BuildCrossRigidRenderedConfigurationSignature(
