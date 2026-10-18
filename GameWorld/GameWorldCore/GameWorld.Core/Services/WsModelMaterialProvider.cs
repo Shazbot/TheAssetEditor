@@ -108,6 +108,8 @@ namespace GameWorld.Core.Services
                 shader = _materialFactory.CreateMaterial(CapabilityMaterialsEnum.MetalRoughPbr_Default);
             }
 
+            shader.SourceWsModelMaterialPath = materialPath.MaterialPath;
+
             _materialCache.Add(materialPath.MaterialPath, shader);
             return shader;
         }

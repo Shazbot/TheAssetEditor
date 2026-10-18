@@ -29,7 +29,11 @@ namespace Editors.Shared.Core.Editors.VariantMeshDefinition
             try
             {
                 // Validate
-                var obj = VariantMeshDefinitionLoader.Load(text); ;
+                // The loader repairs malformed text instead of rejecting it, but the text is saved
+                // exactly as typed, so anything that needed repairing is a save error.
+                var obj = VariantMeshDefinitionLoader.Load(text, out var repairs);
+                if (repairs.Count != 0)
+                    throw new XmlException("The VMD is not well-formed XML: " + string.Join(" ", repairs));
                 error = ValidateFilePaths(obj, pfs);
 
                 return Encoding.UTF8.GetBytes(text);

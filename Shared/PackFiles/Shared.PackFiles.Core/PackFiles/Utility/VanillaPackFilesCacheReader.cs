@@ -678,6 +678,9 @@ internal sealed class VanillaPackFilesCacheReader
         public PackFile? DeleteFile(PackFile file)
             => throw CreateReadOnlyException();
 
+        public List<PackFile> DeleteFiles(IReadOnlyCollection<string> paths)
+            => throw CreateReadOnlyException();
+
         public void DeleteFolder(string folder)
             => ThrowReadOnly();
 

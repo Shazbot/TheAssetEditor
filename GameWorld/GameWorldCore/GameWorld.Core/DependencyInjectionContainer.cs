@@ -51,7 +51,10 @@ namespace GameWorld.Core
             serviceCollection.AddScoped<SceneRenderParametersStore>();
 
             // Services
-            serviceCollection.AddSingleton<ISkeletonAnimationLookUpHelper, SkeletonAnimationLookUpHelper>();
+            serviceCollection.AddSingleton<ISkeletonAnimationLookUpHelper>(x => new SkeletonAnimationLookUpHelper(
+                x.GetRequiredService<Shared.Core.PackFiles.IHeadlessPackFileService>(),
+                x.GetRequiredService<Shared.Core.Events.IGlobalEventHub>(),
+                enableCollectionSynchronization: System.Windows.Data.BindingOperations.EnableCollectionSynchronization));
             serviceCollection.AddScoped<MeshBuilderService>();
             serviceCollection.AddScoped<ViewOnlySelectedService>();
             serviceCollection.AddScoped<FocusSelectableObjectService>();

@@ -286,59 +286,98 @@ namespace Shared.Core.PackFiles.Serialization
             _logger.Here().Information("Finished SerializeFileTable");
         }
 
+        // How many files are read, compressed and verified at a time. The results are written in
+        // table order, so the output is identical to doing it one by one; the limit bounds the
+        // memory held for the files in flight.
+        private const int BlobPreparationBatchSize = 16;
+
+        private sealed record PreparedBlob(byte[] Data, uint UncompressedSize, bool ShouldCompress);
+
+        static PreparedBlob PrepareBlob(PackFileWriteInformation fileMetaData)
+        {
+            var packFile = fileMetaData.PackFile;
+            byte[] data;
+            uint uncompressedSize = 0;
+
+            // Read file data
+            if (fileMetaData.CompressionInfo.DecompressBeforeSaving == false && packFile.DataSource is PackedFileSource packedFileSource)
+                data = packedFileSource.ReadDataWithoutDecompressing();
+            else
+                data = packFile.DataSource.ReadData();
+
+            // Compress if needed
+            var shouldCompress = fileMetaData.CompressionInfo.IntendedCompressionFormat != CompressionFormat.None;
+            if (shouldCompress)
+            {
+                var uncompressedData = packFile.DataSource.ReadData();
+                uncompressedSize = (uint)uncompressedData.Length;
+
+                // Compress the data into the right format
+                var compressedData = FileCompression.Compress(uncompressedData, fileMetaData.CompressionInfo.IntendedCompressionFormat);
+                data = compressedData;
+
+                // Validate new compression
+                var decompressedData = FileCompression.Decompress(compressedData, uncompressedData.Length, fileMetaData.CompressionInfo.IntendedCompressionFormat);
+                if (decompressedData.Length != uncompressedData.Length)
+                    throw new InvalidDataException($"Decompressed bytes {decompressedData.Length:N0} does not match the expected uncompressed bytes {uncompressedData.Length:N0}.");
+            }
+
+            return new PreparedBlob(data, uncompressedSize, shouldCompress);
+        }
+
         static void SerializeFileBlob(string outputFileName, List<PackFileWriteInformation> fileMetaDataTabel, PackFileContainer container, BinaryWriter writer)
         {
             _logger.Here().Information("Starting SerializeFileBlob");
 
-            foreach (var fileMetaData in fileMetaDataTabel)
+            for (var batchStart = 0; batchStart < fileMetaDataTabel.Count; batchStart += BlobPreparationBatchSize)
             {
-                var packFile = fileMetaData.PackFile;
-                byte[] data;
-                uint uncompressedSize = 0;
-
-                // Read file data
-                if (fileMetaData.CompressionInfo.DecompressBeforeSaving == false && packFile.DataSource is PackedFileSource packedFileSource)
-                    data = packedFileSource.ReadDataWithoutDecompressing();
-                else
-                    data = packFile.DataSource.ReadData();
-
-                // Compress if needed
-                var shouldCompress = fileMetaData.CompressionInfo.IntendedCompressionFormat != CompressionFormat.None;
-                if (shouldCompress)
+                var batchCount = Math.Min(BlobPreparationBatchSize, fileMetaDataTabel.Count - batchStart);
+                var prepared = new PreparedBlob[batchCount];
+                if (batchCount == 1)
                 {
-                    var uncompressedData = packFile.DataSource.ReadData();
-                    uncompressedSize = (uint)uncompressedData.Length;
-
-                    // Compress the data into the right format
-                    var compressedData = FileCompression.Compress(uncompressedData, fileMetaData.CompressionInfo.IntendedCompressionFormat);
-                    data = compressedData;
-
-                    // Validate new compression
-                    var decompressedData = FileCompression.Decompress(compressedData, uncompressedData.Length, fileMetaData.CompressionInfo.IntendedCompressionFormat);
-                    if (decompressedData.Length != uncompressedData.Length)
-                        throw new InvalidDataException($"Decompressed bytes {decompressedData.Length:N0} does not match the expected uncompressed bytes {uncompressedData.Length:N0}.");
+                    prepared[0] = PrepareBlob(fileMetaDataTabel[batchStart]);
+                }
+                else
+                {
+                    try
+                    {
+                        Parallel.For(0, batchCount, index => prepared[index] = PrepareBlob(fileMetaDataTabel[batchStart + index]));
+                    }
+                    catch (AggregateException ex) when (ex.InnerExceptions.Count > 0)
+                    {
+                        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
+                    }
                 }
 
-                // Write the data
-                var offset = writer.BaseStream.Position;
-                writer.Write(data);
+                for (var index = 0; index < batchCount; index++)
+                {
+                    var fileMetaData = fileMetaDataTabel[batchStart + index];
+                    var packFile = fileMetaData.PackFile;
+                    var data = prepared[index].Data;
+                    var uncompressedSize = prepared[index].UncompressedSize;
+                    var shouldCompress = prepared[index].ShouldCompress;
 
-                // Patch the size from the position stored earlier
-                var currentPosition = writer.BaseStream.Position;
-                writer.BaseStream.Position = fileMetaData.SizePosition;
-                writer.Write(data.Length);
-                writer.BaseStream.Position = currentPosition;
+                    // Write the data
+                    var offset = writer.BaseStream.Position;
+                    writer.Write(data);
 
-                // Update DataSource
-                var packedFileSourceParent = new PackedFileSourceParent { FilePath = outputFileName };
-                packFile.DataSource = new PackedFileSource(
-                    packedFileSourceParent,
-                    offset,
-                    data.Length,
-                    false,     // We do not encrypt
-                    shouldCompress,
-                    fileMetaData.CompressionInfo.IntendedCompressionFormat,
-                    uncompressedSize);
+                    // Patch the size from the position stored earlier
+                    var currentPosition = writer.BaseStream.Position;
+                    writer.BaseStream.Position = fileMetaData.SizePosition;
+                    writer.Write(data.Length);
+                    writer.BaseStream.Position = currentPosition;
+
+                    // Update DataSource
+                    var packedFileSourceParent = new PackedFileSourceParent { FilePath = outputFileName };
+                    packFile.DataSource = new PackedFileSource(
+                        packedFileSourceParent,
+                        offset,
+                        data.Length,
+                        false,     // We do not encrypt
+                        shouldCompress,
+                        fileMetaData.CompressionInfo.IntendedCompressionFormat,
+                        uncompressedSize);
+                }
             }
 
             _logger.Here().Information("Finished SerializeFileBlob");

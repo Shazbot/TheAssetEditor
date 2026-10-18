@@ -77,6 +77,7 @@ namespace GameWorld.Core.Rendering.Materials
             {
                 var material = CreateMaterial(preferredMaterial);
                 material.Initialize(wsModelMaterial, rmvMaterial);
+                material.SourceWsModelShaderPath = wsModelMaterial?.ShaderPath;
                 return material;
             }
             catch (Exception ex)

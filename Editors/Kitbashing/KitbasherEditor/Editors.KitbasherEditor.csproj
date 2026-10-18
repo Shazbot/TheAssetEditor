@@ -20,6 +20,13 @@
 
 
   <ItemGroup>
+    <EmbeddedResource Include="Services\Wh3UnitCategorySchema.json" />
+    <EmbeddedResource Include="Services\Wh3ShaderTextureChannels.json" />
+    <EmbeddedResource Include="Contracts\ArmyVisualContract.schema.json" />
+    <EmbeddedResource Include="Contracts\Fixtures\army-visual-contract-v1.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\ImportExportEditor\Editors.ImportExport\Editors.ImportExport.csproj" />
     <ProjectReference Include="..\..\..\GameWorld\GameWorldCore\GameWorld.Core\GameWorld.Core.csproj" />
     <ProjectReference Include="..\..\..\GameWorld\GameWorldCore\GameWorld.AssetCore\GameWorld.AssetCore.csproj" />
