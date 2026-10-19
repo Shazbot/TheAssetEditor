@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
 using DirectXTexNet;
+using Editors.ImportExport.Dds;
 using Shared.GameFormats.RigidModel;
 
 namespace Editors.PackOptimizer.Core
@@ -752,6 +753,14 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 using var withMips = full.GenerateMipMaps(TEX_FILTER_FLAGS.DEFAULT, 0);
+                if (DdsEncodeCapture.Enabled)
+                {
+                    DdsEncodeCapture.Record(
+                        "TryEncodeSharedRepackDds", full, null, withMips, compressed,
+                        TEX_COMPRESS_FLAGS.DEFAULT, 0.5f,
+                        "GenerateMipMaps(DEFAULT, levels=0)");
+                }
+
                 using var packed = withMips.Compress(compressed, TEX_COMPRESS_FLAGS.DEFAULT, 0.5f);
                 using var stream = packed.SaveToDDSMemory(
                     dx10 ? DDS_FLAGS.FORCE_DX10_EXT : DDS_FLAGS.NONE);
@@ -866,6 +875,7 @@ namespace Editors.PackOptimizer.Core
                 {
                     byte[] rewritten;
                     string error;
+                    using var captureScope = DdsEncodeCapture.Scope("repack-scaled-source", path);
                     var ok = candidate.UseSlicing
                         ? TrySliceDdsMips(bytes, layout, candidate.SkipLevels, out rewritten, out error)
                         : TryReencodeDds(
@@ -3772,6 +3782,14 @@ namespace Editors.PackOptimizer.Core
                         Marshal.Copy(pixels, y * levelWidth * 4, IntPtr.Add(levelImage.Pixels, y * levelPitch), levelWidth * 4);
                 }
 
+                if (DdsEncodeCapture.Enabled)
+                {
+                    DdsEncodeCapture.Record(
+                        "TryEncodeSharedRepackChain", full, null, chain, compressed,
+                        TEX_COMPRESS_FLAGS.DEFAULT, 0.5f,
+                        $"GenerateMipMaps(DEFAULT, levels=0), then levels {firstOverlayLevel}..{lastOverlayLevel} overwritten by the sources' own mip crops");
+                }
+
                 using var packed = chain.Compress(compressed, TEX_COMPRESS_FLAGS.DEFAULT, 0.5f);
                 using var stream = packed.SaveToDDSMemory(dx10 ? DDS_FLAGS.FORCE_DX10_EXT : DDS_FLAGS.NONE);
                 result = new byte[stream.Length];
@@ -4205,6 +4223,7 @@ namespace Editors.PackOptimizer.Core
                     foreach (var output in page.Outputs)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
+                        using var captureScope = DdsEncodeCapture.Scope("shared-repack", output.Path);
                         if (!TryComposeSharedRepackOutput(page, output, sources, out var error))
                         {
                             failure = $"{output.Slot}: {error}";

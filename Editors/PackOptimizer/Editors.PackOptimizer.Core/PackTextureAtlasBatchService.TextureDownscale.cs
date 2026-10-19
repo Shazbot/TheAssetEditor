@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
 using DirectXTexNet;
+using Editors.ImportExport.Dds;
 using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;
 
@@ -685,6 +686,14 @@ namespace Editors.PackOptimizer.Core
 
             using var resized = full.Resize(newWidth, newHeight, TEX_FILTER_FLAGS.BOX);
             using var withMips = resized.GenerateMipMaps(TEX_FILTER_FLAGS.DEFAULT, 0);
+            if (DdsEncodeCapture.Enabled)
+            {
+                DdsEncodeCapture.Record(
+                    "TryReencodeDds", full, resized, withMips, compressed,
+                    TEX_COMPRESS_FLAGS.DEFAULT, 0.5f,
+                    "Resize(BOX) then GenerateMipMaps(DEFAULT, levels=0)");
+            }
+
             using var packed = withMips.Compress(compressed, TEX_COMPRESS_FLAGS.DEFAULT, 0.5f);
             // Keep a DX10 header DX10 even for UNORM formats, so the header kind survives.
             using var stream = packed.SaveToDDSMemory(
@@ -2131,6 +2140,7 @@ namespace Editors.PackOptimizer.Core
 
                     byte[] rewritten;
                     string error;
+                    using var captureScope = DdsEncodeCapture.Scope("downscale", candidate.Path);
                     var ok = candidate.UseSlicing
                         ? TrySliceDdsMips(bytes, layout, candidate.SkipLevels, out rewritten, out error)
                         : TryReencodeDds(
