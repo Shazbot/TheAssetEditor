@@ -21,7 +21,7 @@ Not in scope: texture atlasing in whmm. It stays an Asset-Editor-only experiment
   - `ApplicationSettingsService.CurrentSettings` (the game check).
   - `IPackFileService`: `CreateNewPackFileContainer`, `AddFilesToPack` ×3, `DeleteFiles`, `FindFile` ×4, `GetAllPackfileContainers` ×2, `SavePackContainer`, `UnloadPackContainer`.
   - `IPackFileContainerLoader.CreateFromPackFile`.
-- **The host references** `Editors.ImportExport.Core`, `GameWorld.AssetCore` and `Shared.PackFiles.Core`, and uses managed BCnEncoder.Net. The optimizer needs native DirectXTexNet (Windows x64) through `PngToDdsImporter` and `TextureAtlasBuilder`, both in `Editors.ImportExport` (not `.Core`).
+- **The host references** `Editors.ImportExport.Core`, `GameWorld.AssetCore` and `Shared.PackFiles.Core`, and uses managed BCnEncoder.Net. The optimizer encodes with native DirectXTex through `PngToDdsImporter` and `TextureAtlasBuilder`, both in `Editors.ImportExport.Dds` (not `.Core`).
 - **Both branches edit these 11 files:**
   - `CachedPackFileContainer.cs`, `PackFileService.cs`, `IPackFileService.cs`, `SystemFolderContainer.cs`;
   - `VariantMeshDefinition.cs`, `WsModelMaterialProvider.cs`;
@@ -56,7 +56,7 @@ Not in scope: texture atlasing in whmm. It stays an Asset-Editor-only experiment
   - all `PackTextureAtlasBatchService.*.cs`, `RigidGeometryOptimizer.cs`, `Wh3ArmyVisualContract.cs`, `Wh3UnitCategoryResolver.cs`, `Wh3VanillaAtlasConsumerCache.cs`, `TextureAtlasMergeService`'s shared helpers;
   - `Wh3ShaderTextureChannels.json` and `Wh3UnitCategorySchema.json` as embedded resources;
   - `TextureAtlas/TextureAtlasBuilder.cs`, plus the DDS compression path of `PngToDdsImporter` (`CreateRawBgraMipChainWriter`, `CompressAndSaveCore`, the large-BC split, `DDSFormatHelper`). Move these into `Editors.ImportExport.Core` (or a new `Editors.ImportExport.Dds`) so the editor importer and the library share one implementation.
-- **References:** `Shared.PackFiles.Core`, `Shared.GameFormats`, `Editors.ImportExport.Core`, DirectXTexNet. No WPF, no `GameWorld.Core`, no `Shared.Ui`.
+- **References:** `Shared.PackFiles.Core`, `Shared.GameFormats`, `Editors.ImportExport.Core`, `Editors.ImportExport.Dds` (native DirectXTexShim). No WPF, no `GameWorld.Core`, no `Shared.Ui`.
 - **Public API:** `PackOptimizer.Run(PackOptimizerRequest, IProgress<Progress>, CancellationToken) → PackOptimizerResult` (status, report path, output path, summary counters).
   - `Process(...)`'s 15 boolean parameters become one options record.
   - The missing-texture prompt (`ApplyMissingTextureDecision`, `atlasMeshesWithMissingTextures`) becomes a policy enum on the request.
@@ -66,13 +66,15 @@ Not in scope: texture atlasing in whmm. It stays an Asset-Editor-only experiment
 - **Tests:** move the optimizer test files (`PackTextureAtlasCrossRigidTests`, `PackTextureAtlasValueGateTests`, `Wh3UnitCategoryResolverTests`, `Wh3ArmyVisualContractTests`, `RigidGeometryOptimizerTests`, `DdsBcnResidencyEstimatorTests`) to `Test.PackOptimizer.Core`. They call private members by reflection, so keep the type and member names.
 - **Done when:** the editor works through the adapter; tests pass at their known counts; the bench, pointed at the library, gives the identical fingerprint.
 
-### 3. Host process mode
-- Run it as a separate process, `WH3AssetHost.exe optimize --request <file.json>`, not inside the pipe server loop, so previews keep working and memory and crashes stay isolated.
-- **Request JSON:** game dir; source pack; output path; options; whmm cache paths (vanilla file index, optional DB cache); the load order (step 4); report path.
-- **Output:** one JSON progress line per update on stdout `{stage, item, current, total}`, a final result line, and the report file. Exit code 0 on success, non-zero on failure, with the error in the result line. Cancel by killing the process: the output is written to a temp path and moved into place only on success.
-- **Vanilla containers** come from `VanillaPackFilesCacheReader` (whmm's file index). If the index is missing or stale, fail with a clear error; whmm warms it first.
-- **Publish:** check that DirectXTexNet's native DLL works in the single-file trimmed build (`IncludeNativeLibrariesForSelfExtract`), add trimmer roots for the optimizer's reflection/serialisation, and record the exe size before and after. Keep DirectXTex: swapping to BCnEncoder.Net changes output bytes and quality.
-- **Done when:** the host's `optimize` mode on `!ak_teb3` produces the same fingerprint as the editor and the bench, and `SmokeTest.ps1` gains an optimize case.
+### 3. Host process mode (done)
+- Run as a separate process, `WH3AssetHost.exe optimize --request <file.json> [--parent-pid <pid>]`, not inside the pipe server loop, so previews keep working and memory and crashes stay isolated.
+- **Request JSON** (`schemaVersion` 1): `gameDirectory` (the `data` folder with `manifest.txt`; the install folder is accepted), `vanillaFileIndexPath` (whmm's `vanilla-pack-files-cache.bin`), `sourcePackPath`, `outputPackPath`, `reportPath`, optional `cacheDirectory`, `options` (nullable bools; omitted ones keep the optimizer defaults), `consumerPackPaths` (checked to exist, ignored until step 4).
+- **Output:** stdout is JSON lines only. Progress lines `{"type":"progress",stage,item,current,total}` (throttled to about 10/s), then one `{"type":"result",status,outputPackPath,reportPath,vmdCount,atlasedMeshCount,generatedTextureCount,removedFileCount,skippedMeshCount,elapsedSeconds}` or `{"type":"error",message,exceptionType}`.
+- **Exit codes:** 0 succeeded, 1 failed, 2 invalid request, 3 cancelled. Cancel by Ctrl+C, SIGTERM or parent exit (`--parent-pid`). Output and report go to `<target>.optimizing` and are moved into place only on success.
+- **Vanilla containers** come from whmm's file index through `HeadlessPackFileLoader.TryLoadFromVanillaCache`, one read-only container per pack, ordered like the editor (load order, then name). A missing or stale entry fails with an error naming the pack; whmm warms the index first. The source pack is loaded with a non-interactive duplicate resolver.
+- **Encoding:** a small native wrapper, `Native/DirectXTexShim` (plain C exports over DirectXTex `mar2024`, pinned in `directxtex.pin`, static CRT, no OpenMP), called through P/Invoke. Output is byte-identical to the managed wrapper it replaced. The prebuilt `DirectXTexShim.dll` (351 KB) is committed; `build.ps1` rebuilds it.
+- **Publish:** single-file, trimmed exe (about 39 MB, was 34 MB); the shim DLL is bundled with `IncludeNativeLibrariesForSelfExtract`. `optimize --check-dds` verifies the native library loads.
+- **Done:** `optimize` on `!ak_teb3` matches the bench fingerprint (only the harmless "Gameplay container snapshot" count line differs), and `SmokeTest.ps1` has an optimize case.
 
 ### 4. Other mods as consumers (new behaviour)
 - Today pruning, vanilla-override protection, texture-sharing checks and the repack's "every user rewritten" rule consider only CA packs. In a load order, submods, compatibility patches and reskins can reference the optimised mod's files.
@@ -110,6 +112,6 @@ Not in scope: texture atlasing in whmm. It stays an Asset-Editor-only experiment
 ## Risks
 
 - **Merge conflicts in the pack-file layer** (step 1). Mitigation: the fingerprint, plus the PackFiles tests on both sides.
-- **DirectXTexNet** in a trimmed single-file publish (step 3). Mitigation: try it first; the fallback is to ship the native DLL next to the exe.
+- **Native shim** (step 3): a Windows x64 binary committed to the repo, with a pinned DirectXTex. Mitigation: `directxtex.pin`, `build.ps1`, and the parity harness against the old output; bump the pin only with a fresh parity run.
 - **Consumer packs** (step 4) are new logic and can block more optimisations than expected. Mitigation: report every block with its reason.
 - **Reflection-based tests** (step 2) break on renames. Mitigation: move files without renaming types or members.
