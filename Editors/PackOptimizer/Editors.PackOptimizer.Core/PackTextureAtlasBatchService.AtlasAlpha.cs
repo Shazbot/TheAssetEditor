@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
 using System.IO;
 using System.Xml;
-using DirectXTexNet;
+using Editors.ImportExport.Dds.Native;
 using Editors.ImportExport.Importing.Importers.PngToDds.Helpers;
 using Editors.ImportExport.TextureAtlas;
 using Pfim;

@@ -1,4 +1,4 @@
-using DirectXTexNet;
+using Editors.ImportExport.Dds.Native;
 using Editors.ImportExport.Common.Interfaces;
 using Editors.ImportExport.Importing.Importers.PngToDds.Helpers;
 using System.Diagnostics;
@@ -543,7 +543,7 @@ namespace Editors.ImportExport.Importing.Importers.PngToDds
         }
 
         private static CompressedBcStripe CompressBcStripe(
-            DirectXTexNet.Image sourceBase,
+            Editors.ImportExport.Dds.Native.Image sourceBase,
             DXGI_FORMAT sourceFormat,
             DXGI_FORMAT ddsFormat,
             int width,

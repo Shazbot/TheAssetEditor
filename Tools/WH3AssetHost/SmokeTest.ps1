@@ -11,7 +11,7 @@
     removed by default.
 
     When -OptimizeSourcePack is given, the script also runs `WH3AssetHost.exe optimize` once
-    (folder layout: dotnet publish -c Release -p:WH3AssetHostFolderLayout=true) with a request
+    (by default from the same single-file exe) with a request
     file, and checks the exit code, that every stdout line is JSON, the final result line, and
     the output pack and report on disk. The vanilla file index is the same one used above.
 
@@ -63,7 +63,7 @@ if ([string]::IsNullOrWhiteSpace($VanillaPackFilesCachePath)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($OptimizeHostPath)) {
-    $OptimizeHostPath = Join-Path $repoRoot 'Tools\WH3AssetHost\bin\Release\folder\WH3AssetHost.exe'
+    $OptimizeHostPath = $HostPath
 }
 
 $packPath = Join-Path $GameDataPath 'ui.pack'
@@ -145,7 +145,7 @@ function Read-JsonFrame {
 
 function Invoke-OptimizeSmoke {
     if (-not (Test-Path -LiteralPath $OptimizeHostPath)) {
-        throw "The folder-layout host was not found at $OptimizeHostPath. Publish it with -p:WH3AssetHostFolderLayout=true."
+        throw "The host was not found at $OptimizeHostPath."
     }
     if (-not (Test-Path -LiteralPath $VanillaPackFilesCachePath)) {
         throw "The vanilla file index $VanillaPackFilesCachePath does not exist; warm it from the mod manager first."

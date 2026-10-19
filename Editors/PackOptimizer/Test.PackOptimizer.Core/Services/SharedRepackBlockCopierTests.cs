@@ -1,6 +1,6 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
-using DirectXTexNet;
+using Editors.ImportExport.Dds.Native;
 using Editors.PackOptimizer.Core;
 
 namespace Test.PackOptimizer.Core

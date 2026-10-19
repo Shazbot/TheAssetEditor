@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
-using DirectXTexNet;
+using Editors.ImportExport.Dds.Native;
 
 namespace Editors.ImportExport.Dds
 {

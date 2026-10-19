@@ -1430,7 +1430,7 @@ namespace Editors.PackOptimizer.Core
                 state.GeneratedTextureFormats[atlasPath] = new GeneratedTextureFormat(
                     channel.Slot,
                     atlasFormat,
-                    atlasFormat == DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB &&
+                    atlasFormat == Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC3_UNORM_SRGB &&
                     IsBc1AtlasTarget(channel.Type)
                         ? GetKeepAlphaReason(candidates, channel.Slot)
                         : null);

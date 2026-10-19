@@ -4,7 +4,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
-using DirectXTexNet;
+using Editors.ImportExport.Dds.Native;
 using Editors.ImportExport.Common.Interfaces;
 
 namespace Editors.ImportExport.Common.Interfaces

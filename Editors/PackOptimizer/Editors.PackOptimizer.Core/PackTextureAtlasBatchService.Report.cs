@@ -733,7 +733,7 @@ namespace Editors.PackOptimizer.Core
                 .Where(item => AtlasChannels.Any(channel =>
                     channel.Slot.Equals(item.Slot, StringComparison.OrdinalIgnoreCase) && IsBc1AtlasTarget(channel.Type)))
                 .ToList();
-            var kept = bc1Targets.Where(item => item.Format == DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB).ToList();
+            var kept = bc1Targets.Where(item => item.Format == Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC3_UNORM_SRGB).ToList();
             int Count(string slot) => kept.Count(item => item.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase));
             sb.AppendLine(
                 $"Atlas channels written as BC3 to keep alpha: {kept.Count} of {bc1Targets.Count} BC1-target " +

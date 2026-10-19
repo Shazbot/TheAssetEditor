@@ -39,7 +39,7 @@ namespace Editors.PackOptimizer.Core
             int Width,
             int Height,
             TextureType TextureType,
-            DirectXTexNet.DXGI_FORMAT Format,
+            Editors.ImportExport.Dds.Native.DXGI_FORMAT Format,
             TimeSpan RasterElapsed,
             TimeSpan CompressionElapsed,
             bool UsedLargeBcSplitCompression,
@@ -2115,7 +2115,7 @@ namespace Editors.PackOptimizer.Core
 
         private sealed record GeneratedTextureFormat(
             string Slot,
-            DirectXTexNet.DXGI_FORMAT Format,
+            Editors.ImportExport.Dds.Native.DXGI_FORMAT Format,
             string? KeepAlphaReason);
 
         private sealed record AtlasedMeshReportEntry(

@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
-using DirectXTexNet;
+using Editors.ImportExport.Dds.Native;
 using Editors.ImportExport.Dds;
 using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;

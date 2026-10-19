@@ -66,30 +66,28 @@ internal static class OptimizeMode
         if (parentPid.HasValue)
             _ = MonitorParentAsync(parentPid.Value, cancellation);
 
-        var layoutError = GetUnsupportedLayoutError();
-        if (layoutError != null)
-            return Fail(stdout, OptimizeOutcome.Failed, layoutError, "UnsupportedLayout");
+        var nativeError = GetNativeLibraryError();
+        if (nativeError != null)
+            return Fail(stdout, OptimizeOutcome.Failed, nativeError, "NativeLibraryUnavailable");
 
         var outcome = Execute(request!, stdout, cancellation.Token);
         return OptimizeExitCodes.For(outcome);
     }
 
     /// <summary>
-    /// Compresses a tiny texture through DirectXTexNet. Proves the native DirectXTex library
-    /// loads in this build (it does not in a single-file bundle unless it is made available).
+    /// Loads the native DirectXTex shim and compresses a tiny texture through it. Proves the library is found
+    /// and works in this build (single-file, trimmed or not).
     /// </summary>
     private static int CheckNativeDds(TextWriter stdout)
     {
-        var layoutError = GetUnsupportedLayoutError();
-        if (layoutError != null)
-            return Fail(stdout, OptimizeOutcome.Failed, layoutError, "UnsupportedLayout");
-
         try
         {
-            using var image = DirectXTexNet.TexHelper.Instance.Initialize2D(
-                DirectXTexNet.DXGI_FORMAT.B8G8R8A8_UNORM, 8, 8, 1, 1, DirectXTexNet.CP_FLAGS.NONE);
+            using var image = Editors.ImportExport.Dds.Native.TexHelper.Instance.Initialize2D(
+                Editors.ImportExport.Dds.Native.DXGI_FORMAT.B8G8R8A8_UNORM, 8, 8, 1, 1, Editors.ImportExport.Dds.Native.CP_FLAGS.NONE);
             using var compressed = image.Compress(
-                DirectXTexNet.DXGI_FORMAT.BC1_UNORM, DirectXTexNet.TEX_COMPRESS_FLAGS.DEFAULT, 0.5f);
+                Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC1_UNORM, Editors.ImportExport.Dds.Native.TEX_COMPRESS_FLAGS.DEFAULT, 0.5f);
+            var native = Editors.ImportExport.Dds.Native.TexHelper.NativeVersion;
+            Console.Error.WriteLine($"DirectXTex shim: version {native.Version}, {native.Tag} ({native.Commit})");
             WriteLine(stdout, new OptimizeResultLine("result", "dds-ok", string.Empty, string.Empty, 0, 0, 0, 0, 0, 0), OptimizeJsonContext.Default.OptimizeResultLine);
             return OptimizeExitCodes.Succeeded;
         }
@@ -100,14 +98,19 @@ internal static class OptimizeMode
         }
     }
 
-    /// <summary>
-    /// DirectXTexNet is a C++/CLI assembly, which cannot be hosted from a single-file bundle.
-    /// </summary>
-    internal static string? GetUnsupportedLayoutError()
-        => !File.Exists(Path.Combine(AppContext.BaseDirectory, "DirectXTexNetImpl.dll"))
-            ? "optimize needs the folder layout of WH3AssetHost (dotnet publish -c Release -p:WH3AssetHostFolderLayout=true); " +
-              "the single-file build cannot load DirectXTexNet."
-            : null;
+    /// <summary>Null when the native DirectXTex shim loads; otherwise why not.</summary>
+    internal static string? GetNativeLibraryError()
+    {
+        try
+        {
+            _ = Editors.ImportExport.Dds.Native.TexHelper.NativeVersion;
+            return null;
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or BadImageFormatException or EntryPointNotFoundException)
+        {
+            return $"The native DirectXTex library (DirectXTexShim.dll) could not be loaded: {exception.Message}";
+        }
+    }
 
     private static OptimizeOutcome Execute(OptimizeRequest request, TextWriter stdout, CancellationToken cancellationToken)
     {

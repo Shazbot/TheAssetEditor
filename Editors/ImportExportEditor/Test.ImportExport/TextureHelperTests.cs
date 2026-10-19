@@ -4,7 +4,7 @@ using System.Text;
 using MeshImportExport;
 using ZstdSharp;
 using System.Drawing;
-using DirectXTexNet;
+using Editors.ImportExport.Dds.Native;
 using Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng;
 using Editors.ImportExport;
 using Moq;

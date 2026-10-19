@@ -9405,7 +9405,7 @@ namespace Test.PackOptimizer.Core
             object state,
             string path,
             string slot,
-            DirectXTexNet.DXGI_FORMAT format,
+            Editors.ImportExport.Dds.Native.DXGI_FORMAT format,
             string? keepAlphaReason,
             int width = 1024,
             int height = 512)
@@ -9423,11 +9423,11 @@ namespace Test.PackOptimizer.Core
             var report = WriteAtlasFormatReport(state =>
             {
                 AddGeneratedAtlas(state, "textures\\asset_editor\\atlases\\a0_base_colour.dds", "t_xml_base_colour",
-                    DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB, reason);
+                    Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC3_UNORM_SRGB, reason);
                 AddGeneratedAtlas(state, "textures\\asset_editor\\atlases\\a0_material_map.dds", "t_xml_material_map",
-                    DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB, null);
+                    Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC1_UNORM_SRGB, null);
                 AddGeneratedAtlas(state, "textures\\asset_editor\\atlases\\a0_normal.dds", "t_xml_normal",
-                    DirectXTexNet.DXGI_FORMAT.BC3_UNORM, null);
+                    Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC3_UNORM, null);
                 SetStateProperty(state, "KeepAlphaFormatGroupsPlanned", 3);
                 SetStateProperty(state, "KeepAlphaFormatGroupsWithAlpha", 1);
             });
@@ -9451,7 +9451,7 @@ namespace Test.PackOptimizer.Core
             var report = WriteAtlasFormatReport(state =>
             {
                 AddGeneratedAtlas(state, "textures\\asset_editor\\atlases\\a1_base_colour.dds", "t_xml_base_colour",
-                    DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB, null);
+                    Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC1_UNORM_SRGB, null);
             });
 
             var lines = report.Split('\n').Select(line => line.TrimEnd('\r')).ToList();
@@ -12739,7 +12739,7 @@ namespace Test.PackOptimizer.Core
 
             var forced = (HashSet<int>?)GetStaticMethod("GetForceOpaqueAlphaSourceIds").Invoke(
                 null,
-                [state, DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB, sourcePaths, bytes, constants]);
+                [state, Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC1_UNORM_SRGB, sourcePaths, bytes, constants]);
 
             Assert.That(forced, Is.EquivalentTo(new[] { 0, 3 }));
 
@@ -12747,7 +12747,7 @@ namespace Test.PackOptimizer.Core
             Assert.That(
                 GetStaticMethod("GetForceOpaqueAlphaSourceIds").Invoke(
                     null,
-                    [state, DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB, sourcePaths, bytes, constants]),
+                    [state, Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC3_UNORM_SRGB, sourcePaths, bytes, constants]),
                 Is.Null);
         }
 
@@ -12759,7 +12759,7 @@ namespace Test.PackOptimizer.Core
                 null,
                 [
                     state,
-                    DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB,
+                    Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC1_UNORM_SRGB,
                     new Dictionary<int, string> { [0] = "a.dds", [1] = "b.dds" },
                     new Dictionary<int, byte[]>
                     {
@@ -12787,7 +12787,7 @@ namespace Test.PackOptimizer.Core
                 null,
                 [
                     state,
-                    DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB,
+                    Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC1_UNORM_SRGB,
                     paths,
                     bytes,
                     new Dictionary<int, Editors.ImportExport.TextureAtlas.TextureAtlasConstantColor>(),
@@ -12817,7 +12817,7 @@ namespace Test.PackOptimizer.Core
 
         // A 4x4 DDS made by DirectXTex: BGRA texels of the given alpha, optionally BC7 encoded.
         private static byte[] BuildDirectXTexDds(
-            DirectXTexNet.DXGI_FORMAT format,
+            Editors.ImportExport.Dds.Native.DXGI_FORMAT format,
             byte alpha,
             bool compressToBc7 = false)
         {
@@ -12830,23 +12830,23 @@ namespace Test.PackOptimizer.Core
                 texels[index * 4 + 3] = alpha;
             }
 
-            using var source = DirectXTexNet.TexHelper.Instance.Initialize2D(
-                format, 4, 4, 1, 1, DirectXTexNet.CP_FLAGS.NONE);
+            using var source = Editors.ImportExport.Dds.Native.TexHelper.Instance.Initialize2D(
+                format, 4, 4, 1, 1, Editors.ImportExport.Dds.Native.CP_FLAGS.NONE);
             System.Runtime.InteropServices.Marshal.Copy(texels, 0, source.GetImage(0).Pixels, texels.Length);
             var image = source;
-            DirectXTexNet.ScratchImage? compressed = null;
+            Editors.ImportExport.Dds.Native.ScratchImage? compressed = null;
             try
             {
                 if (compressToBc7)
                 {
                     compressed = source.Compress(
-                        DirectXTexNet.DXGI_FORMAT.BC7_UNORM,
-                        DirectXTexNet.TEX_COMPRESS_FLAGS.DEFAULT,
+                        Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC7_UNORM,
+                        Editors.ImportExport.Dds.Native.TEX_COMPRESS_FLAGS.DEFAULT,
                         0.5f);
                     image = compressed;
                 }
 
-                using var stream = image.SaveToDDSMemory(DirectXTexNet.DDS_FLAGS.NONE);
+                using var stream = image.SaveToDDSMemory(Editors.ImportExport.Dds.Native.DDS_FLAGS.NONE);
                 var bytes = new byte[stream.Length];
                 stream.ReadExactly(bytes);
                 return bytes;
@@ -12861,13 +12861,13 @@ namespace Test.PackOptimizer.Core
         public void AtlasAlpha_Classify_UncompressedBgra_ScansTheAlpha()
         {
             Assert.That(
-                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8A8_UNORM, 255)),
+                ClassifyAlpha(BuildDirectXTexDds(Editors.ImportExport.Dds.Native.DXGI_FORMAT.B8G8R8A8_UNORM, 255)),
                 Is.EqualTo("Opaque"));
             Assert.That(
-                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8A8_UNORM, 10)),
+                ClassifyAlpha(BuildDirectXTexDds(Editors.ImportExport.Dds.Native.DXGI_FORMAT.B8G8R8A8_UNORM, 10)),
                 Is.EqualTo("HasAlpha"));
             Assert.That(
-                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.R8G8B8A8_UNORM, 10)),
+                ClassifyAlpha(BuildDirectXTexDds(Editors.ImportExport.Dds.Native.DXGI_FORMAT.R8G8B8A8_UNORM, 10)),
                 Is.EqualTo("HasAlpha"));
         }
 
@@ -12875,10 +12875,10 @@ namespace Test.PackOptimizer.Core
         public void AtlasAlpha_Classify_Bc7_ScansTheAlpha()
         {
             Assert.That(
-                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8A8_UNORM, 255, compressToBc7: true)),
+                ClassifyAlpha(BuildDirectXTexDds(Editors.ImportExport.Dds.Native.DXGI_FORMAT.B8G8R8A8_UNORM, 255, compressToBc7: true)),
                 Is.EqualTo("Opaque"));
             Assert.That(
-                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8A8_UNORM, 10, compressToBc7: true)),
+                ClassifyAlpha(BuildDirectXTexDds(Editors.ImportExport.Dds.Native.DXGI_FORMAT.B8G8R8A8_UNORM, 10, compressToBc7: true)),
                 Is.EqualTo("HasAlpha"));
         }
 
@@ -12894,7 +12894,7 @@ namespace Test.PackOptimizer.Core
                 Is.EqualTo("Opaque"));
             // B8G8R8X8: the fourth byte is padding, here 0.
             Assert.That(
-                ClassifyAlpha(BuildDirectXTexDds(DirectXTexNet.DXGI_FORMAT.B8G8R8X8_UNORM, 0)),
+                ClassifyAlpha(BuildDirectXTexDds(Editors.ImportExport.Dds.Native.DXGI_FORMAT.B8G8R8X8_UNORM, 0)),
                 Is.EqualTo("Opaque"));
         }
 
@@ -13019,15 +13019,15 @@ namespace Test.PackOptimizer.Core
             var opaque = ToCandidateList(CreateKeepAlphaCandidate(), CreateKeepAlphaCandidate());
 
             Assert.That(Format(mixed, "t_xml_base_colour", Shared.GameFormats.RigidModel.Types.TextureType.BaseColour),
-                Is.EqualTo(DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB));
+                Is.EqualTo(Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC3_UNORM_SRGB));
             Assert.That(Format(mixed, "t_xml_material_map", Shared.GameFormats.RigidModel.Types.TextureType.MaterialMap),
-                Is.EqualTo(DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB));
+                Is.EqualTo(Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC1_UNORM_SRGB));
             Assert.That(Format(opaque, "t_xml_base_colour", Shared.GameFormats.RigidModel.Types.TextureType.BaseColour),
-                Is.EqualTo(DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB));
+                Is.EqualTo(Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC1_UNORM_SRGB));
             Assert.That(Format(mixed, "t_xml_normal", Shared.GameFormats.RigidModel.Types.TextureType.Normal),
-                Is.EqualTo(DirectXTexNet.DXGI_FORMAT.BC3_UNORM));
-            Assert.That(GetStaticMethod("GetAtlasBytesPerBlock").Invoke(null, [DirectXTexNet.DXGI_FORMAT.BC1_UNORM_SRGB]), Is.EqualTo(8));
-            Assert.That(GetStaticMethod("GetAtlasBytesPerBlock").Invoke(null, [DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB]), Is.EqualTo(16));
+                Is.EqualTo(Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC3_UNORM));
+            Assert.That(GetStaticMethod("GetAtlasBytesPerBlock").Invoke(null, [Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC1_UNORM_SRGB]), Is.EqualTo(8));
+            Assert.That(GetStaticMethod("GetAtlasBytesPerBlock").Invoke(null, [Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC3_UNORM_SRGB]), Is.EqualTo(16));
         }
 
         private static void RunGateTotals(
@@ -13168,7 +13168,7 @@ namespace Test.PackOptimizer.Core
                     1,
                     Shared.GameFormats.RigidModel.Types.TextureType.BaseColour,
                     Shared.Core.Settings.GameTypeEnum.Warhammer3,
-                    ddsFormatOverride: DirectXTexNet.DXGI_FORMAT.BC3_UNORM_SRGB);
+                    ddsFormatOverride: Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC3_UNORM_SRGB);
             var pixels = new byte[8 * 8 * 4];
             for (var texel = 0; texel < 64; texel++)
             {

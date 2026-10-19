@@ -1,4 +1,4 @@
-using DirectXTexNet;
+using Editors.ImportExport.Dds.Native;
 using Editors.ImportExport.Importing.Importers.PngToDds;
 using Editors.ImportExport.Importing.Importers.PngToDds.Helpers;
 using Editors.ImportExport.TextureAtlas;
