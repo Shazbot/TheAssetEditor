@@ -81,6 +81,29 @@ namespace Editors.ImportExport.Dds
             File.WriteAllText(Path.Combine(directory, "meta.json"), meta.ToString());
         }
 
+        /// <summary>
+        /// Records which blocks of a generated sheet are verbatim source blocks. One file per sheet under
+        /// <c>copymaps</c>: for each mip level, int32 block width, int32 block height, then one byte per
+        /// block (the <c>SharedRepackBlockFate</c> value; 7 means copied).
+        /// </summary>
+        public static void RecordCopyMap(string sheetPath, int[] blocksWide, int[] blocksHigh, byte[][] fates)
+        {
+            if (CaptureDirectory == null)
+                return;
+
+            var directory = Path.Combine(CaptureDirectory, "copymaps");
+            Directory.CreateDirectory(directory);
+            using var stream = File.Create(Path.Combine(directory, sheetPath.Replace('\\', '_').Replace('/', '_') + ".copymap"));
+            using var writer = new BinaryWriter(stream);
+            writer.Write(fates.Length);
+            for (var level = 0; level < fates.Length; level++)
+            {
+                writer.Write(blocksWide[level]);
+                writer.Write(blocksHigh[level]);
+                writer.Write(fates[level]);
+            }
+        }
+
         private static void WriteLevel(string path, Image image)
         {
             var rowBytes = checked(image.Width * 4);

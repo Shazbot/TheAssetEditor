@@ -217,6 +217,8 @@ namespace Editors.PackOptimizer.Core
             public int MipLevels { get; set; }
             // Top mip levels whose chart rectangles were copied block for block.
             public int BlockCopiedLevels { get; set; }
+            // Per level and cause: which sheet blocks are verbatim source blocks and what is left to the encoder.
+            internal SharedRepackBlockStats? BlockStats { get; set; }
             public DdsLayout Template { get; set; } = null!;
             // The source textures this output replaces (all of one signature set).
             public List<string> Sources { get; } = [];
@@ -3691,35 +3693,105 @@ namespace Editors.PackOptimizer.Core
                 return false;
             }
 
-            // Block copy.
+            // Block copy: wherever a chart's crop sits on the 4x4 grid at a level, in the source and on
+            // the sheet, the sheet's blocks wholly inside the crop become the source's own blocks. Every
+            // other block (gutters, partly covered or misaligned blocks, levels the source lacks, other
+            // formats, generated levels) stays as the encoder produced it.
+            var stats = new SharedRepackBlockStats(output.MipLevels);
+            var captureFates = DdsEncodeCapture.Enabled ? new byte[output.MipLevels][] : null;
+            var verifyFailures = 0;
             var bytesPerBlock = layout.BytesPerBlock;
-            for (var level = 0; level < blockLevels; level++)
+            for (var level = 0; level < output.MipLevels; level++)
             {
-                var destinationOffset = GetSharedRepackLevelOffset(layout, level);
-                var destinationBlocks = (Math.Max(1, output.Width >> level) + 3) / 4;
+                var levelWidth = Math.Max(1, output.Width >> level);
+                var levelHeight = Math.Max(1, output.Height >> level);
+                var destinationBlocksWide = SharedRepackBlockCopier.BlocksFor(levelWidth);
+                var destinationBlocksHigh = SharedRepackBlockCopier.BlocksFor(levelHeight);
+                stats.LevelWidths[level] = destinationBlocksWide;
+                stats.LevelHeights[level] = destinationBlocksHigh;
+                var destinationOffset = checked((int)GetSharedRepackLevelOffset(layout, level));
+                var destinationBytes = destinationBlocksWide * destinationBlocksHigh * bytesPerBlock;
+                var fates = new SharedRepackBlockFate[destinationBlocksWide * destinationBlocksHigh];
+                var levelHasCharts = false;
                 foreach (var tuple in users)
                 {
-                    var source = sources.Get(tuple.Slots[output.Slot])!;
-                    var sourceOffset = GetSharedRepackLevelOffset(source.Layout, level);
-                    var sourceBlocks = (Math.Max(1, source.Layout.Width >> level) + 3) / 4;
+                    var source = sources.Get(tuple.Slots[output.Slot]);
                     foreach (var item in EnumerateSharedRepackSlotCharts(page, output, tuple))
                     {
-                        var blocksWide = (item.Width >> level) / 4;
-                        var blocksHigh = (item.Height >> level) / 4;
-                        for (var by = 0; by < blocksHigh; by++)
+                        var width = item.Width >> level;
+                        var height = item.Height >> level;
+                        if (width <= 0 || height <= 0)
+                            continue;
+
+                        levelHasCharts = true;
+                        var destinationX = item.DestinationX >> level;
+                        var destinationY = item.DestinationY >> level;
+                        var reason = SharedRepackBlockCopier.GetFallbackReason(
+                            source != null,
+                            source?.Layout.Format ?? string.Empty,
+                            source?.Layout.BytesPerBlock ?? 0,
+                            output.Format,
+                            bytesPerBlock,
+                            source?.Layout.MipCount ?? 0,
+                            source?.Dds.LongLength ?? 0,
+                            source == null ? 0 : source.Layout.HeaderSize + source.Layout.ChainBytes,
+                            level,
+                            item.SourceX,
+                            item.SourceY,
+                            item.DestinationX,
+                            item.DestinationY);
+
+                        if (reason != null)
                         {
-                            var from = sourceOffset +
-                                       (((item.SourceY >> level) / 4 + by) * (long)sourceBlocks +
-                                        (item.SourceX >> level) / 4) * bytesPerBlock;
-                            var to = destinationOffset +
-                                     (((item.DestinationY >> level) / 4 + by) * (long)destinationBlocks +
-                                      (item.DestinationX >> level) / 4) * bytesPerBlock;
-                            Buffer.BlockCopy(source.Dds, checked((int)from), dds, checked((int)to), blocksWide * bytesPerBlock);
+                            SharedRepackBlockCopier.Mark(fates, destinationBlocksWide, destinationBlocksHigh, destinationX, destinationY, width, height, reason.Value);
+                            continue;
                         }
+
+                        var sourceLayout = source!.Layout;
+                        var sourceLevelWidth = Math.Max(1, sourceLayout.Width >> level);
+                        var sourceLevelHeight = Math.Max(1, sourceLayout.Height >> level);
+                        var sourceX = item.SourceX >> level;
+                        var sourceY = item.SourceY >> level;
+                        var sourceOffset = checked((int)GetSharedRepackLevelOffset(sourceLayout, level));
+                        var sourceBlocksWide = SharedRepackBlockCopier.BlocksFor(sourceLevelWidth);
+                        var sourceBlocksHigh = SharedRepackBlockCopier.BlocksFor(sourceLevelHeight);
+                        SharedRepackBlockCopier.CopyRectangle(
+                            source.Dds.AsSpan(sourceOffset, checked((int)sourceLayout.LevelBytes(level))),
+                            sourceBlocksWide,
+                            sourceBlocksHigh,
+                            dds.AsSpan(destinationOffset, destinationBytes),
+                            destinationBlocksWide,
+                            destinationBlocksHigh,
+                            bytesPerBlock,
+                            sourceX,
+                            sourceY,
+                            destinationX,
+                            destinationY,
+                            Math.Min(width, Math.Min(sourceLevelWidth - sourceX, levelWidth - destinationX)),
+                            Math.Min(height, Math.Min(sourceLevelHeight - sourceY, levelHeight - destinationY)),
+                            fates,
+                            ref verifyFailures);
                     }
+                }
+
+                SharedRepackBlockCopier.Tally(stats, level, fates, levelHasCharts);
+                if (captureFates != null)
+                {
+                    captureFates[level] = fates
+                        .Select(fate => (byte)(fate == SharedRepackBlockFate.Gutter && !levelHasCharts ? SharedRepackBlockFate.Generated : fate))
+                        .ToArray();
                 }
             }
 
+            if (verifyFailures != 0)
+            {
+                error = $"{verifyFailures:N0} copied block row(s) differ from their source blocks";
+                return false;
+            }
+
+            output.BlockStats = stats;
+            if (captureFates != null)
+                DdsEncodeCapture.RecordCopyMap(output.Path, stats.LevelWidths, stats.LevelHeights, captureFates);
             output.Data = dds;
             output.BlockCopiedLevels = blockLevels;
             return true;
@@ -4825,7 +4897,30 @@ namespace Editors.PackOptimizer.Core
                         $"    -> {output.Path}: {output.Width}x{output.Height} {output.Format}" +
                         $"{(output.Srgb ? "_SRGB" : string.Empty)}, {output.Bytes:N0} bytes with mips, " +
                         $"{output.BlockCopiedLevels} of {output.MipLevels} mip level(s) block-copied");
+                    if (output.BlockStats is { } blockStats)
+                    {
+                        sb.AppendLine(
+                            $"      blocks: copied {blockStats.Copied:N0} of {blockStats.Total:N0} " +
+                            $"({(blockStats.Total == 0 ? 0 : 100.0 * blockStats.Copied / blockStats.Total):0.00} %), " +
+                            $"encoded {blockStats.Encoded:N0} ({blockStats.DescribeCauses()}); copied per level: {blockStats.DescribeLevels()}");
+                    }
                 }
+            }
+
+            var allBlockStats = result.BuiltSets
+                .SelectMany(set => set.Outputs)
+                .Select(output => output.BlockStats)
+                .OfType<SharedRepackBlockStats>()
+                .ToList();
+            if (allBlockStats.Count != 0)
+            {
+                var combined = new SharedRepackBlockStats(allBlockStats.Max(item => item.Levels));
+                foreach (var item in allBlockStats)
+                    combined.Add(item);
+                sb.AppendLine(
+                    $"Shared repack: block-copied {combined.Copied:N0} of {combined.Total:N0} blocks " +
+                    $"({(combined.Total == 0 ? 0 : 100.0 * combined.Copied / combined.Total):0.00} %), encoded {combined.Encoded:N0} " +
+                    $"({combined.DescribeCauses()}) over {allBlockStats.Count:N0} sheet(s).");
             }
 
             if (result.Samples != 0)
