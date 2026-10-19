@@ -58,6 +58,25 @@ internal static class Program
         settings.CurrentSettings.GameDirectories.Add(new ApplicationSettings.GamePathPair(GameTypeEnum.Warhammer3, gameDirectory));
 
         var loader = services.GetRequiredService<IPackFileContainerLoader>();
+        // Fingerprint of an existing output (for runs made by another host, e.g. WH3AssetHost.exe):
+        //   --fingerprint-pack <pack> --fingerprint-report <report> --fingerprint-to <file>
+        if (options.TryGetValue("fingerprint-pack", out var fingerprintPack))
+        {
+            WriteFingerprint(
+                loader,
+                fingerprintPack,
+                options.GetValueOrDefault("fingerprint-report", string.Empty),
+                options.GetValueOrDefault("fingerprint-to", fingerprintPack + ".fingerprint.txt"));
+            Console.WriteLine($"Fingerprint written to {options.GetValueOrDefault("fingerprint-to", fingerprintPack + ".fingerprint.txt")}.");
+            return 0;
+        }
+
+        // Compares which pack wins a path between the editor's merged game container and the
+        // per-pack containers the asset host builds from whmm's file index:
+        //   --check-container-order true --vanilla-index <vanilla-pack-files-cache.bin>
+        if (options.GetValueOrDefault("check-container-order", "false").Equals("true", StringComparison.OrdinalIgnoreCase))
+            return CheckContainerOrder(loader, gameDirectory, options.GetValueOrDefault("vanilla-index", string.Empty));
+
         var loadStopwatch = Stopwatch.StartNew();
         var caPacks = loader.CreateFromGameEnum(PackFileContainerType.Database, GameTypeEnum.Warhammer3);
         if (caPacks == null)
@@ -128,6 +147,77 @@ internal static class Program
             $"process_seconds={processStopwatch.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)}{Environment.NewLine}" +
             $"total_seconds={total.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)}{Environment.NewLine}");
         return 0;
+    }
+
+    private static int CheckContainerOrder(IPackFileContainerLoader loader, string dataFolder, string indexPath)
+    {
+        var editor = loader.CreateFromGameEnum(PackFileContainerType.Database, GameTypeEnum.Warhammer3);
+        if (editor == null)
+        {
+            Console.Error.WriteLine("Could not load the editor's game container.");
+            return 3;
+        }
+
+        var hostContainers = WH3AssetHost.Optimize.HostVanillaContainers.LoadVanilla(dataFolder, indexPath, Console.Error.WriteLine);
+        Console.WriteLine($"Host containers: {hostContainers.Count}; order starts {string.Join(", ", hostContainers.Take(4).Select(c => c.Name))} ... ends {string.Join(", ", hostContainers.TakeLast(3).Select(c => c.Name))}");
+
+        // Winner per path in the host order (later container wins), and how many containers hold it.
+        var winner = new Dictionary<string, (IPackFileContainer Container, int Count)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var container in hostContainers)
+        {
+            foreach (var path in container.GetAllFiles().Keys)
+                winner[path] = (container, winner.TryGetValue(path, out var previous) ? previous.Count + 1 : 1);
+        }
+
+        var duplicated = winner.Where(pair => pair.Value.Count > 1).Select(pair => pair.Key).OrderBy(p => p, StringComparer.Ordinal).ToList();
+        Console.WriteLine($"Host unique paths: {winner.Count:N0}; paths present in more than one pack: {duplicated.Count:N0}");
+
+        var checkedCount = 0;
+        var mismatches = new List<string>();
+        var missingInEditor = 0;
+        var step = Math.Max(1, duplicated.Count / 5000);
+        for (var index = 0; index < duplicated.Count; index += step)
+        {
+            var path = duplicated[index];
+            var hostFile = winner[path].Container.FindFile(path);
+            var editorFile = editor.FindFile(path);
+            if (editorFile == null || hostFile == null)
+            {
+                missingInEditor++;
+                continue;
+            }
+
+            checkedCount++;
+            var hostHash = Convert.ToHexString(SHA256.HashData(hostFile.DataSource.ReadData()));
+            var editorHash = Convert.ToHexString(SHA256.HashData(editorFile.DataSource.ReadData()));
+            if (hostHash != editorHash)
+                mismatches.Add($"{path} (host winner {winner[path].Container.Name})");
+        }
+
+        // Paths unique to one pack must resolve identically too: sample those.
+        var uniquePaths = winner.Where(pair => pair.Value.Count == 1).Select(pair => pair.Key).ToList();
+        var uniqueStep = Math.Max(1, uniquePaths.Count / 3000);
+        var uniqueChecked = 0;
+        for (var index = 0; index < uniquePaths.Count; index += uniqueStep)
+        {
+            var path = uniquePaths[index];
+            var hostFile = winner[path].Container.FindFile(path);
+            var editorFile = editor.FindFile(path);
+            if (editorFile == null || hostFile == null)
+            {
+                missingInEditor++;
+                continue;
+            }
+
+            uniqueChecked++;
+            if (Convert.ToHexString(SHA256.HashData(hostFile.DataSource.ReadData())) != Convert.ToHexString(SHA256.HashData(editorFile.DataSource.ReadData())))
+                mismatches.Add($"{path} (unique, host {winner[path].Container.Name})");
+        }
+
+        Console.WriteLine($"Compared {checkedCount:N0} duplicated and {uniqueChecked:N0} unique paths; mismatches: {mismatches.Count}; not found on one side: {missingInEditor}");
+        foreach (var mismatch in mismatches.Take(20))
+            Console.WriteLine($"  MISMATCH {mismatch}");
+        return mismatches.Count == 0 ? 0 : 1;
     }
 
     private static void WriteFingerprint(

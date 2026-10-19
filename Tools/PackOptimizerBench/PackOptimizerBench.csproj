@@ -13,4 +13,9 @@
     <ProjectReference Include="..\..\Editors\PackOptimizer\Editors.PackOptimizer.Core\Editors.PackOptimizer.Core.csproj" />
     <ProjectReference Include="..\..\Shared\SharedCore\Shared.Core\Shared.Core.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- Linked, not referenced: WH3AssetHost is a self-contained exe in Release. -->
+    <Compile Include="..\WH3AssetHost\Optimize\HostVanillaContainers.cs" Link="HostVanillaContainers.cs" />
+  </ItemGroup>
 </Project>
