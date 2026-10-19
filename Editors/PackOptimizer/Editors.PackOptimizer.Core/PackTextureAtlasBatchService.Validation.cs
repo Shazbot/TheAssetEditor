@@ -274,6 +274,14 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
+                // Another enabled mod uses or overrides it: kept, with the pack and referrer.
+                if (state.Consumers != null && state.Consumers.TryBlock(Normalize(path), "prune"))
+                {
+                    toRemove.Remove(path);
+                    state.PruneKeptFiles.Add((path, "another mod " + state.Consumers.Describe(Normalize(path))));
+                    continue;
+                }
+
                 var reason = !vanillaKnown
                     ? "vanilla game data is not loaded, so an override of a vanilla file cannot be ruled out"
                     : OverridesVanillaPath(state, path)
@@ -1024,6 +1032,7 @@ namespace Editors.PackOptimizer.Core
             ValidateDownscaledTextures(state, errors, cancellationToken);
             ValidateSharedTextureRepack(state, errors, cancellationToken);
             ValidateTextureCompaction(state, errors, cancellationToken);
+            ValidateConsumerIntegrity(state, errors, cancellationToken);
 
             if (errors.Count != 0)
             {

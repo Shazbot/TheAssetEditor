@@ -13193,5 +13193,314 @@ namespace Test.PackOptimizer.Core
             Assert.That(alphas, Has.All.InRange((byte)90, (byte)210));
             Assert.That(alphas.Count, Is.GreaterThan(1));
         }
+
+        // --- Other enabled mods (consumers) -----------------------------------------------
+
+        private static Dictionary<string, byte[]> ConsumerFiles(params (string Path, string Text)[] files)
+        {
+            var result = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (path, text) in files)
+                result[path] = System.Text.Encoding.UTF8.GetBytes(text);
+            return result;
+        }
+
+        // Builds the consumer index the way the run does (before DB rows), closes it inside the
+        // source and installs it on the state.
+        private static object InstallConsumers(
+            object state,
+            int sourceIndex,
+            params (string Name, Dictionary<string, byte[]> Files)[] packs)
+        {
+            var containers = new List<Shared.Core.PackFiles.Models.IPackFileContainer>();
+            foreach (var (name, files) in packs)
+            {
+                var container = CreateDownscaleContainer(files);
+                container.Setup(item => item.Name).Returns(name);
+                containers.Add(container.Object);
+            }
+
+            var index = GetStaticMethod("BuildConsumerReferenceIndex")
+                .Invoke(null, [state, containers, sourceIndex, CancellationToken.None, null])!;
+            GetStaticMethod("CloseConsumerUse").Invoke(null, [state, index, CancellationToken.None]);
+            SetStateProperty(state, "Consumers", index);
+            return index;
+        }
+
+        private static bool ConsumerUses(object index, string path)
+            => ((IDictionary)Get<object>(index, "Used")).Contains(path);
+
+        private static bool ConsumerFreezes(object index, string path)
+            => ((IDictionary)Get<object>(index, "Frozen")).Contains(path);
+
+        private const string ConsumerMaterial = "variantmeshes\\wh_main\\skin.xml.material";
+        private const string ConsumerMaterialTexture = "variantmeshes\\wh_main\\tex\\skin_base.dds";
+        private const string ConsumerOtherTexture = "variantmeshes\\wh_main\\tex\\other_base.dds";
+        private const string ConsumerRigid = "variantmeshes\\wh_main\\shared.rigid_model_v2";
+
+        private static DownscaleFixture BuildConsumerSourceFixture()
+        {
+            var fixture = new DownscaleFixture();
+            fixture.AddTexture(ConsumerMaterialTexture, 64, 7);
+            fixture.AddTexture(ConsumerOtherTexture, 64, 7);
+            fixture.AddMaterial(ConsumerMaterial, ("t_xml_base_colour", ConsumerMaterialTexture));
+            fixture.AddText(ConsumerRigid, "rigid");
+            return fixture;
+        }
+
+        private static Dictionary<string, byte[]> SubmodFiles()
+            => ConsumerFiles(
+                ("variantmeshes\\submod\\sub.wsmodel",
+                 $"<model><geometry>{ConsumerRigid}</geometry><materials><material lod_index=\"0\" part_index=\"0\">{ConsumerMaterial}</material></materials></model>"));
+
+        [Test]
+        public void Consumers_ReferencedFilesAreKeptByPruning_WithPackAndReferrer()
+        {
+            var fixture = BuildConsumerSourceFixture();
+            var (_, state) = CreateStandardDownscaleState(fixture, downscale: false);
+            InstallConsumers(state, 1, ("SubMod", SubmodFiles()));
+            var toRemove = new HashSet<string>(
+                [ConsumerMaterial, ConsumerMaterialTexture, ConsumerOtherTexture, ConsumerRigid],
+                StringComparer.OrdinalIgnoreCase);
+
+            GetStaticMethod("KeepVanillaOverrides").Invoke(null, [state, toRemove]);
+
+            // The material, its texture (closure) and the rigid are used by the consumer's WSModel.
+            Assert.That(toRemove, Is.EquivalentTo(new[] { ConsumerOtherTexture }));
+            var kept = KeptByPruning(state);
+            Assert.That(kept.Select(item => item.Path), Is.EquivalentTo(
+                new[] { ConsumerMaterial, ConsumerMaterialTexture, ConsumerRigid }));
+            Assert.That(kept.All(item => item.Reason.Contains("SubMod") && item.Reason.Contains("sub.wsmodel")), Is.True);
+        }
+
+        [Test]
+        public void Consumers_OverriddenSourcePathIsFrozenAndKept()
+        {
+            var fixture = BuildConsumerSourceFixture();
+            var (_, state) = CreateStandardDownscaleState(fixture, downscale: false);
+            var reskin = ConsumerFiles();
+            reskin[ConsumerMaterialTexture] = [1, 2, 3];
+            var index = InstallConsumers(state, 0, ("Reskin", reskin));
+            var toRemove = new HashSet<string>(
+                [ConsumerMaterialTexture, ConsumerOtherTexture],
+                StringComparer.OrdinalIgnoreCase);
+
+            Assert.That(ConsumerFreezes(index, ConsumerMaterialTexture), Is.True);
+            Assert.That(ConsumerFreezes(index, ConsumerOtherTexture), Is.False);
+            Assert.That(
+                (bool)GetStaticMethod("OverridesVanillaPath").Invoke(null, [state, ConsumerMaterialTexture, "test"])!,
+                Is.True);
+
+            GetStaticMethod("KeepVanillaOverrides").Invoke(null, [state, toRemove]);
+
+            Assert.That(toRemove, Is.EquivalentTo(new[] { ConsumerOtherTexture }));
+            Assert.That(KeptByPruning(state).Single().Reason, Does.Contain("overridden by").And.Contain("Reskin"));
+            // The consumer loads after the source (source index 0): the report says so.
+            Assert.That(KeptByPruning(state).Single().Reason, Does.Contain("loads after the source"));
+        }
+
+        [Test]
+        public void Consumers_RigidUsedByAConsumerWsModelBlocksLayoutChanges()
+        {
+            var fixture = BuildConsumerSourceFixture();
+            var (_, state) = CreateStandardDownscaleState(fixture, downscale: false);
+            var arguments = new object?[] { state, ConsumerRigid, null };
+
+            Assert.That((bool)GetStaticMethod("TryGetStructuralMergeBlockReason").Invoke(null, arguments)!, Is.False);
+
+            InstallConsumers(state, 1, ("SubMod", SubmodFiles()));
+            arguments = [state, ConsumerRigid, null];
+            Assert.That((bool)GetStaticMethod("TryGetStructuralMergeBlockReason").Invoke(null, arguments)!, Is.True);
+            Assert.That((string)arguments[2]!, Does.Contain("[mod]").And.Contain("SubMod"));
+
+            // The shared repack and the compaction's alpha check use the same rigid test.
+            var repackReason = (string?)GetStaticMethod("GetRigidNotOnlyThroughOwnedWsModelsReason").Invoke(
+                null,
+                [
+                    state,
+                    ConsumerRigid,
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                    new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase),
+                    null,
+                ]);
+            Assert.That(repackReason, Does.Contain("outside the source pack").And.Contain("SubMod"));
+
+            var blocks = (IEnumerable)Get<object>(Get<object>(state, "Consumers"), "Blocks");
+            var stages = blocks.Cast<object>().Select(block => Get<string>(block, "Stage")).Distinct().ToList();
+            Assert.That(stages, Does.Contain("same-rigid merge").And.Contain("repack / compaction"));
+        }
+
+        [Test]
+        public void Consumers_TextureUsedByAConsumerIsNotDownscaled()
+        {
+            var controlFixture = BuildStandardDownscaleFixture();
+            var (controlService, controlState) = CreateStandardDownscaleState(controlFixture, downscale: false);
+            var control = RunDownscale(controlService, controlState, controlFixture);
+            Assert.That(
+                Candidates(control).Select(candidate => Get<string>(candidate, "Path")),
+                Does.Contain("textures\\t_half.dds"));
+
+            var fixture = BuildStandardDownscaleFixture();
+            var (service, state) = CreateStandardDownscaleState(fixture, downscale: false);
+            InstallConsumers(
+                state,
+                0,
+                ("Retexture", ConsumerFiles(
+                    ("variantmeshes\\retex\\retex.wsmodel",
+                     "<model><geometry>other.rigid_model_v2</geometry><materials><material lod_index=\"0\" part_index=\"0\">materials\\m_half.xml.material</material></materials></model>"))));
+
+            var result = RunDownscale(service, state, fixture);
+
+            Assert.That(
+                Candidates(result).Select(candidate => Get<string>(candidate, "Path")),
+                Does.Not.Contain("textures\\t_half.dds"));
+            Assert.That(Reasons(result).GetValueOrDefault(DownscaleReason("TextureDownscaleReasonOtherMod")), Is.EqualTo(1));
+        }
+
+        private static byte[] UniformDds(int size, int mips)
+        {
+            var dds = BuildBcDds(size, size, mips);
+            Array.Clear(dds, 148, dds.Length - 148);
+            return dds;
+        }
+
+        [Test]
+        public void Consumers_TextureUsedByAConsumerIsNotCompacted()
+        {
+            const string texture = "textures\\uniform.dds";
+            const string material = "materials\\uniform.xml.material";
+            DownscaleFixture Build()
+            {
+                var built = new DownscaleFixture();
+                built.Add(texture, UniformDds(64, 7));
+                built.AddMaterial(material, ("t_xml_base_colour", texture));
+                return built;
+            }
+
+            int Compacted(object state)
+                => ((IEnumerable)Get<object>(Get<object>(state, "TextureCompaction"), "Compacted")).Cast<object>().Count();
+
+            var control = Build();
+            var (controlService, controlState) = CreateDownscaleState(control, downscale: false);
+            SetStateProperty(controlState, "CompactTextures", true);
+            GetServiceType().GetMethod("RunTextureCompaction", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(controlService, [controlState, CancellationToken.None, null]);
+            Assert.That(Compacted(controlState), Is.EqualTo(1), "the uniform texture is compacted without consumers");
+
+            var fixture = Build();
+            var (service, state) = CreateDownscaleState(fixture, downscale: false);
+            SetStateProperty(state, "CompactTextures", true);
+            SetStateProperty(state, "DropUnreadAlpha", true);
+            InstallConsumers(
+                state,
+                0,
+                ("Mat", ConsumerFiles(("materials\\own.xml.material", $"<material><textures><texture><source>{texture}</source></texture></textures></material>"))));
+            GetServiceType().GetMethod("RunTextureCompaction", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(service, [state, CancellationToken.None, null]);
+
+            Assert.That(Compacted(state), Is.EqualTo(0));
+            var skipped = Get<Dictionary<string, int>>(Get<object>(state, "TextureCompaction"), "Skipped");
+            Assert.That(skipped.GetValueOrDefault(DownscaleReason("TextureCompactionReasonOtherMod")), Is.EqualTo(1));
+            Assert.That(fixture.Output[texture], Is.EqualTo(fixture.Source[texture]));
+        }
+
+        [Test]
+        public void Consumers_DbRowsThatNameASourceVmdMakeItAUsedRoot_AndFallbackIsCounted()
+        {
+            const string vmd = "variantmeshes\\wh_main\\unit.variantmeshdefinition";
+            var fixture = new DownscaleFixture();
+            fixture.AddText(vmd, "<VARIANT_MESH><decal_diffuse>textures\\decal.dds</decal_diffuse></VARIANT_MESH>");
+            fixture.AddTexture("textures\\decal.dds", 64, 7);
+            fixture.AddText("variantmeshes\\wh_main\\other.variantmeshdefinition", "<VARIANT_MESH/>");
+            var (_, state) = CreateDownscaleState(fixture, downscale: false);
+            var brokenTable = ConsumerFiles(
+                ("db\\main_units_tables\\broken", "junk variantmeshes\\wh_main\\other.variantmeshdefinition junk"));
+            var index = InstallConsumers(state, 0, ("DbMod", brokenTable));
+
+            var usage = CreateDownscaleUsage(vmd, "InfantryMissile", 40);
+            var with = CreateDownscaleResolution(true, (vmd, usage));
+            var without = CreateDownscaleResolution(true);
+            var failureType = ServicesType("Wh3ConsumerDbFailure");
+            var pack = ((IEnumerable)Get<object>(index, "Packs")).Cast<object>().Single();
+            var failures = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(failureType))!;
+            failures.Add(Activator.CreateInstance(
+                failureType, Get<object>(pack, "Container"), "db\\main_units_tables\\broken", "test: no schema")!);
+            with.GetType().GetProperty("ConsumerDbFailures")!.SetValue(with, failures);
+
+            GetStaticMethod("FinalizeConsumerReferenceIndex")
+                .Invoke(null, [state, index, with, without, CancellationToken.None, null]);
+
+            Assert.That(ConsumerUses(index, vmd), Is.True, "root created by the consumer's rows");
+            Assert.That(ConsumerUses(index, "textures\\decal.dds"), Is.True, "and what it names");
+            Assert.That(
+                Get<IEnumerable<string>>(index, "VmdRootsAddedByDb"),
+                Is.EquivalentTo(new[] { vmd }));
+            // The undecodable table's text names another VMD: only the fallback added it.
+            Assert.That(ConsumerUses(index, "variantmeshes\\wh_main\\other.variantmeshdefinition"), Is.True);
+            Assert.That(Get<int>(pack, "DbFallbackAdded"), Is.EqualTo(1));
+            Assert.That(Get<IList>(pack, "DbFallbackTables").Count, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Consumers_IntegrityCheckFailsWhenAnExternalFileChanges_AndHonoursNamedExceptions()
+        {
+            var fixture = BuildConsumerSourceFixture();
+            var (_, state) = CreateStandardDownscaleState(fixture, downscale: false);
+            var index = InstallConsumers(state, 1, ("SubMod", SubmodFiles()));
+            var errors = new List<string>();
+            GetStaticMethod("ValidateConsumerIntegrity").Invoke(null, [state, errors, CancellationToken.None]);
+            Assert.That(errors, Is.Empty);
+
+            fixture.Output[ConsumerMaterialTexture] = [9, 9, 9];
+            GetStaticMethod("ValidateConsumerIntegrity").Invoke(null, [state, errors, CancellationToken.None]);
+            Assert.That(errors.Single(), Does.Contain(ConsumerMaterialTexture).And.Contain("SubMod"));
+
+            errors.Clear();
+            ((HashSet<string>)Get<object>(index, "IntegrityExceptions")).Add(ConsumerMaterialTexture);
+            GetStaticMethod("ValidateConsumerIntegrity").Invoke(null, [state, errors, CancellationToken.None]);
+            Assert.That(errors, Is.Empty);
+
+            fixture.Output.Remove(ConsumerMaterial);
+            GetStaticMethod("ValidateConsumerIntegrity").Invoke(null, [state, errors, CancellationToken.None]);
+            Assert.That(errors.Single(), Does.Contain("removed"));
+        }
+
+        [Test]
+        public void Consumers_NoConsumersLeavesNoTraceInTheReport()
+        {
+            var fixture = BuildConsumerSourceFixture();
+            var (_, state) = CreateStandardDownscaleState(fixture, downscale: false);
+            var builder = new StringBuilder();
+
+            GetStaticMethod("AppendConsumerSection").Invoke(null, [builder, state]);
+            var errors = new List<string>();
+            GetStaticMethod("ValidateConsumerIntegrity").Invoke(null, [state, errors, CancellationToken.None]);
+
+            Assert.That(builder.ToString(), Is.Empty);
+            Assert.That(errors, Is.Empty);
+            Assert.That(Get<object?>(state, "Consumers"), Is.Null);
+            var immutable = (IReadOnlyCollection<string>)GetStaticMethod("GetImmutableGameplayWsModelConsumersForRigid")
+                .Invoke(null, [state, ConsumerRigid, "test"])!;
+            Assert.That(immutable, Is.Empty);
+        }
+
+        [Test]
+        public void Consumers_LargeOverlapOfAssetPathsWarnsAboutADerivedPack()
+        {
+            var fixture = new DownscaleFixture();
+            var variant = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < 30; i++)
+            {
+                var path = $"textures\\t{i}.dds";
+                fixture.Add(path, [1]);
+                variant[path] = [2];
+            }
+
+            var (_, state) = CreateDownscaleState(fixture, downscale: false);
+            var index = InstallConsumers(state, 0, ("source_atlas", variant));
+
+            var warnings = Get<List<string>>(index, "Warnings");
+            Assert.That(warnings.Single(), Does.Contain("source_atlas").And.Contain("30"));
+            Assert.That(((IDictionary)Get<object>(index, "Frozen")).Count, Is.EqualTo(30));
+        }
     }
 }

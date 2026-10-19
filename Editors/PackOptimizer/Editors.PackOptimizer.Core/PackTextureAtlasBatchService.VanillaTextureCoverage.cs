@@ -701,7 +701,8 @@ namespace Editors.PackOptimizer.Core
                     if (containers.Any(container =>
                             container.IsCaPackFile &&
                             !ReferenceEquals(container, state.Source) &&
-                            container.ContainsFile(owned.Path)))
+                            container.ContainsFile(owned.Path)) ||
+                        state.Consumers?.IsExternal(Normalize(owned.Path)) == true)
                     {
                         result.OwnedRemovalBlockers.Add(owned.Path);
                     }

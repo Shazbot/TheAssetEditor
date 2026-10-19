@@ -217,6 +217,9 @@ namespace Editors.PackOptimizer.Core
                 AddRoot(path, GameplayMeshDependencyRootKind.DirectGameplayAsset);
             }
 
+            foreach (var path in state.Consumers?.RootFiles.Keys ?? (IEnumerable<string>)Array.Empty<string>())
+                AddRoot(path, GameplayMeshDependencyRootKind.ConsumerPackAsset);
+
             var roots = rootKindsByPath.Keys
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -270,11 +273,7 @@ namespace Editors.PackOptimizer.Core
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var referencingRoots = index.GetRootsForAsset(wsModelPath).ToArray();
-                var container = FindGameplayTraversalContainer(
-                    state,
-                    state.Source,
-                    GetGameplayTraversalContainers(state),
-                    wsModelPath);
+                var container = FindDependencyContainer(state, wsModelPath);
                 var file = container?.FindFile(wsModelPath);
                 if (container == null || file == null)
                 {
@@ -314,7 +313,7 @@ namespace Editors.PackOptimizer.Core
                 // vanilla CA container this also populates the persistent consumer
                 // cache, so the later value-gate pass does not parse the same WSModel
                 // again.
-                if (!TryGetWsModelConsumerEntry(
+                if (!TryGetDependencyWsModelEntry(
                         state,
                         container,
                         wsModelPath,
@@ -370,11 +369,7 @@ namespace Editors.PackOptimizer.Core
                 foreach (var root in referencingRoots)
                     index.AddRootReference(geometryPath, root);
 
-                var geometryContainer = FindGameplayTraversalContainer(
-                    state,
-                    state.Source,
-                    GetGameplayTraversalContainers(state),
-                    geometryPath);
+                var geometryContainer = FindDependencyContainer(state, geometryPath);
                 if (geometryContainer == null || geometryContainer.FindFile(geometryPath) == null)
                 {
                     RecordFailureForRoots(
@@ -406,25 +401,38 @@ namespace Editors.PackOptimizer.Core
 
         private static IReadOnlyCollection<string> GetImmutableGameplayWsModelConsumersForRigid(
             BatchState state,
-            string rigidPath)
+            string rigidPath,
+            [System.Runtime.CompilerServices.CallerMemberName] string caller = "")
         {
             rigidPath = Normalize(rigidPath);
+            IReadOnlyCollection<string> immutable;
             if (state.GameplayMeshDependencyIndex != null &&
                 state.GameplayMeshDependencyIndex.WsModelConsumersByRigid.TryGetValue(
                     rigidPath,
                     out var indexedConsumers))
             {
-                return indexedConsumers
-                    .Where(path => !state.Source.ContainsFile(path))
+                immutable = indexedConsumers
+                    .Where(path => !state.Source.ContainsFile(path) ||
+                                   state.Consumers?.IsModContainer(
+                                       FindDependencyContainer(state, path)) == true)
                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                     .ToArray();
             }
+            else
+            {
+                immutable = state.ImmutableMeshMergeConsumersByRigid.TryGetValue(
+                        rigidPath,
+                        out var consumers)
+                    ? consumers
+                    : Array.Empty<string>();
+            }
 
-            return state.ImmutableMeshMergeConsumersByRigid.TryGetValue(
-                    rigidPath,
-                    out var consumers)
-                ? consumers
-                : Array.Empty<string>();
+            // Other mods that use or override the rigid (or a WSModel bound to it) count like
+            // vanilla WSModels: any entry blocks every layout change.
+            var modBlockers = GetConsumerRigidBlockers(state, rigidPath, caller);
+            return modBlockers.Count == 0
+                ? immutable
+                : immutable.Concat(modBlockers).ToArray();
         }
 
         private static bool HasDirectGameplayRigidConsumer(
@@ -628,11 +636,7 @@ namespace Editors.PackOptimizer.Core
 
                 if (extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
                 {
-                    var rigidContainer = FindGameplayTraversalContainer(
-                        state,
-                        state.Source,
-                        GetGameplayTraversalContainers(state),
-                        assetPath);
+                    var rigidContainer = FindDependencyContainer(state, assetPath);
                     if (rigidContainer == null || rigidContainer.FindFile(assetPath) == null)
                     {
                         result.IsComplete = false;
@@ -673,11 +677,7 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
-                var container = FindGameplayTraversalContainer(
-                    state,
-                    state.Source,
-                    GetGameplayTraversalContainers(state),
-                    assetPath);
+                var container = FindDependencyContainer(state, assetPath);
                 var file = container?.FindFile(assetPath);
                 if (container == null ||
                     file == null ||
@@ -743,11 +743,7 @@ namespace Editors.PackOptimizer.Core
                     dependencyIndex?.AddDependency(assetPath, modelPath);
                     dependencyIndex?.AddRootReference(modelPath, rootPath);
 
-                    var modelContainer = FindGameplayTraversalContainer(
-                        state,
-                        state.Source,
-                        GetGameplayTraversalContainers(state),
-                        modelPath);
+                    var modelContainer = FindDependencyContainer(state, modelPath);
                     if (modelContainer == null)
                     {
                         result.IsComplete = false;
@@ -799,11 +795,7 @@ namespace Editors.PackOptimizer.Core
                     dependencyIndex?.AddDependency(assetPath, childPath);
                     dependencyIndex?.AddRootReference(childPath, rootPath);
 
-                    if (FindGameplayTraversalContainer(
-                            state,
-                            state.Source,
-                            GetGameplayTraversalContainers(state),
-                            childPath) == null)
+                    if (FindDependencyContainer(state, childPath) == null)
                     {
                         result.IsComplete = false;
                         result.Failures.Add(
@@ -1162,6 +1154,15 @@ namespace Editors.PackOptimizer.Core
             PackFile? file = null)
         {
             vmdPath = Normalize(vmdPath);
+            // A consumer's VMD may sit on a path the source also has: it is parsed for the
+            // dependency index only and never shares the source's cached document.
+            if (state.Consumers?.IsModContainer(container) == true)
+            {
+                var consumerFile = file ?? container.FindFile(vmdPath)
+                    ?? throw new FileNotFoundException($"VMD file could not be resolved: {vmdPath}");
+                return VariantMeshDefinitionLoader.Load(consumerFile, out _);
+            }
+
             if (state.VmdDocuments.TryGetValue(vmdPath, out var cached))
                 return cached;
 

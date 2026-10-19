@@ -28,6 +28,8 @@ namespace Editors.PackOptimizer.Core
 
         private const string TextureCompactionReasonDownscaled = "downscaled in this run";
         private const string TextureCompactionReasonNotOwned = "not a texture of the source pack";
+        private const string TextureCompactionReasonOtherMod =
+            "used or overridden by another enabled mod";
         private const string TextureCompactionReasonNonMaterial =
             "referenced by a non-material file (UI, VMD, WSModel or other text)";
         private const string TextureCompactionReasonUnreferenced =
@@ -787,6 +789,12 @@ namespace Editors.PackOptimizer.Core
                 if (!isGenerated && !state.Source.ContainsFile(path))
                 {
                     Skip(TextureCompactionReasonNotOwned, path);
+                    continue;
+                }
+
+                if (!isGenerated && state.Consumers?.TryBlock(path, "compaction") == true)
+                {
+                    Skip(TextureCompactionReasonOtherMod, path, state.Consumers.Describe(path));
                     continue;
                 }
 

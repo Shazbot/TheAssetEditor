@@ -2378,6 +2378,7 @@ namespace Editors.PackOptimizer.Core
             }
             sb.AppendLine();
 
+            AppendConsumerSection(sb, state);
             AppendLodAuditSection(sb, state);
             AppendAssetChecksSection(sb, state);
             AppendBoneWeightAuditSection(sb, state);

@@ -118,6 +118,16 @@ namespace Editors.PackOptimizer.Core
                     vmdRoots.Count,
                     vmdPath);
 
+                // A merge rewrites the root VMD in place: not one another mod uses or overrides.
+                if (state.Consumers?.TryBlock(vmdPath, "cross-rigid merge") == true)
+                {
+                    RecordCrossRigidAnalysisBlocker(
+                        state,
+                        "The VMD is used or overridden by another enabled mod",
+                        vmdPath);
+                    continue;
+                }
+
                 var expansion = GetCrossRigidAttachmentLocalConfigurationsForVmd(
                     state,
                     vmdPath,

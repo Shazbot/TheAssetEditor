@@ -817,6 +817,18 @@ namespace Editors.PackOptimizer.Core
 
             foreach (var candidate in candidates)
             {
+                var consumerBlock = GetConsumerAtlasBlock(state, candidate);
+                if (consumerBlock != null)
+                {
+                    RecordSkip(
+                        state,
+                        candidate.RootVmdPath,
+                        candidate.Key,
+                        candidate.Usages[0].AssetPath,
+                        $"another mod uses or overrides what this mesh would rewrite: {consumerBlock}");
+                    continue;
+                }
+
                 if (candidate.MissingTextures.Count == 0)
                 {
                     result.Add(candidate);

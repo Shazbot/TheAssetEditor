@@ -3748,6 +3748,12 @@ namespace Editors.PackOptimizer.Core
                 double> rewriteCoverage,
             out string[] wsConsumers)
         {
+            if (state.Consumers?.IsExternal(rigidPath) == true)
+            {
+                wsConsumers = [];
+                return false;
+            }
+
             wsConsumers = dependencyIndex.WsModelConsumersByRigid
                 .GetValueOrDefault(rigidPath)?
                 .OrderBy(

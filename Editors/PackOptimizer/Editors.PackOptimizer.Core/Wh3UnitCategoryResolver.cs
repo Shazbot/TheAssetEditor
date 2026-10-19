@@ -324,6 +324,10 @@ namespace Editors.PackOptimizer.Core
         public bool HasUnknownFactionScope { get; init; }
     }
 
+    internal sealed record Wh3ModDbContainer(IPackFileContainer Container, bool BelowSource);
+
+    internal sealed record Wh3ConsumerDbFailure(IPackFileContainer Container, string TablePath, string Reason);
+
     internal sealed record Wh3UnitCategoryResolution(
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> UsagesByVmd,
         IReadOnlyDictionary<string, IReadOnlyList<Wh3UnitCategoryUsage>> DirectUsagesByVmd,
@@ -340,6 +344,9 @@ namespace Editors.PackOptimizer.Core
         string GameplayResolutionHealthMessage,
         IReadOnlyList<string> Diagnostics)
     {
+        // Tables of other enabled mods that could not be decoded; never part of the health flag.
+        public IReadOnlyList<Wh3ConsumerDbFailure> ConsumerDbFailures { get; init; } = [];
+
         public IReadOnlyList<Wh3UnitCategoryUsage> GetUsages(string vmdPath)
             => UsagesByVmd.TryGetValue(NormalizePath(vmdPath), out var usages)
                 ? usages
@@ -452,8 +459,10 @@ namespace Editors.PackOptimizer.Core
             IReadOnlyDictionary<string, IReadOnlyCollection<string>> childVmdsByVmd,
             CancellationToken cancellationToken,
             Wh3ArmyVisualScenario? scenario,
-            IReadOnlyList<IPackFileContainer> containerSnapshot)
+            IReadOnlyList<IPackFileContainer> containerSnapshot,
+            IReadOnlyList<Wh3ModDbContainer>? modContainers = null)
         {
+            var consumerDbFailures = new List<Wh3ConsumerDbFailure>();
             var activeScenario = (scenario ?? Wh3ArmyVisualScenario.Default)
                 .NormalizeForUse();
             var diagnostics = new List<string>();
@@ -474,12 +483,35 @@ namespace Editors.PackOptimizer.Core
                     container.IsCaPackFile &&
                     !IsSameContainer(container, source))
                 .ToList();
+            // Other enabled mods join the stack in load order (ascending priority), the source at
+            // its own position. Their tables are read through a failure channel of their own: a
+            // third-party table that cannot be decoded must never make the gameplay resolution
+            // unhealthy, it is reported and read as plain text tokens instead.
+            var modContainerSet = new HashSet<IPackFileContainer>(ReferenceEqualityComparer.Instance);
+            foreach (var mod in modContainers ?? [])
+            {
+                if (mod.BelowSource)
+                {
+                    containers.Add(mod.Container);
+                    modContainerSet.Add(mod.Container);
+                }
+            }
+
             containers.Add(source);
+            foreach (var mod in modContainers ?? [])
+            {
+                if (!mod.BelowSource)
+                {
+                    containers.Add(mod.Container);
+                    modContainerSet.Add(mod.Container);
+                }
+            }
 
             var tableFilesRead = 0;
             foreach (var container in containers)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var isMod = modContainerSet.Contains(container);
 
                 foreach (var tableName in RequiredTables)
                 {
@@ -490,6 +522,34 @@ namespace Editors.PackOptimizer.Core
                     foreach (var (path, file) in tableFiles)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
+
+                        if (isMod)
+                        {
+                            var modDiagnostics = new List<string>();
+                            try
+                            {
+                                var modRows = DecodeTable(
+                                    tableName,
+                                    file.DataSource.ReadData(),
+                                    path,
+                                    modDiagnostics);
+                                if (modDiagnostics.Count != 0)
+                                {
+                                    consumerDbFailures.Add(new Wh3ConsumerDbFailure(
+                                        container, path, string.Join(" ", modDiagnostics)));
+                                    continue;
+                                }
+
+                                ApplyEffectiveRows(tableName, effectiveRows[tableName], modRows);
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                consumerDbFailures.Add(new Wh3ConsumerDbFailure(
+                                    container, path, ex.GetType().Name + ": " + ex.Message));
+                            }
+
+                            continue;
+                        }
 
                         try
                         {
@@ -1392,7 +1452,10 @@ namespace Editors.PackOptimizer.Core
                 Math.Max(0, filtered.Count - directSourceVmds.Count),
                 gameplayResolutionHealthMessage.Length == 0,
                 gameplayResolutionHealthMessage,
-                diagnostics);
+                diagnostics)
+            {
+                ConsumerDbFailures = consumerDbFailures,
+            };
         }
 
         private static IReadOnlyList<Wh3ResolvedUnitVisual> BuildResolvedRoster(

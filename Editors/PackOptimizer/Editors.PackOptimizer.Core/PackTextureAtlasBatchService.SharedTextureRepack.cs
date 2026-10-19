@@ -936,7 +936,12 @@ namespace Editors.PackOptimizer.Core
 
         private sealed record SharedRepackScaledSource(byte[] Dds, DdsLayout Layout, double Scale);
 
-        private static bool OverridesVanillaPath(BatchState state, string path)
+        // "Someone else relies on this path": a vanilla file it overrides, or a file another enabled
+        // mod also has (frozen, whatever the load order).
+        private static bool OverridesVanillaPath(
+            BatchState state,
+            string path,
+            [System.Runtime.CompilerServices.CallerMemberName] string caller = "")
         {
             foreach (var container in GetGameplayTraversalContainers(state))
             {
@@ -948,7 +953,7 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
-            return false;
+            return state.Consumers?.TryBlockFrozen(Normalize(path), StageForCaller(caller)) == true;
         }
 
         private void BuildSharedTextureRepack(
@@ -1837,7 +1842,8 @@ namespace Editors.PackOptimizer.Core
 
             bool IsBlockedTexture(VanillaCoverageTexture entry, string path)
                 => GetSharedRepackBlockedTextureReason(merge.Effective(entry).Layout) != null ||
-                   (entry.IsOwned && OverridesVanillaPath(state, path));
+                   (entry.IsOwned && OverridesVanillaPath(state, path)) ||
+                   (entry.IsOwned && state.Consumers?.TryBlock(Normalize(path), "repack") == true);
 
             void AddRigid(SharedRepackSetRigid item)
             {

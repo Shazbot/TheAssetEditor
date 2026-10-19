@@ -38,6 +38,8 @@ namespace Editors.PackOptimizer.Core
             "texture path also exists in vanilla (source pack overrides it)";
         private const string TextureDownscaleReasonBadDds =
             "DDS header unreadable or layout unsupported (uncompressed, cube map, array)";
+        private const string TextureDownscaleReasonOtherMod =
+            "used or overridden by another enabled mod";
         private const string TextureDownscaleReasonSlot =
             "also used in a slot that is not atlasable (legacy s_*, blood, dither, ...)";
         private const string TextureDownscaleReasonNonMaterial =
@@ -206,6 +208,9 @@ namespace Editors.PackOptimizer.Core
             public HashSet<string> RepackGeneratedTextures { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> VanillaOverrideTextures { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            // Textures another enabled mod uses or overrides, with who and how.
+            public Dictionary<string, string> ExternalTextures { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
 
             // Source WSModel path -> its lord/hero or unclassified gameplay link. When the
@@ -1336,6 +1341,8 @@ namespace Editors.PackOptimizer.Core
                 GetFile(texture, state.Output.FindFile(texture));
                 if (OverridesVanilla(texture))
                     inputs.VanillaOverrideTextures.Add(texture);
+                if (state.Consumers != null && state.Consumers.TryBlock(texture, "downscale"))
+                    inputs.ExternalTextures[texture] = state.Consumers.Describe(texture);
             }
 
             // 5. Reference density. The atlas stage's own global value wins when this run
@@ -1786,6 +1793,12 @@ namespace Editors.PackOptimizer.Core
                 if (inputs.VanillaOverrideTextures.Contains(texture))
                 {
                     AddDownscaleIneligible(plan, TextureDownscaleReasonOverridesVanilla, texture);
+                    continue;
+                }
+
+                if (inputs.ExternalTextures.TryGetValue(texture, out var otherMod))
+                {
+                    AddDownscaleIneligible(plan, TextureDownscaleReasonOtherMod, texture, otherMod);
                     continue;
                 }
 

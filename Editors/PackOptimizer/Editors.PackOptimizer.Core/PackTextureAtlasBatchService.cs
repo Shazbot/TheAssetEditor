@@ -261,6 +261,28 @@ namespace Editors.PackOptimizer.Core
                         gameplayContainerSnapshot);
                 state.ExistingAtlasOutputDetected = HasGeneratedAtlasOutput(source);
 
+                if (request.ModConsumers is { Count: > 0 } modConsumers)
+                {
+                    var sourceIndex = request.SourceLoadOrderIndex ?? modConsumers.Count;
+                    if (sourceIndex < 0 || sourceIndex > modConsumers.Count)
+                    {
+                        throw new ArgumentOutOfRangeException(
+                            nameof(request),
+                            sourceIndex,
+                            $"SourceLoadOrderIndex must be between 0 and {modConsumers.Count}.");
+                    }
+
+                    ReportProgress(progress, "Scanning consumer packs", item: $"{modConsumers.Count} pack(s)");
+                    var consumerStopwatch = Stopwatch.StartNew();
+                    state.Consumers = BuildConsumerReferenceIndex(
+                        state,
+                        modConsumers,
+                        sourceIndex,
+                        cancellationToken,
+                        progress);
+                    state.PhaseDurations["Scan consumer packs"] = consumerStopwatch.Elapsed;
+                }
+
                 var allVmdPaths = sourcePaths
                     .Where(x => Path.GetExtension(x).Equals(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase))
                     .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
@@ -303,13 +325,47 @@ namespace Editors.PackOptimizer.Core
                 // still restricted to the selected pack; culture scoping happens inside the
                 // residency model so vanilla units can remain read-only consumers without
                 // polluting a single mixed-culture army denominator.
+                var modDbContainers = state.Consumers?.Packs
+                    .Select(pack => new Wh3ModDbContainer(pack.Container, pack.BelowSource))
+                    .ToList();
                 state.UnitCategoryResolution = Wh3UnitCategoryResolver.ResolveAgainstContainers(
                     source,
                     vmdRoots,
                     childVmdsByVmd,
                     cancellationToken,
                     Wh3ArmyVisualScenario.Default,
-                    gameplayContainerSnapshot);
+                    gameplayContainerSnapshot,
+                    modDbContainers);
+                if (state.UnitCategoryResolution.IsGameplayResolutionHealthy &&
+                    state.Consumers != null)
+                {
+                    // The roots only the consumers' DB rows create need the same resolution
+                    // without them; skipped when no consumer has a table.
+                    Wh3UnitCategoryResolution? withoutConsumers = null;
+                    if (state.Consumers.Packs.Any(pack => pack.DbTables != 0))
+                    {
+                        var withoutStopwatch = Stopwatch.StartNew();
+                        withoutConsumers = Wh3UnitCategoryResolver.ResolveAgainstContainers(
+                            source,
+                            vmdRoots,
+                            childVmdsByVmd,
+                            cancellationToken,
+                            Wh3ArmyVisualScenario.Default,
+                            gameplayContainerSnapshot);
+                        state.PhaseDurations["Resolve unit categories (without consumers)"] =
+                            withoutStopwatch.Elapsed;
+                    }
+
+                    FinalizeConsumerReferenceIndex(
+                        state,
+                        state.Consumers,
+                        state.UnitCategoryResolution,
+                        withoutConsumers,
+                        cancellationToken,
+                        progress);
+                    state.PhaseDurations["Index consumer references"] = state.Consumers.FinalizeElapsed;
+                }
+
                 if (!state.UnitCategoryResolution.IsGameplayResolutionHealthy)
                 {
                     throw new InvalidOperationException(
@@ -740,7 +796,13 @@ namespace Editors.PackOptimizer.Core
                     state.GeneratedTexturePaths.Count,
                     state.RemovedFiles.Count,
                     GetEffectiveSkippedMeshCount(state),
-                    reportPath);
+                    reportPath)
+                {
+                    ConsumerPackCount = state.Consumers?.Packs.Count ?? 0,
+                    ExternallyUsedFileCount = state.Consumers?.Used.Count ?? 0,
+                    FrozenFileCount = state.Consumers?.Frozen.Count ?? 0,
+                    Warnings = state.Consumers?.Warnings.ToList() ?? [],
+                };
             }
             catch (OperationCanceledException)
             {

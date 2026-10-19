@@ -48,6 +48,8 @@ namespace Editors.PackOptimizer.Core
     /// <param name="ReportPath">Where the report is written.</param>
     /// <param name="Game">The game the pack is for.</param>
     /// <param name="CacheDirectory">Directory for the vanilla consumer cache; null disables the cache.</param>
+    /// <param name="ModConsumers">Other enabled mods, read-only, in load order: first loads first and loses, last wins. They may reference or override the source's files; the run never breaks them. Null or empty: none.</param>
+    /// <param name="SourceLoadOrderIndex">How many of <paramref name="ModConsumers"/> load before the source. Null: all of them (the source wins over every consumer).</param>
     /// <param name="OutputWritePath">Where the output pack is physically written; null means <paramref name="OutputPath"/>. Lets a caller stage the file and move it into place on success.</param>
     /// <param name="ReportWritePath">Where the report is physically written; null means <paramref name="ReportPath"/>.</param>
     public sealed record PackOptimizerRequest(
@@ -61,7 +63,9 @@ namespace Editors.PackOptimizer.Core
         MissingTexturePolicy MissingTexturePolicy = MissingTexturePolicy.Skip,
         string? CacheDirectory = null,
         string? OutputWritePath = null,
-        string? ReportWritePath = null);
+        string? ReportWritePath = null,
+        IReadOnlyList<IPackFileContainer>? ModConsumers = null,
+        int? SourceLoadOrderIndex = null);
 
     public sealed record PackOptimizerProgress(
         string Stage,
@@ -83,7 +87,11 @@ namespace Editors.PackOptimizer.Core
         int AtlasedMeshCount,
         int GeneratedTextureCount,
         int RemovedFileCount,
-        int SkippedMeshCount);
+        int SkippedMeshCount,
+        int ConsumerPackCount = 0,
+        int ExternallyUsedFileCount = 0,
+        int FrozenFileCount = 0,
+        IReadOnlyList<string>? Warnings = null);
 
     /// <summary>
     /// Entry point of the library. Failures propagate as exceptions; the output
@@ -120,7 +128,11 @@ namespace Editors.PackOptimizer.Core
                     result.AtlasedMeshCount,
                     result.GeneratedTextureCount,
                     result.RemovedFileCount,
-                    result.SkippedMeshCount);
+                    result.SkippedMeshCount,
+                    result.ConsumerPackCount,
+                    result.ExternallyUsedFileCount,
+                    result.FrozenFileCount,
+                    result.Warnings);
             }
             catch (OperationCanceledException)
             {

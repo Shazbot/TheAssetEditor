@@ -32,7 +32,13 @@ namespace Editors.PackOptimizer.Core
             int GeneratedTextureCount,
             int RemovedFileCount,
             int SkippedMeshCount,
-            string ReportPath);
+            string ReportPath)
+        {
+            public int ConsumerPackCount { get; init; }
+            public int ExternallyUsedFileCount { get; init; }
+            public int FrozenFileCount { get; init; }
+            public IReadOnlyList<string> Warnings { get; init; } = [];
+        }
 
         private sealed record GeneratedTextureTimingEntry(
             string Path,
@@ -625,6 +631,10 @@ namespace Editors.PackOptimizer.Core
             public IReadOnlyList<IPackFileContainer>? GameplayTraversalContainers { get; set; }
             public Dictionary<string, GameplayTraversalContainerResolution>
                 GameplayTraversalContainerResolutions { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            // Other enabled mods (null without any). Never part of GameplayTraversalContainers.
+            public ConsumerReferenceIndex? Consumers { get; set; }
+            public Dictionary<string, IPackFileContainer?> DependencyContainerResolutions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public int GameplayTraversalContainerResolutionCacheHits { get; set; }
             public int GameplayTraversalContainerResolutionScans { get; set; }
@@ -1642,6 +1652,7 @@ namespace Editors.PackOptimizer.Core
             ResidencyAsset,
             UnresolvedResolverVmd,
             DirectGameplayAsset,
+            ConsumerPackAsset,
         }
 
         private enum GameplayMeshDependencyAssetScope
