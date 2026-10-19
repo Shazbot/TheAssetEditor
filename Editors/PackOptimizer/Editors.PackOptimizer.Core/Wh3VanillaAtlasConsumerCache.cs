@@ -331,6 +331,12 @@ internal sealed partial class Wh3VanillaAtlasConsumerCache
 
     private void PruneInactivePersistentScopes()
     {
+        // A run whose containers are all volatile (no persistent identity, as in the asset host)
+        // did not load any persistent entry, so it must not judge them stale and rewrite a cache
+        // another process, such as the editor, owns.
+        if (!_activeContainerScopes.Any(scope => !scope.StartsWith("volatile:", StringComparison.Ordinal)))
+            return;
+
         var staleScopes = _document.Containers.Keys
             .Where(scope => !_activeContainerScopes.Contains(scope))
             .ToArray();
