@@ -3358,7 +3358,7 @@ namespace Editors.PackOptimizer.Core
             if (state.ValidationMessages.Count == 0)
                 sb.AppendLine("(not completed)");
 
-            File.WriteAllText(state.ReportPath, sb.ToString(), Encoding.UTF8);
+            File.WriteAllText(state.ReportWritePath ?? state.ReportPath, sb.ToString(), Encoding.UTF8);
         }
     }
 }

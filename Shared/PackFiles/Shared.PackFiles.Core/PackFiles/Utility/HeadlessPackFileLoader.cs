@@ -45,6 +45,33 @@ namespace Shared.Core.PackFiles.Utility
             }
         }
 
+        /// <summary>
+        /// Builds a read-only container for a vanilla pack from the file index alone. Returns
+        /// null when the index has no current entry for the pack (missing, or its size or
+        /// timestamp changed); it never parses the pack from disk.
+        /// </summary>
+        public IPackFileContainer? TryLoadFromVanillaCache(string packFilePath, out int loadOrder, bool isCaPackFile = true)
+        {
+            if (_vanillaPackFilesCache == null)
+                throw new InvalidOperationException("The loader was created without a vanilla pack file index.");
+
+            var fullPath = Path.GetFullPath(packFilePath);
+            if (File.Exists(fullPath) == false)
+                throw new FileNotFoundException($"Pack file '{fullPath}' was not found.", fullPath);
+
+            var build = _vanillaPackFilesCache.TryBuildContainer(new FileInfo(fullPath));
+            if (build == null)
+            {
+                loadOrder = 0;
+                return null;
+            }
+
+            loadOrder = (build.Container as VanillaPackFilesCacheReader.LazyVanillaPackFileContainer)?.Header.LoadOrder ?? 0;
+            build.Container.IsCaPackFile = isCaPackFile;
+            build.Container.IsReadOnly = true;
+            return build.Container;
+        }
+
         public IPackFileContainer LoadPack(string packFilePath, bool isCaPackFile = false)
             => LoadPackWithDetails(packFilePath, isCaPackFile).Result.Container;
 

@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.Settings;
 
@@ -18,7 +19,7 @@ namespace Editors.PackOptimizer.Core;
 /// pack is deliberately not part of the cache identity; source-pack relevance is filtered by
 /// the caller for each atlas run.
 /// </summary>
-internal sealed class Wh3VanillaAtlasConsumerCache
+internal sealed partial class Wh3VanillaAtlasConsumerCache
 {
     private const int CurrentVersion = 3;
     private const string ParserVersion = "wsmodel-texture-consumers-v3";
@@ -287,7 +288,7 @@ internal sealed class Wh3VanillaAtlasConsumerCache
                            FileShare.None))
                 using (var gzip = new GZipStream(file, CompressionLevel.Fastest, leaveOpen: false))
                 {
-                    JsonSerializer.Serialize(gzip, _document, JsonOptions);
+                    JsonSerializer.Serialize(gzip, _document, CacheJsonContext.Default.CacheDocument);
                 }
 
                 File.Move(temporaryPath, _cachePath, overwrite: true);
@@ -491,7 +492,7 @@ internal sealed class Wh3VanillaAtlasConsumerCache
                 FileAccess.Read,
                 FileShare.Read);
             using var gzip = new GZipStream(file, CompressionMode.Decompress);
-            var document = JsonSerializer.Deserialize<CacheDocument>(gzip, JsonOptions);
+            var document = JsonSerializer.Deserialize(gzip, CacheJsonContext.Default.CacheDocument);
             if (document == null ||
                 document.Version != CurrentVersion ||
                 !string.Equals(document.ParserVersion, ParserVersion, StringComparison.Ordinal) ||
@@ -638,11 +639,12 @@ internal sealed class Wh3VanillaAtlasConsumerCache
         => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             .ToLowerInvariant();
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    // Source generated so the cache reads and writes under trimming without reflection.
+    [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true, WriteIndented = false)]
+    [JsonSerializable(typeof(CacheDocument))]
+    private sealed partial class CacheJsonContext : JsonSerializerContext
     {
-        PropertyNameCaseInsensitive = true,
-        WriteIndented = false,
-    };
+    }
 
     private sealed class CacheDocument
     {

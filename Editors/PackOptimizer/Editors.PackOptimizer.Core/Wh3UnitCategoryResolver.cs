@@ -360,7 +360,7 @@ namespace Editors.PackOptimizer.Core
     /// The packed DB rows are decoded by table version and schema field name.  The schema subset is
     /// generated from WHMM's schema_wh3.json rather than relying on hard-coded column indices.
     /// </summary>
-    internal static class Wh3UnitCategoryResolver
+    internal static partial class Wh3UnitCategoryResolver
     {
         private const string MainUnitsTable = "main_units_tables";
         private const string LandUnitsTable = "land_units_tables";
@@ -2785,14 +2785,18 @@ namespace Editors.PackOptimizer.Core
             using var stream = assembly.GetManifestResourceStream(resourceName)
                 ?? throw new InvalidOperationException(
                     "Embedded WH3 unit-category DB schema could not be opened.");
-            return JsonSerializer.Deserialize<SchemaRoot>(
+            return JsonSerializer.Deserialize(
                        stream,
-                       new JsonSerializerOptions
-                       {
-                           PropertyNameCaseInsensitive = true,
-                       })
+                       SchemaJsonContext.Default.SchemaRoot)
                    ?? throw new InvalidOperationException(
                        "Embedded WH3 unit-category DB schema is invalid.");
+        }
+
+        // Source generated so the schema loads under trimming without reflection.
+        [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
+        [JsonSerializable(typeof(SchemaRoot))]
+        private sealed partial class SchemaJsonContext : JsonSerializerContext
+        {
         }
 
         private sealed class SchemaRoot

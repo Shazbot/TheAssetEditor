@@ -50,15 +50,17 @@ namespace Editors.PackOptimizer.Core
         [property: JsonPropertyName("scenario")] Wh3ArmyVisualContractScenario Scenario,
         [property: JsonPropertyName("units")] Wh3ArmyVisualContractUnit[] Units);
 
-    internal static class Wh3ArmyVisualContract
+    internal static partial class Wh3ArmyVisualContract
     {
         public const string Kind = "wh3-army-visual-contract";
         public const int ContractVersion = 1;
 
-        private static readonly JsonSerializerOptions JsonOptions = new()
+        // Source generated so the contract reads and writes under trimming without reflection.
+        [JsonSourceGenerationOptions(WriteIndented = true)]
+        [JsonSerializable(typeof(Wh3ArmyVisualContractDocument))]
+        private sealed partial class ContractJsonContext : JsonSerializerContext
         {
-            WriteIndented = true,
-        };
+        }
 
         private static readonly HashSet<string> Categories =
         [
@@ -137,14 +139,14 @@ namespace Editors.PackOptimizer.Core
         public static string Serialize(Wh3ArmyVisualContractDocument document)
         {
             Validate(document);
-            return JsonSerializer.Serialize(document, JsonOptions);
+            return JsonSerializer.Serialize(document, ContractJsonContext.Default.Wh3ArmyVisualContractDocument);
         }
 
         public static Wh3ArmyVisualContractDocument Deserialize(string json)
         {
-            var document = JsonSerializer.Deserialize<Wh3ArmyVisualContractDocument>(
+            var document = JsonSerializer.Deserialize(
                 json,
-                JsonOptions)
+                ContractJsonContext.Default.Wh3ArmyVisualContractDocument)
                 ?? throw new InvalidDataException("Army visual contract JSON is empty.");
             Validate(document);
             return document;

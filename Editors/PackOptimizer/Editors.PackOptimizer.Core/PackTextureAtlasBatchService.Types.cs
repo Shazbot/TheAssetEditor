@@ -594,6 +594,8 @@ namespace Editors.PackOptimizer.Core
             public string SourcePath { get; }
             public string OutputPath { get; }
             public string ReportPath { get; }
+            // Where the report file is physically written when the caller stages it; null writes to ReportPath.
+            public string? ReportWritePath { get; set; }
             public Dictionary<string, VariantMesh> VmdDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> WsDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);

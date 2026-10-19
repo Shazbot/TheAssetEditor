@@ -249,6 +249,7 @@ namespace Editors.PackOptimizer.Core
                     crossRigidMerges,
                     crossRigidOnly);
                 state.CancellationToken = cancellationToken;
+                state.ReportWritePath = request.ReportWritePath;
                 state.Progress = progress;
                 var gameplayContainerSnapshot =
                     _packFileService.GetAllPackfileContainers().ToList();
@@ -727,7 +728,7 @@ namespace Editors.PackOptimizer.Core
                 ReportProgress(progress, "Saving output pack", item: Path.GetFileName(outputPath));
                 phaseStopwatch.Restart();
                 var game = GameInformationDatabase.GetGameById(request.Game);
-                _packFileService.SavePackContainer(output, outputPath, game);
+                _packFileService.SavePackContainer(output, request.OutputWritePath ?? outputPath, game);
                 state.PhaseDurations["Save output pack"] = phaseStopwatch.Elapsed;
                 state.TotalElapsed = totalStopwatch.Elapsed;
 
