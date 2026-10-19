@@ -1,0 +1,6 @@
+# The DirectXTex source the shim is built from. DirectXTexNet 1.0.7 (the library this shim replaces) was
+# built from exactly this commit: its repository commit 2ed93e0 "updated DirectXTex to March 2024 version"
+# points the DirectXTex submodule at 5cfd711, which is Microsoft/DirectXTex tag mar2024 ("March 6, 2024").
+tag=mar2024
+commit=5cfd711dc5d64cde1e8b27670036535df5c3f922
+version=203

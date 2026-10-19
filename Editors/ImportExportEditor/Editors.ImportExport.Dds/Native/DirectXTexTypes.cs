@@ -1,0 +1,136 @@
+namespace Editors.ImportExport.Dds.Native
+{
+    // Enum values mirror DirectXTex / dxgiformat.h (DirectXTex mar2024); the names follow DirectXTexNet so
+    // existing call sites read the same.
+    public enum DXGI_FORMAT
+    {
+        UNKNOWN = 0,
+        R32G32B32A32_TYPELESS = 1, R32G32B32A32_FLOAT = 2, R32G32B32A32_UINT = 3, R32G32B32A32_SINT = 4,
+        R32G32B32_TYPELESS = 5, R32G32B32_FLOAT = 6, R32G32B32_UINT = 7, R32G32B32_SINT = 8,
+        R16G16B16A16_TYPELESS = 9, R16G16B16A16_FLOAT = 10, R16G16B16A16_UNORM = 11, R16G16B16A16_UINT = 12,
+        R16G16B16A16_SNORM = 13, R16G16B16A16_SINT = 14,
+        R32G32_TYPELESS = 15, R32G32_FLOAT = 16, R32G32_UINT = 17, R32G32_SINT = 18,
+        R10G10B10A2_TYPELESS = 23, R10G10B10A2_UNORM = 24, R10G10B10A2_UINT = 25, R11G11B10_FLOAT = 26,
+        R8G8B8A8_TYPELESS = 27, R8G8B8A8_UNORM = 28, R8G8B8A8_UNORM_SRGB = 29, R8G8B8A8_UINT = 30,
+        R8G8B8A8_SNORM = 31, R8G8B8A8_SINT = 32,
+        R16G16_TYPELESS = 33, R16G16_FLOAT = 34, R16G16_UNORM = 35, R16G16_UINT = 36, R16G16_SNORM = 37, R16G16_SINT = 38,
+        R32_TYPELESS = 39, D32_FLOAT = 40, R32_FLOAT = 41, R32_UINT = 42, R32_SINT = 43,
+        R8G8_TYPELESS = 48, R8G8_UNORM = 49, R8G8_UINT = 50, R8G8_SNORM = 51, R8G8_SINT = 52,
+        R16_TYPELESS = 53, R16_FLOAT = 54, D16_UNORM = 55, R16_UNORM = 56, R16_UINT = 57, R16_SNORM = 58, R16_SINT = 59,
+        R8_TYPELESS = 60, R8_UNORM = 61, R8_UINT = 62, R8_SNORM = 63, R8_SINT = 64, A8_UNORM = 65,
+        R9G9B9E5_SHAREDEXP = 67,
+        BC1_TYPELESS = 70, BC1_UNORM = 71, BC1_UNORM_SRGB = 72,
+        BC2_TYPELESS = 73, BC2_UNORM = 74, BC2_UNORM_SRGB = 75,
+        BC3_TYPELESS = 76, BC3_UNORM = 77, BC3_UNORM_SRGB = 78,
+        BC4_TYPELESS = 79, BC4_UNORM = 80, BC4_SNORM = 81,
+        BC5_TYPELESS = 82, BC5_UNORM = 83, BC5_SNORM = 84,
+        B5G6R5_UNORM = 85, B5G5R5A1_UNORM = 86,
+        B8G8R8A8_UNORM = 87, B8G8R8X8_UNORM = 88, B8G8R8A8_TYPELESS = 90, B8G8R8A8_UNORM_SRGB = 91,
+        B8G8R8X8_TYPELESS = 92, B8G8R8X8_UNORM_SRGB = 93,
+        BC6H_TYPELESS = 94, BC6H_UF16 = 95, BC6H_SF16 = 96,
+        BC7_TYPELESS = 97, BC7_UNORM = 98, BC7_UNORM_SRGB = 99,
+        B4G4R4A4_UNORM = 115,
+    }
+
+    [Flags]
+    public enum CP_FLAGS
+    {
+        NONE = 0x0,
+        LEGACY_DWORD = 0x1,
+        PARAGRAPH = 0x2,
+        YMM = 0x4,
+        ZMM = 0x8,
+        PAGE4K = 0x200,
+        BAD_DXTN_TAILS = 0x1000,
+        BPP24 = 0x10000,
+    }
+
+    [Flags]
+    public enum TEX_FILTER_FLAGS
+    {
+        DEFAULT = 0,
+        WRAP_U = 0x1,
+        WRAP_V = 0x2,
+        WRAP_W = 0x4,
+        WRAP = 0x7,
+        MIRROR_U = 0x10,
+        MIRROR_V = 0x20,
+        MIRROR_W = 0x40,
+        MIRROR = 0x70,
+        SEPARATE_ALPHA = 0x100,
+        FLOAT_X2BIAS = 0x200,
+        RGB_COPY_RED = 0x1000,
+        RGB_COPY_GREEN = 0x2000,
+        RGB_COPY_BLUE = 0x4000,
+        RGB_COPY_ALPHA = 0x8000,
+        DITHER = 0x10000,
+        DITHER_DIFFUSION = 0x20000,
+        POINT = 0x100000,
+        LINEAR = 0x200000,
+        CUBIC = 0x300000,
+        BOX = 0x400000,
+        FANT = 0x400000,
+        TRIANGLE = 0x500000,
+        SRGB_IN = 0x1000000,
+        SRGB_OUT = 0x2000000,
+        SRGB = 0x3000000,
+        FORCE_NON_WIC = 0x10000000,
+        FORCE_WIC = 0x20000000,
+    }
+
+    [Flags]
+    public enum TEX_COMPRESS_FLAGS
+    {
+        DEFAULT = 0,
+        RGB_DITHER = 0x10000,
+        A_DITHER = 0x20000,
+        DITHER = 0x30000,
+        UNIFORM = 0x40000,
+        BC7_USE_3SUBSETS = 0x80000,
+        BC7_QUICK = 0x100000,
+        SRGB_IN = 0x1000000,
+        SRGB_OUT = 0x2000000,
+        SRGB = 0x3000000,
+        PARALLEL = 0x10000000,
+    }
+
+    [Flags]
+    public enum DDS_FLAGS
+    {
+        NONE = 0x0,
+        LEGACY_DWORD = 0x1,
+        NO_LEGACY_EXPANSION = 0x2,
+        NO_R10B10G10A2_FIXUP = 0x4,
+        FORCE_RGB = 0x8,
+        NO_16BPP = 0x10,
+        EXPAND_LUMINANCE = 0x20,
+        BAD_DXTN_TAILS = 0x40,
+        PERMISSIVE = 0x80,
+        FORCE_DX10_EXT = 0x10000,
+        FORCE_DX10_EXT_MISC2 = 0x20000,
+        FORCE_DX9_LEGACY = 0x40000,
+        FORCE_DXT5_RXGB = 0x80000,
+        ALLOW_LARGE_FILES = 0x1000000,
+    }
+
+    [Flags]
+    public enum WIC_FLAGS
+    {
+        NONE = 0x0,
+        FORCE_RGB = 0x1,
+        NO_X2_BIAS = 0x2,
+        NO_16BPP = 0x4,
+        ALLOW_MONO = 0x8,
+        ALL_FRAMES = 0x10,
+        IGNORE_SRGB = 0x20,
+        FORCE_SRGB = 0x40,
+        FORCE_LINEAR = 0x80,
+        DEFAULT_SRGB = 0x100,
+        DITHER = 0x10000,
+        DITHER_DIFFUSION = 0x20000,
+        FILTER_POINT = 0x100000,
+        FILTER_LINEAR = 0x200000,
+        FILTER_CUBIC = 0x300000,
+        FILTER_FANT = 0x400000,
+    }
+}

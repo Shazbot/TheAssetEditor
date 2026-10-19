@@ -25,8 +25,14 @@ internal static class Program
         var repeat = int.Parse(options.GetValueOrDefault("repeat", "3"), Inv);
         Directory.CreateDirectory(outDir);
 
+        if (options.GetValueOrDefault("parity", "false") == "true")
+            return Parity.Run(inputs.Split(';'), outDir);
+
         var captures = Capture.LoadAll(inputs);
         Console.WriteLine($"{captures.Count} captured encodes.");
+        if (options.GetValueOrDefault("parity", "false") == "true")
+            return Parity.Run(inputs.Split(';'), outDir);
+
         if (options.TryGetValue("pngs", out var pngOld))
         {
             SheetAnalysis.WritePngs(captures, pngOld, options["new"], outDir, options["pick"].Split(','));

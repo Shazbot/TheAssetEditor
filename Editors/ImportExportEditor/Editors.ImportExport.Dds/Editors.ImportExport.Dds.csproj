@@ -8,6 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,4 +22,10 @@
     <PackageReference Include="System.Drawing.Common" Version="10.0.1" />
   </ItemGroup>
 
+
+  <!-- The prebuilt native DirectXTex shim (Native/DirectXTexShim; rebuild with its build.ps1). It is committed so
+       .NET builds need no C++ toolchain. It lands next to every consuming executable and test assembly. -->
+  <ItemGroup>
+    <None Include="..\..\..\Native\DirectXTexShim\bin\win-x64\DirectXTexShim.dll" Link="DirectXTexShim.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

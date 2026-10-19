@@ -15,5 +15,7 @@
 
   <ItemGroup>
     <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
+    <!-- The library the native shim replaces; kept here as the reference for the parity run and the measurements. -->
+    <PackageReference Include="DirectXTexNet" Version="1.0.7" />
   </ItemGroup>
 </Project>
