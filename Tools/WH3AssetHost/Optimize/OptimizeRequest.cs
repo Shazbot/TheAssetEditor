@@ -1,0 +1,244 @@
+using Editors.PackOptimizer.Core;
+
+namespace WH3AssetHost.Optimize;
+
+/// <summary>
+/// The request file of <c>WH3AssetHost optimize --request &lt;file.json&gt;</c>. Property names
+/// are camelCase in the JSON file.
+/// </summary>
+/// <param name="SchemaVersion">Must be <see cref="OptimizeRequest.CurrentSchemaVersion"/>.</param>
+/// <param name="GameDirectory">The game's data folder (the one holding manifest.txt). The game
+/// install folder is accepted too when it has a "data" subfolder.</param>
+/// <param name="VanillaFileIndexPath">whmm's vanilla pack file index (vanilla-pack-files-cache.bin).</param>
+/// <param name="SourcePackPath">The pack to optimize.</param>
+/// <param name="OutputPackPath">Final location of the optimized pack; written to a temp file next to it first.</param>
+/// <param name="ReportPath">Final location of the report; written to a temp file next to it first.</param>
+/// <param name="CacheDirectory">Optional directory for the optimizer's vanilla consumer cache.</param>
+/// <param name="Options">What the optimizer does; omitted fields keep the optimizer's defaults.</param>
+/// <param name="ConsumerPackPaths">Other enabled mods. Validated and logged, not used yet.</param>
+public sealed record OptimizeRequest(
+    int SchemaVersion,
+    string GameDirectory,
+    string VanillaFileIndexPath,
+    string SourcePackPath,
+    string OutputPackPath,
+    string ReportPath,
+    string? CacheDirectory,
+    OptimizeOptionsRequest? Options,
+    IReadOnlyList<string>? ConsumerPackPaths)
+{
+    public const int CurrentSchemaVersion = 1;
+}
+
+/// <summary>
+/// The optimizer options as they appear in the request file. Every field is optional; an omitted
+/// field keeps the optimizer's own default. (Declared separately from <see cref="PackOptimizerOptions"/>
+/// because the source-generated JSON reader does not run that record's property initializers.)
+/// </summary>
+public sealed record OptimizeOptionsRequest(
+    bool? MergeCompatibleMeshes = null,
+    bool? ShareAtlasesAcrossVmds = null,
+    bool? OptimizeGeometry = null,
+    bool? AtlasAllVmds = null,
+    bool? ScoreAllGameUnits = null,
+    bool? LodAwareAtlasPlanning = null,
+    bool? CrossRigidOnly = null,
+    bool? CrossRigidMerges = null,
+    bool? BuildAtlases = null,
+    bool? DownscaleTextures = null,
+    bool? SharedTextureRepack = null,
+    bool? CompactTextures = null,
+    bool? DropUnreadAlpha = null)
+{
+    public PackOptimizerOptions ToOptimizerOptions()
+    {
+        var defaults = new PackOptimizerOptions();
+        return new PackOptimizerOptions
+        {
+            MergeCompatibleMeshes = MergeCompatibleMeshes ?? defaults.MergeCompatibleMeshes,
+            ShareAtlasesAcrossVmds = ShareAtlasesAcrossVmds ?? defaults.ShareAtlasesAcrossVmds,
+            OptimizeGeometry = OptimizeGeometry ?? defaults.OptimizeGeometry,
+            AtlasAllVmds = AtlasAllVmds ?? defaults.AtlasAllVmds,
+            ScoreAllGameUnits = ScoreAllGameUnits ?? defaults.ScoreAllGameUnits,
+            LodAwareAtlasPlanning = LodAwareAtlasPlanning ?? defaults.LodAwareAtlasPlanning,
+            CrossRigidOnly = CrossRigidOnly ?? defaults.CrossRigidOnly,
+            CrossRigidMerges = CrossRigidMerges ?? defaults.CrossRigidMerges,
+            BuildAtlases = BuildAtlases ?? defaults.BuildAtlases,
+            DownscaleTextures = DownscaleTextures ?? defaults.DownscaleTextures,
+            SharedTextureRepack = SharedTextureRepack ?? defaults.SharedTextureRepack,
+            CompactTextures = CompactTextures ?? defaults.CompactTextures,
+            DropUnreadAlpha = DropUnreadAlpha ?? defaults.DropUnreadAlpha,
+        };
+    }
+}
+
+/// <summary>Command line and request-file parsing for <c>optimize</c>.</summary>
+public static class OptimizeRequestReader
+{
+    /// <returns>The request file path and optional parent pid, or an error message.</returns>
+    public static (string? RequestPath, int? ParentPid, string? Error) ParseArguments(string[] args)
+    {
+        string? requestPath = null;
+        int? parentPid = null;
+        if (args.Length == 0 || !string.Equals(args[0], "optimize", StringComparison.OrdinalIgnoreCase))
+            return (null, null, "Usage: WH3AssetHost optimize --request <file.json> [--parent-pid <pid>]");
+
+        for (var index = 1; index < args.Length; index++)
+        {
+            switch (args[index])
+            {
+                case "--request" when index + 1 < args.Length:
+                    requestPath = args[++index];
+                    break;
+                case "--parent-pid" when index + 1 < args.Length:
+                    if (!int.TryParse(args[++index], out var pid) || pid <= 0)
+                        return (null, null, "--parent-pid requires a positive integer.");
+                    parentPid = pid;
+                    break;
+                default:
+                    return (null, null, $"Unknown or incomplete argument '{args[index]}'.");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(requestPath))
+            return (null, null, "--request is required.");
+        return (requestPath, parentPid, null);
+    }
+
+    /// <summary>Parses the request JSON; comments and trailing commas are tolerated.</summary>
+    public static OptimizeRequest? Parse(string json, out string? error)
+    {
+        try
+        {
+            var request = System.Text.Json.JsonSerializer.Deserialize(json, OptimizeJsonContext.Default.OptimizeRequest);
+            error = request == null ? "The request file is empty." : null;
+            return request;
+        }
+        catch (System.Text.Json.JsonException exception)
+        {
+            error = $"The request file is not valid: {exception.Message}";
+            return null;
+        }
+    }
+}
+
+/// <summary>One line on stdout while the optimizer runs.</summary>
+public sealed record OptimizeProgressLine(string Type, string Stage, string? Item, int Current, int Total)
+{
+    public static OptimizeProgressLine From(PackOptimizerProgress progress)
+        => new("progress", progress.Stage, progress.Item, progress.Current, progress.Total);
+}
+
+/// <summary>The final stdout line of a run that finished or was cancelled.</summary>
+public sealed record OptimizeResultLine(
+    string Type,
+    string Status,
+    string OutputPackPath,
+    string ReportPath,
+    int VmdCount,
+    int AtlasedMeshCount,
+    int GeneratedTextureCount,
+    int RemovedFileCount,
+    int SkippedMeshCount,
+    double ElapsedSeconds);
+
+/// <summary>The final stdout line of a run that failed.</summary>
+public sealed record OptimizeErrorLine(string Type, string Message, string ExceptionType);
+
+public enum OptimizeOutcome
+{
+    Succeeded,
+    Failed,
+    InvalidRequest,
+    Cancelled,
+}
+
+public static class OptimizeExitCodes
+{
+    public const int Succeeded = 0;
+    public const int Failed = 1;
+    public const int InvalidRequest = 2;
+    public const int Cancelled = 3;
+
+    public static int For(OptimizeOutcome outcome) => outcome switch
+    {
+        OptimizeOutcome.Succeeded => Succeeded,
+        OptimizeOutcome.InvalidRequest => InvalidRequest,
+        OptimizeOutcome.Cancelled => Cancelled,
+        _ => Failed,
+    };
+}
+
+/// <summary>Request validation: everything that can be checked without running the optimizer.</summary>
+public static class OptimizeRequestValidator
+{
+    /// <returns>An error message, or null when the request is usable.</returns>
+    public static string? Validate(OptimizeRequest? request)
+    {
+        if (request == null)
+            return "The request file is empty.";
+        if (request.SchemaVersion != OptimizeRequest.CurrentSchemaVersion)
+        {
+            return $"Unsupported schemaVersion {request.SchemaVersion}; this host reads version " +
+                   $"{OptimizeRequest.CurrentSchemaVersion}.";
+        }
+
+        foreach (var (name, value) in new[]
+                 {
+                     ("gameDirectory", request.GameDirectory),
+                     ("vanillaFileIndexPath", request.VanillaFileIndexPath),
+                     ("sourcePackPath", request.SourcePackPath),
+                     ("outputPackPath", request.OutputPackPath),
+                     ("reportPath", request.ReportPath),
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return $"{name} is required.";
+        }
+
+        if (request.Options == null)
+            return "options is required.";
+
+        if (ResolveDataFolder(request.GameDirectory) == null)
+            return $"gameDirectory '{request.GameDirectory}' does not contain a data folder with manifest.txt.";
+        if (!File.Exists(request.VanillaFileIndexPath))
+            return $"vanillaFileIndexPath '{request.VanillaFileIndexPath}' does not exist.";
+        if (!File.Exists(request.SourcePackPath))
+            return $"sourcePackPath '{request.SourcePackPath}' does not exist.";
+
+        var source = Path.GetFullPath(request.SourcePackPath);
+        var output = Path.GetFullPath(request.OutputPackPath);
+        var report = Path.GetFullPath(request.ReportPath);
+        if (string.Equals(source, output, StringComparison.OrdinalIgnoreCase))
+            return "outputPackPath must differ from sourcePackPath.";
+        if (string.Equals(output, report, StringComparison.OrdinalIgnoreCase))
+            return "reportPath must differ from outputPackPath.";
+        if (!output.EndsWith(".pack", StringComparison.OrdinalIgnoreCase))
+            return "outputPackPath must end with .pack.";
+
+        foreach (var consumer in request.ConsumerPackPaths ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(consumer) || !File.Exists(consumer))
+                return $"consumerPackPaths entry '{consumer}' does not exist.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The folder holding manifest.txt: the given folder, or its "data" subfolder when the
+    /// game install folder was given.
+    /// </summary>
+    public static string? ResolveDataFolder(string gameDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(gameDirectory))
+            return null;
+
+        var full = Path.GetFullPath(gameDirectory);
+        if (File.Exists(Path.Combine(full, "manifest.txt")))
+            return full;
+
+        var data = Path.Combine(full, "data");
+        return File.Exists(Path.Combine(data, "manifest.txt")) ? data : null;
+    }
+}

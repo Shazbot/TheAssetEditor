@@ -10,6 +10,11 @@
     material textures, and one catalogued animation. Temporary output is
     removed by default.
 
+    When -OptimizeSourcePack is given, the script also runs `WH3AssetHost.exe optimize` once
+    (folder layout: dotnet publish -c Release -p:WH3AssetHostFolderLayout=true) with a request
+    file, and checks the exit code, that every stdout line is JSON, the final result line, and
+    the output pack and report on disk. The vanilla file index is the same one used above.
+
 .EXAMPLE
     pwsh -File .\Tools\WH3AssetHost\SmokeTest.ps1
 
@@ -28,6 +33,8 @@ param(
     [string]$AssetPath = 'ui\3dui\models\default\ground_plane_1m.rigid_model_v2',
     [string]$RichAssetPath = 'variantmeshes\variantmeshdefinitions\emp_ch_karl.variantmeshdefinition',
     [string[]]$RichPackPaths,
+    [string]$OptimizeHostPath,
+    [string]$OptimizeSourcePack,
     [switch]$KeepOutput
 )
 
@@ -53,6 +60,10 @@ if ([string]::IsNullOrWhiteSpace($VanillaPackFilesCachePath)) {
     } else {
         $VanillaPackFilesCachePath = Join-Path $env:APPDATA 'wh3mm\vanilla-pack-files-cache.bin'
     }
+}
+
+if ([string]::IsNullOrWhiteSpace($OptimizeHostPath)) {
+    $OptimizeHostPath = Join-Path $repoRoot 'Tools\WH3AssetHost\bin\Release\folder\WH3AssetHost.exe'
 }
 
 $packPath = Join-Path $GameDataPath 'ui.pack'
@@ -130,6 +141,70 @@ function Read-JsonFrame {
 
     $payload = Read-ExactBytes -Stream $Stream -Count ([int]$payloadLength)
     return $utf8.GetString($payload) | ConvertFrom-Json
+}
+
+function Invoke-OptimizeSmoke {
+    if (-not (Test-Path -LiteralPath $OptimizeHostPath)) {
+        throw "The folder-layout host was not found at $OptimizeHostPath. Publish it with -p:WH3AssetHostFolderLayout=true."
+    }
+    if (-not (Test-Path -LiteralPath $VanillaPackFilesCachePath)) {
+        throw "The vanilla file index $VanillaPackFilesCachePath does not exist; warm it from the mod manager first."
+    }
+
+    New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+    $outputPack = Join-Path $OutputRoot 'smoke-optimized.pack'
+    $reportFile = Join-Path $OutputRoot 'smoke-optimized_report.txt'
+    $requestFile = Join-Path $OutputRoot 'smoke-optimize-request.json'
+    $request = [ordered]@{
+        schemaVersion = 1
+        gameDirectory = $GameDataPath
+        vanillaFileIndexPath = $VanillaPackFilesCachePath
+        sourcePackPath = $OptimizeSourcePack
+        outputPackPath = $outputPack
+        reportPath = $reportFile
+        options = [ordered]@{ optimizeGeometry = $true; buildAtlases = $false; lodAwareAtlasPlanning = $true }
+    }
+    $request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestFile -Encoding utf8
+
+    $startInfo = [Diagnostics.ProcessStartInfo]::new($OptimizeHostPath)
+    $startInfo.Arguments = 'optimize --request "' + $requestFile + '"'
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $process = [Diagnostics.Process]::Start($startInfo)
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $lines = [Collections.Generic.List[string]]::new()
+    while (($line = $process.StandardOutput.ReadLine()) -ne $null) {
+        $lines.Add($line)
+    }
+    $process.WaitForExit()
+    $stderrText = $stderrTask.GetAwaiter().GetResult()
+
+    if ($process.ExitCode -ne 0) {
+        throw "optimize exited with $($process.ExitCode). Last stdout line: $($lines | Select-Object -Last 1). stderr: $stderrText"
+    }
+    if ($lines.Count -eq 0) { throw 'optimize wrote nothing to stdout.' }
+
+    $messages = foreach ($line in $lines) {
+        try { $line | ConvertFrom-Json } catch { throw "stdout carried a line that is not JSON: $line" }
+    }
+    $result = $messages | Select-Object -Last 1
+    if ($result.type -ne 'result' -or $result.status -ne 'succeeded') {
+        throw "The final stdout line was not a successful result: $($lines[-1])"
+    }
+    if (@($messages | Where-Object { $_.type -eq 'progress' }).Count -eq 0) {
+        throw 'optimize reported no progress lines.'
+    }
+    foreach ($path in @($outputPack, $reportFile)) {
+        if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -eq 0) {
+            throw "optimize did not produce $path."
+        }
+    }
+    if (@(Get-ChildItem -LiteralPath $OutputRoot -Filter '*.optimizing*').Count -ne 0) {
+        throw 'optimize left temporary files behind.'
+    }
+    Write-Host "optimize: succeeded, $($result.vmdCount) VMD root(s), $([math]::Round($result.elapsedSeconds)) s."
 }
 
 function Invoke-HostRequest {
@@ -283,6 +358,11 @@ try {
 
     Invoke-HostRequest -Command 'shutdown' | Out-Null
     $shutdownSent = $true
+
+    if (-not [string]::IsNullOrWhiteSpace($OptimizeSourcePack)) {
+        Invoke-OptimizeSmoke
+    }
+
     Write-Host 'Smoke test passed.'
 } catch {
     $exitCode = 1

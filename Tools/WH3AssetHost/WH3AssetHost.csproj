@@ -36,8 +36,22 @@
     <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
   </PropertyGroup>
 
+  <!-- The pack optimizer needs DirectXTexNet, a C++/CLI (IJW) assembly. IJW cannot run from a single-file
+       bundle (the native image is extracted but the runtime cannot be hosted for it) and it breaks under
+       trimming (the trimmer cannot see what DirectXTexNetImpl.dll calls; the runtime also turns C++/CLI
+       host activation off in trimmed apps). `optimize` therefore needs the folder layout:
+         dotnet publish -c Release -p:WH3AssetHostFolderLayout=true
+       This is still self-contained and ReadyToRun, but not single-file and not trimmed. The default
+       Release publish stays single-file and trimmed for `serve`; `optimize` reports that it is unavailable there. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' And '$(WH3AssetHostFolderLayout)' == 'true'">
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+    <EnableCppCLIHostActivation>true</EnableCppCLIHostActivation>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\Editors\ImportExportEditor\Editors.ImportExport.Core\Editors.ImportExport.Core.csproj" />
+    <ProjectReference Include="..\..\Editors\PackOptimizer\Editors.PackOptimizer.Core\Editors.PackOptimizer.Core.csproj" />
     <ProjectReference Include="..\..\GameWorld\GameWorldCore\GameWorld.AssetCore\GameWorld.AssetCore.csproj" />
     <ProjectReference Include="..\..\Shared\PackFiles\Shared.PackFiles.Core\Shared.PackFiles.Core.csproj" />
   </ItemGroup>
