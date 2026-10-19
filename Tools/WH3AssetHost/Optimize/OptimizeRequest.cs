@@ -15,7 +15,13 @@ namespace WH3AssetHost.Optimize;
 /// <param name="ReportPath">Final location of the report; written to a temp file next to it first.</param>
 /// <param name="CacheDirectory">Optional directory for the optimizer's vanilla consumer cache.</param>
 /// <param name="Options">What the optimizer does; omitted fields keep the optimizer's defaults.</param>
-/// <param name="ConsumerPackPaths">Other enabled mods. Validated and logged, not used yet.</param>
+/// <param name="ConsumerPackPaths">The other enabled mods, in load order: the first entry loads first
+/// and loses a conflict, the last entry wins (the order of the mod list, top to bottom). The source
+/// pack itself is not listed. They are read-only; the optimizer never changes a file another mod
+/// uses or overrides. Omitted or empty means no other mods.</param>
+/// <param name="SourceLoadOrderIndex">How many entries of <paramref name="ConsumerPackPaths"/> load
+/// before the source pack (0 = the source loads first, count = the source loads last). Required
+/// whenever <paramref name="ConsumerPackPaths"/> is not empty; there is no default.</param>
 public sealed record OptimizeRequest(
     int SchemaVersion,
     string GameDirectory,
@@ -25,7 +31,8 @@ public sealed record OptimizeRequest(
     string ReportPath,
     string? CacheDirectory,
     OptimizeOptionsRequest? Options,
-    IReadOnlyList<string>? ConsumerPackPaths)
+    IReadOnlyList<string>? ConsumerPackPaths,
+    int? SourceLoadOrderIndex = null)
 {
     public const int CurrentSchemaVersion = 1;
 }
@@ -140,7 +147,11 @@ public sealed record OptimizeResultLine(
     int GeneratedTextureCount,
     int RemovedFileCount,
     int SkippedMeshCount,
-    double ElapsedSeconds);
+    double ElapsedSeconds,
+    string[]? Warnings = null,
+    int ConsumerPackCount = 0,
+    int ExternallyUsedFileCount = 0,
+    int FrozenFileCount = 0);
 
 /// <summary>The final stdout line of a run that failed.</summary>
 public sealed record OptimizeErrorLine(string Type, string Message, string ExceptionType);
@@ -216,12 +227,56 @@ public static class OptimizeRequestValidator
         if (!output.EndsWith(".pack", StringComparison.OrdinalIgnoreCase))
             return "outputPackPath must end with .pack.";
 
-        foreach (var consumer in request.ConsumerPackPaths ?? [])
+        var consumers = request.ConsumerPackPaths ?? [];
+        foreach (var consumer in consumers)
         {
             if (string.IsNullOrWhiteSpace(consumer) || !File.Exists(consumer))
                 return $"consumerPackPaths entry '{consumer}' does not exist.";
         }
 
+        if (consumers.Count == 0)
+            return null;
+
+        if (!request.SourceLoadOrderIndex.HasValue)
+            return "sourceLoadOrderIndex is required when consumerPackPaths is not empty.";
+        if (request.SourceLoadOrderIndex.Value < 0 || request.SourceLoadOrderIndex.Value > consumers.Count)
+        {
+            return $"sourceLoadOrderIndex {request.SourceLoadOrderIndex.Value} is outside 0..{consumers.Count} " +
+                   "(the number of consumerPackPaths entries that load before the source).";
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var consumer in consumers)
+        {
+            var full = Path.GetFullPath(consumer);
+            if (string.Equals(full, source, StringComparison.OrdinalIgnoreCase))
+                return $"consumerPackPaths lists the source pack '{consumer}'; the source is not one of the other mods.";
+            if (string.Equals(full, output, StringComparison.OrdinalIgnoreCase))
+                return $"consumerPackPaths lists the output pack '{consumer}'.";
+            var derived = GetDerivedPackReason(full, source, output);
+            if (derived != null)
+                return $"consumerPackPaths entry '{consumer}' {derived}; leave derived packs of the source out of the other mods.";
+            if (!seen.Add(full))
+                return $"consumerPackPaths lists '{consumer}' more than once.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Why a pack looks like an output of this source (the output pack itself, or named like
+    /// the optimizer names its outputs), else null. Such a pack overrides nearly everything the
+    /// source has and would freeze the whole run.
+    /// </summary>
+    public static string? GetDerivedPackReason(string consumerFullPath, string sourceFullPath, string outputFullPath)
+    {
+        var name = Path.GetFileNameWithoutExtension(consumerFullPath);
+        var sourceStem = Path.GetFileNameWithoutExtension(sourceFullPath);
+        if (string.Equals(name, Path.GetFileNameWithoutExtension(outputFullPath), StringComparison.OrdinalIgnoreCase))
+            return "has the name of the output pack";
+        var optimizerOutput = Path.GetFileNameWithoutExtension(PackOptimizer.BuildOutputPath(sourceFullPath));
+        if (name.StartsWith(optimizerOutput, StringComparison.OrdinalIgnoreCase))
+            return $"looks like a derived output of the source ('{optimizerOutput}...')";
         return null;
     }
 

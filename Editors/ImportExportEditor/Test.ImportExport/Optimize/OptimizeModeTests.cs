@@ -30,7 +30,7 @@ public class OptimizeModeTests
         return path;
     }
 
-    private OptimizeRequest ValidRequest(IReadOnlyList<string>? consumers = null)
+    private OptimizeRequest ValidRequest(IReadOnlyList<string>? consumers = null, int? sourceLoadOrderIndex = null)
     {
         Touch("data/manifest.txt", "data.pack\tx\n");
         var json = $$"""
@@ -46,7 +46,7 @@ public class OptimizeModeTests
             """;
         var request = OptimizeRequestReader.Parse(json, out var error);
         Assert.That(error, Is.Null);
-        return request! with { ConsumerPackPaths = consumers };
+        return request! with { ConsumerPackPaths = consumers, SourceLoadOrderIndex = sourceLoadOrderIndex };
     }
 
     private static string ToJson(string value) => System.Text.Json.JsonSerializer.Serialize(value);
@@ -156,8 +156,50 @@ public class OptimizeModeTests
     {
         var existing = Touch("mods/consumer.pack");
 
-        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([existing])), Is.Null);
-        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([existing, Path.Combine(_directory, "gone.pack")])), Does.Contain("consumerPackPaths"));
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([existing], 0)), Is.Null);
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([existing, Path.Combine(_directory, "gone.pack")], 0)), Does.Contain("consumerPackPaths"));
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest()), Is.Null, "no consumers needs no index");
+    }
+
+    [Test]
+    public void Validate_RequiresTheSourcePositionWhenThereAreConsumers()
+    {
+        var first = Touch("mods/first.pack");
+        var second = Touch("mods/second.pack");
+
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([first, second])), Does.Contain("sourceLoadOrderIndex is required"));
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([first, second], -1)), Does.Contain("outside 0..2"));
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([first, second], 3)), Does.Contain("outside 0..2"));
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([first, second], 2)), Is.Null);
+    }
+
+    [Test]
+    public void Validate_RejectsTheSourceTheOutputAndDerivedPacksAsConsumers()
+    {
+        var other = Touch("mods/other.pack");
+        var source = Touch("mods/source.pack");
+        var derived = Touch("mods/source_atlas - Copy.pack");
+        var outputNamed = Touch("elsewhere/result.pack");
+
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([other, source], 0)), Does.Contain("source pack"));
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([other, derived], 0)), Does.Contain("derived"));
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([other, outputNamed], 0)), Does.Contain("name of the output"));
+        Assert.That(OptimizeRequestValidator.Validate(ValidRequest([other, other], 0)), Does.Contain("more than once"));
+    }
+
+    [Test]
+    public void Parse_ReadsTheSourcePosition()
+    {
+        var json = """
+            { "schemaVersion": 1, "gameDirectory": "g", "vanillaFileIndexPath": "v", "sourcePackPath": "s",
+              "outputPackPath": "o.pack", "reportPath": "r", "options": {},
+              "consumerPackPaths": ["a.pack", "b.pack"], "sourceLoadOrderIndex": 1 }
+            """;
+        var request = OptimizeRequestReader.Parse(json, out var error);
+
+        Assert.That(error, Is.Null);
+        Assert.That(request!.ConsumerPackPaths, Is.EqualTo(new[] { "a.pack", "b.pack" }));
+        Assert.That(request.SourceLoadOrderIndex, Is.EqualTo(1));
     }
 
     [Test]

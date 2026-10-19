@@ -102,6 +102,9 @@ public static class HostVanillaContainers
         return container;
     }
 
+    /// <summary>Loads another enabled mod, read-only, from its pack index only.</summary>
+    public static IPackFileContainer LoadConsumer(string consumerPackPath) => LoadSource(consumerPackPath);
+
     private sealed class SkipDuplicateFileResolver : IDuplicateFileResolver
     {
         public bool CheckForDuplicates => true;

@@ -127,18 +127,26 @@ internal static class OptimizeMode
             DeleteQuietly(tempOutput);
             DeleteQuietly(tempReport);
 
-            if (request.ConsumerPackPaths is { Count: > 0 })
-            {
-                Console.Error.WriteLine(
-                    $"{request.ConsumerPackPaths.Count} consumer pack(s) were supplied; they are ignored for now.");
-                Log.Information("Ignoring {Count} consumer pack(s)", request.ConsumerPackPaths.Count);
-            }
-
             var dataFolder = OptimizeRequestValidator.ResolveDataFolder(request.GameDirectory)!;
             var vanilla = HostVanillaContainers.LoadVanilla(dataFolder, request.VanillaFileIndexPath, Console.Error.WriteLine);
             cancellationToken.ThrowIfCancellationRequested();
             var source = HostVanillaContainers.LoadSource(request.SourcePackPath);
             cancellationToken.ThrowIfCancellationRequested();
+
+            var consumers = new List<IPackFileContainer>();
+            if (request.ConsumerPackPaths is { Count: > 0 })
+            {
+                var loadWatch = Stopwatch.StartNew();
+                foreach (var consumerPath in request.ConsumerPackPaths)
+                {
+                    consumers.Add(HostVanillaContainers.LoadConsumer(consumerPath));
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                Console.Error.WriteLine(
+                    $"Loaded {consumers.Count} consumer pack index(es) in {loadWatch.Elapsed.TotalSeconds:0.0} s.");
+                Log.Information("Loaded {Count} consumer pack(s)", consumers.Count);
+            }
 
             var progress = new ThrottledProgress(stdout);
             var result = PackOptimizer.Run(
@@ -153,7 +161,9 @@ internal static class OptimizeMode
                     MissingTexturePolicy.Skip,
                     request.CacheDirectory,
                     OutputWritePath: tempOutput,
-                    ReportWritePath: tempReport),
+                    ReportWritePath: tempReport,
+                    ModConsumers: consumers,
+                    SourceLoadOrderIndex: consumers.Count == 0 ? null : request.SourceLoadOrderIndex),
                 progress,
                 cancellationToken);
 
@@ -163,6 +173,9 @@ internal static class OptimizeMode
                 WriteLine(stdout, new OptimizeResultLine("result", "cancelled", finalOutput, finalReport, 0, 0, 0, 0, 0, elapsed.Elapsed.TotalSeconds), OptimizeJsonContext.Default.OptimizeResultLine);
                 return OptimizeOutcome.Cancelled;
             }
+
+            foreach (var warning in result.Warnings ?? [])
+                Console.Error.WriteLine($"WARNING: {warning}");
 
             File.Move(tempOutput, finalOutput, overwrite: true);
             if (File.Exists(tempReport))
@@ -178,7 +191,11 @@ internal static class OptimizeMode
                 result.GeneratedTextureCount,
                 result.RemovedFileCount,
                 result.SkippedMeshCount,
-                elapsed.Elapsed.TotalSeconds), OptimizeJsonContext.Default.OptimizeResultLine);
+                elapsed.Elapsed.TotalSeconds,
+                result.Warnings?.ToArray() ?? [],
+                result.ConsumerPackCount,
+                result.ExternallyUsedFileCount,
+                result.FrozenFileCount), OptimizeJsonContext.Default.OptimizeResultLine);
             return OptimizeOutcome.Succeeded;
         }
         catch (OperationCanceledException)
