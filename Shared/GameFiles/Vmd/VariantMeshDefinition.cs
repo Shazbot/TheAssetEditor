@@ -10,22 +10,6 @@ namespace Shared.GameFormats.Vmd
     public static class VariantMeshDefinitionLoader
     {
 
-        [DynamicDependency(
-            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
-            typeof(VariantMesh))]
-        [DynamicDependency(
-            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
-            typeof(SLOT))]
-        [DynamicDependency(
-            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
-            typeof(VariantMeshRef))]
-        [DynamicDependency(
-            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
-            typeof(MetaData))]
-        [UnconditionalSuppressMessage(
-            "Trimming",
-            "IL2026",
-            Justification = "The XML graph is a closed set of the four known public VMD DTOs above. Partial trimming keeps this application assembly, and the dependencies preserve the serializer members used at runtime.")]
         public static VariantMesh Load(string fileContent, bool strict = false)
             => Load(fileContent, out _, strict);
 
@@ -68,9 +52,44 @@ namespace Shared.GameFormats.Vmd
         // per VMD). One instance is shared; Deserialize is thread safe and the strict path's event
         // handler stays per call.
         private static readonly Lazy<XmlSerializer> VariantMeshSerializer = new(
-            () => new XmlSerializer(typeof(VariantMesh), new XmlRootAttribute("VARIANT_MESH")),
+            CreateVariantMeshSerializer,
             LazyThreadSafetyMode.ExecutionAndPublication);
 
+        [DynamicDependency(
+            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
+            typeof(VariantMesh))]
+        [DynamicDependency(
+            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
+            typeof(SLOT))]
+        [DynamicDependency(
+            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
+            typeof(VariantMeshRef))]
+        [DynamicDependency(
+            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
+            typeof(MetaData))]
+        [UnconditionalSuppressMessage(
+            "Trimming",
+            "IL2026",
+            Justification = "The XML graph is a closed set of the four known public VMD DTOs above. Partial trimming keeps this application assembly, and the dependencies preserve the serializer members used at runtime.")]
+        private static XmlSerializer CreateVariantMeshSerializer()
+            => new XmlSerializer(typeof(VariantMesh), new XmlRootAttribute("VARIANT_MESH"));
+
+        [DynamicDependency(
+            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
+            typeof(VariantMesh))]
+        [DynamicDependency(
+            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
+            typeof(SLOT))]
+        [DynamicDependency(
+            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
+            typeof(VariantMeshRef))]
+        [DynamicDependency(
+            DynamicallyAccessedMemberTypes.PublicParameterlessConstructor | DynamicallyAccessedMemberTypes.PublicProperties,
+            typeof(MetaData))]
+        [UnconditionalSuppressMessage(
+            "Trimming",
+            "IL2026",
+            Justification = "The XML graph is a closed set of the four known public VMD DTOs above. Partial trimming keeps this application assembly, and the dependencies preserve the serializer members used at runtime.")]
         private static VariantMesh Deserialize(string fileContent, bool strict)
         {
             var xmlserializer = VariantMeshSerializer.Value;
