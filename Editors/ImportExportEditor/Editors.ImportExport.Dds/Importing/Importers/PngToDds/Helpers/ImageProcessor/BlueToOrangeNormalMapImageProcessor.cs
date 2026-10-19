@@ -6,7 +6,6 @@ using System.Text;
 using System.Threading.Tasks;
 using DirectXTexNet;
 using Editors.ImportExport.Common.Interfaces;
-using Microsoft.Xna.Framework;
 
 namespace Editors.ImportExport.Importing.Importers.PngToDds.Helpers.ImageProcessor
 {
