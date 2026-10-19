@@ -27,6 +27,18 @@ internal static class Program
 
         var captures = Capture.LoadAll(inputs);
         Console.WriteLine($"{captures.Count} captured encodes.");
+        if (options.TryGetValue("pngs", out var pngOld))
+        {
+            SheetAnalysis.WritePngs(captures, pngOld, options["new"], outDir, options["pick"].Split(','));
+            return 0;
+        }
+
+        if (options.TryGetValue("sheets", out var sheetsOld))
+        {
+            SheetAnalysis.Run(captures, options["new"], sheetsOld, outDir);
+            return 0;
+        }
+
         if (options.GetValueOrDefault("alpha-threshold", "false") == "true")
         {
             AlphaThreshold(outDir);
@@ -176,9 +188,9 @@ internal static class Program
 
     // ------------------------------------------------------------------ encoding
 
-    private enum Encoder { DirectXTex, Bcn }
+    internal enum Encoder { DirectXTex, Bcn }
 
-    private sealed record Setting(string Name, Encoder Encoder, TEX_COMPRESS_FLAGS Flags, CompressionQuality Quality, bool Parallel);
+    internal sealed record Setting(string Name, Encoder Encoder, TEX_COMPRESS_FLAGS Flags, CompressionQuality Quality, bool Parallel);
 
     private sealed record RunResult(double MinMs, double MeanMs, double MinCpuMs, long Bytes, string Threads, Metrics Metrics);
 
@@ -207,7 +219,7 @@ internal static class Program
         return new RunResult(times.Min(), times.Average(), cpu.Min(), blocks!.Sum(b => (long)b.Length), threads, metrics);
     }
 
-    private static byte[][] EncodeDirectXTex(Capture capture, Setting setting)
+    internal static byte[][] EncodeDirectXTex(Capture capture, Setting setting)
     {
         // Same call as the optimizer: the uncompressed chain, target format, alphaRef 0.5.
         using var chain = capture.BuildChain();
@@ -223,7 +235,7 @@ internal static class Program
         return blocks;
     }
 
-    private static byte[][] EncodeBcn(Capture capture, Setting setting)
+    internal static byte[][] EncodeBcn(Capture capture, Setting setting)
     {
         var baseFormat = capture.Target is DXGI_FORMAT.BC1_UNORM or DXGI_FORMAT.BC1_UNORM_SRGB ? CompressionFormat.Bc1 : CompressionFormat.Bc3;
         // Mirrors the host's BcnDdsEncoder: punch-through alpha only when something is not opaque.
@@ -244,7 +256,7 @@ internal static class Program
     }
 
     /// <summary>Decodes compressed blocks per mip to BGRA with DirectXTex (the one decoder for every result).</summary>
-    private static byte[][] DecodeWithDirectXTex(Capture capture, byte[][] blocks)
+    internal static byte[][] DecodeWithDirectXTex(Capture capture, byte[][] blocks)
     {
         using var compressed = TexHelper.Instance.Initialize2D(capture.Target, capture.Width, capture.Height, 1, capture.MipLevels, CP_FLAGS.NONE);
         for (var mip = 0; mip < capture.MipLevels; mip++)
@@ -282,7 +294,7 @@ internal static class Program
 
     // ------------------------------------------------------------------ metrics
 
-    private sealed record Metrics(
+    internal sealed record Metrics(
         double Rgb0, double R0, double G0, double B0, double A0, int MaxAbsRgb0, int MaxAbsA0, double W0,
         double RgbChain, double RChain, double GChain, double BChain, double AChain, int MaxAbsRgbChain, int MaxAbsAChain, double WChain,
         long CutMismatch0, long CutMismatchChain, long Lt128Texels0)
@@ -554,6 +566,9 @@ internal sealed class Capture
         var captures = new List<Capture>();
         foreach (var directory in Directory.GetDirectories(root).OrderBy(d => d, StringComparer.Ordinal))
         {
+            if (!File.Exists(Path.Combine(directory, "meta.json")))
+                continue;
+
             var meta = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "meta.json"))).RootElement;
             var width = meta.GetProperty("width").GetInt32();
             var height = meta.GetProperty("height").GetInt32();
