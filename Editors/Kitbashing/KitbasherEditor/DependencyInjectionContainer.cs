@@ -44,7 +44,7 @@ namespace Editors.KitbasherEditor
             // Creators
             serviceCollection.AddScoped<KitbashSceneCreator>();
             serviceCollection.AddTransient<TextureAtlasMergeService>();
-            serviceCollection.AddTransient<PackTextureAtlasBatchService>();
+            serviceCollection.AddTransient<PackOptimizerEditorService>();
 
             // View models 
             serviceCollection.AddScoped<KitbasherView>();

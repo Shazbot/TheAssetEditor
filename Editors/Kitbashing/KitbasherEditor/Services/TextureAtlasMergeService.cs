@@ -2,6 +2,7 @@ using DirectXTexNet;
 using Editors.ImportExport.Importing.Importers.PngToDds;
 using Editors.ImportExport.Importing.Importers.PngToDds.Helpers;
 using Editors.ImportExport.TextureAtlas;
+using Editors.PackOptimizer.Core;
 using GameWorld.Core.Rendering.Materials.Capabilities;
 using GameWorld.Core.Rendering.Materials.Capabilities.Utility;
 using GameWorld.Core.Rendering.Materials.Shaders;

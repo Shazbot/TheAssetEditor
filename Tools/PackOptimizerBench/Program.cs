@@ -5,14 +5,16 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using AssetEditor.Services;
-using Editors.KitbasherEditor.Services;
+using Editors.PackOptimizer.Core;
+using PackOptimizerApi = Editors.PackOptimizer.Core.PackOptimizer;
 using Microsoft.Extensions.DependencyInjection;
+using Shared.Core.Misc;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Shared.Core.PackFiles.Utility;
 using Shared.Core.Settings;
 
-// Headless runner for PackTextureAtlasBatchService.Process, for measuring the batch tool's runtime
+// Headless runner for PackOptimizer.Run, for measuring the batch tool's runtime
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
 //   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true]
@@ -55,7 +57,6 @@ internal static class Program
         settings.CurrentSettings.GameDirectories.RemoveAll(x => x.Game == GameTypeEnum.Warhammer3);
         settings.CurrentSettings.GameDirectories.Add(new ApplicationSettings.GamePathPair(GameTypeEnum.Warhammer3, gameDirectory));
 
-        var packFileService = services.GetRequiredService<IPackFileService>();
         var loader = services.GetRequiredService<IPackFileContainerLoader>();
         var loadStopwatch = Stopwatch.StartNew();
         var caPacks = loader.CreateFromGameEnum(PackFileContainerType.Database, GameTypeEnum.Warhammer3);
@@ -65,43 +66,49 @@ internal static class Program
             return 3;
         }
 
-        packFileService.AddContainer(caPacks);
         Console.WriteLine($"Game packs loaded in {loadStopwatch.Elapsed.TotalSeconds:0.0} s.");
 
-        var service = services.GetRequiredService<PackTextureAtlasBatchService>();
         var lastStage = string.Empty;
-        var stageTimer = Stopwatch.StartNew();
-        var progress = new Progress<PackTextureAtlasBatchService.TextureAtlasPackProgress>(p =>
+        var progress = new Progress<PackOptimizerProgress>(p =>
         {
-            if (p.Phase == lastStage)
+            if (p.Stage == lastStage)
                 return;
 
-            Console.WriteLine($"  [{total.Elapsed.TotalSeconds,7:0.0} s] {p.Phase}");
-            lastStage = p.Phase;
+            Console.WriteLine($"  [{total.Elapsed.TotalSeconds,7:0.0} s] {p.Stage}");
+            lastStage = p.Stage;
         });
 
         // The options of the editor's last real run: no atlases, everything else on, the
-        // progress window's defaults for merge/share/optimize.
-        var processStopwatch = Stopwatch.StartNew();
-        var result = service.Process(
+        // progress window's defaults for merge/share/optimize. The library gets everything
+        // explicitly: the source pack, the read-only game packs, the output and report paths.
+        var source_ = loader.CreateFromPackFile(PackFileContainerType.Normal, source, loadAsReadOnly: true);
+        var request = new PackOptimizerRequest(
             source,
+            source_,
+            [caPacks],
             outputPath,
-            atlasMeshesWithMissingTextures: null,
-            cancellationToken: CancellationToken.None,
-            progress: progress,
-            mergeCompatibleMeshes: true,
-            shareAtlasesAcrossVmds: true,
-            optimizeGeometry: true,
-            atlasAllVmds: false,
-            scoreAllGameUnits: false,
-            lodAwareAtlasPlanning: true,
-            crossRigidOnly: false,
-            crossRigidMerges: true,
-            buildAtlases: buildAtlases,
-            downscaleTextures: true,
-            sharedTextureRepack: true,
-            compactTextures: true,
-            dropUnreadAlpha: true);
+            PackOptimizerApi.BuildReportPath(outputPath),
+            GameTypeEnum.Warhammer3,
+            new PackOptimizerOptions
+            {
+                MergeCompatibleMeshes = true,
+                ShareAtlasesAcrossVmds = true,
+                OptimizeGeometry = true,
+                AtlasAllVmds = false,
+                ScoreAllGameUnits = false,
+                LodAwareAtlasPlanning = true,
+                CrossRigidOnly = false,
+                CrossRigidMerges = true,
+                BuildAtlases = buildAtlases,
+                DownscaleTextures = true,
+                SharedTextureRepack = true,
+                CompactTextures = true,
+                DropUnreadAlpha = true,
+            },
+            MissingTexturePolicy.Skip,
+            DirectoryHelper.CacheDirectory);
+        var processStopwatch = Stopwatch.StartNew();
+        var result = PackOptimizerApi.Run(request, progress, CancellationToken.None);
         processStopwatch.Stop();
         Console.WriteLine($"Process finished in {processStopwatch.Elapsed.TotalSeconds:0.0} s (report: {result.ReportPath}).");
         Console.WriteLine(

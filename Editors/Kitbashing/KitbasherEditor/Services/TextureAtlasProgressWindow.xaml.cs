@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Threading;
+using Editors.PackOptimizer.Core;
 using WindowHandling;
 
 namespace Editors.KitbasherEditor.Services
@@ -22,7 +23,7 @@ namespace Editors.KitbasherEditor.Services
             bool,
             bool,
             CancellationToken,
-            IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> _worker;
+            IProgress<PackOptimizerProgress>> _worker;
         private readonly CancellationTokenSource _cancellation = new();
 
         private bool _started;
@@ -36,7 +37,7 @@ namespace Editors.KitbasherEditor.Services
             Action<
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((mergeCompatibleMeshes, _, _, _, _, _, _, cancellationToken, progress) =>
                 worker(mergeCompatibleMeshes, cancellationToken, progress))
         {
@@ -47,7 +48,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((mergeCompatibleMeshes, shareAcrossVmds, _, _, _, _, _, cancellationToken, progress) =>
                 worker(mergeCompatibleMeshes, shareAcrossVmds, cancellationToken, progress))
         {
@@ -59,7 +60,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((mergeCompatibleMeshes, shareAcrossVmds, optimizeGeometry, _, _, _, _, cancellationToken, progress) =>
                 worker(
                     mergeCompatibleMeshes,
@@ -77,7 +78,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((mergeCompatibleMeshes, shareAcrossVmds, optimizeGeometry, atlasAllVmds, _, _, _, cancellationToken, progress) =>
                 worker(
                     mergeCompatibleMeshes,
@@ -97,7 +98,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((
                 mergeCompatibleMeshes,
                 shareAcrossVmds,
@@ -128,7 +129,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((
                 mergeCompatibleMeshes,
                 shareAcrossVmds,
@@ -161,7 +162,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((
                 mergeCompatibleMeshes,
                 shareAcrossVmds,
@@ -197,7 +198,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((
                 mergeCompatibleMeshes,
                 shareAcrossVmds,
@@ -236,7 +237,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((
                 mergeCompatibleMeshes,
                 shareAcrossVmds,
@@ -278,7 +279,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((
                 mergeCompatibleMeshes,
                 shareAcrossVmds,
@@ -323,7 +324,7 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
             : this((
                 mergeCompatibleMeshes,
                 shareAcrossVmds,
@@ -371,14 +372,14 @@ namespace Editors.KitbasherEditor.Services
                 bool,
                 bool,
                 CancellationToken,
-                IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>> worker)
+                IProgress<PackOptimizerProgress>> worker)
         {
             InitializeComponent();
             _worker = worker;
             UpdateOperationOptionAvailability();
         }
 
-        private void StartButton_Click(object sender, RoutedEventArgs e)
+        private async void StartButton_Click(object sender, RoutedEventArgs e)
         {
             if (_started)
                 return;
@@ -404,30 +405,40 @@ namespace Editors.KitbasherEditor.Services
                     : "Preparing optimized pack...";
             ProgressBar.IsIndeterminate = true;
 
-            var progress = new PumpingProgress(this);
+            var progress = new MarshalingProgress(this);
+            var mergeMeshes = MergeMeshesCheckBox.IsChecked == true;
+            var shareAcrossVmds = ShareAcrossVmdsCheckBox.IsChecked == true;
+            var optimizeGeometry = OptimizeGeometryCheckBox.IsChecked == true;
+            var atlasAllVmds = AtlasAllVmdsCheckBox.IsChecked == true;
+            var scoreAllGameUnits = ScoreAllGameUnitsCheckBox.IsChecked == true;
+            var crossRigidOnly = CrossRigidOnlyCheckBox.IsChecked == true;
+            var crossRigidMerges = CrossRigidMergesCheckBox.IsChecked == true;
+            var buildAtlases = BuildAtlasesCheckBox.IsChecked == true;
+            var downscale = DownscaleTexturesCheckBox.IsChecked == true && !crossRigidOnly;
+            var repack = SharedTextureRepackCheckBox.IsChecked == true && !crossRigidOnly;
+            var compact = CompactTexturesCheckBox.IsChecked == true && !crossRigidOnly;
+            var dropAlpha = DropUnreadAlphaCheckBox.IsChecked == true &&
+                CompactTexturesCheckBox.IsChecked == true && !crossRigidOnly;
+            var token = _cancellation.Token;
 
             try
             {
-                _worker(
-                    MergeMeshesCheckBox.IsChecked == true,
-                    ShareAcrossVmdsCheckBox.IsChecked == true,
-                    OptimizeGeometryCheckBox.IsChecked == true,
-                    AtlasAllVmdsCheckBox.IsChecked == true,
-                    ScoreAllGameUnitsCheckBox.IsChecked == true,
-                    CrossRigidOnlyCheckBox.IsChecked == true,
-                    CrossRigidMergesCheckBox.IsChecked == true,
-                    BuildAtlasesCheckBox.IsChecked == true,
-                    DownscaleTexturesCheckBox.IsChecked == true &&
-                    CrossRigidOnlyCheckBox.IsChecked != true,
-                    SharedTextureRepackCheckBox.IsChecked == true &&
-                    CrossRigidOnlyCheckBox.IsChecked != true,
-                    CompactTexturesCheckBox.IsChecked == true &&
-                    CrossRigidOnlyCheckBox.IsChecked != true,
-                    DropUnreadAlphaCheckBox.IsChecked == true &&
-                    CompactTexturesCheckBox.IsChecked == true &&
-                    CrossRigidOnlyCheckBox.IsChecked != true,
-                    _cancellation.Token,
-                    progress);
+                // The optimizer runs on a worker thread; only progress is marshalled back.
+                await Task.Run(() => _worker(
+                    mergeMeshes,
+                    shareAcrossVmds,
+                    optimizeGeometry,
+                    atlasAllVmds,
+                    scoreAllGameUnits,
+                    crossRigidOnly,
+                    crossRigidMerges,
+                    buildAtlases,
+                    downscale,
+                    repack,
+                    compact,
+                    dropAlpha,
+                    token,
+                    progress));
                 _allowClose = true;
                 DialogResult = true;
             }
@@ -566,9 +577,9 @@ namespace Editors.KitbasherEditor.Services
             CountText.Text = string.Empty;
         }
 
-        private void UpdateProgress(PackTextureAtlasBatchService.TextureAtlasPackProgress value)
+        private void UpdateProgress(PackOptimizerProgress value)
         {
-            PhaseText.Text = value.Phase;
+            PhaseText.Text = value.Stage;
             ItemText.Text = value.Item ?? string.Empty;
 
             if (value.Total > 0)
@@ -586,17 +597,6 @@ namespace Editors.KitbasherEditor.Services
                 CountText.Text = value.Current > 0 ? value.Current.ToString() : string.Empty;
             }
 
-            PumpDispatcher();
-            _cancellation.Token.ThrowIfCancellationRequested();
-        }
-
-        private void PumpDispatcher()
-        {
-            var frame = new DispatcherFrame();
-            Dispatcher.BeginInvoke(
-                DispatcherPriority.Background,
-                new Action(() => frame.Continue = false));
-            Dispatcher.PushFrame(frame);
         }
 
         private void DisposeCancellation()
@@ -608,7 +608,7 @@ namespace Editors.KitbasherEditor.Services
             _cancellation.Dispose();
         }
 
-        private sealed class PumpingProgress : IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>
+        private sealed class MarshalingProgress : IProgress<PackOptimizerProgress>
         {
             private const int MinimumUiUpdateIntervalMs = 75;
 
@@ -616,14 +616,14 @@ namespace Editors.KitbasherEditor.Services
             private readonly Stopwatch _sinceLastUpdate = Stopwatch.StartNew();
             private string? _lastPhase;
 
-            public PumpingProgress(TextureAtlasProgressWindow window)
+            public MarshalingProgress(TextureAtlasProgressWindow window)
             {
                 _window = window;
             }
 
-            public void Report(PackTextureAtlasBatchService.TextureAtlasPackProgress value)
+            public void Report(PackOptimizerProgress value)
             {
-                var phaseChanged = !string.Equals(_lastPhase, value.Phase, StringComparison.Ordinal);
+                var phaseChanged = !string.Equals(_lastPhase, value.Stage, StringComparison.Ordinal);
                 var phaseCompleted = value.Total > 0 && value.Current >= value.Total;
                 if (!phaseChanged &&
                     !phaseCompleted &&
@@ -632,9 +632,11 @@ namespace Editors.KitbasherEditor.Services
                     return;
                 }
 
-                _lastPhase = value.Phase;
+                _lastPhase = value.Stage;
                 _sinceLastUpdate.Restart();
-                _window.UpdateProgress(value);
+                _window.Dispatcher.BeginInvoke(
+                    DispatcherPriority.Background,
+                    new Action(() => _window.UpdateProgress(value)));
             }
         }
     }

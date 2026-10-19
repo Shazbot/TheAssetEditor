@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The pack optimizer as a library: no WPF, no GameWorld.Core, no Shared.Ui, no Shared.Core.
+       It reads and writes packs only through Shared.PackFiles.Core. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <RootNamespace>Editors.PackOptimizer</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Wh3UnitCategorySchema.json" />
+    <EmbeddedResource Include="Wh3ShaderTextureChannels.json" />
+    <EmbeddedResource Include="Contracts\ArmyVisualContract.schema.json" />
+    <EmbeddedResource Include="Contracts\Fixtures\army-visual-contract-v1.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\ImportExportEditor\Editors.ImportExport.Core\Editors.ImportExport.Core.csproj" />
+    <ProjectReference Include="..\..\ImportExportEditor\Editors.ImportExport.Dds\Editors.ImportExport.Dds.csproj" />
+    <ProjectReference Include="..\..\..\Shared\PackFiles\Shared.PackFiles.Core\Shared.PackFiles.Core.csproj" />
+    <ProjectReference Include="..\..\..\Shared\GameFiles\Shared.GameFormats.csproj" />
+    <ProjectReference Include="..\..\..\Shared\Logging\Shared.Core.Logging\Shared.CoreLog.csproj" />
+  </ItemGroup>
+
+</Project>

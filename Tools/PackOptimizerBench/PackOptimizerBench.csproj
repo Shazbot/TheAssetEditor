@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\AssetEditor\AssetEditor.csproj" />
-    <ProjectReference Include="..\..\Editors\Kitbashing\KitbasherEditor\Editors.KitbasherEditor.csproj" />
+    <ProjectReference Include="..\..\Editors\PackOptimizer\Editors.PackOptimizer.Core\Editors.PackOptimizer.Core.csproj" />
     <ProjectReference Include="..\..\Shared\SharedCore\Shared.Core\Shared.Core.csproj" />
   </ItemGroup>
 </Project>

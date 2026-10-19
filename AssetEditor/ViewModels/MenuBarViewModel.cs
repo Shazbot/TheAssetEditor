@@ -35,7 +35,7 @@ namespace AssetEditor.ViewModels
         private readonly IFileSaveService _packFileSaveService;
         private readonly IPackFileContainerLoader _packFileContainerLoader;
         private readonly IStandardDialogs _standardDialogs;
-        private readonly PackTextureAtlasBatchService _packTextureAtlasBatchService;
+        private readonly PackOptimizerEditorService _packTextureAtlasBatchService;
 
         public ObservableCollection<RecentPackFileItem> RecentPackFiles { get; set; } = [];
         public ObservableCollection<EditorShortcutViewModel> Editors { get; set; } = [];
@@ -48,7 +48,7 @@ namespace AssetEditor.ViewModels
             IFileSaveService packFileSaveService,
             IPackFileContainerLoader packFileContainerLoader,
             IStandardDialogs standardDialogs,
-            PackTextureAtlasBatchService packTextureAtlasBatchService)
+            PackOptimizerEditorService packTextureAtlasBatchService)
         {
             _packfileService = packfileService;
             _settingsService = settingsService;
