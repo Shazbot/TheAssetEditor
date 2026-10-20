@@ -187,6 +187,58 @@ public class OptimizeModeTests
         Assert.That(OptimizeRequestValidator.Validate(ValidRequest([other, other], 0)), Does.Contain("more than once"));
     }
 
+    // A minimal PFH5 pack: the given (path, content) entries in order, duplicates included.
+    private string WriteRawPack(string relativePath, params (string Path, string Content)[] entries)
+    {
+        using var index = new MemoryStream();
+        using var data = new MemoryStream();
+        using (var indexWriter = new BinaryWriter(index, System.Text.Encoding.ASCII, leaveOpen: true))
+        {
+            foreach (var (path, content) in entries)
+            {
+                var bytes = System.Text.Encoding.ASCII.GetBytes(content);
+                indexWriter.Write((uint)bytes.Length);
+                indexWriter.Write((byte)0);
+                indexWriter.Write(System.Text.Encoding.ASCII.GetBytes(path));
+                indexWriter.Write((byte)0);
+                data.Write(bytes);
+            }
+        }
+
+        var full = Path.Combine(_directory, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        using var file = File.Create(full);
+        using var writer = new BinaryWriter(file, System.Text.Encoding.ASCII);
+        writer.Write(System.Text.Encoding.ASCII.GetBytes("PFH5"));
+        writer.Write(3); // mod pack, no flags
+        writer.Write(0u);
+        writer.Write(0u);
+        writer.Write((uint)entries.Length);
+        writer.Write((uint)index.Length);
+        writer.Write(0u); // timestamp
+        writer.Write(index.ToArray());
+        writer.Write(data.ToArray());
+        return full;
+    }
+
+    [Test]
+    public void LoadConsumer_SkipsDuplicateFilesWithoutAskingAnyone()
+    {
+        var pack = WriteRawPack(
+            "mods/dupes.pack",
+            ("readme.md", "one"),
+            ("variantmeshes/notes.txt", "a"),
+            ("variantmeshes/notes.txt", "b"),
+            ("readme.md", "two"));
+
+        var filtered = HostVanillaContainers.LoadConsumer(pack);
+        var all = HostVanillaContainers.LoadConsumer(pack, allFiles: true);
+
+        Assert.That(filtered.GetFileCount(), Is.EqualTo(1), "only the listed types, the duplicate skipped");
+        Assert.That(all.GetFileCount(), Is.EqualTo(2));
+        Assert.That(System.Text.Encoding.ASCII.GetString(all.FindFile("readme.md")!.DataSource.ReadData()), Is.EqualTo("one"));
+    }
+
     [Test]
     public void Parse_ReadsTheSourcePosition()
     {
