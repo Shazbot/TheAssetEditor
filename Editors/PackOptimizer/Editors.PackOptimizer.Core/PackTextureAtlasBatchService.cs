@@ -262,6 +262,7 @@ namespace Editors.PackOptimizer.Core
                         gameplayContainerSnapshot);
                 state.PhaseDurations["Vanilla atlas consumer cache load"] = cacheLoadStopwatch.Elapsed;
                 state.ExistingAtlasOutputDetected = HasGeneratedAtlasOutput(source);
+                state.DbSchemaPath = request.DbSchema?.Path;
 
                 if (request.ModConsumers is { Count: > 0 } modConsumers)
                 {
@@ -337,7 +338,8 @@ namespace Editors.PackOptimizer.Core
                     cancellationToken,
                     Wh3ArmyVisualScenario.Default,
                     gameplayContainerSnapshot,
-                    modDbContainers);
+                    modDbContainers,
+                    request.DbSchema);
                 if (state.UnitCategoryResolution.IsGameplayResolutionHealthy &&
                     state.Consumers != null)
                 {
@@ -354,7 +356,9 @@ namespace Editors.PackOptimizer.Core
                             childVmdsByVmd,
                             cancellationToken,
                             Wh3ArmyVisualScenario.Default,
-                            gameplayContainerSnapshot);
+                            gameplayContainerSnapshot,
+                            null,
+                            request.DbSchema);
                         state.PhaseDurations["Resolve unit categories (without consumers)"] =
                             withoutStopwatch.Elapsed;
                         state.UnitCategoryResolution = Wh3UnitCategoryResolver.MergeAdditive(

@@ -50,6 +50,7 @@ namespace Editors.PackOptimizer.Core
     /// <param name="CacheDirectory">Directory for the vanilla consumer cache; null disables the cache.</param>
     /// <param name="ModConsumers">Other enabled mods, read-only, in load order: first loads first and loses, last wins. They may reference or override the source's files; the run never breaks them. Null or empty: none.</param>
     /// <param name="SourceLoadOrderIndex">How many of <paramref name="ModConsumers"/> load before the source. Null: all of them (the source wins over every consumer).</param>
+    /// <param name="DbSchema">DB table layouts (an RPFM schema) tried before the schema embedded in this library; null uses the embedded one only.</param>
     /// <param name="OutputWritePath">Where the output pack is physically written; null means <paramref name="OutputPath"/>. Lets a caller stage the file and move it into place on success.</param>
     /// <param name="ReportWritePath">Where the report is physically written; null means <paramref name="ReportPath"/>.</param>
     public sealed record PackOptimizerRequest(
@@ -65,7 +66,8 @@ namespace Editors.PackOptimizer.Core
         string? OutputWritePath = null,
         string? ReportWritePath = null,
         IReadOnlyList<IPackFileContainer>? ModConsumers = null,
-        int? SourceLoadOrderIndex = null);
+        int? SourceLoadOrderIndex = null,
+        PackOptimizerDbSchema? DbSchema = null);
 
     public sealed record PackOptimizerProgress(
         string Stage,

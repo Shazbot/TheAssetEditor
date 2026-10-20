@@ -634,6 +634,7 @@ namespace Editors.PackOptimizer.Core
                 new(StringComparer.OrdinalIgnoreCase);
             // Other enabled mods (null without any). Never part of GameplayTraversalContainers.
             public ConsumerReferenceIndex? Consumers { get; set; }
+            public string? DbSchemaPath { get; set; }
             public Dictionary<string, IPackFileContainer?> DependencyContainerResolutions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public int GameplayTraversalContainerResolutionCacheHits { get; set; }

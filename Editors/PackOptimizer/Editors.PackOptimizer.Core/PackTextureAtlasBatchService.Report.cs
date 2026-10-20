@@ -2378,6 +2378,7 @@ namespace Editors.PackOptimizer.Core
             }
             sb.AppendLine();
 
+            AppendDbSchemaSources(sb, state);
             AppendConsumerSection(sb, state);
             AppendLodAuditSection(sb, state);
             AppendAssetChecksSection(sb, state);

@@ -926,6 +926,19 @@ namespace Editors.PackOptimizer.Core
             }
         }
 
+        // Which schema decoded each table; only when a schema was supplied. Every line starts with
+        // "DB schema source:" so the bench fingerprint can leave them out when comparing a run that
+        // used the supplied schema with one that did not.
+        private static void AppendDbSchemaSources(StringBuilder sb, BatchState state)
+        {
+            if (state.DbSchemaPath == null || state.UnitCategoryResolution == null)
+                return;
+
+            sb.AppendLine($"DB schema source: supplied schema file {state.DbSchemaPath}");
+            foreach (var line in state.UnitCategoryResolution.DbSchemaSources)
+                sb.AppendLine($"DB schema source: {line}");
+        }
+
         private static void AppendConsumerSection(StringBuilder sb, BatchState state)
         {
             var consumers = state.Consumers;

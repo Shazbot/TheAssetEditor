@@ -357,6 +357,8 @@ namespace Editors.PackOptimizer.Core
     {
         // Tables of other enabled mods that could not be decoded; never part of the health flag.
         // Time spent reading (pack index to bytes) and decoding the game and source DB tables.
+        // One line per game/source table version decoded: the version and which schema supplied it.
+        public IReadOnlyList<string> DbSchemaSources { get; init; } = [];
         public TimeSpan DbReadElapsed { get; init; }
         public TimeSpan DbDecodeElapsed { get; init; }
         public long DbBytes { get; init; }
@@ -481,8 +483,10 @@ namespace Editors.PackOptimizer.Core
             CancellationToken cancellationToken,
             Wh3ArmyVisualScenario? scenario,
             IReadOnlyList<IPackFileContainer> containerSnapshot,
-            IReadOnlyList<Wh3ModDbContainer>? modContainers = null)
+            IReadOnlyList<Wh3ModDbContainer>? modContainers = null,
+            PackOptimizerDbSchema? dbSchema = null)
         {
+            var schemaSources = new Dictionary<string, int>(StringComparer.Ordinal);
             var consumerDbFailures = new List<Wh3ConsumerDbFailure>();
             var dbReadElapsed = TimeSpan.Zero;
             var dbDecodeElapsed = TimeSpan.Zero;
@@ -558,11 +562,13 @@ namespace Editors.PackOptimizer.Core
                             var modDiagnostics = new List<string>();
                             try
                             {
-                                var modRows = DecodeTable(
+                                var modRows = DecodeTableWithSchemas(
                                     tableName,
                                     file.DataSource.ReadData(),
                                     path,
-                                    modDiagnostics);
+                                    modDiagnostics,
+                                    dbSchema,
+                                    null);
                                 if (modDiagnostics.Count != 0)
                                 {
                                     consumerDbFailures.Add(new Wh3ConsumerDbFailure(
@@ -595,11 +601,13 @@ namespace Editors.PackOptimizer.Core
                             var decodeStart = Stopwatch.GetTimestamp();
                             var tableBytes = file.DataSource.ReadData();
                             var readElapsed = Stopwatch.GetElapsedTime(decodeStart);
-                            var rows = DecodeTable(
+                            var rows = DecodeTableWithSchemas(
                                 tableName,
                                 tableBytes,
                                 path,
-                                diagnostics);
+                                diagnostics,
+                                dbSchema,
+                                schemaSources);
                             dbReadElapsed += readElapsed;
                             dbDecodeElapsed += Stopwatch.GetElapsedTime(decodeStart) - readElapsed;
                             dbBytes += tableBytes.Length;
@@ -1499,6 +1507,10 @@ namespace Editors.PackOptimizer.Core
                 gameplayResolutionHealthMessage,
                 diagnostics)
             {
+                DbSchemaSources = schemaSources
+                    .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                    .Select(entry => $"{entry.Key} ({entry.Value:N0} file(s))")
+                    .ToList(),
                 DbReadElapsed = dbReadElapsed,
                 DbDecodeElapsed = dbDecodeElapsed,
                 DbBytes = dbBytes,
@@ -2526,14 +2538,64 @@ namespace Editors.PackOptimizer.Core
             }
         }
 
+        internal static IReadOnlyList<string> RequiredTableNames => RequiredTables;
+
+        private static readonly HashSet<string> SupportedFieldTypes = new(StringComparer.Ordinal)
+        {
+            "Boolean", "ColourRGB", "StringU16", "StringU8", "OptionalStringU8",
+            "F32", "I32", "I16", "F64", "I64",
+        };
+
         private static List<Dictionary<string, string>> DecodeTable(
             string tableName,
             byte[] data,
             string packedPath,
             List<string> diagnostics)
+            => DecodeTableWithSchemas(tableName, data, packedPath, diagnostics, null, null);
+
+        // The version of a table to decode with: the supplied (whmm) schema first, then the
+        // embedded one, exact version first and then the no-marker version 0.
+        private static (DbSchemaTableVersion Version, string Source)? FindTableVersion(
+            string tableName,
+            int? packedVersion,
+            PackOptimizerDbSchema? supplied)
         {
-            if (!Schema.Value.Definitions.TryGetValue(tableName, out var versions))
+            List<DbSchemaTableVersion>? suppliedVersions = null;
+            supplied?.Tables.TryGetValue(tableName, out suppliedVersions);
+            Schema.Value.Definitions.TryGetValue(tableName, out var embeddedVersions);
+            foreach (var wanted in packedVersion.HasValue ? new[] { packedVersion.Value, 0 } : [0])
+            {
+                var fromSupplied = suppliedVersions?.FirstOrDefault(version => version.Version == wanted);
+                if (fromSupplied != null)
+                    return (fromSupplied, "supplied schema");
+
+                var fromEmbedded = embeddedVersions?.FirstOrDefault(version => version.Version == wanted);
+                if (fromEmbedded != null)
+                {
+                    return (
+                        new DbSchemaTableVersion(
+                            fromEmbedded.Version,
+                            fromEmbedded.Fields.Select(field => new DbSchemaField(field.Name, field.FieldType)).ToList()),
+                        "embedded schema");
+                }
+            }
+
+            return null;
+        }
+
+        private static List<Dictionary<string, string>> DecodeTableWithSchemas(
+            string tableName,
+            byte[] data,
+            string packedPath,
+            List<string> diagnostics,
+            PackOptimizerDbSchema? supplied,
+            Dictionary<string, int>? schemaSources)
+        {
+            if (!Schema.Value.Definitions.ContainsKey(tableName) &&
+                supplied?.Tables.ContainsKey(tableName) != true)
+            {
                 return [];
+            }
 
             var position = 0;
             int? packedVersion = null;
@@ -2562,8 +2624,8 @@ namespace Editors.PackOptimizer.Core
                 break;
             }
 
-            var schemaVersion = versions.FirstOrDefault(version => version.Version == packedVersion)
-                ?? versions.FirstOrDefault(version => version.Version == 0);
+            var picked = FindTableVersion(tableName, packedVersion, supplied);
+            var schemaVersion = picked?.Version;
             if (schemaVersion == null ||
                 (packedVersion.HasValue && schemaVersion.Version < packedVersion.Value))
             {
@@ -2571,6 +2633,17 @@ namespace Editors.PackOptimizer.Core
                     $"Skipped {packedPath}: no schema for {tableName} version " +
                     $"{(packedVersion.HasValue ? packedVersion.Value.ToString(CultureInfo.InvariantCulture) : "<none>")}.");
                 return [];
+            }
+
+            var source = picked!.Value.Source;
+            foreach (var field in schemaVersion.Fields)
+            {
+                if (!SupportedFieldTypes.Contains(field.FieldType))
+                {
+                    throw new InvalidDataException(
+                        $"Table {tableName} version {schemaVersion.Version} ({source}): field '{field.Name}' " +
+                        $"has the type '{field.FieldType}', which the DB decoder does not support.");
+                }
             }
 
             var entryCount = ReadInt32(data, ref position);
@@ -2590,6 +2663,21 @@ namespace Editors.PackOptimizer.Core
                 $"packedVersion={(packedVersion.HasValue ? packedVersion.Value.ToString(CultureInfo.InvariantCulture) : "none")} " +
                 $"schemaVersion={schemaVersion.Version} fields={schemaVersion.Fields.Count} rows={entryCount} " +
                 $"bytesLeft={data.Length - position}";
+            // A table that does not end where its schema says it does was read with the wrong
+            // layout: treat it as a decode failure rather than trust the rows.
+            if (position != data.Length)
+            {
+                throw new InvalidDataException(
+                    $"Table {tableName} version {schemaVersion.Version} ({source}): {data.Length - position} byte(s) " +
+                    $"are left after the last of {entryCount} row(s); the schema does not match the table.");
+            }
+
+            if (schemaSources != null)
+            {
+                var sourceKey = $"{tableName} v{schemaVersion.Version}: {source}";
+                schemaSources[sourceKey] = schemaSources.GetValueOrDefault(sourceKey) + 1;
+            }
+
             return rows;
         }
 
