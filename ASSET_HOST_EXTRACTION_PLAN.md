@@ -89,10 +89,16 @@ Not in scope: texture atlasing in whmm. It stays an Asset-Editor-only experiment
 - **Left as is:** geometry optimisation stays blocked for consumer-used rigids, like for vanilla users (it keeps mesh count and order, so a later split of that gate is possible). Vanilla-user indexing does not resolve through consumers first.
 - **Done:** unit tests for each block, the DB-root and DB-fallback paths and the integrity check; an empty list gives the identical fingerprint (bench, bench with atlases); real packs from the workshop folder run cleanly (see the step 4 report).
 
-### 5. Caches
+### 5. Caches (decided)
 - **Vanilla file lookups:** whmm's file index (step 3). The SQLite `CachedPackFileContainer` path isn't used in the host.
-- **Vanilla DB tables:** decide between (a) a C# reader for whmm's `vanillaDbCache` format and (b) whmm exporting the 18 table types the resolver reads (listed in `Wh3UnitCategorySchema.json`) as part of the request. I prefer (b): it keeps one owner of the format. Whichever is chosen, check the columns field by field against `Wh3UnitCategorySchema.json`.
-- **Derived indexes** (VMD→WSModel occurrence expansion, the gameplay mesh dependency index): first measure a cold run on the current code (Sysinternals RAMMap → Empty Standby List, then the bench). Add a disk cache only if the derived phases still cost more than about 60 s cold. Key it on whmm's per-pack identities (`size` + `lastChangedLocal`) plus the tool version, and store it in a whmm-provided directory.
+- **Vanilla DB tables:** the host keeps decoding the 18 tables from the game packs (0.2 s warm: 59 files, 5 MiB), but with whmm's table layouts. No export and no reader for whmm's `vanilla-db-cache` file (a search-oriented column store that only covers `db.pack` and changed format twice).
+  - Request field `dbSchemaPath`: the RPFM schema whmm bundles (`schema/schema_wh3.json.zst`; plain JSON works too). Optional; the editor and the bench use the embedded schema (`Wh3UnitCategorySchema.json`).
+  - Lookup per table and version: the supplied schema first, then the embedded one. With a supplied schema the report lists which schema decoded each table (lines starting `DB schema source:`; the bench fingerprint leaves them out).
+  - An unreadable or corrupt file is exit 2. A version in neither schema keeps the old behaviour (skip with a diagnostic; a critical table makes the gameplay resolution unhealthy and the run stops). A field type the decoder does not support names table, version and field.
+  - A table that does not end exactly after its last row is a decode failure (critical for game and source tables, a text-fallback diagnostic for consumers).
+  - A game patch that bumps a table version now needs a schema update in whmm, not a new host.
+  - whmm side (step 6): pass the path of its bundled schema. In the current packaging (no asar) it is a plain file next to the webpack output (`.webpack/schema/schema_wh3.json.zst`, what `__dirname/../schema` resolves to), readable by the host. If whmm ever turns asar on, it must unpack that file or pass a temp copy.
+- **Derived indexes:** measured warm in the host on `!ak_teb3`: unit category resolution 10.3 s (DB read and decode 0.2 s, resolver 3.3 s, army residency model 6.8 s), gameplay mesh dependency index 1.7 s, out of 124 to 143 s. The editor's persisted vanilla consumer cache saves about 1.4 s; the host never persists it (and no longer prunes the editor's file). No new disk cache for now: the group is about 12 s warm. Cold figures are open until run-cold.ps1 is run elevated (`bench/cold-*`); a cache is only worth adding if a phase costs more than about 60 s cold, keyed on whmm's per-pack `size` + `lastChangedLocal`, the tool and schema version, stored in the `cacheDirectory` whmm passes, with consumers kept out.
 
 ### 6. whmm side
 - **Option UI** (follow `docs/DESIGN.md`):
