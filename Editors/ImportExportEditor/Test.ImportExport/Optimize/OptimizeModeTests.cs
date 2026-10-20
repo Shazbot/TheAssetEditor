@@ -240,6 +240,33 @@ public class OptimizeModeTests
     }
 
     [Test]
+    public void Validate_ChecksTheDbSchemaFile()
+    {
+        var request = ValidRequest();
+        var good = Touch("schema/good.json", "{\"definitions\":{\"main_units_tables\":[{\"version\":7,\"fields\":[{\"name\":\"unit\",\"field_type\":\"StringU8\"}]}]}}");
+        var corrupt = Touch("schema/corrupt.json", "not a schema");
+        var wrongCompressed = Path.Combine(_directory, "schema", "bad.json.zst");
+        File.WriteAllBytes(wrongCompressed, [0x28, 0xB5, 0x2F, 0xFD, 1, 2, 3]);
+
+        Assert.That(OptimizeRequestValidator.Validate(request with { DbSchemaPath = good }), Is.Null);
+        Assert.That(OptimizeRequestValidator.Validate(request with { DbSchemaPath = null }), Is.Null);
+        Assert.That(OptimizeRequestValidator.Validate(request with { DbSchemaPath = corrupt }), Does.Contain("could not be read").And.Contain("corrupt.json"));
+        Assert.That(OptimizeRequestValidator.Validate(request with { DbSchemaPath = wrongCompressed }), Does.Contain("could not be read"));
+        Assert.That(OptimizeRequestValidator.Validate(request with { DbSchemaPath = Path.Combine(_directory, "nope.json") }), Does.Contain("does not exist"));
+    }
+
+    [Test]
+    public void Parse_ReadsTheDbSchemaPath()
+    {
+        var request = OptimizeRequestReader.Parse(
+            "{ \"schemaVersion\": 1, \"gameDirectory\": \"g\", \"vanillaFileIndexPath\": \"v\", \"sourcePackPath\": \"s\", \"outputPackPath\": \"o.pack\", \"reportPath\": \"r\", \"options\": {}, \"dbSchemaPath\": \"C:/x/schema_wh3.json.zst\" }",
+            out var error);
+
+        Assert.That(error, Is.Null);
+        Assert.That(request!.DbSchemaPath, Is.EqualTo("C:/x/schema_wh3.json.zst"));
+    }
+
+    [Test]
     public void Parse_ReadsTheSourcePosition()
     {
         var json = """
