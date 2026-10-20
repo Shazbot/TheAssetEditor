@@ -91,9 +91,10 @@ namespace Editors.PackOptimizer.Core
                 .Concat(withConsumers.RosterUnits.Where(unit =>
                     TakesNew(unit.MainUnitKey, unit.LandUnitKey) && rosterIdentities.Add(unit.Identity)))
                 .ToList();
+            // A source VMD root without a gameplay user stays listed unless a consumer gives it one.
             var unresolvedRoots = baseline.UnresolvedVmdRoots
-                .Concat(withConsumers.UnresolvedVmdRoots.Where(root =>
-                    !baseline.UnresolvedVmdRoots.Contains(root, StringComparer.OrdinalIgnoreCase)))
+                .Where(root => baseline.UsagesByVmd.ContainsKey(NormalizePath(root)) ||
+                               !usages.ContainsKey(NormalizePath(root)))
                 .ToList();
 
             return new Wh3UnitCategoryResolution(
