@@ -956,6 +956,7 @@ namespace Editors.PackOptimizer.Core
                     sb.AppendLine($"    DB table read as text because it could not be decoded: {path}: {reason}");
             }
 
+            AppendConsumerDbSection(sb, state, consumers);
             sb.AppendLine();
             sb.AppendLine("Kept because another mod uses it (not pruned, not changed in place)");
             sb.AppendLine("--------------------------------------------------------------------");
@@ -1031,6 +1032,63 @@ namespace Editors.PackOptimizer.Core
             foreach (var path in consumers.IntegrityExceptions.OrderBy(item => item, StringComparer.Ordinal))
                 sb.AppendLine($"EXCEPTION {path}");
             sb.AppendLine();
+        }
+
+        private static void AppendConsumerDbSection(StringBuilder sb, BatchState state, ConsumerReferenceIndex consumers)
+        {
+            var resolution = state.UnitCategoryResolution;
+            if (resolution == null)
+                return;
+
+            sb.AppendLine();
+            sb.AppendLine("Consumer DB rows");
+            sb.AppendLine("----------------");
+            foreach (var pack in consumers.Packs)
+            {
+                var overrides = resolution.ConsumerRowOverrides
+                    .Where(item => ReferenceEquals(item.Container, pack.Container))
+                    .ToList();
+                var ignored = overrides.Count(item => item.ReplacedGameOrSourceRow);
+                var byTable = string.Join(", ", overrides
+                    .Where(item => item.ReplacedGameOrSourceRow)
+                    .GroupBy(item => item.Table)
+                    .OrderBy(group => group.Key, StringComparer.Ordinal)
+                    .Select(group => $"{group.Key} {group.Count():N0}"));
+                sb.AppendLine(
+                    $"{pack.Name}: rows added {resolution.ConsumerRowsAdded.GetValueOrDefault(pack.Container):N0}; " +
+                    $"existing game/source rows overridden (ignored for analysis) {ignored:N0}" +
+                    (byTable.Length == 0 ? string.Empty : $" [{byTable}]"));
+            }
+
+            var misread = resolution.ConsumerTableInfos
+                .Where(info => !info.DecodeInfo.EndsWith("bytesLeft=0", StringComparison.Ordinal))
+                .ToList();
+            sb.AppendLine($"Consumer tables decoded with bytes left over after the last row: {misread.Count:N0}");
+            foreach (var info in misread.Take(50))
+                sb.AppendLine($"    {info.Container.Name}: {info.TablePath}: {info.DecodeInfo}");
+
+            foreach (var group in resolution.ConsumerRowOverrides
+                         .Where(item => item.ReplacedGameOrSourceRow)
+                         .GroupBy(item => (item.Container, item.FilePath))
+                         .OrderBy(group => group.Key.Container.Name, StringComparer.Ordinal)
+                         .ThenBy(group => group.Key.FilePath, StringComparer.Ordinal))
+            {
+                var info = resolution.ConsumerTableInfos.FirstOrDefault(item =>
+                    ReferenceEquals(item.Container, group.Key.Container) && item.TablePath == group.Key.FilePath);
+                sb.AppendLine($"    table {group.Key.FilePath}: {group.Count():N0} overridden row(s); decode {info?.DecodeInfo}");
+            }
+
+            sb.AppendLine("Overridden game/source rows (consumer table file | key | changed columns before -> after), first 400:");
+            foreach (var item in resolution.ConsumerRowOverrides
+                         .Where(item => item.ReplacedGameOrSourceRow)
+                         .OrderBy(item => item.Container.Name, StringComparer.Ordinal)
+                         .ThenBy(item => item.Table, StringComparer.Ordinal)
+                         .ThenBy(item => item.Key, StringComparer.Ordinal)
+                         .Take(400))
+            {
+                var changes = item.Changes.Length > 300 ? item.Changes[..300] + "..." : item.Changes;
+                sb.AppendLine($"    {item.Container.Name}: {item.FilePath} | {item.Key.Replace('\u001f', '/')} | {changes}");
+            }
         }
 
         private static void AppendConsumerCountTable(StringBuilder sb, IEnumerable<string> paths, string label)

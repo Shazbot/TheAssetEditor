@@ -339,8 +339,9 @@ namespace Editors.PackOptimizer.Core
                 if (state.UnitCategoryResolution.IsGameplayResolutionHealthy &&
                     state.Consumers != null)
                 {
-                    // The roots only the consumers' DB rows create need the same resolution
-                    // without them; skipped when no consumer has a table.
+                    // Consumers may add gameplay users and roots, never remove or change one:
+                    // the resolution everything uses is the one without any consumer table plus
+                    // what the consumers' rows add. Skipped when no consumer has a table.
                     Wh3UnitCategoryResolution? withoutConsumers = null;
                     if (state.Consumers.Packs.Any(pack => pack.DbTables != 0))
                     {
@@ -354,6 +355,9 @@ namespace Editors.PackOptimizer.Core
                             gameplayContainerSnapshot);
                         state.PhaseDurations["Resolve unit categories (without consumers)"] =
                             withoutStopwatch.Elapsed;
+                        state.UnitCategoryResolution = Wh3UnitCategoryResolver.MergeAdditive(
+                            withoutConsumers,
+                            state.UnitCategoryResolution);
                     }
 
                     FinalizeConsumerReferenceIndex(

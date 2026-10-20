@@ -13502,5 +13502,80 @@ namespace Test.PackOptimizer.Core
             Assert.That(warnings.Single(), Does.Contain("source_atlas").And.Contain("30"));
             Assert.That(((IDictionary)Get<object>(index, "Frozen")).Count, Is.EqualTo(30));
         }
+
+        private static object CreateUsageWithLand(string vmd, string unit, string land)
+        {
+            var counts = Activator.CreateInstance(ServicesType("Wh3UnitVisualCounts"), 1, 0, 0, 0)!;
+            return Activator.CreateInstance(
+                ServicesType("Wh3UnitCategoryUsage"),
+                vmd,
+                unit,
+                land,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                40,
+                Enum.Parse(ServicesType("Wh3ArmyUnitCategory"), "InfantryMissile"),
+                Enum.Parse(ServicesType("Wh3UnitVisualRole"), "Men"),
+                1,
+                counts)!;
+        }
+
+        private static object MergeResolutions(object baseline, object withConsumers)
+            => ServicesType("Wh3UnitCategoryResolver")
+                .GetMethod("MergeAdditive", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [baseline, withConsumers])!;
+
+        private static List<string> ResolutionUsageKeys(object resolution)
+            => ((IDictionary)Get<object>(resolution, "UsagesByVmd")).Keys.Cast<string>().Order().ToList();
+
+        private static int ResolutionUsageCount(object resolution, string vmd)
+        {
+            var dictionary = (IDictionary)Get<object>(resolution, "UsagesByVmd");
+            return dictionary.Contains(vmd) ? ((IList)dictionary[vmd]!).Count : 0;
+        }
+
+        [Test]
+        public void ConsumerRows_NeverRemoveARootOrChangeAUnit_TheyOnlyAdd()
+        {
+            const string vmdA = "variantmeshes\\a.variantmeshdefinition";
+            const string vmdVanilla = "variantmeshes\\vanilla.variantmeshdefinition";
+            const string vmdB = "variantmeshes\\b.variantmeshdefinition";
+            const string vmdNew = "variantmeshes\\new.variantmeshdefinition";
+            var baseline = CreateDownscaleResolution(
+                true,
+                (vmdA, CreateUsageWithLand(vmdA, "teb_unit", "land_teb")),
+                (vmdB, CreateUsageWithLand(vmdB, "teb_other", "land_other")));
+            // The consumer repoints teb_unit at a vanilla land unit (the oldworld case) and
+            // adds a unit of its own on a source VMD, plus a second variant for teb_other.
+            var withConsumers = CreateDownscaleResolution(
+                true,
+                (vmdVanilla, CreateUsageWithLand(vmdVanilla, "teb_unit", "land_vanilla")),
+                (vmdB, CreateUsageWithLand(vmdB, "teb_other", "land_other")),
+                (vmdA, CreateUsageWithLand(vmdA, "cr_new_unit", "land_cr_new")),
+                (vmdNew, CreateUsageWithLand(vmdNew, "teb_other", "land_other")));
+
+            var merged = MergeResolutions(baseline, withConsumers);
+
+            // The remapped unit keeps its baseline root; its consumer-made entry is not taken.
+            Assert.That(ResolutionUsageCount(merged, vmdA), Is.EqualTo(2), "teb_unit stays, the consumer's new unit is added");
+            Assert.That(ResolutionUsageKeys(merged), Does.Not.Contain(vmdVanilla));
+            // A new link for an existing unit and its land unit is an addition.
+            Assert.That(ResolutionUsageKeys(merged), Does.Contain(vmdNew));
+            Assert.That(ResolutionUsageCount(merged, vmdB), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ConsumerRows_NothingToAddGivesTheBaseline()
+        {
+            const string vmdA = "variantmeshes\\a.variantmeshdefinition";
+            var baseline = CreateDownscaleResolution(true, (vmdA, CreateUsageWithLand(vmdA, "u", "land_u")));
+            var same = CreateDownscaleResolution(true, (vmdA, CreateUsageWithLand(vmdA, "u", "land_u")));
+
+            var merged = MergeResolutions(baseline, same);
+
+            Assert.That(ResolutionUsageKeys(merged), Is.EqualTo(ResolutionUsageKeys(baseline)));
+            Assert.That(ResolutionUsageCount(merged, vmdA), Is.EqualTo(1));
+        }
     }
 }

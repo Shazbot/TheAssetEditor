@@ -326,6 +326,16 @@ namespace Editors.PackOptimizer.Core
 
     internal sealed record Wh3ModDbContainer(IPackFileContainer Container, bool BelowSource);
 
+    internal sealed record Wh3ConsumerRowOverride(
+        IPackFileContainer Container,
+        string Table,
+        string FilePath,
+        string Key,
+        string Changes,
+        bool ReplacedGameOrSourceRow);
+
+    internal sealed record Wh3ConsumerTableInfo(IPackFileContainer Container, string TablePath, string DecodeInfo);
+
     internal sealed record Wh3ConsumerDbFailure(IPackFileContainer Container, string TablePath, string Reason);
 
     internal sealed record Wh3UnitCategoryResolution(
@@ -346,6 +356,12 @@ namespace Editors.PackOptimizer.Core
     {
         // Tables of other enabled mods that could not be decoded; never part of the health flag.
         public IReadOnlyList<Wh3ConsumerDbFailure> ConsumerDbFailures { get; init; } = [];
+        // Rows of consumers' tables that replaced an existing effective row (what changed), the
+        // tables they came from, and how many new keys each consumer added.
+        public IReadOnlyList<Wh3ConsumerRowOverride> ConsumerRowOverrides { get; init; } = [];
+        public IReadOnlyList<Wh3ConsumerTableInfo> ConsumerTableInfos { get; init; } = [];
+        public IReadOnlyDictionary<IPackFileContainer, int> ConsumerRowsAdded { get; init; } =
+            new Dictionary<IPackFileContainer, int>();
 
         public IReadOnlyList<Wh3UnitCategoryUsage> GetUsages(string vmdPath)
             => UsagesByVmd.TryGetValue(NormalizePath(vmdPath), out var usages)
@@ -463,6 +479,12 @@ namespace Editors.PackOptimizer.Core
             IReadOnlyList<Wh3ModDbContainer>? modContainers = null)
         {
             var consumerDbFailures = new List<Wh3ConsumerDbFailure>();
+            var consumerRowOverrides = new List<Wh3ConsumerRowOverride>();
+            var consumerTableInfos = new List<Wh3ConsumerTableInfo>();
+            var consumerRowsAdded = new Dictionary<IPackFileContainer, int>(ReferenceEqualityComparer.Instance);
+            // Which container's file supplied the effective row of each key: null for game and
+            // source rows, the mod container for a row a consumer wrote.
+            var rowOrigins = new Dictionary<string, Dictionary<string, IPackFileContainer?>>(StringComparer.OrdinalIgnoreCase);
             var activeScenario = (scenario ?? Wh3ArmyVisualScenario.Default)
                 .NormalizeForUse();
             var diagnostics = new List<string>();
@@ -540,7 +562,16 @@ namespace Editors.PackOptimizer.Core
                                     continue;
                                 }
 
-                                ApplyEffectiveRows(tableName, effectiveRows[tableName], modRows);
+                                consumerTableInfos.Add(new Wh3ConsumerTableInfo(container, path, LastDecodeInfo));
+                                ApplyModRows(
+                                    tableName,
+                                    effectiveRows[tableName],
+                                    GetRowOrigins(rowOrigins, tableName),
+                                    modRows,
+                                    container,
+                                    path,
+                                    consumerRowOverrides,
+                                    consumerRowsAdded);
                             }
                             catch (Exception ex) when (ex is not OperationCanceledException)
                             {
@@ -1455,6 +1486,9 @@ namespace Editors.PackOptimizer.Core
                 diagnostics)
             {
                 ConsumerDbFailures = consumerDbFailures,
+                ConsumerRowOverrides = consumerRowOverrides,
+                ConsumerTableInfos = consumerTableInfos,
+                ConsumerRowsAdded = consumerRowsAdded,
             };
         }
 
@@ -2414,6 +2448,67 @@ namespace Editors.PackOptimizer.Core
             return Math.Max(1, rounded);
         }
 
+        [ThreadStatic]
+        private static string? s_lastDecodeInfo;
+
+        // How the most recent DecodeTable call read its table (schema version, column count,
+        // bytes left over after the last row).
+        internal static string LastDecodeInfo => s_lastDecodeInfo ?? string.Empty;
+
+        private static Dictionary<string, IPackFileContainer?> GetRowOrigins(
+            Dictionary<string, Dictionary<string, IPackFileContainer?>> all,
+            string tableName)
+        {
+            if (!all.TryGetValue(tableName, out var origins))
+            {
+                origins = new Dictionary<string, IPackFileContainer?>(StringComparer.OrdinalIgnoreCase);
+                all[tableName] = origins;
+            }
+
+            return origins;
+        }
+
+        // A consumer's rows are applied like any other (later wins by key); what they replace is
+        // recorded so the report can show it.
+        private static void ApplyModRows(
+            string tableName,
+            Dictionary<string, Dictionary<string, string>> effectiveRows,
+            Dictionary<string, IPackFileContainer?> origins,
+            IEnumerable<Dictionary<string, string>> rows,
+            IPackFileContainer container,
+            string filePath,
+            List<Wh3ConsumerRowOverride> overrides,
+            Dictionary<IPackFileContainer, int> added)
+        {
+            foreach (var row in rows)
+            {
+                var key = BuildEffectiveRowKey(tableName, row);
+                if (string.IsNullOrWhiteSpace(key))
+                    continue;
+
+                if (effectiveRows.TryGetValue(key, out var existing))
+                {
+                    var changes = string.Join("; ", row
+                        .Where(pair => !existing.TryGetValue(pair.Key, out var before) ||
+                                       !string.Equals(before, pair.Value, StringComparison.Ordinal))
+                        .Select(pair => $"{pair.Key}: '{(existing.TryGetValue(pair.Key, out var old) ? old : "<none>")}' -> '{pair.Value}'"));
+                    if (changes.Length != 0)
+                    {
+                        var replacedBaseline = !origins.TryGetValue(key, out var origin) || origin == null;
+                        overrides.Add(new Wh3ConsumerRowOverride(
+                            container, tableName, filePath, key, changes, replacedBaseline));
+                    }
+                }
+                else
+                {
+                    added[container] = added.GetValueOrDefault(container) + 1;
+                }
+
+                effectiveRows[key] = row;
+                origins[key] = container;
+            }
+        }
+
         private static List<Dictionary<string, string>> DecodeTable(
             string tableName,
             byte[] data,
@@ -2474,6 +2569,10 @@ namespace Editors.PackOptimizer.Core
                 rows.Add(row);
             }
 
+            s_lastDecodeInfo =
+                $"packedVersion={(packedVersion.HasValue ? packedVersion.Value.ToString(CultureInfo.InvariantCulture) : "none")} " +
+                $"schemaVersion={schemaVersion.Version} fields={schemaVersion.Fields.Count} rows={entryCount} " +
+                $"bytesLeft={data.Length - position}";
             return rows;
         }
 
