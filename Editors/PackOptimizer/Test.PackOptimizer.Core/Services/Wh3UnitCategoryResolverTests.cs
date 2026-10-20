@@ -2356,5 +2356,90 @@ namespace Test.PackOptimizer.Core
             Assert.That(variants, Is.EqualTo(new[] { "baseline_variant" }));
         }
 
+
+        // --- What a game patch does to the embedded schema (measurement for step 5) -----------
+
+        private static string LastDecodeInfo()
+            => (string)Assembly.Load("Editors.PackOptimizer.Core")
+                .GetType("Editors.PackOptimizer.Core.Wh3UnitCategoryResolver", throwOnError: true)!
+                .GetProperty("LastDecodeInfo", BindingFlags.NonPublic | BindingFlags.Static)!
+                .GetValue(null)!;
+
+        private static byte[] TwoParentRows(int versionOverride, bool extraColumn, int count = 2)
+        {
+            using var stream = new MemoryStream();
+            using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+            writer.Write(new byte[] { 0xfc, 0xfd, 0xfe, 0xff });
+            writer.Write(versionOverride);
+            writer.Write((byte)0);
+            writer.Write(count);
+            for (var i = 0; i < count; i++)
+            {
+                WriteStringU8(writer, "icon" + i);
+                WriteStringU8(writer, "key" + i);
+                writer.Write(i);
+                writer.Write(10 + i);
+                if (extraColumn)
+                    writer.Write(777 + i);
+            }
+
+            writer.Flush();
+            return stream.ToArray();
+        }
+
+        [Test]
+        public void SchemaPatch_AKnownVersionDecodesAndReadsEveryByte()
+        {
+            var diagnostics = new List<string>();
+            var rows = DecodeTable("ui_unit_group_parents_tables", TwoParentRows(1, extraColumn: false), diagnostics);
+
+            Assert.That(rows, Has.Count.EqualTo(2));
+            Assert.That(diagnostics, Is.Empty);
+            Assert.That(LastDecodeInfo(), Does.Contain("bytesLeft=0"));
+        }
+
+        [Test]
+        public void SchemaPatch_ANewerTableVersionIsSkippedWithADiagnostic_NotMisread()
+        {
+            var diagnostics = new List<string>();
+            var rows = DecodeTable("ui_unit_group_parents_tables", TwoParentRows(2, extraColumn: true), diagnostics);
+
+            // The table contributes no rows; the diagnostic names it. For a critical table this
+            // makes the gameplay resolution unhealthy and the run stops with a clear message.
+            Assert.That(rows, Is.Empty);
+            Assert.That(diagnostics.Single(), Does.Contain("Skipped").And.Contain("no schema"));
+        }
+
+        [Test]
+        public void SchemaPatch_AColumnAddedWithoutAVersionBumpEitherThrowsOrMisreadsWithNoDiagnostic()
+        {
+            // CA bumps the version number when a column is added, so this needs a wrong schema
+            // (or a hand-edited table). Today nothing rejects it: rows are decoded misaligned.
+            var diagnostics = new List<string>();
+            List<Dictionary<string, string>>? rows = null;
+            Exception? failure = null;
+            try
+            {
+                rows = DecodeTable("ui_unit_group_parents_tables", TwoParentRows(1, extraColumn: true, count: 60), diagnostics);
+            }
+            catch (Exception ex)
+            {
+                failure = ex.InnerException ?? ex;
+            }
+
+            TestContext.Out.WriteLine($"rows={(rows == null ? "none" : rows.Count.ToString())}, failure={failure?.GetType().Name}, " +
+                                      $"diagnostics={diagnostics.Count}, info={LastDecodeInfo()}");
+            // Either the decoder runs off the end (an exception, which the resolver turns into a
+            // "Failed to decode" diagnostic) or it returns misaligned rows with no diagnostic.
+            if (rows != null)
+            {
+                Assert.That(diagnostics, Is.Empty, "no diagnostic: the decoder does not check leftover bytes");
+                Assert.That(rows[1]["key"], Is.Not.EqualTo("key1"), "the second row is misaligned");
+            }
+            else
+            {
+                Assert.That(failure, Is.Not.Null);
+            }
+        }
     }
 }
