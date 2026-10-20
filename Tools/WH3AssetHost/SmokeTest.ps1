@@ -35,6 +35,8 @@ param(
     [string[]]$RichPackPaths,
     [string]$OptimizeHostPath,
     [string]$OptimizeSourcePack,
+    # Optional: an RPFM schema (the mod manager's schema_wh3.json.zst) passed as dbSchemaPath.
+    [string]$OptimizeDbSchemaPath,
     [switch]$KeepOutput
 )
 
@@ -163,6 +165,9 @@ function Invoke-OptimizeSmoke {
         outputPackPath = $outputPack
         reportPath = $reportFile
         options = [ordered]@{ optimizeGeometry = $true; buildAtlases = $false; lodAwareAtlasPlanning = $true }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($OptimizeDbSchemaPath)) {
+        $request['dbSchemaPath'] = $OptimizeDbSchemaPath
     }
     $request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestFile -Encoding utf8
 

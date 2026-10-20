@@ -22,6 +22,11 @@ namespace WH3AssetHost.Optimize;
 /// <param name="SourceLoadOrderIndex">How many entries of <paramref name="ConsumerPackPaths"/> load
 /// before the source pack (0 = the source loads first, count = the source loads last). Required
 /// whenever <paramref name="ConsumerPackPaths"/> is not empty; there is no default.</param>
+/// <param name="DbSchemaPath">Optional path of an RPFM schema (the mod manager's bundled
+/// <c>schema_wh3.json.zst</c>, or plain JSON). The unit category resolver decodes the game's DB
+/// tables with its table layouts first and falls back to the layouts embedded in the host, so a game
+/// patch that bumps a table version needs a schema update in the manager, not a new host. An
+/// unreadable or corrupt file is an invalid request (exit 2). Omitted: the embedded layouts only.</param>
 public sealed record OptimizeRequest(
     int SchemaVersion,
     string GameDirectory,
@@ -32,7 +37,8 @@ public sealed record OptimizeRequest(
     string? CacheDirectory,
     OptimizeOptionsRequest? Options,
     IReadOnlyList<string>? ConsumerPackPaths,
-    int? SourceLoadOrderIndex = null)
+    int? SourceLoadOrderIndex = null,
+    string? DbSchemaPath = null)
 {
     public const int CurrentSchemaVersion = 1;
 }
@@ -226,6 +232,14 @@ public static class OptimizeRequestValidator
             return "reportPath must differ from outputPackPath.";
         if (!output.EndsWith(".pack", StringComparison.OrdinalIgnoreCase))
             return "outputPackPath must end with .pack.";
+
+        if (!string.IsNullOrWhiteSpace(request.DbSchemaPath))
+        {
+            if (!File.Exists(request.DbSchemaPath))
+                return $"dbSchemaPath '{request.DbSchemaPath}' does not exist.";
+            if (!PackOptimizerDbSchema.TryLoad(request.DbSchemaPath, out _, out var schemaError))
+                return schemaError;
+        }
 
         var consumers = request.ConsumerPackPaths ?? [];
         foreach (var consumer in consumers)

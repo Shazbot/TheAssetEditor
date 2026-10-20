@@ -169,7 +169,10 @@ internal static class Program
                 ? (cacheDir.Equals("none", StringComparison.OrdinalIgnoreCase) ? null : cacheDir)
                 : DirectoryHelper.CacheDirectory,
             ModConsumers: consumers,
-            SourceLoadOrderIndex: sourceIndex);
+            SourceLoadOrderIndex: sourceIndex,
+            DbSchema: options.TryGetValue("db-schema", out var dbSchemaPath)
+                ? PackOptimizerDbSchema.Load(dbSchemaPath)
+                : null);
         var processStopwatch = Stopwatch.StartNew();
         var result = PackOptimizerApi.Run(request, progress, CancellationToken.None);
         processStopwatch.Stop();
@@ -385,7 +388,10 @@ internal static class Program
         @"(\d[\d.,]*\s?(ms|s|min)\b)|\bwall\b|\bduration|\belapsed\b|\btime\b|\btimes\b|^Generated:|^(Output|Report):|timing",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    private static bool IsTimingLine(string line) => TimingPattern.IsMatch(line);
+    // "DB schema source:" lines exist only when a schema was supplied; leaving them out lets such a
+    // run be compared with one that decoded with the embedded schema.
+    private static bool IsTimingLine(string line)
+        => TimingPattern.IsMatch(line) || line.StartsWith("DB schema source:", StringComparison.Ordinal);
 
     private static Dictionary<string, string> ParseArguments(string[] args)
     {

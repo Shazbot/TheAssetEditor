@@ -163,7 +163,10 @@ internal static class OptimizeMode
                     OutputWritePath: tempOutput,
                     ReportWritePath: tempReport,
                     ModConsumers: consumers,
-                    SourceLoadOrderIndex: consumers.Count == 0 ? null : request.SourceLoadOrderIndex),
+                    SourceLoadOrderIndex: consumers.Count == 0 ? null : request.SourceLoadOrderIndex,
+                    DbSchema: string.IsNullOrWhiteSpace(request.DbSchemaPath)
+                        ? null
+                        : PackOptimizerDbSchema.Load(request.DbSchemaPath)),
                 progress,
                 cancellationToken);
 
