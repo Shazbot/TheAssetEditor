@@ -18,6 +18,13 @@ using Shared.Core.Settings;
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
 //   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true]
+//                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
+//
+// --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
+// enabled mods in load order, first loads first and loses, last wins; --source-index is how many
+// of them load before the source (default: all of them). Consumers are only read.
+//   PackOptimizerBench --make-synthetic-consumer <out.pack> [--source <pack>]
+//     writes a small test mod (a reskin of two source textures and a VMD reusing two WSModels).
 //
 // The output pack, the report and the fingerprint are written to <out>\<tag>\ (default
 // K:\projects\assedfork-bench\run), never next to the source pack.
@@ -58,6 +65,23 @@ internal static class Program
         settings.CurrentSettings.GameDirectories.Add(new ApplicationSettings.GamePathPair(GameTypeEnum.Warhammer3, gameDirectory));
 
         var loader = services.GetRequiredService<IPackFileContainerLoader>();
+        if (options.TryGetValue("make-synthetic-consumer", out var syntheticPath))
+            return MakeSyntheticConsumer(loader, source, syntheticPath);
+
+        var consumerPaths = ReadConsumerPaths(args, options);
+        var loadAllConsumerFiles = options.GetValueOrDefault("consumer-load", "filtered")
+            .Equals("full", StringComparison.OrdinalIgnoreCase);
+        // Times only the loading of the consumer packs (the asset host's loader).
+        if (options.GetValueOrDefault("load-only", "false").Equals("true", StringComparison.OrdinalIgnoreCase))
+        {
+            var watch = Stopwatch.StartNew();
+            var listed = 0;
+            foreach (var consumerPath in consumerPaths)
+                listed += WH3AssetHost.Optimize.HostVanillaContainers.LoadConsumer(consumerPath, loadAllConsumerFiles).GetFileCount();
+            Console.WriteLine($"Loaded {consumerPaths.Count} consumer pack(s) ({(loadAllConsumerFiles ? "full" : "filtered")}) in {watch.Elapsed.TotalSeconds:0.0} s; {listed:N0} file(s) listed.");
+            return 0;
+        }
+
         // Fingerprint of an existing output (for runs made by another host, e.g. WH3AssetHost.exe):
         //   --fingerprint-pack <pack> --fingerprint-report <report> --fingerprint-to <file>
         if (options.TryGetValue("fingerprint-pack", out var fingerprintPack))
@@ -101,6 +125,21 @@ internal static class Program
         // progress window's defaults for merge/share/optimize. The library gets everything
         // explicitly: the source pack, the read-only game packs, the output and report paths.
         var source_ = loader.CreateFromPackFile(PackFileContainerType.Normal, source, loadAsReadOnly: true);
+        var consumerLoadStopwatch = Stopwatch.StartNew();
+        var consumers = new List<IPackFileContainer>();
+        foreach (var consumerPath in consumerPaths)
+        {
+            // The asset host's loader, so the bench measures what the host does.
+            consumers.Add(WH3AssetHost.Optimize.HostVanillaContainers.LoadConsumer(consumerPath, loadAllConsumerFiles));
+        }
+
+        var consumerLoadSeconds = consumerLoadStopwatch.Elapsed.TotalSeconds;
+        int? sourceIndex = options.TryGetValue("source-index", out var sourceIndexText)
+            ? int.Parse(sourceIndexText, CultureInfo.InvariantCulture)
+            : null;
+        if (consumers.Count != 0)
+            Console.WriteLine($"{consumers.Count} consumer pack(s) loaded in {consumerLoadSeconds:0.0} s; the source loads after {sourceIndex ?? consumers.Count} of them.");
+
         var request = new PackOptimizerRequest(
             source,
             source_,
@@ -125,7 +164,9 @@ internal static class Program
                 DropUnreadAlpha = true,
             },
             MissingTexturePolicy.Skip,
-            DirectoryHelper.CacheDirectory);
+            DirectoryHelper.CacheDirectory,
+            ModConsumers: consumers,
+            SourceLoadOrderIndex: sourceIndex);
         var processStopwatch = Stopwatch.StartNew();
         var result = PackOptimizerApi.Run(request, progress, CancellationToken.None);
         processStopwatch.Stop();
@@ -145,7 +186,95 @@ internal static class Program
         File.WriteAllText(
             Path.Combine(runDirectory, "wall_time.txt"),
             $"process_seconds={processStopwatch.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)}{Environment.NewLine}" +
-            $"total_seconds={total.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)}{Environment.NewLine}");
+            $"total_seconds={total.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture)}{Environment.NewLine}" +
+            $"consumer_packs={consumers.Count}{Environment.NewLine}" +
+            $"consumer_load_seconds={consumerLoadSeconds.ToString("0.0", CultureInfo.InvariantCulture)}{Environment.NewLine}" +
+            $"peak_working_set_mib={Process.GetCurrentProcess().PeakWorkingSet64 / (1024 * 1024)}{Environment.NewLine}" +
+            $"externally_used_files={result.ExternallyUsedFileCount}{Environment.NewLine}" +
+            $"frozen_files={result.FrozenFileCount}{Environment.NewLine}");
+        // The phase lines of the report that matter for consumers (their unit is the report's own).
+        File.WriteAllLines(
+            Path.Combine(runDirectory, "phases.txt"),
+            File.ReadAllLines(result.ReportPath).Where(line =>
+                line.StartsWith("Scan consumer packs:", StringComparison.Ordinal) ||
+                line.StartsWith("Index consumer references:", StringComparison.Ordinal) ||
+                line.StartsWith("Resolve unit categories", StringComparison.Ordinal) ||
+                line.StartsWith("Prune unused assets:", StringComparison.Ordinal) ||
+                line.StartsWith("Validate output:", StringComparison.Ordinal)));
+        foreach (var warning in result.Warnings ?? [])
+            Console.WriteLine($"WARNING: {warning}");
+        return 0;
+    }
+
+    private static List<string> ReadConsumerPaths(string[] args, Dictionary<string, string> options)
+    {
+        var paths = new List<string>();
+        for (var index = 0; index + 1 < args.Length; index++)
+        {
+            if (args[index].Equals("--consumer", StringComparison.OrdinalIgnoreCase))
+                paths.Add(args[index + 1]);
+        }
+
+        if (options.TryGetValue("consumer-list", out var listPath))
+        {
+            paths.AddRange(File.ReadAllLines(listPath)
+                .Select(line => line.Trim())
+                .Where(line => line.Length != 0 && !line.StartsWith('#')));
+        }
+
+        return paths;
+    }
+
+    // A tiny stand-in for a reskin plus a submod, for manual end-to-end runs: two source textures
+    // overridden with their own bytes, and a VMD of its own that reuses two source WSModels.
+    private static int MakeSyntheticConsumer(IPackFileContainerLoader loader, string sourcePath, string outputPath)
+    {
+        var source = loader.CreateFromPackFile(PackFileContainerType.Normal, sourcePath, loadAsReadOnly: true);
+        var files = source.GetAllFiles();
+        var textures = files.Keys
+            .Where(path => path.EndsWith(".dds", StringComparison.OrdinalIgnoreCase) &&
+                           path.Contains("\\morion\\tex\\", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Take(2)
+            .ToList();
+        var wsModels = files.Keys
+            .Where(path => path.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase) &&
+                           path.Contains("\\morion\\", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .Take(2)
+            .ToList();
+        if (textures.Count < 2 || wsModels.Count < 2)
+        {
+            Console.Error.WriteLine("The source has no morion textures/WSModels to build the synthetic consumer from.");
+            return 3;
+        }
+
+        var vmd = "<VARIANT_MESH>" + Environment.NewLine +
+                  string.Concat(wsModels.Select((path, index) =>
+                      $"\t<SLOT name=\"synth{index}\" >{Environment.NewLine}\t\t<VARIANT_MESH model=\"{path}\"  />{Environment.NewLine}\t</SLOT>{Environment.NewLine}")) +
+                  "</VARIANT_MESH>";
+        var container = Shared.Core.PackFiles.Models.Containers.PackFileContainer.CreatePackFile(
+            Path.GetFileNameWithoutExtension(outputPath), null, Shared.Core.Settings.PackFileVersion.PFH5);
+        var entries = new List<Shared.Core.PackFiles.Models.NewPackFileEntry>();
+        foreach (var texture in textures)
+        {
+            entries.Add(new Shared.Core.PackFiles.Models.NewPackFileEntry(
+                Path.GetDirectoryName(texture) ?? string.Empty,
+                new Shared.Core.PackFiles.Models.PackFile(
+                    Path.GetFileName(texture),
+                    new Shared.Core.PackFiles.Models.FileSources.MemorySource(files[texture].DataSource.ReadData()))));
+        }
+
+        entries.Add(new Shared.Core.PackFiles.Models.NewPackFileEntry(
+            "variantmeshes\\variantmeshdefinitions",
+            new Shared.Core.PackFiles.Models.PackFile(
+                "zz_synth_submod.variantmeshdefinition",
+                new Shared.Core.PackFiles.Models.FileSources.MemorySource(Encoding.UTF8.GetBytes(vmd)))));
+        ((Shared.Core.PackFiles.Models.IPackFileContainerInternal)container).AddFiles(entries);
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath))!);
+        ((Shared.Core.PackFiles.Models.IPackFileContainerInternal)container).SaveToDisk(
+            outputPath, false, GameInformationDatabase.GetGameById(GameTypeEnum.Warhammer3));
+        Console.WriteLine($"Wrote {outputPath}: overrides {string.Join(", ", textures)}; VMD reuses {string.Join(", ", wsModels)}.");
         return 0;
     }
 

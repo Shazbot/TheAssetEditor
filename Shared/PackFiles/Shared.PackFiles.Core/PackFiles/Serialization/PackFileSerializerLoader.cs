@@ -39,7 +39,8 @@ namespace Shared.Core.PackFiles.Serialization
             long packFileSize,
             BinaryReader reader,
             IDuplicateFileResolver duplicatePackFileResolver,
-            Func<string, bool>? includeFile)
+            Func<string, bool>? includeFile,
+            bool deferCompressionInfo = false)
         {
             try
             {
@@ -90,7 +91,9 @@ namespace Shared.Core.PackFiles.Serialization
 
                     var compressionFormat = CompressionFormat.None;
                     uint uncompressedSize = 0;
-                    if (isCompressed)
+                    // deferCompressionInfo skips the seek to every compressed entry's header (minutes on a
+                    // cold disk for a big mod); PackedFileSource reads the header on the first ReadData.
+                    if (isCompressed && !deferCompressionInfo)
                     {
                         var fileHeader = DetectCompressionInfo(reader, offset, size, isEncrypted);
                         using var compressionStream = new MemoryStream(fileHeader, false);

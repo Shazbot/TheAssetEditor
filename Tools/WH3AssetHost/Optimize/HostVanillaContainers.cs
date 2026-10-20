@@ -86,7 +86,10 @@ public static class HostVanillaContainers
             .ToList();
 
     /// <summary>Loads the pack being optimized, read-only; duplicate paths are skipped, never prompted.</summary>
-    public static IPackFileContainer LoadSource(string sourcePackPath)
+    public static IPackFileContainer LoadSource(
+        string sourcePackPath,
+        Func<string, bool>? includeFile = null,
+        bool deferCompressionInfo = false)
     {
         var fullPath = Path.GetFullPath(sourcePackPath);
         using var stream = File.OpenRead(fullPath);
@@ -95,15 +98,38 @@ public static class HostVanillaContainers
             fullPath,
             new FileInfo(fullPath).Length,
             reader,
-            new SkipDuplicateFileResolver());
+            new SkipDuplicateFileResolver(),
+            includeFile,
+            deferCompressionInfo);
         container.Name = Path.GetFileNameWithoutExtension(fullPath);
         container.SystemFilePath = fullPath;
         container.IsReadOnly = true;
         return container;
     }
 
-    /// <summary>Loads another enabled mod, read-only, from its pack index only.</summary>
-    public static IPackFileContainer LoadConsumer(string consumerPackPath) => LoadSource(consumerPackPath);
+    /// <summary>
+    /// Loads another enabled mod, read-only, from its pack index only. Only the files the
+    /// optimizer can look at are listed: model, material and texture assets, the text files that
+    /// may name them, and DB tables. The loader also skips its per-file seek to every compressed
+    /// entry's header (the header is read when the file is first read). Together this is what
+    /// keeps a cold load of a mod with tens of thousands of files to seconds instead of minutes.
+    /// </summary>
+    public static IPackFileContainer LoadConsumer(string consumerPackPath, bool allFiles = false)
+        => allFiles ? LoadSource(consumerPackPath) : LoadSource(consumerPackPath, IncludeConsumerFile, deferCompressionInfo: true);
+
+    /// <summary>The paths of a consumer pack worth listing (lower-case, backslashes).</summary>
+    public static bool IncludeConsumerFile(string path)
+        => path.StartsWith("db\\", StringComparison.Ordinal) ||
+           path.EndsWith(".variantmeshdefinition", StringComparison.Ordinal) ||
+           path.EndsWith(".wsmodel", StringComparison.Ordinal) ||
+           path.EndsWith(".rigid_model_v2", StringComparison.Ordinal) ||
+           path.EndsWith(".xml.material", StringComparison.Ordinal) ||
+           path.EndsWith(".dds", StringComparison.Ordinal) ||
+           path.EndsWith(".xml", StringComparison.Ordinal) ||
+           path.EndsWith(".fx_fragment", StringComparison.Ordinal) ||
+           path.EndsWith(".lua", StringComparison.Ordinal) ||
+           path.EndsWith(".txt", StringComparison.Ordinal) ||
+           path.EndsWith(".json", StringComparison.Ordinal);
 
     private sealed class SkipDuplicateFileResolver : IDuplicateFileResolver
     {

@@ -785,6 +785,9 @@ namespace Editors.PackOptimizer.Core
                 "GetRigidNotOnlyThroughOwnedWsModelsReason" => "repack / compaction",
                 "SelectNoAtlasGeometryOptimizationRigids" => "geometry optimisation",
                 "HasUnrewritableMaterialConsumerAtlasConflict" or "IsAtlasCandidateGameplayDiscoverySafe" => "atlas",
+                "CheckUnreadAlpha" or "CompactTextures" or "CompactTexture" => "compaction",
+                "KeepVanillaOverrides" => "prune",
+                _ when caller.Contains("Repack", StringComparison.Ordinal) => "repack",
                 _ => caller,
             };
 
