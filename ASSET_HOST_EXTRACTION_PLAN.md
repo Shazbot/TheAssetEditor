@@ -68,22 +68,26 @@ Not in scope: texture atlasing in whmm. It stays an Asset-Editor-only experiment
 
 ### 3. Host process mode (done)
 - Run as a separate process, `WH3AssetHost.exe optimize --request <file.json> [--parent-pid <pid>]`, not inside the pipe server loop, so previews keep working and memory and crashes stay isolated.
-- **Request JSON** (`schemaVersion` 1): `gameDirectory` (the `data` folder with `manifest.txt`; the install folder is accepted), `vanillaFileIndexPath` (whmm's `vanilla-pack-files-cache.bin`), `sourcePackPath`, `outputPackPath`, `reportPath`, optional `cacheDirectory`, `options` (nullable bools; omitted ones keep the optimizer defaults), `consumerPackPaths` (checked to exist, ignored until step 4).
-- **Output:** stdout is JSON lines only. Progress lines `{"type":"progress",stage,item,current,total}` (throttled to about 10/s), then one `{"type":"result",status,outputPackPath,reportPath,vmdCount,atlasedMeshCount,generatedTextureCount,removedFileCount,skippedMeshCount,elapsedSeconds}` or `{"type":"error",message,exceptionType}`.
+- **Request JSON** (`schemaVersion` 1): `gameDirectory` (the `data` folder with `manifest.txt`; the install folder is accepted), `vanillaFileIndexPath` (whmm's `vanilla-pack-files-cache.bin`), `sourcePackPath`, `outputPackPath`, `reportPath`, optional `cacheDirectory`, `options` (nullable bools; omitted ones keep the optimizer defaults), `consumerPackPaths` and `sourceLoadOrderIndex` (step 4).
+- **Output:** stdout is JSON lines only. Progress lines `{"type":"progress",stage,item,current,total}` (throttled to about 10/s), then one `{"type":"result",status,outputPackPath,reportPath,vmdCount,atlasedMeshCount,generatedTextureCount,removedFileCount,skippedMeshCount,elapsedSeconds,warnings,consumerPackCount,externallyUsedFileCount,frozenFileCount}` or `{"type":"error",message,exceptionType}`.
 - **Exit codes:** 0 succeeded, 1 failed, 2 invalid request, 3 cancelled. Cancel by Ctrl+C, SIGTERM or parent exit (`--parent-pid`). Output and report go to `<target>.optimizing` and are moved into place only on success.
 - **Vanilla containers** come from whmm's file index through `HeadlessPackFileLoader.TryLoadFromVanillaCache`, one read-only container per pack, ordered like the editor (load order, then name). A missing or stale entry fails with an error naming the pack; whmm warms the index first. The source pack is loaded with a non-interactive duplicate resolver.
 - **Encoding:** a small native wrapper, `Native/DirectXTexShim` (plain C exports over DirectXTex `mar2024`, pinned in `directxtex.pin`, static CRT, no OpenMP), called through P/Invoke. Output is byte-identical to the managed wrapper it replaced. The prebuilt `DirectXTexShim.dll` (351 KB) is committed; `build.ps1` rebuilds it.
 - **Publish:** single-file, trimmed exe (about 39 MB, was 34 MB); the shim DLL is bundled with `IncludeNativeLibrariesForSelfExtract`. `optimize --check-dds` verifies the native library loads.
 - **Done:** `optimize` on `!ak_teb3` matches the bench fingerprint (only the harmless "Gameplay container snapshot" count line differs), and `SmokeTest.ps1` has an optimize case.
 
-### 4. Other mods as consumers (new behaviour)
-- Today pruning, vanilla-override protection, texture-sharing checks and the repack's "every user rewritten" rule consider only CA packs. In a load order, submods, compatibility patches and reskins can reference the optimised mod's files.
-- Add `ConsumerPacks` to the request: the other enabled mods, read-only. Treat them like vanilla:
-  - a file they reference is never pruned;
-  - a texture they use is never retired or repacked away;
-  - their WSModels and VMDs count as users in the value gates and the repack.
-- The report lists files kept because another mod uses them.
-- **Done when:** tests cover a consumer-pack reference that blocks pruning, the repack and compaction's alpha drop; and running with an empty `ConsumerPacks` gives the identical fingerprint.
+### 4. Other mods as consumers (done)
+- **Request:** `consumerPackPaths` lists the other enabled mods in load order: the first loads first and loses, the last wins (the mod list top to bottom). `sourceLoadOrderIndex` says how many of them load before the source; it is required whenever the list is not empty (exit 2 if missing or out of range). The library takes `ModConsumers` and `SourceLoadOrderIndex` (default: the source wins over all of them).
+- **Loading:** read-only, from the pack index only, like the source. Exit 2 for the source itself, the output pack, a pack named like the optimizer's output (`<source>_atlas...`) and duplicates. A consumer that overrides more than half of its asset paths gets a warning on stderr, in the report and in the result line's `warnings`.
+- **Two sets, computed once** (`ConsumerReferenceIndex`):
+  - **E, externally used:** source files reachable from a consumer file. Seeds are paths named in consumer VMDs, WSModels, materials and text files, the embedded textures of consumer rigids a consumer VMD draws directly, and source files that become gameplay roots only through consumer DB rows (the unit category resolution runs with the consumers' tables, once with and once without them). E is then closed inside the source (VMD to WSModel to rigid, material, texture).
+  - **F, frozen:** source asset paths a consumer also has, in either load order.
+- **Rules:** nothing in E or F is pruned or changed in place. Texture repack, compaction, downscale and atlasing skip those textures; a rigid that E or F (or a WSModel bound to it) touches gets no merge, repack UV remap or geometry change; cross-rigid skips VMDs in E or F. Source analysis still resolves source first, then the game packs; consumers are not in the pack file service and not in the vanilla consumer cache.
+- **Unreadable DB tables** of a consumer never make the gameplay resolution unhealthy: the report lists them, and the table is read as text for paths (the report shows how many source paths that alone added).
+- **Report:** one section, only when consumers are supplied: the packs, "kept because another mod uses it" (file, pack, referrer, what was blocked), "frozen because another mod overrides it", the blocked operations by stage, DB roots, integrity.
+- **Integrity check** in `ValidateOutput`: every path in E and F must be byte-identical to the source in the output, or the run fails. The named exceptions list is empty.
+- **Left as is:** geometry optimisation stays blocked for consumer-used rigids, like for vanilla users (it keeps mesh count and order, so a later split of that gate is possible). Vanilla-user indexing does not resolve through consumers first.
+- **Done:** unit tests for each block, the DB-root and DB-fallback paths and the integrity check; an empty list gives the identical fingerprint (bench, bench with atlases); real packs from the workshop folder run cleanly (see the step 4 report).
 
 ### 5. Caches
 - **Vanilla file lookups:** whmm's file index (step 3). The SQLite `CachedPackFileContainer` path isn't used in the host.
@@ -113,5 +117,7 @@ Not in scope: texture atlasing in whmm. It stays an Asset-Editor-only experiment
 
 - **Merge conflicts in the pack-file layer** (step 1). Mitigation: the fingerprint, plus the PackFiles tests on both sides.
 - **Native shim** (step 3): a Windows x64 binary committed to the repo, with a pinned DirectXTex. Mitigation: `directxtex.pin`, `build.ps1`, and the parity harness against the old output; bump the pin only with a fresh parity run.
-- **Consumer packs** (step 4) are new logic and can block more optimisations than expected. Mitigation: report every block with its reason.
+- **Consumer packs** (step 4) can block more optimisations than expected. Mitigation: every block is reported with its reason, pack and referrer. A stale derived pack of the same mod in the load order would freeze almost everything; the host rejects packs named like its outputs and warns on heavy overlap, and whmm must leave derived packs out.
+- **Editor leak** (follow-up): the Asset Editor passes all open containers as `ConsumerContainers`, so open non-CA packs are visible to generic reads. Left unchanged; the editor passes no `ModConsumers`.
+- **Cache directory:** whmm passes its own `cacheDirectory` (never the editor's). The host's vanilla containers have no persistent identity, so the vanilla consumer cache is in-memory only there, and a volatile-only run no longer prunes or rewrites the editor's file.
 - **Reflection-based tests** (step 2) break on renames. Mitigation: move files without renaming types or members.
