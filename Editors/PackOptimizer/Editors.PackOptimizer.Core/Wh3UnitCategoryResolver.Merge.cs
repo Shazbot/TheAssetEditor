@@ -113,6 +113,9 @@ namespace Editors.PackOptimizer.Core
                 baseline.GameplayResolutionHealthMessage,
                 baseline.Diagnostics)
             {
+                DbReadElapsed = baseline.DbReadElapsed,
+                DbDecodeElapsed = baseline.DbDecodeElapsed,
+                DbBytes = baseline.DbBytes,
                 ConsumerDbFailures = withConsumers.ConsumerDbFailures,
                 ConsumerRowOverrides = withConsumers.ConsumerRowOverrides,
                 ConsumerTableInfos = withConsumers.ConsumerTableInfos,

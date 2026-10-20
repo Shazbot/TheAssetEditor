@@ -164,7 +164,10 @@ internal static class Program
                 DropUnreadAlpha = true,
             },
             MissingTexturePolicy.Skip,
-            DirectoryHelper.CacheDirectory,
+            // --cache-dir <folder> uses another folder for the vanilla consumer cache, "none" disables it.
+            options.TryGetValue("cache-dir", out var cacheDir)
+                ? (cacheDir.Equals("none", StringComparison.OrdinalIgnoreCase) ? null : cacheDir)
+                : DirectoryHelper.CacheDirectory,
             ModConsumers: consumers,
             SourceLoadOrderIndex: sourceIndex);
         var processStopwatch = Stopwatch.StartNew();

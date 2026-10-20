@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Buffers.Binary;
 using System.Collections.ObjectModel;
 using System.Globalization;
@@ -355,6 +356,10 @@ namespace Editors.PackOptimizer.Core
         IReadOnlyList<string> Diagnostics)
     {
         // Tables of other enabled mods that could not be decoded; never part of the health flag.
+        // Time spent reading (pack index to bytes) and decoding the game and source DB tables.
+        public TimeSpan DbReadElapsed { get; init; }
+        public TimeSpan DbDecodeElapsed { get; init; }
+        public long DbBytes { get; init; }
         public IReadOnlyList<Wh3ConsumerDbFailure> ConsumerDbFailures { get; init; } = [];
         // Rows of consumers' tables that replaced an existing effective row (what changed), the
         // tables they came from, and how many new keys each consumer added.
@@ -479,6 +484,9 @@ namespace Editors.PackOptimizer.Core
             IReadOnlyList<Wh3ModDbContainer>? modContainers = null)
         {
             var consumerDbFailures = new List<Wh3ConsumerDbFailure>();
+            var dbReadElapsed = TimeSpan.Zero;
+            var dbDecodeElapsed = TimeSpan.Zero;
+            long dbBytes = 0;
             var consumerRowOverrides = new List<Wh3ConsumerRowOverride>();
             var consumerTableInfos = new List<Wh3ConsumerTableInfo>();
             var consumerRowsAdded = new Dictionary<IPackFileContainer, int>(ReferenceEqualityComparer.Instance);
@@ -584,11 +592,17 @@ namespace Editors.PackOptimizer.Core
 
                         try
                         {
+                            var decodeStart = Stopwatch.GetTimestamp();
+                            var tableBytes = file.DataSource.ReadData();
+                            var readElapsed = Stopwatch.GetElapsedTime(decodeStart);
                             var rows = DecodeTable(
                                 tableName,
-                                file.DataSource.ReadData(),
+                                tableBytes,
                                 path,
                                 diagnostics);
+                            dbReadElapsed += readElapsed;
+                            dbDecodeElapsed += Stopwatch.GetElapsedTime(decodeStart) - readElapsed;
+                            dbBytes += tableBytes.Length;
                             tableFilesRead++;
                             parsedRowsByTable[tableName] += rows.Count;
 
@@ -1485,6 +1499,9 @@ namespace Editors.PackOptimizer.Core
                 gameplayResolutionHealthMessage,
                 diagnostics)
             {
+                DbReadElapsed = dbReadElapsed,
+                DbDecodeElapsed = dbDecodeElapsed,
+                DbBytes = dbBytes,
                 ConsumerDbFailures = consumerDbFailures,
                 ConsumerRowOverrides = consumerRowOverrides,
                 ConsumerTableInfos = consumerTableInfos,

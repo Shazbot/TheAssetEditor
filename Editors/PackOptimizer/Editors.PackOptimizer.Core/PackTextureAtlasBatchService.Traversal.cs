@@ -101,10 +101,13 @@ namespace Editors.PackOptimizer.Core
             CancellationToken cancellationToken)
         {
             var resolution = state.UnitCategoryResolution;
+            var dependencyStopwatch = Stopwatch.StartNew();
             var dependencyIndex = BuildGameplayMeshDependencyIndex(
                 state,
                 vmdRoots,
                 cancellationToken);
+            state.PhaseDurations["  Gameplay mesh dependency index (inside the phase that calls it)"] =
+                dependencyStopwatch.Elapsed;
             state.GameplayMeshDependencyIndex = dependencyIndex;
 
             state.ImmutableMeshMergeConsumersByRigid.Clear();

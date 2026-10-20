@@ -254,11 +254,13 @@ namespace Editors.PackOptimizer.Core
                 var gameplayContainerSnapshot =
                     _packFileService.GetAllPackfileContainers().ToList();
                 state.GameplayTraversalContainers = gameplayContainerSnapshot;
+                var cacheLoadStopwatch = Stopwatch.StartNew();
                 state.VanillaAtlasConsumerCache =
                     Wh3VanillaAtlasConsumerCache.Load(
                         _cacheDirectory,
                         request.Game,
                         gameplayContainerSnapshot);
+                state.PhaseDurations["Vanilla atlas consumer cache load"] = cacheLoadStopwatch.Elapsed;
                 state.ExistingAtlasOutputDetected = HasGeneratedAtlasOutput(source);
 
                 if (request.ModConsumers is { Count: > 0 } modConsumers)
@@ -380,6 +382,8 @@ namespace Editors.PackOptimizer.Core
                         "processing; pack-wide mode cannot bypass this safety gate.");
                 }
 
+                var resolveElapsed = phaseStopwatch.Elapsed;
+                var residencyStopwatch = Stopwatch.StartNew();
                 state.ArmyResidencyModel =
                     state.UnitCategoryResolution.IsGameplayResolutionHealthy
                         ? BuildArmyResidencyModel(
@@ -388,6 +392,14 @@ namespace Editors.PackOptimizer.Core
                             includeAllGameCultures: scoreAllGameUnits)
                         : null;
                 state.PhaseDurations["Resolve unit categories"] = phaseStopwatch.Elapsed;
+                // Detail of the phase above (timing lines are stripped from the fingerprint).
+                state.PhaseDurations[
+                    $"  of which DB tables read ({state.UnitCategoryResolution.TableFilesRead:N0} files, {state.UnitCategoryResolution.DbBytes / (1024 * 1024):N0} MiB)"] =
+                    state.UnitCategoryResolution.DbReadElapsed;
+                state.PhaseDurations["  of which DB tables decoded"] = state.UnitCategoryResolution.DbDecodeElapsed;
+                state.PhaseDurations["  of which resolver, rest"] =
+                    resolveElapsed - state.UnitCategoryResolution.DbReadElapsed - state.UnitCategoryResolution.DbDecodeElapsed;
+                state.PhaseDurations["  of which army residency model"] = residencyStopwatch.Elapsed;
 
                 var gameplayEligibleVmdRoots = state.UnitCategoryResolution.UsagesByVmd.Keys
                     .Where(state.UnitCategoryResolution.IsVmdUsageComplete);
