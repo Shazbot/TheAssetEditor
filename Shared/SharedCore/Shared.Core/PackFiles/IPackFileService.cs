@@ -13,6 +13,7 @@ namespace Shared.Core.PackFiles
         void CopyFileFromOtherPackFile(IPackFileContainer source, string path, IPackFileContainer target);
         IPackFileContainer CreateNewPackFileContainer(string name, PackFileVersion packFileVersion, PackFileCAType type, bool setEditablePack = false);
         void DeleteFile(IPackFileContainer pf, PackFile file);
+        void DeleteFiles(IPackFileContainer pf, IReadOnlyCollection<string> paths);
         void DeleteFolder(IPackFileContainer pf, string folder);
         PackFile? FindFile(string path, IPackFileContainer? container = null);
         List<IPackFileContainer> GetAllPackfileContainers();
@@ -26,7 +27,7 @@ namespace Shared.Core.PackFiles
         void SaveFile(PackFile file, byte[] data);
         void SavePackContainer(IPackFileContainer pf, string path, bool createBackup, GameInformation gameInformation);
         void SetEditablePack(IPackFileContainer? pf);
-        void UnloadPackContainer(IPackFileContainer pf);
+        void UnloadPackContainer(IPackFileContainer pf, bool force = false);
         List<(string FileName, PackFile Pack)> FindAllWithExtention(string extention, IPackFileContainer? container = null);
     }
 }

@@ -12,6 +12,7 @@ using Editors.Reports.DeepSearch;
 using Editors.Reports.Files;
 using Editors.Reports.Geometry;
 using Editors.Shared.Core.Services;
+using Editors.KitbasherEditor.Services;
 using Shared.Core.Events;
 using Shared.Core.Misc;
 using Shared.Core.PackFiles;
@@ -34,6 +35,7 @@ namespace AssetEditor.ViewModels
         private readonly IFileSaveService _packFileSaveService;
         private readonly IPackFileContainerLoader _packFileContainerLoader;
         private readonly IStandardDialogs _standardDialogs;
+        private readonly PackTextureAtlasBatchService _packTextureAtlasBatchService;
 
         public ObservableCollection<RecentPackFileItem> RecentPackFiles { get; set; } = [];
         public ObservableCollection<EditorShortcutViewModel> Editors { get; set; } = [];
@@ -45,7 +47,8 @@ namespace AssetEditor.ViewModels
             TouchedFilesRecorder touchedFilesRecorder, 
             IFileSaveService packFileSaveService,
             IPackFileContainerLoader packFileContainerLoader,
-            IStandardDialogs standardDialogs)
+            IStandardDialogs standardDialogs,
+            PackTextureAtlasBatchService packTextureAtlasBatchService)
         {
             _packfileService = packfileService;
             _settingsService = settingsService;
@@ -55,6 +58,7 @@ namespace AssetEditor.ViewModels
             _packFileSaveService = packFileSaveService;
             _packFileContainerLoader = packFileContainerLoader;
             _standardDialogs = standardDialogs;
+            _packTextureAtlasBatchService = packTextureAtlasBatchService;
             var settings = settingsService.CurrentSettings;
             settings.RecentPackFiles.CollectionChanged += OnRecentPackFilePathsChanged;
             CreateRecentPackFilesItems();
@@ -175,6 +179,10 @@ namespace AssetEditor.ViewModels
 
         void CreateTools()
         {
+            Editors.Add(new EditorShortcutViewModel(
+                "Create Texture Atlas Pack",
+                _packTextureAtlasBatchService.Run));
+
             var infos = _editorDatabase
                 .GetEditorInfos()
                 .OrderBy(x=>x.ToolbarName)

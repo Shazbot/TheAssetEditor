@@ -11,12 +11,55 @@ namespace Shared.GameFormats.Vmd
     {
 
         public static VariantMesh Load(string fileContent, bool strict = false)
-        {
-            var xRoot = new XmlRootAttribute("VARIANT_MESH");
+            => Load(fileContent, out _, strict);
 
-            var xmlserializer = new XmlSerializer(typeof(VariantMesh), xRoot);
+        public static VariantMesh Load(
+            string fileContent,
+            out IReadOnlyList<string> compatibilityRepairs,
+            bool strict = false)
+        {
+            var vmd = XmlCompatibilityParser.Parse(
+                fileContent,
+                content => Deserialize(content, strict),
+                out compatibilityRepairs);
+
+            // The compatibility parser repairs malformed text instead of rejecting it. A strict
+            // caller (validation before saving) must still be told the text needed repairing.
+            if (strict && compatibilityRepairs.Count != 0)
+            {
+                throw new XmlException(
+                    "The VMD is not well-formed XML and would need repairs: " +
+                    string.Join(" ", compatibilityRepairs));
+            }
+
+            return vmd;
+        }
+
+        public static VariantMesh Load(PackFile pf, bool strict = false)
+            => Load(pf, out _, strict);
+
+        public static VariantMesh Load(
+            PackFile pf,
+            out IReadOnlyList<string> compatibilityRepairs,
+            bool strict = false)
+        {
+            var vmdContent = Encoding.UTF8.GetString(pf.DataSource.ReadData());
+            return Load(vmdContent, out compatibilityRepairs, strict);
+        }
+
+        // The (Type, XmlRootAttribute) constructor is not cached by the framework: building a new
+        // serializer per load regenerates and JIT-compiles a reader assembly every time (about 40 ms
+        // per VMD). One instance is shared; Deserialize is thread safe and the strict path's event
+        // handler stays per call.
+        private static readonly Lazy<XmlSerializer> VariantMeshSerializer = new(
+            () => new XmlSerializer(typeof(VariantMesh), new XmlRootAttribute("VARIANT_MESH")),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+
+        private static VariantMesh Deserialize(string fileContent, bool strict)
+        {
+            var xmlserializer = VariantMeshSerializer.Value;
             using var stringReader = new StringReader(fileContent);
-            var reader = XmlReader.Create(stringReader);
+            using var reader = XmlReader.Create(stringReader);
 
             object result = null;
             if (strict)
@@ -27,12 +70,6 @@ namespace Shared.GameFormats.Vmd
             var typedObject = result as VariantMesh;
             typedObject.FixStrings();
             return typedObject;
-        }
-
-        public static VariantMesh Load(PackFile pf, bool strict = false)
-        {
-            var vmdContent = Encoding.UTF8.GetString(pf.DataSource.ReadData());
-            return Load(vmdContent, strict);
         }
     }
 

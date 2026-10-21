@@ -86,6 +86,7 @@ namespace KitbasherEditor.ViewModels.MenuBarViews
 
             RegisterUiCommand<DivideSubMeshCommand>();
             RegisterUiCommand<MergeObjectsCommand>();
+            RegisterUiCommand<MergeObjectsWithTextureAtlasCommand>();
             RegisterUiCommand<DuplicateObjectCommand>();
             RegisterUiCommand<DeleteObjectCommand>();
             RegisterUiCommand<CreateStaticMeshCommand>();
@@ -128,6 +129,7 @@ namespace KitbasherEditor.ViewModels.MenuBarViews
 
             var toolsToolbar = builder.CreateRootToolBar("Tools");
             builder.CreateToolBarItem<GroupItemsCommand>(toolsToolbar, "(Un)Group selection");
+            builder.CreateToolBarItem<MergeObjectsWithTextureAtlasCommand>(toolsToolbar, "Create texture atlas for selected meshes");
             builder.CreateToolBarItem<ReduceMeshCommand>(toolsToolbar, "\"Reduce mesh by 10%\"");
             builder.CreateToolBarItem<SortMeshesCommand>(toolsToolbar, "Sort models by name");
 

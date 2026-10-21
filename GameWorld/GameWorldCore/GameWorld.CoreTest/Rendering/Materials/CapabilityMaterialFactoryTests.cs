@@ -101,6 +101,28 @@ namespace GameWorld.Core.Test.Rendering.Materials
 
             var emissiveCapability = material.TryGetCapability<EmissiveCapability>();
             Assert.That(emissiveCapability, Is.Not.Null);
+            Assert.That(material.UsesEmissiveShader, Is.True);
+        }
+
+        [Test]
+        public void Create_FromWs_Wh3_PropEmissive_IsDefaultButStillEmissiveForUvSafety()
+        {
+            var rmvMaterial = RmvMaterialHelper
+                .Create(ModelMaterialEnum.weighted);
+
+            var wsMaterial = new WsModelMaterialFile()
+            {
+                Name = "test_prop_weighted2_alpha_off.xml",
+                ShaderPath = "shaders/rigid_character_prop_emissive.xml.shader",
+            };
+
+            var appSettings = new ApplicationSettingsService(GameTypeEnum.Warhammer3);
+            var abstractMaterialFactory = new CapabilityMaterialFactory(appSettings, null);
+            var material = abstractMaterialFactory.Create(rmvMaterial, wsMaterial);
+
+            Assert.That(material, Is.TypeOf<Core.Rendering.Materials.Shaders.MetalRough.DefaultMaterial>());
+            Assert.That(material.SourceWsModelShaderPath, Is.EqualTo(wsMaterial.ShaderPath));
+            Assert.That(material.UsesEmissiveShader, Is.True);
         }
 
         [Test]

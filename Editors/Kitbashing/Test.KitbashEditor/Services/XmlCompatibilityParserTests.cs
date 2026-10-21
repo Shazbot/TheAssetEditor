@@ -1,0 +1,234 @@
+using System.Xml;
+using Shared.GameFormats;
+using Shared.GameFormats.Vmd;
+
+namespace Test.KitbashEditor.Services
+{
+    public class XmlCompatibilityParserTests
+    {
+        [Test]
+        public void Parse_LeavesValidXmlUntouched()
+        {
+            var document = XmlCompatibilityParser.Parse(
+                "<model><geometry>foo</geometry></model>",
+                ParseDocument,
+                out var repairs);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(document.DocumentElement?.Name, Is.EqualTo("model"));
+                Assert.That(repairs, Is.Empty);
+            });
+        }
+
+        [Test]
+        public void Parse_IgnoresTrailingDashAnnotations()
+        {
+            const string xml =
+                "<model><geometry>foo</geometry></model>\r\n" +
+                "--11 is moustache+plume\r\n" +
+                "--12 is beard stubble\r\n" +
+                "--14 is goatee+band\r\n" +
+                "--15 is alpha beard\r\n";
+
+            var document = XmlCompatibilityParser.Parse(
+                xml,
+                ParseDocument,
+                out var repairs);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(document.DocumentElement?.Name, Is.EqualTo("model"));
+                Assert.That(repairs, Has.Count.EqualTo(1));
+                Assert.That(repairs[0], Does.Contain("trailing non-XML text"));
+                Assert.That(repairs[0], Does.Contain("4 non-empty lines"));
+            });
+        }
+
+        [Test]
+        public void Parse_IgnoresTrailingEqualsAnnotation()
+        {
+            const string xml =
+                "<model><geometry>foo</geometry></model>\n" +
+                "===this goes well with demigryph knight and greatsword chests, except 01\n";
+
+            var document = XmlCompatibilityParser.Parse(
+                xml,
+                ParseDocument,
+                out var repairs);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(document.DocumentElement?.Name, Is.EqualTo("model"));
+                Assert.That(repairs, Has.Count.EqualTo(1));
+                Assert.That(repairs[0], Does.Contain("1 non-empty line"));
+            });
+        }
+
+        [Test]
+        public void Parse_IgnoresTrailingFreeformMultilineNotes()
+        {
+            const string xml =
+                "<model><geometry>foo</geometry></model>\n" +
+                "01 & 02 masked (half split)\n" +
+                "\n" +
+                "03 brown cloth\n" +
+                "\n" +
+                "no hood and no filthy peasant either\n";
+
+            var document = XmlCompatibilityParser.Parse(
+                xml,
+                ParseDocument,
+                out var repairs);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(document.DocumentElement?.Name, Is.EqualTo("model"));
+                Assert.That(repairs, Has.Count.EqualTo(1));
+                Assert.That(repairs[0], Does.Contain("3 non-empty lines"));
+            });
+        }
+
+        [Test]
+        public void Parse_RepairsMissingClosingTagTerminator()
+        {
+            const string xml =
+                "<VARIANT_MESH>\n" +
+                "  <SLOT></SLOT>\n" +
+                "</VARIANT_MESH";
+
+            var document = XmlCompatibilityParser.Parse(
+                xml,
+                ParseDocument,
+                out var repairs);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(document.DocumentElement?.Name, Is.EqualTo("VARIANT_MESH"));
+                Assert.That(repairs, Has.Count.EqualTo(1));
+                Assert.That(repairs[0], Does.Contain("</VARIANT_MESH>"));
+            });
+        }
+
+        [Test]
+        public void Parse_AppliesClosingTagAndTrailingTextRepairsTogether()
+        {
+            const string xml =
+                "<VARIANT_MESH>\n" +
+                "  <SLOT></SLOT>\n" +
+                "</VARIANT_MESH\n" +
+                "01 & 02 masked (half split)\n";
+
+            var document = XmlCompatibilityParser.Parse(
+                xml,
+                ParseDocument,
+                out var repairs);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(document.DocumentElement?.Name, Is.EqualTo("VARIANT_MESH"));
+                Assert.That(repairs, Has.Count.EqualTo(2));
+                Assert.That(repairs[0], Does.Contain("</VARIANT_MESH>"));
+                Assert.That(repairs[1], Does.Contain("trailing non-XML text"));
+            });
+        }
+
+        [Test]
+        public void Parse_DoesNotIgnoreTextInsideTheRootElement()
+        {
+            const string xml =
+                "<model>\n" +
+                "  <broken\n" +
+                "</model>";
+
+            Assert.Throws<XmlException>(() =>
+                XmlCompatibilityParser.Parse(
+                    xml,
+                    ParseDocument,
+                    out _));
+        }
+
+        [Test]
+        public void Parse_DoesNotGuessBrokenXmlStructure()
+        {
+            const string xml = "<model><broken</model>";
+
+            Assert.Throws<XmlException>(() =>
+                XmlCompatibilityParser.Parse(
+                    xml,
+                    ParseDocument,
+                    out _));
+        }
+
+        [Test]
+        public void Parse_RethrownFailureKeepsTheOriginalStackTrace()
+        {
+            var exception = Assert.Throws<XmlException>(() =>
+                XmlCompatibilityParser.Parse(
+                    "<model><broken</model>",
+                    ParseDocument,
+                    out _))!;
+
+            Assert.That(exception.StackTrace, Does.Contain(nameof(ParseDocument)));
+        }
+
+        private const string WellFormedVmd = "<VARIANT_MESH model=\"a.rigid_model_v2\"></VARIANT_MESH>";
+        private const string VmdWithTrailingText = WellFormedVmd + "\r\n--a note outside the root";
+
+        [Test]
+        public void VmdLoad_StrictWellFormed_Loads()
+        {
+            var vmd = VariantMeshDefinitionLoader.Load(WellFormedVmd, out var repairs, strict: true);
+
+            Assert.That(vmd, Is.Not.Null);
+            Assert.That(repairs, Is.Empty);
+            Assert.That(VariantMeshDefinitionLoader.Load(WellFormedVmd, strict: true), Is.Not.Null);
+        }
+
+        [Test]
+        public void VmdLoad_SharedSerializer_IsSafeAcrossThreadsAndBetweenStrictAndLenientLoads()
+        {
+            var loaded = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+            Parallel.For(0, 64, index =>
+            {
+                var vmd = VariantMeshDefinitionLoader.Load(WellFormedVmd, strict: index % 2 == 0);
+                loaded.Add(vmd.ModelReference);
+            });
+
+            Assert.That(loaded, Has.Count.EqualTo(64));
+            Assert.That(loaded.Distinct(), Is.EqualTo(new[] { "a.rigid_model_v2" }));
+        }
+
+        [Test]
+        public void VmdLoad_NonStrictMalformed_IsRepairedAndReported()
+        {
+            var vmd = VariantMeshDefinitionLoader.Load(VmdWithTrailingText, out var repairs);
+
+            Assert.That(vmd, Is.Not.Null);
+            Assert.That(repairs, Has.Count.EqualTo(1));
+            Assert.That(VariantMeshDefinitionLoader.Load(VmdWithTrailingText), Is.Not.Null);
+        }
+
+        [Test]
+        public void VmdLoad_StrictMalformed_ThrowsAndListsTheRepairs()
+        {
+            var fromOverload = Assert.Throws<XmlException>(() =>
+                VariantMeshDefinitionLoader.Load(VmdWithTrailingText, out _, strict: true))!;
+            var fromShort = Assert.Throws<XmlException>(() =>
+                VariantMeshDefinitionLoader.Load(VmdWithTrailingText, strict: true))!;
+
+            VariantMeshDefinitionLoader.Load(VmdWithTrailingText, out var repairs);
+            Assert.That(repairs, Is.Not.Empty);
+            Assert.That(fromOverload.Message, Does.Contain(repairs[0]));
+            Assert.That(fromShort.Message, Does.Contain(repairs[0]));
+        }
+
+        private static XmlDocument ParseDocument(string xml)
+        {
+            var document = new XmlDocument();
+            document.LoadXml(xml);
+            return document;
+        }
+    }
+}

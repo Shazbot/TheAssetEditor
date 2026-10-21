@@ -234,6 +234,25 @@ namespace Shared.CoreTest.PackFiles
         }
 
         [Test]
+        public void UnloadPackContainer_Force_SkipsCloseVeto()
+        {
+            var eventHub = new Mock<IGlobalEventHub>();
+            var pfs = CreateServiceWithCaPack(eventHub);
+            var custom = PackFileContainer.CreatePackFile("Temporary", "temp.pack");
+            pfs.AddContainer(custom);
+
+            pfs.UnloadPackContainer(custom, force: true);
+
+            Assert.That(pfs.GetAllPackfileContainers(), Does.Not.Contain(custom));
+            eventHub.Verify(
+                m => m.PublishGlobalEvent(It.IsAny<BeforePackFileContainerRemovedEvent>()),
+                Times.Never);
+            eventHub.Verify(
+                m => m.PublishGlobalEvent(It.IsAny<PackFileContainerRemovedEvent>()),
+                Times.Once);
+        }
+
+        [Test]
         public void UnloadPackContainer_NonEditablePack_DoesNotClearEditable()
         {
             var pfs = CreateServiceWithCaPack();

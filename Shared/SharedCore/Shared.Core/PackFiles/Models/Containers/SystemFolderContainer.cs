@@ -303,6 +303,29 @@ namespace Shared.Core.PackFiles.Models.Containers
             return file;
         }
 
+        public List<PackFile> DeleteFiles(IReadOnlyCollection<string> paths)
+        {
+            var removed = new List<PackFile>(paths.Count);
+            using (SuppressWatcher())
+            {
+                foreach (var path in paths)
+                {
+                    var normalizedPath = PathNormalization.NormalizeFileName(path);
+                    if (!_fileList.TryGetValue(normalizedPath, out var file))
+                        continue;
+
+                    var absolutePath = Path.Combine(SystemFilePath!, normalizedPath);
+                    if (_fileSystemAccess.FileExists(absolutePath))
+                        _fileSystemAccess.FileDelete(absolutePath);
+
+                    _fileList.Remove(normalizedPath);
+                    removed.Add(file);
+                }
+            }
+
+            return removed;
+        }
+
         public void DeleteFolder(string folder)
         {
             var normalizedFolder = PathNormalization.NormalizeFileName(folder);

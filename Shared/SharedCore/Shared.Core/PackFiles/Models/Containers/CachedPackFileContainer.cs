@@ -15,7 +15,7 @@ namespace Shared.Core.PackFiles.Models.Containers
         InMemory
     }
 
-    internal class CachedPackFileContainer : IPackFileContainerInternal, IDisposable
+    internal class CachedPackFileContainer : IPackFileContainerInternal, IBulkReadPackFileContainer, IDisposable
     {
         private static readonly ILogger _logger = Logging.CreateStatic(typeof(CachedPackFileContainer));
         private const int CurrentSchemaVersion = 4;
@@ -23,6 +23,12 @@ namespace Shared.Core.PackFiles.Models.Containers
         private CacheDbContext _db;
         private readonly DbContextOptions<CacheDbContext> _dbOptions;
         private readonly object _dbLock = new();
+        // Path lookups by normalised path, positive and negative. The cache database is read-only
+        // after it is built (Save() rebuilds it and clears this), a game-pack lookup costs a
+        // database round trip, and the same paths are asked for again and again. Only the row is
+        // cached: every FindFile still returns a fresh PackFile, so callers can never share one.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CachedFileEntity?> _lookupCache =
+            new(StringComparer.Ordinal);
         private SqliteConnection? _keepAliveConnection;
 
         public CacheStorageMode StorageMode { get; }
@@ -168,6 +174,7 @@ namespace Shared.Core.PackFiles.Models.Containers
             PackFileSettings.GameVersion = source.PackFileSettings.GameVersion;
 
             // Recreate _db so this instance can be queried after Save()
+            _lookupCache.Clear();
             _db.Dispose();
             _db = new CacheDbContext(_dbOptions);
             _db.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
@@ -348,6 +355,46 @@ namespace Shared.Core.PackFiles.Models.Containers
             _keepAliveConnection = null;
         }
 
+        /// <summary>
+        /// Keeps one connection to the cache database open until the scope is disposed. The cache is
+        /// opened without pooling (so the file can be deleted as soon as a container is done with it),
+        /// which makes every lookup open and close the database: about 3 ms each. A batch job that
+        /// asks thousands of times holds the connection for its duration instead.
+        /// </summary>
+        public IDisposable BeginBulkRead()
+        {
+            lock (_dbLock)
+            {
+                var db = _db;
+                db.Database.OpenConnection();
+                return new BulkReadScope(db, _dbLock);
+            }
+        }
+
+        private sealed class BulkReadScope(CacheDbContext db, object dbLock) : IDisposable
+        {
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                lock (dbLock)
+                {
+                    if (_disposed)
+                        return;
+
+                    _disposed = true;
+                    try
+                    {
+                        db.Database.CloseConnection();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // The container was disposed first; its context already closed the connection.
+                    }
+                }
+            }
+        }
+
         public int GetFileCount()
         {
             lock (_dbLock)
@@ -358,23 +405,30 @@ namespace Shared.Core.PackFiles.Models.Containers
 
         public PackFile? FindFile(string path)
         {
-            var lowerPath = PathNormalization.NormalizeFileName(path);
+            var entry = FindEntry(PathNormalization.NormalizeFileName(path));
+            return entry != null ? ToPackFile(entry) : null;
+        }
+
+        public bool ContainsFile(string path)
+            => FindEntry(PathNormalization.NormalizeFileName(path)) != null;
+
+        private CachedFileEntity? FindEntry(string lowerPath)
+        {
+            if (_lookupCache.TryGetValue(lowerPath, out var cached))
+            {
+                PackFileLookupDiagnostics.Record(hit: true);
+                return cached;
+            }
+
             CachedFileEntity? entry;
             lock (_dbLock)
             {
                 entry = _db.Files.FirstOrDefault(f => f.RelativePath == lowerPath);
             }
 
-            return entry != null ? ToPackFile(entry) : null;
-        }
-
-        public bool ContainsFile(string path)
-        {
-            var lowerPath = PathNormalization.NormalizeFileName(path);
-            lock (_dbLock)
-            {
-                return _db.Files.Any(f => f.RelativePath == lowerPath);
-            }
+            PackFileLookupDiagnostics.Record(hit: false);
+            _lookupCache[lowerPath] = entry;
+            return entry;
         }
 
         public string? GetFullPath(PackFile file)
@@ -558,6 +612,9 @@ namespace Shared.Core.PackFiles.Models.Containers
             throw new InvalidOperationException("Cannot modify a cached CA pack file container.");
 
         public PackFile? DeleteFile(PackFile file) =>
+            throw new InvalidOperationException("Cannot modify a cached CA pack file container.");
+
+        public List<PackFile> DeleteFiles(IReadOnlyCollection<string> paths) =>
             throw new InvalidOperationException("Cannot modify a cached CA pack file container.");
 
         public void DeleteFolder(string folder) =>

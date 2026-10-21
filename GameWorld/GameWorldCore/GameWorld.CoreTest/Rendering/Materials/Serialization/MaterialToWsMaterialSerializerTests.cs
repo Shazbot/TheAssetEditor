@@ -89,5 +89,72 @@ namespace GameWorld.Core.Test.Rendering.Materials.Serialization
             // Assert
             Assert.That(pathToCreatedMaterial0, Is.EqualTo("materials\\mymesh0_weighted2_alpha_off.xml.material"));
         }
+
+        private const string SourceMaterialPath = "variantmeshes/wh_variantmodels/test/materials/test_prop_emissive.xml.material";
+
+        private void MarkAsPreserved(CapabilityMaterial material)
+        {
+            material.SourceWsModelMaterialPath = SourceMaterialPath;
+            material.SourceWsModelShaderPath = "shaders/rigid_character_prop_emissive.xml.shader";
+            material.PreserveSourceWsModelMaterialOnSave = true;
+        }
+
+        private string Process(CapabilityMaterial material)
+            => _wsMaterialSerializer.ProsessMaterial(
+                "variantmeshes/wh_variantmodels/test/test.rigid_model_v2",
+                "mymesh0",
+                UiVertexFormat.Weighted,
+                material);
+
+        [Test]
+        public void ProsessMaterial_UnchangedMaterial_PreservesSourceWsModelMaterial()
+        {
+            MarkAsPreserved(_testMaterial);
+
+            var returnedPath = Process(_testMaterial);
+
+            Assert.That(_testMaterial.UsesEmissiveShader, Is.True);
+            Assert.That(returnedPath, Is.EqualTo(SourceMaterialPath));
+            Assert.That(_outputPack.GetFileCount(), Is.EqualTo(0));
+        }
+
+        [Test]
+        public void ProsessMaterial_TextureChangedAfterPreserveFlag_IsSerialisedNormally()
+        {
+            MarkAsPreserved(_testMaterial);
+            _testMaterial.GetCapability<MetalRoughCapability>().BaseColour.TexturePath = "texturePath/edited_base_colour.dds";
+
+            var returnedPath = Process(_testMaterial);
+
+            Assert.That(_testMaterial.PreserveSourceWsModelMaterialOnSave, Is.True);
+            Assert.That(_testMaterial.ShouldPreserveSourceWsModelMaterialOnSave, Is.False);
+            Assert.That(returnedPath, Is.Not.EqualTo(SourceMaterialPath));
+            Assert.That(_pfs.FindFile(returnedPath, _outputPack), Is.Not.Null);
+        }
+
+        [Test]
+        public void ProsessMaterial_ChangeRevertedToTheSnapshot_PreservesAgain()
+        {
+            MarkAsPreserved(_testMaterial);
+            var baseColour = _testMaterial.GetCapability<MetalRoughCapability>().BaseColour;
+            var original = baseColour.TexturePath;
+            baseColour.TexturePath = "texturePath/edited_base_colour.dds";
+            baseColour.TexturePath = original;
+
+            Assert.That(Process(_testMaterial), Is.EqualTo(SourceMaterialPath));
+        }
+
+        [Test]
+        public void ProsessMaterial_ClonedMaterial_IsNotPreserved()
+        {
+            MarkAsPreserved(_testMaterial);
+
+            var clone = _testMaterial.Clone();
+            var returnedPath = Process(clone);
+
+            Assert.That(clone.PreserveSourceWsModelMaterialOnSave, Is.False);
+            Assert.That(clone.SourceWsModelMaterialPath, Is.EqualTo(SourceMaterialPath));
+            Assert.That(returnedPath, Is.Not.EqualTo(SourceMaterialPath));
+        }
     }
 }

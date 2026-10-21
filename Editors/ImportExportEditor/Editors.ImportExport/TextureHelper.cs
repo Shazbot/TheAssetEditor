@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Runtime.InteropServices;
 using Pfim;
 
 namespace MeshImportExport
@@ -9,70 +10,32 @@ namespace MeshImportExport
     {
         public static byte[] ConvertDdsToPng(byte[] ddsbyteSteam)
         {
-            using var m = new MemoryStream();
-            using var w = new BinaryWriter(m);
-            w.Write(ddsbyteSteam);
-            m.Seek(0, SeekOrigin.Begin);
-            var image = Pfimage.FromStream(m);
+            using var stream = new MemoryStream(ddsbyteSteam);
+            using var image = Pfimage.FromStream(stream);
 
-            PixelFormat pixelFormat = PixelFormat.Format32bppArgb;
-            if (image.Format == Pfim.ImageFormat.Rgba32)
+            var pixelFormat = image.Format switch
             {
-                pixelFormat = PixelFormat.Format32bppArgb;
-            }
-            else if (image.Format == Pfim.ImageFormat.Rgb24)
+                Pfim.ImageFormat.Rgba32 => PixelFormat.Format32bppArgb,
+                Pfim.ImageFormat.Rgb24 => PixelFormat.Format24bppRgb,
+                _ => throw new NotSupportedException($"Unsupported DDS format: {image.Format}")
+            };
+
+            // Pfim's decoded byte layout is already compatible with the matching
+            // GDI+ pixel format. Do not swap red/blue here: doing so corrupts the
+            // atlas BaseColour before it is encoded back to DDS.
+            var handle = GCHandle.Alloc(image.Data, GCHandleType.Pinned);
+            try
             {
-                pixelFormat = PixelFormat.Format24bppRgb;
+                var data = Marshal.UnsafeAddrOfPinnedArrayElement(image.Data, 0);
+                using var bitmap = new Bitmap(image.Width, image.Height, image.Stride, pixelFormat, data);
+                using var output = new MemoryStream();
+                bitmap.Save(output, System.Drawing.Imaging.ImageFormat.Png);
+                return output.ToArray();
             }
-            else
+            finally
             {
-                throw new NotSupportedException($"Unsupported DDS format: {image.Format}");
+                handle.Free();
             }
-
-            // Pfim returns BGRA data for Rgba32, but Bitmap expects ARGB
-            // We need to swap the R and B channels
-            byte[] correctedData = new byte[image.DataLen];
-
-            if (image.Format == Pfim.ImageFormat.Rgba32)
-            {
-                // BGRA -> ARGB conversion
-                for (int i = 0; i < image.DataLen; i += 4)
-                {
-                    correctedData[i] = image.Data[i + 2];     // B -> R
-                    correctedData[i + 1] = image.Data[i + 1]; // G -> G
-                    correctedData[i + 2] = image.Data[i];     // R -> B
-                    correctedData[i + 3] = image.Data[i + 3]; // A -> A
-                }
-            }
-            else if (image.Format == Pfim.ImageFormat.Rgb24)
-            {
-                // BGR -> RGB conversion
-                for (int i = 0; i < image.DataLen; i += 3)
-                {
-                    correctedData[i] = image.Data[i + 2];     // B -> R
-                    correctedData[i + 1] = image.Data[i + 1]; // G -> G
-                    correctedData[i + 2] = image.Data[i];     // R -> B
-                }
-            }
-            else
-            {
-                // For other formats, use the data as-is
-                correctedData = image.Data;
-            }
-
-            using var bitmap = new Bitmap(image.Width, image.Height, pixelFormat);
-
-            var bitmapData = bitmap.LockBits(new Rectangle(0, 0, image.Width, image.Height), ImageLockMode.WriteOnly, pixelFormat);
-            System.Runtime.InteropServices.Marshal.Copy(correctedData, 0, bitmapData.Scan0, correctedData.Length);
-            bitmap.UnlockBits(bitmapData);
-
-            using var b = new MemoryStream();
-            bitmap.Save(b, System.Drawing.Imaging.ImageFormat.Png);
-
-            using var byteSteam = new BinaryReader(b);
-            b.Seek(0, SeekOrigin.Begin);
-            var binData = byteSteam.ReadBytes((int)b.Length);
-            return binData;
         }
 
         public static byte[] ConvertPngToDds(byte[] png)
