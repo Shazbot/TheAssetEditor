@@ -98,7 +98,7 @@ Not in scope: texture atlasing in whmm. It stays an Asset-Editor-only experiment
   - A table that does not end exactly after its last row is a decode failure (critical for game and source tables, a text-fallback diagnostic for consumers).
   - A game patch that bumps a table version now needs a schema update in whmm, not a new host.
   - whmm side (step 6): pass the path of its bundled schema. In the current packaging (no asar) it is a plain file next to the webpack output (`.webpack/schema/schema_wh3.json.zst`, what `__dirname/../schema` resolves to), readable by the host. If whmm ever turns asar on, it must unpack that file or pass a temp copy.
-- **Derived indexes:** measured warm in the host on `!ak_teb3`: unit category resolution 10.3 s (DB read and decode 0.2 s, resolver 3.3 s, army residency model 6.8 s), gameplay mesh dependency index 1.7 s, out of 124 to 143 s. The editor's persisted vanilla consumer cache saves about 1.4 s; the host never persists it (and no longer prunes the editor's file). No new disk cache for now: the group is about 12 s warm. Cold figures are open until run-cold.ps1 is run elevated (`bench/cold-*`); a cache is only worth adding if a phase costs more than about 60 s cold, keyed on whmm's per-pack `size` + `lastChangedLocal`, the tool and schema version, stored in the `cacheDirectory` whmm passes, with consumers kept out.
+- **Derived indexes:** measured warm in the host on `!ak_teb3`: unit category resolution 10.3 s (DB read and decode 0.2 s, resolver 3.3 s, army residency model 6.8 s), gameplay mesh dependency index 1.7 s, out of 124 to 143 s. The editor's persisted vanilla consumer cache saves about 1.4 s; the host never persists it (and no longer prunes the editor's file). No new disk cache for now: the group is about 12 s warm. Cold runs (run-cold.ps1 elevated; `bench/cold-1`, `cold-2`, `cold-eight`) all exited 0 with wall times of 140.6 s, 131.8 s and 129.2 s, within warm's 123 to 142 s. The phases match warm: DB read 23 ms, decode 160 to 180 ms, resolver 3.3 to 3.5 s, army residency 6.7 to 6.9 s, dependency index 1.8 s, "Resolve unit categories" 10.4 s (15.8 s with 8 consumers). Decision: no new derived cache (one would only be worth it if a phase cost more than about 60 s cold).
 
 ### 6. whmm side
 - **Option UI** (follow `docs/DESIGN.md`):
@@ -112,7 +112,10 @@ Not in scope: texture atlasing in whmm. It stays an Asset-Editor-only experiment
 ### 7. Parity and verification
 - **Fingerprint parity:** the editor (adapter), the bench and host `optimize` give the same fingerprint on `!ak_teb3` (atlasing off) and on `ovn_albion`.
 - **Tests:** every test project at its known failure count; new tests for step 4.
-- **Cold-run timing** recorded before and after step 5.
+- **Cold-run timing** recorded (see step 5, derived indexes): 129 to 141 s, same as warm, no derived cache.
+
+### 8. Vanilla files another mod replaces (refined in 6b)
+- A vanilla path another enabled mod replaces is not frozen in the source files that reach it. Each stage that copies content refuses only that: shared repack and atlas refuse a replaced texture's pixels and a replaced material they would clone, cross-rigid merges refuse a plan that copies a replaced rigid, WSModel or VMD, and parts whose materials merge by content do not merge a replaced material with a differently named one. Path references stay allowed. The report lists each reached path with the stages that refused it.
 - **In game:** load the host-optimised `!ak_teb3` and check:
   - the repacked rigids (Gelt staff, golden lion);
   - the downscaled morion helmets;

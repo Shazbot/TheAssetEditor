@@ -905,20 +905,31 @@ namespace Editors.PackOptimizer.Core
                         plan.GeneratedPayloadId);
                 }
 
-                // Nothing is merged from a WSModel or rigid that reaches a vanilla file another mod
-                // replaces: the plan would bake in the vanilla version.
-                if (state.Consumers != null &&
-                    (plan.SourceInstances.Any(instance => state.Consumers.IsVanillaTouched(Normalize(instance.WsModelPath))) ||
-                     plan.SourceGeometry.Any(source => state.Consumers.IsVanillaTouched(Normalize(source.RigidPath)))))
+                // The merge copies the geometry of every rigid and the material table of every WSModel
+                // it combines into the generated files. A rigid or WSModel that is a vanilla file
+                // another mod replaces would be baked in as its vanilla version, so such a plan is
+                // refused. Materials, textures and the other files it only names by path are not
+                // copied (material parts that merge by content are handled in the merge identity).
+                if (state.Consumers != null)
                 {
-                    state.Consumers.RecordBlock(
-                        plan.VmdPath, "cross-rigid merge", "vanilla-replaced", string.Empty,
-                        "a source part of the plan reaches a vanilla file another mod replaces");
-                    RecordCrossRigidAnalysisBlocker(
-                        state,
-                        "The plan includes a part that reaches a vanilla file another enabled mod replaces",
-                        $"{plan.VmdPath} [{plan.AttachmentIdentity}]");
-                    continue;
+                    var bakedReplaced = false;
+                    foreach (var path in plan.SourceInstances.Select(instance => Normalize(instance.WsModelPath))
+                                 .Concat(plan.SourceGeometry.Select(source => Normalize(source.RigidPath)))
+                                 .Append(Normalize(plan.VmdPath))
+                                 .Distinct(StringComparer.OrdinalIgnoreCase))
+                    {
+                        if (state.Consumers.TryBlockCrossRigidCopy(path))
+                            bakedReplaced = true;
+                    }
+
+                    if (bakedReplaced)
+                    {
+                        RecordCrossRigidAnalysisBlocker(
+                            state,
+                            "The plan would copy a rigid or WSModel that is a vanilla file another enabled mod replaces",
+                            $"{plan.VmdPath} [{plan.AttachmentIdentity}]");
+                        continue;
+                    }
                 }
 
                 state.CrossRigidMergeAnalysisEntries.Add(

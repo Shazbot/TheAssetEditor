@@ -68,9 +68,7 @@ namespace Editors.PackOptimizer.Core
             ConsumerPackEntry Pack,
             string Referrer,
             string Parent,
-            bool Fallback,
-            // The file reaches a vanilla path another mod replaces (not a reference from a mod).
-            bool VanillaPath = false);
+            bool Fallback);
 
         private sealed record ConsumerBlock(
             string Path,
@@ -101,15 +99,24 @@ namespace Editors.PackOptimizer.Core
             public Dictionary<string, ConsumerPackEntry> RootFiles { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> Closed { get; } = new(StringComparer.OrdinalIgnoreCase);
-            // Vanilla paths another enabled mod also has (and the source does not): what the source
-            // reaches through them is not what the game will load, so nothing is derived from them.
+            // Vanilla paths another enabled mod also has (and the source does not). What the game
+            // loads for them is the other mod's file, so no stage may bake the vanilla content of
+            // one into a generated file; referencing the path stays fine. Each stage that would
+            // copy content checks the path (TryBlockVanillaReplaced) and records what it refused.
             public Dictionary<string, List<ConsumerPackEntry>> VanillaReplaced { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             // Replaced vanilla path -> the first source file that reaches it.
             public Dictionary<string, string> VanillaReachedBy { get; } = new(StringComparer.OrdinalIgnoreCase);
             public bool IsVanillaReplaced(string path) => VanillaReplaced.ContainsKey(path);
 
-            public bool IsVanillaTouched(string path) => Used.TryGetValue(path, out var use) && use.VanillaPath;
+            // A cross-rigid merge copies the geometry of the rigids and the material tables of the
+            // WSModels it combines (and derives the generated VMD from the VMD). Materials are
+            // named by path in the result and textures are not touched, so those never block it.
+            public bool TryBlockCrossRigidCopy(string path)
+                => (path.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase) ||
+                    path.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
+                    path.EndsWith(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase)) &&
+                   TryBlockVanillaReplaced(path, "cross-rigid merge");
 
             public bool TryBlockVanillaReplaced(string path, string stage)
             {
@@ -190,9 +197,7 @@ namespace Editors.PackOptimizer.Core
             }
 
             public static string DescribeUse(ConsumerUse use)
-                => use.VanillaPath
-                    ? $"{use.Pack.Name} ({use.Referrer}{(use.Parent.Length == 0 ? string.Empty : " via " + use.Parent)})"
-                    : use.Parent.Length == 0
+                => use.Parent.Length == 0
                     ? $"{use.Pack.Name} ({use.Referrer}{(use.Fallback ? ", DB text fallback" : string.Empty)})"
                     : $"{use.Pack.Name} ({use.Referrer} via {use.Parent}{(use.Fallback ? ", DB text fallback" : string.Empty)})";
 
@@ -457,11 +462,11 @@ namespace Editors.PackOptimizer.Core
             return index_;
         }
 
-        // Vanilla paths a consumer replaces that the source reaches (directly or through vanilla
-        // VMDs, WSModels and materials). The source files that reach one are marked like files a
-        // mod uses: nothing is derived from, merged with or rebound through them. Reaching is a
-        // token scan, so it over-approximates; a source rigid's own embedded texture paths are
-        // not followed.
+        // Vanilla paths a consumer replaces, and the ones the source reaches (directly or through
+        // vanilla VMDs, WSModels and materials). Reaching is a token scan, so it over-approximates;
+        // a source rigid's own embedded texture paths are not followed. Nothing is frozen here:
+        // the stages that copy content check each path they bake (see TryBlockVanillaReplaced),
+        // and the probe reports a consumer as relevant when the source reaches one of its paths.
         private static void ComputeVanillaReplacement(
             IPackFileContainer source,
             IReadOnlyList<IPackFileContainer> vanilla,
@@ -578,16 +583,6 @@ namespace Editors.PackOptimizer.Core
                 if (reached.Count == 0)
                     continue;
 
-                var first = reached.First();
-                var firstPack = index.VanillaReplaced[first][0];
-                index.Used.TryAdd(
-                    path,
-                    new ConsumerUse(
-                        firstPack,
-                        $"reaches the vanilla file {first}, which {string.Join(", ", index.VanillaReplaced[first].Select(item => item.Name))} replaces",
-                        string.Empty,
-                        false,
-                        VanillaPath: true));
                 foreach (var replaced in reached)
                 {
                     index.VanillaReachedBy.TryAdd(replaced, path);
@@ -901,7 +896,7 @@ namespace Editors.PackOptimizer.Core
                         continue;
                     }
 
-                    if (index.Used.TryAdd(token, new ConsumerUse(use.Pack, use.Referrer, path, use.Fallback, use.VanillaPath)))
+                    if (index.Used.TryAdd(token, new ConsumerUse(use.Pack, use.Referrer, path, use.Fallback)))
                     {
                         added++;
                         queue.Enqueue(token);
@@ -978,8 +973,14 @@ namespace Editors.PackOptimizer.Core
             {
                 if (consumers.TryBlock(path, "atlas"))
                     return $"{path} is {consumers.Describe(path)}";
-                if (consumers.TryBlockVanillaReplaced(path, "atlas"))
+                // The atlas bakes texture pixels and clones the material; it only rebinds the WSModels
+                // and rigids it rewrites, which the source owns.
+                if ((path.EndsWith(".dds", StringComparison.OrdinalIgnoreCase) ||
+                     path.EndsWith(".xml.material", StringComparison.OrdinalIgnoreCase)) &&
+                    consumers.TryBlockVanillaReplaced(path, "atlas"))
+                {
                     return $"{path} is a vanilla file another mod replaces";
+                }
             }
 
             return null;
@@ -1293,10 +1294,23 @@ namespace Editors.PackOptimizer.Core
 
             sb.AppendLine("Vanilla paths another mod replaces");
             sb.AppendLine("----------------------------------");
+            var vanillaBlocks = consumers.Blocks
+                .Where(block => block.Kind == "vanilla-replaced")
+                .GroupBy(block => block.Path, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(block => block.Stage).Distinct(StringComparer.Ordinal).OrderBy(stage => stage, StringComparer.Ordinal).ToList(),
+                    StringComparer.OrdinalIgnoreCase);
+            var vanillaListed = consumers.VanillaReachedBy.Keys
+                .Concat(vanillaBlocks.Keys)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToList();
             sb.AppendLine(
                 $"Vanilla asset paths other mods also have (the source does not): {consumers.VanillaReplaced.Count:N0}; " +
                 $"reached by the source: {consumers.VanillaReachedBy.Count:N0}; " +
-                $"source files frozen because they reach one: {consumers.Used.Values.Count(use => use.VanillaPath):N0}");
+                $"refused by at least one stage: {vanillaBlocks.Count:N0}. " +
+                "A stage refuses only to copy the content of such a file into a generated file; a reference by path stays allowed.");
             foreach (var pack in consumers.Packs.Where(pack => consumers.VanillaReplaced.Values.Any(list => list.Contains(pack))))
             {
                 sb.AppendLine(
@@ -1304,13 +1318,18 @@ namespace Editors.PackOptimizer.Core
                     $"{pack.VanillaReached.Count:N0} reached by the source");
             }
 
-            foreach (var (replaced, reachedBy) in consumers.VanillaReachedBy.OrderBy(item => item.Key, StringComparer.Ordinal).Take(200))
+            foreach (var replaced in vanillaListed.Take(200))
             {
+                var reachedBy = consumers.VanillaReachedBy.GetValueOrDefault(replaced);
                 sb.AppendLine(
-                    $"{replaced} | replaced by {string.Join(", ", consumers.VanillaReplaced[replaced].Select(pack => pack.Name))} | reached by {reachedBy}");
+                    $"{replaced} | replaced by {string.Join(", ", (consumers.VanillaReplaced.GetValueOrDefault(replaced) ?? []).Select(pack => pack.Name))} | " +
+                    $"reached by {reachedBy ?? "(a stage's own lookup)"} | " +
+                    (vanillaBlocks.TryGetValue(replaced, out var stages)
+                        ? "refused by: " + string.Join(", ", stages)
+                        : "referenced by path only, no stage refused it"));
             }
 
-            if (consumers.VanillaReachedBy.Count == 0)
+            if (vanillaListed.Count == 0)
                 sb.AppendLine("(none reached)");
             sb.AppendLine();
 

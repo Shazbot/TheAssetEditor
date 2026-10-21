@@ -13610,7 +13610,7 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
-        public void VanillaReplacement_SourceFilesThatReachAReplacedVanillaFileAreFrozenLikeUsedOnes()
+        public void VanillaReplacement_SourceFilesThatOnlyReferenceAReplacedVanillaFileByPathStayFree()
         {
             var (_, state, _) = BuildVanillaReplacementState();
             var reskin = ConsumerFiles();
@@ -13621,18 +13621,62 @@ namespace Test.PackOptimizer.Core
 
             Assert.That(((IDictionary)Get<object>(index, "VanillaReplaced")).Contains(VanillaTexture), Is.True);
             Assert.That(((IDictionary)Get<object>(index, "VanillaReachedBy"))[VanillaTexture], Is.EqualTo("variantmeshes\\mod\\w.wsmodel"));
-            // The WSModel that binds the vanilla material is frozen, and so is its rigid (closure).
-            Assert.That(ConsumerUses(index, "variantmeshes\\mod\\w.wsmodel"), Is.True);
-            Assert.That(ConsumerUses(index, ConsumerRigid), Is.True);
+            // The WSModel that binds the vanilla material only names it by path: it and its rigid
+            // are not frozen (a generated file referencing the path picks up the other mod's file).
+            Assert.That(ConsumerUses(index, "variantmeshes\\mod\\w.wsmodel"), Is.False);
+            Assert.That(ConsumerUses(index, ConsumerRigid), Is.False);
             Assert.That(ConsumerUses(index, "variantmeshes\\mod\\other.wsmodel"), Is.False);
-            var touched = Get<bool>(((IDictionary)Get<object>(index, "Used"))["variantmeshes\\mod\\w.wsmodel"]!, "VanillaPath");
-            Assert.That(touched, Is.True);
             // Pack-level count (what the probe and the result report).
             var pack = ((IEnumerable)Get<object>(index, "Packs")).Cast<object>().Single();
             Assert.That(((IEnumerable)Get<object>(pack, "VanillaReached")).Cast<object>().Count(), Is.EqualTo(1));
-            // The rigid is now blocked like a rigid another mod uses.
+            // The rigid can still be merged and rewritten.
             var arguments = new object?[] { state, ConsumerRigid, null };
-            Assert.That((bool)GetStaticMethod("TryGetStructuralMergeBlockReason").Invoke(null, arguments)!, Is.True);
+            Assert.That((bool)GetStaticMethod("TryGetStructuralMergeBlockReason").Invoke(null, arguments)!, Is.False);
+        }
+
+        [Test]
+        public void VanillaReplacement_ATextureOverrideDoesNotBlockACrossRigidMergeButARigidOrWsModelOverrideDoes()
+        {
+            const string vanillaRigid = "variantmeshes\\vanilla\\r.rigid_model_v2";
+            const string vanillaWsModel = "variantmeshes\\vanilla\\w.wsmodel";
+            var (_, state, fixture) = BuildVanillaReplacementState();
+            fixture.Vanilla[vanillaRigid] = [1];
+            fixture.Vanilla[vanillaWsModel] = System.Text.Encoding.UTF8.GetBytes("<model/>");
+            var reskin = ConsumerFiles();
+            reskin[VanillaTexture] = [9];
+            reskin[VanillaMaterial] = [9];
+            reskin[vanillaRigid] = [9];
+            reskin[vanillaWsModel] = [9];
+            var index = InstallConsumers(state, 0, ("VanillaReskin", reskin));
+            ComputeVanillaReplacementFor(state, index);
+            var gate = index.GetType().GetMethod("TryBlockCrossRigidCopy")!;
+
+            // The merge names textures and materials by path only: the other mod's file is loaded.
+            Assert.That((bool)gate.Invoke(index, [VanillaTexture])!, Is.False);
+            Assert.That((bool)gate.Invoke(index, [VanillaMaterial])!, Is.False);
+            // It copies rigid geometry and the WSModel's material table into generated files.
+            Assert.That((bool)gate.Invoke(index, [vanillaRigid])!, Is.True);
+            Assert.That((bool)gate.Invoke(index, [vanillaWsModel])!, Is.True);
+            Assert.That((bool)gate.Invoke(index, ["variantmeshes\\vanilla\\unreplaced.rigid_model_v2"])!, Is.False);
+            var stages = ((IEnumerable)Get<object>(index, "Blocks")).Cast<object>()
+                .Where(block => Get<string>(block, "Kind") == "vanilla-replaced")
+                .Select(block => Get<string>(block, "Path") + "@" + Get<string>(block, "Stage"))
+                .ToList();
+            Assert.That(stages, Is.EquivalentTo(new[] { vanillaRigid + "@cross-rigid merge", vanillaWsModel + "@cross-rigid merge" }));
+        }
+
+        [Test]
+        public void VanillaReplacement_AReplacedMaterialOnlyMergesByIdentityWithItself()
+        {
+            var (_, state, _) = BuildVanillaReplacementState();
+            var reskin = ConsumerFiles();
+            reskin[VanillaMaterial] = [9];
+            var index = InstallConsumers(state, 0, ("VanillaReskin", reskin));
+            ComputeVanillaReplacementFor(state, index);
+            // Whatever the material's content, it no longer merges with a differently named material.
+            var identityAfter = (string)GetStaticMethod("GetMeshMergeMaterialIdentity").Invoke(null, [state, VanillaMaterial])!;
+
+            Assert.That(identityAfter, Is.EqualTo("path:" + VanillaMaterial));
         }
 
         [Test]

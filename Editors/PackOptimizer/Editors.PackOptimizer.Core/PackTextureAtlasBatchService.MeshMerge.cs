@@ -2131,6 +2131,12 @@ namespace Editors.PackOptimizer.Core
             string materialPath)
         {
             var normalizedPath = Normalize(materialPath);
+            // Parts merge when their materials render identically, and the merged part keeps one
+            // of the material paths. A material that is a vanilla file another mod replaces is not
+            // what the game will render, so it only merges with parts using the very same path.
+            if (state.Consumers?.TryBlockVanillaReplaced(normalizedPath, "mesh merge by material content") == true)
+                return $"path:{normalizedPath}";
+
             var snapshot = GetMaterialMergeDiagnosticSnapshot(state, normalizedPath);
             return snapshot == null
                 ? $"path:{normalizedPath}"

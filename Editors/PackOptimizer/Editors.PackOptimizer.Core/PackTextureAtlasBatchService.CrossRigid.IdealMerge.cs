@@ -401,7 +401,8 @@ namespace Editors.PackOptimizer.Core
             string identity;
             // The snapshot call is what establishes whether the material is
             // readable (and caches its document in state.MaterialDocuments).
-            if (GetMaterialMergeDiagnosticSnapshot(
+            if (state.Consumers?.IsVanillaReplaced(normalizedMaterialPath) == true ||
+                GetMaterialMergeDiagnosticSnapshot(
                     state,
                     normalizedMaterialPath) == null)
             {
