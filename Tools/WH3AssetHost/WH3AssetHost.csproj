@@ -6,7 +6,20 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Version>0.6.0</Version>
   </PropertyGroup>
+
+  <!-- The informational version is "<Version>+<git commit>" (the SDK appends SourceRevisionId); the
+       commit is "unknown" when git is not available. whmm keys its optimized-mod cache on it. -->
+  <Target Name="StampGitCommit" BeforeTargets="InitializeSourceControlInformation;AddSourceRevisionToInformationalVersion;GetAssemblyAttributes">
+    <Exec Command="git rev-parse --short=12 HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low" ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="WhmmGitCommit" />
+    </Exec>
+    <PropertyGroup>
+      <SourceRevisionId Condition="'$(SourceRevisionId)' == '' And '$(WhmmGitCommit)' != ''">$(WhmmGitCommit)</SourceRevisionId>
+      <SourceRevisionId Condition="'$(SourceRevisionId)' == ''">unknown</SourceRevisionId>
+    </PropertyGroup>
+  </Target>
 
   <!-- Release builds are distributed with the mod manager as one self-contained file. -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">

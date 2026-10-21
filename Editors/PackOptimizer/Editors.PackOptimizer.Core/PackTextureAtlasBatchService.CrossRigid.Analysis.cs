@@ -905,6 +905,22 @@ namespace Editors.PackOptimizer.Core
                         plan.GeneratedPayloadId);
                 }
 
+                // Nothing is merged from a WSModel or rigid that reaches a vanilla file another mod
+                // replaces: the plan would bake in the vanilla version.
+                if (state.Consumers != null &&
+                    (plan.SourceInstances.Any(instance => state.Consumers.IsVanillaTouched(Normalize(instance.WsModelPath))) ||
+                     plan.SourceGeometry.Any(source => state.Consumers.IsVanillaTouched(Normalize(source.RigidPath)))))
+                {
+                    state.Consumers.RecordBlock(
+                        plan.VmdPath, "cross-rigid merge", "vanilla-replaced", string.Empty,
+                        "a source part of the plan reaches a vanilla file another mod replaces");
+                    RecordCrossRigidAnalysisBlocker(
+                        state,
+                        "The plan includes a part that reaches a vanilla file another enabled mod replaces",
+                        $"{plan.VmdPath} [{plan.AttachmentIdentity}]");
+                    continue;
+                }
+
                 state.CrossRigidMergeAnalysisEntries.Add(
                     new CrossRigidMergeAnalysisEntry(
                         plan.RewritePlanId,

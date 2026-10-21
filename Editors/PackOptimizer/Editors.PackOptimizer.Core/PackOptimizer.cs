@@ -69,6 +69,20 @@ namespace Editors.PackOptimizer.Core
         int? SourceLoadOrderIndex = null,
         PackOptimizerDbSchema? DbSchema = null);
 
+    /// <summary>
+    /// A consumer pack and why it can matter to the result. A pack with no reason cannot change
+    /// what the run keeps, freezes or derives; the narrow cache key may leave it out.
+    /// </summary>
+    public sealed record PackOptimizerConsumerPack(
+        string Path,
+        string Name,
+        bool Relevant,
+        int FrozenFiles,
+        int UsedFiles,
+        int DbMentions,
+        int UndecodableTables,
+        int VanillaOverridesReached);
+
     public sealed record PackOptimizerProgress(
         string Stage,
         string? Item,
@@ -93,7 +107,8 @@ namespace Editors.PackOptimizer.Core
         int ConsumerPackCount = 0,
         int ExternallyUsedFileCount = 0,
         int FrozenFileCount = 0,
-        IReadOnlyList<string>? Warnings = null);
+        IReadOnlyList<string>? Warnings = null,
+        IReadOnlyList<PackOptimizerConsumerPack>? ConsumerPacks = null);
 
     /// <summary>
     /// Entry point of the library. Failures propagate as exceptions; the output
@@ -134,7 +149,8 @@ namespace Editors.PackOptimizer.Core
                     result.ConsumerPackCount,
                     result.ExternallyUsedFileCount,
                     result.FrozenFileCount,
-                    result.Warnings);
+                    result.Warnings,
+                    result.ConsumerPacks);
             }
             catch (OperationCanceledException)
             {
@@ -145,6 +161,23 @@ namespace Editors.PackOptimizer.Core
                     0, 0, 0, 0, 0);
             }
         }
+
+        /// <summary>
+        /// Which consumers can matter to a run, without running it: the consumers' overlap with the
+        /// source (frozen files), their references to it (used files), DB tables that name its
+        /// VMDs, tables that cannot be decoded and vanilla files they replace that the source
+        /// reaches. A superset of what the real run finds relevant. Reads index data and the small
+        /// text files of each pack only.
+        /// </summary>
+        public static IReadOnlyList<PackOptimizerConsumerPack> ProbeConsumers(
+            IPackFileContainer sourceContainer,
+            IReadOnlyList<IPackFileContainer> modConsumers,
+            int? sourceLoadOrderIndex,
+            IReadOnlyList<IPackFileContainer> vanillaContainers,
+            PackOptimizerDbSchema? dbSchema = null,
+            CancellationToken cancellationToken = default)
+            => PackTextureAtlasBatchService.ProbeConsumers(
+                sourceContainer, modConsumers, sourceLoadOrderIndex, vanillaContainers, dbSchema, cancellationToken);
 
         public static string BuildOutputPath(string sourcePath)
             => PackTextureAtlasBatchService.BuildOutputPath(sourcePath);

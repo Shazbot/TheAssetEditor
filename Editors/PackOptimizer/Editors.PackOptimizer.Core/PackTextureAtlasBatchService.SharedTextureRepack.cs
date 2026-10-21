@@ -1620,6 +1620,8 @@ namespace Editors.PackOptimizer.Core
 
                 if (state.Source.ContainsFile(material) && OverridesVanillaPath(state, material))
                     part.Reason ??= SharedRepackReasonMaterialOverridesVanilla;
+                if (state.Consumers?.TryBlockVanillaReplaced(material, "repack") == true)
+                    part.Reason ??= "a bound material is a vanilla file another mod replaces";
 
                 foreach (var (slot, texture) in info.Textures)
                 {
@@ -1843,7 +1845,8 @@ namespace Editors.PackOptimizer.Core
             bool IsBlockedTexture(VanillaCoverageTexture entry, string path)
                 => GetSharedRepackBlockedTextureReason(merge.Effective(entry).Layout) != null ||
                    (entry.IsOwned && OverridesVanillaPath(state, path)) ||
-                   (entry.IsOwned && state.Consumers?.TryBlock(Normalize(path), "repack") == true);
+                   (entry.IsOwned && state.Consumers?.TryBlock(Normalize(path), "repack") == true) ||
+                   state.Consumers?.TryBlockVanillaReplaced(Normalize(path), "repack") == true;
 
             void AddRigid(SharedRepackSetRigid item)
             {

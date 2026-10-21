@@ -29,6 +29,11 @@ internal static class OptimizeMode
 
         if (args.Length == 2 && string.Equals(args[1], "--check-dds", StringComparison.Ordinal))
             return CheckNativeDds(stdout);
+        if (args.Length == 2 && string.Equals(args[1], "--version", StringComparison.Ordinal))
+        {
+            stdout.WriteLine(AssetHostProtocol.HostVersion);
+            return OptimizeExitCodes.Succeeded;
+        }
 
         var (requestPath, parentPid, argumentError) = OptimizeRequestReader.ParseArguments(args);
         if (argumentError != null)
@@ -70,7 +75,9 @@ internal static class OptimizeMode
         if (nativeError != null)
             return Fail(stdout, OptimizeOutcome.Failed, nativeError, "NativeLibraryUnavailable");
 
-        var outcome = Execute(request!, stdout, cancellation.Token);
+        var outcome = request!.ProbeOnly
+            ? ExecuteProbe(request, stdout, cancellation.Token)
+            : Execute(request, stdout, cancellation.Token);
         return OptimizeExitCodes.For(outcome);
     }
 
@@ -109,6 +116,52 @@ internal static class OptimizeMode
         catch (Exception exception) when (exception is DllNotFoundException or BadImageFormatException or EntryPointNotFoundException)
         {
             return $"The native DirectXTex library (DirectXTexShim.dll) could not be loaded: {exception.Message}";
+        }
+    }
+
+    private static OptimizeConsumerPackLine[] ToLines(IEnumerable<PackOptimizerConsumerPack> packs)
+        => packs.Select(pack => new OptimizeConsumerPackLine(
+            pack.Path,
+            pack.Relevant,
+            new OptimizeConsumerReasons(
+                pack.FrozenFiles, pack.UsedFiles, pack.DbMentions, pack.UndecodableTables, pack.VanillaOverridesReached)))
+            .ToArray();
+
+    /// <summary>Reports which consumers can matter to the result; optimizes nothing.</summary>
+    private static OptimizeOutcome ExecuteProbe(OptimizeRequest request, TextWriter stdout, CancellationToken cancellationToken)
+    {
+        var elapsed = Stopwatch.StartNew();
+        try
+        {
+            var dataFolder = OptimizeRequestValidator.ResolveDataFolder(request.GameDirectory)!;
+            var vanilla = HostVanillaContainers.LoadVanilla(dataFolder, request.VanillaFileIndexPath, Console.Error.WriteLine);
+            cancellationToken.ThrowIfCancellationRequested();
+            var source = HostVanillaContainers.LoadSource(request.SourcePackPath);
+            var consumers = (request.ConsumerPackPaths ?? []).Select(path => HostVanillaContainers.LoadConsumer(path)).ToList();
+            cancellationToken.ThrowIfCancellationRequested();
+            var probed = PackOptimizer.ProbeConsumers(
+                source,
+                consumers,
+                consumers.Count == 0 ? null : request.SourceLoadOrderIndex,
+                vanilla,
+                string.IsNullOrWhiteSpace(request.DbSchemaPath) ? null : PackOptimizerDbSchema.Load(request.DbSchemaPath),
+                cancellationToken);
+            WriteLine(
+                stdout,
+                new OptimizeProbeLine("probe", AssetHostProtocol.HostVersion, ToLines(probed), elapsed.Elapsed.TotalSeconds),
+                OptimizeJsonContext.Default.OptimizeProbeLine);
+            return OptimizeOutcome.Succeeded;
+        }
+        catch (OperationCanceledException)
+        {
+            WriteLine(stdout, new OptimizeResultLine("result", "cancelled", string.Empty, string.Empty, 0, 0, 0, 0, 0, elapsed.Elapsed.TotalSeconds), OptimizeJsonContext.Default.OptimizeResultLine);
+            return OptimizeOutcome.Cancelled;
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception.ToString());
+            WriteLine(stdout, new OptimizeErrorLine("error", exception.Message, exception.GetType().Name), OptimizeJsonContext.Default.OptimizeErrorLine);
+            return OptimizeOutcome.Failed;
         }
     }
 
@@ -198,7 +251,9 @@ internal static class OptimizeMode
                 result.Warnings?.ToArray() ?? [],
                 result.ConsumerPackCount,
                 result.ExternallyUsedFileCount,
-                result.FrozenFileCount), OptimizeJsonContext.Default.OptimizeResultLine);
+                result.FrozenFileCount,
+                AssetHostProtocol.HostVersion,
+                ToLines(result.ConsumerPacks ?? [])), OptimizeJsonContext.Default.OptimizeResultLine);
             return OptimizeOutcome.Succeeded;
         }
         catch (OperationCanceledException)

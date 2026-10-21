@@ -22,6 +22,10 @@ namespace WH3AssetHost.Optimize;
 /// <param name="SourceLoadOrderIndex">How many entries of <paramref name="ConsumerPackPaths"/> load
 /// before the source pack (0 = the source loads first, count = the source loads last). Required
 /// whenever <paramref name="ConsumerPackPaths"/> is not empty; there is no default.</param>
+/// <param name="ProbeOnly">Only report which of <paramref name="ConsumerPackPaths"/> can matter to the
+/// result (see <see cref="OptimizeProbeLine"/>); nothing is optimized, <c>outputPackPath</c> and
+/// <c>reportPath</c> are not needed, and the vanilla file index is used to find vanilla files a mod
+/// replaces that the source reaches.</param>
 /// <param name="DbSchemaPath">Optional path of an RPFM schema (the mod manager's bundled
 /// <c>schema_wh3.json.zst</c>, or plain JSON). The unit category resolver decodes the game's DB
 /// tables with its table layouts first and falls back to the layouts embedded in the host, so a game
@@ -38,7 +42,8 @@ public sealed record OptimizeRequest(
     OptimizeOptionsRequest? Options,
     IReadOnlyList<string>? ConsumerPackPaths,
     int? SourceLoadOrderIndex = null,
-    string? DbSchemaPath = null)
+    string? DbSchemaPath = null,
+    bool ProbeOnly = false)
 {
     public const int CurrentSchemaVersion = 1;
 }
@@ -157,7 +162,29 @@ public sealed record OptimizeResultLine(
     string[]? Warnings = null,
     int ConsumerPackCount = 0,
     int ExternallyUsedFileCount = 0,
-    int FrozenFileCount = 0);
+    int FrozenFileCount = 0,
+    string? HostVersion = null,
+    OptimizeConsumerPackLine[]? ConsumerPacks = null);
+
+/// <summary>A consumer that can matter to a result and why; any non-zero reason makes it relevant.</summary>
+public sealed record OptimizeConsumerPackLine(
+    string Path,
+    bool Relevant,
+    OptimizeConsumerReasons Reasons);
+
+public sealed record OptimizeConsumerReasons(
+    int FrozenFiles,
+    int UsedFiles,
+    int DbMentions,
+    int UndecodableTables,
+    int VanillaOverridesReached);
+
+/// <summary>The only stdout line of <c>optimize</c> with <c>probeOnly</c>.</summary>
+public sealed record OptimizeProbeLine(
+    string Type,
+    string HostVersion,
+    OptimizeConsumerPackLine[] Consumers,
+    double ElapsedSeconds);
 
 /// <summary>The final stdout line of a run that failed.</summary>
 public sealed record OptimizeErrorLine(string Type, string Message, string ExceptionType);
@@ -205,15 +232,15 @@ public static class OptimizeRequestValidator
                      ("gameDirectory", request.GameDirectory),
                      ("vanillaFileIndexPath", request.VanillaFileIndexPath),
                      ("sourcePackPath", request.SourcePackPath),
-                     ("outputPackPath", request.OutputPackPath),
-                     ("reportPath", request.ReportPath),
+                     ("outputPackPath", request.ProbeOnly ? "-" : request.OutputPackPath),
+                     ("reportPath", request.ProbeOnly ? "-" : request.ReportPath),
                  })
         {
             if (string.IsNullOrWhiteSpace(value))
                 return $"{name} is required.";
         }
 
-        if (request.Options == null)
+        if (request.Options == null && !request.ProbeOnly)
             return "options is required.";
 
         if (ResolveDataFolder(request.GameDirectory) == null)
@@ -224,14 +251,17 @@ public static class OptimizeRequestValidator
             return $"sourcePackPath '{request.SourcePackPath}' does not exist.";
 
         var source = Path.GetFullPath(request.SourcePackPath);
-        var output = Path.GetFullPath(request.OutputPackPath);
-        var report = Path.GetFullPath(request.ReportPath);
-        if (string.Equals(source, output, StringComparison.OrdinalIgnoreCase))
-            return "outputPackPath must differ from sourcePackPath.";
-        if (string.Equals(output, report, StringComparison.OrdinalIgnoreCase))
-            return "reportPath must differ from outputPackPath.";
-        if (!output.EndsWith(".pack", StringComparison.OrdinalIgnoreCase))
-            return "outputPackPath must end with .pack.";
+        var output = request.ProbeOnly ? string.Empty : Path.GetFullPath(request.OutputPackPath);
+        var report = request.ProbeOnly ? string.Empty : Path.GetFullPath(request.ReportPath);
+        if (!request.ProbeOnly)
+        {
+            if (string.Equals(source, output, StringComparison.OrdinalIgnoreCase))
+                return "outputPackPath must differ from sourcePackPath.";
+            if (string.Equals(output, report, StringComparison.OrdinalIgnoreCase))
+                return "reportPath must differ from outputPackPath.";
+            if (!output.EndsWith(".pack", StringComparison.OrdinalIgnoreCase))
+                return "outputPackPath must end with .pack.";
+        }
 
         if (!string.IsNullOrWhiteSpace(request.DbSchemaPath))
         {

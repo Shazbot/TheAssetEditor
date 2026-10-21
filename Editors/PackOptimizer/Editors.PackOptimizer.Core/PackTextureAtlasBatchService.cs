@@ -822,6 +822,7 @@ namespace Editors.PackOptimizer.Core
                     ExternallyUsedFileCount = state.Consumers?.Used.Count ?? 0,
                     FrozenFileCount = state.Consumers?.Frozen.Count ?? 0,
                     Warnings = state.Consumers?.Warnings.ToList() ?? [],
+                    ConsumerPacks = state.Consumers == null ? [] : DescribeConsumerPacks(state.Consumers),
                 };
             }
             catch (OperationCanceledException)

@@ -13577,5 +13577,127 @@ namespace Test.PackOptimizer.Core
             Assert.That(ResolutionUsageKeys(merged), Is.EqualTo(ResolutionUsageKeys(baseline)));
             Assert.That(ResolutionUsageCount(merged, vmdA), Is.EqualTo(1));
         }
+
+        // --- Vanilla files another mod replaces -------------------------------------------------
+
+        private const string VanillaMaterial = "variantmeshes\\vanilla\\m.xml.material";
+        private const string VanillaTexture = "textures\\vanilla\\t_replaced.dds";
+
+        private static (object Service, object State, DownscaleFixture Fixture) BuildVanillaReplacementState()
+        {
+            var fixture = new DownscaleFixture();
+            // A vanilla material that names a vanilla texture; the source WSModel binds the material.
+            fixture.Vanilla[VanillaMaterial] = System.Text.Encoding.UTF8.GetBytes(
+                DownscaleMaterialXml(("t_xml_base_colour", VanillaTexture)));
+            fixture.Vanilla[VanillaTexture] = [1];
+            fixture.AddText(
+                "variantmeshes\\mod\\w.wsmodel",
+                $"<model><geometry>{ConsumerRigid}</geometry><materials><material lod_index=\"0\" part_index=\"0\">{VanillaMaterial}</material></materials></model>");
+            fixture.AddText(ConsumerRigid, "rigid");
+            fixture.AddText("variantmeshes\\mod\\other.wsmodel", "<model><geometry>other.rigid_model_v2</geometry></model>");
+            var (service, state) = CreateDownscaleState(fixture, downscale: false);
+            return (service, state, fixture);
+        }
+
+        private static void ComputeVanillaReplacementFor(object state, object index)
+        {
+            var vanilla = Get<IEnumerable<Shared.Core.PackFiles.Models.IPackFileContainer>>(state, "GameplayTraversalContainers")
+                .Where(container => container.IsCaPackFile).ToList();
+            GetStaticMethod("ComputeVanillaReplacement").Invoke(
+                null,
+                [Get<Shared.Core.PackFiles.Models.IPackFileContainer>(state, "Source"), vanilla, index, CancellationToken.None]);
+            GetStaticMethod("CloseConsumerUse").Invoke(null, [state, index, CancellationToken.None]);
+        }
+
+        [Test]
+        public void VanillaReplacement_SourceFilesThatReachAReplacedVanillaFileAreFrozenLikeUsedOnes()
+        {
+            var (_, state, _) = BuildVanillaReplacementState();
+            var reskin = ConsumerFiles();
+            reskin[VanillaTexture] = [9, 9];
+            var index = InstallConsumers(state, 0, ("VanillaReskin", reskin));
+
+            ComputeVanillaReplacementFor(state, index);
+
+            Assert.That(((IDictionary)Get<object>(index, "VanillaReplaced")).Contains(VanillaTexture), Is.True);
+            Assert.That(((IDictionary)Get<object>(index, "VanillaReachedBy"))[VanillaTexture], Is.EqualTo("variantmeshes\\mod\\w.wsmodel"));
+            // The WSModel that binds the vanilla material is frozen, and so is its rigid (closure).
+            Assert.That(ConsumerUses(index, "variantmeshes\\mod\\w.wsmodel"), Is.True);
+            Assert.That(ConsumerUses(index, ConsumerRigid), Is.True);
+            Assert.That(ConsumerUses(index, "variantmeshes\\mod\\other.wsmodel"), Is.False);
+            var touched = Get<bool>(((IDictionary)Get<object>(index, "Used"))["variantmeshes\\mod\\w.wsmodel"]!, "VanillaPath");
+            Assert.That(touched, Is.True);
+            // Pack-level count (what the probe and the result report).
+            var pack = ((IEnumerable)Get<object>(index, "Packs")).Cast<object>().Single();
+            Assert.That(((IEnumerable)Get<object>(pack, "VanillaReached")).Cast<object>().Count(), Is.EqualTo(1));
+            // The rigid is now blocked like a rigid another mod uses.
+            var arguments = new object?[] { state, ConsumerRigid, null };
+            Assert.That((bool)GetStaticMethod("TryGetStructuralMergeBlockReason").Invoke(null, arguments)!, Is.True);
+        }
+
+        [Test]
+        public void VanillaReplacement_AReplacedTextureIsBlockedForTheRepackAndTheAtlas()
+        {
+            var (_, state, _) = BuildVanillaReplacementState();
+            var reskin = ConsumerFiles();
+            reskin[VanillaTexture] = [9, 9];
+            var index = InstallConsumers(state, 0, ("VanillaReskin", reskin));
+            ComputeVanillaReplacementFor(state, index);
+
+            var blocked = (bool)index.GetType().GetMethod("TryBlockVanillaReplaced")!.Invoke(index, [VanillaTexture, "repack"])!;
+            var notBlocked = (bool)index.GetType().GetMethod("TryBlockVanillaReplaced")!.Invoke(index, ["textures\\other.dds", "repack"])!;
+
+            Assert.That(blocked, Is.True);
+            Assert.That(notBlocked, Is.False);
+            var blocks = ((IEnumerable)Get<object>(index, "Blocks")).Cast<object>().ToList();
+            Assert.That(blocks.Any(block => Get<string>(block, "Kind") == "vanilla-replaced" && Get<string>(block, "Stage") == "repack"), Is.True);
+        }
+
+        [Test]
+        public void Probe_ReportsWhichConsumersCanMatter()
+        {
+            var (_, _, fixture) = BuildVanillaReplacementState();
+            fixture.AddText("variantmeshes\\variantmeshdefinitions\\unit_a.variantmeshdefinition", "<VARIANT_MESH/>");
+            fixture.AddTexture("textures\\mod_owned.dds", 64, 7);
+            var source = CreateDownscaleContainer(fixture.Source);
+            var vanilla = CreateDownscaleContainer(fixture.Vanilla, isCaPackFile: true);
+            foreach (var container in new[] { source, vanilla })
+            {
+                container.Setup(item => item.GetDirectoryContent(Moq.It.IsAny<string>()))
+                    .Returns(new List<(string Path, Shared.Core.PackFiles.Models.PackFile File)>());
+            }
+
+            Shared.Core.PackFiles.Models.IPackFileContainer Pack(string name, Dictionary<string, byte[]> files)
+            {
+                var container = CreateDownscaleContainer(files);
+                container.Setup(item => item.Name).Returns(name);
+                container.Setup(item => item.SystemFilePath).Returns("C:\\mods\\" + name + ".pack");
+                container.Setup(item => item.GetDirectoryContent(Moq.It.IsAny<string>()))
+                    .Returns(new List<(string Path, Shared.Core.PackFiles.Models.PackFile File)>());
+                return container.Object;
+            }
+
+            var overlapping = ConsumerFiles();
+            overlapping["textures\\mod_owned.dds"] = [1, 2];
+            var referencing = ConsumerFiles(("variantmeshes\\sub\\sub.wsmodel", $"<model><geometry>{ConsumerRigid}</geometry></model>"));
+            var dbNaming = ConsumerFiles(("db\\units_tables\\data", "xx unit_a yy"));
+            var vanillaReskin = ConsumerFiles();
+            vanillaReskin[VanillaTexture] = [9];
+            var unrelated = ConsumerFiles(("ui\\icons\\icon.png", "png"), ("script\\a.lua", "print('hi')"));
+
+            var probed = Editors.PackOptimizer.Core.PackOptimizer.ProbeConsumers(
+                source.Object,
+                [Pack("overlapping", overlapping), Pack("referencing", referencing), Pack("dbNaming", dbNaming),
+                 Pack("vanillaReskin", vanillaReskin), Pack("unrelated", unrelated)],
+                null,
+                [vanilla.Object]);
+
+            var byName = probed.ToDictionary(pack => pack.Name);
+            Assert.That(byName["overlapping"].Relevant && byName["overlapping"].FrozenFiles == 1, Is.True);
+            Assert.That(byName["referencing"].Relevant && byName["referencing"].UsedFiles == 1, Is.True);
+            Assert.That(byName["dbNaming"].Relevant && byName["dbNaming"].DbMentions == 1, Is.True);
+            Assert.That(byName["vanillaReskin"].Relevant && byName["vanillaReskin"].VanillaOverridesReached == 1, Is.True);
+            Assert.That(byName["unrelated"].Relevant, Is.False);
+        }
     }
 }

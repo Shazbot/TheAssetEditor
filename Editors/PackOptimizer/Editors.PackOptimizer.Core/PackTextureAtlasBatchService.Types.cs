@@ -38,6 +38,7 @@ namespace Editors.PackOptimizer.Core
             public int ExternallyUsedFileCount { get; init; }
             public int FrozenFileCount { get; init; }
             public IReadOnlyList<string> Warnings { get; init; } = [];
+            public IReadOnlyList<PackOptimizerConsumerPack> ConsumerPacks { get; init; } = [];
         }
 
         private sealed record GeneratedTextureTimingEntry(

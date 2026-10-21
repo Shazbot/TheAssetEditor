@@ -13,6 +13,7 @@ namespace WH3AssetHost.Optimize;
 [JsonSerializable(typeof(OptimizeProgressLine))]
 [JsonSerializable(typeof(OptimizeResultLine))]
 [JsonSerializable(typeof(OptimizeErrorLine))]
+[JsonSerializable(typeof(OptimizeProbeLine))]
 internal partial class OptimizeJsonContext : JsonSerializerContext
 {
 }

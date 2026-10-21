@@ -30,6 +30,12 @@ internal static class Program
 
         try
         {
+            if (args.Length == 1 && string.Equals(args[0], "--version", StringComparison.Ordinal))
+            {
+                Console.Out.WriteLine(AssetHostProtocol.HostVersion);
+                return 0;
+            }
+
             if (args.Length > 0 && string.Equals(args[0], "serve", StringComparison.OrdinalIgnoreCase))
                 return RunServe(args);
 

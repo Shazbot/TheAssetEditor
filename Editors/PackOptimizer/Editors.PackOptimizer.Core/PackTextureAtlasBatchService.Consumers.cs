@@ -57,13 +57,20 @@ namespace Editors.PackOptimizer.Core
             public int DbRootsAdded { get; set; }
             public List<(string Path, string Reason)> DbFallbackTables { get; } = [];
             public int DbFallbackAdded { get; set; }
+            // Distinct source files this pack's files name, even when another pack named them first.
+            public HashSet<string> SeedHits { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public int DbMentions { get; set; }
+            public int UndecodableTables { get; set; }
+            public HashSet<string> VanillaReached { get; } = new(StringComparer.OrdinalIgnoreCase);
         }
 
         private sealed record ConsumerUse(
             ConsumerPackEntry Pack,
             string Referrer,
             string Parent,
-            bool Fallback);
+            bool Fallback,
+            // The file reaches a vanilla path another mod replaces (not a reference from a mod).
+            bool VanillaPath = false);
 
         private sealed record ConsumerBlock(
             string Path,
@@ -94,6 +101,26 @@ namespace Editors.PackOptimizer.Core
             public Dictionary<string, ConsumerPackEntry> RootFiles { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> Closed { get; } = new(StringComparer.OrdinalIgnoreCase);
+            // Vanilla paths another enabled mod also has (and the source does not): what the source
+            // reaches through them is not what the game will load, so nothing is derived from them.
+            public Dictionary<string, List<ConsumerPackEntry>> VanillaReplaced { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            // Replaced vanilla path -> the first source file that reaches it.
+            public Dictionary<string, string> VanillaReachedBy { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public bool IsVanillaReplaced(string path) => VanillaReplaced.ContainsKey(path);
+
+            public bool IsVanillaTouched(string path) => Used.TryGetValue(path, out var use) && use.VanillaPath;
+
+            public bool TryBlockVanillaReplaced(string path, string stage)
+            {
+                if (!VanillaReplaced.TryGetValue(path, out var packs))
+                    return false;
+
+                RecordBlock(
+                    path, stage, "vanilla-replaced", string.Join(", ", packs.Select(pack => pack.Name)),
+                    $"vanilla path replaced by {string.Join(", ", packs.Select(pack => pack.Name))}");
+                return true;
+            }
             public List<ConsumerBlock> Blocks { get; } = [];
             public List<string> Warnings { get; } = [];
             public List<string> VmdRootsAddedByDb { get; } = [];
@@ -163,7 +190,9 @@ namespace Editors.PackOptimizer.Core
             }
 
             public static string DescribeUse(ConsumerUse use)
-                => use.Parent.Length == 0
+                => use.VanillaPath
+                    ? $"{use.Pack.Name} ({use.Referrer}{(use.Parent.Length == 0 ? string.Empty : " via " + use.Parent)})"
+                    : use.Parent.Length == 0
                     ? $"{use.Pack.Name} ({use.Referrer}{(use.Fallback ? ", DB text fallback" : string.Empty)})"
                     : $"{use.Pack.Name} ({use.Referrer} via {use.Parent}{(use.Fallback ? ", DB text fallback" : string.Empty)})";
 
@@ -270,6 +299,14 @@ namespace Editors.PackOptimizer.Core
             int sourceLoadOrderIndex,
             CancellationToken cancellationToken,
             IProgress<TextureAtlasPackProgress>? progress)
+            => BuildConsumerReferenceIndexFor(state.Source, modConsumers, sourceLoadOrderIndex, cancellationToken, progress);
+
+        private static ConsumerReferenceIndex BuildConsumerReferenceIndexFor(
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> modConsumers,
+            int sourceLoadOrderIndex,
+            CancellationToken cancellationToken,
+            IProgress<TextureAtlasPackProgress>? progress)
         {
             var stopwatch = Stopwatch.StartNew();
             var packs = new List<ConsumerPackEntry>(modConsumers.Count);
@@ -277,7 +314,7 @@ namespace Editors.PackOptimizer.Core
                 packs.Add(new ConsumerPackEntry(index, modConsumers[index], index < sourceLoadOrderIndex));
 
             var index_ = new ConsumerReferenceIndex(packs);
-            var sourceFiles = state.Source.GetAllFiles();
+            var sourceFiles = source.GetAllFiles();
 
             // F: source paths a consumer also has. Only asset types the optimizer can touch are
             // frozen; the rest (UI, scripts, tool leftovers) is counted and ignored.
@@ -367,9 +404,10 @@ namespace Editors.PackOptimizer.Core
                         if (token.Equals(path, StringComparison.OrdinalIgnoreCase))
                             continue;
 
-                        if (state.Source.ContainsFile(token))
+                        if (source.ContainsFile(token))
                         {
                             index_.Used.TryAdd(token, new ConsumerUse(pack, path, string.Empty, false));
+                            pack.SeedHits.Add(token);
                             var kind = GetConsumerAssetKind(token);
                             if ((isVmd || isWsModel) && kind is "VMD" or "WSModel" or "rigid")
                                 index_.RootFiles.TryAdd(path, pack);
@@ -407,7 +445,7 @@ namespace Editors.PackOptimizer.Core
 
                 foreach (var token in ExtractAssetTokens(data, includeWideView: false))
                 {
-                    if (state.Source.ContainsFile(token))
+                    if (source.ContainsFile(token))
                     {
                         index_.Used.TryAdd(
                             token, new ConsumerUse(group.Pack, group.Rigid, group.Vmd, false));
@@ -417,6 +455,233 @@ namespace Editors.PackOptimizer.Core
 
             index_.ScanElapsed = stopwatch.Elapsed;
             return index_;
+        }
+
+        // Vanilla paths a consumer replaces that the source reaches (directly or through vanilla
+        // VMDs, WSModels and materials). The source files that reach one are marked like files a
+        // mod uses: nothing is derived from, merged with or rebound through them. Reaching is a
+        // token scan, so it over-approximates; a source rigid's own embedded texture paths are
+        // not followed.
+        private static void ComputeVanillaReplacement(
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> vanilla,
+            ConsumerReferenceIndex index,
+            CancellationToken cancellationToken)
+        {
+            bool VanillaHas(string path)
+            {
+                for (var i = vanilla.Count - 1; i >= 0; i--)
+                {
+                    if (vanilla[i].ContainsFile(path))
+                        return true;
+                }
+
+                return false;
+            }
+
+            PackFile? FindVanilla(string path)
+            {
+                for (var i = vanilla.Count - 1; i >= 0; i--)
+                {
+                    if (vanilla[i].ContainsFile(path))
+                        return vanilla[i].FindFile(path);
+                }
+
+                return null;
+            }
+
+            foreach (var pack in index.Packs)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (var key in pack.Files.Keys)
+                {
+                    var path = Normalize(key);
+                    if (!IsConsumerAssetPath(path) || source.ContainsFile(path) || !VanillaHas(path))
+                        continue;
+
+                    if (!index.VanillaReplaced.TryGetValue(path, out var packs))
+                    {
+                        packs = [];
+                        index.VanillaReplaced[path] = packs;
+                    }
+
+                    packs.Add(pack);
+                }
+            }
+
+            if (index.VanillaReplaced.Count == 0)
+                return;
+
+            var memo = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> Reach(string vanillaPath)
+            {
+                if (memo.TryGetValue(vanillaPath, out var cached))
+                    return cached;
+
+                var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (!visiting.Add(vanillaPath))
+                    return result;
+
+                if (index.VanillaReplaced.ContainsKey(vanillaPath))
+                {
+                    result.Add(vanillaPath);
+                }
+                else if (vanillaPath.EndsWith(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase) ||
+                         vanillaPath.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
+                         vanillaPath.EndsWith(".xml.material", StringComparison.OrdinalIgnoreCase))
+                {
+                    var file = FindVanilla(vanillaPath);
+                    var data = file == null ? null : TryReadConsumerFile(file, ConsumerScanFileLimit);
+                    if (data != null)
+                    {
+                        foreach (var token in ExtractAssetTokens(data, LooksWide(data)).Distinct(StringComparer.OrdinalIgnoreCase))
+                        {
+                            if (token.Equals(vanillaPath, StringComparison.OrdinalIgnoreCase) || source.ContainsFile(token))
+                                continue;
+
+                            result.UnionWith(Reach(token));
+                        }
+                    }
+                }
+
+                visiting.Remove(vanillaPath);
+                memo[vanillaPath] = result;
+                return result;
+            }
+
+            foreach (var key in source.GetAllFiles().Keys.OrderBy(path => path, StringComparer.Ordinal))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var path = Normalize(key);
+                if (!(path.EndsWith(".variantmeshdefinition", StringComparison.OrdinalIgnoreCase) ||
+                      path.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
+                      path.EndsWith(".xml.material", StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                var file = source.FindFile(path);
+                var data = file == null ? null : TryReadConsumerFile(file, ConsumerScanFileLimit);
+                if (data == null)
+                    continue;
+
+                var reached = new SortedSet<string>(StringComparer.Ordinal);
+                foreach (var token in ExtractAssetTokens(data, LooksWide(data)).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (token.Equals(path, StringComparison.OrdinalIgnoreCase) || source.ContainsFile(token))
+                        continue;
+
+                    reached.UnionWith(Reach(token));
+                }
+
+                if (reached.Count == 0)
+                    continue;
+
+                var first = reached.First();
+                var firstPack = index.VanillaReplaced[first][0];
+                index.Used.TryAdd(
+                    path,
+                    new ConsumerUse(
+                        firstPack,
+                        $"reaches the vanilla file {first}, which {string.Join(", ", index.VanillaReplaced[first].Select(item => item.Name))} replaces",
+                        string.Empty,
+                        false,
+                        VanillaPath: true));
+                foreach (var replaced in reached)
+                {
+                    index.VanillaReachedBy.TryAdd(replaced, path);
+                    foreach (var replacer in index.VanillaReplaced[replaced])
+                        replacer.VanillaReached.Add(replaced);
+                }
+            }
+        }
+
+        private static IReadOnlyList<PackOptimizerConsumerPack> DescribeConsumerPacks(ConsumerReferenceIndex index)
+            => index.Packs.Select(pack =>
+            {
+                var frozen = pack.OverlapAssets;
+                var used = pack.SeedHits.Count;
+                var dbMentions = Math.Max(pack.DbMentions, pack.DbRootsAdded + pack.DbFallbackAdded);
+                var undecodable = Math.Max(pack.UndecodableTables, pack.DbFallbackTables.Count);
+                var vanilla = pack.VanillaReached.Count;
+                return new PackOptimizerConsumerPack(
+                    pack.Container.SystemFilePath ?? string.Empty,
+                    pack.Name,
+                    frozen > 0 || used > 0 || dbMentions > 0 || undecodable > 0 || vanilla > 0,
+                    frozen,
+                    used,
+                    dbMentions,
+                    undecodable,
+                    vanilla);
+            }).ToList();
+
+        public static IReadOnlyList<PackOptimizerConsumerPack> ProbeConsumers(
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> modConsumers,
+            int? sourceLoadOrderIndex,
+            IReadOnlyList<IPackFileContainer> vanilla,
+            PackOptimizerDbSchema? dbSchema,
+            CancellationToken cancellationToken)
+        {
+            var index = BuildConsumerReferenceIndexFor(
+                source, modConsumers, sourceLoadOrderIndex ?? modConsumers.Count, cancellationToken, null);
+
+            // DB tables that name a VMD, WSModel or rigid of the source (either text encoding):
+            // a superset of the tables that give a source file a new gameplay root.
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var key in source.GetAllFiles().Keys)
+            {
+                var path = Normalize(key);
+                if (path.EndsWith(".variantmeshdefinition", StringComparison.Ordinal))
+                    names.Add(Path.GetFileNameWithoutExtension(path));
+                else if (path.EndsWith(".wsmodel", StringComparison.Ordinal) || path.EndsWith(".rigid_model_v2", StringComparison.Ordinal))
+                    names.Add(path);
+            }
+
+            var tokenPattern = new Regex(@"[a-z0-9_\\/\.\-]{4,260}", RegexOptions.Compiled);
+            foreach (var pack in index.Packs)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var mentioned = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var key in pack.Files.Keys.Select(Normalize)
+                             .Where(item => item.StartsWith("db\\", StringComparison.Ordinal))
+                             .OrderBy(item => item, StringComparer.Ordinal))
+                {
+                    var file = pack.Container.FindFile(key);
+                    var data = file == null ? null : TryReadConsumerFile(file, ConsumerScanFileLimit);
+                    if (data == null)
+                        continue;
+
+                    foreach (var wide in new[] { false, true })
+                    {
+                        var bytes = wide ? data.Where(value => value != 0).ToArray() : data;
+                        var text = Encoding.Latin1.GetString(bytes).ToLowerInvariant();
+                        foreach (Match match in tokenPattern.Matches(text))
+                        {
+                            var token = match.Value.Replace('/', '\\');
+                            if (names.Contains(token))
+                            {
+                                mentioned.Add(token);
+                                continue;
+                            }
+
+                            var name = token[(token.LastIndexOf('\\') + 1)..];
+                            if (name.EndsWith(".variantmeshdefinition", StringComparison.Ordinal))
+                                name = name[..^".variantmeshdefinition".Length];
+                            if (names.Contains(name))
+                                mentioned.Add(name);
+                        }
+                    }
+                }
+
+                pack.DbMentions = mentioned.Count;
+                pack.UndecodableTables = Wh3UnitCategoryResolver.CountUndecodableTables(pack.Container, dbSchema);
+            }
+
+            ComputeVanillaReplacement(
+                source, vanilla.Where(container => container.IsCaPackFile).ToList(), index, cancellationToken);
+            return DescribeConsumerPacks(index);
         }
 
         private static HashSet<string> GetResolutionRootPaths(Wh3UnitCategoryResolution resolution)
@@ -477,6 +742,13 @@ namespace Editors.PackOptimizer.Core
                     }
                 }
             }
+
+            // 1b. Vanilla paths other mods replace that the source reaches.
+            ComputeVanillaReplacement(
+                state.Source,
+                GetGameplayTraversalContainers(state).Where(container => container.IsCaPackFile).ToList(),
+                index,
+                cancellationToken);
 
             // 2. Close E inside the source, then the DB text fallback per pack (so its own
             //    contribution can be counted).
@@ -582,6 +854,12 @@ namespace Editors.PackOptimizer.Core
             BatchState state,
             ConsumerReferenceIndex index,
             CancellationToken cancellationToken)
+            => CloseConsumerUseFor(state.Source, index, cancellationToken);
+
+        private static int CloseConsumerUseFor(
+            IPackFileContainer source,
+            ConsumerReferenceIndex index,
+            CancellationToken cancellationToken)
         {
             var queue = new Queue<string>(index.Used.Keys.OrderBy(path => path, StringComparer.Ordinal));
             var processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -602,13 +880,13 @@ namespace Editors.PackOptimizer.Core
                     path.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
                     path.EndsWith(".xml.material", StringComparison.OrdinalIgnoreCase))
                 {
-                    var file = state.Source.FindFile(path);
+                    var file = source.FindFile(path);
                     var data = file == null ? null : TryReadConsumerFile(file, ConsumerScanFileLimit);
                     tokens = data == null ? [] : ExtractAssetTokens(data, LooksWide(data));
                 }
                 else if (path.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
                 {
-                    tokens = ReadRigidTextureTokens(state.Source.FindFile(path));
+                    tokens = ReadRigidTextureTokens(source.FindFile(path));
                 }
                 else
                 {
@@ -618,12 +896,12 @@ namespace Editors.PackOptimizer.Core
                 foreach (var token in tokens.Distinct(StringComparer.OrdinalIgnoreCase))
                 {
                     if (token.Equals(path, StringComparison.OrdinalIgnoreCase) ||
-                        !state.Source.ContainsFile(token))
+                        !source.ContainsFile(token))
                     {
                         continue;
                     }
 
-                    if (index.Used.TryAdd(token, new ConsumerUse(use.Pack, use.Referrer, path, use.Fallback)))
+                    if (index.Used.TryAdd(token, new ConsumerUse(use.Pack, use.Referrer, path, use.Fallback, use.VanillaPath)))
                     {
                         added++;
                         queue.Enqueue(token);
@@ -700,6 +978,8 @@ namespace Editors.PackOptimizer.Core
             {
                 if (consumers.TryBlock(path, "atlas"))
                     return $"{path} is {consumers.Describe(path)}";
+                if (consumers.TryBlockVanillaReplaced(path, "atlas"))
+                    return $"{path} is a vanilla file another mod replaces";
             }
 
             return null;
@@ -1009,6 +1289,29 @@ namespace Editors.PackOptimizer.Core
 
             if (consumers.Frozen.Count == 0)
                 sb.AppendLine("(none)");
+            sb.AppendLine();
+
+            sb.AppendLine("Vanilla paths another mod replaces");
+            sb.AppendLine("----------------------------------");
+            sb.AppendLine(
+                $"Vanilla asset paths other mods also have (the source does not): {consumers.VanillaReplaced.Count:N0}; " +
+                $"reached by the source: {consumers.VanillaReachedBy.Count:N0}; " +
+                $"source files frozen because they reach one: {consumers.Used.Values.Count(use => use.VanillaPath):N0}");
+            foreach (var pack in consumers.Packs.Where(pack => consumers.VanillaReplaced.Values.Any(list => list.Contains(pack))))
+            {
+                sb.AppendLine(
+                    $"  {pack.Name}: replaces {consumers.VanillaReplaced.Values.Count(list => list.Contains(pack)):N0} vanilla asset path(s), " +
+                    $"{pack.VanillaReached.Count:N0} reached by the source");
+            }
+
+            foreach (var (replaced, reachedBy) in consumers.VanillaReachedBy.OrderBy(item => item.Key, StringComparer.Ordinal).Take(200))
+            {
+                sb.AppendLine(
+                    $"{replaced} | replaced by {string.Join(", ", consumers.VanillaReplaced[replaced].Select(pack => pack.Name))} | reached by {reachedBy}");
+            }
+
+            if (consumers.VanillaReachedBy.Count == 0)
+                sb.AppendLine("(none reached)");
             sb.AppendLine();
 
             sb.AppendLine("Blocked operations");

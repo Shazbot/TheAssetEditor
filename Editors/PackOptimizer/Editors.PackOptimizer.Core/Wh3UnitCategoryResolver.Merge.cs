@@ -1,3 +1,5 @@
+using Shared.Core.PackFiles.Models;
+
 namespace Editors.PackOptimizer.Core
 {
     internal static partial class Wh3UnitCategoryResolver
@@ -10,6 +12,34 @@ namespace Editors.PackOptimizer.Core
         /// baseline attributes, and the entries a consumer creates for such a unit by changing
         /// its land unit are not taken.
         /// </summary>
+        /// <summary>
+        /// How many of a pack's tables among the ones the resolver reads cannot be decoded (no
+        /// schema for the version, a decode error, bytes left over). Those tables are read as text.
+        /// </summary>
+        internal static int CountUndecodableTables(IPackFileContainer container, PackOptimizerDbSchema? supplied)
+        {
+            var count = 0;
+            foreach (var table in RequiredTables)
+            {
+                foreach (var (path, file) in container.GetDirectoryContent($"db\\{table}"))
+                {
+                    var diagnostics = new List<string>();
+                    try
+                    {
+                        DecodeTableWithSchemas(table, file.DataSource.ReadData(), path, diagnostics, supplied, null);
+                        if (diagnostics.Count != 0)
+                            count++;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        count++;
+                    }
+                }
+            }
+
+            return count;
+        }
+
         internal static Wh3UnitCategoryResolution MergeAdditive(
             Wh3UnitCategoryResolution baseline,
             Wh3UnitCategoryResolution withConsumers)
