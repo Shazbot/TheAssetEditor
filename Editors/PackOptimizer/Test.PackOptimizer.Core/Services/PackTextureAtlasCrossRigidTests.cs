@@ -13827,6 +13827,61 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void ScanCachePruning_KeepsOneScanPerPackAndDropsMissingExpiredAndOldFormatOnes()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "scan-prune-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                Shared.Core.PackFiles.Models.IPackFileContainer Pack(string name)
+                {
+                    var diskPath = Path.Combine(directory, name + ".pack");
+                    File.WriteAllText(diskPath, name);
+                    var container = CreateDownscaleContainer(new Dictionary<string, byte[]>());
+                    container.Setup(item => item.SystemFilePath).Returns(diskPath);
+                    return container.Object;
+                }
+
+                var scanType = GetServiceType().GetNestedType("ConsumerPackScan", BindingFlags.NonPublic)!;
+                string Write(Shared.Core.PackFiles.Models.IPackFileContainer pack, string schema, string packPath)
+                {
+                    var cachePath = (string)GetStaticMethod("GetScanCachePath").Invoke(null, [directory, pack, schema])!;
+                    GetStaticMethod("TryWriteScan").Invoke(null, [cachePath, schema, packPath, Activator.CreateInstance(scanType, true)]);
+                    return cachePath;
+                }
+
+                var kept = Pack("kept");
+                var superseded = Write(kept, "schema-a", kept.SystemFilePath!);
+                File.SetLastWriteTimeUtc(superseded, DateTime.UtcNow.AddHours(-2));
+                var current = Write(kept, "schema-b", kept.SystemFilePath!);
+
+                var gone = Pack("gone");
+                var missing = Write(gone, "schema-a", gone.SystemFilePath!);
+                File.Delete(gone.SystemFilePath!);
+
+                var stale = Pack("stale");
+                var expired = Write(stale, "schema-a", stale.SystemFilePath!);
+                File.SetLastWriteTimeUtc(expired, DateTime.UtcNow.AddDays(-31));
+
+                var legacy = Path.Combine(directory, "probe-scan", "legacy.scan");
+                File.WriteAllBytes(legacy, [1, 2, 3, 4, 5, 6, 7, 8]);
+
+                var removed = (int)GetStaticMethod("PruneScanCache").Invoke(null, [directory, DateTime.UtcNow])!;
+
+                Assert.That(removed, Is.EqualTo(4));
+                Assert.That(File.Exists(current), Is.True, "the newest scan of a pack stays");
+                Assert.That(File.Exists(superseded), Is.False, "an older scan of the same pack goes");
+                Assert.That(File.Exists(missing), Is.False, "a pack that no longer exists");
+                Assert.That(File.Exists(expired), Is.False, "not read for more than 30 days");
+                Assert.That(File.Exists(legacy), Is.False, "an unreadable or older format");
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+
+        [Test]
         public void RigidModelLz4_IsChosenLikeTheModManagersStagingCompressor()
         {
             var compressible = new byte[400 * 1024];

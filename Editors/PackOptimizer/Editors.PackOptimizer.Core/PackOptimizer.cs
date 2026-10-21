@@ -49,10 +49,11 @@ namespace Editors.PackOptimizer.Core
         public const int OutputVersion = 1;
 
         /// <summary>
-        /// Version of the consumer scan and probe results (what makes another mod relevant). Bump it when a
-        /// pack's scan data or the relevance rules change; cached scans of older versions are ignored.
+        /// Version of the consumer scan and probe results (what makes another mod relevant) and of the format
+        /// of the scan cache files. Bump it when a pack's scan data, the relevance rules or the file format
+        /// change; cached scans of older versions are ignored and pruned.
         /// </summary>
-        public const int ScanVersion = 1;
+        public const int ScanVersion = 2;
 
         public static string Describe() => $"output={OutputVersion} scan={ScanVersion}";
     }

@@ -23,6 +23,8 @@ namespace Editors.PackOptimizer.Core
         }
 
         private const int ConsumerScanFileMagic = 0x314E4353; // "SCN1"
+        // A scan not read for this long is removed at the end of a probe.
+        internal static readonly TimeSpan ScanCacheExpiry = TimeSpan.FromDays(30);
         private static readonly Regex ConsumerDbTokenPattern = new(@"[a-z0-9_\\/\.\-]{4,260}", RegexOptions.Compiled);
 
         internal static ulong HashScanToken(string token)
@@ -130,21 +132,22 @@ namespace Editors.PackOptimizer.Core
                 if (!File.Exists(cachePath))
                     return null;
 
-                using var reader = new BinaryReader(File.OpenRead(cachePath));
-                if (reader.ReadInt32() != ConsumerScanFileMagic ||
-                    reader.ReadInt32() != PackOptimizerVersions.ScanVersion ||
-                    reader.ReadString() != schemaId)
+                ConsumerPackScan scan;
+                using (var reader = new BinaryReader(File.OpenRead(cachePath)))
                 {
-                    return null;
+                    if (reader.ReadInt32() != ConsumerScanFileMagic ||
+                        reader.ReadInt32() != PackOptimizerVersions.ScanVersion ||
+                        reader.ReadString() != schemaId)
+                    {
+                        return null;
+                    }
+
+                    reader.ReadString(); // the pack path, kept for pruning
+                    scan = ReadScanBody(reader);
                 }
 
-                var scan = new ConsumerPackScan { UndecodableTables = reader.ReadInt32() };
-                var textCount = reader.ReadInt32();
-                for (var index = 0; index < textCount; index++)
-                    scan.TextTokens.Add(reader.ReadUInt64());
-                var dbCount = reader.ReadInt32();
-                for (var index = 0; index < dbCount; index++)
-                    scan.DbKeys.Add(reader.ReadUInt64());
+                // The modification time is the last read: pruning drops scans nobody reads.
+                File.SetLastWriteTimeUtc(cachePath, DateTime.UtcNow);
                 return scan;
             }
             catch (Exception ex) when (ex is IOException or EndOfStreamException or UnauthorizedAccessException)
@@ -153,7 +156,19 @@ namespace Editors.PackOptimizer.Core
             }
         }
 
-        private static void TryWriteScan(string cachePath, string schemaId, ConsumerPackScan scan)
+        private static ConsumerPackScan ReadScanBody(BinaryReader reader)
+        {
+            var scan = new ConsumerPackScan { UndecodableTables = reader.ReadInt32() };
+            var textCount = reader.ReadInt32();
+            for (var index = 0; index < textCount; index++)
+                scan.TextTokens.Add(reader.ReadUInt64());
+            var dbCount = reader.ReadInt32();
+            for (var index = 0; index < dbCount; index++)
+                scan.DbKeys.Add(reader.ReadUInt64());
+            return scan;
+        }
+
+        private static void TryWriteScan(string cachePath, string schemaId, string packPath, ConsumerPackScan scan)
         {
             try
             {
@@ -164,6 +179,7 @@ namespace Editors.PackOptimizer.Core
                     writer.Write(ConsumerScanFileMagic);
                     writer.Write(PackOptimizerVersions.ScanVersion);
                     writer.Write(schemaId);
+                    writer.Write(packPath);
                     writer.Write(scan.UndecodableTables);
                     writer.Write(scan.TextTokens.Count);
                     foreach (var value in scan.TextTokens)
@@ -179,6 +195,85 @@ namespace Editors.PackOptimizer.Core
             {
                 // The scan cache only saves time.
             }
+        }
+
+        /// <summary>
+        /// Keeps the scan cache from growing: one scan per pack path (the one read or written last), none for
+        /// a pack that no longer exists, none unread for <see cref="ScanCacheExpiry"/>, and none of an older
+        /// format. Reads only the head of each file. Never changes what a probe returns.
+        /// </summary>
+        internal static int PruneScanCache(string cacheDirectory, DateTime nowUtc)
+        {
+            var removed = 0;
+            try
+            {
+                var directory = Path.Combine(cacheDirectory, "probe-scan");
+                if (!Directory.Exists(directory))
+                    return 0;
+
+                var latest = new Dictionary<string, (string File, DateTime Used)>(StringComparer.OrdinalIgnoreCase);
+                var doomed = new List<string>();
+                foreach (var file in Directory.EnumerateFiles(directory, "*.scan"))
+                {
+                    var used = File.GetLastWriteTimeUtc(file);
+                    string? packPath = null;
+                    try
+                    {
+                        using var reader = new BinaryReader(File.OpenRead(file));
+                        if (reader.ReadInt32() == ConsumerScanFileMagic && reader.ReadInt32() == PackOptimizerVersions.ScanVersion)
+                        {
+                            reader.ReadString(); // the schema
+                            packPath = reader.ReadString();
+                        }
+                    }
+                    catch (Exception ex) when (ex is IOException or EndOfStreamException or UnauthorizedAccessException)
+                    {
+                        // Unreadable head: treated like an old format below.
+                    }
+
+                    if (string.IsNullOrEmpty(packPath) || !File.Exists(packPath) || nowUtc - used > ScanCacheExpiry)
+                    {
+                        doomed.Add(file);
+                        continue;
+                    }
+
+                    if (latest.TryGetValue(packPath, out var kept))
+                    {
+                        if (used > kept.Used)
+                        {
+                            doomed.Add(kept.File);
+                            latest[packPath] = (file, used);
+                        }
+                        else
+                        {
+                            doomed.Add(file);
+                        }
+                    }
+                    else
+                    {
+                        latest[packPath] = (file, used);
+                    }
+                }
+
+                foreach (var file in doomed)
+                {
+                    try
+                    {
+                        File.Delete(file);
+                        removed++;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // In use by another probe; the next run removes it.
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Pruning is housekeeping; a probe never fails because of it.
+            }
+
+            return removed;
         }
 
         internal sealed record BatchProbeResult(
@@ -221,7 +316,7 @@ namespace Editors.PackOptimizer.Core
                     scan = ScanConsumerPack(loadOrder[index], dbSchema, cancellationToken);
                     scanned++;
                     if (cachePath != null)
-                        TryWriteScan(cachePath, schemaId, scan);
+                        TryWriteScan(cachePath, schemaId, loadOrder[index].SystemFilePath ?? string.Empty, scan);
                 }
 
                 scans[index] = scan;
@@ -276,6 +371,9 @@ namespace Editors.PackOptimizer.Core
                 ComputeVanillaReplacement(source, vanillaCa, index_, cancellationToken, vanillaTokens);
                 results.Add(DescribeConsumerPacks(index_));
             }
+
+            if (!string.IsNullOrWhiteSpace(cacheDirectory))
+                PruneScanCache(cacheDirectory, DateTime.UtcNow);
 
             return new BatchProbeResult(results, scanned, hits, scanWatch.Elapsed);
         }
