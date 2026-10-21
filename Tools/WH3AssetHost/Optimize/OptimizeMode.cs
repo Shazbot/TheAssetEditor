@@ -31,7 +31,7 @@ internal static class OptimizeMode
             return CheckNativeDds(stdout);
         if (args.Length == 2 && string.Equals(args[1], "--version", StringComparison.Ordinal))
         {
-            stdout.WriteLine(AssetHostProtocol.HostVersion);
+            stdout.WriteLine($"{AssetHostProtocol.HostVersion} {PackOptimizerVersions.Describe()}");
             return OptimizeExitCodes.Succeeded;
         }
 
@@ -136,6 +136,8 @@ internal static class OptimizeMode
             var dataFolder = OptimizeRequestValidator.ResolveDataFolder(request.GameDirectory)!;
             var vanilla = HostVanillaContainers.LoadVanilla(dataFolder, request.VanillaFileIndexPath, Console.Error.WriteLine);
             cancellationToken.ThrowIfCancellationRequested();
+            if (request.ProbeSources is { Count: > 0 })
+                return ExecuteBatchProbe(request, vanilla, stdout, elapsed, cancellationToken);
             var source = HostVanillaContainers.LoadSource(request.SourcePackPath);
             var consumers = (request.ConsumerPackPaths ?? []).Select(path => HostVanillaContainers.LoadConsumer(path)).ToList();
             cancellationToken.ThrowIfCancellationRequested();
@@ -148,7 +150,9 @@ internal static class OptimizeMode
                 cancellationToken);
             WriteLine(
                 stdout,
-                new OptimizeProbeLine("probe", AssetHostProtocol.HostVersion, ToLines(probed), elapsed.Elapsed.TotalSeconds),
+                new OptimizeProbeLine(
+                    "probe", AssetHostProtocol.HostVersion, ToLines(probed), elapsed.Elapsed.TotalSeconds,
+                    PackOptimizerVersions.OutputVersion, PackOptimizerVersions.ScanVersion),
                 OptimizeJsonContext.Default.OptimizeProbeLine);
             return OptimizeOutcome.Succeeded;
         }
@@ -163,6 +167,45 @@ internal static class OptimizeMode
             WriteLine(stdout, new OptimizeErrorLine("error", exception.Message, exception.GetType().Name), OptimizeJsonContext.Default.OptimizeErrorLine);
             return OptimizeOutcome.Failed;
         }
+    }
+
+    /// <summary>One probe for several sources: the whole load order is loaded and scanned once.</summary>
+    private static OptimizeOutcome ExecuteBatchProbe(
+        OptimizeRequest request,
+        IReadOnlyList<IPackFileContainer> vanilla,
+        TextWriter stdout,
+        Stopwatch elapsed,
+        CancellationToken cancellationToken)
+    {
+        var loadOrderPaths = request.ConsumerPackPaths!.Select(Path.GetFullPath).ToList();
+        var loadOrder = new List<IPackFileContainer>();
+        foreach (var path in loadOrderPaths)
+        {
+            loadOrder.Add(HostVanillaContainers.LoadConsumer(path));
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        var sourcePaths = request.ProbeSources!.Select(Path.GetFullPath).ToList();
+        var sourceIndexes = sourcePaths
+            .Select(path => loadOrderPaths.FindIndex(item => string.Equals(item, path, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        var schema = string.IsNullOrWhiteSpace(request.DbSchemaPath) ? null : PackOptimizerDbSchema.Load(request.DbSchemaPath);
+        var schemaId = string.IsNullOrWhiteSpace(request.DbSchemaPath)
+            ? "embedded"
+            : Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(File.ReadAllBytes(request.DbSchemaPath)));
+        var batch = PackOptimizer.ProbeConsumersBatch(
+            loadOrder, sourceIndexes, vanilla, schema, request.CacheDirectory, schemaId, cancellationToken);
+        var sources = new OptimizeSourceProbeLine[sourcePaths.Count];
+        for (var index = 0; index < sources.Length; index++)
+            sources[index] = new OptimizeSourceProbeLine(sourcePaths[index], ToLines(batch.Sources[index]));
+        WriteLine(
+            stdout,
+            new OptimizeProbeLine(
+                "probe", AssetHostProtocol.HostVersion, [], elapsed.Elapsed.TotalSeconds,
+                PackOptimizerVersions.OutputVersion, PackOptimizerVersions.ScanVersion, sources,
+                batch.PacksScanned, batch.ScanCacheHits, batch.ScanElapsed.TotalSeconds),
+            OptimizeJsonContext.Default.OptimizeProbeLine);
+        return OptimizeOutcome.Succeeded;
     }
 
     private static OptimizeOutcome Execute(OptimizeRequest request, TextWriter stdout, CancellationToken cancellationToken)
@@ -253,7 +296,16 @@ internal static class OptimizeMode
                 result.ExternallyUsedFileCount,
                 result.FrozenFileCount,
                 AssetHostProtocol.HostVersion,
-                ToLines(result.ConsumerPacks ?? [])), OptimizeJsonContext.Default.OptimizeResultLine);
+                ToLines(result.ConsumerPacks ?? []),
+                PackOptimizerVersions.OutputVersion,
+                result.Summary == null
+                    ? null
+                    : new OptimizeSummaryLine(
+                        new FileInfo(request.SourcePackPath).Length,
+                        new FileInfo(finalOutput).Length,
+                        result.Summary.TextureBytesSaved,
+                        result.Summary.DrawCallsEliminated,
+                        result.Summary.MergedModelsGenerated)), OptimizeJsonContext.Default.OptimizeResultLine);
             return OptimizeOutcome.Succeeded;
         }
         catch (OperationCanceledException)

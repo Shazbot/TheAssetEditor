@@ -804,7 +804,22 @@ namespace Editors.PackOptimizer.Core
                 ReportProgress(progress, "Saving output pack", item: Path.GetFileName(outputPath));
                 phaseStopwatch.Restart();
                 var game = GameInformationDatabase.GetGameById(request.Game);
-                _packFileService.SavePackContainer(output, request.OutputWritePath ?? outputPath, game);
+                var summary = BuildSummary(state);
+                var rigidsToCompress = options.CompressRigidModels
+                    ? SelectRigidModelsForLz4(output, cancellationToken)
+                    : null;
+                FileCompression.ForcedLz4Files = rigidsToCompress;
+                FileCompression.ForcedLz4Level = RigidLz4Level;
+                try
+                {
+                    _packFileService.SavePackContainer(output, request.OutputWritePath ?? outputPath, game);
+                }
+                finally
+                {
+                    FileCompression.ForcedLz4Files = null;
+                    FileCompression.ForcedLz4Level = K4os.Compression.LZ4.LZ4Level.L00_FAST;
+                }
+
                 state.PhaseDurations["Save output pack"] = phaseStopwatch.Elapsed;
                 state.TotalElapsed = totalStopwatch.Elapsed;
 
@@ -823,6 +838,7 @@ namespace Editors.PackOptimizer.Core
                     FrozenFileCount = state.Consumers?.Frozen.Count ?? 0,
                     Warnings = state.Consumers?.Warnings.ToList() ?? [],
                     ConsumerPacks = state.Consumers == null ? [] : DescribeConsumerPacks(state.Consumers),
+                    Summary = summary,
                 };
             }
             catch (OperationCanceledException)
@@ -852,6 +868,60 @@ namespace Editors.PackOptimizer.Core
                 if (output != null)
                     _packFileService.ReleaseOutputContainer(output);
             }
+        }
+
+        // What the run saved, from the finished output container.
+        private static PackOptimizerSummary BuildSummary(BatchState state)
+        {
+            static long TextureBytes(IPackFileContainer container)
+                => container.GetAllFiles()
+                    .Where(item => item.Key.EndsWith(".dds", StringComparison.OrdinalIgnoreCase))
+                    .Sum(item => item.Value.DataSource.Size);
+
+            var generatedRigids = state.Output.GetAllFiles().Keys.Count(path =>
+                path.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase) && !state.Source.ContainsFile(path));
+            var drawCalls = state.CrossRigidPayloadSelectionEntries
+                .Where(entry => entry.Accepted)
+                .Sum(entry => entry.MarginalExpectedArmyDrawCallsEliminated);
+            return new PackOptimizerSummary(
+                TextureBytes(state.Source) - TextureBytes(state.Output),
+                Math.Round(drawCalls, 1),
+                generatedRigids);
+        }
+
+        // The mod manager's staging compressor LZ4-compresses a rigid_model_v2 of at least 256 KiB
+        // when the frame, with the 4-byte size in front, is at most 75 % of the file. The same rule
+        // and the same payload layout decide here, with the pack writer's own LZ4 encoder.
+        private const int RigidLz4MinimumBytes = 256 * 1024;
+        private const double RigidLz4MaximumRatioPercent = 75;
+        // Rigid models are compressed with a higher LZ4 level than the pack writer's fast default: the
+        // staging compressor's encoder (lz4_flex) and K4os differ by a few percent per file, and the
+        // higher level keeps every file that the staging rule would accept.
+        private const K4os.Compression.LZ4.LZ4Level RigidLz4Level = K4os.Compression.LZ4.LZ4Level.L03_HC;
+
+        private static HashSet<string> SelectRigidModelsForLz4(IPackFileContainer output, CancellationToken cancellationToken)
+        {
+            var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (path, file) in output.GetAllFiles())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!path.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase) ||
+                    file.DataSource.Size < RigidLz4MinimumBytes)
+                {
+                    continue;
+                }
+
+                var data = file.DataSource.ReadData();
+                if (data.Length < RigidLz4MinimumBytes)
+                    continue;
+
+                var compressed = FileCompression.CompressLz4(data, RigidLz4Level);
+
+                if (compressed.Length * 100.0 / data.Length <= RigidLz4MaximumRatioPercent)
+                    selected.Add(path);
+            }
+
+            return selected;
         }
 
         public static string BuildOutputPath(string sourcePath)

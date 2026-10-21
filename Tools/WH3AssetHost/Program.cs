@@ -32,7 +32,7 @@ internal static class Program
         {
             if (args.Length == 1 && string.Equals(args[0], "--version", StringComparison.Ordinal))
             {
-                Console.Out.WriteLine(AssetHostProtocol.HostVersion);
+                Console.Out.WriteLine($"{AssetHostProtocol.HostVersion} {Editors.PackOptimizer.Core.PackOptimizerVersions.Describe()}");
                 return 0;
             }
 

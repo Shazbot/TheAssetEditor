@@ -13605,7 +13605,7 @@ namespace Test.PackOptimizer.Core
                 .Where(container => container.IsCaPackFile).ToList();
             GetStaticMethod("ComputeVanillaReplacement").Invoke(
                 null,
-                [Get<Shared.Core.PackFiles.Models.IPackFileContainer>(state, "Source"), vanilla, index, CancellationToken.None]);
+                [Get<Shared.Core.PackFiles.Models.IPackFileContainer>(state, "Source"), vanilla, index, CancellationToken.None, null]);
             GetStaticMethod("CloseConsumerUse").Invoke(null, [state, index, CancellationToken.None]);
         }
 
@@ -13742,6 +13742,262 @@ namespace Test.PackOptimizer.Core
             Assert.That(byName["dbNaming"].Relevant && byName["dbNaming"].DbMentions == 1, Is.True);
             Assert.That(byName["vanillaReskin"].Relevant && byName["vanillaReskin"].VanillaOverridesReached == 1, Is.True);
             Assert.That(byName["unrelated"].Relevant, Is.False);
+        }
+
+        [Test]
+        public void ProbeBatch_StaysASupersetOfTheSingleProbe_AndReusesTheScanCache()
+        {
+            var (_, _, fixture) = BuildVanillaReplacementState();
+            fixture.AddText("variantmeshes\\variantmeshdefinitions\\unit_a.variantmeshdefinition", "<VARIANT_MESH/>");
+            fixture.AddTexture("textures\\mod_owned.dds", 64, 7);
+            var source = CreateDownscaleContainer(fixture.Source);
+            var vanilla = CreateDownscaleContainer(fixture.Vanilla, isCaPackFile: true);
+            foreach (var container in new[] { source, vanilla })
+            {
+                container.Setup(item => item.GetDirectoryContent(Moq.It.IsAny<string>()))
+                    .Returns(new List<(string Path, Shared.Core.PackFiles.Models.PackFile File)>());
+            }
+
+            var directory = Path.Combine(Path.GetTempPath(), "probe-batch-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                Shared.Core.PackFiles.Models.IPackFileContainer Pack(string name, Dictionary<string, byte[]> files)
+                {
+                    var diskPath = Path.Combine(directory, name + ".pack");
+                    File.WriteAllText(diskPath, name);
+                    var container = CreateDownscaleContainer(files);
+                    container.Setup(item => item.Name).Returns(name);
+                    container.Setup(item => item.SystemFilePath).Returns(diskPath);
+                    container.Setup(item => item.GetDirectoryContent(Moq.It.IsAny<string>()))
+                        .Returns(new List<(string Path, Shared.Core.PackFiles.Models.PackFile File)>());
+                    return container.Object;
+                }
+
+                var overlapping = ConsumerFiles();
+                overlapping["textures\\mod_owned.dds"] = [1, 2];
+                var referencing = ConsumerFiles(("variantmeshes\\sub\\sub.wsmodel", $"<model><geometry>{ConsumerRigid}</geometry></model>"));
+                var dbNaming = ConsumerFiles(("db\\units_tables\\data", "xx unit_a yy"));
+                var vanillaReskin = ConsumerFiles();
+                vanillaReskin[VanillaTexture] = [9];
+                var unrelated = ConsumerFiles(("ui\\icons\\icon.png", "png"), ("script\\a.lua", "print('hi')"));
+                var consumers = new[]
+                {
+                    Pack("overlapping", overlapping), Pack("referencing", referencing), Pack("dbNaming", dbNaming),
+                    Pack("vanillaReskin", vanillaReskin), Pack("unrelated", unrelated),
+                };
+                source.Setup(item => item.Name).Returns("source");
+                source.Setup(item => item.SystemFilePath).Returns(Path.Combine(directory, "source.pack"));
+                File.WriteAllText(Path.Combine(directory, "source.pack"), "source");
+
+                var single = Editors.PackOptimizer.Core.PackOptimizer.ProbeConsumers(
+                    source.Object, consumers, null, [vanilla.Object]);
+                var loadOrder = consumers.Prepend(source.Object).ToList();
+
+                var first = Editors.PackOptimizer.Core.PackOptimizer.ProbeConsumersBatch(
+                    loadOrder, [0], [vanilla.Object], null, directory, "schema-a");
+                var second = Editors.PackOptimizer.Core.PackOptimizer.ProbeConsumersBatch(
+                    loadOrder, [0], [vanilla.Object], null, directory, "schema-a");
+                var otherSchema = Editors.PackOptimizer.Core.PackOptimizer.ProbeConsumersBatch(
+                    loadOrder, [0], [vanilla.Object], null, directory, "schema-b");
+
+                Assert.That(first.PacksScanned, Is.EqualTo(5));
+                Assert.That(first.ScanCacheHits, Is.EqualTo(0));
+                Assert.That(second.PacksScanned, Is.EqualTo(0));
+                Assert.That(second.ScanCacheHits, Is.EqualTo(5));
+                Assert.That(otherSchema.PacksScanned, Is.EqualTo(5), "a different DB schema ignores older scans");
+
+                var batch = first.Sources[0].ToDictionary(pack => pack.Name);
+                foreach (var pack in single)
+                {
+                    Assert.That(batch[pack.Name].Relevant || !pack.Relevant, Is.True, pack.Name + " must stay relevant");
+                    Assert.That(batch[pack.Name].FrozenFiles, Is.EqualTo(pack.FrozenFiles), pack.Name);
+                    Assert.That(batch[pack.Name].UsedFiles, Is.GreaterThanOrEqualTo(pack.UsedFiles), pack.Name);
+                    Assert.That(batch[pack.Name].DbMentions, Is.GreaterThanOrEqualTo(pack.DbMentions), pack.Name);
+                    Assert.That(batch[pack.Name].VanillaOverridesReached, Is.EqualTo(pack.VanillaOverridesReached), pack.Name);
+                }
+
+                Assert.That(batch["unrelated"].Relevant, Is.False);
+                Assert.That(second.Sources[0].Select(pack => pack.Relevant), Is.EqualTo(first.Sources[0].Select(pack => pack.Relevant)));
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+
+        [Test]
+        public void RigidModelLz4_IsChosenLikeTheModManagersStagingCompressor()
+        {
+            var compressible = new byte[400 * 1024];
+            var random = new Random(7);
+            var incompressible = new byte[400 * 1024];
+            random.NextBytes(incompressible);
+            var small = new byte[100 * 1024];
+            var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["a\\compressible.rigid_model_v2"] = compressible,
+                ["a\\random.rigid_model_v2"] = incompressible,
+                ["a\\small.rigid_model_v2"] = small,
+                ["a\\texture.dds"] = compressible,
+            };
+            var container = CreateDownscaleContainer(files);
+
+            var selected = (HashSet<string>)GetStaticMethod("SelectRigidModelsForLz4")
+                .Invoke(null, [container.Object, CancellationToken.None])!;
+
+            Assert.That(selected, Is.EquivalentTo(new[] { "a\\compressible.rigid_model_v2" }));
+        }
+
+        [Test]
+        public void RigidModelLz4_ForcedFilesAreWrittenAsLz4OnlyWhileTheOverrideIsSet()
+        {
+            var game = Shared.Core.Settings.GameInformationDatabase.GetGameById(Shared.Core.Settings.GameTypeEnum.Warhammer3);
+            const string rigid = "variantmeshes\\a.rigid_model_v2";
+            Assert.That(
+                Shared.Core.PackFiles.Utility.FileCompression.GetCompressionFormat(game, rigid),
+                Is.EqualTo(Shared.Core.PackFiles.Utility.CompressionFormat.None));
+            try
+            {
+                Shared.Core.PackFiles.Utility.FileCompression.ForcedLz4Files =
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { rigid };
+                Assert.That(
+                    Shared.Core.PackFiles.Utility.FileCompression.GetCompressionFormat(game, rigid),
+                    Is.EqualTo(Shared.Core.PackFiles.Utility.CompressionFormat.Lz4));
+                Assert.That(
+                    Shared.Core.PackFiles.Utility.FileCompression.GetCompressionFormat(game, "variantmeshes\\b.rigid_model_v2"),
+                    Is.EqualTo(Shared.Core.PackFiles.Utility.CompressionFormat.None));
+            }
+            finally
+            {
+                Shared.Core.PackFiles.Utility.FileCompression.ForcedLz4Files = null;
+            }
+        }
+
+        // --- Output version ---------------------------------------------------------------------
+        //
+        // PackOptimizerVersions.OutputVersion is part of the mod manager's cache key. The golden hash of
+        // the optimizer's output stages is pinned here next to it. A change that alters the output for the
+        // same input changes the hash; the test then fails until OutputVersion is bumped and the new hash is
+        // ADDED under the new version (never edit an existing entry). A change that leaves the output alone
+        // (speed, logging, the probe) leaves the hash alone and needs no bump.
+        //
+        // The stages hashed: texture downscaling and lossless compaction on a fixed set of synthetic
+        // textures, geometry optimization and the mesh merge on fixed synthetic meshes. Whole-pack output is
+        // checked by the fingerprint bench (Tools/PackOptimizerBench), which this test does not replace.
+        private static readonly Dictionary<int, string> OutputGoldenHashes = new()
+        {
+            [1] = "16D0E04C047A3181D23F53880A296765BD51EF01C67FCD1CC7C5D0ECBE7A77F5",
+        };
+
+        private static string ComputeOutputGoldenHash()
+        {
+            using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(
+                System.Security.Cryptography.HashAlgorithmName.SHA256);
+            void Add(string label, byte[] bytes)
+            {
+                hash.AppendData(Encoding.UTF8.GetBytes(label + "\n"));
+                hash.AppendData(BitConverter.GetBytes(bytes.Length));
+                hash.AppendData(bytes);
+            }
+
+            // Textures: downscale, then compaction, on the standard synthetic set.
+            var fixture = BuildStandardDownscaleFixture();
+            var (service, state) = CreateStandardDownscaleState(fixture, downscale: true);
+            RunDownscale(service, state, fixture);
+            SetStateProperty(state, "CompactTextures", true);
+            GetServiceType()
+                .GetMethod("RunTextureCompaction", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(service, [state, CancellationToken.None, null]);
+            foreach (var (path, bytes) in fixture.Output.OrderBy(item => item.Key, StringComparer.Ordinal))
+                Add("file:" + path, bytes);
+
+            // Geometry: a grid with unreferenced and duplicate vertices.
+            CommonVertex GridVertex(float x, float y) => new()
+            {
+                Position = new Vector4(x, y, 0, 1),
+                Normal = Vector3.UnitZ,
+                BiNormal = Vector3.UnitY,
+                Tangent = Vector3.UnitX,
+                Uv = new Vector2(x / 8, y / 8),
+                Uv1 = Vector2.Zero,
+                Colour = Vector4.One,
+                BoneIndex = [],
+                BoneWeight = [],
+                WeightCount = 0,
+            };
+
+            RmvModel Grid(float offset)
+            {
+                var vertices = new List<CommonVertex>();
+                var indices = new List<ushort>();
+                for (var row = 0; row < 8; row++)
+                {
+                    for (var column = 0; column < 8; column++)
+                        vertices.Add(GridVertex(column + offset, row));
+                }
+
+                vertices.Add(GridVertex(100, 100));
+                vertices.Add(GridVertex(offset, 0));
+                for (var row = 0; row < 7; row++)
+                {
+                    for (var column = 0; column < 7; column++)
+                    {
+                        var origin = (ushort)(row * 8 + column);
+                        indices.AddRange([origin, (ushort)(origin + 1), (ushort)(origin + 8)]);
+                        indices.AddRange([(ushort)(origin + 1), (ushort)(origin + 9), (ushort)(origin + 8)]);
+                    }
+                }
+
+                return new RmvModel { Mesh = new RmvMesh { VertexList = [.. vertices], IndexList = [.. indices] } };
+            }
+
+            void AddModel(string label, RmvModel model)
+            {
+                using var stream = new MemoryStream();
+                using var writer = new BinaryWriter(stream);
+                foreach (var vertex in model.Mesh.VertexList)
+                {
+                    writer.Write(vertex.Position.X);
+                    writer.Write(vertex.Position.Y);
+                    writer.Write(vertex.Position.Z);
+                    writer.Write(vertex.Uv.X);
+                    writer.Write(vertex.Uv.Y);
+                }
+
+                foreach (var index in model.Mesh.IndexList)
+                    writer.Write(index);
+                writer.Flush();
+                Add(label, stream.ToArray());
+            }
+
+            var optimized = Grid(0);
+            Editors.PackOptimizer.Core.RigidGeometryOptimizer.Optimize(optimized);
+            AddModel("geometry", optimized);
+
+            AddModel("merge", MergeOwned(CreateWeightedModel(1f), CreateWeightedModel(2f)));
+
+            return Convert.ToHexString(hash.GetHashAndReset());
+        }
+
+        [Test]
+        public void OutputVersion_GoldenHashIsPinnedForTheCurrentVersion()
+        {
+            var actual = ComputeOutputGoldenHash();
+            Assert.That(ComputeOutputGoldenHash(), Is.EqualTo(actual), "the golden output must be deterministic");
+
+            var version = Editors.PackOptimizer.Core.PackOptimizerVersions.OutputVersion;
+            Assert.That(
+                OutputGoldenHashes.Keys.Order(),
+                Is.EqualTo(Enumerable.Range(1, OutputGoldenHashes.Count)),
+                "every version keeps its pinned hash; add the new one, never edit an old one");
+            Assert.That(OutputGoldenHashes.ContainsKey(version), Is.True,
+                $"OutputVersion is {version} but no golden hash is pinned for it. Add [{version}] = \"{actual}\".");
+            Assert.That(
+                actual,
+                Is.EqualTo(OutputGoldenHashes[version]),
+                "The optimizer's output changed for the same input. Bump PackOptimizerVersions.OutputVersion and " +
+                $"pin the new hash under the new version: [{version + 1}] = \"{actual}\".");
         }
     }
 }

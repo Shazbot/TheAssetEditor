@@ -59,6 +59,8 @@ namespace Editors.PackOptimizer.Core
             public int DbFallbackAdded { get; set; }
             // Distinct source files this pack's files name, even when another pack named them first.
             public HashSet<string> SeedHits { get; } = new(StringComparer.OrdinalIgnoreCase);
+            // The batch probe counts hits from stored scans (hashes) instead of the set above.
+            public int BatchSeedHits { get; set; }
             public int DbMentions { get; set; }
             public int UndecodableTables { get; set; }
             public HashSet<string> VanillaReached { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -471,7 +473,8 @@ namespace Editors.PackOptimizer.Core
             IPackFileContainer source,
             IReadOnlyList<IPackFileContainer> vanilla,
             ConsumerReferenceIndex index,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Dictionary<string, string[]>? vanillaTokenCache = null)
         {
             bool VanillaHas(string path)
             {
@@ -536,17 +539,24 @@ namespace Editors.PackOptimizer.Core
                          vanillaPath.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
                          vanillaPath.EndsWith(".xml.material", StringComparison.OrdinalIgnoreCase))
                 {
-                    var file = FindVanilla(vanillaPath);
-                    var data = file == null ? null : TryReadConsumerFile(file, ConsumerScanFileLimit);
-                    if (data != null)
+                    string[]? tokens = null;
+                    if (vanillaTokenCache == null || !vanillaTokenCache.TryGetValue(vanillaPath, out tokens))
                     {
-                        foreach (var token in ExtractAssetTokens(data, LooksWide(data)).Distinct(StringComparer.OrdinalIgnoreCase))
-                        {
-                            if (token.Equals(vanillaPath, StringComparison.OrdinalIgnoreCase) || source.ContainsFile(token))
-                                continue;
+                        var file = FindVanilla(vanillaPath);
+                        var data = file == null ? null : TryReadConsumerFile(file, ConsumerScanFileLimit);
+                        tokens = data == null
+                            ? []
+                            : ExtractAssetTokens(data, LooksWide(data)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                        if (vanillaTokenCache != null)
+                            vanillaTokenCache[vanillaPath] = tokens;
+                    }
 
-                            result.UnionWith(Reach(token));
-                        }
+                    foreach (var token in tokens)
+                    {
+                        if (token.Equals(vanillaPath, StringComparison.OrdinalIgnoreCase) || source.ContainsFile(token))
+                            continue;
+
+                        result.UnionWith(Reach(token));
                     }
                 }
 
@@ -596,7 +606,7 @@ namespace Editors.PackOptimizer.Core
             => index.Packs.Select(pack =>
             {
                 var frozen = pack.OverlapAssets;
-                var used = pack.SeedHits.Count;
+                var used = Math.Max(pack.SeedHits.Count, pack.BatchSeedHits);
                 var dbMentions = Math.Max(pack.DbMentions, pack.DbRootsAdded + pack.DbFallbackAdded);
                 var undecodable = Math.Max(pack.UndecodableTables, pack.DbFallbackTables.Count);
                 var vanilla = pack.VanillaReached.Count;

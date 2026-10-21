@@ -24,7 +24,47 @@ namespace Editors.PackOptimizer.Core
         public bool SharedTextureRepack { get; init; }
         public bool CompactTextures { get; init; }
         public bool DropUnreadAlpha { get; init; }
+        /// <summary>
+        /// Writes the output's .rigid_model_v2 files LZ4-compressed the way the mod manager's staging
+        /// compressor does (an LZ4 frame behind the 4-byte size, only for files of at least
+        /// 256 KiB that shrink to 75 % or less). Off by default: it changes the saved bytes, not the
+        /// content.
+        /// </summary>
+        public bool CompressRigidModels { get; init; }
     }
+
+    /// <summary>
+    /// The versions that decide whether a stored result may be reused. Callers key their caches on them.
+    /// </summary>
+    public static class PackOptimizerVersions
+    {
+        /// <summary>
+        /// Version of the optimizer's OUTPUT. Bump it, and only then, when the optimizer produces different
+        /// output for the same inputs and options (a stage, a threshold or a codec changed). A change that
+        /// leaves the output as it was (speed, logging, the probe) must not bump it, because the mod
+        /// manager reuses cached results for the same version. Enforced by the golden-output test
+        /// (OutputVersionGoldenTests): it pins a hash of the output of the optimizer's deterministic output
+        /// stages next to this number, so changing the output without bumping the version fails the test.
+        /// </summary>
+        public const int OutputVersion = 1;
+
+        /// <summary>
+        /// Version of the consumer scan and probe results (what makes another mod relevant). Bump it when a
+        /// pack's scan data or the relevance rules change; cached scans of older versions are ignored.
+        /// </summary>
+        public const int ScanVersion = 1;
+
+        public static string Describe() => $"output={OutputVersion} scan={ScanVersion}";
+    }
+
+    /// <summary>What an optimization saved, for display. All sizes are bytes.</summary>
+    /// <param name="TextureBytesSaved">DDS bytes in the source minus DDS bytes in the output.</param>
+    /// <param name="DrawCallsEliminated">Scenario-expected battle draw calls the selected merges remove.</param>
+    /// <param name="MergedModelsGenerated">Rigid models in the output that the source did not have.</param>
+    public sealed record PackOptimizerSummary(
+        long TextureBytesSaved,
+        double DrawCallsEliminated,
+        int MergedModelsGenerated);
 
     /// <summary>
     /// What to do with meshes that reference textures which cannot be resolved.
@@ -83,6 +123,13 @@ namespace Editors.PackOptimizer.Core
         int UndecodableTables,
         int VanillaOverridesReached);
 
+    /// <param name="Sources">Per requested source, in request order, its consumers (the load order without it).</param>
+    public sealed record PackOptimizerBatchProbe(
+        IReadOnlyList<IReadOnlyList<PackOptimizerConsumerPack>> Sources,
+        int PacksScanned,
+        int ScanCacheHits,
+        TimeSpan ScanElapsed);
+
     public sealed record PackOptimizerProgress(
         string Stage,
         string? Item,
@@ -108,7 +155,8 @@ namespace Editors.PackOptimizer.Core
         int ExternallyUsedFileCount = 0,
         int FrozenFileCount = 0,
         IReadOnlyList<string>? Warnings = null,
-        IReadOnlyList<PackOptimizerConsumerPack>? ConsumerPacks = null);
+        IReadOnlyList<PackOptimizerConsumerPack>? ConsumerPacks = null,
+        PackOptimizerSummary? Summary = null);
 
     /// <summary>
     /// Entry point of the library. Failures propagate as exceptions; the output
@@ -150,7 +198,8 @@ namespace Editors.PackOptimizer.Core
                     result.ExternallyUsedFileCount,
                     result.FrozenFileCount,
                     result.Warnings,
-                    result.ConsumerPacks);
+                    result.ConsumerPacks,
+                    result.Summary);
             }
             catch (OperationCanceledException)
             {
@@ -178,6 +227,26 @@ namespace Editors.PackOptimizer.Core
             CancellationToken cancellationToken = default)
             => PackTextureAtlasBatchService.ProbeConsumers(
                 sourceContainer, modConsumers, sourceLoadOrderIndex, vanillaContainers, dbSchema, cancellationToken);
+
+        /// <summary>
+        /// The probe for several sources against one load order (every enabled mod, sources included).
+        /// Each pack is scanned once and the scan is kept in <paramref name="cacheDirectory"/> (null: not
+        /// kept); <paramref name="schemaId"/> identifies the DB schema in use so a changed schema ignores
+        /// older scans. For source <c>i</c> the consumers are the load order without it.
+        /// </summary>
+        public static PackOptimizerBatchProbe ProbeConsumersBatch(
+            IReadOnlyList<IPackFileContainer> loadOrder,
+            IReadOnlyList<int> sourceIndexes,
+            IReadOnlyList<IPackFileContainer> vanillaContainers,
+            PackOptimizerDbSchema? dbSchema = null,
+            string? cacheDirectory = null,
+            string schemaId = "",
+            CancellationToken cancellationToken = default)
+        {
+            var result = PackTextureAtlasBatchService.ProbeBatch(
+                loadOrder, sourceIndexes, vanillaContainers, dbSchema, cacheDirectory, schemaId, cancellationToken);
+            return new PackOptimizerBatchProbe(result.Sources, result.PacksScanned, result.ScanCacheHits, result.ScanElapsed);
+        }
 
         public static string BuildOutputPath(string sourcePath)
             => PackTextureAtlasBatchService.BuildOutputPath(sourcePath);

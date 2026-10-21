@@ -26,6 +26,11 @@ namespace WH3AssetHost.Optimize;
 /// result (see <see cref="OptimizeProbeLine"/>); nothing is optimized, <c>outputPackPath</c> and
 /// <c>reportPath</c> are not needed, and the vanilla file index is used to find vanilla files a mod
 /// replaces that the source reaches.</param>
+/// <param name="ProbeSources">With <c>probeOnly</c>: probe several sources in one run. Each entry is the
+/// path of a pack that also appears in <paramref name="ConsumerPackPaths"/>, which then lists the whole
+/// load order (sources included); for a source the consumers are that list without it, and the entries
+/// before it load before it. Every pack is scanned once (the scan is kept in
+/// <c>cacheDirectory</c>/probe-scan). <c>sourcePackPath</c> is still required: use the first source.</param>
 /// <param name="DbSchemaPath">Optional path of an RPFM schema (the mod manager's bundled
 /// <c>schema_wh3.json.zst</c>, or plain JSON). The unit category resolver decodes the game's DB
 /// tables with its table layouts first and falls back to the layouts embedded in the host, so a game
@@ -43,7 +48,8 @@ public sealed record OptimizeRequest(
     IReadOnlyList<string>? ConsumerPackPaths,
     int? SourceLoadOrderIndex = null,
     string? DbSchemaPath = null,
-    bool ProbeOnly = false)
+    bool ProbeOnly = false,
+    IReadOnlyList<string>? ProbeSources = null)
 {
     public const int CurrentSchemaVersion = 1;
 }
@@ -66,7 +72,8 @@ public sealed record OptimizeOptionsRequest(
     bool? DownscaleTextures = null,
     bool? SharedTextureRepack = null,
     bool? CompactTextures = null,
-    bool? DropUnreadAlpha = null)
+    bool? DropUnreadAlpha = null,
+    bool? CompressRigidModels = null)
 {
     public PackOptimizerOptions ToOptimizerOptions()
     {
@@ -86,6 +93,7 @@ public sealed record OptimizeOptionsRequest(
             SharedTextureRepack = SharedTextureRepack ?? defaults.SharedTextureRepack,
             CompactTextures = CompactTextures ?? defaults.CompactTextures,
             DropUnreadAlpha = DropUnreadAlpha ?? defaults.DropUnreadAlpha,
+            CompressRigidModels = CompressRigidModels ?? defaults.CompressRigidModels,
         };
     }
 }
@@ -164,7 +172,17 @@ public sealed record OptimizeResultLine(
     int ExternallyUsedFileCount = 0,
     int FrozenFileCount = 0,
     string? HostVersion = null,
-    OptimizeConsumerPackLine[]? ConsumerPacks = null);
+    OptimizeConsumerPackLine[]? ConsumerPacks = null,
+    int OutputVersion = 0,
+    OptimizeSummaryLine? Summary = null);
+
+/// <summary>What a run saved (see <see cref="PackOptimizerSummary"/>); sizes are bytes.</summary>
+public sealed record OptimizeSummaryLine(
+    long SourceBytes,
+    long OutputBytes,
+    long TextureBytesSaved,
+    double DrawCallsEliminated,
+    int MergedModelsGenerated);
 
 /// <summary>A consumer that can matter to a result and why; any non-zero reason makes it relevant.</summary>
 public sealed record OptimizeConsumerPackLine(
@@ -184,7 +202,16 @@ public sealed record OptimizeProbeLine(
     string Type,
     string HostVersion,
     OptimizeConsumerPackLine[] Consumers,
-    double ElapsedSeconds);
+    double ElapsedSeconds,
+    int OutputVersion = 0,
+    int ScanVersion = 0,
+    OptimizeSourceProbeLine[]? Sources = null,
+    int PacksScanned = 0,
+    int ScanCacheHits = 0,
+    double ScanSeconds = 0);
+
+/// <summary>One source of a batch probe and its consumers.</summary>
+public sealed record OptimizeSourceProbeLine(string SourcePackPath, OptimizeConsumerPackLine[] Consumers);
 
 /// <summary>The final stdout line of a run that failed.</summary>
 public sealed record OptimizeErrorLine(string Type, string Message, string ExceptionType);
@@ -276,6 +303,22 @@ public static class OptimizeRequestValidator
         {
             if (string.IsNullOrWhiteSpace(consumer) || !File.Exists(consumer))
                 return $"consumerPackPaths entry '{consumer}' does not exist.";
+        }
+
+        if (request.ProbeSources is { Count: > 0 })
+        {
+            if (!request.ProbeOnly)
+                return "probeSources requires probeOnly.";
+            var loadOrder = consumers.Select(Path.GetFullPath).ToList();
+            if (loadOrder.Distinct(StringComparer.OrdinalIgnoreCase).Count() != loadOrder.Count)
+                return "consumerPackPaths lists a pack more than once.";
+            foreach (var probeSource in request.ProbeSources)
+            {
+                if (!loadOrder.Contains(Path.GetFullPath(probeSource), StringComparer.OrdinalIgnoreCase))
+                    return $"probeSources entry '{probeSource}' is not in consumerPackPaths (the whole load order).";
+            }
+
+            return null;
         }
 
         if (consumers.Count == 0)

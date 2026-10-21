@@ -107,6 +107,20 @@ namespace Shared.Core.PackFiles.Utility
             ".parsed",
         ];
 
+        /// <summary>
+        /// Files (by their pack path) to compress with Lz4 whatever their type says. Set only around one
+        /// save by a caller that decided per file, e.g. the optimizer's opt-in rigid_model_v2 compression;
+        /// null otherwise. The writer reads it while it builds the file table.
+        /// </summary>
+        public static IReadOnlySet<string>? ForcedLz4Files { get; set; }
+
+        /// <summary>
+        /// The Lz4 level used for <see cref="ForcedLz4Files"/> only (every other Lz4 file keeps the fast
+        /// default). A higher level shrinks the rigid models a little more, so more of them clear the
+        /// mod manager's 75 % rule, at the price of time.
+        /// </summary>
+        public static K4os.Compression.LZ4.LZ4Level ForcedLz4Level { get; set; } = K4os.Compression.LZ4.LZ4Level.L00_FAST;
+
         public static byte[] Decompress(byte[] data, int outputSize, CompressionFormat compressionFormat)
         {
             using var stream = new MemoryStream(data, false);
@@ -177,12 +191,12 @@ namespace Shared.Core.PackFiles.Utility
             }
         }
 
-        public static byte[] Compress(byte[] data, CompressionFormat compressionFormat)
+        public static byte[] Compress(byte[] data, CompressionFormat compressionFormat, string? fileName = null)
         {
             if(compressionFormat == CompressionFormat.Zstd)
                 return CompressZstd(data);
             else if(compressionFormat == CompressionFormat.Lz4)
-                return CompressLz4(data);
+                return CompressLz4(data, fileName != null && ForcedLz4Files?.Contains(fileName) == true ? ForcedLz4Level : K4os.Compression.LZ4.LZ4Level.L00_FAST);
             else if (compressionFormat == CompressionFormat.Lzma1)
                 return CompressLzma1(data);
             else
@@ -206,12 +220,13 @@ namespace Shared.Core.PackFiles.Utility
         }
 
 
-        private static byte[] CompressLz4(byte[] data)
+        /// <summary>Lz4 with the 4-byte size in front, as pack files store it, at the given level.</summary>
+        public static byte[] CompressLz4(byte[] data, K4os.Compression.LZ4.LZ4Level level)
         {
             using var stream = new MemoryStream();
             stream.Write(BitConverter.GetBytes((uint)data.Length));
 
-            using (var encoder = LZ4Stream.Encode(stream, leaveOpen: true))
+            using (var encoder = LZ4Stream.Encode(stream, level, leaveOpen: true))
                 encoder.Write(data, 0, data.Length);
 
             return stream.ToArray();
@@ -275,6 +290,10 @@ namespace Shared.Core.PackFiles.Utility
             var firstFilePathPart = fileName.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).First();
 
             var compressionFormats = gameInformation.CompressionFormats;
+
+            var forced = ForcedLz4Files;
+            if (forced != null && forced.Contains(fileName) && compressionFormats.Contains(CompressionFormat.Lz4))
+                return CompressionFormat.Lz4;
 
             // Check if the game supports any compression at all
             if (compressionFormats.All(compressionFormat => compressionFormat == CompressionFormat.None))

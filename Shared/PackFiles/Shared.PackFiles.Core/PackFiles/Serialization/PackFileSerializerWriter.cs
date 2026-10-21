@@ -313,7 +313,7 @@ namespace Shared.Core.PackFiles.Serialization
                 uncompressedSize = (uint)uncompressedData.Length;
 
                 // Compress the data into the right format
-                var compressedData = FileCompression.Compress(uncompressedData, fileMetaData.CompressionInfo.IntendedCompressionFormat);
+                var compressedData = FileCompression.Compress(uncompressedData, fileMetaData.CompressionInfo.IntendedCompressionFormat, fileMetaData.FullFileName);
                 data = compressedData;
 
                 // Validate new compression
