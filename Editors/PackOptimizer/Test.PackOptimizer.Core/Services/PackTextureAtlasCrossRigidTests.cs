@@ -13938,11 +13938,15 @@ namespace Test.PackOptimizer.Core
         // (speed, logging, the probe) leaves the hash alone and needs no bump.
         //
         // The stages hashed: texture downscaling and lossless compaction on a fixed set of synthetic
-        // textures, geometry optimization and the mesh merge on fixed synthetic meshes. Whole-pack output is
+        // textures, geometry optimization and the mesh merge on fixed synthetic meshes, and the
+        // battle-presence model's army pools and weights (under the default army scope) on a fixed
+        // synthetic roster, since every value-gated stage (cross-rigid merges, atlases) decides on it. Whole-pack output is
         // checked by the fingerprint bench (Tools/PackOptimizerBench), which this test does not replace.
         private static readonly Dictionary<int, string> OutputGoldenHashes = new()
         {
             [1] = "16D0E04C047A3181D23F53880A296765BD51EF01C67FCD1CC7C5D0ECBE7A77F5",
+            // 2: army pools per subculture, player scopes weighted by the pack's units.
+            [2] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
@@ -14031,6 +14035,22 @@ namespace Test.PackOptimizer.Core
             AddModel("geometry", optimized);
 
             AddModel("merge", MergeOwned(CreateWeightedModel(1f), CreateWeightedModel(2f)));
+
+            // Battle-presence model: two subcultures of one culture, a second culture, a unit without a
+            // subculture; pack-affected and unaffected units. Built with the optimizer's default army scope.
+            var defaultArmyScope = new Editors.PackOptimizer.Core.PackOptimizerOptions().ArmyScope;
+            var (armyState, armyResolution) = PackTextureAtlasValueGateTests.CreateArmyScopeState(
+                PackTextureAtlasValueGateTests.ScopeTestCultures,
+                new PackTextureAtlasValueGateTests.ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new PackTextureAtlasValueGateTests.ScopedRosterUnit("InfantryMissile", ["sc_a1", "sc_b"], ["culture_a", "culture_b"]),
+                new PackTextureAtlasValueGateTests.ScopedRosterUnit("InfantryMissile", ["sc_a2"], ["culture_a"], PackAffected: false),
+                new PackTextureAtlasValueGateTests.ScopedRosterUnit("InfantryMissile", ["sc_b"], ["culture_b"], PackAffected: false),
+                new PackTextureAtlasValueGateTests.ScopedRosterUnit("InfantryMissile", [], ["culture_c"], PackAffected: false));
+            var armyModel = PackTextureAtlasValueGateTests.BuildArmyScopeModel(
+                armyState,
+                armyResolution,
+                defaultArmyScope.ToString());
+            Add("army", Encoding.UTF8.GetBytes(PackTextureAtlasValueGateTests.DescribeArmyModel(armyModel)));
 
             return Convert.ToHexString(hash.GetHashAndReset());
         }

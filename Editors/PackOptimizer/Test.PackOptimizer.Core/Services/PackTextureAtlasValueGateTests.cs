@@ -8192,13 +8192,13 @@ namespace Test.PackOptimizer.Core
 
         // ---- Army scope (subculture / culture) ----
 
-        private sealed record ScopedRosterUnit(
+        internal sealed record ScopedRosterUnit(
             string Category,
             string[] Subcultures,
             string[] Cultures,
             bool PackAffected = true);
 
-        private static (object State, object Resolution) CreateArmyScopeState(
+        internal static (object State, object Resolution) CreateArmyScopeState(
             IReadOnlyDictionary<string, string> cultureBySubculture,
             params ScopedRosterUnit[] units)
         {
@@ -8231,7 +8231,7 @@ namespace Test.PackOptimizer.Core
             return (state, resolution);
         }
 
-        private static object BuildArmyScopeModel(
+        internal static object BuildArmyScopeModel(
             object state,
             object resolution,
             string armyScope,
@@ -8261,7 +8261,34 @@ namespace Test.PackOptimizer.Core
             return byCategory.Values.Cast<ISet<string>>().Sum(units => units.Count);
         }
 
-        private static readonly Dictionary<string, string> ScopeTestCultures = new()
+        // A canonical text form of a battle-presence model's pools and weights, for the golden-output
+        // hash (PackTextureAtlasCrossRigidTests): any change to how armies are pooled or weighted changes it.
+        internal static string DescribeArmyModel(object model)
+        {
+            var text = new StringBuilder();
+            static string Number(double value) => value.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+            foreach (var property in new[] { "PlayerCultureWeights", "OpponentCultureWeights" })
+            {
+                foreach (var (scope, weight) in GetScopeWeights(model, property).OrderBy(entry => entry.Key, StringComparer.Ordinal))
+                    text.Append(property).Append(' ').Append(scope).Append(' ').Append(Number(weight)).Append('\n');
+            }
+
+            var unitsByScope = GetRecordProperty<IDictionary>(model, "UnitsByCultureAndCategory");
+            foreach (var scope in unitsByScope.Keys.Cast<string>().OrderBy(value => value, StringComparer.Ordinal))
+            {
+                var byCategory = (IDictionary)unitsByScope[scope]!;
+                foreach (var category in byCategory.Keys.Cast<object>().OrderBy(value => value.ToString(), StringComparer.Ordinal))
+                {
+                    var units = ((ISet<string>)byCategory[category]!).OrderBy(value => value, StringComparer.Ordinal);
+                    text.Append("pool ").Append(scope).Append(' ').Append(category).Append(' ')
+                        .Append(string.Join(",", units)).Append('\n');
+                }
+            }
+
+            return text.ToString();
+        }
+
+        internal static readonly Dictionary<string, string> ScopeTestCultures = new()
         {
             ["sc_a1"] = "culture_a",
             ["sc_a2"] = "culture_a",
