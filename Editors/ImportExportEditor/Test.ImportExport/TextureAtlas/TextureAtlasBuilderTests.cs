@@ -67,6 +67,116 @@ namespace Test.ImportExport.TextureAtlas
         }
 
         [Test]
+        public void CreatePlan_FitsSmallerPageThanShelfPackerWhenMaxRectsCan()
+        {
+            var sizes = new (int Width, int Height)[] { (40, 40), (24, 24), (24, 24), (40, 24) };
+            var sources = sizes
+                .Select((size, id) => new TextureAtlasLayoutSource(id, size.Width, size.Height, 0, 0, 1, 1))
+                .ToArray();
+
+            // The legacy shelf packer (height desc, width desc) cannot fit these into 64x64.
+            var shelfOrder = sizes.OrderByDescending(x => x.Height).ThenByDescending(x => x.Width).ToArray();
+            Assert.That(TextureAtlasRectPacker.TryShelfPack(shelfOrder, 64, 64, out _), Is.False);
+
+            var plan = TextureAtlasBuilder.CreatePlan(sources, padding: 0);
+
+            Assert.That((plan.Width, plan.Height), Is.EqualTo((64, 64)));
+            AssertValidPlan(plan, sources, 0);
+        }
+
+        [Test]
+        public void CreatePlan_RealBenchPageFitsHalfSizeAtlas()
+        {
+            // Padded rects from a real 2048x4096 shelf-packed bench page (atlas_005, padding 8).
+            var crops = new (int Width, int Height)[]
+            {
+                (144, 83), (1011, 1019), (1001, 953), (1001, 957), (705, 607), (440, 223), (337, 423)
+            };
+            var sources = crops
+                .Select((size, id) => new TextureAtlasLayoutSource(id, size.Width, size.Height, 0, 0, 1, 1))
+                .ToArray();
+
+            var plan = TextureAtlasBuilder.CreatePlan(sources, padding: 8);
+
+            Assert.That((plan.Width, plan.Height), Is.EqualTo((2048, 2048)));
+            AssertValidPlan(plan, sources, 8);
+        }
+
+        [Test]
+        public void CreatePlan_RandomInputs_NoOverlapNeverWorseThanShelfAndDeterministic()
+        {
+            var random = new Random(12345);
+            for (var iteration = 0; iteration < 80; iteration++)
+            {
+                var padding = iteration % 2 == 0 ? 8 : 0;
+                var count = random.Next(1, 45);
+                var sources = new TextureAtlasLayoutSource[count];
+                for (var i = 0; i < count; i++)
+                {
+                    var width = random.Next(4, 300);
+                    var height = random.Next(4, 300);
+                    sources[i] = new TextureAtlasLayoutSource(i * 3 + 1, width, height, 0, 0, 1, 1);
+                }
+
+                var plan = TextureAtlasBuilder.CreatePlan(sources, padding);
+                var again = TextureAtlasBuilder.CreatePlan(sources, padding);
+
+                AssertValidPlan(plan, sources, padding);
+                Assert.That((again.Width, again.Height), Is.EqualTo((plan.Width, plan.Height)));
+                Assert.That(again.Placements, Is.EqualTo(plan.Placements));
+
+                var padded = sources
+                    .Select(x => (Width: x.SourceWidth + padding * 2, Height: x.SourceHeight + padding * 2))
+                    .OrderByDescending(x => x.Height)
+                    .ThenByDescending(x => x.Width)
+                    .ToArray();
+                long shelfArea = long.MaxValue;
+                for (var w = 1; w <= 8192; w *= 2)
+                {
+                    for (var h = 1; h <= 8192; h *= 2)
+                    {
+                        if ((long)w * h < shelfArea && TextureAtlasRectPacker.TryShelfPack(padded, w, h, out _))
+                            shelfArea = (long)w * h;
+                    }
+                }
+
+                Assert.That((long)plan.Width * plan.Height, Is.LessThanOrEqualTo(shelfArea), $"iteration {iteration}");
+            }
+        }
+
+        private static void AssertValidPlan(
+            TextureAtlasPlan plan,
+            IReadOnlyList<TextureAtlasLayoutSource> sources,
+            int padding)
+        {
+            Assert.That(plan.Placements.Count, Is.EqualTo(sources.Count));
+            Assert.That(plan.Placements.Select(x => x.Id), Is.EquivalentTo(sources.Select(x => x.Id)));
+
+            var rects = plan.Placements
+                .Select(p => (Left: p.DestinationX - padding, Top: p.DestinationY - padding,
+                    Right: p.DestinationX - padding + p.CropWidth + padding * 2,
+                    Bottom: p.DestinationY - padding + p.CropHeight + padding * 2))
+                .ToArray();
+            foreach (var r in rects)
+            {
+                Assert.That(r.Left, Is.GreaterThanOrEqualTo(0));
+                Assert.That(r.Top, Is.GreaterThanOrEqualTo(0));
+                Assert.That(r.Right, Is.LessThanOrEqualTo(plan.Width));
+                Assert.That(r.Bottom, Is.LessThanOrEqualTo(plan.Height));
+            }
+
+            for (var i = 0; i < rects.Length; i++)
+            {
+                for (var j = i + 1; j < rects.Length; j++)
+                {
+                    var disjoint = rects[i].Right <= rects[j].Left || rects[j].Right <= rects[i].Left ||
+                        rects[i].Bottom <= rects[j].Top || rects[j].Bottom <= rects[i].Top;
+                    Assert.That(disjoint, Is.True, $"placements {i} and {j} overlap");
+                }
+            }
+        }
+
+        [Test]
         public void CreatePlan_PrefersRectangularAtlasOverNextSquareSize()
         {
             var plan = TextureAtlasBuilder.CreatePlan(

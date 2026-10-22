@@ -1850,32 +1850,22 @@ namespace Editors.ImportExport.TextureAtlas
             int padding,
             out IReadOnlyList<TextureAtlasPlacement> placements)
         {
-            var output = new List<TextureAtlasPlacement>(pending.Count);
-            var x = 0;
-            var y = 0;
-            var shelfHeight = 0;
+            var sizes = new (int Width, int Height)[pending.Count];
+            for (var i = 0; i < sizes.Length; i++)
+                sizes[i] = (pending[i].PaddedWidth, pending[i].PaddedHeight);
 
-            foreach (var item in pending)
+            if (!TextureAtlasRectPacker.TryPack(sizes, atlasWidth, atlasHeight, out var positions))
             {
-                if (item.PaddedWidth > atlasWidth || item.PaddedHeight > atlasHeight)
-                {
-                    placements = [];
-                    return false;
-                }
+                placements = [];
+                return false;
+            }
 
-                if (x + item.PaddedWidth > atlasWidth)
-                {
-                    y += shelfHeight;
-                    x = 0;
-                    shelfHeight = 0;
-                }
-
-                if (y + item.PaddedHeight > atlasHeight)
-                {
-                    placements = [];
-                    return false;
-                }
-
+            // Placements stay in `pending` order (height desc, width desc) regardless of which
+            // packing strategy won; only the coordinates differ.
+            var output = new List<TextureAtlasPlacement>(pending.Count);
+            for (var i = 0; i < pending.Count; i++)
+            {
+                var item = pending[i];
                 output.Add(new TextureAtlasPlacement(
                     item.Id,
                     item.SourceWidth,
@@ -1884,12 +1874,9 @@ namespace Editors.ImportExport.TextureAtlas
                     item.CropY,
                     item.CropWidth,
                     item.CropHeight,
-                    x + padding,
-                    y + padding,
+                    positions[i].X + padding,
+                    positions[i].Y + padding,
                     padding));
-
-                x += item.PaddedWidth;
-                shelfHeight = Math.Max(shelfHeight, item.PaddedHeight);
             }
 
             placements = output;
