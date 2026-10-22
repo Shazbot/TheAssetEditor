@@ -973,6 +973,12 @@ namespace Test.PackOptimizer.Core
         private static object CreateAtlasValueGateSourceTexture(
             long bcnBytes,
             params object[] references)
+            => CreateAtlasValueGateSourceTexture(bcnBytes, references, []);
+
+        private static object CreateAtlasValueGateSourceTexture(
+            long bcnBytes,
+            object[] references,
+            object[] packReferenceValues)
         {
             var assembly = Assembly.Load("Editors.PackOptimizer.Core");
             var serviceType = assembly.GetType(
@@ -1001,6 +1007,12 @@ namespace Test.PackOptimizer.Core
             var packReferences = Activator.CreateInstance(referenceSetType)
                 ?? throw new InvalidOperationException(
                     "Could not create pack-reference set.");
+            foreach (var reference in packReferenceValues)
+            {
+                packReferences.GetType()
+                    .GetMethod("Add")
+                    ?.Invoke(packReferences, [reference]);
+            }
             var constructor = sourceTextureType.GetConstructors(
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                 .Single(candidate => candidate.GetParameters().Length == 6);
@@ -7759,17 +7771,25 @@ namespace Test.PackOptimizer.Core
             object state,
             string texturePath,
             params object[] references)
+            => SetSiblingSourceIndex(state, texturePath, 1024, references, []);
+
+        private static void SetSiblingSourceIndex(
+            object state,
+            string texturePath,
+            long bcnBytes,
+            object[] references,
+            object[] packReferences)
         {
             var textureType = GetServiceNestedType("AtlasValueGateSourceTexture");
             var index = (IDictionary)Activator.CreateInstance(
                 typeof(Dictionary<,>).MakeGenericType(typeof(string), textureType),
                 StringComparer.OrdinalIgnoreCase)!;
             index[NormalizeTestPath(texturePath)] =
-                CreateAtlasValueGateSourceTexture(1024, references);
+                CreateAtlasValueGateSourceTexture(bcnBytes, references, packReferences);
             SetStateProperty(state, "AtlasValueGateSourceTextureIndex", index);
         }
 
-        private static object CreateSiblingTestState()
+        private static object CreateSiblingTestState(string scope = "Pack")
         {
             var source = CreateTraversalContainer(
                 isCaPackFile: false,
@@ -7777,6 +7797,10 @@ namespace Test.PackOptimizer.Core
             var state = CreateTraversalBatchState(source.Object, []);
             // The sibling rule must not depend on LOD-aware planning.
             SetStateProperty(state, "LodAwareAtlasPlanningEnabled", false);
+            SetStateProperty(
+                state,
+                "SiblingScope",
+                Enum.Parse(typeof(Editors.PackOptimizer.Core.PackOptimizerSiblingScope), scope));
             return state;
         }
 
@@ -7868,7 +7892,7 @@ namespace Test.PackOptimizer.Core
         public void SourceTextureSiblings_DifferentConsumerAssets_AreNotSiblings()
         {
             const string texture = "variantmeshes\\tex\\shared_vanilla_base_colour.dds";
-            var state = CreateSiblingTestState();
+            var state = CreateSiblingTestState("Model");
             var first = CreateSiblingTestCandidate(
                 "models/a.rigid_model_v2", 0, 0, texture, "variantmeshes\\a.wsmodel");
             var second = CreateSiblingTestCandidate(
@@ -7891,6 +7915,168 @@ namespace Test.PackOptimizer.Core
                 Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingGroupsMoved"), Is.Zero);
                 Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingCandidatesRejected"), Is.Zero);
                 Assert.That(GetSkipReasons(state, GetCandidateKey(first)), Is.Empty);
+            });
+        }
+
+        private const long SiblingBigTexture = 1024 * 1024;
+
+        [TestCase("Model", 2)]
+        [TestCase("Pack", 1)]
+        public void SourceTextureSiblings_TwoSourcePackModels_GroupOnlyInPackScope(
+            string scope,
+            int expectedGroups)
+        {
+            const string texture = "variantmeshes\\tex\\shared_mod_base_colour.dds";
+            const string wsA = "variantmeshes\\a.wsmodel";
+            const string wsB = "variantmeshes\\b.wsmodel";
+            var state = CreateSiblingTestState(scope);
+            var first = CreateSiblingTestCandidate("models/a.rigid_model_v2", 0, 0, texture, wsA);
+            var second = CreateSiblingTestCandidate("models/b.rigid_model_v2", 0, 0, texture, wsB);
+            var refs = new[]
+            {
+                CreateSiblingSourceReference(GetCandidateKey(first), wsA),
+                CreateSiblingSourceReference(GetCandidateKey(second), wsB),
+            };
+            SetSiblingSourceIndex(state, texture, SiblingBigTexture, refs, refs);
+
+            var closed = CloseAtlasPlanningTestBatches(state, (first, null), (second, null));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingGroupCount"), Is.EqualTo(expectedGroups));
+                Assert.That(
+                    GetStateProperty<int>(state, "SourceTextureSiblingMultiModelGroupCount"),
+                    Is.EqualTo(expectedGroups == 1 ? 1 : 0));
+                Assert.That(closed.Sum(batch => batch.Count), Is.EqualTo(2));
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingCandidatesRejected"), Is.Zero);
+            });
+        }
+
+        [Test]
+        public void SourceTextureSiblings_VanillaConsumer_DoesNotJoinOrOpenTheGroup()
+        {
+            const string texture = "variantmeshes\\tex\\shared_mod_base_colour.dds";
+            const string wsA = "variantmeshes\\a.wsmodel";
+            const string wsB = "variantmeshes\\b.wsmodel";
+            const string vanilla = "variantmeshes\\ca_vanilla.wsmodel";
+            var state = CreateSiblingTestState();
+            var first = CreateSiblingTestCandidate("models/a.rigid_model_v2", 0, 0, texture, wsA);
+            var second = CreateSiblingTestCandidate("models/b.rigid_model_v2", 0, 0, texture, wsB);
+            var vanillaMesh = GetServiceNestedType("MeshKey")
+                .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Single()
+                .Invoke(["variantmeshes/ca_vanilla.rigid_model_v2", 0, 0]);
+            var refA = CreateSiblingSourceReference(GetCandidateKey(first), wsA);
+            var refB = CreateSiblingSourceReference(GetCandidateKey(second), wsB);
+            var refVanilla = CreateSiblingSourceReference(vanillaMesh, vanilla);
+            // The vanilla consumer is a texture reference but not a source-pack reference.
+            SetSiblingSourceIndex(
+                state,
+                texture,
+                SiblingBigTexture,
+                [refA, refB, refVanilla],
+                [refA, refB]);
+
+            var closed = CloseAtlasPlanningTestBatches(state, (first, null), (second, null));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(closed.Sum(batch => batch.Count), Is.EqualTo(2));
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingOpenGroupCount"), Is.Zero);
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingGroupCount"), Is.EqualTo(1));
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingMemberCount"), Is.EqualTo(2));
+            });
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SourceTextureSiblings_NonCandidatePartInAnotherModel_RejectsEveryMemberWithCrossModelReason(
+            bool noMesh)
+        {
+            const string texture = "variantmeshes\\tex\\shared_mod_base_colour.dds";
+            const string wsA = "variantmeshes\\a.wsmodel";
+            const string wsB = "variantmeshes\\b.wsmodel";
+            const string wsC = "variantmeshes\\c.wsmodel";
+            var state = CreateSiblingTestState();
+            var first = CreateSiblingTestCandidate("models/a.rigid_model_v2", 0, 0, texture, wsA);
+            var second = CreateSiblingTestCandidate("models/b.rigid_model_v2", 0, 0, texture, wsB);
+            var blockerMesh = noMesh
+                ? null
+                : GetServiceNestedType("MeshKey")
+                    .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .Single()
+                    .Invoke(["models/c.rigid_model_v2", 0, 0]);
+            var refs = new[]
+            {
+                CreateSiblingSourceReference(GetCandidateKey(first), wsA),
+                CreateSiblingSourceReference(GetCandidateKey(second), wsB),
+                CreateSiblingSourceReference(blockerMesh, wsC),
+            };
+            SetSiblingSourceIndex(state, texture, SiblingBigTexture, refs, refs);
+
+            var closed = CloseAtlasPlanningTestBatches(state, (first, null), (second, null));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(closed, Is.Empty);
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingOpenGroupCount"), Is.EqualTo(1));
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingCandidatesRejected"), Is.EqualTo(2));
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingCrossModelCandidatesRejected"), Is.EqualTo(2));
+                foreach (var candidate in new[] { first, second })
+                {
+                    Assert.That(
+                        GetSkipReasons(state, GetCandidateKey(candidate)),
+                        Has.One.Contain("in another model").And.Contain("cannot be atlased"));
+                }
+            });
+        }
+
+        [TestCase(1024, false)]
+        [TestCase(SiblingBigTexture, true)]
+        public void SourceTextureSiblings_TinyAndUniformTextures_DoNotLinkModels(
+            long bcnBytes,
+            bool uniform)
+        {
+            const string texture = "variantmeshes\\tex\\shared_mod_base_colour.dds";
+            const string wsA = "variantmeshes\\a.wsmodel";
+            const string wsB = "variantmeshes\\b.wsmodel";
+            var state = CreateSiblingTestState();
+            var first = CreateSiblingTestCandidate("models/a.rigid_model_v2", 0, 0, texture, wsA);
+            var second = CreateSiblingTestCandidate("models/b.rigid_model_v2", 0, 0, texture, wsB);
+            if (uniform)
+            {
+                foreach (var candidate in new[] { first, second })
+                {
+                    var type = candidate.GetType();
+                    ((HashSet<string>)type.GetProperty("ResolvedChannels")!.GetValue(candidate)!)
+                        .Remove(SiblingBaseColour);
+                    var constants = (IDictionary)type.GetProperty("ConstantChannels")!.GetValue(candidate)!;
+                    constants[SiblingBaseColour] = Activator.CreateInstance(
+                        constants.GetType().GetGenericArguments()[1])!;
+                }
+            }
+
+            var refs = new[]
+            {
+                CreateSiblingSourceReference(GetCandidateKey(first), wsA),
+                CreateSiblingSourceReference(GetCandidateKey(second), wsB),
+            };
+            SetSiblingSourceIndex(state, texture, bcnBytes, refs, refs);
+
+            var closed = CloseAtlasPlanningTestBatches(state, (first, null), (second, null));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(closed.Sum(batch => batch.Count), Is.EqualTo(2));
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingGroupCount"), Is.EqualTo(2));
+                Assert.That(GetStateProperty<int>(state, "SourceTextureSiblingMultiModelGroupCount"), Is.Zero);
+                Assert.That(
+                    GetStateProperty<int>(
+                        state,
+                        uniform
+                            ? "SourceTextureSiblingUniformTexturesSkipped"
+                            : "SourceTextureSiblingTinyTexturesSkipped"),
+                    Is.EqualTo(1));
             });
         }
 

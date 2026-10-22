@@ -17,7 +17,7 @@ using Shared.Core.Settings;
 // Headless runner for PackOptimizer.Run, for measuring the batch tool's runtime
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
-//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--army-scope culture|subculture]
+//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--army-scope culture|subculture] [--sibling-scope model|pack]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
 // --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
@@ -148,6 +148,14 @@ internal static class Program
             return 2;
         }
 
+        var siblingScope = PackOptimizerSiblingScope.Model;
+        if (options.TryGetValue("sibling-scope", out var siblingScopeText) &&
+            !Enum.TryParse(siblingScopeText, ignoreCase: true, out siblingScope))
+        {
+            Console.Error.WriteLine($"Unknown --sibling-scope '{siblingScopeText}' (model|pack).");
+            return 2;
+        }
+
         var request = new PackOptimizerRequest(
             source,
             source_,
@@ -164,6 +172,7 @@ internal static class Program
                 ScoreAllGameUnits = false,
                 LodAwareAtlasPlanning = true,
                 ArmyScope = armyScope,
+                SiblingScope = siblingScope,
                 CrossRigidOnly = false,
                 CrossRigidMerges = true,
                 BuildAtlases = buildAtlases,

@@ -12,6 +12,16 @@ namespace Editors.PackOptimizer.Core
         Culture = 1,
     }
 
+    /// <summary>How far the atlas source-texture sibling rule links parts that share a source texture.</summary>
+    public enum PackOptimizerSiblingScope
+    {
+        /// <summary>Only parts the same consumer asset (one WSModel or rigid) references the texture from (default).</summary>
+        Model = 0,
+        /// <summary>Parts of every consumer asset the source pack owns: removes textures another model keeps
+        /// referenced, at the cost of far fewer atlased parts.</summary>
+        Pack = 1,
+    }
+
     /// <summary>
     /// What the optimizer does to a pack. Every flag defaults to the value the
     /// batch service has always used when a caller does not say otherwise.
@@ -31,6 +41,12 @@ namespace Editors.PackOptimizer.Core
         /// pools every subculture of a culture.
         /// </summary>
         public PackOptimizerArmyScope ArmyScope { get; init; } = PackOptimizerArmyScope.Subculture;
+        /// <summary>
+        /// Whether atlas candidates that share a source texture are grouped per consumer asset
+        /// (<see cref="PackOptimizerSiblingScope.Model"/>, default) or across every source-pack consumer
+        /// of the texture (<see cref="PackOptimizerSiblingScope.Pack"/>).
+        /// </summary>
+        public PackOptimizerSiblingScope SiblingScope { get; init; } = PackOptimizerSiblingScope.Model;
         public bool CrossRigidOnly { get; init; }
         public bool CrossRigidMerges { get; init; }
         public bool BuildAtlases { get; init; } = true;

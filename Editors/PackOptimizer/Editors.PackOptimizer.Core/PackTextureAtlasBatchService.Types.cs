@@ -896,6 +896,13 @@ namespace Editors.PackOptimizer.Core
             public int SourceTextureSiblingClosedGroupCount { get; set; }
             public int SourceTextureSiblingOpenGroupCount { get; set; }
             public int SourceTextureSiblingMemberCount { get; set; }
+            public PackOptimizerSiblingScope SiblingScope { get; set; } = PackOptimizerSiblingScope.Model;
+            public int SourceTextureSiblingMultiModelGroupCount { get; set; }
+            public int SourceTextureSiblingCrossModelCandidatesRejected { get; set; }
+            public int SourceTextureSiblingPlaceholderTexturesSkipped { get; set; }
+            public int SourceTextureSiblingUniformTexturesSkipped { get; set; }
+            public int SourceTextureSiblingTinyTexturesSkipped { get; set; }
+            public List<SourceTextureSiblingGroup> SourceTextureSiblingTopGroups { get; } = [];
             public int SourceTextureSiblingGroupsMoved { get; set; }
             public int SourceTextureSiblingCandidatesRejected { get; set; }
             public int SourceTextureSiblingInvariantViolations { get; set; }

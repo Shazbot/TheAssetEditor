@@ -232,6 +232,7 @@ namespace Editors.PackOptimizer.Core
                     optimizeGeometry);
                 state.LodAwareAtlasPlanningEnabled = lodAwareAtlasPlanning;
                 state.ArmyScope = options.ArmyScope;
+                state.SiblingScope = options.SiblingScope;
                 state.CrossRigidOnly = crossRigidOnly;
                 state.CrossRigidMergesEnabled =
                     crossRigidMerges || crossRigidOnly;

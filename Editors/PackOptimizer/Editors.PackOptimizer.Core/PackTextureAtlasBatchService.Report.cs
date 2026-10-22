@@ -996,11 +996,35 @@ namespace Editors.PackOptimizer.Core
                 $"open {state.SourceTextureSiblingOpenGroupCount:N0}); " +
                 $"members {state.SourceTextureSiblingMemberCount:N0}");
             sb.AppendLine(
+                $"Source-texture sibling scope: " +
+                $"{state.SiblingScope.ToString().ToLowerInvariant()}; groups spanning more than " +
+                $"one model: {state.SourceTextureSiblingMultiModelGroupCount:N0}");
+            sb.AppendLine(
+                $"Source-texture sibling link guards (textures not linked across models): " +
+                $"placeholder {state.SourceTextureSiblingPlaceholderTexturesSkipped:N0}, " +
+                $"uniform constant {state.SourceTextureSiblingUniformTexturesSkipped:N0}, " +
+                $"below 64 KiB {state.SourceTextureSiblingTinyTexturesSkipped:N0}");
+            foreach (var group in state.SourceTextureSiblingTopGroups
+                         .OrderByDescending(group => group.Members.Count)
+                         .ThenBy(group => group.Texture, StringComparer.Ordinal)
+                         .Take(10))
+            {
+                sb.AppendLine(
+                    $"  Largest sibling group: {group.Members.Count:N0} members, " +
+                    $"{group.ModelCount:N0} models, {(group.IsOpen ? "open" : "closed")}, " +
+                    $"texture {group.Texture}");
+            }
+
+            sb.AppendLine(
                 $"Source-texture sibling groups moved to one host batch: " +
                 $"{state.SourceTextureSiblingGroupsMoved:N0}");
             sb.AppendLine(
                 $"Candidates rejected because a sibling part using the same source texture " +
-                $"cannot be atlased: {state.SourceTextureSiblingCandidatesRejected:N0}");
+                $"cannot be atlased: " +
+                $"{state.SourceTextureSiblingCandidatesRejected - state.SourceTextureSiblingCrossModelCandidatesRejected:N0}");
+            sb.AppendLine(
+                $"Candidates rejected because a sibling in another model " +
+                $"cannot be atlased: {state.SourceTextureSiblingCrossModelCandidatesRejected:N0}");
             sb.AppendLine(
                 $"Source-texture sibling invariant violations after the value gate: " +
                 $"{state.SourceTextureSiblingInvariantViolations:N0} " +

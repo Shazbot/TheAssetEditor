@@ -74,7 +74,8 @@ public sealed record OptimizeOptionsRequest(
     bool? CompactTextures = null,
     bool? DropUnreadAlpha = null,
     bool? CompressRigidModels = null,
-    string? ArmyScope = null)
+    string? ArmyScope = null,
+    string? SiblingScope = null)
 {
     public PackOptimizerOptions ToOptimizerOptions()
     {
@@ -96,7 +97,18 @@ public sealed record OptimizeOptionsRequest(
             DropUnreadAlpha = DropUnreadAlpha ?? defaults.DropUnreadAlpha,
             CompressRigidModels = CompressRigidModels ?? defaults.CompressRigidModels,
             ArmyScope = ParseArmyScope(ArmyScope, defaults.ArmyScope),
+            SiblingScope = ParseSiblingScope(SiblingScope, defaults.SiblingScope),
         };
+    }
+
+    private static PackOptimizerSiblingScope ParseSiblingScope(string? value, PackOptimizerSiblingScope fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return fallback;
+        if (Enum.TryParse<PackOptimizerSiblingScope>(value.Trim(), ignoreCase: true, out var parsed) &&
+            Enum.IsDefined(parsed))
+            return parsed;
+        throw new ArgumentException($"Unknown siblingScope '{value}'; expected 'model' or 'pack'.");
     }
 
     private static PackOptimizerArmyScope ParseArmyScope(string? value, PackOptimizerArmyScope fallback)

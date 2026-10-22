@@ -9,10 +9,19 @@
         // source texture resident and adds an atlas on top. Groups are therefore all-or-nothing.
         // A group is open when some reference to one of its textures from one of its consumers
         // belongs to a mesh that is not an eligible candidate: it can never be completed.
+        // Models are the distinct consumer assets that reference a member through a linking
+        // source texture; CrossModelBlock marks an open group whose rejection only exists
+        // because the group spans (or is blocked from) more than one model.
         private sealed record SourceTextureSiblingGroup(
             List<MeshKey> Members,
             bool IsOpen,
-            string BlockReason);
+            string BlockReason,
+            int ModelCount = 1,
+            bool CrossModelBlock = false,
+            string Texture = "");
+
+        private const long SiblingLinkMinimumTextureBytes = 64 * 1024;
+        private const int SiblingTopGroupCount = 10;
 
         private static List<SourceTextureSiblingGroup> BuildSourceTextureSiblingGroups(
             BatchState state,
@@ -34,6 +43,10 @@
                         ? state.AtlasValueGateCandidateTexturePaths
                         : candidateTexturePaths);
 
+            var placeholderTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var packScope = state.SiblingScope == PackOptimizerSiblingScope.Pack;
+            // Textures reached through a constant (uniform) slot never link across models.
+            var uniformTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             // (texture, consumer) -> candidates that reference it through an atlas slot.
             var pairs = new SortedDictionary<(string Texture, string Consumer), List<MeshKey>>(
                 Comparer<(string Texture, string Consumer)>.Create((a, b) =>
@@ -52,12 +65,18 @@
                     }
 
                     var texture = Normalize(GetTexturePath(candidate.MaterialDocument, channel.Slot));
-                    if (texture.Length == 0 ||
-                        IsTexturePlaceholder(texture) ||
-                        !index.ContainsKey(texture))
+                    if (texture.Length == 0)
+                        continue;
+                    if (IsTexturePlaceholder(texture))
                     {
+                        placeholderTextures.Add(texture);
                         continue;
                     }
+
+                    if (!index.ContainsKey(texture))
+                        continue;
+                    if (candidate.ConstantChannels.ContainsKey(channel.Slot))
+                        uniformTextures.Add(texture);
 
                     foreach (var usage in candidate.Usages)
                     {
@@ -108,7 +127,33 @@
             var lookups = new Dictionary<
                 string,
                 ILookup<string, AtlasValueGateSourceReference>>(StringComparer.OrdinalIgnoreCase);
-            var pairBlockers = new List<(MeshKey Member, string Reason)>();
+            var pairBlockers = new List<(MeshKey Member, string Reason, bool Cross)>();
+            var consumersByKey = new Dictionary<MeshKey, HashSet<string>>();
+            var keysByTexture = new Dictionary<string, HashSet<MeshKey>>(StringComparer.Ordinal);
+
+            void Note(MeshKey key, string consumer, string texture)
+            {
+                if (!consumersByKey.TryGetValue(key, out var set))
+                {
+                    set = new HashSet<string>(StringComparer.Ordinal);
+                    consumersByKey[key] = set;
+                }
+
+                set.Add(consumer);
+                if (!keysByTexture.TryGetValue(texture, out var keys))
+                {
+                    keys = [];
+                    keysByTexture[texture] = keys;
+                }
+
+                keys.Add(key);
+            }
+
+            string DescribeBlocker(AtlasValueGateSourceReference reference)
+                => reference.Mesh is { } blocker
+                    ? $"{blocker}"
+                    : "a material binding without an atlas candidate part";
+
             foreach (var (pairKey, members) in pairs)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
@@ -123,6 +168,8 @@
                 foreach (var member in members.Skip(1))
                     Union(members[0], member);
                 Find(members[0]);
+                foreach (var member in members)
+                    Note(member, pairKey.Consumer, pairKey.Texture);
 
                 var blockerRecorded = false;
                 foreach (var reference in lookup[pairKey.Consumer])
@@ -130,6 +177,7 @@
                     if (reference.Mesh is { } mesh && eligible.Contains(mesh))
                     {
                         Union(members[0], mesh);
+                        Note(mesh, pairKey.Consumer, pairKey.Texture);
                         continue;
                     }
 
@@ -138,15 +186,91 @@
                     if (blockerRecorded)
                         continue;
 
-                    var other = reference.Mesh is { } blocker
-                        ? $"{blocker}"
-                        : "a material binding without an atlas candidate part";
                     pairBlockers.Add((
                         members[0],
-                        $"{other} in the same model ({pairKey.Consumer}) uses the same " +
-                        $"source texture {pairKey.Texture} and cannot be atlased"));
+                        $"{DescribeBlocker(reference)} in the same model ({pairKey.Consumer}) uses " +
+                        $"the same source texture {pairKey.Texture} and cannot be atlased",
+                        false));
                     blockerRecorded = true;
                 }
+            }
+
+            if (packScope)
+            {
+                // Cross-model linking: every source-pack consumer of a texture joins its
+                // atlas candidates into one group. CA-owned consumers are not in
+                // PackReferences, cannot be rewritten and stay outside groups.
+                var consumersByTexture = pairs
+                    .GroupBy(entry => entry.Key.Texture, StringComparer.Ordinal)
+                    .ToList();
+                foreach (var textureGroup in consumersByTexture)
+                {
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    var texture = textureGroup.Key;
+                    var source = index[texture];
+                    if (uniformTextures.Contains(texture))
+                    {
+                        state.SourceTextureSiblingUniformTexturesSkipped++;
+                        continue;
+                    }
+
+                    if (source.BcnBytes < SiblingLinkMinimumTextureBytes)
+                    {
+                        state.SourceTextureSiblingTinyTexturesSkipped++;
+                        continue;
+                    }
+
+                    var consumersWithCandidates = textureGroup
+                        .Select(entry => entry.Key.Consumer)
+                        .ToHashSet(StringComparer.Ordinal);
+                    var packConsumers = source.PackReferences
+                        .Select(reference => reference.ConsumerAssetPath)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var linked = textureGroup
+                        .Where(entry => packConsumers.Contains(entry.Key.Consumer))
+                        .ToList();
+                    if (linked.Count == 0)
+                        continue;
+
+                    var anchor = linked[0].Value[0];
+                    foreach (var entry in linked)
+                    {
+                        foreach (var member in entry.Value)
+                        {
+                            Union(anchor, member);
+                            Note(member, entry.Key.Consumer, texture);
+                        }
+                    }
+
+                    var blockerRecorded = false;
+                    foreach (var reference in source.PackReferences)
+                    {
+                        if (reference.Mesh is { } mesh && eligible.Contains(mesh))
+                        {
+                            Union(anchor, mesh);
+                            Note(mesh, reference.ConsumerAssetPath, texture);
+                            continue;
+                        }
+
+                        // Blockers of consumers that own candidates for this texture are
+                        // already recorded by the same-model pass above.
+                        if (blockerRecorded ||
+                            consumersWithCandidates.Contains(reference.ConsumerAssetPath))
+                        {
+                            continue;
+                        }
+
+                        pairBlockers.Add((
+                            anchor,
+                            $"{DescribeBlocker(reference)} in another model " +
+                            $"({reference.ConsumerAssetPath}) uses the same source texture " +
+                            $"{texture} and cannot be atlased",
+                            true));
+                        blockerRecorded = true;
+                    }
+                }
+
+                state.SourceTextureSiblingPlaceholderTexturesSkipped += placeholderTextures.Count;
             }
 
             var componentMembers = new Dictionary<MeshKey, List<MeshKey>>();
@@ -162,13 +286,25 @@
                 list.Add(key);
             }
 
+            // A same-model reason is preferred: it was already a blocker before the rule
+            // spanned models.
             var blockerByRoot = new Dictionary<MeshKey, string>();
-            foreach (var (member, reason) in pairBlockers)
-                blockerByRoot.TryAdd(Find(member), reason);
+            var crossBlockerRoots = new HashSet<MeshKey>();
+            foreach (var (member, reason, cross) in pairBlockers.OrderBy(entry => entry.Cross))
+            {
+                var root = Find(member);
+                blockerByRoot.TryAdd(root, reason);
+                if (cross)
+                    crossBlockerRoots.Add(root);
+            }
 
             foreach (var (root, members) in componentMembers
                          .OrderBy(entry => entry.Value.Min(key => key.ToString()), StringComparer.Ordinal))
             {
+                var models = members
+                    .SelectMany(key => consumersByKey.GetValueOrDefault(key) ?? [])
+                    .ToHashSet(StringComparer.Ordinal);
+                var modelCount = Math.Max(1, models.Count);
                 result.Add(
                     new SourceTextureSiblingGroup(
                         members
@@ -177,7 +313,18 @@
                             .ThenBy(key => key.PartIndex)
                             .ToList(),
                         blockerByRoot.ContainsKey(root),
-                        blockerByRoot.GetValueOrDefault(root, string.Empty)));
+                        blockerByRoot.GetValueOrDefault(root, string.Empty),
+                        modelCount,
+                        blockerByRoot.ContainsKey(root) &&
+                        (modelCount > 1 || crossBlockerRoots.Contains(root)),
+                        // The texture that links the most members names the group.
+                        keysByTexture
+                            .Select(entry => (entry.Key, Count: members.Count(entry.Value.Contains)))
+                            .Where(entry => entry.Count != 0)
+                            .OrderByDescending(entry => entry.Count)
+                            .ThenBy(entry => entry.Key, StringComparer.Ordinal)
+                            .Select(entry => entry.Key)
+                            .FirstOrDefault() ?? string.Empty));
             }
 
             return result;
@@ -207,6 +354,19 @@
             state.SourceTextureSiblingOpenGroupCount += groups.Count(group => group.IsOpen);
             state.SourceTextureSiblingClosedGroupCount += groups.Count(group => !group.IsOpen);
             state.SourceTextureSiblingMemberCount += groups.Sum(group => group.Members.Count);
+            state.SourceTextureSiblingMultiModelGroupCount += groups.Count(group => group.ModelCount > 1);
+            foreach (var group in groups.Where(group => group.Members.Count >= 2 || group.ModelCount > 1))
+            {
+                state.SourceTextureSiblingTopGroups.Add(group);
+                if (state.SourceTextureSiblingTopGroups.Count > 4 * SiblingTopGroupCount)
+                {
+                    state.SourceTextureSiblingTopGroups.Sort(
+                        (a, b) => b.Members.Count.CompareTo(a.Members.Count));
+                    state.SourceTextureSiblingTopGroups.RemoveRange(
+                        SiblingTopGroupCount,
+                        state.SourceTextureSiblingTopGroups.Count - SiblingTopGroupCount);
+                }
+            }
 
             // Units: sibling groups joined with the structural merge components that are
             // already atomic, so a unit is never split by either rule.
@@ -291,6 +451,8 @@
                     members,
                     "Atlas planning: kept unchanged because " + group.BlockReason + ".");
                 removedKeys.UnionWith(members.Select(member => member.Key));
+                if (group.CrossModelBlock)
+                    state.SourceTextureSiblingCrossModelCandidatesRejected += members.Count;
             }
 
             foreach (var (root, members) in unitMembers)
