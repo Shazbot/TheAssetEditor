@@ -19,6 +19,15 @@ namespace WH3AssetHost.Optimize;
 /// and loses a conflict, the last entry wins (the order of the mod list, top to bottom). The source
 /// pack itself is not listed. They are read-only; the optimizer never changes a file another mod
 /// uses or overrides. Omitted or empty means no other mods.</param>
+/// <param name="DependencyPackPaths">Optional. The packs among <paramref name="ConsumerPackPaths"/> that have a
+/// declared dependency relationship with the source, in either direction (the source requires them, or they
+/// require the source). Each must also be listed in <paramref name="ConsumerPackPaths"/> (that is how their
+/// load-order position is known) and must not be the source. A file the source references but does not contain
+/// (a model, material or texture, for a mod split over several packs) is looked up in them, last in load order
+/// first, before the game packs, so the run treats source and dependencies like one pack. They stay read-only:
+/// nothing in them is changed, and whatever the optimizer derives from their files goes into the output pack only.
+/// A pack that supplied a file is reported relevant with <c>resolutionProvider</c> set. Omitted or empty: no
+/// pack provides files. DB tables of all <paramref name="ConsumerPackPaths"/> are layered regardless.</param>
 /// <param name="SourceLoadOrderIndex">How many entries of <paramref name="ConsumerPackPaths"/> load
 /// before the source pack (0 = the source loads first, count = the source loads last). Required
 /// whenever <paramref name="ConsumerPackPaths"/> is not empty; there is no default.</param>
@@ -49,7 +58,8 @@ public sealed record OptimizeRequest(
     int? SourceLoadOrderIndex = null,
     string? DbSchemaPath = null,
     bool ProbeOnly = false,
-    IReadOnlyList<string>? ProbeSources = null)
+    IReadOnlyList<string>? ProbeSources = null,
+    IReadOnlyList<string>? DependencyPackPaths = null)
 {
     public const int CurrentSchemaVersion = 1;
 }
@@ -223,7 +233,8 @@ public sealed record OptimizeConsumerReasons(
     int UsedFiles,
     int DbMentions,
     int UndecodableTables,
-    int VanillaOverridesReached);
+    int VanillaOverridesReached,
+    bool ResolutionProvider = false);
 
 /// <summary>The only stdout line of <c>optimize</c> with <c>probeOnly</c>.</summary>
 public sealed record OptimizeProbeLine(
@@ -331,6 +342,17 @@ public static class OptimizeRequestValidator
         {
             if (string.IsNullOrWhiteSpace(consumer) || !File.Exists(consumer))
                 return $"consumerPackPaths entry '{consumer}' does not exist.";
+        }
+
+        foreach (var dependency in request.DependencyPackPaths ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(dependency) || !File.Exists(dependency))
+                return $"dependencyPackPaths entry '{dependency}' does not exist.";
+            var dependencyFull = Path.GetFullPath(dependency);
+            if (string.Equals(dependencyFull, source, StringComparison.OrdinalIgnoreCase))
+                return $"dependencyPackPaths lists the source pack '{dependency}'.";
+            if (!consumers.Any(consumer => string.Equals(Path.GetFullPath(consumer), dependencyFull, StringComparison.OrdinalIgnoreCase)))
+                return $"dependencyPackPaths entry '{dependency}' is not in consumerPackPaths.";
         }
 
         if (request.ProbeSources is { Count: > 0 })

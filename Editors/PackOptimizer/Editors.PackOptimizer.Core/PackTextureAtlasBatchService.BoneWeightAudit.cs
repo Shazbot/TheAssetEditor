@@ -128,7 +128,7 @@ namespace Editors.PackOptimizer.Core
                 loadRigid ??= path =>
                 {
                     var file = ResolveGameplayTraversalContainer(
-                            state.Source, GetGameplayTraversalContainers(state), path)?
+                            state.Source, GetGameplayTraversalContainers(state), path, state.ResolutionProviders)?
                         .FindFile(path);
                     return file == null ? null : ModelFactory.Create().Load(file.DataSource.ReadData());
                 };

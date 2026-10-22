@@ -602,7 +602,9 @@ namespace Editors.PackOptimizer.Core
             }
         }
 
-        private static IReadOnlyList<PackOptimizerConsumerPack> DescribeConsumerPacks(ConsumerReferenceIndex index)
+        private static IReadOnlyList<PackOptimizerConsumerPack> DescribeConsumerPacks(
+            ConsumerReferenceIndex index,
+            ResolutionProviderSet? providers = null)
             => index.Packs.Select(pack =>
             {
                 var frozen = pack.OverlapAssets;
@@ -610,15 +612,17 @@ namespace Editors.PackOptimizer.Core
                 var dbMentions = Math.Max(pack.DbMentions, pack.DbRootsAdded + pack.DbFallbackAdded);
                 var undecodable = Math.Max(pack.UndecodableTables, pack.DbFallbackTables.Count);
                 var vanilla = pack.VanillaReached.Count;
+                var resolutionProvider = providers != null && providers.Supplied(pack.Container);
                 return new PackOptimizerConsumerPack(
                     pack.Container.SystemFilePath ?? string.Empty,
                     pack.Name,
-                    frozen > 0 || used > 0 || dbMentions > 0 || undecodable > 0 || vanilla > 0,
+                    frozen > 0 || used > 0 || dbMentions > 0 || undecodable > 0 || vanilla > 0 || resolutionProvider,
                     frozen,
                     used,
                     dbMentions,
                     undecodable,
-                    vanilla);
+                    vanilla,
+                    resolutionProvider);
             }).ToList();
 
         public static IReadOnlyList<PackOptimizerConsumerPack> ProbeConsumers(
@@ -1154,7 +1158,7 @@ namespace Editors.PackOptimizer.Core
             }
 
             resolved ??= ResolveGameplayTraversalContainer(
-                state.Source, GetGameplayTraversalContainers(state), path);
+                state.Source, GetGameplayTraversalContainers(state), path, state.ResolutionProviders);
             state.DependencyContainerResolutions[path] = resolved;
             return resolved;
         }

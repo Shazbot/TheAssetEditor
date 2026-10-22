@@ -277,6 +277,25 @@ namespace Editors.PackOptimizer.Core
                             $"SourceLoadOrderIndex must be between 0 and {modConsumers.Count}.");
                     }
 
+                    if (request.ResolutionProviders is { Count: > 0 } providerRequest)
+                    {
+                        foreach (var provider in providerRequest)
+                        {
+                            if (!modConsumers.Any(consumer => ReferenceEquals(consumer, provider)))
+                            {
+                                throw new ArgumentException(
+                                    "ResolutionProviders must be a subset of ModConsumers.",
+                                    nameof(request));
+                            }
+                        }
+
+                        // Load order of the mod list, not the order the caller listed them in.
+                        state.ResolutionProviders = new ResolutionProviderSet(
+                            modConsumers
+                                .Where(consumer => providerRequest.Any(item => ReferenceEquals(item, consumer)))
+                                .ToList());
+                    }
+
                     ReportProgress(progress, "Scanning consumer packs", item: $"{modConsumers.Count} pack(s)");
                     var consumerStopwatch = Stopwatch.StartNew();
                     state.Consumers = BuildConsumerReferenceIndex(
@@ -839,7 +858,7 @@ namespace Editors.PackOptimizer.Core
                     ExternallyUsedFileCount = state.Consumers?.Used.Count ?? 0,
                     FrozenFileCount = state.Consumers?.Frozen.Count ?? 0,
                     Warnings = state.Consumers?.Warnings.ToList() ?? [],
-                    ConsumerPacks = state.Consumers == null ? [] : DescribeConsumerPacks(state.Consumers),
+                    ConsumerPacks = state.Consumers == null ? [] : DescribeConsumerPacks(state.Consumers, state.ResolutionProviders),
                     Summary = summary,
                 };
             }

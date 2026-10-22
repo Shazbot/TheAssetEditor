@@ -605,6 +605,42 @@ namespace Editors.PackOptimizer.Core
                 new(StringComparer.OrdinalIgnoreCase);
         }
 
+        // Read-only packs that have a declared dependency relationship with the source, in load
+        // order (last wins). They provide files the source references but does not contain, like
+        // CA packs do; the optimizer never changes them. Records which of them supplied a file.
+        private sealed class ResolutionProviderSet
+        {
+            private readonly HashSet<IPackFileContainer> _used = new(ReferenceEqualityComparer.Instance);
+
+            public static ResolutionProviderSet Empty { get; } = new([]);
+
+            public ResolutionProviderSet(IReadOnlyList<IPackFileContainer> containers)
+            {
+                Containers = containers;
+            }
+
+            public IReadOnlyList<IPackFileContainer> Containers { get; }
+
+            public bool Supplied(IPackFileContainer container) => _used.Contains(container);
+
+            // The last provider (not the source) holding the path; marks it as having supplied a file.
+            public IPackFileContainer? Find(IPackFileContainer source, string path)
+            {
+                for (var index = Containers.Count - 1; index >= 0; index--)
+                {
+                    var provider = Containers[index];
+                    if (!ReferenceEquals(provider, source) && provider.ContainsFile(path))
+                    {
+                        if (!ReferenceEquals(this, Empty))
+                            _used.Add(provider);
+                        return provider;
+                    }
+                }
+
+                return null;
+            }
+        }
+
         private sealed class BatchState
         {
             public IPackFileContainer Source { get; }
@@ -612,6 +648,9 @@ namespace Editors.PackOptimizer.Core
             // The visual-asset check (PackOptimizer.Check) runs the detection stages only: it scopes
             // the gameplay mesh dependency index to the pack's own VMDs and needs no unit roster.
             public bool CheckMode { get; set; }
+            // Dependency-related packs (either direction) that can provide files the selected source
+            // references but does not contain. Read-only like CA packs; never part of GameplayTraversalContainers.
+            public ResolutionProviderSet ResolutionProviders { get; set; } = ResolutionProviderSet.Empty;
             public IPackOptimizerPackFiles PackFileService { get; }
             public string SourcePath { get; }
             public string OutputPath { get; }

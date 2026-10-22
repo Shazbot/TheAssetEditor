@@ -868,7 +868,7 @@ namespace Editors.PackOptimizer.Core
             try
             {
                 var bytes = ResolveGameplayTraversalContainer(
-                        state.Source, GetGameplayTraversalContainers(state), path)?
+                        state.Source, GetGameplayTraversalContainers(state), path, state.ResolutionProviders)?
                     .FindFile(path)?.DataSource.ReadData();
                 if (bytes != null &&
                     TryReadDdsLayout(
@@ -1367,7 +1367,7 @@ namespace Editors.PackOptimizer.Core
                     {
                         var file = FindForReadStatic(state, material) ??
                                    ResolveGameplayTraversalContainer(
-                                       state.Source, GetGameplayTraversalContainers(state), material)?
+                                       state.Source, GetGameplayTraversalContainers(state), material, state.ResolutionProviders)?
                                    .FindFile(material);
                         if (file != null)
                         {
@@ -1426,7 +1426,7 @@ namespace Editors.PackOptimizer.Core
                                        layout.Height <= SharedRepackUniformTextureSide))
                 {
                     var bytes = ResolveGameplayTraversalContainer(
-                            state.Source, GetGameplayTraversalContainers(state), texture)?
+                            state.Source, GetGameplayTraversalContainers(state), texture, state.ResolutionProviders)?
                         .FindFile(texture)?.DataSource.ReadData();
                     if (layout == null && bytes != null &&
                         TryReadDdsLayout(
@@ -3332,7 +3332,7 @@ namespace Editors.PackOptimizer.Core
                          .OrderBy(path => path, StringComparer.Ordinal))
             {
                 var file = ResolveGameplayTraversalContainer(
-                        state.Source, GetGameplayTraversalContainers(state), material)?
+                        state.Source, GetGameplayTraversalContainers(state), material, state.ResolutionProviders)?
                     .FindFile(material);
                 if (file == null)
                 {
@@ -4289,7 +4289,7 @@ namespace Editors.PackOptimizer.Core
             var containers = GetGameplayTraversalContainers(state);
             var sources = new SharedRepackSourceCache(path =>
                 GetSharedRepackScaledSource(state, path)?.Dds ??
-                ResolveGameplayTraversalContainer(state.Source, containers, path)?.FindFile(path)?.DataSource.ReadData());
+                ResolveGameplayTraversalContainer(state.Source, containers, path, state.ResolutionProviders)?.FindFile(path)?.DataSource.ReadData());
             var generated = new SharedRepackSourceCache(_ => null);
             var stats = new SharedRepackPixelStats();
             var rewrites = new List<(SharedRepackPart Part, System.Numerics.Vector2[] Uv)>();

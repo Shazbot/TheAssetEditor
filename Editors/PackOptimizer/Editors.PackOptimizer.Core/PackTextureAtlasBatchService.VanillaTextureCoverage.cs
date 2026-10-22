@@ -510,7 +510,7 @@ namespace Editors.PackOptimizer.Core
                 if (materials.TryGetValue(path, out var cached))
                     return cached;
 
-                var file = ResolveGameplayTraversalContainer(state.Source, containers, path)?
+                var file = ResolveGameplayTraversalContainer(state.Source, containers, path, state.ResolutionProviders)?
                     .FindFile(path);
                 VanillaCoverageMaterial material;
                 if (file == null)
@@ -622,7 +622,7 @@ namespace Editors.PackOptimizer.Core
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var container = ResolveGameplayTraversalContainer(
-                    state.Source, containers, entry.Path);
+                    state.Source, containers, entry.Path, state.ResolutionProviders);
                 var file = container?.FindFile(entry.Path);
                 if (container == null || file == null)
                 {

@@ -1100,7 +1100,8 @@ namespace Editors.PackOptimizer.Core
                 if (state.Source.FindFile(referencePath) != null)
                     return false;
 
-                return _packFileService.FindFile(referencePath) == null;
+                return state.ResolutionProviders.Find(state.Source, referencePath) == null &&
+                       _packFileService.FindFile(referencePath) == null;
             }
             catch
             {
@@ -1250,7 +1251,7 @@ namespace Editors.PackOptimizer.Core
             try
             {
                 var file = ResolveGameplayTraversalContainer(
-                        state.Source, GetGameplayTraversalContainers(state), sourceMaterial)?
+                        state.Source, GetGameplayTraversalContainers(state), sourceMaterial, state.ResolutionProviders)?
                     .FindFile(sourceMaterial);
                 if (file == null)
                     return null;
@@ -1271,6 +1272,7 @@ namespace Editors.PackOptimizer.Core
         // source pack, so the source pack and every loaded (vanilla or other) pack decide.
         private bool ResolvedBeforeTheRun(BatchState state, string path)
             => state.Source.ContainsFile(path) ||
+               state.ResolutionProviders.Find(state.Source, path) != null ||
                GetGameplayTraversalContainers(state).Any(container => container.ContainsFile(path)) ||
                _packFileService.FindFile(path) != null;
 
@@ -1327,7 +1329,8 @@ namespace Editors.PackOptimizer.Core
             if (state.Source.FindFile(path) != null)
                 return false;
 
-            return _packFileService.FindFile(path) != null;
+            return state.ResolutionProviders.Find(state.Source, path) != null ||
+                   _packFileService.FindFile(path) != null;
         }
 
         private static void RecordSkip(

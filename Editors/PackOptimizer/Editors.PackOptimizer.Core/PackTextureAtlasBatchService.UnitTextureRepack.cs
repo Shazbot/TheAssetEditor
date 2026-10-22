@@ -464,7 +464,7 @@ namespace Editors.PackOptimizer.Core
                         rigid = new UnitRepackRigid
                         {
                             ModOwned = state.Source.ContainsFile(rigidPath),
-                            Bytes = ResolveGameplayTraversalContainer(state.Source, containers, rigidPath)?
+                            Bytes = ResolveGameplayTraversalContainer(state.Source, containers, rigidPath, state.ResolutionProviders)?
                                 .FindFile(rigidPath)?.DataSource.Size ?? 0,
                         };
                         result.Rigids[rigidPath] = rigid;

@@ -13947,6 +13947,9 @@ namespace Test.PackOptimizer.Core
             [1] = "16D0E04C047A3181D23F53880A296765BD51EF01C67FCD1CC7C5D0ECBE7A77F5",
             // 2: army pools per subculture, player scopes weighted by the pack's units.
             [2] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 3: files the source references are also resolved from its dependency-related packs
+            // (dependencyPackPaths); the pinned stages are unchanged without dependencies.
+            [3] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

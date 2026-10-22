@@ -76,7 +76,7 @@ namespace Editors.PackOptimizer.Core
         /// (OutputVersionGoldenTests): it pins a hash of the output of the optimizer's deterministic output
         /// stages next to this number, so changing the output without bumping the version fails the test.
         /// </summary>
-        public const int OutputVersion = 2;
+        public const int OutputVersion = 3;
 
         /// <summary>
         /// Version of the consumer scan and probe results (what makes another mod relevant) and of the format
@@ -129,6 +129,7 @@ namespace Editors.PackOptimizer.Core
     /// <param name="ModConsumers">Other enabled mods, read-only, in load order: first loads first and loses, last wins. They may reference or override the source's files; the run never breaks them. Null or empty: none.</param>
     /// <param name="SourceLoadOrderIndex">How many of <paramref name="ModConsumers"/> load before the source. Null: all of them (the source wins over every consumer).</param>
     /// <param name="DbSchema">DB table layouts (an RPFM schema) tried before the schema embedded in this library; null uses the embedded one only.</param>
+    /// <param name="ResolutionProviders">Read-only packs, each an instance from <paramref name="ModConsumers"/>, that have a declared dependency relationship with the source (either direction). A file the source references but does not contain is looked up in them (last in load order wins) before the game packs, as if the source and they were one pack. Only the files they supply are read; they are never changed or counted as game data. Null or empty: none.</param>
     /// <param name="OutputWritePath">Where the output pack is physically written; null means <paramref name="OutputPath"/>. Lets a caller stage the file and move it into place on success.</param>
     /// <param name="ReportWritePath">Where the report is physically written; null means <paramref name="ReportPath"/>.</param>
     public sealed record PackOptimizerRequest(
@@ -145,7 +146,8 @@ namespace Editors.PackOptimizer.Core
         string? ReportWritePath = null,
         IReadOnlyList<IPackFileContainer>? ModConsumers = null,
         int? SourceLoadOrderIndex = null,
-        PackOptimizerDbSchema? DbSchema = null);
+        PackOptimizerDbSchema? DbSchema = null,
+        IReadOnlyList<IPackFileContainer>? ResolutionProviders = null);
 
     /// <summary>
     /// A consumer pack and why it can matter to the result. A pack with no reason cannot change
@@ -159,7 +161,8 @@ namespace Editors.PackOptimizer.Core
         int UsedFiles,
         int DbMentions,
         int UndecodableTables,
-        int VanillaOverridesReached);
+        int VanillaOverridesReached,
+        bool ResolutionProvider = false);
 
     /// <param name="Sources">Per requested source, in request order, its consumers (the load order without it).</param>
     public sealed record PackOptimizerBatchProbe(

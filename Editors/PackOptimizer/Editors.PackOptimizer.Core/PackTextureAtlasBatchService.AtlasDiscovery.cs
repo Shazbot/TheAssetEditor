@@ -299,7 +299,8 @@ namespace Editors.PackOptimizer.Core
             var resolvedContainer = ResolveGameplayTraversalContainer(
                 source,
                 loadedContainers,
-                path);
+                path,
+                state.ResolutionProviders);
             if (resolvedContainer != null)
             {
                 state.GameplayTraversalContainerResolutions[path] =
@@ -318,6 +319,13 @@ namespace Editors.PackOptimizer.Core
             IPackFileContainer source,
             IReadOnlyList<IPackFileContainer> loadedContainers,
             string path)
+            => ResolveGameplayTraversalContainer(source, loadedContainers, path, null);
+
+        private static IPackFileContainer? ResolveGameplayTraversalContainer(
+            IPackFileContainer source,
+            IReadOnlyList<IPackFileContainer> loadedContainers,
+            string path,
+            ResolutionProviderSet? resolutionProviders)
         {
             if (path.Length == 0)
                 return null;
@@ -326,9 +334,13 @@ namespace Editors.PackOptimizer.Core
             if (source.ContainsFile(path))
                 return source;
 
-            // Resolver semantics are CA game data + selected source only. Search CA
-            // containers in reverse load order to preserve normal pack-file override
-            // precedence without allowing unrelated open mods into gameplay resolution.
+            // The source owns the files being optimized. For paths absent from it, search the
+            // dependency-related packs in reverse load order (last wins), then the CA game containers.
+            var providerHit = resolutionProviders?.Find(source, path);
+            if (providerHit != null)
+                return providerHit;
+
+            // Search CA containers in reverse load order to preserve normal pack-file precedence.
             for (var index = loadedContainers.Count - 1; index >= 0; index--)
             {
                 var container = loadedContainers[index];

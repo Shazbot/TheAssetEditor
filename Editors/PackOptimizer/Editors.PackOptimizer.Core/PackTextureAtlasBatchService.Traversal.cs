@@ -1387,6 +1387,7 @@ namespace Editors.PackOptimizer.Core
             path = Normalize(path);
             return state.Output.FindFile(path)
                    ?? state.Source.FindFile(path)
+                   ?? state.ResolutionProviders.Find(state.Source, path)?.FindFile(path)
                    ?? state.PackFileService.FindFile(path);
         }
 
@@ -1509,6 +1510,7 @@ namespace Editors.PackOptimizer.Core
             path = Normalize(path);
             return state.Output.FindFile(path)
                    ?? state.Source.FindFile(path)
+                   ?? state.ResolutionProviders.Find(state.Source, path)?.FindFile(path)
                    ?? _packFileService.FindFile(path);
         }
 

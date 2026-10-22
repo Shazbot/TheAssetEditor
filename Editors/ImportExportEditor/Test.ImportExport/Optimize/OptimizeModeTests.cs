@@ -175,6 +175,23 @@ public class OptimizeModeTests
     }
 
     [Test]
+    public void Validate_ChecksDependencyPacks()
+    {
+        var dependency = Touch("mods/dependency.pack");
+        var other = Touch("mods/other.pack");
+        var request = ValidRequest([other, dependency], 1);
+
+        Assert.That(OptimizeRequestValidator.Validate(request with { DependencyPackPaths = [dependency] }), Is.Null);
+        Assert.That(OptimizeRequestValidator.Validate(request with { DependencyPackPaths = [] }), Is.Null);
+        Assert.That(OptimizeRequestValidator.Validate(request with { DependencyPackPaths = [Path.Combine(_directory, "gone.pack")] }),
+            Does.Contain("dependencyPackPaths"));
+        Assert.That(OptimizeRequestValidator.Validate(request with { DependencyPackPaths = [request.SourcePackPath] }),
+            Does.Contain("lists the source pack"));
+        Assert.That(OptimizeRequestValidator.Validate(request with { DependencyPackPaths = [Touch("mods/unlisted.pack")] }),
+            Does.Contain("is not in consumerPackPaths"));
+    }
+
+    [Test]
     public void Validate_RequiresTheSourcePositionWhenThereAreConsumers()
     {
         var first = Touch("mods/first.pack");

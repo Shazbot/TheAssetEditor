@@ -124,7 +124,8 @@ internal static class OptimizeMode
             pack.Path,
             pack.Relevant,
             new OptimizeConsumerReasons(
-                pack.FrozenFiles, pack.UsedFiles, pack.DbMentions, pack.UndecodableTables, pack.VanillaOverridesReached)))
+                pack.FrozenFiles, pack.UsedFiles, pack.DbMentions, pack.UndecodableTables, pack.VanillaOverridesReached,
+                pack.ResolutionProvider)))
             .ToArray();
 
     /// <summary>Reports which consumers can matter to the result; optimizes nothing.</summary>
@@ -244,6 +245,20 @@ internal static class OptimizeMode
                 Log.Information("Loaded {Count} consumer pack(s)", consumers.Count);
             }
 
+            // The dependency-related packs are the already loaded consumer instances (load order kept).
+            var providers = new List<IPackFileContainer>();
+            if (request.DependencyPackPaths is { Count: > 0 } dependencyPaths && request.ConsumerPackPaths != null)
+            {
+                var dependencies = dependencyPaths.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                for (var index = 0; index < consumers.Count; index++)
+                {
+                    if (dependencies.Contains(Path.GetFullPath(request.ConsumerPackPaths[index])))
+                        providers.Add(consumers[index]);
+                }
+
+                Console.Error.WriteLine($"{providers.Count} dependency pack(s) can provide files to the source.");
+            }
+
             var progress = new ThrottledProgress(stdout);
             var result = PackOptimizer.Run(
                 new PackOptimizerRequest(
@@ -262,7 +277,8 @@ internal static class OptimizeMode
                     SourceLoadOrderIndex: consumers.Count == 0 ? null : request.SourceLoadOrderIndex,
                     DbSchema: string.IsNullOrWhiteSpace(request.DbSchemaPath)
                         ? null
-                        : PackOptimizerDbSchema.Load(request.DbSchemaPath)),
+                        : PackOptimizerDbSchema.Load(request.DbSchemaPath),
+                    ResolutionProviders: providers.Count == 0 ? null : providers),
                 progress,
                 cancellationToken);
 

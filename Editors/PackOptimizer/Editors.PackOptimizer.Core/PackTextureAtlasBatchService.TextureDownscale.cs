@@ -862,7 +862,7 @@ namespace Editors.PackOptimizer.Core
             var file = ResolveGameplayTraversalContainer(
                     state.Source,
                     GetGameplayTraversalContainers(state),
-                    path)?
+                    path, state.ResolutionProviders)?
                 .FindFile(path);
             if (file == null)
                 return null;

@@ -5018,10 +5018,8 @@ namespace Editors.PackOptimizer.Core
 
                 if (ReferenceEquals(wsContainer, state.Source))
                     sourceWsModelCount++;
-                else if (wsContainer.IsCaPackFile)
-                    caWsModelCount++;
                 else
-                    unresolvedWsModelCount++;
+                    caWsModelCount++; // a game pack or a dependency pack: read-only either way
 
                 resolvedWsModels.Add((wsModelPath, wsContainer, wsFile));
             }

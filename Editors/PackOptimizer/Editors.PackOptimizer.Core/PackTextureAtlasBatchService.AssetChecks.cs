@@ -725,7 +725,7 @@ namespace Editors.PackOptimizer.Core
                 var file = sourceFile;
                 if (file == null)
                 {
-                    file = ResolveGameplayTraversalContainer(state.Source, containers, path)?
+                    file = ResolveGameplayTraversalContainer(state.Source, containers, path, state.ResolutionProviders)?
                         .FindFile(path);
                 }
 
@@ -1161,7 +1161,7 @@ namespace Editors.PackOptimizer.Core
             var file = ResolveGameplayTraversalContainer(
                     state.Source,
                     GetGameplayTraversalContainers(state),
-                    path)?
+                    path, state.ResolutionProviders)?
                 .FindFile(path);
             if (file == null)
                 return null;
