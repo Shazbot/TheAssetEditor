@@ -983,6 +983,21 @@ namespace Editors.PackOptimizer.Core
                     $"LOD-aware structural components rejected: " +
                     $"{state.LodAwareAtlasStructuralComponentsRejected:N0}");
             }
+            sb.AppendLine(
+                $"Source-texture sibling groups: {state.SourceTextureSiblingGroupCount:N0} " +
+                $"(closed {state.SourceTextureSiblingClosedGroupCount:N0}, " +
+                $"open {state.SourceTextureSiblingOpenGroupCount:N0}); " +
+                $"members {state.SourceTextureSiblingMemberCount:N0}");
+            sb.AppendLine(
+                $"Source-texture sibling groups moved to one host batch: " +
+                $"{state.SourceTextureSiblingGroupsMoved:N0}");
+            sb.AppendLine(
+                $"Candidates rejected because a sibling part using the same source texture " +
+                $"cannot be atlased: {state.SourceTextureSiblingCandidatesRejected:N0}");
+            sb.AppendLine(
+                $"Source-texture sibling invariant violations after the value gate: " +
+                $"{state.SourceTextureSiblingInvariantViolations:N0} " +
+                $"(batches dropped {state.SourceTextureSiblingInvariantBatchesDropped:N0})");
             sb.AppendLine($"Atlas batches generated: {state.AtlasBatchCount}");
             sb.AppendLine($"Texel-density downscale candidates: {state.TexelDensityScaledMeshes}");
             if (state.TexelDensityScaledMeshes != 0)

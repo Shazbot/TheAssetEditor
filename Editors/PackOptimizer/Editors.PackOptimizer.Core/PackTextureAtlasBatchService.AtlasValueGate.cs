@@ -1116,6 +1116,7 @@ namespace Editors.PackOptimizer.Core
                     $"Value gate batch {orderedBatchIndex + 1}");
                 var originalBatch = orderedBatches[orderedBatchIndex];
                 var batch = new List<AtlasCandidate>(originalBatch.Count);
+                var unresolvedKeys = new HashSet<MeshKey>();
                 foreach (var candidate in originalBatch)
                 {
                     state.CancellationToken.ThrowIfCancellationRequested();
@@ -1124,6 +1125,44 @@ namespace Editors.PackOptimizer.Core
                     if (!IsAtlasValueCandidateAllowedForMode(
                             state.AtlasAllVmdsEnabled,
                             scenarioResolved))
+                    {
+                        unresolvedKeys.Add(candidate.Key);
+                    }
+                }
+
+                // A closed family (structural component, LOD family, source-texture sibling
+                // group) is all-or-nothing: an unresolved member takes the whole family out.
+                var familyDroppedKeys = new HashSet<MeshKey>();
+                if (unresolvedKeys.Count != 0)
+                {
+                    var growing = true;
+                    while (growing)
+                    {
+                        growing = false;
+                        foreach (var family in state.LodAwareAtlasFamilies)
+                        {
+                            if (!family.Overlaps(unresolvedKeys) &&
+                                !family.Overlaps(familyDroppedKeys))
+                            {
+                                continue;
+                            }
+
+                            foreach (var member in family)
+                            {
+                                if (!unresolvedKeys.Contains(member) &&
+                                    familyDroppedKeys.Add(member))
+                                {
+                                    growing = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                foreach (var candidate in originalBatch)
+                {
+                    state.CancellationToken.ThrowIfCancellationRequested();
+                    if (unresolvedKeys.Contains(candidate.Key))
                     {
                         RecordSkip(
                             state,
@@ -1134,6 +1173,20 @@ namespace Editors.PackOptimizer.Core
                             "resolved safely; gameplay-used mode leaves this asset unchanged.");
                         state.AtlasValueGateCandidatesRejected++;
                         state.AtlasValueGateUnresolvedCandidatesSkipped++;
+                        continue;
+                    }
+
+                    if (familyDroppedKeys.Contains(candidate.Key))
+                    {
+                        RecordSkip(
+                            state,
+                            candidate.RootVmdPath,
+                            candidate.Key,
+                            candidate.Usages.FirstOrDefault()?.AssetPath ?? string.Empty,
+                            "Atlas value gate: kept unchanged because another member of its " +
+                            "atlas family (same source texture or structural merge component) " +
+                            "has gameplay/scenario relevance that could not be resolved safely.");
+                        state.AtlasValueGateCandidatesRejected++;
                         continue;
                     }
 
@@ -1649,6 +1702,12 @@ namespace Editors.PackOptimizer.Core
                 pendingTextureMergeAttachments,
                 acceptedEconomicsStartIndex);
 
+            EnforceSourceTextureSiblingInvariant(
+                state,
+                result,
+                expectedEntitiesByMesh,
+                acceptedEconomicsStartIndex);
+
             return result;
         }
 
@@ -1865,6 +1924,13 @@ namespace Editors.PackOptimizer.Core
                     residency.ExpectedArmyNetBcnBytes,
                     rawDrawsEliminated,
                     expectedArmyDrawsEliminated));
+            state.AtlasValueGateAcceptedBatchUndo.Add(
+                new AtlasValueGateAcceptedBatchUndo(
+                    residency.PackReferenceRetiredSourceTextureCount,
+                    residency.RetiredSourceTextureCount,
+                    residency.ScenarioDisplacedSourceTextureCount,
+                    residency.ExpectedArmyRetiredSourceTextureCount,
+                    consolidatedTextureAssignments));
 
             AddAtlasValueGateRewrittenReferences(
                 state,
@@ -3425,24 +3491,35 @@ namespace Editors.PackOptimizer.Core
                     candidate => candidate.Key.ToString(),
                     StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            var pending = new Queue<List<AtlasCandidate>>();
-            for (var offset = 0;
-                 offset < orderedCandidates.Count;
-                 offset += TextureConsolidationInitialCohortCandidateLimit)
+            // A cohort is a list of family units: a closed atlas family (structural component,
+            // LOD family, source-texture sibling group) is never split across cohorts, so a
+            // cohort acceptance or rejection always covers whole families.
+            var units = BuildAtlasFamilyUnits(state, orderedCandidates);
+            var pending = new Queue<List<List<AtlasCandidate>>>();
+            var currentCohort = new List<List<AtlasCandidate>>();
+            var currentCount = 0;
+            foreach (var unit in units)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
-                pending.Enqueue(
-                    orderedCandidates
-                        .Skip(offset)
-                        .Take(TextureConsolidationInitialCohortCandidateLimit)
-                        .ToList());
+                currentCohort.Add(unit);
+                currentCount += unit.Count;
+                if (currentCount < TextureConsolidationInitialCohortCandidateLimit)
+                    continue;
+
+                pending.Enqueue(currentCohort);
+                currentCohort = [];
+                currentCount = 0;
             }
+
+            if (currentCohort.Count != 0)
+                pending.Enqueue(currentCohort);
 
             var accepted = new List<TextureConsolidationCohortAcceptance>();
             while (pending.Count != 0)
             {
                 state.CancellationToken.ThrowIfCancellationRequested();
-                var cohort = pending.Dequeue();
+                var cohortUnits = pending.Dequeue();
+                var cohort = cohortUnits.SelectMany(unit => unit).ToList();
                 state.AtlasValueGateTextureConsolidationCohortsEvaluated++;
                 if (TryAcceptTextureConsolidationAtlasBatch(
                         state,
@@ -3475,13 +3552,22 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
-                if (ShouldSplitTextureConsolidationCohort(
+                if (cohortUnits.Count >= 2 &&
+                    ShouldSplitTextureConsolidationCohort(
                         cohort,
                         rejectionReason))
                 {
-                    var splitIndex = cohort.Count / 2;
-                    pending.Enqueue(cohort.Take(splitIndex).ToList());
-                    pending.Enqueue(cohort.Skip(splitIndex).ToList());
+                    var splitIndex = 0;
+                    var splitCount = 0;
+                    while (splitIndex < cohortUnits.Count - 1 &&
+                           splitCount < cohort.Count / 2)
+                    {
+                        splitCount += cohortUnits[splitIndex].Count;
+                        splitIndex++;
+                    }
+
+                    pending.Enqueue(cohortUnits.Take(splitIndex).ToList());
+                    pending.Enqueue(cohortUnits.Skip(splitIndex).ToList());
                     state.AtlasValueGateTextureConsolidationCohortsSplit++;
                     continue;
                 }
@@ -3494,6 +3580,48 @@ namespace Editors.PackOptimizer.Core
             }
 
             return accepted;
+        }
+
+        private static List<List<AtlasCandidate>> BuildAtlasFamilyUnits(
+            BatchState state,
+            IReadOnlyList<AtlasCandidate> orderedCandidates)
+        {
+            var byKey = orderedCandidates.ToDictionary(candidate => candidate.Key);
+            var unitOfKey = new Dictionary<MeshKey, List<AtlasCandidate>>();
+            var units = new List<List<AtlasCandidate>>();
+            foreach (var candidate in orderedCandidates)
+            {
+                if (unitOfKey.ContainsKey(candidate.Key))
+                    continue;
+
+                // Transitive closure over overlapping families.
+                var keys = new HashSet<MeshKey> { candidate.Key };
+                var growing = true;
+                while (growing)
+                {
+                    growing = false;
+                    foreach (var family in state.LodAwareAtlasFamilies)
+                    {
+                        if (!family.Overlaps(keys))
+                            continue;
+
+                        foreach (var member in family)
+                        {
+                            if (byKey.ContainsKey(member) && keys.Add(member))
+                                growing = true;
+                        }
+                    }
+                }
+
+                var unit = orderedCandidates
+                    .Where(other => keys.Contains(other.Key))
+                    .ToList();
+                units.Add(unit);
+                foreach (var member in unit)
+                    unitOfKey[member.Key] = unit;
+            }
+
+            return units;
         }
 
         private static bool ShouldSplitTextureConsolidationCohort(

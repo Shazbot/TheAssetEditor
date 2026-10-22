@@ -201,9 +201,7 @@ namespace Editors.PackOptimizer.Core
                 "Optimizing atlas batches",
                 item: "Evaluating compatible mesh merges");
             var mergeOptimized = OptimizeBatchesForMergeAffinity(state, localityOptimized);
-            var familyClosed = state.LodAwareAtlasPlanningEnabled
-                ? CloseLodAtlasFamilies(state, mergeOptimized)
-                : mergeOptimized;
+            var familyClosed = CloseLodAtlasFamilies(state, mergeOptimized);
             cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(
                 progress,
@@ -234,6 +232,18 @@ namespace Editors.PackOptimizer.Core
         }
 
         private static List<List<AtlasCandidate>> CloseLodAtlasFamilies(
+            BatchState state,
+            IReadOnlyList<List<AtlasCandidate>> batches)
+        {
+            var closed = CloseStructuralAndIdentityAtlasFamilies(state, batches);
+            // The source-texture sibling rule is independent of LOD-aware planning: it applies
+            // whenever atlasing runs.
+            return CloseSourceTextureSiblingGroups(state, closed)
+                .Where(batch => batch.Count != 0)
+                .ToList();
+        }
+
+        private static List<List<AtlasCandidate>> CloseStructuralAndIdentityAtlasFamilies(
             BatchState state,
             IReadOnlyList<List<AtlasCandidate>> batches)
         {

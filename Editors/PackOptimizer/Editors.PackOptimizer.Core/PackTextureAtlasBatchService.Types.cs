@@ -877,6 +877,18 @@ namespace Editors.PackOptimizer.Core
             public int LodAwareAtlasStructuralComponentsReplanned { get; set; }
             public int LodAwareAtlasStructuralComponentsRejected { get; set; }
             public List<HashSet<MeshKey>> LodAwareAtlasFamilies { get; } = [];
+            // Source-texture sibling groups (one consumer asset referencing one source texture
+            // from several atlas candidates). Closed groups are all-or-nothing for the atlas.
+            public List<HashSet<MeshKey>> SourceTextureSiblingGroups { get; } = [];
+            public int SourceTextureSiblingGroupCount { get; set; }
+            public int SourceTextureSiblingClosedGroupCount { get; set; }
+            public int SourceTextureSiblingOpenGroupCount { get; set; }
+            public int SourceTextureSiblingMemberCount { get; set; }
+            public int SourceTextureSiblingGroupsMoved { get; set; }
+            public int SourceTextureSiblingCandidatesRejected { get; set; }
+            public int SourceTextureSiblingInvariantViolations { get; set; }
+            public int SourceTextureSiblingInvariantBatchesDropped { get; set; }
+            public List<AtlasValueGateAcceptedBatchUndo> AtlasValueGateAcceptedBatchUndo { get; } = [];
             public HashSet<string> GeneratedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, (int Width, int Height)> GeneratedTextureDimensions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
@@ -1567,6 +1579,16 @@ namespace Editors.PackOptimizer.Core
             double ExpectedArmyNetBcnBytes,
             int RawDrawsEliminated,
             double ExpectedArmyDrawsEliminated);
+
+        // Per-kind counters RecordAtlasValueGateAccepted adds that the economics row does not
+        // carry; kept in a list parallel to AtlasValueGateAcceptedBatchEconomics so a batch
+        // dropped by the sibling invariant can be un-accounted exactly.
+        private sealed record AtlasValueGateAcceptedBatchUndo(
+            int PackReferenceRetiredSourceTextureCount,
+            int RetiredSourceTextureCount,
+            int ScenarioDisplacedSourceTextureCount,
+            double ExpectedRetiredSourceTextureCount,
+            int ConsolidatedTextureAssignments);
 
         private sealed record TextureConsolidationCohortAcceptance(
             List<AtlasCandidate> Candidates,
