@@ -8196,7 +8196,8 @@ namespace Test.PackOptimizer.Core
             string Category,
             string[] Subcultures,
             string[] Cultures,
-            bool PackAffected = true);
+            bool PackAffected = true,
+            bool FromConsumer = false);
 
         internal static (object State, object Resolution) CreateArmyScopeState(
             IReadOnlyDictionary<string, string> cultureBySubculture,
@@ -8220,6 +8221,8 @@ namespace Test.PackOptimizer.Core
                 visual.GetType().GetProperty("CultureKeys")!.SetValue(
                     visual,
                     new HashSet<string>(units[index].Cultures, StringComparer.OrdinalIgnoreCase));
+                if (units[index].FromConsumer)
+                    visual.GetType().GetProperty("FromConsumer")!.SetValue(visual, true);
                 if (!units[index].PackAffected)
                     usagesByVmd.Remove(NormalizeTestPath($"models\\scope_{index}.variantmeshdefinition"));
             }
@@ -8294,6 +8297,45 @@ namespace Test.PackOptimizer.Core
             ["sc_a2"] = "culture_a",
             ["sc_b"] = "culture_b",
         };
+
+        [Test]
+        public void ArmyScope_ConsumerUnitsNotUsingTheSourceDoNotChangeTheModel()
+        {
+            var cultures = new Dictionary<string, string>(ScopeTestCultures) { ["sc_c"] = "culture_c" };
+            var game = new[]
+            {
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_b"], ["culture_b"], PackAffected: false),
+            };
+            var (aloneState, aloneResolution) = CreateArmyScopeState(cultures, game);
+            var alone = BuildArmyScopeModel(aloneState, aloneResolution, "Subculture");
+
+            var (state, resolution) = CreateArmyScopeState(
+                cultures,
+                [
+                    .. game,
+                    new ScopedRosterUnit("InfantryMissile", ["sc_c"], ["culture_c"], PackAffected: false, FromConsumer: true),
+                    new ScopedRosterUnit("InfantryMissile", ["sc_b"], ["culture_b"], PackAffected: false, FromConsumer: true),
+                ]);
+            var withConsumer = BuildArmyScopeModel(state, resolution, "Subculture");
+
+            Assert.That(DescribeArmyModel(withConsumer), Is.EqualTo(DescribeArmyModel(alone)));
+        }
+
+        [Test]
+        public void ArmyScope_ConsumerUnitsUsingTheSourceJoinTheModel()
+        {
+            var cultures = new Dictionary<string, string>(ScopeTestCultures) { ["sc_c"] = "culture_c" };
+            var (state, resolution) = CreateArmyScopeState(
+                cultures,
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_c"], ["culture_c"], FromConsumer: true));
+
+            var model = BuildArmyScopeModel(state, resolution, "Subculture");
+
+            var unitsByScope = GetRecordProperty<IDictionary>(model, "UnitsByCultureAndCategory");
+            Assert.That(unitsByScope.Keys.Cast<string>(), Is.EquivalentTo(new[] { "sc_a1", "sc_c" }));
+        }
 
         [Test]
         public void ArmyScope_Subculture_KeepsSubculturesOfOneCultureInSeparatePools()

@@ -119,7 +119,8 @@ namespace Editors.PackOptimizer.Core
             var rosterIdentities = baseline.RosterUnits.Select(unit => unit.Identity).ToHashSet(StringComparer.Ordinal);
             var roster = baseline.RosterUnits
                 .Concat(withConsumers.RosterUnits.Where(unit =>
-                    TakesNew(unit.MainUnitKey, unit.LandUnitKey) && rosterIdentities.Add(unit.Identity)))
+                    TakesNew(unit.MainUnitKey, unit.LandUnitKey) && rosterIdentities.Add(unit.Identity))
+                    .Select(unit => unit with { FromConsumer = true }))
                 .ToList();
             // A source VMD root without a gameplay user stays listed unless a consumer gives it one.
             var unresolvedRoots = baseline.UnresolvedVmdRoots

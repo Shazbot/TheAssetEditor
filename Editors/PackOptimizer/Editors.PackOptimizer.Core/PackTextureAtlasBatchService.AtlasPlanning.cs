@@ -1271,16 +1271,8 @@ namespace Editors.PackOptimizer.Core
             if (resolution == null)
                 return null;
 
-            var rosterByUnitId = resolution.RosterUnits
-                .Select(unit => (Identity: GetArmyUnitIdentity(unit), Unit: unit))
-                .Where(entry => entry.Identity.Length != 0)
-                .ToDictionary(
-                    entry => entry.Identity,
-                    entry => entry.Unit,
-                    StringComparer.OrdinalIgnoreCase);
-            if (rosterByUnitId.Count == 0)
-                return null;
-
+            // Units only a consumer's DB rows add stay out of the model unless they use source
+            // files: other mods must not change its cultures, scopes or populations.
             var packAffectedUnitIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var usage in resolution.UsagesByVmd.Values.SelectMany(usages => usages))
             {
@@ -1303,8 +1295,22 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            var rosterUnits = resolution.RosterUnits
+                .Where(unit => !unit.FromConsumer ||
+                               packAffectedUnitIds.Contains(GetArmyUnitIdentity(unit)))
+                .ToList();
+            var rosterByUnitId = rosterUnits
+                .Select(unit => (Identity: GetArmyUnitIdentity(unit), Unit: unit))
+                .Where(entry => entry.Identity.Length != 0)
+                .ToDictionary(
+                    entry => entry.Identity,
+                    entry => entry.Unit,
+                    StringComparer.OrdinalIgnoreCase);
+            if (rosterByUnitId.Count == 0)
+                return null;
+
             var armyScope = state.ArmyScope;
-            var allKnownCultures = resolution.RosterUnits
+            var allKnownCultures = rosterUnits
                 .SelectMany(unit => GetArmyScopeKeys(unit, armyScope))
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Select(value => value.Trim().ToLowerInvariant())
@@ -1378,7 +1384,7 @@ namespace Editors.PackOptimizer.Core
                     Dictionary<string, double>>>(
                 StringComparer.OrdinalIgnoreCase);
 
-            foreach (var unit in resolution.RosterUnits)
+            foreach (var unit in rosterUnits)
             {
                 if (!resolution.Scenario.ArmySlotTemplate.ContainsKey(unit.Category))
                     continue;

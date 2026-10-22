@@ -13950,6 +13950,9 @@ namespace Test.PackOptimizer.Core
             // 3: files the source references are also resolved from its dependency-related packs
             // (dependencyPackPaths); the pinned stages are unchanged without dependencies.
             [3] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 4: consumer-added units that do not use the source stay out of the army model; the
+            // pinned stages have no consumers, so the hash is unchanged.
+            [4] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

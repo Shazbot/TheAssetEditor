@@ -323,6 +323,9 @@ namespace Editors.PackOptimizer.Core
         // particular faction. Selected-faction/culture roster filters must therefore
         // conservatively keep it instead of treating "unknown" as "matches nothing".
         public bool HasUnknownFactionScope { get; init; }
+
+        // True for a unit only another enabled mod's DB rows add (not game or source).
+        public bool FromConsumer { get; init; }
     }
 
     internal sealed record Wh3ModDbContainer(IPackFileContainer Container, bool BelowSource);
