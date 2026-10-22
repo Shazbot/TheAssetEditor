@@ -258,6 +258,9 @@ namespace Editors.PackOptimizer.Core
             public int SourceTextureCount { get; set; }
             public int VanillaReferencedTextureCount { get; set; }
             public int UnresolvedTextureCount { get; set; }
+            // The texture paths behind UnresolvedTextureCount (referenced by a material, found nowhere).
+            public HashSet<string> UnresolvedTexturePaths { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public int HashedFileCount { get; set; }
             public long HashedByteCount { get; set; }
             public int HashFailureCount { get; set; }
@@ -393,6 +396,11 @@ namespace Editors.PackOptimizer.Core
                     cancellationToken,
                     progress);
                 checks.DecodeElapsed = phase.Elapsed;
+
+                // The merge-unlock evaluation measures an optimization, not a defect: the
+                // visual-asset check leaves it out.
+                if (state.CheckMode)
+                    return;
 
                 phase.Restart();
                 var exposure = BuildAssetCheckExposure(state, checks);
@@ -724,6 +732,7 @@ namespace Editors.PackOptimizer.Core
                 if (file == null)
                 {
                     checks.UnresolvedTextureCount++;
+                    checks.UnresolvedTexturePaths.Add(path);
                     continue;
                 }
 

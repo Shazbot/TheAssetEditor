@@ -85,7 +85,14 @@ namespace Editors.PackOptimizer.Core
         /// </summary>
         public const int ScanVersion = 2;
 
-        public static string Describe() => $"output={OutputVersion} scan={ScanVersion}";
+        /// <summary>
+        /// Version of the visual-asset check (the host's <c>check</c> action). A host that prints
+        /// <c>check=N</c> in its version line supports it; callers may use that to detect an older host.
+        /// Not part of any cache key.
+        /// </summary>
+        public const int CheckVersion = 2;
+
+        public static string Describe() => $"output={OutputVersion} scan={ScanVersion} check={CheckVersion}";
     }
 
     /// <summary>What an optimization saved, for display. All sizes are bytes.</summary>
@@ -239,6 +246,40 @@ namespace Editors.PackOptimizer.Core
                     request.ReportPath,
                     request.OutputPath,
                     0, 0, 0, 0, 0);
+            }
+        }
+
+        /// <summary>
+        /// The visual-asset check: runs only the detection stages of the optimizer (broken or invalid
+        /// references, malformed or repaired XML, unreadable models and textures, alpha-tested materials with
+        /// opaque alpha, duplicate textures, LOD and bone weight problems) and returns the findings. It
+        /// optimizes nothing and writes no pack. Cancellation returns <see cref="PackOptimizerStatus.Cancelled"/>
+        /// with no findings.
+        /// </summary>
+        public static PackOptimizerCheckResult Check(
+            PackOptimizerCheckRequest request,
+            IProgress<PackOptimizerProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var packFiles = new PackOptimizerPackFiles(request.ConsumerContainers);
+            var service = new PackTextureAtlasBatchService(packFiles, request.CacheDirectory);
+            IProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>? inner = progress == null
+                ? null
+                : new DirectProgress<PackTextureAtlasBatchService.TextureAtlasPackProgress>(
+                    value => progress.Report(new PackOptimizerProgress(
+                        value.Phase, value.Item, value.Current, value.Total)));
+
+            try
+            {
+                return service.Check(request, inner, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                var summary = PackOptimizerCheck.Summarize([]);
+                return new PackOptimizerCheckResult(
+                    PackOptimizerStatus.Cancelled, [], summary, string.Empty, 0, 0, 0, 0, TimeSpan.Zero);
             }
         }
 

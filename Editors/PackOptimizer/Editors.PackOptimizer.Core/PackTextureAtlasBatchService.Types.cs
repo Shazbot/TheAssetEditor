@@ -609,6 +609,9 @@ namespace Editors.PackOptimizer.Core
         {
             public IPackFileContainer Source { get; }
             public IPackFileContainer Output { get; }
+            // The visual-asset check (PackOptimizer.Check) runs the detection stages only: it scopes
+            // the gameplay mesh dependency index to the pack's own VMDs and needs no unit roster.
+            public bool CheckMode { get; set; }
             public IPackOptimizerPackFiles PackFileService { get; }
             public string SourcePath { get; }
             public string OutputPath { get; }

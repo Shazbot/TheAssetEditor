@@ -42,6 +42,9 @@ internal static class Program
             if (args.Length > 0 && string.Equals(args[0], "optimize", StringComparison.OrdinalIgnoreCase))
                 return WH3AssetHost.Optimize.OptimizeMode.Run(args);
 
+            if (args.Length > 0 && string.Equals(args[0], "check", StringComparison.OrdinalIgnoreCase))
+                return WH3AssetHost.Optimize.CheckMode.Run(args);
+
             var request = CliRequest.Parse(args);
             if (request.Error != null)
                 return WriteFailure(2, "InvalidArguments", request.Error);

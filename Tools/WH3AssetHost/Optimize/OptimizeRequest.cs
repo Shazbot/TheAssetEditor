@@ -127,11 +127,15 @@ public static class OptimizeRequestReader
 {
     /// <returns>The request file path and optional parent pid, or an error message.</returns>
     public static (string? RequestPath, int? ParentPid, string? Error) ParseArguments(string[] args)
+        => ParseArguments(args, "optimize");
+
+    /// <summary>The same command line for another subcommand (<c>check</c>).</summary>
+    public static (string? RequestPath, int? ParentPid, string? Error) ParseArguments(string[] args, string command)
     {
         string? requestPath = null;
         int? parentPid = null;
-        if (args.Length == 0 || !string.Equals(args[0], "optimize", StringComparison.OrdinalIgnoreCase))
-            return (null, null, "Usage: WH3AssetHost optimize --request <file.json> [--parent-pid <pid>]");
+        if (args.Length == 0 || !string.Equals(args[0], command, StringComparison.OrdinalIgnoreCase))
+            return (null, null, $"Usage: WH3AssetHost {command} --request <file.json> [--parent-pid <pid>]");
 
         for (var index = 1; index < args.Length; index++)
         {

@@ -56,6 +56,8 @@ namespace Editors.PackOptimizer.Core
             public int RigidsInScope { get; set; }
             public int RigidsRead { get; set; }
             public int RigidsUnreadable { get; set; }
+            // The rigids behind RigidsUnreadable and why (null reason: the file was not found).
+            public List<(string Rigid, string? Reason)> UnreadableRigids { get; } = [];
             public int RigidsNotReached { get; set; }
             // Meshes of the rigids that could not be read or were not reached (format unknown).
             public int MeshesUnreadableRigid { get; set; }
@@ -158,6 +160,7 @@ namespace Editors.PackOptimizer.Core
 
                     ReportProgress(progress, "Auditing bone weights", index + 1, rigids.Count, scoped.RigidPath);
                     RmvFile? rigid = null;
+                    string? loadFailure = null;
                     try
                     {
                         rigid = loadRigid(scoped.RigidPath);
@@ -165,11 +168,13 @@ namespace Editors.PackOptimizer.Core
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         rigid = null;
+                        loadFailure = $"{ex.GetType().Name}: {ex.Message}";
                     }
 
                     if (rigid?.ModelList == null)
                     {
                         result.RigidsUnreadable++;
+                        result.UnreadableRigids.Add((scoped.RigidPath, loadFailure));
                         result.MeshesUnreadableRigid += scoped.VertexCounts.Sum(lod => lod.Length);
                         continue;
                     }

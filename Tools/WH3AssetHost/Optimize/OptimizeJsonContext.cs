@@ -15,6 +15,8 @@ namespace WH3AssetHost.Optimize;
 [JsonSerializable(typeof(OptimizeErrorLine))]
 [JsonSerializable(typeof(OptimizeProbeLine))]
 [JsonSerializable(typeof(OptimizeSourceProbeLine))]
+[JsonSerializable(typeof(CheckRequest))]
+[JsonSerializable(typeof(CheckResultLine))]
 internal partial class OptimizeJsonContext : JsonSerializerContext
 {
 }

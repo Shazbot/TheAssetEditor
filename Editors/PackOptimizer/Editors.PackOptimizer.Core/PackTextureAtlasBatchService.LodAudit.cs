@@ -77,8 +77,16 @@ namespace Editors.PackOptimizer.Core
             IReadOnlyList<string> DistanceProfiles,
             IReadOnlyList<string> RigidPaths);
 
+        // A root or WSModel the audit could not expand or resolve, with the reason it gave.
+        private sealed record LodAuditFailure(string Kind, string RootPath, string AssetPath, string Reason);
+
         private sealed class LodAuditResult
         {
+            public List<LodAuditFailure> Failures { get; } = [];
+            // The component-resolution diagnostics (reason -> count / examples) the audit saw before
+            // it hands the shared counters back to the cross-rigid analysis.
+            public Dictionary<string, int> ComponentDiagnosticCounts { get; } = new(StringComparer.Ordinal);
+            public Dictionary<string, List<string>> ComponentDiagnosticExamples { get; } = new(StringComparer.Ordinal);
             public Dictionary<string, LodAuditRigid> Rigids { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, LodAuditRigid?> RigidByWsModel { get; } =
@@ -152,6 +160,8 @@ namespace Editors.PackOptimizer.Core
                     if (expansion.FailureReason != null)
                     {
                         audit.ExpansionFailures++;
+                        audit.Failures.Add(new LodAuditFailure(
+                            "Expansion", vmdPath, string.Empty, expansion.FailureReason));
                         continue;
                     }
 
@@ -169,8 +179,10 @@ namespace Editors.PackOptimizer.Core
                                     traversalContainers,
                                     rigidCache,
                                     out var component,
-                                    out _))
+                                    out var componentReason))
                             {
+                                audit.Failures.Add(new LodAuditFailure(
+                                    "Component", vmdPath, Normalize(wsModelPath), componentReason));
                                 return null;
                             }
 
@@ -191,6 +203,10 @@ namespace Editors.PackOptimizer.Core
             {
                 // The component resolution above records cross-rigid diagnostics that
                 // belong to the cross-rigid analysis; it clears them itself when it runs.
+                foreach (var (reason, count) in state.CrossRigidAnalysisDiagnosticCounts)
+                    audit.ComponentDiagnosticCounts[reason] = count;
+                foreach (var (reason, examples) in state.CrossRigidAnalysisDiagnosticExamples)
+                    audit.ComponentDiagnosticExamples[reason] = [.. examples];
                 state.CrossRigidAnalysisDiagnosticCounts.Clear();
                 state.CrossRigidAnalysisDiagnosticExamples.Clear();
                 audit.Elapsed = timer.Elapsed;

@@ -337,7 +337,7 @@ internal static class OptimizeMode
         }
     }
 
-    private static int Fail(TextWriter stdout, OptimizeOutcome outcome, string message, string exceptionType)
+    internal static int Fail(TextWriter stdout, OptimizeOutcome outcome, string message, string exceptionType)
     {
         Console.Error.WriteLine($"{exceptionType}: {message}");
         WriteLine(stdout, new OptimizeErrorLine("error", message, exceptionType), OptimizeJsonContext.Default.OptimizeErrorLine);
@@ -352,7 +352,7 @@ internal static class OptimizeMode
             DeleteQuietly(report);
     }
 
-    private static void DeleteQuietly(string path)
+    internal static void DeleteQuietly(string path)
     {
         try
         {
@@ -367,14 +367,14 @@ internal static class OptimizeMode
 
     private static readonly object StdoutLock = new();
 
-    private static void WriteLine<T>(TextWriter stdout, T value, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo)
+    internal static void WriteLine<T>(TextWriter stdout, T value, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo)
     {
         var line = JsonSerializer.Serialize(value, typeInfo);
         lock (StdoutLock)
             stdout.WriteLine(line);
     }
 
-    private static async Task MonitorParentAsync(int parentProcessId, CancellationTokenSource cancellation)
+    internal static async Task MonitorParentAsync(int parentProcessId, CancellationTokenSource cancellation)
     {
         try
         {
@@ -395,7 +395,7 @@ internal static class OptimizeMode
         }
     }
 
-    private sealed class ThrottledProgress(TextWriter stdout) : IProgress<PackOptimizerProgress>
+    internal sealed class ThrottledProgress(TextWriter stdout) : IProgress<PackOptimizerProgress>
     {
         private readonly Stopwatch _sinceLast = Stopwatch.StartNew();
         private string? _lastStage;

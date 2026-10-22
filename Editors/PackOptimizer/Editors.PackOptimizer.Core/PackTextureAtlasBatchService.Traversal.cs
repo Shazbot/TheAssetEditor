@@ -166,15 +166,19 @@ namespace Editors.PackOptimizer.Core
             // bc8b75c9's UnitIdsByAssetPath is intentionally an army-planning index: units
             // outside the slot template or modeled cultures may be absent. Reuse that fast
             // population, but never treat it as the complete mutation-safety authority.
-            var indexedGameplayAssets = state.ArmyResidencyModel?.UnitIdsByAssetPath.Keys
-                .Where(IsMeshConsumerAssetPath)
-                ?? Array.Empty<string>();
+            var indexedGameplayAssets = state.CheckMode
+                ? Array.Empty<string>()
+                : state.ArmyResidencyModel?.UnitIdsByAssetPath.Keys
+                    .Where(IsMeshConsumerAssetPath)
+                    ?? Array.Empty<string>();
 
             // The resolver roster is the complete DB-derived visual population before the
             // residency model applies army/category/culture filters. Every resolved VMD
             // component remains a safety root because an excluded unit can still reference
             // an immutable CA WSModel sharing a source-owned rigid.
-            var safetyRosterVmdRoots = resolution?.RosterUnits
+            var safetyRosterVmdRoots = state.CheckMode
+                ? Array.Empty<string>()
+                : resolution?.RosterUnits
                 .SelectMany(unit => unit.Components)
                 .Where(component => component.IsVariantMeshDefinition)
                 .Select(component => component.AssetPath)
@@ -557,7 +561,8 @@ namespace Editors.PackOptimizer.Core
         private static bool CanClassifyVerifiedMissingDependencies(BatchState state)
         {
             var containers = state.GameplayTraversalContainers;
-            return state.UnitCategoryResolution?.IsGameplayResolutionHealthy == true &&
+            // The check has no unit resolution: the game packs alone make "missing everywhere" verifiable.
+            return (state.CheckMode || state.UnitCategoryResolution?.IsGameplayResolutionHealthy == true) &&
                    containers != null &&
                    containers.Any(container => container.IsCaPackFile);
         }
