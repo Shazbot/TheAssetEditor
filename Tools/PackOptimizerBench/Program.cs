@@ -17,7 +17,7 @@ using Shared.Core.Settings;
 // Headless runner for PackOptimizer.Run, for measuring the batch tool's runtime
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
-//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true]
+//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--army-scope culture|subculture]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
 // --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
@@ -140,6 +140,14 @@ internal static class Program
         if (consumers.Count != 0)
             Console.WriteLine($"{consumers.Count} consumer pack(s) loaded in {consumerLoadSeconds:0.0} s; the source loads after {sourceIndex ?? consumers.Count} of them.");
 
+        var armyScope = PackOptimizerArmyScope.Subculture;
+        if (options.TryGetValue("army-scope", out var armyScopeText) &&
+            !Enum.TryParse(armyScopeText, ignoreCase: true, out armyScope))
+        {
+            Console.Error.WriteLine($"Unknown --army-scope '{armyScopeText}' (culture|subculture).");
+            return 2;
+        }
+
         var request = new PackOptimizerRequest(
             source,
             source_,
@@ -155,6 +163,7 @@ internal static class Program
                 AtlasAllVmds = false,
                 ScoreAllGameUnits = false,
                 LodAwareAtlasPlanning = true,
+                ArmyScope = armyScope,
                 CrossRigidOnly = false,
                 CrossRigidMerges = true,
                 BuildAtlases = buildAtlases,

@@ -143,6 +143,9 @@ namespace Editors.PackOptimizer.Core
                 baseline.GameplayResolutionHealthMessage,
                 baseline.Diagnostics)
             {
+                CultureBySubculture = MergeCultureBySubculture(
+                    baseline.CultureBySubculture,
+                    withConsumers.CultureBySubculture),
                 DbSchemaSources = baseline.DbSchemaSources,
                 DbReadElapsed = baseline.DbReadElapsed,
                 DbDecodeElapsed = baseline.DbDecodeElapsed,
@@ -152,6 +155,16 @@ namespace Editors.PackOptimizer.Core
                 ConsumerTableInfos = withConsumers.ConsumerTableInfos,
                 ConsumerRowsAdded = withConsumers.ConsumerRowsAdded,
             };
+        }
+
+        private static IReadOnlyDictionary<string, string> MergeCultureBySubculture(
+            IReadOnlyDictionary<string, string> baseline,
+            IReadOnlyDictionary<string, string> withConsumers)
+        {
+            var merged = new Dictionary<string, string>(baseline, StringComparer.OrdinalIgnoreCase);
+            foreach (var (subculture, culture) in withConsumers)
+                merged.TryAdd(subculture, culture);
+            return merged;
         }
     }
 }

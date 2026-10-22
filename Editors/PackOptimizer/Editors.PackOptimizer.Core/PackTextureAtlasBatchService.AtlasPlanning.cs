@@ -1254,6 +1254,15 @@ namespace Editors.PackOptimizer.Core
             return true;
         }
 
+        // The army-pool keys of a unit: its subcultures (culture-level when it has none) in
+        // subculture mode, its cultures in culture mode.
+        private static IEnumerable<string> GetArmyScopeKeys(
+            Wh3ResolvedUnitVisual unit,
+            PackOptimizerArmyScope scope)
+            => scope == PackOptimizerArmyScope.Subculture && unit.SubcultureKeys.Count != 0
+                ? unit.SubcultureKeys
+                : unit.CultureKeys;
+
         private static ArmyResidencyModel? BuildArmyResidencyModel(
             BatchState state,
             Wh3UnitCategoryResolution? resolution,
@@ -1294,8 +1303,9 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            var armyScope = state.ArmyScope;
             var allKnownCultures = resolution.RosterUnits
-                .SelectMany(unit => unit.CultureKeys)
+                .SelectMany(unit => GetArmyScopeKeys(unit, armyScope))
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Select(value => value.Trim().ToLowerInvariant())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -1324,7 +1334,7 @@ namespace Editors.PackOptimizer.Core
                         continue;
 
                     playerCultures.UnionWith(
-                        unit.CultureKeys
+                        GetArmyScopeKeys(unit, armyScope)
                             .Where(value => !string.IsNullOrWhiteSpace(value))
                             .Select(value => value.Trim().ToLowerInvariant())
                             .Where(modelCultures.Contains));
@@ -1377,7 +1387,7 @@ namespace Editors.PackOptimizer.Core
                 if (identity.Length == 0)
                     continue;
 
-                var unitCultures = unit.CultureKeys
+                var unitCultures = GetArmyScopeKeys(unit, armyScope)
                     .Where(value => !string.IsNullOrWhiteSpace(value))
                     .Select(value => value.Trim().ToLowerInvariant())
                     .Where(modelCultures.Contains)
@@ -1387,7 +1397,7 @@ namespace Editors.PackOptimizer.Core
                 // keeps unresolved generic units available in each culture without ever mixing
                 // known units from unrelated cultures into the same army population.
                 if (unitCultures.Count == 0 &&
-                    (unit.HasUnknownFactionScope || unit.CultureKeys.Count == 0))
+                    (unit.HasUnknownFactionScope || !GetArmyScopeKeys(unit, armyScope).Any()))
                 {
                     unitCultures.UnionWith(modelCultures);
                 }
@@ -1489,20 +1499,57 @@ namespace Editors.PackOptimizer.Core
             if (scoredPlayerCultures.Length == 0)
                 scoredPlayerCultures = populatedCultures;
 
-            var playerCultureWeight = 1.0 / scoredPlayerCultures.Length;
-            var cultureWeights = scoredPlayerCultures.ToDictionary(
-                culture => culture,
-                _ => playerCultureWeight,
-                StringComparer.OrdinalIgnoreCase);
+            // Culture mode (and the all-game-units mode) weights the player scopes equally. In
+            // subculture mode a player scope weighs by how many pack-affected units it can field
+            // (a unit available to several subcultures counts for each), so subcultures that
+            // merely share a culture with the pack, or custom-battle copies of a roster, do not
+            // dilute the pack's presence. Nothing resolving falls back to equal weights.
+            var playerScopeUnitCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var unitId in packAffectedUnitIds)
+            {
+                if (!rosterByUnitId.TryGetValue(unitId, out var packUnit))
+                    continue;
+
+                foreach (var scopeKey in GetArmyScopeKeys(packUnit, armyScope)
+                             .Where(value => !string.IsNullOrWhiteSpace(value))
+                             .Select(value => value.Trim().ToLowerInvariant())
+                             .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    if (playerCultures.Contains(scopeKey) &&
+                        scoredPlayerCultures.Contains(scopeKey, StringComparer.OrdinalIgnoreCase))
+                    {
+                        playerScopeUnitCounts[scopeKey] =
+                            playerScopeUnitCounts.GetValueOrDefault(scopeKey) + 1;
+                    }
+                }
+            }
+
+            var cultureWeights = armyScope == PackOptimizerArmyScope.Subculture &&
+                                 !includeAllGameCultures &&
+                                 playerScopeUnitCounts.Count != 0
+                ? CreateProportionalPlayerScopeWeights(playerScopeUnitCounts)
+                : scoredPlayerCultures.ToDictionary(
+                    culture => culture,
+                    _ => 1.0 / scoredPlayerCultures.Length,
+                    StringComparer.OrdinalIgnoreCase);
 
             // Opponent cultures are uniformly distributed across the complete resolved game
             // roster. For culture-local assets this only adds the same-culture mirror chance.
             // If the dependency graph proves an asset is shared across cultures, those cultures
             // automatically contribute without needing an explicit culture-pair matrix.
-            var opponentCultureWeight = 1.0 / populatedCultures.Length;
+            // In subculture mode the culture still receives the uniform weight and splits it
+            // equally across its populated subcultures.
+            var parentCultureByScope = BuildParentCultureByScope(
+                resolution,
+                populatedCultures,
+                armyScope);
+            var populatedScopesPerCulture = populatedCultures
+                .GroupBy(scope => parentCultureByScope[scope], StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
             var opponentCultureWeights = populatedCultures.ToDictionary(
-                culture => culture,
-                _ => opponentCultureWeight,
+                scope => scope,
+                scope => 1.0 / populatedScopesPerCulture.Count /
+                         populatedScopesPerCulture[parentCultureByScope[scope]],
                 StringComparer.OrdinalIgnoreCase);
 
             var occurrenceCache = new Dictionary<string, IReadOnlyDictionary<string, double>>(
@@ -1722,7 +1769,76 @@ namespace Editors.PackOptimizer.Core
                 expectedWsModelOccurrencesByUnit,
                 visualConfigurationsByUnitAndRole,
                 resolution.Scenario,
-                includeAllGameCultures);
+                includeAllGameCultures)
+            {
+                Scope = armyScope,
+                PlayerScopeUnitCounts = playerScopeUnitCounts,
+                ParentCultureByScope = parentCultureByScope,
+            };
+        }
+
+        private static Dictionary<string, double> CreateProportionalPlayerScopeWeights(
+            IReadOnlyDictionary<string, int> unitCountsByScope)
+        {
+            var total = unitCountsByScope.Values.Sum(count => (double)count);
+            return unitCountsByScope.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value / total,
+                StringComparer.OrdinalIgnoreCase);
+        }
+
+        // Maps every populated army scope to its culture: the DB's subculture -> culture table,
+        // then the culture the scope's own units agree on, then the scope itself. In culture mode
+        // a scope is its own culture.
+        private static Dictionary<string, string> BuildParentCultureByScope(
+            Wh3UnitCategoryResolution resolution,
+            IEnumerable<string> scopes,
+            PackOptimizerArmyScope armyScope)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (armyScope == PackOptimizerArmyScope.Culture)
+            {
+                foreach (var scope in scopes)
+                    result[scope] = scope;
+                return result;
+            }
+
+            var unitCulturesBySubculture = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var unit in resolution.RosterUnits)
+            {
+                foreach (var subculture in unit.SubcultureKeys)
+                {
+                    var key = subculture.Trim().ToLowerInvariant();
+                    if (!unitCulturesBySubculture.TryGetValue(key, out var cultures))
+                    {
+                        cultures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        unitCulturesBySubculture[key] = cultures;
+                    }
+
+                    cultures.UnionWith(unit.CultureKeys.Select(value => value.Trim().ToLowerInvariant()));
+                }
+            }
+
+            foreach (var scope in scopes)
+            {
+                if (resolution.CultureBySubculture.TryGetValue(scope, out var culture) &&
+                    !string.IsNullOrWhiteSpace(culture))
+                {
+                    result[scope] = culture.Trim().ToLowerInvariant();
+                }
+                else if (unitCulturesBySubculture.TryGetValue(scope, out var unitCultures) &&
+                         unitCultures.Count == 1)
+                {
+                    result[scope] = unitCultures.First();
+                }
+                else
+                {
+                    result[scope] = scope;
+                }
+            }
+
+            return result;
         }
 
         private static IReadOnlyDictionary<string, double> GetExpectedWsModelOccurrencesForVmd(

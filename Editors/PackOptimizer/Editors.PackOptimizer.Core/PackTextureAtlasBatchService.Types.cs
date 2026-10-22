@@ -554,7 +554,18 @@ namespace Editors.PackOptimizer.Core
                 Dictionary<Wh3UnitVisualRole, IReadOnlyList<UnitVisualConfiguration>>>
                 VisualConfigurationsByUnitAndRole,
             Wh3ArmyVisualScenario Scenario,
-            bool IncludesAllGameCultures);
+            bool IncludesAllGameCultures)
+        {
+            // The "culture" keys of this model are army scopes: subcultures (or the culture of a unit
+            // without one) in subculture mode, cultures in culture mode.
+            public PackOptimizerArmyScope Scope { get; init; } = PackOptimizerArmyScope.Culture;
+            // Pack-affected units each player scope can field (a unit counts for every scope it is in).
+            public IReadOnlyDictionary<string, int> PlayerScopeUnitCounts { get; init; } =
+                new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            // Parent culture of every populated army scope (the scope itself in culture mode).
+            public IReadOnlyDictionary<string, string> ParentCultureByScope { get; init; } =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
 
         private sealed record ArmyLocalitySplitEvaluationReportEntry(
             bool Accepted,
@@ -871,6 +882,7 @@ namespace Editors.PackOptimizer.Core
             public int AtlasAssistedMergePartsRemoved { get; set; }
             public int AtlasProtectedStructuralMeshCount { get; set; }
             public bool LodAwareAtlasPlanningEnabled { get; set; } = true;
+            public PackOptimizerArmyScope ArmyScope { get; set; } = PackOptimizerArmyScope.Subculture;
             public int LodAwareAtlasFamilyClosures { get; set; }
             public int LodAwareAtlasFamiliesSpanningMultipleLods { get; set; }
             public int LodAwareAtlasFamilyClosureCandidates { get; set; }

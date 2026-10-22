@@ -231,6 +231,7 @@ namespace Editors.PackOptimizer.Core
                     shareAtlasesAcrossVmds,
                     optimizeGeometry);
                 state.LodAwareAtlasPlanningEnabled = lodAwareAtlasPlanning;
+                state.ArmyScope = options.ArmyScope;
                 state.CrossRigidOnly = crossRigidOnly;
                 state.CrossRigidMergesEnabled =
                     crossRigidMerges || crossRigidOnly;

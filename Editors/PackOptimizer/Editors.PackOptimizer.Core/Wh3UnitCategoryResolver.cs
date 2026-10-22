@@ -359,6 +359,9 @@ namespace Editors.PackOptimizer.Core
         // Time spent reading (pack index to bytes) and decoding the game and source DB tables.
         // One line per game/source table version decoded: the version and which schema supplied it.
         public IReadOnlyList<string> DbSchemaSources { get; init; } = [];
+        // Parent culture of every subculture, from cultures_subcultures_tables.
+        public IReadOnlyDictionary<string, string> CultureBySubculture { get; init; } =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public TimeSpan DbReadElapsed { get; init; }
         public TimeSpan DbDecodeElapsed { get; init; }
         public long DbBytes { get; init; }
@@ -1507,6 +1510,7 @@ namespace Editors.PackOptimizer.Core
                 gameplayResolutionHealthMessage,
                 diagnostics)
             {
+                CultureBySubculture = cultureBySubculture,
                 DbSchemaSources = schemaSources
                     .OrderBy(entry => entry.Key, StringComparer.Ordinal)
                     .Select(entry => $"{entry.Key} ({entry.Value:N0} file(s))")

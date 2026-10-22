@@ -776,11 +776,18 @@ namespace Editors.PackOptimizer.Core
                         $"Atlas value-model roster scope: culture-local " +
                         $"({(state.ArmyResidencyModel.IncludesAllGameCultures ? "all game cultures" : "pack-affected cultures")})");
                     sb.AppendLine(
-                        $"Atlas value-model player cultures: {state.ArmyResidencyModel.PlayerCultureWeights.Count:N0} " +
-                        $"[{string.Join(", ", state.ArmyResidencyModel.PlayerCultureWeights.Keys.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))}]");
+                        $"Atlas value-model army scope: {state.ArmyResidencyModel.Scope.ToString().ToLowerInvariant()} " +
+                        (state.ArmyResidencyModel.Scope == PackOptimizerArmyScope.Subculture
+                            ? "(random armies are drawn per subculture; a unit without one uses its culture)"
+                            : "(random armies are drawn per culture)"));
+                    var modelForReport = state.ArmyResidencyModel;
                     sb.AppendLine(
-                        $"Atlas value-model opponent cultures: {state.ArmyResidencyModel.OpponentCultureWeights.Count:N0} " +
-                        "(uniform across the resolved game roster; unrelated cultures contribute zero for culture-local assets).");
+                        $"Atlas value-model player army scopes: {modelForReport.PlayerCultureWeights.Count:N0} " +
+                        $"[{string.Join(", ", modelForReport.PlayerCultureWeights.OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase).Select(entry => modelForReport.PlayerScopeUnitCounts.TryGetValue(entry.Key, out var unitCount) ? $"{entry.Key} {entry.Value.ToString("0.000", CultureInfo.InvariantCulture)} ({unitCount:N0} units)" : $"{entry.Key} {entry.Value.ToString("0.000", CultureInfo.InvariantCulture)}"))}]");
+                    sb.AppendLine(
+                        $"Atlas value-model opponent army scopes: {modelForReport.OpponentCultureWeights.Count:N0} in " +
+                        $"{modelForReport.ParentCultureByScope.Values.Distinct(StringComparer.OrdinalIgnoreCase).Count():N0} culture(s) " +
+                        "(uniform per culture across the resolved game roster, each culture's weight split equally across its populated scopes; unrelated scopes contribute zero for scope-local assets).");
                     sb.AppendLine(
                         "Vanilla-owned visual assets: read-only residency consumers (never rewritten; never physically retired).");
                     sb.AppendLine(

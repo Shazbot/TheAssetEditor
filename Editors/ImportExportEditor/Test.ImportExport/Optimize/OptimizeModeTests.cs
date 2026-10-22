@@ -63,8 +63,21 @@ public class OptimizeModeTests
         // Omitted option fields keep the optimizer's defaults.
         Assert.That(options.ShareAtlasesAcrossVmds, Is.True);
         Assert.That(options.LodAwareAtlasPlanning, Is.True);
+        Assert.That(options.ArmyScope, Is.EqualTo(Editors.PackOptimizer.Core.PackOptimizerArmyScope.Subculture));
         Assert.That(options.MergeCompatibleMeshes, Is.False);
         Assert.That(request.CacheDirectory, Is.Null);
+    }
+
+    [Test]
+    public void ArmyScope_IsReadFromTheOptionsAndRejectsUnknownValues()
+    {
+        Assert.That(
+            new OptimizeOptionsRequest(ArmyScope: "Culture").ToOptimizerOptions().ArmyScope,
+            Is.EqualTo(Editors.PackOptimizer.Core.PackOptimizerArmyScope.Culture));
+        Assert.That(
+            new OptimizeOptionsRequest(ArmyScope: " subculture ").ToOptimizerOptions().ArmyScope,
+            Is.EqualTo(Editors.PackOptimizer.Core.PackOptimizerArmyScope.Subculture));
+        Assert.Throws<ArgumentException>(() => new OptimizeOptionsRequest(ArmyScope: "faction").ToOptimizerOptions());
     }
 
     [Test]

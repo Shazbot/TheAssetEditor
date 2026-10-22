@@ -5,6 +5,13 @@ using Shared.Core.Settings;
 
 namespace Editors.PackOptimizer.Core
 {
+    /// <summary>The unit grouping of the battle-presence model's random armies.</summary>
+    public enum PackOptimizerArmyScope
+    {
+        Subculture = 0,
+        Culture = 1,
+    }
+
     /// <summary>
     /// What the optimizer does to a pack. Every flag defaults to the value the
     /// batch service has always used when a caller does not say otherwise.
@@ -17,6 +24,13 @@ namespace Editors.PackOptimizer.Core
         public bool AtlasAllVmds { get; init; }
         public bool ScoreAllGameUnits { get; init; }
         public bool LodAwareAtlasPlanning { get; init; } = true;
+        /// <summary>
+        /// Which unit groups form separate random-army pools in the battle-presence model.
+        /// <see cref="PackOptimizerArmyScope.Subculture"/> (default) keeps e.g. the Tilean and Estalian
+        /// mercenary lists apart from the rest of their culture; <see cref="PackOptimizerArmyScope.Culture"/>
+        /// pools every subculture of a culture.
+        /// </summary>
+        public PackOptimizerArmyScope ArmyScope { get; init; } = PackOptimizerArmyScope.Subculture;
         public bool CrossRigidOnly { get; init; }
         public bool CrossRigidMerges { get; init; }
         public bool BuildAtlases { get; init; } = true;

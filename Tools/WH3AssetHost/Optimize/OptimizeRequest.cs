@@ -73,7 +73,8 @@ public sealed record OptimizeOptionsRequest(
     bool? SharedTextureRepack = null,
     bool? CompactTextures = null,
     bool? DropUnreadAlpha = null,
-    bool? CompressRigidModels = null)
+    bool? CompressRigidModels = null,
+    string? ArmyScope = null)
 {
     public PackOptimizerOptions ToOptimizerOptions()
     {
@@ -94,7 +95,18 @@ public sealed record OptimizeOptionsRequest(
             CompactTextures = CompactTextures ?? defaults.CompactTextures,
             DropUnreadAlpha = DropUnreadAlpha ?? defaults.DropUnreadAlpha,
             CompressRigidModels = CompressRigidModels ?? defaults.CompressRigidModels,
+            ArmyScope = ParseArmyScope(ArmyScope, defaults.ArmyScope),
         };
+    }
+
+    private static PackOptimizerArmyScope ParseArmyScope(string? value, PackOptimizerArmyScope fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return fallback;
+        if (Enum.TryParse<PackOptimizerArmyScope>(value.Trim(), ignoreCase: true, out var parsed) &&
+            Enum.IsDefined(parsed))
+            return parsed;
+        throw new ArgumentException($"Unknown armyScope '{value}'; expected 'subculture' or 'culture'.");
     }
 }
 

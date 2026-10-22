@@ -8004,6 +8004,195 @@ namespace Test.PackOptimizer.Core
             });
         }
 
+        // ---- Army scope (subculture / culture) ----
+
+        private sealed record ScopedRosterUnit(
+            string Category,
+            string[] Subcultures,
+            string[] Cultures,
+            bool PackAffected = true);
+
+        private static (object State, object Resolution) CreateArmyScopeState(
+            IReadOnlyDictionary<string, string> cultureBySubculture,
+            params ScopedRosterUnit[] units)
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>());
+            var state = CreateTraversalBatchState(source.Object, []);
+            var resolution = CreateResolutionWithRosterVmds(
+                true,
+                units.Select((unit, index) => ($"models\\scope_{index}.variantmeshdefinition", unit.Category)).ToArray());
+            var roster = GetRecordProperty<IList>(resolution, "RosterUnits");
+            var usagesByVmd = GetRecordProperty<IDictionary>(resolution, "UsagesByVmd");
+            for (var index = 0; index < units.Length; index++)
+            {
+                var visual = roster[index]!;
+                visual.GetType().GetProperty("SubcultureKeys")!.SetValue(
+                    visual,
+                    new HashSet<string>(units[index].Subcultures, StringComparer.OrdinalIgnoreCase));
+                visual.GetType().GetProperty("CultureKeys")!.SetValue(
+                    visual,
+                    new HashSet<string>(units[index].Cultures, StringComparer.OrdinalIgnoreCase));
+                if (!units[index].PackAffected)
+                    usagesByVmd.Remove(NormalizeTestPath($"models\\scope_{index}.variantmeshdefinition"));
+            }
+
+            resolution.GetType().GetProperty("CultureBySubculture")!.SetValue(
+                resolution,
+                new Dictionary<string, string>(cultureBySubculture, StringComparer.OrdinalIgnoreCase));
+            SetStateProperty(state, "UnitCategoryResolution", resolution);
+            return (state, resolution);
+        }
+
+        private static object BuildArmyScopeModel(
+            object state,
+            object resolution,
+            string armyScope,
+            bool includeAllGameCultures = false)
+        {
+            var assembly = Assembly.Load("Editors.PackOptimizer.Core");
+            var scopeType = assembly.GetType(
+                "Editors.PackOptimizer.Core.PackOptimizerArmyScope",
+                throwOnError: true)!;
+            SetStateProperty(state, "ArmyScope", Enum.Parse(scopeType, armyScope));
+            var method = assembly.GetType(
+                    "Editors.PackOptimizer.Core.PackTextureAtlasBatchService",
+                    throwOnError: true)!
+                .GetMethod("BuildArmyResidencyModel", BindingFlags.NonPublic | BindingFlags.Static)!;
+            return method.Invoke(null, [state, resolution, includeAllGameCultures])
+                   ?? throw new InvalidOperationException("BuildArmyResidencyModel returned null.");
+        }
+
+        private static IReadOnlyDictionary<string, double> GetScopeWeights(object model, string property)
+            => ((IDictionary<string, double>)GetRecordProperty<object>(model, property))
+                .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase);
+
+        private static int CountUnitsInScope(object model, string scope)
+        {
+            var byScope = GetRecordProperty<IDictionary>(model, "UnitsByCultureAndCategory");
+            var byCategory = (IDictionary)byScope[scope]!;
+            return byCategory.Values.Cast<ISet<string>>().Sum(units => units.Count);
+        }
+
+        private static readonly Dictionary<string, string> ScopeTestCultures = new()
+        {
+            ["sc_a1"] = "culture_a",
+            ["sc_a2"] = "culture_a",
+            ["sc_b"] = "culture_b",
+        };
+
+        [Test]
+        public void ArmyScope_Subculture_KeepsSubculturesOfOneCultureInSeparatePools()
+        {
+            var (state, resolution) = CreateArmyScopeState(
+                ScopeTestCultures,
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_a2"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1", "sc_a2"], ["culture_a"]));
+
+            var model = BuildArmyScopeModel(state, resolution, "Subculture");
+
+            var unitsByScope = GetRecordProperty<IDictionary>(model, "UnitsByCultureAndCategory");
+            Assert.That(unitsByScope.Keys.Cast<string>(), Is.EquivalentTo(new[] { "sc_a1", "sc_a2" }));
+            var a1 = ((IDictionary)unitsByScope["sc_a1"]!).Values.Cast<ISet<string>>().SelectMany(u => u).ToHashSet();
+            var a2 = ((IDictionary)unitsByScope["sc_a2"]!).Values.Cast<ISet<string>>().SelectMany(u => u).ToHashSet();
+            // Unit 0 is only in sc_a1, unit 1 only in sc_a2, unit 2 (shared) in both.
+            Assert.That(a1, Has.Count.EqualTo(2));
+            Assert.That(a2, Has.Count.EqualTo(2));
+            Assert.That(a1.Intersect(a2).Count(), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ArmyScope_Subculture_WeightsPlayerScopesByPackAffectedUnitCounts()
+        {
+            var (state, resolution) = CreateArmyScopeState(
+                ScopeTestCultures,
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1", "sc_b"], ["culture_a", "culture_b"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_a2"], ["culture_a"], PackAffected: false),
+                new ScopedRosterUnit("InfantryMissile", ["sc_b"], ["culture_b"], PackAffected: false));
+
+            var model = BuildArmyScopeModel(state, resolution, "Subculture");
+
+            var weights = GetScopeWeights(model, "PlayerCultureWeights");
+            var counts = GetRecordProperty<IDictionary<string, int>>(model, "PlayerScopeUnitCounts");
+            Assert.Multiple(() =>
+            {
+                // sc_a1 fields all 3 affected units, sc_b the shared one; sc_a2 has none.
+                Assert.That(weights.Keys, Is.EquivalentTo(new[] { "sc_a1", "sc_b" }));
+                Assert.That(counts["sc_a1"], Is.EqualTo(3));
+                Assert.That(counts["sc_b"], Is.EqualTo(1));
+                Assert.That(weights["sc_a1"], Is.EqualTo(0.75).Within(1e-12));
+                Assert.That(weights["sc_b"], Is.EqualTo(0.25).Within(1e-12));
+                Assert.That(weights.Values.Sum(), Is.EqualTo(1.0).Within(1e-12));
+            });
+        }
+
+        [Test]
+        public void ArmyScope_Subculture_SplitsEachOpponentCultureWeightAcrossItsSubcultures()
+        {
+            var (state, resolution) = CreateArmyScopeState(
+                ScopeTestCultures,
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_a2"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_b"], ["culture_b"]));
+
+            var model = BuildArmyScopeModel(state, resolution, "Subculture");
+
+            var opponents = GetScopeWeights(model, "OpponentCultureWeights");
+            Assert.Multiple(() =>
+            {
+                Assert.That(opponents["sc_a1"], Is.EqualTo(0.25).Within(1e-12));
+                Assert.That(opponents["sc_a2"], Is.EqualTo(0.25).Within(1e-12));
+                Assert.That(opponents["sc_b"], Is.EqualTo(0.5).Within(1e-12));
+                Assert.That(opponents.Values.Sum(), Is.EqualTo(1.0).Within(1e-12));
+            });
+        }
+
+        [Test]
+        public void ArmyScope_Subculture_UsesTheCultureForUnitsWithoutASubculture()
+        {
+            var (state, resolution) = CreateArmyScopeState(
+                ScopeTestCultures,
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", [], ["culture_c"]));
+
+            var model = BuildArmyScopeModel(state, resolution, "Subculture");
+
+            var unitsByScope = GetRecordProperty<IDictionary>(model, "UnitsByCultureAndCategory");
+            Assert.That(unitsByScope.Keys.Cast<string>(), Is.EquivalentTo(new[] { "sc_a1", "culture_c" }));
+            var opponents = GetScopeWeights(model, "OpponentCultureWeights");
+            Assert.That(opponents["culture_c"], Is.EqualTo(0.5).Within(1e-12));
+        }
+
+        [Test]
+        public void ArmyScope_Culture_ReproducesTheCulturePoolsWithEqualWeights()
+        {
+            var (state, resolution) = CreateArmyScopeState(
+                ScopeTestCultures,
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_a1"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_a2"], ["culture_a"]),
+                new ScopedRosterUnit("InfantryMissile", ["sc_b"], ["culture_b"]));
+
+            var model = BuildArmyScopeModel(state, resolution, "Culture");
+
+            Assert.Multiple(() =>
+            {
+                var unitsByScope = GetRecordProperty<IDictionary>(model, "UnitsByCultureAndCategory");
+                Assert.That(unitsByScope.Keys.Cast<string>(), Is.EquivalentTo(new[] { "culture_a", "culture_b" }));
+                Assert.That(CountUnitsInScope(model, "culture_a"), Is.EqualTo(3));
+                Assert.That(CountUnitsInScope(model, "culture_b"), Is.EqualTo(1));
+                var players = GetScopeWeights(model, "PlayerCultureWeights");
+                Assert.That(players["culture_a"], Is.EqualTo(0.5).Within(1e-12));
+                Assert.That(players["culture_b"], Is.EqualTo(0.5).Within(1e-12));
+                var opponents = GetScopeWeights(model, "OpponentCultureWeights");
+                Assert.That(opponents["culture_a"], Is.EqualTo(0.5).Within(1e-12));
+                Assert.That(opponents["culture_b"], Is.EqualTo(0.5).Within(1e-12));
+            });
+        }
 
     }
 }
