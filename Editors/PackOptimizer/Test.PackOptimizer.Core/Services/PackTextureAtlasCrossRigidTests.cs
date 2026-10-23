@@ -8431,6 +8431,54 @@ namespace Test.PackOptimizer.Core
             Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
         }
 
+        // Charts a row packer cannot fit on 512x512 (it needs 1024x512) but MaxRects can: a run of four
+        // blocks across, three runs down and a lone block.
+        private static SrWorld BuildMaxRectsWinsSrWorld()
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1);
+            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2);
+            world.Fixture.AddMaterial(SrMaterialPath("m1"), (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n1.dds"));
+            var m1 = SrMaterialPath("m1");
+            var lod0 = new[] { (m1, SrBlocks((9, 6), (10, 6), (11, 6), (12, 6), (14, 0), (5, 1), (5, 2), (5, 3))) };
+            world.AddModel(SrRigid, SrWs, SrRoot, SrRigidFactory(lod0), [[m1]]);
+            return world;
+        }
+
+        [Test]
+        public void SharedRepack_EndToEnd_WhereMaxRectsWins_BuildsValidatesAndSamplesTheSameColours()
+        {
+            var world = BuildMaxRectsWinsSrWorld();
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "FailedPixelCheck"), Is.Zero);
+            var built = SrBuilt(result).Single();
+            var group = Get<IEnumerable>(built, "Groups").Cast<object>().Single();
+            // The shelf packer needs 1024x512 for these charts.
+            Assert.That(Get<string>(group, "Sizes"), Is.EqualTo("base_colour 1024x1024 -> 512x512; normal 512x512 -> 256x256"));
+            var (samples, max) = AssertSrPixels(
+                world, SrRigid, SrWs, BuildMaxRectsWinsSrWorld().Rigids[SrRigid], new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 });
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_EndToEnd_WhereMaxRectsWins_IsDeterministic()
+        {
+            var first = BuildMaxRectsWinsSrWorld();
+            first.Run(minimumSaving: 1, minimumGroupSaving: 1);
+            var second = BuildMaxRectsWinsSrWorld();
+            second.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(second.Fixture.Output.Keys.OrderBy(key => key), Is.EqualTo(first.Fixture.Output.Keys.OrderBy(key => key)));
+            foreach (var (path, bytes) in first.Fixture.Output)
+                Assert.That(second.Fixture.Output[path], Is.EqualTo(bytes), path);
+        }
+
         [Test]
         public void SharedRepack_SlotListedTwiceWithTheSameSource_BothEntriesAreRewritten()
         {
@@ -10242,7 +10290,7 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
-        public void SharedRepack_Layout_ShelfPackerIsDeterministicAndOverlapFree()
+        public void SharedRepack_Layout_PackerIsDeterministicAndOverlapFree()
         {
             (int Width, int Height)[] sizes = [(80, 80), (144, 80), (64, 256), (32, 32), (200, 40)];
             var arguments = new object?[] { sizes.ToList(), 4096, 4096, 0, 0, null };
@@ -10328,6 +10376,26 @@ namespace Test.PackOptimizer.Core
             Assert.That(report, Does.Contain("Owned source textures replaced: 0"));
             Assert.That(report, Does.Contain("Skipped sets (0)"));
             TestContext.Out.WriteLine(report);
+        }
+
+        [Test]
+        public void SharedRepack_ReportSection_HasAPackingSimulationThatMatchesThePlannersChartModel()
+        {
+            var world = BuildStandardSrWorld();
+            world.Run();
+            SetStateProperty(world.State, "SharedTextureRepackRequested", true);
+            SetStateProperty(world.State, "SharedTextureRepackEnabled", true);
+            GetStaticMethod("FinalizeSharedTextureRepack").Invoke(null, [world.State]);
+
+            var report = BuildSharedRepackSection(world.State);
+
+            Assert.That(report, Does.Contain("Packing simulation (report only, power-of-two pages):"));
+            Assert.That(report, Does.Contain("group failures 0;"));
+            Assert.That(report, Does.Contain("baseline-model mismatches 0 chart(s)"));
+            Assert.That(report, Does.Not.Contain("same rectangles"));
+            Assert.That(report, Does.Contain("MaxRects/skyline, align 16"));
+            Assert.That(report, Does.Contain("already packed with the best of shelf, MaxRects and skyline"));
+            Assert.That(report, Does.Contain("tight pieces, gutter 4 + align 4"));
         }
 
         private static readonly (string Slot, string Texture)[] SrPassThrough =
@@ -14591,6 +14659,52 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void SharedRepack_Group_PacksWithMaxRectsWhenTheRowsNeedALargerCanvas()
+        {
+            // Row packing needs 512x256 for these; MaxRects fits them on 256x256.
+            var tuple = SrChartTuple(1024, 1024, copy: false, (64, 160), (224, 96), (32, 192));
+
+            var pages = SrPackGroup(tuple, 4096, 1L << 60, out _);
+
+            var page = pages.Single();
+            var width = Get<int>(page, "LayoutWidth");
+            var height = Get<int>(page, "LayoutHeight");
+            Assert.That((width, height), Is.EqualTo((256, 256)));
+            var charts = Get<IEnumerable>(page, "Charts").Cast<object>().ToList();
+            Assert.That(charts, Has.Count.EqualTo(3));
+            foreach (var chart in charts)
+            {
+                Assert.That(Get<int>(chart, "PackX") % 32, Is.Zero);
+                Assert.That(Get<int>(chart, "PackY") % 32, Is.Zero);
+                Assert.That(Get<int>(chart, "PackX") + Get<int>(chart, "LayoutWidth"), Is.LessThanOrEqualTo(width));
+                Assert.That(Get<int>(chart, "PackY") + Get<int>(chart, "LayoutHeight"), Is.LessThanOrEqualTo(height));
+            }
+
+            for (var left = 0; left < charts.Count; left++)
+            {
+                for (var right = left + 1; right < charts.Count; right++)
+                {
+                    int Lx(object c) => Get<int>(c, "PackX");
+                    int Ly(object c) => Get<int>(c, "PackY");
+                    int Lw(object c) => Get<int>(c, "LayoutWidth");
+                    int Lh(object c) => Get<int>(c, "LayoutHeight");
+                    var overlaps = Lx(charts[left]) < Lx(charts[right]) + Lw(charts[right]) &&
+                                   Lx(charts[right]) < Lx(charts[left]) + Lw(charts[left]) &&
+                                   Ly(charts[left]) < Ly(charts[right]) + Lh(charts[right]) &&
+                                   Ly(charts[right]) < Ly(charts[left]) + Lh(charts[left]);
+                    Assert.That(overlaps, Is.False, $"{left} overlaps {right}");
+                }
+            }
+
+            // Same input again: the same positions.
+            var again = SrPackGroup(SrChartTuple(1024, 1024, copy: false, (64, 160), (224, 96), (32, 192)), 4096, 1L << 60, out _)
+                .Single();
+            Assert.That(
+                Get<IEnumerable>(again, "Charts").Cast<object>().Select(c => (Get<int>(c, "PackX"), Get<int>(c, "PackY"))),
+                Is.EqualTo(charts.Select(c => (Get<int>(c, "PackX"), Get<int>(c, "PackY")))));
+        }
+
+        [Test]
         public void SharedRepack_CopySlotGroup_RestrictsPageCanvasesToTheReferenceAspect()
         {
             // A 2048x1024 reference (aspect 2:1) with charts that an unrestricted packer fits on a 512x512
@@ -14675,6 +14789,10 @@ namespace Test.PackOptimizer.Core
             // 9: the shared texture repack (and the duplicate-slot refusals) ignore a t_xml_ slot the material's
             // shader never binds; the repack is not among the pinned stages, so the hash is unchanged.
             [9] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 10: the shared texture repack packs its pages with the best of shelf, MaxRects and skyline
+            // (and fills split pages on MaxRects too); the repack is not among the pinned stages, so the
+            // hash is unchanged.
+            [10] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

@@ -35,7 +35,7 @@ namespace Editors.PackOptimizer.Core
         //    conservatively on a grid of
         //    cells of 8+ source pixels, split into 8-connected components, boxed, padded by
         //    one cell and merged while the padded boxes overlap: the charts.
-        //  * All charts of all tuples go into one shared layout (deterministic shelf packer,
+        //  * All charts of all tuples go into one shared layout (deterministic packer (best of shelf, MaxRects, skyline),
         //    power-of-two canvas). Every slot's output is that layout scaled by the slot's
         //    finest source resolution, so no tuple loses pixels; coarser slots are
         //    replicated up (nearest, exact copies) and the overhead is reported.
@@ -87,6 +87,9 @@ namespace Editors.PackOptimizer.Core
         // first-page sizes tried per level and this many greedy fills per group.
         private const int SharedRepackMaximumSplitPages = 4;
         private const int SharedRepackSplitCandidatesPerLevel = 12;
+        // Operations (free rectangles or skyline segments looked at) the better packers may spend per
+        // layout group; when spent only the shelf result is used.
+        private const long SharedRepackLayoutOperationBudget = 40_000_000;
         private const int SharedRepackMaximumSplitAttempts = 400;
         private const int SharedRepackMaximumCharts = 4000;
         private const int SharedRepackMaximumComponents = 8000;
@@ -481,7 +484,7 @@ namespace Editors.PackOptimizer.Core
         }
 
         // One layout group's pages in output bytes: what the touched cells, the padded and aligned
-        // chart rectangles, and the shelf packing trimmed to its used width and height would take
+        // chart rectangles, and the packing trimmed to its used width and height would take
         // at the pages' bytes per reference pixel, against the power-of-two pages and the sources.
         private sealed record SharedRepackGroupWaste(
             bool Gated,
@@ -489,7 +492,8 @@ namespace Editors.PackOptimizer.Core
             long UsedBytes,
             long ChartBytes,
             long TrimmedBytes,
-            long PageBytes);
+            long PageBytes,
+            SharedRepackGroupSim? Sim = null);
 
         private sealed class SharedRepackBuiltSet
         {
@@ -563,6 +567,8 @@ namespace Editors.PackOptimizer.Core
             public long MinimumGroupSavingBytes { get; set; } = SharedRepackMinimumGroupSavingBytes;
             public int MaximumSide { get; set; } = SharedRepackMaximumSide;
             public TimeSpan Elapsed { get; set; }
+            // Stopwatch ticks spent in the report-only packing simulation.
+            public long PackingSimTicks { get; set; }
             public string? Failure { get; set; }
             public string? UnavailableReason { get; set; }
 
@@ -781,45 +787,8 @@ namespace Editors.PackOptimizer.Core
             return boxes;
         }
 
-        // Deterministic shelf packing in the given order (tallest first). Sizes and the
-        // canvas are multiples of the alignment, so every position is too.
-        private static bool TryShelfPack(
-            IReadOnlyList<(int Width, int Height)> sizes,
-            int[] order,
-            int canvasWidth,
-            int canvasHeight,
-            out (int X, int Y)[] positions)
-        {
-            positions = new (int X, int Y)[sizes.Count];
-            var x = 0;
-            var y = 0;
-            var rowHeight = 0;
-            foreach (var index in order)
-            {
-                var (width, height) = sizes[index];
-                if (width > canvasWidth || height > canvasHeight)
-                    return false;
-
-                if (x + width > canvasWidth)
-                {
-                    x = 0;
-                    y += rowHeight;
-                    rowHeight = 0;
-                }
-
-                if (y + height > canvasHeight)
-                    return false;
-
-                positions[index] = (x, y);
-                x += width;
-                rowHeight = Math.Max(rowHeight, height);
-            }
-
-            return true;
-        }
-
-        // Smallest power-of-two canvas (by area, then squarest, then wider) the shelf packer
-        // fits all rectangles into, within the given limits.
+        // Smallest power-of-two canvas (by area, then squarest, then wider) the packer fits all
+        // rectangles into, within the given limits. Positions are multiples of the alignment.
         private static bool TryPackSharedRepackLayout(
             IReadOnlyList<(int Width, int Height)> sizes,
             int maximumWidth,
@@ -830,7 +799,11 @@ namespace Editors.PackOptimizer.Core
             => TryPackSharedRepackLayoutOnCanvases(
                 sizes, maximumWidth, maximumHeight, out canvasWidth, out canvasHeight, out positions, null);
 
-        // As above, but only canvases the predicate accepts are tried (null: every power-of-two canvas).
+        // As above, but only canvases the predicate accepts are tried (null: every power-of-two
+        // canvas). The packer is the best of the original shelf (rows, tallest first), MaxRects
+        // (short side and area fit) and skyline over several orders, taken per canvas in that order
+        // so a canvas the shelf fits keeps the shelf positions; a smaller canvas wins over all of
+        // them. A solver keeps the operation budget and the answers of one layout group.
         private static bool TryPackSharedRepackLayoutOnCanvases(
             IReadOnlyList<(int Width, int Height)> sizes,
             int maximumWidth,
@@ -838,46 +811,17 @@ namespace Editors.PackOptimizer.Core
             out int canvasWidth,
             out int canvasHeight,
             out (int X, int Y)[] positions,
-            Func<int, int, bool>? canvasAllowed)
+            Func<int, int, bool>? canvasAllowed,
+            SharedRepackLayoutSolver? solver = null)
         {
-            canvasWidth = canvasHeight = 0;
-            positions = [];
-            if (sizes.Count == 0)
-                return false;
-
-            var order = Enumerable.Range(0, sizes.Count)
-                .OrderByDescending(index => sizes[index].Height)
-                .ThenByDescending(index => sizes[index].Width)
-                .ThenBy(index => index)
-                .ToArray();
-            long area = sizes.Sum(size => (long)size.Width * size.Height);
-            var minimumWidth = NextPowerOfTwo(sizes.Max(size => size.Width));
-            var minimumHeight = NextPowerOfTwo(sizes.Max(size => size.Height));
-            var candidates = new List<(int Width, int Height)>();
-            for (var width = minimumWidth; width <= maximumWidth; width <<= 1)
-            {
-                for (var height = minimumHeight; height <= maximumHeight; height <<= 1)
-                {
-                    if ((long)width * height >= area && (canvasAllowed == null || canvasAllowed(width, height)))
-                        candidates.Add((width, height));
-                }
-            }
-
-            foreach (var candidate in candidates
-                         .OrderBy(item => (long)item.Width * item.Height)
-                         .ThenBy(item => Math.Abs(Log2Exact(item.Width) - Log2Exact(item.Height)))
-                         .ThenByDescending(item => item.Width))
-            {
-                if (TryShelfPack(sizes, order, candidate.Width, candidate.Height, out positions))
-                {
-                    canvasWidth = candidate.Width;
-                    canvasHeight = candidate.Height;
-                    return true;
-                }
-            }
-
-            return false;
+            solver ??= CreateSharedRepackLayoutSolver(0);
+            return solver.TryPack(
+                sizes, maximumWidth, maximumHeight, canvasAllowed, out canvasWidth, out canvasHeight, out positions);
         }
+
+        // unit: the chart alignment (0: derived from the rectangles).
+        private static SharedRepackLayoutSolver CreateSharedRepackLayoutSolver(int unit)
+            => new(SharedRepackPackerKind.Best, unit, 1, new SharedRepackSimBudget(SharedRepackLayoutOperationBudget));
 
         // First failing property of a texture the repack could not copy exactly, else null.
         private static string? GetSharedRepackBlockedTextureReason(DdsLayout? layout)
@@ -3324,6 +3268,8 @@ namespace Editors.PackOptimizer.Core
 
             var maximumSide = result.MaximumSide;
             var passWaste = new List<SharedRepackGroupWaste>();
+            // Groups of the current pass whose packing simulation (report only) waits for the final pass.
+            var passSimPending = new List<(int Index, List<SharedRepackTuple> Tuples, List<SharedRepackPage> Pages, long Before, long After, string Label)>();
             while (true)
             {
                 while (Propagate())
@@ -3335,6 +3281,7 @@ namespace Editors.PackOptimizer.Core
                 plan.AspectGroups = plan.AspectTuples = 0;
                 plan.AspectExtraBytes = 0;
                 passWaste.Clear();
+                passSimPending.Clear();
                 foreach (var tuple in tuples)
                     foreach (var chart in tuple.Charts)
                         chart.Page = null;
@@ -3431,6 +3378,11 @@ namespace Editors.PackOptimizer.Core
                         }
 
                         gated = true;
+                        waste = waste with
+                        {
+                            Sim = SimulateSharedRepackGroupPacking(
+                                result, groupTuples, pages, maximumSide, before, after, true, info.Label),
+                        };
                         merge.GroupWaste.Add(waste);
                         restart = true;
                         break;
@@ -3448,6 +3400,7 @@ namespace Editors.PackOptimizer.Core
                                            : string.Empty) + "]";
                     }
 
+                    passSimPending.Add((passWaste.Count, groupTuples, pages, before, after, info.Label));
                     passWaste.Add(waste);
                     plan.Pages.AddRange(pages);
                     plan.Groups.Add(info);
@@ -3455,6 +3408,16 @@ namespace Editors.PackOptimizer.Core
 
                 if (!restart)
                 {
+                    foreach (var pending in passSimPending)
+                    {
+                        passWaste[pending.Index] = passWaste[pending.Index] with
+                        {
+                            Sim = SimulateSharedRepackGroupPacking(
+                                result, pending.Tuples, pending.Pages, maximumSide, pending.Before, pending.After,
+                                false, pending.Label),
+                        };
+                    }
+
                     merge.GroupWaste.AddRange(passWaste);
                     break;
                 }
@@ -3556,7 +3519,10 @@ namespace Editors.PackOptimizer.Core
             => FindSharedRepackSplitOnCanvases(
                 sizes, clusters, limitWidth, limitHeight, pageBytes, out bestBytes, out bestSizes, null);
 
-        // As above, but every page canvas must be accepted by the predicate (null: any).
+        // As above, but every page canvas must be accepted by the predicate (null: any). The search
+        // is shared with the packing simulation (SharedRepackGroupSimulator.FindSplit): pages are
+        // packed by the layout solver, and the greedy first-page fill is tried on rows (the original
+        // fill, whose result wins ties) and on MaxRects pages.
         private static List<List<int>>? FindSharedRepackSplitOnCanvases(
             IReadOnlyList<(int Width, int Height)> sizes,
             List<List<int>> clusters,
@@ -3565,153 +3531,23 @@ namespace Editors.PackOptimizer.Core
             Func<int, int, long> pageBytes,
             out long bestBytes,
             out List<(int Width, int Height)> bestSizes,
-            Func<int, int, bool>? canvasAllowed)
+            Func<int, int, bool>? canvasAllowed,
+            SharedRepackLayoutSolver? solver = null)
         {
-            List<List<int>>? best = null;
-            var bestKey = string.Empty;
-            long bestTotal = long.MaxValue;
-            var foundSizes = new List<(int Width, int Height)>();
-            var attempts = 0;
-            long Area(List<int> cluster) => cluster.Sum(index => (long)sizes[index].Width * sizes[index].Height);
-            var ordered = clusters
-                .Select(cluster => cluster
-                    .OrderByDescending(index => sizes[index].Height)
-                    .ThenByDescending(index => sizes[index].Width)
-                    .ThenBy(index => index)
-                    .ToList())
-                .OrderByDescending(Area)
-                .ThenBy(cluster => cluster.Min())
-                .ToList();
-
-            bool TryPage(IEnumerable<List<int>> page, out long bytes, out (int Width, int Height) size)
+            solver ??= CreateSharedRepackLayoutSolver(0);
+            var input = new SharedRepackSimInput
             {
-                bytes = 0;
-                size = default;
-                var indexes = page.SelectMany(cluster => cluster).OrderBy(index => index).ToList();
-                if (!TryPackSharedRepackLayoutOnCanvases(
-                        indexes.Select(index => sizes[index]).ToList(), limitWidth, limitHeight,
-                        out var width, out var height, out _, canvasAllowed))
-                {
-                    return false;
-                }
-
-                size = (width, height);
-                bytes = pageBytes(width, height);
-                return true;
-            }
-
-            void Search(
-                List<List<int>> remaining,
-                List<List<List<int>>> pages,
-                List<(int Width, int Height)> pageSizes,
-                long accumulated)
-            {
-                if (accumulated > bestTotal || !TryPage(remaining, out var restBytes, out var restSize))
-                    return;
-
-                if (pages.Count > 0)
-                {
-                    var total = accumulated + restBytes;
-                    var allSizes = pageSizes.Append(restSize).ToList();
-                    var key = string.Join(",", allSizes.Select(size => $"{size.Width}x{size.Height}"));
-                    var count = pages.Count + 1;
-                    if (total < bestTotal ||
-                        (total == bestTotal && (count < best!.Count ||
-                            (count == best.Count && string.CompareOrdinal(key, bestKey) < 0))))
-                    {
-                        bestTotal = total;
-                        bestKey = key;
-                        foundSizes = allSizes;
-                        best = pages.Select(page => page.SelectMany(cluster => cluster).OrderBy(index => index).ToList())
-                            .Append(remaining.SelectMany(cluster => cluster).OrderBy(index => index).ToList())
-                            .ToList();
-                    }
-                }
-
-                if (pages.Count + 2 > SharedRepackMaximumSplitPages || remaining.Count < 2)
-                    return;
-
-                var restArea = (long)restSize.Width * restSize.Height;
-                var candidates = new List<(int Width, int Height)>();
-                for (var width = 16; width <= limitWidth; width <<= 1)
-                {
-                    for (var height = 16; height <= limitHeight; height <<= 1)
-                    {
-                        if ((long)width * height < restArea && (canvasAllowed == null || canvasAllowed(width, height)))
-                            candidates.Add((width, height));
-                    }
-                }
-
-                foreach (var candidate in candidates
-                             .OrderByDescending(item => (long)item.Width * item.Height)
-                             .ThenBy(item => Math.Abs(Log2Exact(item.Width) - Log2Exact(item.Height)))
-                             .ThenByDescending(item => item.Width)
-                             .Take(SharedRepackSplitCandidatesPerLevel))
-                {
-                    if (++attempts > SharedRepackMaximumSplitAttempts)
-                        return;
-
-                    // Whole clusters, largest first, on a shelf of the candidate's size; a
-                    // cluster that does not fit goes to the rest.
-                    var chosen = new List<List<int>>();
-                    var rest = new List<List<int>>();
-                    int x = 0, y = 0, rowHeight = 0;
-                    foreach (var cluster in remaining)
-                    {
-                        int saveX = x, saveY = y, saveRow = rowHeight;
-                        var fits = true;
-                        foreach (var index in cluster)
-                        {
-                            var (width, height) = sizes[index];
-                            if (width > candidate.Width || height > candidate.Height)
-                            {
-                                fits = false;
-                                break;
-                            }
-
-                            if (x + width > candidate.Width)
-                            {
-                                x = 0;
-                                y += rowHeight;
-                                rowHeight = 0;
-                            }
-
-                            if (y + height > candidate.Height)
-                            {
-                                fits = false;
-                                break;
-                            }
-
-                            x += width;
-                            rowHeight = Math.Max(rowHeight, height);
-                        }
-
-                        if (fits)
-                        {
-                            chosen.Add(cluster);
-                        }
-                        else
-                        {
-                            (x, y, rowHeight) = (saveX, saveY, saveRow);
-                            rest.Add(cluster);
-                        }
-                    }
-
-                    if (chosen.Count == 0 || rest.Count == 0 || !TryPage(chosen, out var chosenBytes, out var chosenSize))
-                        continue;
-
-                    Search(
-                        rest,
-                        pages.Append(chosen).ToList(),
-                        pageSizes.Append(chosenSize).ToList(),
-                        accumulated + chosenBytes);
-                }
-            }
-
-            Search(ordered, [], [], 0);
-            bestBytes = bestTotal == long.MaxValue ? 0 : bestTotal;
-            bestSizes = foundSizes;
-            return best;
+                Sizes = sizes,
+                ClusterOf = [],
+                CanvasAllowed = canvasAllowed,
+                PageBytes = pageBytes,
+                MinimumSide = 16,
+                MaximumPages = SharedRepackMaximumSplitPages,
+                CandidatesPerLevel = SharedRepackSplitCandidatesPerLevel,
+                MaximumAttempts = SharedRepackMaximumSplitAttempts,
+            };
+            return SharedRepackGroupSimulator.FindSplit(
+                input, solver, clusters, limitWidth, limitHeight, out bestBytes, out bestSizes);
         }
 
         // One group's pages. Charts that a part uses together form a cluster and stay on one
@@ -3742,6 +3578,7 @@ namespace Editors.PackOptimizer.Core
                 ? (width, height) => (long)width * first.ReferenceHeight == (long)height * first.ReferenceWidth
                 : null;
             split.AspectRestricted = canvasAllowed != null;
+            var solver = CreateSharedRepackLayoutSolver(cell);
             foreach (var tuple in groupTuples)
             {
                 foreach (var chart in tuple.Charts)
@@ -3823,7 +3660,7 @@ namespace Editors.PackOptimizer.Core
             var sizes = allIndexes.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
             split.Clusters = clusters.Count;
             if (TryPackSharedRepackLayoutOnCanvases(
-                    sizes, maximumWidth, maximumHeight, out var singleWidth, out var singleHeight, out _, canvasAllowed))
+                    sizes, maximumWidth, maximumHeight, out var singleWidth, out var singleHeight, out _, canvasAllowed, solver))
             {
                 assignments.Add(allIndexes);
 
@@ -3854,8 +3691,8 @@ namespace Editors.PackOptimizer.Core
                 split.SingleBytes = PageBytes(singleWidth, singleHeight);
                 split.SingleSize = $"{singleWidth}x{singleHeight}";
                 if (canvasAllowed != null &&
-                    TryPackSharedRepackLayout(
-                        sizes, maximumWidth, maximumHeight, out var freeWidth, out var freeHeight, out _))
+                    TryPackSharedRepackLayoutOnCanvases(
+                        sizes, maximumWidth, maximumHeight, out var freeWidth, out var freeHeight, out _, null, solver))
                 {
                     split.UnrestrictedSingleBytes = PageBytes(freeWidth, freeHeight);
                     split.UnrestrictedSingleSize = $"{freeWidth}x{freeHeight}";
@@ -3869,7 +3706,7 @@ namespace Editors.PackOptimizer.Core
                 {
                     var pagesFound = FindSharedRepackSplitOnCanvases(
                         sizes, clusters, singleWidth, singleHeight, PageBytes, out var bestBytes, out var bestSizes,
-                        canvasAllowed);
+                        canvasAllowed, solver);
                     if (pagesFound != null)
                     {
                         split.BestBytes = bestBytes;
@@ -3899,7 +3736,7 @@ namespace Editors.PackOptimizer.Core
                         if (trialSizes.Sum(size => (long)size.LayoutWidth * size.LayoutHeight) <=
                             (long)maximumWidth * maximumHeight &&
                             TryPackSharedRepackLayoutOnCanvases(
-                                trialSizes, maximumWidth, maximumHeight, out _, out _, out _, canvasAllowed))
+                                trialSizes, maximumWidth, maximumHeight, out _, out _, out _, canvasAllowed, solver))
                         {
                             page.AddRange(cluster);
                             placed = true;
@@ -3911,7 +3748,7 @@ namespace Editors.PackOptimizer.Core
                         continue;
 
                     var alone = cluster.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
-                    if (!TryPackSharedRepackLayoutOnCanvases(alone, maximumWidth, maximumHeight, out _, out _, out _, canvasAllowed))
+                    if (!TryPackSharedRepackLayoutOnCanvases(alone, maximumWidth, maximumHeight, out _, out _, out _, canvasAllowed, solver))
                     {
                         excludeTuple = charts[cluster[0]].Tuple;
                         excludeReason = $"the charts of one part ({cluster.Count:N0} chart(s)) do not fit a " +
@@ -3933,7 +3770,7 @@ namespace Editors.PackOptimizer.Core
             {
                 var pageSizes = assignment.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
                 TryPackSharedRepackLayoutOnCanvases(
-                    pageSizes, maximumWidth, maximumHeight, out var width, out var height, out var positions, canvasAllowed);
+                    pageSizes, maximumWidth, maximumHeight, out var width, out var height, out var positions, canvasAllowed, solver);
                 var hash = StableHash($"{identity}|{groupTextures}|{first.GroupKey}|{pages.Count}");
                 var page = new SharedRepackPage
                 {
@@ -5582,7 +5419,7 @@ namespace Editors.PackOptimizer.Core
                 return;
 
             sb.AppendLine(
-                "Page layout (output bytes at each page's bytes per reference pixel; \"trimmed\" = the same shelf " +
+                "Page layout (output bytes at each page's bytes per reference pixel; \"trimmed\" = the same packing " +
                 "packing cut to its used width and height, i.e. pages that are not a power of two):");
             if (built.Count != 0)
             {
@@ -5593,7 +5430,7 @@ namespace Editors.PackOptimizer.Core
                 sb.AppendLine(
                     $"  Built groups ({built.Count:N0}): sources {built.Sum(waste => waste.SourceBytes):N0} -> pages " +
                     $"{page:N0} bytes = touched cells {used:N0} + chart padding/bounding/alignment {charts - used:N0} + " +
-                    $"shelf gaps {trimmed - charts:N0} + power-of-two rounding {page - trimmed:N0}");
+                    $"packing gaps {trimmed - charts:N0} + power-of-two rounding {page - trimmed:N0}");
             }
 
             if (gated.Count != 0)
@@ -5614,7 +5451,7 @@ namespace Editors.PackOptimizer.Core
                 var gatedCharts = gated.Sum(waste => waste.ChartBytes);
                 sb.AppendLine(
                     $"    their pages = touched cells {gatedUsed:N0} + chart padding/bounding/alignment " +
-                    $"{gatedCharts - gatedUsed:N0} + shelf gaps {trimmed - gatedCharts:N0} + power-of-two rounding {page - trimmed:N0}");
+                    $"{gatedCharts - gatedUsed:N0} + packing gaps {trimmed - gatedCharts:N0} + power-of-two rounding {page - trimmed:N0}");
             }
         }
 
@@ -5729,6 +5566,7 @@ namespace Editors.PackOptimizer.Core
             AppendSharedRepackClosureCauses(sb, result, builtOutcomes);
 
             AppendSharedRepackPageWaste(sb, result);
+            AppendSharedRepackPackingSimulation(sb, result);
 
             var lost = result.Outcomes
                 .Where(outcome => outcome.Bucket != SharedRepackBucketBuilt &&
