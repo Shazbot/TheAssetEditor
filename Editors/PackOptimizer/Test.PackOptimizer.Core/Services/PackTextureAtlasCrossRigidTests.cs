@@ -8432,6 +8432,48 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void SharedRepack_SlotListedTwiceWithTheSameSource_BothEntriesAreRewritten()
+        {
+            var world = BuildStandardSrWorld();
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1"),
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"));
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var generated = Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]);
+            Assert.That(generated, Does.Not.Contain("sr_n1.dds"));
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml(generated);
+            var normals = doc.SelectNodes("/material/textures/texture[slot='t_xml_normal']/source")!
+                .Cast<System.Xml.XmlNode>().Select(node => node.InnerText).ToList();
+            Assert.That(normals, Has.Count.EqualTo(2));
+            Assert.That(normals[0], Does.Contain("_repack_"));
+            Assert.That(normals[1], Is.EqualTo(normals[0]));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_SlotListedTwiceWithDifferentSources_IsRefused()
+        {
+            var world = BuildStandardSrWorld();
+            world.Fixture.AddMaterial(
+                SrMaterialPath("m1"),
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrNormal, "textures\\sr_n2.dds"));
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero, SrSkips(result));
+            Assert.That(SrSkips(result), Does.Contain("no part is left after closing the set"));
+            Assert.That(world.Fixture.Output.Keys, Has.None.Contain("_repack_"));
+        }
+
+        [Test]
         public void SharedRepack_RegionsSharedByTwoLods_AreStoredOnce()
         {
             var twoLods = BuildStandardSrWorld();
@@ -14556,6 +14598,10 @@ namespace Test.PackOptimizer.Core
             // shared distortion noise (a cropped copy plus rescaled emissive parameters); the repack is
             // not among the pinned stages, so the hash is unchanged.
             [7] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 8: texture helpers rewrite every entry of a slot listed twice in a material, and materials
+            // listing a slot twice with different sources are refused; the pinned stages have no such
+            // material, so the hash is unchanged.
+            [8] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

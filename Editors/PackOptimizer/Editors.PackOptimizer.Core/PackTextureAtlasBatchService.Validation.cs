@@ -1200,6 +1200,16 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
+                // Optimizations refuse materials listing one slot with different sources, so every
+                // entry of a slot must agree here: a stale entry would sample an old texture with
+                // remapped UVs.
+                if (FindConflictingDuplicateTextureSlot(materialDoc) is { } inconsistentSlot)
+                {
+                    errors.Add(
+                        $"Generated {label} material lists texture slot {inconsistentSlot} more than once " +
+                        $"with different sources (a rewrite missed an entry): {materialPath}");
+                }
+
                 var textureNodes = materialDoc.SelectNodes("/material/textures/texture");
                 if (textureNodes == null)
                     continue;

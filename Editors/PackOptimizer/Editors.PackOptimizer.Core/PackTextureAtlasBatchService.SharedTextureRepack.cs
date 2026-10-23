@@ -196,6 +196,8 @@ namespace Editors.PackOptimizer.Core
             };
         private const string SharedRepackReasonVariants =
             "the part's WSModel bindings resolve to different textures";
+        private const string SharedRepackReasonDuplicateSlot =
+            "a bound material lists one texture slot more than once with different sources (which one the engine samples is unknown)";
         private const string SharedRepackReasonMixed =
             "a bound material also uses textures outside the set";
         private const string SharedRepackReasonBlockedTexture =
@@ -2067,6 +2069,16 @@ namespace Editors.PackOptimizer.Core
                     part.Reason ??= SharedRepackReasonMaterialOverridesVanilla;
                 if (state.Consumers?.TryBlockVanillaReplaced(material, "repack") == true)
                     part.Reason ??= "a bound material is a vanilla file another mod replaces";
+
+                if (info.Textures
+                        .GroupBy(item => item.Slot, StringComparer.OrdinalIgnoreCase)
+                        .Any(group => group
+                            .Select(item => Normalize(item.Texture))
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .Count() > 1))
+                {
+                    part.Reason ??= SharedRepackReasonDuplicateSlot;
+                }
 
                 var hasDistortion = info.Textures.Any(item =>
                     item.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase) &&
@@ -5319,6 +5331,15 @@ namespace Editors.PackOptimizer.Core
                         foreach (XmlNode node in document.SelectNodes("/material/textures/texture") ?? throw new InvalidDataException("no textures"))
                         {
                             var texture = Normalize(node.SelectSingleNode("source")?.InnerText ?? node.InnerText);
+                            // Every entry of every slot (a slot may be listed twice) must be redirected:
+                            // an entry still naming a replaced texture samples it with repacked UVs.
+                            if (set.Replaced.Any(item => Normalize(item.Path).Equals(texture, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                errors.Add(
+                                    $"Generated repack material {materialPath} still references the replaced texture " +
+                                    $"{texture} in slot {GetTextureSlot(node)}");
+                            }
+
                             // Only the textures the repack generated; pass-through slots are unchanged.
                             if (!set.Outputs.Any(output => output.Path.Equals(texture, StringComparison.OrdinalIgnoreCase)))
                                 continue;

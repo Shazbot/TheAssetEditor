@@ -1717,8 +1717,56 @@ namespace Editors.PackOptimizer.Core
                     source.InnerText = path;
                 else
                     node.InnerText = path;
-                return;
+                // Do not return: a material may list the same slot more than once
+                // (e.g. weighted4 variants); every entry must be redirected.
             }
+        }
+
+        /// <summary>
+        /// True when the material lists <paramref name="slot"/> more than once with different
+        /// sources. The engine's choice between them is unknown, so texture-rewriting
+        /// optimizations must refuse such materials.
+        /// </summary>
+        private static bool HasConflictingDuplicateTextureSlot(XmlDocument material, string slot)
+        {
+            var textureNodes = material.SelectNodes("/material/textures/texture");
+            if (textureNodes == null)
+                return false;
+
+            string? first = null;
+            foreach (XmlNode node in textureNodes)
+            {
+                if (!GetTextureSlot(node).Equals(slot, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var path = Normalize(node.SelectSingleNode("source")?.InnerText ?? node.InnerText);
+                if (first == null)
+                    first = path;
+                else if (!first.Equals(path, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>First slot listed more than once with different sources, or null.</summary>
+        private static string? FindConflictingDuplicateTextureSlot(XmlDocument material)
+        {
+            var textureNodes = material.SelectNodes("/material/textures/texture");
+            if (textureNodes == null)
+                return null;
+
+            foreach (var slot in textureNodes
+                         .Cast<XmlNode>()
+                         .Select(GetTextureSlot)
+                         .Where(x => x.Length != 0)
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (HasConflictingDuplicateTextureSlot(material, slot))
+                    return slot;
+            }
+
+            return null;
         }
 
         private static void RemoveTextureSlot(XmlDocument material, string slot)

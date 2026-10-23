@@ -4080,6 +4080,58 @@ namespace Test.PackOptimizer.Core
 
 
         [Test]
+        public void SetTexturePath_RewritesEveryEntryOfADuplicatedSlot()
+        {
+            var material = new XmlDocument();
+            material.LoadXml(
+                "<material><textures>" +
+                "<texture><slot>t_xml_material_map</slot><source>old.dds</source></texture>" +
+                "<texture><slot>t_xml_base_colour</slot><source>base.dds</source></texture>" +
+                "<texture><slot>t_xml_material_map</slot><source>old.dds</source></texture>" +
+                "</textures></material>");
+
+            InvokeAtlasStatic("SetTexturePath", material, "t_xml_material_map", "new.dds");
+
+            var sources = material.SelectNodes("/material/textures/texture[slot='t_xml_material_map']/source")!
+                .Cast<XmlNode>().Select(node => node.InnerText).ToList();
+            Assert.That(sources, Is.EqualTo(new[] { "new.dds", "new.dds" }));
+            Assert.That(
+                material.SelectSingleNode("/material/textures/texture[slot='t_xml_base_colour']/source")!.InnerText,
+                Is.EqualTo("base.dds"));
+            Assert.That(InvokeAtlasStatic("FindConflictingDuplicateTextureSlot", material), Is.Null);
+        }
+
+        [Test]
+        public void FindConflictingDuplicateTextureSlot_ReportsOnlyDifferentSources()
+        {
+            var same = new XmlDocument();
+            same.LoadXml(
+                "<material><textures>" +
+                "<texture><slot>t_xml_normal</slot><source>a.dds</source></texture>" +
+                "<texture><slot>T_XML_NORMAL</slot><source>A.dds</source></texture>" +
+                "</textures></material>");
+            var different = new XmlDocument();
+            different.LoadXml(
+                "<material><textures>" +
+                "<texture><slot>t_xml_normal</slot><source>a.dds</source></texture>" +
+                "<texture><slot>t_xml_normal</slot><source>b.dds</source></texture>" +
+                "</textures></material>");
+
+            Assert.That(InvokeAtlasStatic("FindConflictingDuplicateTextureSlot", same), Is.Null);
+            Assert.That(InvokeAtlasStatic("FindConflictingDuplicateTextureSlot", different), Is.EqualTo("t_xml_normal"));
+        }
+
+        private static object? InvokeAtlasStatic(string name, params object[] arguments)
+        {
+            var serviceType = Assembly.Load("Editors.PackOptimizer.Core").GetType(
+                "Editors.PackOptimizer.Core.PackTextureAtlasBatchService",
+                throwOnError: true)!;
+            var method = serviceType.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(name + " was not found.");
+            return method.Invoke(null, arguments);
+        }
+
+        [Test]
         public void RemoveTextureSlot_RemovesMaskWithoutTouchingOtherTextures()
         {
             var material = new XmlDocument();

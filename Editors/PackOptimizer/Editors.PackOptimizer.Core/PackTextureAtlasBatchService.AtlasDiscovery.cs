@@ -540,6 +540,9 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
+                if (FindConflictingDuplicateTextureSlot(materialDoc) != null)
+                    continue;
+
                 var primaryPath = GetTexturePath(materialDoc, "t_xml_base_colour");
                 if (string.IsNullOrWhiteSpace(primaryPath) || FindForRead(state, primaryPath) == null)
                     continue;
@@ -1887,6 +1890,13 @@ namespace Editors.PackOptimizer.Core
                     .Any(x => GetTextureSlot(x).Contains("emissive", StringComparison.OrdinalIgnoreCase)) == true)
             {
                 skipReason = "Material contains an emissive texture slot and must retain its original UV0 mapping.";
+                return null;
+            }
+
+            if (FindConflictingDuplicateTextureSlot(materialDoc) is { } conflictingSlot)
+            {
+                skipReason = $"Material lists texture slot {conflictingSlot} more than once with different " +
+                    "sources; which one the engine samples is unknown.";
                 return null;
             }
 

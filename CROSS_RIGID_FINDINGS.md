@@ -379,6 +379,14 @@ Bench (this branch, `PackOptimizerBench`, baselines `teb-causes` and `albion-cau
 
 All `PASS:` lines still pass, status SUCCESS. Tests: 813 in `Test.PackOptimizer.Core` (13 new: eligibility, new reasons, copy slot alignment/uniform/group key, aspect restriction, copy not replaced/pruned, parameter math, report counters).
 
+## 2026-10-23: materials listing one texture slot twice
+
+**Symptom (in game):** the plates of `cth_shugengan` showed a blotchy white pattern on LOD0/1 (weighted4) while LOD2/3 (weighted2) were fine.
+
+**Cause:** the vanilla material `cth_shugengan_body_01_weighted4_alpha_off` lists `t_xml_material_map` twice (same source). `SetTexturePath` returned after the first matching entry, so the shared texture repack redirected only the first entry to the repacked texture; the second still named the original 2048 material map, which the engine then sampled with the remapped atlas UVs. `GetTexturePath` also reads the first match while other code builds slot dictionaries where the last duplicate wins.
+
+**Fix (output version 8):** `SetTexturePath` rewrites every entry of the slot (`RemoveTextureSlot` already removed all). A slot listed more than once with different sources is ambiguous (the engine's choice is unknown), so the atlas stage and the shared texture repack refuse such materials. Validation of generated atlas and repack materials now reports a slot with differing entries, and the repack validation reports any entry that still names a replaced texture.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).
