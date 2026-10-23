@@ -404,6 +404,24 @@ namespace Editors.PackOptimizer.Core
             public List<SharedRepackSample> Worst { get; } = [];
         }
 
+        // Funnel buckets of SharedRepackSetOutcome, in report order.
+        private const string SharedRepackBucketBelow = "below the threshold";
+        private const string SharedRepackBucketMerged = "merged into another set's plan";
+        private const string SharedRepackBucketIneligible = "every rigid not eligible";
+        private const string SharedRepackBucketClosure = "dropped by closure";
+        private const string SharedRepackBucketBuild = "not buildable";
+        private const string SharedRepackBucketBytes = "failed the actual-bytes gate";
+        private const string SharedRepackBucketPixel = "failed the pixel check";
+        private const string SharedRepackBucketBuilt = "built";
+
+        private sealed record SharedRepackSetOutcome(
+            string Label,
+            string Bucket,
+            long Estimate,
+            string? Reason,
+            long? Actual = null,
+            string? Plan = null);
+
         private sealed class SharedTextureRepackResult
         {
             public long MinimumSavingBytes { get; set; } = SharedRepackMinimumSavingBytes;
@@ -447,6 +465,9 @@ namespace Editors.PackOptimizer.Core
             public int Built => BuiltSets.Count;
 
             public List<(string Label, string Reason)> Skips { get; } = [];
+            // Every considered set's funnel bucket with its estimated saving, so the report can say
+            // where the estimate goes in bytes. Actual is the built plan's saving (seed sets only).
+            public List<SharedRepackSetOutcome> Outcomes { get; } = [];
             public Dictionary<string, int> PartDropReasons { get; } = new(StringComparer.Ordinal);
             // Per set: which texture pulled a part's material outside the set, and who else uses it.
             public List<(string Label, string Note)> ClosureNotes { get; } = [];
@@ -1188,6 +1209,7 @@ namespace Editors.PackOptimizer.Core
                 {
                     result.MergedIntoOther++;
                     Skip(label, $"merged into another set's plan ({takenBy})");
+                    result.Outcomes.Add(new(label, SharedRepackBucketMerged, decision.Saving, null, Plan: takenBy));
                     continue;
                 }
 
@@ -1197,6 +1219,7 @@ namespace Editors.PackOptimizer.Core
                     result.BelowThreshold++;
                     Skip(label, $"estimated saving {FormatSignedBytes(decision.Saving)} bytes is below " +
                                 $"the {result.MinimumSavingBytes:N0}-byte threshold");
+                    result.Outcomes.Add(new(label, SharedRepackBucketBelow, decision.Saving, null));
                     continue;
                 }
 
@@ -1212,6 +1235,7 @@ namespace Editors.PackOptimizer.Core
                 {
                     result.DroppedByClosure++;
                     Skip(label, "no part uses the set's textures");
+                    result.Outcomes.Add(new(label, SharedRepackBucketClosure, decision.Saving, "no part uses the set's textures"));
                     continue;
                 }
 
@@ -1219,7 +1243,9 @@ namespace Editors.PackOptimizer.Core
                 if (rigids.All(item => item.Rigid == null))
                 {
                     result.RigidNotEligible++;
-                    Skip(label, DescribeSharedRepackIneligibleRigids(rigids));
+                    var ineligibleReason = DescribeSharedRepackIneligibleRigids(rigids);
+                    Skip(label, ineligibleReason);
+                    result.Outcomes.Add(new(label, SharedRepackBucketIneligible, decision.Saving, ineligibleReason));
                     continue;
                 }
 
@@ -1337,20 +1363,43 @@ namespace Editors.PackOptimizer.Core
 
                 if (attempt.Built == null)
                 {
+                    string bucket;
                     if (attempt.Bucket == "bytes")
+                    {
                         result.FailedActualBytes++;
+                        bucket = SharedRepackBucketBytes;
+                    }
                     else if (attempt.Bucket == "pixel")
+                    {
                         result.FailedPixelCheck++;
+                        bucket = SharedRepackBucketPixel;
+                    }
                     else if (attempt.Bucket == "build")
+                    {
                         result.NotBuildable++;
+                        bucket = SharedRepackBucketBuild;
+                    }
                     else
+                    {
                         result.DroppedByClosure++;
-                    Skip(label, fallbackNote == null ? attempt.Failure! : fallbackNote + "alone: " + attempt.Failure);
+                        bucket = SharedRepackBucketClosure;
+                    }
+
+                    var failureReason = fallbackNote == null ? attempt.Failure! : fallbackNote + "alone: " + attempt.Failure;
+                    Skip(label, failureReason);
+                    result.Outcomes.Add(new(label, bucket, decision.Saving, failureReason));
                     continue;
                 }
 
                 attempt.Built.FallbackNote = fallbackNote == null ? null : fallbackNote + "built alone";
                 result.BuiltSets.Add(attempt.Built);
+                result.Outcomes.Add(new(
+                    label,
+                    SharedRepackBucketBuilt,
+                    decision.Saving,
+                    null,
+                    attempt.Built.Before - attempt.Built.After,
+                    label));
             }
 
             // Geometry invariants of every rewritten rigid, against the snapshots.
@@ -4897,6 +4946,99 @@ namespace Editors.PackOptimizer.Core
             }
         }
 
+        // The funnel in bytes: where the per-set estimate goes. Negative estimates count as zero, and
+        // a set merged into a built plan counts toward that plan, so the buckets add up to the total.
+        private static void AppendSharedRepackEstimateFunnel(StringBuilder sb, SharedTextureRepackResult result)
+        {
+            if (result.Outcomes.Count == 0)
+                return;
+
+            static long Positive(SharedRepackSetOutcome outcome) => Math.Max(0, outcome.Estimate);
+
+            var total = result.Outcomes.Sum(Positive);
+            sb.AppendLine(
+                "Estimated saving by outcome (each set's own estimate, negatives counted as 0; a set merged into " +
+                "a built plan counts toward that plan):");
+            sb.AppendLine(
+                $"  All considered sets: {total:N0} bytes over " +
+                $"{result.Outcomes.Count(outcome => outcome.Estimate > 0):N0} set(s) with a positive estimate");
+            long accounted = 0;
+            foreach (var bucket in new[]
+                     {
+                         SharedRepackBucketBelow, SharedRepackBucketIneligible, SharedRepackBucketClosure,
+                         SharedRepackBucketBuild, SharedRepackBucketBytes, SharedRepackBucketPixel,
+                     })
+            {
+                var items = result.Outcomes.Where(outcome => outcome.Bucket == bucket).ToList();
+                var bytes = items.Sum(Positive);
+                accounted += bytes;
+                sb.AppendLine($"  Lost, {bucket}: {bytes:N0} bytes ({items.Count:N0} set(s), {Share(bytes, total)})");
+            }
+
+            var builtOutcomes = result.Outcomes.Where(outcome => outcome.Bucket == SharedRepackBucketBuilt).ToList();
+            var mergedByPlan = result.Outcomes
+                .Where(outcome => outcome.Bucket == SharedRepackBucketMerged)
+                .GroupBy(outcome => outcome.Plan ?? string.Empty, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Sum(Positive), StringComparer.Ordinal);
+            var seedEstimate = builtOutcomes.Sum(Positive);
+            var joinedEstimate = mergedByPlan.Values.Sum();
+            var builtEstimate = seedEstimate + joinedEstimate;
+            var actual = builtOutcomes.Sum(outcome => outcome.Actual ?? 0);
+            accounted += builtEstimate;
+            sb.AppendLine(
+                $"  Built plans: estimated {builtEstimate:N0} bytes ({Share(builtEstimate, total)}; seed sets " +
+                $"{seedEstimate:N0} + joined sets {joinedEstimate:N0}), actual {FormatSignedBytes(actual)} " +
+                $"({Share(actual, builtEstimate)} of their estimate); shortfall {FormatSignedBytes(builtEstimate - actual)} bytes");
+            sb.AppendLine(
+                $"  Realised: {FormatSignedBytes(actual)} of {total:N0} estimated bytes ({Share(actual, total)}). " +
+                $"Check: {accounted:N0} of {total:N0} bytes accounted " +
+                (accounted == total ? "(reconciles)" : "(DOES NOT RECONCILE)"));
+
+            var lost = result.Outcomes
+                .Where(outcome => outcome.Bucket != SharedRepackBucketBuilt &&
+                                  outcome.Bucket != SharedRepackBucketMerged &&
+                                  outcome.Estimate >= result.MinimumSavingBytes)
+                .OrderByDescending(outcome => outcome.Estimate)
+                .ThenBy(outcome => outcome.Label, StringComparer.Ordinal)
+                .ToList();
+            if (lost.Count != 0)
+            {
+                sb.AppendLine($"Largest estimates that were not built ({Math.Min(15, lost.Count):N0} of {lost.Count:N0} at or above the threshold):");
+                foreach (var outcome in lost.Take(15))
+                {
+                    sb.AppendLine(
+                        $"  {outcome.Estimate:N0} bytes, {outcome.Bucket}: {outcome.Label}: " +
+                        Truncate(outcome.Reason ?? string.Empty, 240));
+                }
+            }
+
+            var shortfalls = builtOutcomes
+                .Select(outcome =>
+                {
+                    var estimate = Positive(outcome) + mergedByPlan.GetValueOrDefault(outcome.Plan ?? string.Empty);
+                    return (outcome.Label, Estimate: estimate, Actual: outcome.Actual ?? 0);
+                })
+                .Where(item => item.Estimate > item.Actual)
+                .OrderByDescending(item => item.Estimate - item.Actual)
+                .ThenBy(item => item.Label, StringComparer.Ordinal)
+                .ToList();
+            if (shortfalls.Count != 0)
+            {
+                sb.AppendLine($"Built plans with the largest shortfall against their estimate ({Math.Min(10, shortfalls.Count):N0} of {shortfalls.Count:N0}):");
+                foreach (var (label, estimate, saved) in shortfalls.Take(10))
+                {
+                    sb.AppendLine(
+                        $"  short by {estimate - saved:N0} bytes: {label}: estimated {estimate:N0}, actual {FormatSignedBytes(saved)}");
+                }
+            }
+
+            static string Share(long part, long whole)
+                => whole <= 0 ? "n/a" : $"{(double)part / whole:P1}";
+
+            static string Truncate(string text, int length)
+                => text.Length <= length ? text : text[..length] + "...";
+        }
+
         private static void AppendSharedTextureRepackSection(StringBuilder sb, BatchState state)
         {
             sb.AppendLine("Shared texture repack");
@@ -5015,6 +5157,7 @@ namespace Editors.PackOptimizer.Core
             sb.AppendLine(
                 $"  Check: {accounted:N0} accounted of {result.SetsConsidered:N0} considered " +
                 (accounted == result.SetsConsidered ? "(reconciles)" : "(DOES NOT RECONCILE)"));
+            AppendSharedRepackEstimateFunnel(sb, result);
             sb.AppendLine(
                 $"Merged plans (a set whose material shares textures with unprocessed sets takes them in, up to " +
                 $"{SharedRepackMaximumMergedSets} sets, {SharedRepackMaximumMergedRigids} source rigids and " +
