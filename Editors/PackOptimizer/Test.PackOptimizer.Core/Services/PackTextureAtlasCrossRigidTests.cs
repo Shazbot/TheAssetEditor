@@ -8952,12 +8952,12 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
-        public void SharedRepack_DefaultThresholdIsTwoMiB()
+        public void SharedRepack_DefaultThresholdIsOneMiB()
         {
             Assert.That(
                 GetServiceType().GetField("SharedRepackMinimumSavingBytes", BindingFlags.NonPublic | BindingFlags.Static)!
                     .GetRawConstantValue(),
-                Is.EqualTo(2L * 1024 * 1024));
+                Is.EqualTo(1L * 1024 * 1024));
         }
 
         // Part 2 uses base b1 with a normal that cannot be repacked (48 pixels, not a power of
@@ -13953,6 +13953,9 @@ namespace Test.PackOptimizer.Core
             // 4: consumer-added units that do not use the source stay out of the army model; the
             // pinned stages have no consumers, so the hash is unchanged.
             [4] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 5: the shared texture repack builds sets saving at least 1 MiB (was 2 MiB); the
+            // repack is not among the pinned stages, so the hash is unchanged.
+            [5] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

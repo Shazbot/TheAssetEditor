@@ -40,8 +40,9 @@ namespace Editors.PackOptimizer.Core
         //    finest source resolution, so no tuple loses pixels; coarser slots are
         //    replicated up (nearest, exact copies) and the overhead is reported.
         private static readonly TimeSpan SharedRepackAnalysisBudget = TimeSpan.FromMinutes(10);
-        // A set is only built when it saves at least this much, estimated AND actual.
-        private const long SharedRepackMinimumSavingBytes = 2L * 1024 * 1024;
+        // A set is only built when it saves at least this much, estimated AND actual. 1 MiB keeps
+        // most of what 512 KiB adds on !ak_teb3 (69.4 of 71.9 MB) with fewer tiny sets.
+        private const long SharedRepackMinimumSavingBytes = 1L * 1024 * 1024;
         // A layout group is only built when it saves at least this much (and more than nothing).
         private const long SharedRepackMinimumGroupSavingBytes = 512L * 1024;
         private const int SharedRepackMaximumSide = 4096;

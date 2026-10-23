@@ -202,7 +202,7 @@ Built, opt-in: "Repack shared textures (experimental)" (off by default). New sma
 - **Scope.** Option C sets confined to one mod-owned rigid. Cannot be combined with cross-rigid-only mode (which never writes textures). It can run together with atlasing and cross-rigid merges, in that order (cross-rigid merges, atlasing, repack): atlasing runs first, a rigid atlasing changed in any way is left out of the repack (reason "the rigid was changed by texture atlasing"), and an atlased part no longer counts as a user of the textures it used, so each part and texture is changed by at most one of the two. The thresholds and the actual-bytes re-check are unchanged. Cross-rigid merges keep their full candidate set (they run before atlasing and the repack, so atlasing neither changes what they select nor takes meshes they built from: those rigids are not atlas candidates, reason "the rigid was changed by cross-rigid merging", and the generated cross-rigid WSModels count as users of the source textures they still name in the atlas value gate) and the repack gives way: the source rigids the writer built generated models from (`CrossRigidChangedRigids`) are left out (reason "the rigid was changed by cross-rigid merging"), and the generated rigids, which copy source parts with their original materials and so keep those textures loaded, block every set containing one of those textures. Source parts are not exempted (the source files are kept and may stay reachable).
 - **Chart snapping.** Charts are snapped to 32 px so mips 0-3 are block-copied exactly. This fixed a bug: mip-3 errors came from regions offset by 2 texels against the 4x4 block grid.
 - **Pixel check before writing.** Block-copied levels must match exactly. Re-encoded levels fail if more than 0.5 % of samples are over 96 or the mean is over 12.
-- **Layout.** Layout groups combine tuples with the same slots, formats and ratios. Pages split at 4096. A group needs at least 512 KiB saved and a set at least 2 MiB.
+- **Layout.** Layout groups combine tuples with the same slots, formats and ratios. Pages split at 4096. A group needs at least 512 KiB saved and a set at least 1 MiB (2 MiB until 2026-10-23, see "Repack threshold" below).
 - **Pass-through.** Auxiliary slots (blood, dither, distortion, distortion noise) pass through, and `blood_uv_scale` is divided by the UV scale. Tiny uniform textures are kept as authored.
 - **Output paths.** Generated vanilla-material copies go under `variantmeshes\asset_editor\repack_materials\`, textures under `textures\asset_editor\atlases\*_repack_*.dds`. The rigid's embedded material is not updated (same as existing atlas practice).
 
@@ -250,7 +250,7 @@ Results (validation passes, zero pixel error on every sample):
 | | `ak_teb3` | `ovn_albion` |
 |---|---|---|
 | Signature sets considered | 299 | 211 |
-| Below the 2 MiB estimate threshold | 254 | 155 |
+| Below the 2 MiB estimate threshold (then the default) | 254 | 155 |
 | Merged into another set's plan | 10 | 16 |
 | Dropped by closure, variants, tiling or ineligible rigids | 12 | 20 |
 | Failed the bytes gate (near-full coverage) | 16 | 6 |
@@ -266,6 +266,21 @@ Results (validation passes, zero pixel error on every sample):
 - **Many repacked textures are vanilla.** A vanilla unit in the same battle keeps the original loaded, so these savings are whole-pack upper bounds.
   - Copying vanilla rigids to unlock more sets was not done.
   - Only 3 such blockers exist: the two demigryph rigids and `brt_men_at_arms_helmet_01`.
+
+### Repack threshold (2026-10-23)
+
+Bench runs on the Workshop `!ak_teb3` (output version 4 code, only the set threshold changed):
+
+| Set threshold | Sets built | Saved (upper bound) | Textures / materials generated | Rigids rewritten | Pack on disk |
+|---|---|---|---|---|---|
+| 2 MiB (old default) | 8 | 57.0 MB | 33 / 27 | 15 | 577.9 MB |
+| **1 MiB (default)** | **15** | **69.4 MB** | **70 / 47** | **24** | **583.0 MB** |
+| 512 KiB | 18 | 71.9 MB | 88 / 57 | 27 | 585.6 MB |
+
+- 1 MiB keeps 84 % of what 512 KiB adds. The three extra 512 KiB sets save 2.4 MB together (Arch Lector head estimated 2.4 MB, saved 0.7 MB).
+- Actual savings ran at about 60 % of the estimates again. Validation passes and pixel error is zero at every threshold.
+- Two mod-owned textures stay in the output next to their repacked copies (another reference keeps them).
+- Output version 5.
 
 ### Exact texture compaction (`PackTextureAtlasBatchService.TextureCompaction.cs`)
 
