@@ -361,7 +361,26 @@ namespace Editors.PackOptimizer.Core
             public bool CapHit { get; set; }
             // The cap that was hit was the one for generated rigids.
             public bool GeneratedCapHit { get; set; }
+            // Why each texture of the plan left it while closing (first cause wins), with its
+            // chain bytes; and the chain bytes of every texture the plan took in.
+            public Dictionary<string, (string Reason, long Bytes)> RemovedTextures { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public long PlanTextureBytes { get; set; }
+            // Page waste of the layout groups of the plan's final layout pass, and of the groups
+            // left untouched because their pages did not shrink enough.
+            public List<SharedRepackGroupWaste> GroupWaste { get; } = [];
         }
+
+        // One layout group's pages in output bytes: what the touched cells, the padded and aligned
+        // chart rectangles, and the shelf packing trimmed to its used width and height would take
+        // at the pages' bytes per reference pixel, against the power-of-two pages and the sources.
+        private sealed record SharedRepackGroupWaste(
+            bool Gated,
+            long SourceBytes,
+            long UsedBytes,
+            long ChartBytes,
+            long TrimmedBytes,
+            long PageBytes);
 
         private sealed class SharedRepackBuiltSet
         {
@@ -420,7 +439,8 @@ namespace Editors.PackOptimizer.Core
             long Estimate,
             string? Reason,
             long? Actual = null,
-            string? Plan = null);
+            string? Plan = null,
+            SharedRepackMergeContext? Context = null);
 
         private sealed class SharedTextureRepackResult
         {
@@ -1387,7 +1407,7 @@ namespace Editors.PackOptimizer.Core
 
                     var failureReason = fallbackNote == null ? attempt.Failure! : fallbackNote + "alone: " + attempt.Failure;
                     Skip(label, failureReason);
-                    result.Outcomes.Add(new(label, bucket, decision.Saving, failureReason));
+                    result.Outcomes.Add(new(label, bucket, decision.Saving, failureReason, Context: attempt.Context));
                     continue;
                 }
 
@@ -1399,7 +1419,8 @@ namespace Editors.PackOptimizer.Core
                     decision.Saving,
                     null,
                     attempt.Built.Before - attempt.Built.After,
-                    label));
+                    label,
+                    attempt.Context));
             }
 
             // Geometry invariants of every rewritten rigid, against the snapshots.
@@ -1993,11 +2014,28 @@ namespace Editors.PackOptimizer.Core
             var pseudoParts = new Dictionary<string, SortedDictionary<(int Lod, int Part), SharedRepackPart>>(
                 StringComparer.OrdinalIgnoreCase);
 
+            string? BlockedTextureReason(VanillaCoverageTexture entry, string path)
+            {
+                var layoutReason = GetSharedRepackBlockedTextureReason(merge.Effective(entry).Layout);
+                if (layoutReason != null)
+                    return "the texture cannot be repacked: " + layoutReason;
+                if (entry.IsOwned && OverridesVanillaPath(state, path))
+                    return "the texture is an owned override of a vanilla texture";
+                if (entry.IsOwned && state.Consumers?.TryBlock(Normalize(path), "repack") == true)
+                    return "the texture is used by another enabled mod";
+                if (state.Consumers?.TryBlockVanillaReplaced(Normalize(path), "repack") == true)
+                    return "another enabled mod replaces the vanilla texture";
+                return null;
+            }
+
             bool IsBlockedTexture(VanillaCoverageTexture entry, string path)
-                => GetSharedRepackBlockedTextureReason(merge.Effective(entry).Layout) != null ||
-                   (entry.IsOwned && OverridesVanillaPath(state, path)) ||
-                   (entry.IsOwned && state.Consumers?.TryBlock(Normalize(path), "repack") == true) ||
-                   state.Consumers?.TryBlockVanillaReplaced(Normalize(path), "repack") == true;
+                => BlockedTextureReason(entry, path) != null;
+
+            void NoteRemoved(string texture, string reason)
+            {
+                if (entryOf.TryGetValue(texture, out var removedEntry))
+                    merge.RemovedTextures.TryAdd(texture, (reason, removedEntry.Layout?.ChainBytes ?? 0));
+            }
 
             void AddRigid(SharedRepackSetRigid item)
             {
@@ -2013,13 +2051,22 @@ namespace Editors.PackOptimizer.Core
                 foreach (var item in added.Set.Items)
                 {
                     var path = Normalize(item.Entry.Path);
+                    var effectiveEntry = merge.Effective(item.Entry);
+                    if (!entryOf.ContainsKey(path))
+                        merge.PlanTextureBytes += effectiveEntry.Layout?.ChainBytes ?? 0;
                     slotOf[path] = item.Slot;
-                    entryOf[path] = merge.Effective(item.Entry);
+                    entryOf[path] = effectiveEntry;
                     // Textures that can never be copied exactly stay out of the set.
-                    if (IsBlockedTexture(item.Entry, path))
+                    var blockedReason = BlockedTextureReason(item.Entry, path);
+                    if (blockedReason != null)
+                    {
                         blocked.Add(path);
+                        NoteRemoved(path, blockedReason);
+                    }
                     else
+                    {
                         members.Add(path);
+                    }
                 }
 
                 foreach (var rigidPath in added.Set.Items
@@ -2136,6 +2183,7 @@ namespace Editors.PackOptimizer.Core
             AddSet(merge.Decisions[merge.Seed]);
 
             var dropped = new HashSet<MeshKey>();
+            var dropReasonOf = new Dictionary<MeshKey, string>();
             var removedBecause = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var outside = new Dictionary<string, (int Count, string Description)>(StringComparer.OrdinalIgnoreCase);
 
@@ -2168,6 +2216,9 @@ namespace Editors.PackOptimizer.Core
             {
                 dropped.Add(part.Key);
                 droppedParts.Add(part);
+                dropReasonOf[part.Key] = reason;
+                foreach (var texture in part.Textures.Where(members.Contains))
+                    NoteRemoved(texture, reason);
                 result.PartDropReasons[reason] = result.PartDropReasons.GetValueOrDefault(reason) + 1;
                 if (reason == SharedRepackReasonMixed || reason == SharedRepackReasonBlockedTexture)
                 {
@@ -2306,6 +2357,7 @@ namespace Editors.PackOptimizer.Core
                                 {
                                     foreach (var texture in droppedPart.Textures.Where(members.Contains))
                                     {
+                                        NoteRemoved(texture, dropReasonOf[droppedPart.Key]);
                                         removedBecause.TryAdd(
                                             texture,
                                             $"{DescribeSharedRepackPart(droppedPart)} was dropped");
@@ -2371,6 +2423,16 @@ namespace Editors.PackOptimizer.Core
                     .ToList();
                 if (moved.Count == 0 || members.Count == 0)
                 {
+                    // What is still a member has no rewritable user at all.
+                    foreach (var texture in members)
+                    {
+                        NoteRemoved(
+                            texture,
+                            candidates.Any(part => part.Textures.Contains(texture))
+                                ? "every part using the texture was dropped"
+                                : "no part of an eligible rigid with a complete WSModel binding uses the texture");
+                    }
+
                     NoteOutside();
                     failure = "no part is left after closing the set (mixed materials, variants, tiling, " +
                               "non-atlasable slots or ineligible rigids)";
@@ -2868,6 +2930,7 @@ namespace Editors.PackOptimizer.Core
             }
 
             var maximumSide = result.MaximumSide;
+            var passWaste = new List<SharedRepackGroupWaste>();
             while (true)
             {
                 while (Propagate())
@@ -2876,6 +2939,7 @@ namespace Editors.PackOptimizer.Core
 
                 plan.Pages.Clear();
                 plan.Groups.Clear();
+                passWaste.Clear();
                 foreach (var tuple in tuples)
                     foreach (var chart in tuple.Charts)
                         chart.Page = null;
@@ -2916,6 +2980,10 @@ namespace Editors.PackOptimizer.Core
                         .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                     var before = textures.Sum(texture => entryOf[texture].Layout!.ChainBytes);
                     var after = pages.Sum(page => page.BytesAfter);
+                    var waste = MeasureSharedRepackGroupWaste(
+                        before - after <= 0 || before - after < result.MinimumGroupSavingBytes,
+                        before,
+                        pages);
                     var info = new SharedRepackGroupInfo
                     {
                         Sizes = DescribeSharedRepackSizes(groupTuples, pages),
@@ -2959,16 +3027,21 @@ namespace Editors.PackOptimizer.Core
                         }
 
                         gated = true;
+                        merge.GroupWaste.Add(waste);
                         restart = true;
                         break;
                     }
 
+                    passWaste.Add(waste);
                     plan.Pages.AddRange(pages);
                     plan.Groups.Add(info);
                 }
 
                 if (!restart)
+                {
+                    merge.GroupWaste.AddRange(passWaste);
                     break;
+                }
             }
 
             // Every excluded tuple is reported as a skipped group.
@@ -4948,6 +5021,160 @@ namespace Editors.PackOptimizer.Core
 
         // The funnel in bytes: where the per-set estimate goes. Negative estimates count as zero, and
         // a set merged into a built plan counts toward that plan, so the buckets add up to the total.
+        private static SharedRepackGroupWaste MeasureSharedRepackGroupWaste(
+            bool gated,
+            long sourceBytes,
+            List<SharedRepackPage> pages)
+        {
+            double used = 0, charts = 0, trimmed = 0, page = 0;
+            foreach (var item in pages)
+            {
+                var area = (double)item.LayoutWidth * item.LayoutHeight;
+                if (area <= 0 || item.Charts.Count == 0)
+                    continue;
+
+                var perPixel = item.BytesAfter / area;
+                page += item.BytesAfter;
+                var width = item.Charts.Max(chart => chart.PackX + chart.LayoutWidth);
+                var height = item.Charts.Max(chart => chart.PackY + chart.LayoutHeight);
+                trimmed += perPixel * width * height;
+                foreach (var chart in item.Charts)
+                {
+                    charts += perPixel * chart.LayoutWidth * chart.LayoutHeight;
+                    var tuple = chart.Tuple;
+                    var cells = 0;
+                    for (var y = chart.CellY0; y <= chart.CellY1; y++)
+                    {
+                        for (var x = chart.CellX0; x <= chart.CellX1; x++)
+                        {
+                            if (tuple.CellChart[y * tuple.GridX + x] == chart.Id)
+                                cells++;
+                        }
+                    }
+
+                    used += perPixel * cells * tuple.Cell * tuple.Cell;
+                }
+            }
+
+            return new SharedRepackGroupWaste(
+                gated, sourceBytes, (long)used, (long)charts, (long)trimmed, (long)page);
+        }
+
+        // Where the bytes of the repacked pages go, and what pages trimmed to their packed charts
+        // (not a power of two) would change. Trimmed figures scale the page bytes by area, so they
+        // are an estimate; whether the game accepts such textures is not checked here.
+        private static void AppendSharedRepackPageWaste(StringBuilder sb, SharedTextureRepackResult result)
+        {
+            var built = result.Outcomes
+                .Where(outcome => outcome.Bucket == SharedRepackBucketBuilt && outcome.Context != null)
+                .SelectMany(outcome => outcome.Context!.GroupWaste.Where(waste => !waste.Gated))
+                .ToList();
+            var gated = result.Outcomes
+                .Where(outcome => outcome.Context != null)
+                .SelectMany(outcome => outcome.Context!.GroupWaste.Where(waste => waste.Gated))
+                .ToList();
+            if (built.Count == 0 && gated.Count == 0)
+                return;
+
+            sb.AppendLine(
+                "Page layout (output bytes at each page's bytes per reference pixel; \"trimmed\" = the same shelf " +
+                "packing cut to its used width and height, i.e. pages that are not a power of two):");
+            if (built.Count != 0)
+            {
+                var page = built.Sum(waste => waste.PageBytes);
+                var used = built.Sum(waste => waste.UsedBytes);
+                var charts = built.Sum(waste => waste.ChartBytes);
+                var trimmed = built.Sum(waste => waste.TrimmedBytes);
+                sb.AppendLine(
+                    $"  Built groups ({built.Count:N0}): sources {built.Sum(waste => waste.SourceBytes):N0} -> pages " +
+                    $"{page:N0} bytes = touched cells {used:N0} + chart padding/bounding/alignment {charts - used:N0} + " +
+                    $"shelf gaps {trimmed - charts:N0} + power-of-two rounding {page - trimmed:N0}");
+            }
+
+            if (gated.Count != 0)
+            {
+                var source = gated.Sum(waste => waste.SourceBytes);
+                var page = gated.Sum(waste => waste.PageBytes);
+                var trimmed = gated.Sum(waste => waste.TrimmedBytes);
+                var passing = gated
+                    .Where(waste => waste.SourceBytes - waste.TrimmedBytes >= result.MinimumGroupSavingBytes)
+                    .ToList();
+                sb.AppendLine(
+                    $"  Groups left untouched because their pages did not get small enough ({gated.Count:N0}): " +
+                    $"sources {source:N0} bytes, power-of-two pages {page:N0}, trimmed pages {trimmed:N0}; " +
+                    $"{passing.Count:N0} would pass the {result.MinimumGroupSavingBytes:N0}-byte group minimum trimmed, " +
+                    $"saving {passing.Sum(waste => waste.SourceBytes - waste.TrimmedBytes):N0} bytes (before the set threshold " +
+                    "and the closure of their sets)");
+                var gatedUsed = gated.Sum(waste => waste.UsedBytes);
+                var gatedCharts = gated.Sum(waste => waste.ChartBytes);
+                sb.AppendLine(
+                    $"    their pages = touched cells {gatedUsed:N0} + chart padding/bounding/alignment " +
+                    $"{gatedCharts - gatedUsed:N0} + shelf gaps {trimmed - gatedCharts:N0} + power-of-two rounding {page - trimmed:N0}");
+            }
+        }
+
+        // Why sets lost textures while closing. A set dropped by closure has its estimate split over
+        // the causes in proportion to the chain bytes each cause removed (what stayed in the set
+        // counts as "left, but saves below the threshold"); built plans list the bytes they lost.
+        private static void AppendSharedRepackClosureCauses(
+            StringBuilder sb,
+            SharedTextureRepackResult result,
+            List<SharedRepackSetOutcome> builtOutcomes)
+        {
+            const string LeftReason = "stayed in the set, but what was left saves below the threshold";
+            var closure = result.Outcomes
+                .Where(outcome => outcome.Bucket == SharedRepackBucketClosure && outcome.Context != null)
+                .ToList();
+            if (closure.Count != 0)
+            {
+                var byCause = new Dictionary<string, (double Estimate, long Bytes, int Sets)>(StringComparer.Ordinal);
+                foreach (var outcome in closure)
+                {
+                    var context = outcome.Context!;
+                    var causes = context.RemovedTextures.Values
+                        .GroupBy(item => item.Reason, StringComparer.Ordinal)
+                        .ToDictionary(group => group.Key, group => group.Sum(item => item.Bytes), StringComparer.Ordinal);
+                    var left = context.PlanTextureBytes - causes.Values.Sum();
+                    if (left > 0)
+                        causes[LeftReason] = left;
+                    var whole = causes.Values.Sum();
+                    foreach (var (cause, bytes) in causes)
+                    {
+                        var share = whole <= 0 ? 0 : (double)Math.Max(0, outcome.Estimate) * bytes / whole;
+                        var known = byCause.GetValueOrDefault(cause);
+                        byCause[cause] = (known.Estimate + share, known.Bytes + bytes, known.Sets + 1);
+                    }
+                }
+
+                sb.AppendLine(
+                    "Dropped by closure, by cause (each set's estimate split over the causes in proportion to the " +
+                    "texture bytes each removed from it; first cause per texture):");
+                foreach (var (cause, (estimate, bytes, sets)) in byCause
+                             .OrderByDescending(pair => pair.Value.Estimate)
+                             .ThenBy(pair => pair.Key, StringComparer.Ordinal))
+                {
+                    sb.AppendLine(
+                        $"  {(long)Math.Round(estimate):N0} bytes estimated ({sets:N0} set(s), {bytes:N0} texture bytes): {cause}");
+                }
+            }
+
+            var builtCauses = builtOutcomes
+                .Where(outcome => outcome.Context != null)
+                .SelectMany(outcome => outcome.Context!.RemovedTextures.Values)
+                .GroupBy(item => item.Reason, StringComparer.Ordinal)
+                .Select(group => (Reason: group.Key, Bytes: group.Sum(item => item.Bytes), Textures: group.Count()))
+                .OrderByDescending(item => item.Bytes)
+                .ThenBy(item => item.Reason, StringComparer.Ordinal)
+                .ToList();
+            var builtPlanBytes = builtOutcomes.Where(outcome => outcome.Context != null)
+                .Sum(outcome => outcome.Context!.PlanTextureBytes);
+            sb.AppendLine(
+                $"Built plans: {builtCauses.Sum(item => item.Bytes):N0} of {builtPlanBytes:N0} texture bytes left " +
+                "them while closing (kept as authored; part of the shortfall), by cause:");
+            foreach (var (reason, bytes, textures) in builtCauses)
+                sb.AppendLine($"  {bytes:N0} bytes ({textures:N0} texture(s)): {reason}");
+        }
+
         private static void AppendSharedRepackEstimateFunnel(StringBuilder sb, SharedTextureRepackResult result)
         {
             if (result.Outcomes.Count == 0)
@@ -4993,6 +5220,10 @@ namespace Editors.PackOptimizer.Core
                 $"  Realised: {FormatSignedBytes(actual)} of {total:N0} estimated bytes ({Share(actual, total)}). " +
                 $"Check: {accounted:N0} of {total:N0} bytes accounted " +
                 (accounted == total ? "(reconciles)" : "(DOES NOT RECONCILE)"));
+
+            AppendSharedRepackClosureCauses(sb, result, builtOutcomes);
+
+            AppendSharedRepackPageWaste(sb, result);
 
             var lost = result.Outcomes
                 .Where(outcome => outcome.Bucket != SharedRepackBucketBuilt &&
