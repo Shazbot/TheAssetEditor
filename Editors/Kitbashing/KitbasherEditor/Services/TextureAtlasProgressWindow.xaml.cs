@@ -530,7 +530,8 @@ namespace Editors.KitbasherEditor.Services
                 atlasOptionsEnabled &&
                 CompactTexturesCheckBox.IsChecked == true;
             // The shared texture repack works next to atlasing and cross-rigid merges (it runs
-            // after them and only acts on what they did not change); cross-rigid-only mode
+            // after them; it leaves atlas-changed rigids alone and rewrites the cross-rigid source
+            // and generated models together); cross-rigid-only mode
             // never writes textures, which is why atlasOptionsEnabled is false there.
             SharedTextureRepackCheckBox.IsEnabled = atlasOptionsEnabled;
         }

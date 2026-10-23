@@ -961,10 +961,14 @@ namespace Editors.PackOptimizer.Core
                             state.TextureAtlasingActive ? "texture atlasing" : null,
                             state.CrossRigidMergesEnabled ? "cross-rigid merges" : null,
                         }.OfType<string>()) +
-                    " (every part and texture is changed by at most one of them). Repack candidates dropped: " +
-                    $"{(repack?.RigidsChangedByAtlasing.Count ?? 0):N0} rigid(s) changed by atlasing, " +
-                    $"{(repack?.RigidsChangedByCrossRigid.Count ?? 0):N0} rigid(s) changed by cross-rigid merging; " +
-                    $"{(repack?.SetsBlockedByMergedUsers.Count ?? 0):N0} set(s) blocked by merged-rigid users.");
+                    ". Repack candidates dropped: " +
+                    $"{(repack?.RigidsChangedByAtlasing.Count ?? 0):N0} rigid(s) changed by atlasing. " +
+                    "Rigids cross-rigid merging relied on and the rigids it generated are rewritten like any other " +
+                    "user of a repacked texture: " +
+                    $"{(repack?.RepackedRigids.Count(path => state.CrossRigidChangedRigids.Contains(path)) ?? 0):N0} " +
+                    "cross-rigid source rigid(s) and " +
+                    $"{(repack?.RepackedRigids.Count(path => state.CrossRigidGeneratedRigidPaths.Contains(path)) ?? 0):N0} " +
+                    "generated rigid(s) rewritten.");
             }
             sb.AppendLine($"Cross-rigid-only mode: {(state.CrossRigidOnly ? "YES" : "NO")}");
             if (!state.TextureAtlasingActive)

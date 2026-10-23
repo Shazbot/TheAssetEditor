@@ -9223,16 +9223,32 @@ namespace Test.PackOptimizer.Core
         private const string SrGeneratedRigid = "variantmeshes\\asset_editor\\cross_rigid\\g.rigid_model_v2";
         private const string SrGeneratedWs = "variantmeshes\\asset_editor\\cross_rigid\\g.wsmodel";
 
-        // What the cross-rigid writer leaves behind: a generated WSModel binding original materials.
-        private static void AddCrossRigidGeneratedUser(object state, params string[] materials)
+        // What the cross-rigid writer leaves behind: a generated rigid in memory (RigidModels) with
+        // a generated WSModel binding original materials, both registered as modified and generated.
+        private static void AddCrossRigidGeneratedModel(
+            SrWorld world,
+            Func<RmvFile> factory,
+            params string[][] materialsByLod)
         {
+            var state = world.State;
+            Get<IDictionary>(state, "RigidModels")[SrGeneratedRigid] = factory();
             Get<IDictionary>(state, "WsDocuments")[SrGeneratedWs] =
-                CreateWsModelDocument(SrGeneratedRigid, [materials]);
+                CreateWsModelDocument(SrGeneratedRigid, materialsByLod);
+            Get<HashSet<string>>(state, "CrossRigidGeneratedRigidPaths").Add(SrGeneratedRigid);
             Get<HashSet<string>>(state, "CrossRigidGeneratedWsModelPaths").Add(SrGeneratedWs);
+            Get<HashSet<string>>(state, "ModifiedRigids").Add(SrGeneratedRigid);
+            Get<HashSet<string>>(state, "ModifiedWsModels").Add(SrGeneratedWs);
+        }
+
+        private static Func<RmvFile> SrStandardFirstLodFactory()
+        {
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
+            return SrRigidFactory([(m1, SrBlocks((2, 3), (3, 3))), (m2, SrBlocks((10, 4)))]);
         }
 
         [Test]
-        public void SharedRepack_RigidChangedByCrossRigidMerging_IsLeftOutWithAClearReason()
+        public void SharedRepack_RigidChangedByCrossRigidMerging_IsRewrittenLikeAnyOther()
         {
             var world = BuildStandardSrWorld();
             world.Analyse();
@@ -9240,11 +9256,12 @@ namespace Test.PackOptimizer.Core
 
             var result = world.Run(analyse: false);
 
-            Assert.That(Get<int>(result, "RigidNotEligible"), Is.EqualTo(1), SrSkips(result));
-            Assert.That(Get<int>(result, "Built"), Is.Zero);
-            Assert.That(SrSkips(result), Does.Contain($"{SrRigid}: the rigid was changed by cross-rigid merging"));
-            Assert.That(Get<HashSet<string>>(result, "RigidsChangedByCrossRigid"), Is.EquivalentTo(new[] { SrRigid }));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "RigidNotEligible"), Is.Zero);
+            Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Is.EquivalentTo(new[] { SrRigid }));
+            Assert.That(Get<HashSet<string>>(result, "CrossRigidSourceRigidsConsidered"), Is.EquivalentTo(new[] { SrRigid }));
             AssertFunnelReconciles(result);
+            Assert.That(SrValidate(world), Is.Empty);
         }
 
         [Test]
@@ -9260,31 +9277,162 @@ namespace Test.PackOptimizer.Core
             var result = world.Run(analyse: false);
 
             Assert.That(Get<int>(result, "SetsConsidered"), Is.EqualTo(2), SrSkips(result));
-            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
-            Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Is.EquivalentTo(new[] { SrRigid }));
-            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Is.EquivalentTo(new[] { SrWs }));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(2), SrSkips(result));
+            Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Is.EquivalentTo(new[] { SrRigid, SrRigid2 }));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Is.EquivalentTo(new[] { SrWs, SrWs2 }));
             AssertFunnelReconciles(result);
             Assert.That(SrValidate(world), Is.Empty);
         }
 
         [Test]
-        public void SharedRepack_GeneratedCrossRigidRigidUsingTheTextures_BlocksThatSet()
+        public void SharedRepack_SetUsedByACrossRigidSourceAndAGeneratedRigid_RewritesBothAndLeavesTheCrossRigidOutputAlone()
         {
-            var world = BuildStandardSrWorld();
+            var world = BuildStandardSrWorld(secondLod: false);
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
             world.Analyse();
-            // A merged rigid copied the m2 part: it keeps the m2 textures (b2, n2) loaded.
-            AddCrossRigidGeneratedUser(world.State, SrMaterialPath("m2"));
+            Get<HashSet<string>>(world.State, "CrossRigidChangedRigids").Add(SrRigid);
+            var factory = SrStandardFirstLodFactory();
+            AddCrossRigidGeneratedModel(world, factory, [m1, m2]);
+            var generatedRigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrGeneratedRigid]!;
+            var indicesBefore = generatedRigid.ModelList[0].Select(model => model.Mesh.IndexList.ToArray()).ToList();
+            var generatedRigidsBefore = Get<HashSet<string>>(world.State, "CrossRigidGeneratedRigidPaths").ToList();
+            var generatedWsBefore = Get<HashSet<string>>(world.State, "CrossRigidGeneratedWsModelPaths").ToList();
 
             var result = world.Run(analyse: false);
 
-            Assert.That(Get<HashSet<string>>(result, "SetsBlockedByMergedUsers"), Has.Count.EqualTo(1));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            AssertFunnelReconciles(result);
+            Assert.That(
+                Get<HashSet<string>>(result, "RepackedRigids"),
+                Is.EquivalentTo(new[] { SrRigid, SrGeneratedRigid }));
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<int>(built, "Parts"), Is.EqualTo(4));
+            // Both WSModels point to the same new materials, one per original material.
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Does.Contain("_repack_"));
+            Assert.That(SrWsMaterial(world.State, SrGeneratedWs, 0, 0), Is.EqualTo(SrWsMaterial(world.State, SrWs, 0, 0)));
+            Assert.That(SrWsMaterial(world.State, SrGeneratedWs, 0, 1), Is.EqualTo(SrWsMaterial(world.State, SrWs, 0, 1)));
+            // UVs: the same transform, so every triangle samples the same colours in both rigids.
+            AssertSrPixels(world, SrRigid, SrWs, factory, SrPart0Seeds, (_, part) => part == 0);
+            AssertSrPixels(world, SrRigid, SrWs, factory, SrPart1Seeds, (_, part) => part == 1);
+            AssertSrPixels(world, SrGeneratedRigid, SrGeneratedWs, factory, SrPart0Seeds, (_, part) => part == 0);
+            AssertSrPixels(world, SrGeneratedRigid, SrGeneratedWs, factory, SrPart1Seeds, (_, part) => part == 1);
+            var sourceRigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            for (var part = 0; part < 2; part++)
+            {
+                Assert.That(
+                    generatedRigid.ModelList[0][part].Mesh.VertexList.Select(vertex => vertex.Uv),
+                    Is.EqualTo(sourceRigid.ModelList[0][part].Mesh.VertexList.Select(vertex => vertex.Uv)));
+            }
+
+            // The cross-rigid output is otherwise unchanged: same generated paths, parts and indices.
+            Assert.That(Get<HashSet<string>>(world.State, "CrossRigidGeneratedRigidPaths"), Is.EquivalentTo(generatedRigidsBefore));
+            Assert.That(Get<HashSet<string>>(world.State, "CrossRigidGeneratedWsModelPaths"), Is.EquivalentTo(generatedWsBefore));
+            Assert.That(generatedRigid.ModelList, Has.Length.EqualTo(1));
+            Assert.That(generatedRigid.ModelList[0], Has.Length.EqualTo(2));
+            Assert.That(
+                generatedRigid.ModelList[0].Select(model => model.Mesh.IndexList.ToArray()),
+                Is.EqualTo(indicesBefore));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedRigids"), Is.EquivalentTo(new[] { SrRigid, SrGeneratedRigid }));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Is.EquivalentTo(new[] { SrWs, SrGeneratedWs }));
+            Assert.That(
+                BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("1 generated cross-rigid rigid(s) (2 part(s))"));
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_GeneratedPartMergingTwoSourceParts_MapsEveryTriangle_AndKeepsBothChartsOnOnePage()
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_big.dds", 2048, "BC1", true, 1);
+            world.Fixture.AddMaterial(SrMaterialPath("mbig"), (SrBase, "textures\\sr_big.dds"));
+            var mbig = SrMaterialPath("mbig");
+            var a = UvQuad(0.004, 0.004, 0.2, 0.2);
+            var b = UvQuad(0.5, 0.004, 0.7, 0.2);
+            var factory = SrRigidFactory([(mbig, a), (mbig, b)]);
+            world.AddModel(SrRigid, SrWs, SrRoot, factory, [[mbig, mbig]]);
+            world.Analyse();
+            Get<HashSet<string>>(world.State, "CrossRigidChangedRigids").Add(SrRigid);
+            // The merged model has both quads (two separate charts) in a single part.
+            var mergedFactory = SrRigidFactory([(mbig, a.Concat(b).ToArray())]);
+            AddCrossRigidGeneratedModel(world, mergedFactory, [mbig]);
+
+            var result = world.Run(analyse: false, minimumSaving: 100_000, minimumGroupSaving: 10_000);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var built = SrBuilt(result).Single();
+            // The merged part joins both charts into one cluster, so the group cannot be split.
+            Assert.That(Get<int>(built, "Pages"), Is.EqualTo(1));
+            Assert.That(Get<int>(built, "Charts"), Is.EqualTo(2));
+            Assert.That(Get<IEnumerable>(built, "Splits").Cast<object>().Single(), Has.Property("OneCluster").True);
+            var material = SrWsMaterial(world.State, SrGeneratedWs, 0, 0);
+            Assert.That(material, Does.Contain("_repack_"));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(material));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 1), Is.EqualTo(material));
+            var (samples, max) = AssertSrPixels(world, SrGeneratedRigid, SrGeneratedWs, mergedFactory, SrBigSeeds);
+            Assert.That(samples, Is.EqualTo(4));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            AssertSrPixels(world, SrRigid, SrWs, factory, SrBigSeeds);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_SetAlsoUsedByAVanillaRigid_IsStillBlocked_EvenWithGeneratedUsers()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
+            // A vanilla rigid keeps b1 + n1 (m1) loaded: it cannot be rewritten.
+            world.AddModel(SrRigid2, SrWs2, SrRoot, SrRigidFactory([(m1, SrBlocks((9, 9)))]), [[m1]], ownedRigid: false);
+            world.Analyse();
+            Get<HashSet<string>>(world.State, "CrossRigidChangedRigids").Add(SrRigid);
+            AddCrossRigidGeneratedModel(world, SrStandardFirstLodFactory(), [m1, m2]);
+
+            var result = world.Run(analyse: false);
+
+            AssertFunnelReconciles(result);
+            // The m2 textures are used by the source and the generated rigid only: they are repacked.
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var replaced = string.Concat(Get<IEnumerable>(SrBuilt(result).Single(), "Replaced").Cast<object>());
+            Assert.That(replaced, Does.Contain("sr_b2").And.Not.Contain("sr_b1"));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(m1));
+            Assert.That(SrWsMaterial(world.State, SrGeneratedWs, 0, 0), Is.EqualTo(m1));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 1), Does.Contain("_repack_"));
+            Assert.That(SrWsMaterial(world.State, SrGeneratedWs, 0, 1), Is.EqualTo(SrWsMaterial(world.State, SrWs, 0, 1)));
             Assert.That(
                 Get<IDictionary>(result, "PartDropReasons").Keys.Cast<string>(),
-                Has.Some.Contain("a rigid generated by cross-rigid merging also uses the texture"));
-            // Whatever else was built, the part on m2 still uses its original material.
-            Assert.That(SrWsMaterial(world.State, SrWs, 0, 1), Is.EqualTo(SrMaterialPath("m2")));
-            Assert.That(SrWsMaterial(world.State, SrWs, 1, 1), Is.EqualTo(SrMaterialPath("m2")));
-            AssertFunnelReconciles(result);
+                Has.Some.Contain("the part's rigid is not eligible: the rigid is not owned by the source pack"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_GeneratedPartThatTilesItsTexture_DropsOutWithAReason()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
+            world.Analyse();
+            Get<HashSet<string>>(world.State, "CrossRigidChangedRigids").Add(SrRigid);
+            // u runs from 0.9 to 1.1 in the generated m1 part: inside no single tile.
+            float[][] crossing = [[0.9f, 0.5f, 1.1f, 0.5f, 1.0f, 0.6f]];
+            AddCrossRigidGeneratedModel(
+                world,
+                SrRigidFactory([(m1, crossing), (m2, SrBlocks((10, 4)))]),
+                [m1, m2]);
+
+            var result = world.Run(analyse: false);
+
+            var reasons = Get<IDictionary>(result, "PartDropReasons").Keys.Cast<string>().ToList();
+            Assert.That(reasons, Has.Some.Contain("spans more than one UV tile"));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            // m1's textures left the set: the generated part and the source part keep m1.
+            Assert.That(SrWsMaterial(world.State, SrGeneratedWs, 0, 0), Is.EqualTo(m1));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(m1));
+            Assert.That(SrWsMaterial(world.State, SrGeneratedWs, 0, 1), Does.Contain("_repack_"));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 1), Is.EqualTo(SrWsMaterial(world.State, SrGeneratedWs, 0, 1)));
+            Assert.That(SrValidate(world), Is.Empty);
         }
 
         [Test]
@@ -9298,15 +9446,16 @@ namespace Test.PackOptimizer.Core
             world.Analyse();
             MarkAtlasChanged(world.State, SrRigid2, (0, 0));
             Get<HashSet<string>>(world.State, "CrossRigidChangedRigids").Add(SrRigid3);
-            AddCrossRigidGeneratedUser(world.State, m2);
+            AddCrossRigidGeneratedModel(world, SrRigidFactory([(m2, SrBlocks((5, 5)))]), [m2]);
 
             var result = world.Run(analyse: false);
 
             AssertFunnelReconciles(result);
             Assert.That(Get<HashSet<string>>(result, "RigidsChangedByAtlasing"), Does.Contain(SrRigid2));
-            Assert.That(Get<HashSet<string>>(result, "RigidsChangedByCrossRigid"), Does.Contain(SrRigid3));
-            Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Does.Not.Contain(SrRigid3));
+            Assert.That(Get<HashSet<string>>(result, "CrossRigidSourceRigidsConsidered"), Does.Contain(SrRigid3));
+            Assert.That(Get<HashSet<string>>(result, "CrossRigidGeneratedRigidsConsidered"), Does.Contain(SrGeneratedRigid));
             Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Does.Not.Contain(SrRigid2));
+            Assert.That(SrValidate(world), Is.Empty);
         }
 
         // --- Repack and the same-rigid mesh merge ---------------------------------------------
@@ -11198,7 +11347,7 @@ namespace Test.PackOptimizer.Core
                 Assert.That(Get<IEnumerable>(built, "MergedSets").Cast<object>().Count(), Is.LessThanOrEqualTo(7));
             Assert.That(
                 BuildSharedRepackSection(Enabled(world)),
-                Does.Contain("merge cap reached: at most 8 sets and 16 rigids per plan"));
+                Does.Contain("merge cap reached: at most 8 sets and 16 source rigids and 64 generated rigids per plan"));
             Assert.That(SrValidate(world), Is.Empty);
             Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
         }
@@ -13956,6 +14105,9 @@ namespace Test.PackOptimizer.Core
             // 5: the shared texture repack builds sets saving at least 1 MiB (was 2 MiB); the
             // repack is not among the pinned stages, so the hash is unchanged.
             [5] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 6: the shared texture repack also rewrites the rigids cross-rigid merging relied on and the
+            // ones it generated; the repack is not among the pinned stages, so the hash is unchanged.
+            [6] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
