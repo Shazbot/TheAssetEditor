@@ -235,7 +235,12 @@ namespace Editors.PackOptimizer.Core
             public int[] TileU { get; set; } = [];
             public int[] TileV { get; set; } = [];
             public bool[] Used { get; set; } = [];
+            // Per vertex: the chart (or tight piece) of the ACTIVE layout of its tuple (-1 = unused).
             public int[] VertexChart { get; set; } = [];
+            // The two layouts of the tuple (see SharedRepackTuple.TightCharts); null when the tuple has no
+            // tight alternative.
+            public int[]? MergedVertexChart { get; set; }
+            public int[]? TightVertexChart { get; set; }
             public string TupleKey => string.Join("|", Slots.Select(slot => $"{slot.Key}={Normalize(slot.Value)}"));
         }
 
@@ -259,7 +264,12 @@ namespace Editors.PackOptimizer.Core
             public int PackX { get; set; }
             public int PackY { get; set; }
             public SharedRepackPage? Page { get; set; }
-            public string Label => $"{Tuple.Index}.{Id}";
+            // A tight piece (one 8-connected component of touched cells) rather than a merged chart:
+            // the id of the merged chart it was part of (its pieces always share a cluster, so they
+            // land on one page), else -1.
+            public bool Piece { get; init; }
+            public int MergedId { get; init; } = -1;
+            public string Label => Piece ? $"{Tuple.Index}.p{Id}" : $"{Tuple.Index}.{Id}";
         }
 
         private sealed class SharedRepackTuple
@@ -288,8 +298,23 @@ namespace Editors.PackOptimizer.Core
             public int Align { get; set; }
             public int GridX { get; set; }
             public int GridY { get; set; }
+            // The ACTIVE layout: cell -> chart id (-1 = untouched) and the charts. It is the merged-chart
+            // layout unless the group chose its tight pieces (ActivateSharedRepackLayout).
             public int[] CellChart { get; set; } = [];
-            public List<SharedRepackChart> Charts { get; } = [];
+            public List<SharedRepackChart> Charts { get; set; } = [];
+            // Tight pieces: one chart per 8-connected component of touched cells (same one-cell gutter
+            // and alignment as a merged chart, so a piece never needs more room than the chart it came
+            // from). Null when the tuple has no merged component (the pieces would be the charts) or
+            // no consistent assignment. MergedCharts/MergedCellChart keep the merged layout while the
+            // pieces are active.
+            public List<SharedRepackChart>? TightCharts { get; set; }
+            public int[]? TightCellChart { get; set; }
+            public List<SharedRepackChart>? MergedCharts { get; set; }
+            public int[]? MergedCellChart { get; set; }
+            // Why the tight pieces could not be assigned exactly (the group then keeps the merged charts).
+            public string? TightInconsistent { get; set; }
+            // The active layout is the tight one.
+            public bool Tight { get; set; }
             // Tuples with the same signature can share one layout: same slots, formats,
             // colour spaces and per-slot size ratios, so no slot is ever resampled.
             public string GroupKey { get; set; } = string.Empty;
@@ -378,6 +403,15 @@ namespace Editors.PackOptimizer.Core
             // The group's canvases were restricted to the reference aspect ratio (exact emissive
             // compensation), and what a single page would have cost without the restriction.
             public bool AspectRestricted { get; set; }
+            // Tight pieces: the group had merged charts to split (Tried), the pieces gave smaller pages
+            // (Used: Pieces instead of MergedCharts, saving SavedBytes), or were not assignable exactly
+            // (Inconsistent, the merged layout is kept).
+            public bool TightTried { get; set; }
+            public bool TightUsed { get; set; }
+            public bool TightInconsistent { get; set; }
+            public int TightPieces { get; set; }
+            public int TightMergedCharts { get; set; }
+            public long TightSavedBytes { get; set; }
             public long UnrestrictedSingleBytes { get; set; }
             public string UnrestrictedSingleSize { get; set; } = string.Empty;
         }
@@ -429,6 +463,9 @@ namespace Editors.PackOptimizer.Core
             public long LevelCount { get; set; }
             public long LevelSamples { get; set; }
             public long EdgeSkipped { get; set; }
+            // Tight pieces on the checked pages, and how many of them were sampled (all, or the report says so).
+            public long Pieces { get; set; }
+            public long PiecesSampled { get; set; }
             public double LevelP99 { get; set; }
             public double LevelOutlierShare { get; set; }
             public List<SharedRepackSample> Worst { get; } = [];
@@ -493,7 +530,8 @@ namespace Editors.PackOptimizer.Core
             long ChartBytes,
             long TrimmedBytes,
             long PageBytes,
-            SharedRepackGroupSim? Sim = null);
+            SharedRepackGroupSim? Sim = null,
+            SharedRepackSplitInfo? Split = null);
 
         private sealed class SharedRepackBuiltSet
         {
@@ -530,6 +568,8 @@ namespace Editors.PackOptimizer.Core
             public long LevelSamples { get; set; }
             public long SkippedSamples { get; set; }
             public long EdgeSkippedSamples { get; set; }
+            public long Pieces { get; set; }
+            public long PiecesSampled { get; set; }
             public int LayoutWidth { get; set; }
             public int LayoutHeight { get; set; }
             public List<string> Materials { get; } = [];
@@ -699,6 +739,24 @@ namespace Editors.PackOptimizer.Core
             double ax, double ay,
             double bx, double by,
             double cx, double cy)
+            => VisitSharedRepackTriangleRows(
+                gx, gy, ax, ay, bx, by, cx, cy,
+                (row, firstCell, lastCell) =>
+                {
+                    for (var x = firstCell; x <= lastCell; x++)
+                        grid[row * gx + x] = true;
+                });
+
+        // The row spans (row, first cell, last cell) the conservative rasterisation marks for a
+        // triangle: the one definition of "the cells a triangle touches", used to mark the grid and
+        // to read back which component a triangle belongs to.
+        private static void VisitSharedRepackTriangleRows(
+            int gx,
+            int gy,
+            double ax, double ay,
+            double bx, double by,
+            double cx, double cy,
+            Action<int, int, int> visit)
         {
             Span<double> triangle = stackalloc double[6]
             {
@@ -730,8 +788,7 @@ namespace Editors.PackOptimizer.Core
 
                 var firstCell = Math.Clamp((int)Math.Floor(rowMinX), 0, gx - 1);
                 var lastCell = Math.Clamp(Math.Max(firstCell, (int)Math.Ceiling(rowMaxX) - 1), firstCell, gx - 1);
-                for (var x = firstCell; x <= lastCell; x++)
-                    grid[row * gx + x] = true;
+                visit(row, firstCell, lastCell);
             }
         }
 
@@ -3046,39 +3103,8 @@ namespace Editors.PackOptimizer.Core
                 var chartOfRoot = new Dictionary<int, int>();
                 foreach (var root in roots.OrderBy(root => live[root].Y0).ThenBy(root => live[root].X0))
                 {
-                    var box = live[root];
-                    // Padded by one cell, but never beyond the texture itself, so a chart's
-                    // rectangle in any slot is never larger than that slot's texture.
-                    var left = Math.Max(0, (box.X0 - 1) * tuple.Cell);
-                    var top = Math.Max(0, (box.Y0 - 1) * tuple.Cell);
-                    var right = Math.Min(tuple.ReferenceWidth, (box.X1 + 2) * tuple.Cell);
-                    var bottom = Math.Min(tuple.ReferenceHeight, (box.Y1 + 2) * tuple.Cell);
-                    if (tuple.ReferenceWidth % tuple.Align == 0 && tuple.ReferenceHeight % tuple.Align == 0)
-                    {
-                        left = left / tuple.Align * tuple.Align;
-                        top = top / tuple.Align * tuple.Align;
-                        right = Math.Min(tuple.ReferenceWidth, RoundUpTo(right, tuple.Align));
-                        bottom = Math.Min(tuple.ReferenceHeight, RoundUpTo(bottom, tuple.Align));
-                    }
-
-                    var width = right - left;
-                    var height = bottom - top;
                     chartOfRoot[root] = tuple.Charts.Count;
-                    tuple.Charts.Add(new SharedRepackChart
-                    {
-                        Id = tuple.Charts.Count,
-                        Tuple = tuple,
-                        CellX0 = box.X0,
-                        CellY0 = box.Y0,
-                        CellX1 = box.X1,
-                        CellY1 = box.Y1,
-                        X0 = left,
-                        Y0 = top,
-                        Width = width,
-                        Height = height,
-                        LayoutWidth = width,
-                        LayoutHeight = height,
-                    });
+                    tuple.Charts.Add(CreateSharedRepackChart(tuple, tuple.Charts.Count, live[root], false, -1));
                 }
 
                 tuple.CellChart = new int[grid.Length];
@@ -3089,7 +3115,11 @@ namespace Editors.PackOptimizer.Core
                 // assignment from an earlier round of the closure is void.)
                 foreach (var part in tuple.Parts)
                 {
+                    // A fresh array: an earlier round (or the other layout) may still hold the old one.
+                    part.VertexChart = new int[part.VertexChart.Length];
                     Array.Fill(part.VertexChart, -1);
+                    part.MergedVertexChart = null;
+                    part.TightVertexChart = null;
                     var indices = part.Model!.Mesh.IndexList;
                     var bad = false;
                     for (var index = 0; index < indices.Length && !bad; index += 3)
@@ -3116,10 +3146,193 @@ namespace Editors.PackOptimizer.Core
                     if (bad)
                         violating.Add(part);
                 }
+
+                // Tight pieces only differ from the charts when a chart merged several components.
+                if (boxes.Count > roots.Count)
+                {
+                    BuildSharedRepackTightPieces(
+                        tuple, grid, boxes, label, component => chartOfRoot[Find(component)]);
+                }
             }
 
             return tuples;
         }
+
+        // A chart rectangle for a cell box: padded by one cell but never beyond the texture itself (so
+        // a chart's rectangle in any slot is never larger than that slot's texture), snapped outward to
+        // the tuple's alignment. Merged charts and tight pieces are sized by this one formula.
+        private static SharedRepackChart CreateSharedRepackChart(
+            SharedRepackTuple tuple,
+            int id,
+            (int X0, int Y0, int X1, int Y1) box,
+            bool piece,
+            int mergedId)
+        {
+            var left = Math.Max(0, (box.X0 - 1) * tuple.Cell);
+            var top = Math.Max(0, (box.Y0 - 1) * tuple.Cell);
+            var right = Math.Min(tuple.ReferenceWidth, (box.X1 + 2) * tuple.Cell);
+            var bottom = Math.Min(tuple.ReferenceHeight, (box.Y1 + 2) * tuple.Cell);
+            if (tuple.ReferenceWidth % tuple.Align == 0 && tuple.ReferenceHeight % tuple.Align == 0)
+            {
+                left = left / tuple.Align * tuple.Align;
+                top = top / tuple.Align * tuple.Align;
+                right = Math.Min(tuple.ReferenceWidth, RoundUpTo(right, tuple.Align));
+                bottom = Math.Min(tuple.ReferenceHeight, RoundUpTo(bottom, tuple.Align));
+            }
+
+            var width = right - left;
+            var height = bottom - top;
+            return new SharedRepackChart
+            {
+                Id = id,
+                Tuple = tuple,
+                CellX0 = box.X0,
+                CellY0 = box.Y0,
+                CellX1 = box.X1,
+                CellY1 = box.Y1,
+                X0 = left,
+                Y0 = top,
+                Width = width,
+                Height = height,
+                LayoutWidth = width,
+                LayoutHeight = height,
+                Piece = piece,
+                MergedId = mergedId,
+            };
+        }
+
+        // Tight pieces: one chart per 8-connected component of touched cells, the same gutter and
+        // alignment as a merged chart, translated only (never scaled) by the UV rewrite.
+        //
+        // What the merge protects: components whose padded boxes overlap are joined into one chart so that
+        // (1) no two rectangles of the layout overlap in source space (a texel is copied once), and (2) a
+        // vertex lookup by cell neighbourhood (FindSharedRepackChart, radius 1) can never see two charts.
+        // Neither matters for pieces: overlapping source rectangles just duplicate texels (every piece
+        // carries its own gutter, so each triangle still sees its own neighbourhood unchanged), and the
+        // piece of a triangle is read from the rasterisation itself (the cells the triangle marked all
+        // belong to one component) instead of a neighbourhood lookup. The one thing the merge
+        // implied that is kept: the pieces of a former chart share a cluster (MergedId), so they land
+        // on the same page as before.
+        //
+        // A shared vertex lies in the cells of every triangle that uses it, so those triangles are in one
+        // component. Anything that does not hold (a triangle over two components, a vertex of two pieces)
+        // sets TightInconsistent and the tuple's group keeps the merged charts.
+        private static void BuildSharedRepackTightPieces(
+            SharedRepackTuple tuple,
+            bool[] grid,
+            List<(int X0, int Y0, int X1, int Y1)> boxes,
+            int[] label,
+            Func<int, int> mergedChartOf)
+        {
+            if (SharedRepackTightPiecesDisabled)
+                return;
+
+            var order = Enumerable.Range(0, boxes.Count)
+                .OrderBy(component => boxes[component].Y0)
+                .ThenBy(component => boxes[component].X0)
+                .ThenBy(component => component)
+                .ToList();
+            var pieceOfComponent = new int[boxes.Count];
+            var pieces = new List<SharedRepackChart>();
+            foreach (var component in order)
+            {
+                pieceOfComponent[component] = pieces.Count;
+                pieces.Add(CreateSharedRepackChart(tuple, pieces.Count, boxes[component], true, mergedChartOf(component)));
+            }
+
+            var cellPiece = new int[grid.Length];
+            for (var cell = 0; cell < grid.Length; cell++)
+                cellPiece[cell] = label[cell] < 0 ? -1 : pieceOfComponent[label[cell]];
+
+            string? inconsistent = null;
+            var vertexPieces = new List<int[]>();
+            foreach (var part in tuple.Parts)
+            {
+                var assigned = new int[part.VertexChart.Length];
+                Array.Fill(assigned, -1);
+                vertexPieces.Add(assigned);
+                var indices = part.Model!.Mesh.IndexList;
+                var gx = tuple.GridX;
+                var current = -1;
+                var mixed = false;
+                void Visit(int row, int first, int last)
+                {
+                    for (var x = first; x <= last; x++)
+                    {
+                        var piece = cellPiece[row * gx + x];
+                        if (piece < 0 || (current != -1 && current != piece))
+                            mixed = true;
+                        else
+                            current = piece;
+                    }
+                }
+
+                Action<int, int, int> visit = Visit;
+                for (var index = 0; index < indices.Length && inconsistent == null; index += 3)
+                {
+                    int[] corners = [indices[index], indices[index + 1], indices[index + 2]];
+                    current = -1;
+                    mixed = false;
+                    VisitSharedRepackTriangleRows(
+                        tuple.GridX, tuple.GridY,
+                        part.U[corners[0]], part.V[corners[0]], part.U[corners[1]], part.V[corners[1]],
+                        part.U[corners[2]], part.V[corners[2]], visit);
+                    if (mixed || current < 0)
+                    {
+                        inconsistent = "a triangle touches cells of more than one UV component";
+                        break;
+                    }
+
+                    foreach (var vertex in corners)
+                    {
+                        if (assigned[vertex] == -1)
+                            assigned[vertex] = current;
+                        else if (assigned[vertex] != current)
+                            inconsistent = "a vertex is shared by triangles of two UV components";
+                    }
+                }
+
+                if (inconsistent != null)
+                    break;
+            }
+
+            if (inconsistent != null)
+            {
+                tuple.TightInconsistent = inconsistent;
+                return;
+            }
+
+            tuple.MergedCharts = tuple.Charts;
+            tuple.MergedCellChart = tuple.CellChart;
+            tuple.TightCharts = pieces;
+            tuple.TightCellChart = cellPiece;
+            for (var index = 0; index < tuple.Parts.Count; index++)
+            {
+                tuple.Parts[index].MergedVertexChart = tuple.Parts[index].VertexChart;
+                tuple.Parts[index].TightVertexChart = vertexPieces[index];
+            }
+        }
+
+        // Switches the tuples that have a tight alternative between their merged charts and pieces. The
+        // other tuples (no merged component, nothing to switch) keep their charts.
+        private static void ActivateSharedRepackLayout(IEnumerable<SharedRepackTuple> tuples, bool tight)
+        {
+            foreach (var tuple in tuples)
+            {
+                if (tuple.TightCharts == null || tuple.MergedCharts == null)
+                    continue;
+
+                tuple.Tight = tight;
+                tuple.Charts = tight ? tuple.TightCharts : tuple.MergedCharts;
+                tuple.CellChart = tight ? tuple.TightCellChart! : tuple.MergedCellChart!;
+                foreach (var part in tuple.Parts)
+                    part.VertexChart = (tight ? part.TightVertexChart : part.MergedVertexChart) ?? part.VertexChart;
+            }
+        }
+
+        // Both layouts of a tuple (a page reset must reach the inactive one too).
+        private static IEnumerable<SharedRepackChart> EnumerateAllSharedRepackCharts(SharedRepackTuple tuple)
+            => tuple.Charts.Concat(tuple.MergedCharts ?? []).Concat(tuple.TightCharts ?? []);
 
         // The chart that holds a tile-local point: the cell it falls in, else its neighbours.
         private static int FindSharedRepackChart(SharedRepackTuple tuple, double u, double v)
@@ -3283,7 +3496,7 @@ namespace Editors.PackOptimizer.Core
                 passWaste.Clear();
                 passSimPending.Clear();
                 foreach (var tuple in tuples)
-                    foreach (var chart in tuple.Charts)
+                    foreach (var chart in EnumerateAllSharedRepackCharts(tuple))
                         chart.Page = null;
 
                 var active = tuples.Where(tuple => tuple.Excluded == null).ToList();
@@ -3325,7 +3538,7 @@ namespace Editors.PackOptimizer.Core
                     var waste = MeasureSharedRepackGroupWaste(
                         before - after <= 0 || before - after < result.MinimumGroupSavingBytes,
                         before,
-                        pages);
+                        pages) with { Split = split };
                     var info = new SharedRepackGroupInfo
                     {
                         Sizes = DescribeSharedRepackSizes(groupTuples, pages),
@@ -3341,6 +3554,15 @@ namespace Editors.PackOptimizer.Core
                               $"{split.SingleSize}, {split.SingleBytes:N0} bytes)"
                             : "built",
                     };
+                    if (split.TightUsed)
+                    {
+                        info.Status += $" [tight pieces: {split.TightPieces:N0} piece(s) instead of " +
+                                       $"{split.TightMergedCharts:N0} chart(s), pages {FormatSignedBytes(-split.TightSavedBytes)} bytes]";
+                    }
+                    else if (split.TightInconsistent)
+                    {
+                        info.Status += " [tight pieces not used: internal inconsistency, merged charts kept]";
+                    }
                     // Why the pages are not smaller, for a group that is left untouched.
                     var splitNote = split.Note != null
                         ? $"; {split.Note}"
@@ -3550,9 +3772,71 @@ namespace Editors.PackOptimizer.Core
                 input, solver, clusters, limitWidth, limitHeight, out bestBytes, out bestSizes);
         }
 
-        // One group's pages. Charts that a part uses together form a cluster and stay on one
-        // page. Returns null with a tuple to exclude when a cluster cannot fit at all.
+        // One group's pages: the merged-chart layout, and, when some tuple merged components into a
+        // chart, the tight-piece layout; the pieces are used only when their pages hold fewer bytes in
+        // total (a tie, an excluded tuple or an inconsistent assignment keeps the merged charts, so a
+        // group tight pieces do not help stays byte-identical). The chosen layout is left active on the
+        // tuples.
         private static List<SharedRepackPage> PackSharedRepackGroup(
+            string nameRigid,
+            string identity,
+            List<SharedRepackTuple> groupTuples,
+            int maximumSide,
+            int firstPageNumber,
+            long minimumGroupSaving,
+            out SharedRepackSplitInfo split,
+            out SharedRepackTuple? excludeTuple,
+            out string? excludeReason)
+        {
+            ActivateSharedRepackLayout(groupTuples, false);
+            var mergedPages = PackSharedRepackGroupLayout(
+                nameRigid, identity, groupTuples, maximumSide, firstPageNumber, minimumGroupSaving,
+                out split, out excludeTuple, out excludeReason);
+            if (excludeTuple != null || groupTuples.All(tuple => tuple.TightCharts == null && tuple.TightInconsistent == null))
+                return mergedPages;
+
+            split.TightTried = true;
+            split.TightMergedCharts = groupTuples.Sum(tuple => tuple.Charts.Count);
+            if (groupTuples.Any(tuple => tuple.TightInconsistent != null))
+            {
+                split.TightInconsistent = true;
+                return mergedPages;
+            }
+
+            var mergedChartCount = split.TightMergedCharts;
+            ActivateSharedRepackLayout(groupTuples, true);
+            var tightPages = PackSharedRepackGroupLayout(
+                nameRigid, identity, groupTuples, maximumSide, firstPageNumber, minimumGroupSaving,
+                out var tightSplit, out var tightExclude, out _);
+            var mergedBytes = mergedPages.Sum(page => page.BytesAfter);
+            var tightBytes = tightPages.Sum(page => page.BytesAfter);
+            if (tightExclude == null && tightPages.Count != 0 && tightBytes < mergedBytes)
+            {
+                tightSplit.TightTried = true;
+                tightSplit.TightUsed = true;
+                tightSplit.TightMergedCharts = mergedChartCount;
+                tightSplit.TightPieces = groupTuples.Sum(tuple => tuple.Charts.Count);
+                tightSplit.TightSavedBytes = mergedBytes - tightBytes;
+                split = tightSplit;
+                return tightPages;
+            }
+
+            // Tuples without pieces share their chart objects between the two runs, and the tight run
+            // moved them: lay the merged layout out again (deterministic, so identical to the first run)
+            // so every chart holds the position of the pages that are returned.
+            ActivateSharedRepackLayout(groupTuples, false);
+            var again = PackSharedRepackGroupLayout(
+                nameRigid, identity, groupTuples, maximumSide, firstPageNumber, minimumGroupSaving,
+                out split, out excludeTuple, out excludeReason);
+            split.TightTried = true;
+            split.TightMergedCharts = mergedChartCount;
+            return again;
+        }
+
+        // One layout's pages. Charts that a part uses together form a cluster and stay on one
+        // page (so do the pieces of one merged chart). Returns null with a tuple to exclude when a
+        // cluster cannot fit at all.
+        private static List<SharedRepackPage> PackSharedRepackGroupLayout(
             string nameRigid,
             string identity,
             List<SharedRepackTuple> groupTuples,
@@ -3645,6 +3929,20 @@ namespace Editors.PackOptimizer.Core
                         else
                             parent[Find(id)] = Find(head.Value);
                     }
+                }
+            }
+
+            // The pieces of one merged chart stay together, as the chart did.
+            foreach (var tuple in groupTuples)
+            {
+                var head = new Dictionary<int, int>();
+                foreach (var chart in tuple.Charts.Where(chart => chart.MergedId >= 0))
+                {
+                    var id = chartIndex[chart];
+                    if (head.TryGetValue(chart.MergedId, out var sibling))
+                        parent[Find(id)] = Find(sibling);
+                    else
+                        head[chart.MergedId] = id;
                 }
             }
 
@@ -4576,6 +4874,9 @@ namespace Editors.PackOptimizer.Core
         // Test hook: runs after the textures are composed and before the pixel check.
         private static Action<object>? SharedRepackBeforeCheckHook;
 
+        // Test hook: no tight pieces are built (the merged-chart layout of an earlier output version).
+        private static bool SharedRepackTightPiecesDisabled;
+
         private static (float U, float V) ComputeSharedRepackUv(
             SharedRepackPage page,
             SharedRepackTuple tuple,
@@ -4638,6 +4939,10 @@ namespace Editors.PackOptimizer.Core
             var exactViolation = false;
             var levelExactViolation = false;
             var triangleCounter = 0;
+            // Tight pieces: every piece of the page must be sampled at least once, not only the ones the
+            // triangle stride happens to hit.
+            var sampledPieces = new HashSet<SharedRepackChart>();
+            stats.Pieces += page.Charts.Count(chart => chart.Piece);
             foreach (var tuple in page.Tuples)
             {
                 foreach (var part in tuple.Parts.Where(page.Parts.Contains))
@@ -4660,10 +4965,13 @@ namespace Editors.PackOptimizer.Core
 
                     for (var index = 0; index < indices.Length; index += 3)
                     {
-                        if (triangleCounter++ % stride != 0)
-                            continue;
-
                         int[] corners = [indices[index], indices[index + 1], indices[index + 2]];
+                        if (triangleCounter++ % stride != 0 &&
+                            !(tuple.Tight && !sampledPieces.Contains(tuple.Charts[part.VertexChart[corners[0]]])))
+                        {
+                            continue;
+                        }
+
                         var cornerUv = corners.Select(vertex => ComputeSharedRepackUv(page, tuple, part, vertex)).ToArray();
                         for (var nominalIndex = 0; nominalIndex < nominals.Length; nominalIndex++)
                         {
@@ -4690,6 +4998,8 @@ namespace Editors.PackOptimizer.Core
 
                                 found = true;
                                 var chart = tuple.Charts[part.VertexChart[corners[0]]];
+                                if (chart.Piece && sampledPieces.Add(chart))
+                                    stats.PiecesSampled++;
                                 foreach (var output in page.Outputs.Where(item => tuple.Slots.ContainsKey(item.Slot)))
                                 {
                                     var texture = tuple.Slots[output.Slot];
@@ -4801,7 +5111,8 @@ namespace Editors.PackOptimizer.Core
             var topMean = pageTopCount == 0 ? 0 : pageTopSum / pageTopCount;
             var levelMean = pageLevelCount == 0 ? 0 : pageLevelSum / pageLevelCount;
             if (exactViolation)
-                problems.Add($"a block-copied top level differs from the source (max {pageTopMax:0}); it must be exact");
+                problems.Add($"a block-copied top level differs from the source (max {pageTopMax:0}); it must be exact" +
+                             (stats.Worst.Count == 0 ? string.Empty : $" (worst: {stats.Worst[0]})"));
             else if (pageTopMax > SharedRepackSampleMaximumError)
                 problems.Add($"a sampled top-level texel differs by {pageTopMax:0} levels (limit {SharedRepackSampleMaximumError:0})");
             if (topMean > SharedRepackSampleMeanLimit)
@@ -5073,6 +5384,8 @@ namespace Editors.PackOptimizer.Core
                 LevelSamples = stats.LevelSamples,
                 SkippedSamples = stats.Skipped,
                 EdgeSkippedSamples = stats.EdgeSkipped,
+                Pieces = stats.Pieces,
+                PiecesSampled = stats.PiecesSampled,
             };
             built.Rigids.AddRange(rewritten);
             built.MergedSets.AddRange(merge.Component.Skip(1).Select(item =>
@@ -5453,6 +5766,26 @@ namespace Editors.PackOptimizer.Core
                     $"    their pages = touched cells {gatedUsed:N0} + chart padding/bounding/alignment " +
                     $"{gatedCharts - gatedUsed:N0} + packing gaps {trimmed - gatedCharts:N0} + power-of-two rounding {page - trimmed:N0}");
             }
+
+            // Tight pieces: one rectangle per UV island instead of per merged chart, used by a group only
+            // when its pages then hold fewer bytes (the figures above already include them).
+            var tightBuilt = built.Where(waste => waste.Split is { TightTried: true }).Select(waste => waste.Split!).ToList();
+            var tightGated = gated.Where(waste => waste.Split is { TightTried: true }).Select(waste => waste.Split!).ToList();
+            var tightAll = tightBuilt.Concat(tightGated).ToList();
+            if (tightAll.Count != 0)
+            {
+                var usedBuilt = tightBuilt.Where(split => split.TightUsed).ToList();
+                var usedGated = tightGated.Where(split => split.TightUsed).ToList();
+                sb.AppendLine(
+                    $"  Tight pieces (one rectangle per UV island instead of per merged chart, same gutter and alignment): " +
+                    $"{tightAll.Count:N0} group(s) had merged charts to split; used by {usedBuilt.Count:N0} built group(s) " +
+                    $"({usedBuilt.Sum(split => split.TightPieces):N0} piece(s) instead of {usedBuilt.Sum(split => split.TightMergedCharts):N0} " +
+                    $"chart(s), pages {FormatSignedBytes(-usedBuilt.Sum(split => split.TightSavedBytes))} bytes) and by " +
+                    $"{usedGated.Count:N0} left-untouched group(s) ({usedGated.Sum(split => split.TightPieces):N0} piece(s) instead of " +
+                    $"{usedGated.Sum(split => split.TightMergedCharts):N0} chart(s), pages {FormatSignedBytes(-usedGated.Sum(split => split.TightSavedBytes))} bytes); " +
+                    $"{tightAll.Count(split => !split.TightUsed && !split.TightInconsistent):N0} group(s) kept the merged charts " +
+                    $"(pieces not smaller); internal inconsistencies (merged charts kept): {tightAll.Count(split => split.TightInconsistent):N0}");
+            }
         }
 
         // Why sets lost textures while closing. A set dropped by closure has its estimate split over
@@ -5669,7 +6002,8 @@ namespace Editors.PackOptimizer.Core
             sb.AppendLine(
                 $"Threshold: estimated and actual saving of at least {result.MinimumSavingBytes:N0} bytes. " +
                 $"Charts: grid cells of {SharedRepackMinimumCell}+ source pixels, 8-connected, one cell of padding, " +
-                $"merged while padded boxes overlap. Tuples are packed together only inside a layout group (same " +
+                $"merged while padded boxes overlap; a group whose pages get smaller with one rectangle per 8-connected " +
+                $"component (tight pieces, same padding and alignment, translated only) uses those instead. Tuples are packed together only inside a layout group (same " +
                 $"slots, formats, colour spaces and per-slot size ratios, so nothing is resampled); a group is built " +
                 $"only if it saves at least {result.MinimumGroupSavingBytes:N0} bytes, a group whose charts do not " +
                 $"fit {result.MaximumSide}x{result.MaximumSide} is split into pages (a part's charts stay on one " +
@@ -5886,7 +6220,10 @@ namespace Editors.PackOptimizer.Core
                     $"{set.LevelOutlierShare:P2} of re-encoded samples over {SharedRepackLevelOutlierError:0} " +
                     $"(fail above {SharedRepackLevelOutlierShare:P1}) (texels within 1 of a chart edge are " +
                     $"not judged: {set.EdgeSkippedSamples:N0}); {set.SkippedSamples:N0} point(s) skipped " +
-                    "(no position off texel edges)");
+                    "(no position off texel edges)" +
+                    (set.Pieces == 0
+                        ? string.Empty
+                        : $"; tight pieces: {set.PiecesSampled:N0} of {set.Pieces:N0} piece(s) sampled"));
                 foreach (var sample in set.Worst)
                     sb.AppendLine($"      worst: {sample}");
                 sb.AppendLine($"    replaced {set.Replaced.Count:N0} texture(s): " +

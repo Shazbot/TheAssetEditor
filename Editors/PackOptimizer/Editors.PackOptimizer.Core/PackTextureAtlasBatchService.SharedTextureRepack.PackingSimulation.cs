@@ -6,8 +6,10 @@ namespace Editors.PackOptimizer.Core
     public sealed partial class PackTextureAtlasBatchService
     {
         // Report-only simulation of tighter page packing. The planner itself already packs with the
-        // best of shelf, MaxRects and skyline on the chart rectangles it sizes (so the real pages are
-        // the baseline here). For every layout group the planner packs, the charts are re-sized and
+        // best of shelf, MaxRects and skyline on the chart rectangles it sizes, and uses tight pieces
+        // (one rectangle per 8-connected component) for a group where they make the pages smaller; the
+        // real pages are the baseline here, so a group that already runs on pieces has its pieces as its
+        // charts and gains nothing from the tight-piece strategies (no double counting). For every layout group the planner packs, the charts are re-sized and
         // re-packed with other strategies (smaller gutter or alignment, tight pieces) under the SAME constraints (power of
         // two canvases, side limit, aspect restriction, whole clusters per page, up to 4 pages) and
         // the page bytes of the existing page-bytes formula are reported. Nothing here changes a
@@ -45,7 +47,7 @@ namespace Editors.PackOptimizer.Core
             new("MaxRects/skyline, no gutter + align 4 (bound)", SharedRepackPackerKind.Best, 0, 4, false,
                 "NOT SAFE for filtering at any mip; theoretical bound only"),
             new("tight pieces, current padding", SharedRepackPackerKind.Best, -1, 0, true,
-                "one rectangle per 8-connected component instead of per merged chart (needs per-piece UV work)"),
+                "one rectangle per 8-connected component instead of per merged chart; the planner already uses it where it is smaller, so a group on pieces gains nothing from this one"),
             new("tight pieces, align 16", SharedRepackPackerKind.Best, -1, 16, true,
                 "as above with alignment 16 px"),
             new("tight pieces, gutter 4 + align 4", SharedRepackPackerKind.Best, 4, 4, true,
@@ -229,6 +231,20 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            // The pieces of one merged chart share a cluster, as in PackSharedRepackGroupLayout.
+            foreach (var tuple in groupTuples)
+            {
+                var head = new Dictionary<int, int>();
+                foreach (var chart in tuple.Charts.Where(chart => chart.MergedId >= 0))
+                {
+                    var id = chartIndex[chart];
+                    if (head.TryGetValue(chart.MergedId, out var sibling))
+                        parent[Find(id)] = Find(sibling);
+                    else
+                        head[chart.MergedId] = id;
+                }
+            }
+
             var chartCluster = Enumerable.Range(0, charts.Count).Select(Find).ToArray();
 
             // 8-connected components of every tuple (cells are labelled by their chart already).
@@ -397,7 +413,8 @@ namespace Editors.PackOptimizer.Core
             sb.AppendLine(
                 "  The same charts re-packed under the same constraints (power-of-two canvases, side limit, aspect " +
                 "restriction, whole clusters per page, up to 4 pages); bytes use the planner's page-bytes formula. " +
-                "The baseline is the real pages, which are already packed with the best of shelf, MaxRects and skyline; " +
+                "The baseline is the real pages, which are already packed with the best of shelf, MaxRects and skyline " +
+                "and, in a group where one rectangle per UV island made the pages smaller, already on tight pieces; " +
                 "the strategies change the gutter, the alignment or the rectangles themselves. " +
                 "A group keeps its real pages when a strategy does not make it smaller. Nothing here changes the output.");
             sb.AppendLine(

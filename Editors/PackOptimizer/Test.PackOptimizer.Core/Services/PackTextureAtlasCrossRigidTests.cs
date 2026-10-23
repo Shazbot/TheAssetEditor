@@ -14748,6 +14748,486 @@ namespace Test.PackOptimizer.Core
             Assert.That(pages, Is.Not.Empty);
         }
 
+        // --- Tight pieces ------------------------------------------------------------------------
+        //
+        // Two quads on a 2048 texture (cell 16, alignment 32) whose cell boxes are two cells apart, so
+        // they are separate 8-connected components whose padded boxes overlap: one merged chart, two
+        // tight pieces. DiagonalQuads: both axes (the merged box is mostly empty); SideBySide: one row
+        // (the pieces would be larger together than the chart).
+
+        private const string SrTightTexture = "textures\\sr_big.dds";
+
+        private static (double U0, double V0, double U1, double V1)[] SrDiagonalQuads()
+            => [(20.2 / 128, 20.2 / 128, 28.8 / 128, 28.8 / 128), (30.2 / 128, 30.2 / 128, 38.8 / 128, 38.8 / 128)];
+
+        private static (double U0, double V0, double U1, double V1)[] SrSideBySideQuads()
+            => [(20.2 / 128, 20.2 / 128, 28.8 / 128, 28.8 / 128), (30.2 / 128, 20.2 / 128, 38.8 / 128, 28.8 / 128)];
+
+        // Quads with shared vertices (4 vertices, 6 indices each), as real meshes have.
+        private static RmvModel CreateSharedVertexQuads((double U0, double V0, double U1, double V1)[] rects)
+        {
+            var vertices = new List<CommonVertex>();
+            var indices = new List<ushort>();
+            foreach (var (u0, v0, u1, v1) in rects)
+            {
+                var first = (ushort)vertices.Count;
+                foreach (var (u, v) in new[] { (u0, v0), (u1, v0), (u1, v1), (u0, v1) })
+                    vertices.Add(new CommonVertex { Position = new Vector4((float)u, (float)v, vertices.Count, 1), Uv = new Vector2((float)u, (float)v) });
+                indices.AddRange([first, (ushort)(first + 1), (ushort)(first + 2), first, (ushort)(first + 2), (ushort)(first + 3)]);
+            }
+
+            return new RmvModel
+            {
+                Mesh = new RmvMesh { VertexList = vertices.ToArray(), IndexList = indices.ToArray() },
+            };
+        }
+
+        private static object SrTightPart((double U0, double V0, double U1, double V1)[] rects)
+        {
+            var part = Activator.CreateInstance(GetNestedType("SharedRepackPart"))!;
+            var type = part.GetType();
+            type.GetProperty("Key")!.SetValue(part, CreateMeshKey(SrRigid, 0, 0));
+            type.GetProperty("Model")!.SetValue(part, CreateSharedVertexQuads(rects));
+            Get<IDictionary>(part, "Slots")[SrBase] = SrTightTexture;
+            Assert.That(GetStaticMethod("AnalyzeSharedRepackGeometry").Invoke(null, [part]), Is.Null);
+            return part;
+        }
+
+        private static object SrTightTuple((double U0, double V0, double U1, double V1)[] rects)
+        {
+            var entries = new Dictionary<string, object> { [SrTightTexture] = SrEntry(SrTightTexture, 2048, 2048) };
+            var tuple = SrBuildTuples([SrTightPart(rects)], entries, _ => null, out var violating).Single();
+            Assert.That(violating, Is.Empty);
+            Assert.That(Get<string?>(tuple, "Excluded"), Is.Null);
+            return tuple;
+        }
+
+        private static void WithTightPiecesDisabled(Action test)
+        {
+            var field = GetServiceType().GetField("SharedRepackTightPiecesDisabled", BindingFlags.NonPublic | BindingFlags.Static)!;
+            field.SetValue(null, true);
+            try
+            {
+                test();
+            }
+            finally
+            {
+                field.SetValue(null, false);
+            }
+        }
+
+        private static (SrWorld World, Func<RmvFile> Rigid) BuildTightSrWorld(
+            (double U0, double V0, double U1, double V1)[] rects, int lods = 1)
+        {
+            var world = new SrWorld();
+            world.AddTexture(SrTightTexture, 2048, "BC1", true, 1);
+            world.Fixture.AddMaterial(SrMaterialPath("mbig"), (SrBase, SrTightTexture));
+            var mbig = SrMaterialPath("mbig");
+            var triangles = rects.SelectMany(rect => UvQuad(rect.U0, rect.V0, rect.U1, rect.V1)).ToArray();
+            var part = new[] { (mbig, triangles) };
+            var factory = lods == 1 ? SrRigidFactory(part) : SrRigidFactory(part, part);
+            world.AddModel(SrRigid, SrWs, SrRoot, factory, lods == 1 ? [[mbig]] : [[mbig], [mbig]]);
+            return (world, factory);
+        }
+
+        [Test]
+        public void SharedRepack_TightPieces_EachComponentBecomesItsOwnPiece_WithTheChartsGutterAndAlignment()
+        {
+            var tuple = SrTightTuple(SrDiagonalQuads());
+
+            var charts = Get<IList>(tuple, "Charts").Cast<object>().ToList();
+            var pieces = Get<IList>(tuple, "TightCharts").Cast<object>().ToList();
+
+            // The merged chart: cells 20..38 plus one cell, snapped to 32 pixels.
+            Assert.That(charts, Has.Count.EqualTo(1));
+            Assert.That(Get<bool>(charts[0], "Piece"), Is.False);
+            Assert.That(
+                (Get<int>(charts[0], "X0"), Get<int>(charts[0], "Y0"), Get<int>(charts[0], "Width"), Get<int>(charts[0], "Height")),
+                Is.EqualTo((288, 288, 352, 352)));
+            // Pieces: cells 20..28 and 30..38, each padded by one cell and snapped to 32 pixels (the
+            // rectangles overlap in source space: 448..480).
+            Assert.That(pieces, Has.Count.EqualTo(2));
+            Assert.That(
+                pieces.Select(piece => (Get<int>(piece, "X0"), Get<int>(piece, "Y0"), Get<int>(piece, "Width"), Get<int>(piece, "Height"))),
+                Is.EqualTo(new[] { (288, 288, 192, 192), (448, 448, 192, 192) }));
+            Assert.That(pieces.Select(piece => Get<bool>(piece, "Piece")), Is.All.True);
+            Assert.That(pieces.Select(piece => Get<int>(piece, "MergedId")), Is.All.EqualTo(0));
+            Assert.That(pieces.Select(piece => Get<int>(piece, "Id")), Is.EqualTo(new[] { 0, 1 }));
+            // The cells: the piece owns exactly its component, the chart owns both.
+            var cellPiece = Get<int[]>(tuple, "TightCellChart");
+            var cellChart = Get<int[]>(tuple, "MergedCellChart");
+            Assert.That(cellPiece.Count(piece => piece >= 0), Is.EqualTo(cellChart.Count(chart => chart >= 0)));
+            Assert.That(cellPiece.Count(piece => piece == 0), Is.LessThan(cellChart.Count(chart => chart == 0)));
+            Assert.That(cellPiece[25 * 128 + 25], Is.EqualTo(0));
+            Assert.That(cellPiece[35 * 128 + 35], Is.EqualTo(1));
+            Assert.That(cellPiece[25 * 128 + 35], Is.EqualTo(-1));
+            Assert.That(cellChart[25 * 128 + 35], Is.EqualTo(-1));
+            Assert.That(Get<string?>(tuple, "TightInconsistent"), Is.Null);
+            // The active layout is still the merged one until a group chooses.
+            Assert.That(Get<bool>(tuple, "Tight"), Is.False);
+
+            // No merged component, no alternative: one separate quad.
+            var plain = SrTightTuple([SrDiagonalQuads()[0]]);
+            Assert.That(Get<object?>(plain, "TightCharts"), Is.Null);
+        }
+
+        [Test]
+        public void SharedRepack_TightPieces_EveryTriangleBelongsToExactlyOnePiece_AndSharedVerticesStayInOne()
+        {
+            var tuple = SrTightTuple(SrDiagonalQuads());
+            var part = Get<IList>(tuple, "Parts").Cast<object>().Single();
+            var model = Get<RmvModel>(part, "Model");
+            var pieces = Get<IList>(tuple, "TightCharts").Cast<object>().ToList();
+            var vertexPiece = Get<int[]>(part, "TightVertexChart");
+            var vertexChart = Get<int[]>(part, "MergedVertexChart");
+            var indices = model.Mesh.IndexList;
+            var trianglesOfPiece = new int[pieces.Count];
+
+            Assert.That(indices.Length / 3, Is.EqualTo(4));
+            for (var index = 0; index < indices.Length; index += 3)
+            {
+                var corners = new[] { indices[index], indices[index + 1], indices[index + 2] };
+                var owners = corners.Select(vertex => vertexPiece[vertex]).Distinct().ToList();
+                Assert.That(owners, Has.Count.EqualTo(1), $"triangle {index / 3}");
+                Assert.That(owners[0], Is.GreaterThanOrEqualTo(0));
+                trianglesOfPiece[owners[0]]++;
+                // The triangle lies inside its piece's rectangle (reference pixels), whole.
+                var piece = pieces[owners[0]];
+                foreach (var vertex in corners)
+                {
+                    var x = model.Mesh.VertexList[vertex].Uv.X * 2048;
+                    var y = model.Mesh.VertexList[vertex].Uv.Y * 2048;
+                    Assert.That(x, Is.InRange(Get<int>(piece, "X0"), Get<int>(piece, "X0") + Get<int>(piece, "Width")));
+                    Assert.That(y, Is.InRange(Get<int>(piece, "Y0"), Get<int>(piece, "Y0") + Get<int>(piece, "Height")));
+                }
+            }
+
+            Assert.That(trianglesOfPiece, Is.EqualTo(new[] { 2, 2 }));
+            // Two triangles share two vertices of a quad; every vertex has one piece.
+            Assert.That(vertexPiece, Has.None.EqualTo(-1));
+            Assert.That(vertexChart, Is.All.EqualTo(0));
+        }
+
+        [Test]
+        public void SharedRepack_TightPieces_AnInconsistentAssignment_KeepsTheMergedCharts_AndIsReported()
+        {
+            var tuple = SrTightTuple(SrDiagonalQuads());
+            var grid = Get<int[]>(tuple, "MergedCellChart").Select(chart => chart >= 0).ToArray();
+            // A labelling that cuts every quad in two (alternate columns are another component).
+            var label = new int[grid.Length];
+            for (var cell = 0; cell < grid.Length; cell++)
+                label[cell] = grid[cell] ? (cell % 128) % 2 : -1;
+            var boxes = (IList)Activator.CreateInstance(
+                typeof(List<>).MakeGenericType(typeof((int, int, int, int))))!;
+            boxes.Add((20, 20, 38, 38));
+            boxes.Add((21, 20, 37, 38));
+            tuple.GetType().GetProperty("TightCharts")!.SetValue(tuple, null);
+            tuple.GetType().GetProperty("TightInconsistent")!.SetValue(tuple, null);
+
+            GetStaticMethod("BuildSharedRepackTightPieces").Invoke(
+                null, [tuple, grid, boxes, label, (Func<int, int>)(_ => 0)]);
+
+            Assert.That(Get<string?>(tuple, "TightInconsistent"), Does.Contain("more than one UV component"));
+            Assert.That(Get<object?>(tuple, "TightCharts"), Is.Null);
+
+            // A group with such a tuple keeps the merged layout, whatever the pieces would have saved.
+            var page = SrPackGroup(tuple, 4096, 1L << 60, out var split).Single();
+            Assert.That(Get<IList>(page, "Charts"), Has.Count.EqualTo(1));
+            Assert.That(Get<bool>(split, "TightInconsistent"), Is.True);
+            Assert.That(Get<bool>(split, "TightUsed"), Is.False);
+        }
+
+        [Test]
+        public void SharedRepack_TightPieces_GroupUsesThePiecesOnlyWhenTheirPagesAreSmaller()
+        {
+            // Diagonal: one 352x352 chart needs 512x512; two 192x192 pieces fit 512x256.
+            var diagonal = SrTightTuple(SrDiagonalQuads());
+            var pages = SrPackGroup(diagonal, 4096, 1L << 60, out var split);
+            var page = pages.Single();
+            Assert.That(Get<bool>(split, "TightUsed"), Is.True);
+            Assert.That(Get<int>(split, "TightPieces"), Is.EqualTo(2));
+            Assert.That(Get<int>(split, "TightMergedCharts"), Is.EqualTo(1));
+            Assert.That(Get<long>(split, "TightSavedBytes"), Is.GreaterThan(0));
+            Assert.That((Get<int>(page, "LayoutWidth"), Get<int>(page, "LayoutHeight")), Is.EqualTo((512, 256)));
+            Assert.That(Get<IEnumerable>(page, "Charts").Cast<object>().Select(chart => Get<bool>(chart, "Piece")), Is.All.True);
+            Assert.That(Get<bool>(diagonal, "Tight"), Is.True);
+            Assert.That(Get<IList>(diagonal, "Charts"), Has.Count.EqualTo(2));
+            // The pieces keep the scale: a piece is as large in the layout as its rectangle.
+            foreach (var piece in Get<IEnumerable>(page, "Charts").Cast<object>())
+            {
+                Assert.That(Get<int>(piece, "LayoutWidth"), Is.EqualTo(Get<int>(piece, "Width")));
+                Assert.That(Get<int>(piece, "PackX") % 32, Is.Zero);
+                Assert.That(Get<int>(piece, "PackY") % 32, Is.Zero);
+            }
+
+            // Side by side: two 192x192 pieces are larger together than the 352x192 chart and need the
+            // same 512x256 page; no gain, so the merged chart stays.
+            var row = SrTightTuple(SrSideBySideQuads());
+            var rowPage = SrPackGroup(row, 4096, 1L << 60, out var rowSplit).Single();
+            Assert.That(Get<bool>(rowSplit, "TightTried"), Is.True);
+            Assert.That(Get<bool>(rowSplit, "TightUsed"), Is.False);
+            Assert.That(Get<bool>(row, "Tight"), Is.False);
+            Assert.That(Get<IList>(row, "Charts"), Has.Count.EqualTo(1));
+            Assert.That((Get<int>(rowPage, "LayoutWidth"), Get<int>(rowPage, "LayoutHeight")), Is.EqualTo((512, 256)));
+
+            // Disabled, the diagonal group is the merged layout: 512x512, no alternative at all.
+            WithTightPiecesDisabled(() =>
+            {
+                var plain = SrTightTuple(SrDiagonalQuads());
+                var plainPage = SrPackGroup(plain, 4096, 1L << 60, out var plainSplit).Single();
+                Assert.That(Get<object?>(plain, "TightCharts"), Is.Null);
+                Assert.That(Get<bool>(plainSplit, "TightTried"), Is.False);
+                Assert.That((Get<int>(plainPage, "LayoutWidth"), Get<int>(plainPage, "LayoutHeight")), Is.EqualTo((512, 512)));
+            });
+        }
+
+        [Test]
+        public void SharedRepack_TightPieces_OverlappingRectangles_DuplicateTheirTexels_AndTheUvRewriteSamplesTheSourceTexels()
+        {
+            var (world, factory) = BuildTightSrWorld(SrDiagonalQuads());
+            object plan = null!;
+            (byte[] Bgra, int Width, int Height) page = default;
+            var charts = new List<(int X0, int Y0, int Width, int Height, int PackX, int PackY)>();
+            object result = null!;
+
+            WithBeforeCheckHook(
+                hooked =>
+                {
+                    plan = hooked;
+                    var firstPage = Get<IEnumerable>(hooked, "Pages").Cast<object>().First();
+                    foreach (var chart in Get<IEnumerable>(firstPage, "Charts").Cast<object>())
+                    {
+                        Assert.That(Get<bool>(chart, "Piece"), Is.True);
+                        charts.Add((Get<int>(chart, "X0"), Get<int>(chart, "Y0"), Get<int>(chart, "Width"), Get<int>(chart, "Height"),
+                            Get<int>(chart, "PackX"), Get<int>(chart, "PackY")));
+                    }
+
+                    page = DecodeDds(Get<byte[]>(HookOutputs(hooked).Single(), "Data"));
+                },
+                () => result = world.Run());
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(charts, Has.Count.EqualTo(2));
+            var source = DecodeDds(world.Fixture.Vanilla[SrTightTexture]);
+            // The two source rectangles overlap (x and y 448..480); that region is in both pieces.
+            var duplicated = 0;
+            for (var y = 448; y < 480; y += 3)
+            {
+                for (var x = 448; x < 480; x += 3)
+                {
+                    var expected = (y * source.Width + x) * 4;
+                    foreach (var chart in charts)
+                    {
+                        var tx = chart.PackX + (x - chart.X0);
+                        var ty = chart.PackY + (y - chart.Y0);
+                        var actual = (ty * page.Width + tx) * 4;
+                        for (var channel = 0; channel < 4; channel++)
+                            Assert.That(page.Bgra[actual + channel], Is.EqualTo(source.Bgra[expected + channel]), $"({x},{y}) in piece at {chart.PackX},{chart.PackY}");
+                    }
+
+                    duplicated++;
+                }
+            }
+
+            Assert.That(duplicated, Is.GreaterThan(50));
+            // The rectangles do not overlap in the page.
+            Assert.That(
+                charts[0].PackX < charts[1].PackX + charts[1].Width && charts[1].PackX < charts[0].PackX + charts[0].Width &&
+                charts[0].PackY < charts[1].PackY + charts[1].Height && charts[1].PackY < charts[0].PackY + charts[0].Height,
+                Is.False);
+            Assert.That((page.Width, page.Height), Is.EqualTo((512, 256)));
+            // Every triangle, end to end, reads the texel it read before.
+            var (samples, max) = AssertSrPixels(world, SrRigid, SrWs, factory, SrBigSeeds);
+            Assert.That(samples, Is.EqualTo(4));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<int>(built, "Charts"), Is.EqualTo(2));
+            Assert.That(Get<long>(built, "Pieces"), Is.EqualTo(2));
+            Assert.That(Get<long>(built, "PiecesSampled"), Is.EqualTo(2));
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain("[tight pieces: 2 piece(s) instead of 1 chart(s)"));
+            Assert.That(report, Does.Contain("tight pieces: 2 of 2 piece(s) sampled"));
+            Assert.That(report, Does.Contain("Tight pieces (one rectangle per UV island instead of per merged chart"));
+            Assert.That(report, Does.Contain("used by 1 built group(s) (2 piece(s) instead of 1 chart(s)"));
+            Assert.That(report, Does.Contain("internal inconsistencies (merged charts kept): 0"));
+            Assert.That(report, Does.Contain("baseline-model mismatches 0 chart(s)"));
+            Assert.That(report, Does.Contain("group failures 0;"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_TightPieces_NotSmaller_IsByteIdenticalToTheMergedLayout()
+        {
+            var (tight, _) = BuildTightSrWorld(SrSideBySideQuads());
+            var tightResult = tight.Run();
+            var (merged, _) = BuildTightSrWorld(SrSideBySideQuads());
+            object mergedResult = null!;
+            WithTightPiecesDisabled(() => mergedResult = merged.Run());
+
+            Assert.That(Get<int>(tightResult, "Built"), Is.EqualTo(1), SrSkips(tightResult));
+            Assert.That(Get<int>(mergedResult, "Built"), Is.EqualTo(1), SrSkips(mergedResult));
+            Assert.That(tight.Fixture.Output.Keys.OrderBy(key => key, StringComparer.Ordinal),
+                Is.EqualTo(merged.Fixture.Output.Keys.OrderBy(key => key, StringComparer.Ordinal)));
+            foreach (var (path, bytes) in merged.Fixture.Output)
+                Assert.That(tight.Fixture.Output[path], Is.EqualTo(bytes), path);
+            var report = BuildSharedRepackSection(Enabled(tight));
+            Assert.That(report, Does.Contain("1 group(s) had merged charts to split; used by 0 built group(s)"));
+            Assert.That(report, Does.Contain("1 group(s) kept the merged charts (pieces not smaller)"));
+            Assert.That(report, Does.Not.Contain("[tight pieces:"));
+            Assert.That(Get<long>(SrBuilt(tightResult).Single(), "Pieces"), Is.Zero);
+        }
+
+        [Test]
+        public void SharedRepack_TightPieces_TwoRuns_AreIdentical_AndSmallerThanTheMergedLayout()
+        {
+            var (first, _) = BuildTightSrWorld(SrDiagonalQuads(), lods: 2);
+            var firstResult = first.Run();
+            var (second, _) = BuildTightSrWorld(SrDiagonalQuads(), lods: 2);
+            second.Run();
+            var (merged, _) = BuildTightSrWorld(SrDiagonalQuads(), lods: 2);
+            object mergedResult = null!;
+            WithTightPiecesDisabled(() => mergedResult = merged.Run());
+
+            Assert.That(Get<int>(firstResult, "Built"), Is.EqualTo(1), SrSkips(firstResult));
+            Assert.That(second.Fixture.Output.Keys.OrderBy(key => key, StringComparer.Ordinal),
+                Is.EqualTo(first.Fixture.Output.Keys.OrderBy(key => key, StringComparer.Ordinal)));
+            foreach (var (path, bytes) in first.Fixture.Output)
+                Assert.That(second.Fixture.Output[path], Is.EqualTo(bytes), path);
+            Assert.That(
+                BuildSharedRepackSection(Enabled(first)),
+                Is.EqualTo(BuildSharedRepackSection(Enabled(second))));
+            var tightBytes = Get<long>(SrBuilt(firstResult).Single(), "After");
+            var mergedBytes = Get<long>(SrBuilt(mergedResult).Single(), "After");
+            Assert.That(tightBytes, Is.LessThan(mergedBytes));
+            // Both LODs of the part use the same pieces.
+            Assert.That(Get<int>(SrBuilt(firstResult).Single(), "Charts"), Is.EqualTo(2));
+        }
+
+        // A layout group of two tuples: part 0 (texture A) has merged components, part 1 (texture B) a single
+        // quad and so no pieces. The tuple without pieces shares its chart object between the merged and the
+        // pieces layout run; when the pieces lose, the merged pages must still hold the merged positions.
+        private static (SrWorld World, Func<RmvFile> Rigid) BuildMixedTightSrWorld(
+            (double U0, double V0, double U1, double V1)[] rects)
+        {
+            var world = new SrWorld();
+            world.AddTexture(SrTightTexture, 2048, "BC1", true, 1);
+            world.AddTexture("textures\\sr_big2.dds", 2048, "BC1", true, 3);
+            world.Fixture.AddMaterial(SrMaterialPath("mbig"), (SrBase, SrTightTexture));
+            world.Fixture.AddMaterial(SrMaterialPath("mbig2"), (SrBase, "textures\\sr_big2.dds"));
+            var a = rects.SelectMany(rect => UvQuad(rect.U0, rect.V0, rect.U1, rect.V1)).ToArray();
+            var b = UvQuad(60.2 / 128, 100.2 / 128, 66.8 / 128, 106.8 / 128);
+            var factory = SrRigidFactory([(SrMaterialPath("mbig"), a), (SrMaterialPath("mbig2"), b)]);
+            world.AddModel(SrRigid, SrWs, SrRoot, factory, [[SrMaterialPath("mbig"), SrMaterialPath("mbig2")]]);
+            return (world, factory);
+        }
+
+        private static void AssertMixedTightGroup(bool piecesWin)
+        {
+            var rects = piecesWin ? SrDiagonalQuads() : SrSideBySideQuads();
+            var (tight, factory) = BuildMixedTightSrWorld(rects);
+            var tightResult = tight.Run();
+            var (plain, _) = BuildMixedTightSrWorld(rects);
+            object plainResult = null!;
+            WithTightPiecesDisabled(() => plainResult = plain.Run());
+
+            Assert.That(Get<int>(tightResult, "Built"), Is.EqualTo(1), SrSkips(tightResult));
+            Assert.That(Get<int>(tightResult, "FailedPixelCheck"), Is.Zero, SrSkips(tightResult));
+            var built = SrBuilt(tightResult).Single();
+            var report = BuildSharedRepackSection(Enabled(tight));
+            if (piecesWin)
+            {
+                Assert.That(report, Does.Contain("[tight pieces:"));
+                Assert.That(Get<long>(built, "After"), Is.LessThan(Get<long>(SrBuilt(plainResult).Single(), "After")));
+            }
+            else
+            {
+                Assert.That(report, Does.Not.Contain("[tight pieces:"));
+                Assert.That(Get<long>(built, "Pieces"), Is.Zero);
+                Assert.That(tight.Fixture.Output.Keys.OrderBy(key => key, StringComparer.Ordinal),
+                    Is.EqualTo(plain.Fixture.Output.Keys.OrderBy(key => key, StringComparer.Ordinal)));
+                foreach (var (path, bytes) in plain.Fixture.Output)
+                    Assert.That(tight.Fixture.Output[path], Is.EqualTo(bytes), path);
+            }
+
+            // Both parts read the texels they read before (part 0 seed 1, part 1 seed 3).
+            AssertSrPixels(tight, SrRigid, SrWs, factory, SrBigSeeds, (lod, part) => part == 0);
+            AssertSrPixels(tight, SrRigid, SrWs, factory, new Dictionary<string, int> { [SrBase] = 3 }, (lod, part) => part == 1);
+            Assert.That(SrValidate(tight), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_TightPieces_MixedGroup_PiecesLose_KeepsTheMergedPositionsOfTheTupleWithoutPieces()
+            => AssertMixedTightGroup(piecesWin: false);
+
+        [Test]
+        public void SharedRepack_TightPieces_MixedGroup_PiecesWin_StillSamplesEveryTexel()
+            => AssertMixedTightGroup(piecesWin: true);
+
+        // 2048 base and normal, 512 noise: Align 32, cell 16, reference aspect 1:1. Four small quads on a
+        // diagonal merge into one 352x352 chart (a 512x512 page); as pieces they fit a 256x256 page.
+        private static SrWorld BuildTightEmissiveSrWorld()
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 2048, "BC1", true, 1);
+            world.AddTexture("textures\\sr_n1.dds", 2048, "BC3", false, 2);
+            world.AddTexture(SrNoise, 512, "BC1", true, 7);
+            world.AddTexture(SrGlowTexture, 512, "BC1", true, 8);
+            var e1 = SrMaterialPath("e1");
+            world.Fixture.AddText(e1, SrEmissiveMaterialXml(SrEmissiveShader));
+            var triangles = new[] { (10, 13), (15, 18), (20, 23), (25, 28) }
+                .SelectMany(range => UvQuad((range.Item1 + 0.2) / 128, (range.Item1 + 0.2) / 128, (range.Item2 + 0.8) / 128, (range.Item2 + 0.8) / 128))
+                .ToArray();
+            world.AddModel(SrRigid, SrWs, SrRoot, SrRigidFactory([(e1, triangles)]), [[e1]]);
+            return world;
+        }
+
+        [Test]
+        public void SharedRepack_TightPieces_EmissiveCompensatedGroup_KeepsTheAspectRestrictionAndTheParameters()
+        {
+            var world = BuildTightEmissiveSrWorld();
+            var triangles = new[] { (10, 13), (15, 18), (20, 23), (25, 28) }
+                .SelectMany(range => UvQuad((range.Item1 + 0.2) / 128, (range.Item1 + 0.2) / 128, (range.Item2 + 0.8) / 128, (range.Item2 + 0.8) / 128))
+                .ToArray();
+            var factory = SrRigidFactory([(SrMaterialPath("e1"), triangles)]);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            var built = SrBuilt(result).Single();
+            var splitInfo = Get<IEnumerable>(built, "Splits").Cast<object>().Single();
+            Assert.That(Get<bool>(splitInfo, "AspectRestricted"), Is.True);
+            Assert.That(Get<int>(built, "Charts"), Is.EqualTo(4));
+            Assert.That(Get<int>(built, "LayoutWidth"), Is.EqualTo(Get<int>(built, "LayoutHeight")));
+            Assert.That(Get<int>(built, "LayoutWidth"), Is.EqualTo(256));
+            // Pieces are only translated: the scale is the page's, equal in U and V, as for any group.
+            var scale = 2048.0 / Get<int>(built, "LayoutWidth");
+            var generated = Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]);
+            var document = new XmlDocument();
+            document.LoadXml(generated);
+            string Value(string name) => document.SelectNodes("/material/params/param")!.Cast<XmlNode>()
+                .Single(node => node.SelectSingleNode("name")!.InnerText == name).SelectSingleNode("value")!.InnerText;
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            Assert.That(Value("emissive_tiling"), Is.EqualTo(string.Create(invariant, $"{2 / scale:R},{3 / scale:R}")));
+            Assert.That(Value("emissive_distort_strength"), Is.EqualTo(string.Create(invariant, $"{0.05 * scale:R}")));
+            Assert.That(Value("emissive_direction"), Is.EqualTo(string.Create(invariant, $"{0.5 * scale:R},{-0.25 * scale:R}")));
+            Assert.That(Get<int>(result, "EmissiveAspectGroups"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "EmissiveMaterialsRescaled"), Is.EqualTo(1));
+            var (samples, max) = AssertSrPixels(world, SrRigid, SrWs, factory, SrEmissiveSeeds);
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            var section = BuildSharedRepackSection(Enabled(world));
+            Assert.That(section, Does.Contain("[tight pieces: 4 piece(s) instead of 1 chart(s)"));
+            Assert.That(section, Does.Contain("canvases keep the reference aspect"));
+            Assert.That(SrValidate(world), Is.Empty);
+
+            // Without pieces the same group needs the 512x512 page.
+            var plain = BuildTightEmissiveSrWorld();
+            object plainResult = null!;
+            WithTightPiecesDisabled(() => plainResult = plain.Run());
+            Assert.That(Get<int>(SrBuilt(plainResult).Single(), "LayoutWidth"), Is.EqualTo(512));
+            Assert.That(Get<long>(built, "After"), Is.LessThan(Get<long>(SrBuilt(plainResult).Single(), "After")));
+        }
+
         // --- Output version ---------------------------------------------------------------------
         //
         // PackOptimizerVersions.OutputVersion is part of the mod manager's cache key. The golden hash of
@@ -14793,6 +15273,10 @@ namespace Test.PackOptimizer.Core
             // (and fills split pages on MaxRects too); the repack is not among the pinned stages, so the
             // hash is unchanged.
             [10] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 11: the shared texture repack lays a group out on tight pieces (one rectangle per UV island)
+            // when that makes its pages smaller; the repack is not among the pinned stages, so the hash is
+            // unchanged.
+            [11] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
