@@ -4121,6 +4121,72 @@ namespace Test.PackOptimizer.Core
             Assert.That(InvokeAtlasStatic("FindConflictingDuplicateTextureSlot", different), Is.EqualTo("t_xml_normal"));
         }
 
+        [Test]
+        public void FindConflictingDuplicateTextureSlot_IgnoresASlotTheMaterialsShaderNeverBinds()
+        {
+            string Material(string shader, string slot)
+                => "<material><shader>" + shader + "</shader><textures>" +
+                   "<texture><slot>" + slot + "</slot><source>a.dds</source></texture>" +
+                   "<texture><slot>" + slot + "</slot><source>b.dds</source></texture>" +
+                   "</textures></material>";
+            XmlDocument Load(string xml)
+            {
+                var document = new XmlDocument();
+                document.LoadXml(xml);
+                return document;
+            }
+
+            // weighted4_default binds no t_xml_texture1 and binds t_xml_normal.
+            Assert.That(InvokeAtlasStatic("FindConflictingDuplicateTextureSlot",
+                Load(Material("shaders/weighted4_default.xml.shader", "t_xml_texture1"))), Is.Null);
+            Assert.That(InvokeAtlasStatic("FindConflictingDuplicateTextureSlot",
+                Load(Material("shaders/weighted4_default.xml.shader", "t_xml_normal"))), Is.EqualTo("t_xml_normal"));
+            // A shader that is not in the table keeps the old behaviour.
+            Assert.That(InvokeAtlasStatic("FindConflictingDuplicateTextureSlot",
+                Load(Material("shaders/unknown_shader.xml.shader", "t_xml_texture1"))), Is.EqualTo("t_xml_texture1"));
+            Assert.That(InvokeAtlasStatic("FindConflictingDuplicateTextureSlot",
+                Load(Material("", "t_xml_texture1"))), Is.EqualTo("t_xml_texture1"));
+        }
+
+        [TestCase("shaders/weighted4_default.xml.shader", "t_xml_base_colour", false)]
+        [TestCase("shaders/weighted4_default.xml.shader", "t_xml_normal", false)]
+        [TestCase("shaders/weighted4_default.xml.shader", "t_xml_texture1", true)]
+        [TestCase("shaders\\Weighted4_Default.xml.shader", "T_XML_TEXTURE1", true)]
+        [TestCase("shaders/weighted4_default.xml.shader", "s_base_colour", false)]
+        [TestCase("shaders/weighted4_default.xml.shader", "base_colour", false)]
+        // The blood map is bound by the _blood sibling the engine can switch to.
+        [TestCase("shaders/weighted4_default.xml.shader", "t_xml_blood_map", false)]
+        [TestCase("shaders/rigid_random_colours.xml.shader", "t_xml_colour_map", false)]
+        [TestCase("shaders/weighted2_character.xml.shader", "t_xml_colour_map", true)]
+        [TestCase("shaders/not_in_the_table.xml.shader", "t_xml_texture1", false)]
+        [TestCase("", "t_xml_texture1", false)]
+        public void IsSlotUnreadByShader_UsesTheGeneratedCompiledShaderTable(string shader, string slot, bool expected)
+        {
+            Assert.That(InvokeAtlasStatic("IsSlotUnreadByShader", shader, slot), Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void GeneratedShaderBoundSlotsTable_HasTheExpectedShape()
+        {
+            var serviceType = Assembly.Load("Editors.PackOptimizer.Core").GetType(
+                "Editors.PackOptimizer.Core.PackTextureAtlasBatchService", throwOnError: true)!;
+            var table = (System.Collections.IDictionary)serviceType.GetField(
+                "SharedRepackShaderBoundSlots", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+            Assert.That(table.Count, Is.GreaterThan(500));
+            foreach (System.Collections.DictionaryEntry entry in table)
+            {
+                Assert.That((string)entry.Key, Does.StartWith("shaders/").And.EndsWith(".xml.shader"));
+                var slots = (HashSet<string>)entry.Value!;
+                Assert.That(slots, Is.Not.Empty, (string)entry.Key);
+                Assert.That(slots, Has.All.StartsWith("t_xml_"), (string)entry.Key);
+            }
+
+            var weighted4 = (HashSet<string>)table["shaders/weighted4_default.xml.shader"]!;
+            Assert.That(weighted4, Does.Contain("t_xml_base_colour").And.Contain("t_xml_normal"));
+            Assert.That(weighted4, Does.Not.Contain("t_xml_texture1"));
+            Assert.That(table.Keys.Cast<string>().Any(key => ((HashSet<string>)table[key]!).Contains("t_xml_texture1")), Is.False);
+        }
+
         private static object? InvokeAtlasStatic(string name, params object[] arguments)
         {
             var serviceType = Assembly.Load("Editors.PackOptimizer.Core").GetType(

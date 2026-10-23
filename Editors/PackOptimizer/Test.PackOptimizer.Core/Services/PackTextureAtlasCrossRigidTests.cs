@@ -10437,12 +10437,82 @@ namespace Test.PackOptimizer.Core
             Assert.That(Get<IEnumerable>(SrBuilt(result).Single(), "BloodScales").Cast<object>(), Is.Empty);
         }
 
+        private const string SrWeighted2Shader = "shaders\\weighted2_character.xml.shader";
+
+        // A world whose material m1 uses the given shader and extra (possibly repeated) slots.
+        private static SrWorld BuildShaderSlotWorld(string shader, params (string Slot, string Texture)[] extra)
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            foreach (var (_, texture) in SrPassThrough.Concat(extra))
+                world.AddTexture(texture, 256, "BC1", true, 9);
+            world.Fixture.AddText(
+                SrMaterialPath("m1"),
+                SrMaterialXml("textures\\sr_b1.dds", "textures\\sr_n1.dds", SrPassThrough.Concat(extra))
+                    .Replace(SrWeighted2Shader, shader));
+            return world;
+        }
+
+        [Test]
+        public void SharedRepack_SlotTheShaderNeverBinds_IsIgnored_KeptAsAuthored_AndReported()
+        {
+            // weighted2_character binds no t_xml_colour_map (compiled-shader table).
+            var world = BuildShaderSlotWorld(SrWeighted2Shader, ("t_xml_colour_map", "textures\\sr_cm.dds"));
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            Assert.That(SrPartDropReasons(result), Does.Not.Contain("non-atlasable slot"));
+            var generated = Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]);
+            var original = Encoding.UTF8.GetString(world.Fixture.Source[SrMaterialPath("m1")]);
+            Assert.That(SrSlotNode(generated, "t_xml_colour_map").OuterXml,
+                Is.EqualTo(SrSlotNode(original, "t_xml_colour_map").OuterXml));
+            var unread = Get<SortedDictionary<string, HashSet<string>>>(result, "UnreadSlotMaterials");
+            Assert.That(unread.Keys, Is.EqualTo(new[] { "t_xml_colour_map" }));
+            Assert.That(unread["t_xml_colour_map"], Has.Count.EqualTo(1));
+            var section = BuildSharedRepackSection(Enabled(world));
+            Assert.That(section, Does.Contain("Slots ignored because the material's shader never binds them (built sets): t_xml_colour_map in 1 material(s)"));
+            Assert.That(section, Does.Contain("ignored as unread by the material's shader: t_xml_colour_map (1 material(s))"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_SlotTheShaderBinds_StillDropsThePart()
+        {
+            // rigid_random_colours binds t_xml_colour_map.
+            var world = BuildShaderSlotWorld(
+                "shaders/rigid_random_colours.xml.shader", ("t_xml_colour_map", "textures\\sr_cm.dds"));
+
+            var result = world.Run();
+
+            // Only the part using m1 is dropped; the other material's part still repacks.
+            Assert.That(SrPartDropReasons(result), Does.Contain("non-atlasable slot t_xml_colour_map"));
+            Assert.That(Get<SortedDictionary<string, HashSet<string>>>(result, "UnreadSlotMaterials"), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_ConflictingDuplicatesOfAnUnreadSlot_NoLongerRefuse_ButOfAReadSlotStillDo()
+        {
+            var duplicates = new[]
+            {
+                ("t_xml_colour_map", "textures\\sr_cm.dds"),
+                ("t_xml_colour_map", "textures\\sr_cm2.dds"),
+            };
+            var unread = BuildShaderSlotWorld(SrWeighted2Shader, duplicates);
+            var unreadResult = unread.Run();
+            Assert.That(Get<int>(unreadResult, "Built"), Is.EqualTo(1), SrSkips(unreadResult) + SrPartDropReasons(unreadResult));
+            Assert.That(SrPartDropReasons(unreadResult), Does.Not.Contain("more than once"));
+
+            var read = BuildShaderSlotWorld("shaders/rigid_random_colours.xml.shader", duplicates);
+            var readResult = read.Run();
+            Assert.That(SrPartDropReasons(readResult), Does.Contain("more than once with different sources"));
+        }
+
         [Test]
         public void SharedRepack_UnknownExtraSlot_StillDropsThePart_AndTheReportNamesIt()
         {
-            var world = BuildPassThroughWorld(
-                null, SrPassThrough.Append(("t_xml_colour_map", "textures\\sr_cm.dds")));
-            world.AddTexture("textures\\sr_cm.dds", 256, "BC1", true, 9);
+            // The material's shader is not in the compiled-shader table, so no slot is ever treated as unread.
+            var world = BuildShaderSlotWorld(
+                "shaders/not_in_the_table_test.xml.shader", ("t_xml_colour_map", "textures\\sr_cm.dds"));
 
             var result = world.Run();
 
@@ -14602,6 +14672,9 @@ namespace Test.PackOptimizer.Core
             // listing a slot twice with different sources are refused; the pinned stages have no such
             // material, so the hash is unchanged.
             [8] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 9: the shared texture repack (and the duplicate-slot refusals) ignore a t_xml_ slot the material's
+            // shader never binds; the repack is not among the pinned stages, so the hash is unchanged.
+            [9] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

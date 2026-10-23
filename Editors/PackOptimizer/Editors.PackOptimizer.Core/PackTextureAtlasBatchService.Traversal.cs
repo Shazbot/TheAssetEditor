@@ -1749,17 +1749,22 @@ namespace Editors.PackOptimizer.Core
             return false;
         }
 
-        /// <summary>First slot listed more than once with different sources, or null.</summary>
+        /// <summary>
+        /// First slot listed more than once with different sources, or null. A slot the material's shader
+        /// never binds (IsSlotUnreadByShader) is dead data and cannot conflict.
+        /// </summary>
         private static string? FindConflictingDuplicateTextureSlot(XmlDocument material)
         {
             var textureNodes = material.SelectNodes("/material/textures/texture");
             if (textureNodes == null)
                 return null;
 
+            var shader = material.SelectSingleNode("/material/shader")?.InnerText;
+
             foreach (var slot in textureNodes
                          .Cast<XmlNode>()
                          .Select(GetTextureSlot)
-                         .Where(x => x.Length != 0)
+                         .Where(x => x.Length != 0 && !IsSlotUnreadByShader(shader, x))
                          .Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 if (HasConflictingDuplicateTextureSlot(material, slot))

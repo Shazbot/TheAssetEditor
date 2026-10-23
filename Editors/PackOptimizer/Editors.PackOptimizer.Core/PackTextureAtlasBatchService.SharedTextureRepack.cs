@@ -223,6 +223,8 @@ namespace Editors.PackOptimizer.Core
             // Slots of Slots that are copied (cropped per chart) but whose texture is not a set member
             // and is never replaced: the emissive distortion noise.
             public HashSet<string> CopySlots { get; } = new(StringComparer.OrdinalIgnoreCase);
+            // (material, slot) pairs ignored because the material's shader never binds the slot.
+            public HashSet<(string Material, string Slot)> UnreadSlots { get; } = [];
             public string? Reason { get; set; }
             public bool GeometryChecked { get; set; }
             public double[] U { get; set; } = [];
@@ -511,6 +513,7 @@ namespace Editors.PackOptimizer.Core
             public int Tuples { get; set; }
             public int Charts { get; set; }
             public int Parts { get; set; }
+            public SortedDictionary<string, HashSet<string>> UnreadSlotMaterials { get; } = new(StringComparer.Ordinal);
             public int Pages { get; set; }
             public long UpsampleOverheadBytes { get; set; }
             public long Samples { get; set; }
@@ -589,6 +592,8 @@ namespace Editors.PackOptimizer.Core
             // and layout groups whose canvases were restricted to the reference aspect ratio, those
             // that then failed the group gate although they would have paid without the restriction.
             public int EmissiveParts { get; set; }
+            // Slots of materials in built sets that were ignored because the shader never binds them: slot -> materials.
+            public SortedDictionary<string, HashSet<string>> UnreadSlotMaterials { get; } = new(StringComparer.Ordinal);
             public int EmissiveCopies { get; set; }
             public long EmissiveCopyBytes { get; set; }
             public int EmissiveMaterialsRescaled { get; set; }
@@ -1880,6 +1885,31 @@ namespace Editors.PackOptimizer.Core
             => SharedRepackPassThroughSlots.Contains(slot, StringComparer.OrdinalIgnoreCase) ||
                IsIgnorableUnresolvedAtlasTexture(slot, texture);
 
+        // The same, plus a t_xml_ slot the material's shader never binds (see IsSlotUnreadByShader).
+        private static bool IsSharedRepackIgnoredTexture(VanillaCoverageMaterial info, string slot, string texture)
+            => IsSharedRepackIgnoredTexture(slot, texture) || IsSlotUnreadByShader(info.Shader, slot);
+
+        /// <summary>
+        /// True when <paramref name="shader"/> is in the generated SharedRepackShaderBoundSlots table
+        /// (Tools/ShaderChannels/shader_bound_slots.py) and its compiled variants of every stage bind no
+        /// resource named like the t_xml_ <paramref name="slot"/>: the engine binds a material slot to the
+        /// compiled resource of the same name, so such a slot is dead data. A shader that is not in the
+        /// table, or a slot outside the t_xml_ namespace, is never reported unread.
+        /// </summary>
+        internal static bool IsSlotUnreadByShader(string? shader, string? slot)
+        {
+            if (string.IsNullOrWhiteSpace(shader) || string.IsNullOrWhiteSpace(slot))
+                return false;
+
+            slot = slot.Trim();
+            if (!slot.StartsWith("t_xml_", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            return SharedRepackShaderBoundSlots.TryGetValue(
+                       shader.Trim().Replace('\\', '/'), out var bound) &&
+                   !bound.Contains(slot);
+        }
+
         internal static bool IsSharedRepackEmissiveParameter(string name)
             => SharedRepackEmissiveParameters.Contains(name, StringComparer.OrdinalIgnoreCase);
 
@@ -2070,7 +2100,17 @@ namespace Editors.PackOptimizer.Core
                 if (state.Consumers?.TryBlockVanillaReplaced(material, "repack") == true)
                     part.Reason ??= "a bound material is a vanilla file another mod replaces";
 
+                foreach (var (unreadSlot, _) in info.Textures)
+                {
+                    if (!IsSharedRepackIgnoredTexture(unreadSlot, string.Empty) &&
+                        IsSlotUnreadByShader(info.Shader, unreadSlot))
+                    {
+                        part.UnreadSlots.Add((material, unreadSlot.ToLowerInvariant()));
+                    }
+                }
+
                 if (info.Textures
+                        .Where(item => !IsSlotUnreadByShader(info.Shader, item.Slot))
                         .GroupBy(item => item.Slot, StringComparer.OrdinalIgnoreCase)
                         .Any(group => group
                             .Select(item => Normalize(item.Texture))
@@ -2082,11 +2122,11 @@ namespace Editors.PackOptimizer.Core
 
                 var hasDistortion = info.Textures.Any(item =>
                     item.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase) &&
-                    !IsSharedRepackIgnoredTexture(item.Slot, item.Texture));
+                    !IsSharedRepackIgnoredTexture(info, item.Slot, item.Texture));
                 var emissiveReason = GetSharedRepackEmissiveReason(info);
                 foreach (var (slot, texture) in info.Textures)
                 {
-                    if (IsSharedRepackIgnoredTexture(slot, texture))
+                    if (IsSharedRepackIgnoredTexture(info, slot, texture))
                         continue;
 
                     var isDistortion = slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase);
@@ -2151,7 +2191,7 @@ namespace Editors.PackOptimizer.Core
 
                 var slots = info.Textures
                     .Where(texture => (IsTextureDownscaleSlot(texture.Slot) || IsSharedRepackCopySlot(info, texture.Slot)) &&
-                                      !IsSharedRepackIgnoredTexture(texture.Slot, texture.Texture))
+                                      !IsSharedRepackIgnoredTexture(info, texture.Slot, texture.Texture))
                     .Select(texture => texture.Slot)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
                 if (!slots.SetEquals(part.Slots.Keys))
@@ -5215,6 +5255,25 @@ namespace Editors.PackOptimizer.Core
             built.BloodScales.AddRange(plan.Pages.SelectMany(page => page.BloodScales));
             built.EmissiveScales.AddRange(plan.Pages.SelectMany(page => page.EmissiveScales));
             built.EmissiveParts = plan.Pages.SelectMany(page => page.Parts).Count(part => part.CopySlots.Count != 0);
+            foreach (var (unreadMaterial, unreadSlot) in plan.Pages.SelectMany(page => page.Parts)
+                         .SelectMany(part => part.UnreadSlots).Distinct())
+            {
+                if (!built.UnreadSlotMaterials.TryGetValue(unreadSlot, out var inSet))
+                {
+                    inSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    built.UnreadSlotMaterials[unreadSlot] = inSet;
+                }
+
+                inSet.Add(unreadMaterial);
+                if (!result.UnreadSlotMaterials.TryGetValue(unreadSlot, out var inRun))
+                {
+                    inRun = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    result.UnreadSlotMaterials[unreadSlot] = inRun;
+                }
+
+                inRun.Add(unreadMaterial);
+            }
+
             built.EmissiveCopies = built.Outputs.Count(output => output.IsCopy);
             built.EmissiveCopyBytes = built.Outputs.Where(output => output.IsCopy).Sum(output => output.Data.LongLength);
             result.EmissiveParts += built.EmissiveParts;
@@ -5751,7 +5810,9 @@ namespace Editors.PackOptimizer.Core
                 "and a failed merged plan falls back to its seed set alone. " +
                 "Original textures and materials are not edited. Video memory only. Pass-through slots (" +
                 string.Join(", ", SharedRepackPassThroughSlots) + ") are kept unchanged in the generated " +
-                "materials; any other non-atlasable slot makes a part ineligible, named per slot below. " +
+                "materials, as is any t_xml_ slot the material's shader never binds (compiled-shader analysis, " +
+                $"{SharedRepackShaderBoundSlots.Count:N0} shader(s); a slot the shader does not read cannot change the " +
+                "picture); any other non-atlasable slot makes a part ineligible, named per slot below. " +
                 $"ASSUMPTION (check in game): the blood overlay samples UV0 x {SharedRepackBloodScaleParameter}; " +
                 "the repack scales UV0 per tuple, so a float2 " + SharedRepackBloodScaleParameter +
                 " is divided by that scale per axis (pattern density preserved, a per-chart offset remains). " +
@@ -5869,6 +5930,15 @@ namespace Editors.PackOptimizer.Core
                 .ThenBy(pair => pair.Key, StringComparer.Ordinal)
                 .ToList();
             sb.AppendLine(
+                "Slots ignored because the material's shader never binds them (built sets): " +
+                (result.UnreadSlotMaterials.Count == 0
+                    ? "none"
+                    : string.Join(", ", result.UnreadSlotMaterials.Select(pair =>
+                        $"{pair.Key} in {pair.Value.Count:N0} material(s)")) +
+                      $"; {result.UnreadSlotMaterials.Values.SelectMany(items => items).Distinct(StringComparer.OrdinalIgnoreCase).Count():N0} " +
+                      "distinct material(s)") +
+                ".");
+            sb.AppendLine(
                 $"Emissive distortion copy: {result.EmissiveParts:N0} part(s) moved with a copied " +
                 $"{SharedRepackEmissiveDistortionSlot}; {result.EmissiveCopies:N0} copy texture(s) written " +
                 $"({result.EmissiveCopyBytes:N0} bytes, counted as cost, not as replaced texture bytes); " +
@@ -5952,6 +6022,14 @@ namespace Editors.PackOptimizer.Core
                     if (group.Sizes.Length != 0)
                         sb.AppendLine($"      sizes: {group.Sizes}");
                 }
+                if (set.UnreadSlotMaterials.Count != 0)
+                {
+                    sb.AppendLine(
+                        "    ignored as unread by the material's shader: " +
+                        string.Join(", ", set.UnreadSlotMaterials.Select(pair =>
+                            $"{pair.Key} ({pair.Value.Count:N0} material(s))")));
+                }
+
                 foreach (var blood in set.BloodScales)
                     sb.AppendLine($"    blood: {blood}");
                 if (set.EmissiveParts != 0 || set.EmissiveCopies != 0)
