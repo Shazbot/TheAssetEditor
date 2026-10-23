@@ -348,6 +348,37 @@ RGB stays bit-exact and is verified at every level; only the alpha is dropped.
 - **Checked in-game by the author** (morions, Lupio, the gambeson): no visible change. That supports the assumption that the material's shader is the one the game uses.
 - **Compaction total on `ak_teb3` with the option:** 58.9 MB (24.1 MB flat, 22.4 MB opaque, 12.4 MB unread alpha).
 
+### Emissive distortion copy (2026-10-23)
+
+Problem: a part whose material has a `t_xml_emissive_distortion` (or `t_xml_emissive_texture`) texture was ineligible for the shared texture repack (reason "non-atlasable slot"). In the test packs this closure cause was 39.9 MB of the estimate on `!ak_teb3` (6 sets) and 35.8 MB on `ovn_albion` (7 sets).
+
+Shader evidence (disassembled compiled shaders of the `wh3dump` `shaders` branch, `fxc/*.hlsl_compiled`, 922 pixel shader variants of 159 families that name the distortion texture): in the common character emissive families the pixel shader does exactly
+
+- `d = sample(t_xml_emissive_distortion, UV0)` (two channels),
+- `emissiveUV = (UV0 + d * sp_emissive_distort_strength + time * sp_emissive_speed * sp_emissive_direction) * sp_emissive_tiling`,
+- `glow = sample(t_xml_emissive_texture, emissiveUV)`,
+
+with UV0 the interpolator the base colour is sampled with. Both emissive slots point at shared tiled noise textures in `commontextures\` (512x512 DXT1), never per-model art. About 110 families compute the distortion UV differently (ethereal standard/overlay, renown topper, `*_distortion`, dissolve, ghost, tinted metal, flesh_to_stone, spirit, ...) or sample extra textures at UV0 (`mask1`, `emissive_colour`, `scroll_direction`, ...); they stay blocked.
+
+Verification: `Tools/ShaderChannels/verify_emissive_uv.py` (+ `dxbc_disassemble.ps1`) symbolically evaluates the straight-line ALU code of every variant (registers hold polynomials over interpolator components, structured-buffer parameters, the camera time and texture results; control flow is scoped, loops make written registers opaque) and requires every UV0-dependent texture read to be one of: an atlas slot or the distortion at the raw UV0, the emissive texture at exactly the chain above (matched by offset ranges of the parameter structure, the camera `time_in_sec` constant and two distinct distortion channels), the blood map (accepted under the existing blood assumption: the shaders use `(UV0 * constant + per-instance offset) * blood_uv_scale`, not a plain scale), or a read that does not depend on UV0. UV0 reaching anything else (other ALU use, outputs) fails the family. A family qualifies only if all its variants pass. Result: 46 of 159 families are on the allowlist in `PackTextureAtlasBatchService.SharedTextureRepack.cs` (`SharedRepackEmissiveVerifiedShaders`): the `*_emissive`, `*_iridescent_emissive`, `*_silk_emissive`, `*_alphatint_emissive`, `rigid_character_tentacle_emissive` and `*_character_ethereal` families (with their `_alpha` and `_blood` twins). Families with a `vfx_` prefix verified but are left out because the file name does not say whether the path is `shaders/vfx/x` or `shaders/vfx_x`.
+
+Design ("copied slot"):
+
+- The distortion slot is cropped and remapped like an atlas slot (chart rectangles, block copy, pixel check) but its texture is not a set member: it never joins the signature-set closure, is never classified uniform, is excluded from the chart alignment (`32 << downshift` of the other slots) while still deciding the cell (whole noise texels), is keyed in the layout group as `copy:<noise path>`, and is written as `<name>_repack_emissive_distortion.dds`. Its bytes count as cost in the page and in the actual-bytes gate, but it is not in `plan.Replaced`: not a replaced texture, not pruned, not part of the "no WSModel binds a replaced texture" check, not part of the signature-set ownership check. `t_xml_emissive_texture` stays as authored.
+- The shader needs the UV scale `s` equal in U and V for the compensation to be exact, so the group key carries the reference aspect ratio and the page canvases of such a group are restricted to that aspect ratio (candidate generation and page splitting). Groups that then do not pay fall to the existing group gate; no approximation for unequal scales.
+- Per generated material: `emissive_tiling / s`, `emissive_distort_strength * s`, `emissive_direction * s` (invariant culture, "R"), logged per material in the report; the page fails if a parameter cannot be rewritten.
+- Remaining ASSUMPTION (check in game): the new UV0 is `s * UV0 + offset`, so the scrolling pattern is exact up to a constant per-chart phase shift (offset times tiling).
+- New part reasons: "the material's shader is not verified for emissive repacking (`<shader>`)" and "the material lacks emissive parameter `<name>`". `OutputVersion` 6 -> 7 (pinned stages unchanged, same golden hash).
+
+Bench (this branch, `PackOptimizerBench`, baselines `teb-causes` and `albion-causes`):
+
+| pack | sets built | actual saving | emissive copies | notes |
+| --- | --- | --- | --- | --- |
+| `!ak_teb3` | 17 -> 19 | 72,591,032 -> 91,377,928 bytes (+18.8 MB) | 12 parts, 2 copies (87,664 bytes), 4 materials rescaled | closure loss 72.4 -> 36.9 MB; the emissive_distortion cause (39.9 MB, 6 sets) is gone; 2 of its sets built (`ak_teb_estragon_shoulders_03`, `ak_teb_piggolo_clothing`), 2 more fail the actual-bytes gate; 2 built layout groups aspect-restricted (single-page cost 3.2 MB), 1 more group lost only to the restriction; pack file +0.9 MB (new textures, old ones stay unless pruned) |
+| `ovn_albion` | 20 -> 20 | 139,634,888 (unchanged) | 0 | the emissive cause (35.8 MB, 7 sets) is gone from the closure, but the freed sets do not pay (chart coverage 70 % of 2048 textures, "group would not get smaller"): closure drops 31 -> 26, actual-bytes failures 4 -> 8; 1 group lost only to the aspect restriction; two built sets only changed generated file names (their merge plan identity changed) |
+
+All `PASS:` lines still pass, status SUCCESS. Tests: 813 in `Test.PackOptimizer.Core` (13 new: eligibility, new reasons, copy slot alignment/uniform/group key, aspect restriction, copy not replaced/pruned, parameter math, report counters).
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).

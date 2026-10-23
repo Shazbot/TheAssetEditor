@@ -14078,6 +14078,450 @@ namespace Test.PackOptimizer.Core
             }
         }
 
+        // --- Emissive distortion copy ------------------------------------------------------------
+
+        private const string SrEmissiveShader = "shaders/weighted4_character_emissive.xml.shader";
+        private const string SrDistortion = "t_xml_emissive_distortion";
+        private const string SrGlow = "t_xml_emissive_texture";
+        private const string SrNoise = "textures\\commontextures\\sr_noise.dds";
+        private const string SrGlowTexture = "textures\\commontextures\\sr_glow.dds";
+
+        private static string SrEmissiveMaterialXml(
+            string shader,
+            string[]? omitParameters = null,
+            bool withDistortion = true,
+            bool withGlow = true)
+        {
+            var textures = new List<(string Slot, string Texture)>
+            {
+                (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n1.dds"),
+            };
+            if (withDistortion)
+                textures.Add((SrDistortion, SrNoise));
+            if (withGlow)
+                textures.Add((SrGlow, SrGlowTexture));
+            var xml = DownscaleMaterialXml(textures.ToArray()).Replace("shaders\\weighted2_character.xml.shader", shader);
+            (string Name, string Type, string Value)[] parameters =
+            [
+                ("emissive_tiling", "float2", "2,3"),
+                ("emissive_distort_strength", "float", "0.05"),
+                ("emissive_direction", "float2", "0.5,-0.25"),
+            ];
+            return xml.Replace(
+                "</material>",
+                "<params>" + string.Concat(parameters
+                    .Where(item => omitParameters?.Contains(item.Name) != true)
+                    .Select(item => $"<param><name>{item.Name}</name><type>{item.Type}</type><value>{item.Value}</value></param>")) +
+                "</params></material>");
+        }
+
+        private static SrWorld BuildEmissiveSrWorld(
+            string shader = SrEmissiveShader,
+            string[]? omitParameters = null,
+            int noiseSize = 512,
+            bool ownedNoise = false,
+            bool withDistortion = true)
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1);
+            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2);
+            world.AddTexture(SrNoise, noiseSize, "BC1", true, 7, ownedNoise);
+            world.AddTexture(SrGlowTexture, 512, "BC1", true, 8);
+            var e1 = SrMaterialPath("e1");
+            world.Fixture.AddText(e1, SrEmissiveMaterialXml(shader, omitParameters, withDistortion));
+            world.AddModel(SrRigid, SrWs, SrRoot, SrRigidFactory([(e1, SrBlocks((2, 3), (3, 3)))]), [[e1]]);
+            return world;
+        }
+
+        private static readonly Dictionary<string, int> SrEmissiveSeeds =
+            new() { [SrBase] = 1, [SrNormal] = 2, [SrDistortion] = 7 };
+
+        private static string SrPartDropReasons(object result)
+            => string.Join("\n", Get<IDictionary>(result, "PartDropReasons").Keys.Cast<string>());
+
+        [Test]
+        public void SharedRepack_EmissiveDistortion_VerifiedShader_IsCopiedNotReplaced_AndParametersRescaled()
+        {
+            var world = BuildEmissiveSrWorld();
+            var sourceBefore = SrSnapshot(world.Fixture.Source);
+            var vanillaBefore = SrSnapshot(world.Fixture.Vanilla);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            Assert.That(outputs, Has.Count.EqualTo(3));
+            var copy = outputs.Single(output => Get<bool>(output, "IsCopy"));
+            Assert.That(Get<string>(copy, "Slot"), Is.EqualTo(SrDistortion));
+            Assert.That(Get<string>(copy, "Path"), Does.EndWith("_repack_emissive_distortion.dds"));
+            Assert.That(Get<IEnumerable>(copy, "Sources").Cast<string>(), Is.EqualTo(new[] { SrNoise }));
+
+            // Cost counts the copy, but nothing is "replaced" by it.
+            var replaced = Get<IEnumerable>(built, "Replaced").Cast<(string Path, bool Owned, long Bytes)>().ToList();
+            Assert.That(replaced.Select(item => item.Path), Is.EquivalentTo(new[] { "textures\\sr_b1.dds", "textures\\sr_n1.dds" }));
+            Assert.That(Get<long>(built, "Before"), Is.EqualTo(replaced.Sum(item => item.Bytes)));
+            Assert.That(Get<long>(built, "After"), Is.EqualTo(outputs.Sum(output => Get<long>(output, "Bytes"))));
+            Assert.That(world.Fixture.Vanilla[SrNoise], Is.EqualTo(vanillaBefore[SrNoise]));
+            foreach (var (path, bytes) in sourceBefore)
+                Assert.That(world.Fixture.Source[path], Is.EqualTo(bytes), path);
+
+            // The crop shows the noise at the new UVs; the glow texture stays as authored.
+            var factory = SrRigidFactory([(SrMaterialPath("e1"), SrBlocks((2, 3), (3, 3)))]);
+            var (samples, _) = AssertSrPixels(world, SrRigid, SrWs, factory, SrEmissiveSeeds);
+            Assert.That(samples, Is.GreaterThan(0));
+            var generatedPath = SrWsMaterial(world.State, SrWs, 0, 0);
+            var generated = Encoding.UTF8.GetString(world.Fixture.Output[generatedPath]);
+            Assert.That(generated, Does.Contain(SrGlowTexture));
+            Assert.That(generated, Does.Not.Contain(SrNoise));
+            Assert.That(SrSlotNode(generated, SrDistortion).OuterXml, Does.Contain("_repack_emissive_distortion.dds"));
+
+            // tiling / s, strength * s, direction * s with the equal U and V scale s.
+            var scaleU = 1024.0 / Get<int>(built, "LayoutWidth");
+            var scaleV = 1024.0 / Get<int>(built, "LayoutHeight");
+            Assert.That(scaleU, Is.EqualTo(scaleV));
+            var document = new XmlDocument();
+            document.LoadXml(generated);
+            string Value(string name) => document.SelectNodes("/material/params/param")!.Cast<XmlNode>()
+                .Single(node => node.SelectSingleNode("name")!.InnerText == name).SelectSingleNode("value")!.InnerText;
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            Assert.That(Value("emissive_tiling"), Is.EqualTo(string.Create(invariant, $"{2 / scaleU:R},{3 / scaleU:R}")));
+            Assert.That(Value("emissive_distort_strength"), Is.EqualTo(string.Create(invariant, $"{0.05 * scaleU:R}")));
+            Assert.That(Value("emissive_direction"), Is.EqualTo(string.Create(invariant, $"{0.5 * scaleU:R},{-0.25 * scaleU:R}")));
+            Assert.That(Get<IEnumerable>(built, "EmissiveScales").Cast<string>().Count(), Is.EqualTo(1));
+
+            // Counters and report.
+            Assert.That(Get<int>(result, "EmissiveParts"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "EmissiveCopies"), Is.EqualTo(1));
+            Assert.That(Get<long>(result, "EmissiveCopyBytes"), Is.EqualTo(Get<byte[]>(copy, "Data").LongLength));
+            Assert.That(Get<int>(result, "EmissiveMaterialsRescaled"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "EmissiveAspectGroups"), Is.EqualTo(1));
+            var section = BuildSharedRepackSection(Enabled(world));
+            Assert.That(section, Does.Contain("Emissive distortion copy: 1 part(s) moved"));
+            Assert.That(section, Does.Contain("1 copy texture(s) written"));
+            Assert.That(section, Does.Contain("per-chart phase shift").And.Contain("ASSUMPTION"));
+            Assert.That(section, Does.Contain("emissive: ").And.Contain(": UV scale").And.Contain("emissive_tiling 2,3 -> "));
+            Assert.That(section, Does.Contain("not a replacement"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_EmissiveDistortion_OwnedNoise_IsNeverReplacedOrPruned()
+        {
+            var world = BuildEmissiveSrWorld(ownedNoise: true);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            SetStateProperty(world.State, "SharedTextureRepackRequested", true);
+            SetStateProperty(world.State, "SharedTextureRepackEnabled", true);
+            GetStaticMethod("FinalizeSharedTextureRepack").Invoke(null, [world.State]);
+            // Only owned textures that were replaced count; the noise was copied, not replaced.
+            Assert.That(Get<int>(result, "OwnedReplaced"), Is.EqualTo(0));
+            Assert.That(Get<List<string>>(result, "OwnedPruned"), Is.Empty);
+            Assert.That(world.Fixture.Output.ContainsKey(SrNoise), Is.True);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [TestCase("shaders/weighted4_phoenix_standard_overlay.xml.shader")]
+        [TestCase("")]
+        public void SharedRepack_EmissiveDistortion_UnverifiedShader_KeepsThePartBlockedWithTheNewReason(string shader)
+        {
+            var world = BuildEmissiveSrWorld(shader);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(0));
+            var reasons = SrPartDropReasons(result);
+            Assert.That(reasons, Does.Contain("the material's shader is not verified for emissive repacking ("));
+            Assert.That(reasons, Does.Contain(shader.Length == 0 ? "unknown shader" : shader));
+            Assert.That(reasons, Does.Not.Contain("non-atlasable slot"));
+            Assert.That(Get<int>(result, "EmissiveCopies"), Is.EqualTo(0));
+            Assert.That(world.Fixture.Output.Keys.Count(key => key.Contains("_repack_")), Is.EqualTo(0));
+            var section = BuildSharedRepackSection(Enabled(world));
+            Assert.That(section, Does.Contain("x the material's shader is not verified for emissive repacking ("));
+        }
+
+        [TestCase("emissive_tiling")]
+        [TestCase("emissive_distort_strength")]
+        [TestCase("emissive_direction")]
+        public void SharedRepack_EmissiveDistortion_MissingParameter_KeepsThePartBlockedWithTheNewReason(string missing)
+        {
+            var world = BuildEmissiveSrWorld(omitParameters: [missing]);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(0));
+            Assert.That(SrPartDropReasons(result), Does.Contain("the material lacks emissive parameter " + missing));
+        }
+
+        [Test]
+        public void SharedRepack_EmissiveTextureWithoutDistortion_KeepsTheOriginalSlotReason()
+        {
+            var world = BuildEmissiveSrWorld(withDistortion: false);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(0));
+            Assert.That(
+                SrPartDropReasons(result),
+                Does.Contain("a bound material has a texture in the non-atlasable slot t_xml_emissive_texture"));
+        }
+
+        [Test]
+        public void SharedRepack_EmissiveParameterMath_DividesTilingAndMultipliesStrengthAndDirection()
+        {
+            var computed = GetStaticMethod("ComputeSharedRepackEmissiveParameters")
+                .Invoke(null, [new[] { 2.0, 3.0 }, 0.05, new[] { 0.5, -0.25 }, 0.25])!;
+            var (tiling, strength, direction) = ((double[] Tiling, double Strength, double[] Direction))computed;
+            Assert.That(tiling, Is.EqualTo(new[] { 8.0, 12.0 }));
+            Assert.That(strength, Is.EqualTo(0.0125).Within(1e-15));
+            Assert.That(direction, Is.EqualTo(new[] { 0.125, -0.0625 }));
+
+            // The rewrite: invariant "R" text, one description, and a refusal for unequal scales.
+            var document = new XmlDocument();
+            document.LoadXml(SrEmissiveMaterialXml(SrEmissiveShader));
+            var arguments = new object?[] { document, 0.25, 0.25, null };
+            Assert.That((bool)GetStaticMethod("TryScaleSharedRepackEmissiveParameters").Invoke(null, arguments)!, Is.True);
+            var text = document.OuterXml;
+            Assert.That(text, Does.Contain("<value>8,12</value>"));
+            Assert.That(text, Does.Contain("<value>0.0125</value>"));
+            Assert.That(text, Does.Contain("<value>0.125,-0.0625</value>"));
+
+            var unequal = new XmlDocument();
+            unequal.LoadXml(SrEmissiveMaterialXml(SrEmissiveShader));
+            var before = unequal.OuterXml;
+            arguments = [unequal, 0.25, 0.5, null];
+            Assert.That((bool)GetStaticMethod("TryScaleSharedRepackEmissiveParameters").Invoke(null, arguments)!, Is.False);
+            Assert.That((string)arguments[3]!, Does.Contain("not equal in U and V"));
+            Assert.That(unequal.OuterXml, Is.EqualTo(before));
+
+            var missing = new XmlDocument();
+            missing.LoadXml(SrEmissiveMaterialXml(SrEmissiveShader, ["emissive_direction"]));
+            arguments = [missing, 0.25, 0.25, null];
+            Assert.That((bool)GetStaticMethod("TryScaleSharedRepackEmissiveParameters").Invoke(null, arguments)!, Is.False);
+            Assert.That((string)arguments[3]!, Does.Contain("emissive_direction"));
+        }
+
+        // ---- tuples and layout groups of a copy slot ----
+
+        private static object SrLayout(int width, int height, string format = "BC1")
+        {
+            var mips = 1 + (int)Math.Floor(Math.Log2(Math.Max(width, height)));
+            var dds = BuildBcDds(width, height, mips, format);
+            var arguments = new object?[] { dds, null };
+            Assert.That((bool)GetStaticMethod("TryReadDdsLayout").Invoke(null, arguments)!, Is.True);
+            return arguments[1]!;
+        }
+
+        private static object SrEntry(string path, int width, int height, string format = "BC1")
+        {
+            var entry = GetNestedType("VanillaCoverageTexture").GetConstructors(AnyInstance).Single().Invoke([path]);
+            entry.GetType().GetProperty("Layout")!.SetValue(entry, SrLayout(width, height, format));
+            return entry;
+        }
+
+        private static object SrPart(Dictionary<string, string> slots, params string[] copySlots)
+        {
+            var part = Activator.CreateInstance(GetNestedType("SharedRepackPart"))!;
+            var type = part.GetType();
+            type.GetProperty("Key")!.SetValue(part, CreateMeshKey(SrRigid, 0, 0));
+            type.GetProperty("Model")!.SetValue(part, CreateUvPart(SrBlock(2, 3).Concat(SrBlock(3, 3)).ToArray()));
+            var slotDictionary = Get<IDictionary>(part, "Slots");
+            foreach (var (slot, texture) in slots)
+                slotDictionary[slot] = texture;
+            var copySet = Get<HashSet<string>>(part, "CopySlots");
+            foreach (var slot in copySlots)
+                copySet.Add(slot);
+            Assert.That(GetStaticMethod("AnalyzeSharedRepackGeometry").Invoke(null, [part]), Is.Null);
+            return part;
+        }
+
+        private static List<object> SrBuildTuples(
+            List<object> parts,
+            Dictionary<string, object> entries,
+            Func<string, bool?> classify,
+            out List<object> violating)
+        {
+            var partList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(GetNestedType("SharedRepackPart")))!;
+            foreach (var part in parts)
+                partList.Add(part);
+            var entryDictionary = (IDictionary)Activator.CreateInstance(
+                typeof(Dictionary<,>).MakeGenericType(typeof(string), GetNestedType("VanillaCoverageTexture")),
+                StringComparer.OrdinalIgnoreCase)!;
+            foreach (var (path, entry) in entries)
+                entryDictionary[path] = entry;
+            var arguments = new object?[] { partList, entryDictionary, classify, (Func<string, string>)(texture => "set:" + texture), null };
+            var tuples = ((IEnumerable)GetStaticMethod("BuildSharedRepackTuples").Invoke(null, arguments)!).Cast<object>().ToList();
+            violating = ((IEnumerable)arguments[4]!).Cast<object>().ToList();
+            return tuples;
+        }
+
+        [Test]
+        public void SharedRepack_CopySlot_DoesNotRaiseTheAlignment_IsNeverUniform_AndKeysTheGroupByNoiseAndAspect()
+        {
+            const string baseTexture = "textures\\b.dds";
+            const string noise = "textures\\commontextures\\noise.dds";
+            var part = SrPart(
+                new Dictionary<string, string> { [SrBase] = baseTexture, [SrDistortion] = noise }, SrDistortion);
+            // 2048x1024 base, 256x256 noise: the noise is 8x / 4x smaller than the reference.
+            var entries = new Dictionary<string, object>
+            {
+                [baseTexture] = SrEntry(baseTexture, 2048, 1024),
+                [noise] = SrEntry(noise, 256, 256),
+            };
+
+            // A classifier that calls the noise uniform must not matter: a copy slot is never classified.
+            var tuples = SrBuildTuples([part], entries, texture => texture == noise ? true : null, out var violating);
+
+            Assert.That(violating, Is.Empty);
+            var tuple = tuples.Single();
+            Assert.That(Get<string?>(tuple, "Excluded"), Is.Null);
+            Assert.That(Get<IDictionary>(tuple, "ConstantSlots").Count, Is.EqualTo(0));
+            Assert.That(Get<IDictionary>(tuple, "Slots").Contains(SrDistortion), Is.True);
+            Assert.That(Get<HashSet<string>>(tuple, "CopySlots"), Is.EquivalentTo(new[] { SrDistortion }));
+            Assert.That(Get<bool>(tuple, "EmissiveCompensation"), Is.True);
+            Assert.That(Get<IEnumerable>(tuple, "MemberTextures").Cast<string>(), Is.EqualTo(new[] { baseTexture }));
+            // The noise decides the cell (whole noise texels: 4 << 3 = 32) but not the alignment (32 << 0, not 32 << 3).
+            Assert.That(Get<int>(tuple, "Cell"), Is.EqualTo(32));
+            Assert.That(Get<int>(tuple, "Align"), Is.EqualTo(32));
+            var key = Get<string>(tuple, "GroupKey");
+            Assert.That(key, Does.Contain($"{SrDistortion}:BC1:True:-3:-2:copy:{noise}"));
+            Assert.That(key, Does.Contain("aspect:2x1"));
+            Assert.That(key, Does.Contain($"{SrBase}:BC1:True:0:0:set:{baseTexture}"));
+
+            // A tuple whose noise is a different texture, or whose reference has another aspect, is another group.
+            const string otherNoise = "textures\\commontextures\\other.dds";
+            entries[otherNoise] = SrEntry(otherNoise, 256, 256);
+            var other = SrBuildTuples(
+                [SrPart(new Dictionary<string, string> { [SrBase] = baseTexture, [SrDistortion] = otherNoise }, SrDistortion)],
+                entries, _ => null, out _).Single();
+            Assert.That(Get<string>(other, "GroupKey"), Is.Not.EqualTo(key));
+            const string squareBase = "textures\\sq.dds";
+            entries[squareBase] = SrEntry(squareBase, 1024, 1024);
+            var square = SrBuildTuples(
+                [SrPart(new Dictionary<string, string> { [SrBase] = squareBase, [SrDistortion] = noise }, SrDistortion)],
+                entries, _ => null, out _).Single();
+            Assert.That(Get<string>(square, "GroupKey"), Does.Contain("aspect:1x1"));
+            Assert.That(Get<string>(square, "GroupKey"), Is.Not.EqualTo(key));
+
+            // Without the copy slot there is no aspect component and the alignment is the same.
+            var plain = SrBuildTuples(
+                [SrPart(new Dictionary<string, string> { [SrBase] = baseTexture })], entries, _ => null, out _).Single();
+            Assert.That(Get<string>(plain, "GroupKey"), Does.Not.Contain("aspect"));
+            Assert.That(Get<int>(plain, "Align"), Is.EqualTo(Get<int>(tuple, "Align")));
+            Assert.That(Get<int>(plain, "Cell"), Is.EqualTo(16));
+        }
+
+        [Test]
+        public void SharedRepack_CopySlotOnly_IsNothingToRepack()
+        {
+            const string noise = "textures\\commontextures\\noise.dds";
+            var part = SrPart(new Dictionary<string, string> { [SrDistortion] = noise }, SrDistortion);
+            var entries = new Dictionary<string, object> { [noise] = SrEntry(noise, 512, 512) };
+
+            var tuple = SrBuildTuples([part], entries, _ => null, out _).Single();
+
+            Assert.That(Get<string?>(tuple, "Excluded"), Does.Contain("uniform"));
+        }
+
+        // A tuple with charts of the given sizes (reference pixels) and no parts.
+        private static object SrChartTuple(int referenceWidth, int referenceHeight, bool copy, params (int Width, int Height)[] charts)
+        {
+            var tuple = Activator.CreateInstance(GetNestedType("SharedRepackTuple"))!;
+            var type = tuple.GetType();
+            type.GetProperty("Index")!.SetValue(tuple, 0);
+            type.GetProperty("ReferenceWidth")!.SetValue(tuple, referenceWidth);
+            type.GetProperty("ReferenceHeight")!.SetValue(tuple, referenceHeight);
+            type.GetProperty("Cell")!.SetValue(tuple, 16);
+            type.GetProperty("Align")!.SetValue(tuple, 32);
+            type.GetProperty("GroupKey")!.SetValue(tuple, "key");
+            var slots = Get<IDictionary>(tuple, "Slots");
+            var layouts = Get<IDictionary>(tuple, "Layouts");
+            var exponents = Get<IDictionary>(tuple, "SourceExponent");
+            slots[SrBase] = "textures\\b.dds";
+            layouts[SrBase] = SrLayout(referenceWidth, referenceHeight);
+            exponents[SrBase] = (0, 0);
+            if (copy)
+            {
+                slots[SrDistortion] = "textures\\n.dds";
+                layouts[SrDistortion] = SrLayout(256, 256);
+                exponents[SrDistortion] = (
+                    (int)Math.Log2(256) - (int)Math.Log2(referenceWidth), (int)Math.Log2(256) - (int)Math.Log2(referenceHeight));
+                Get<HashSet<string>>(tuple, "CopySlots").Add(SrDistortion);
+            }
+
+            var chartType = GetNestedType("SharedRepackChart");
+            var tupleCharts = Get<IList>(tuple, "Charts");
+            foreach (var (width, height) in charts)
+            {
+                var chart = Activator.CreateInstance(chartType)!;
+                chartType.GetProperty("Id")!.SetValue(chart, tupleCharts.Count);
+                chartType.GetProperty("Tuple")!.SetValue(chart, tuple);
+                chartType.GetProperty("Width")!.SetValue(chart, width);
+                chartType.GetProperty("Height")!.SetValue(chart, height);
+                tupleCharts.Add(chart);
+            }
+
+            return tuple;
+        }
+
+        private static List<object> SrPackGroup(object tuple, int maximumSide, long minimumGroupSaving, out object split)
+        {
+            var tupleList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(GetNestedType("SharedRepackTuple")))!;
+            tupleList.Add(tuple);
+            var arguments = new object?[] { "variantmeshes\\a.rigid_model_v2", "id", tupleList, maximumSide, 0, minimumGroupSaving, null, null, null };
+            var pages = ((IEnumerable)GetStaticMethod("PackSharedRepackGroup").Invoke(null, arguments)!).Cast<object>().ToList();
+            Assert.That(arguments[7], Is.Null, arguments[8] as string);
+            split = arguments[6]!;
+            return pages;
+        }
+
+        [Test]
+        public void SharedRepack_CopySlotGroup_RestrictsPageCanvasesToTheReferenceAspect()
+        {
+            // A 2048x1024 reference (aspect 2:1) with charts that an unrestricted packer fits on a 512x512
+            // canvas; the smallest 2:1 canvas that holds them is 1024x512.
+            var tuple = SrChartTuple(2048, 1024, copy: true, (512, 128), (256, 256));
+
+            var pages = SrPackGroup(tuple, 4096, 1, out var split);
+
+            Assert.That(Get<bool>(split, "AspectRestricted"), Is.True);
+            Assert.That(Get<string>(split, "SingleSize"), Is.EqualTo("1024x512"));
+            Assert.That(Get<string>(split, "UnrestrictedSingleSize"), Is.EqualTo("512x512"));
+            Assert.That(pages, Is.Not.Empty);
+            foreach (var page in pages)
+            {
+                var width = Get<int>(page, "LayoutWidth");
+                var height = Get<int>(page, "LayoutHeight");
+                Assert.That((long)width * 1024, Is.EqualTo((long)height * 2048), $"{width}x{height}");
+                // scaleU == scaleV for every page, which is what the exact compensation needs.
+                Assert.That(2048.0 / width, Is.EqualTo(1024.0 / height));
+            }
+
+            // The restriction costs bytes against the unrestricted canvas, and is reported.
+            Assert.That(Get<long>(split, "UnrestrictedSingleBytes"), Is.GreaterThan(0));
+            Assert.That(Get<long>(split, "SingleBytes"), Is.GreaterThanOrEqualTo(Get<long>(split, "UnrestrictedSingleBytes")));
+            var copy = Get<IEnumerable>(pages[0], "Outputs").Cast<object>().Single(output => Get<bool>(output, "IsCopy"));
+            Assert.That(Get<string>(copy, "Path"), Does.EndWith("_repack_emissive_distortion.dds"));
+            Assert.That(Get<long>(pages[0], "BytesAfter"), Is.EqualTo(
+                Get<IEnumerable>(pages[0], "Outputs").Cast<object>().Sum(output => Get<long>(output, "Bytes"))));
+        }
+
+        [Test]
+        public void SharedRepack_GroupWithoutCopySlot_KeepsTheFreeCanvasChoice()
+        {
+            var tuple = SrChartTuple(2048, 1024, copy: false, (512, 128), (256, 256));
+
+            var pages = SrPackGroup(tuple, 4096, 1, out var split);
+
+            Assert.That(Get<bool>(split, "AspectRestricted"), Is.False);
+            Assert.That(Get<string>(split, "SingleSize"), Is.EqualTo("512x512"), "the free choice is not 2:1");
+            Assert.That(Get<long>(split, "UnrestrictedSingleBytes"), Is.EqualTo(0));
+            Assert.That(pages, Is.Not.Empty);
+        }
+
         // --- Output version ---------------------------------------------------------------------
         //
         // PackOptimizerVersions.OutputVersion is part of the mod manager's cache key. The golden hash of
@@ -14108,6 +14552,10 @@ namespace Test.PackOptimizer.Core
             // 6: the shared texture repack also rewrites the rigids cross-rigid merging relied on and the
             // ones it generated; the repack is not among the pinned stages, so the hash is unchanged.
             [6] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 7: the shared texture repack also repacks parts whose verified emissive shader samples a
+            // shared distortion noise (a cropped copy plus rescaled emissive parameters); the repack is
+            // not among the pinned stages, so the hash is unchanged.
+            [7] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

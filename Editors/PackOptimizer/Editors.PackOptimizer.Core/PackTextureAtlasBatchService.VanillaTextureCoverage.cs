@@ -133,7 +133,12 @@ namespace Editors.PackOptimizer.Core
             string Path,
             bool Found,
             bool Readable,
-            IReadOnlyList<(string Slot, string Texture)> Textures);
+            IReadOnlyList<(string Slot, string Texture)> Textures,
+            // The material's shader, normalised to lower case with forward slashes
+            // ("shaders/weighted4_character_emissive.xml.shader"), and the raw text of the emissive
+            // scroll parameters the shared repack compensates (lower-case name -> value text).
+            string Shader = "",
+            IReadOnlyDictionary<string, string>? EmissiveParameters = null);
 
         private sealed class VanillaTextureCoverageResult
         {
@@ -534,7 +539,26 @@ namespace Editors.PackOptimizer.Core
                             }
                         }
 
-                        material = new VanillaCoverageMaterial(path, true, true, textures);
+                        var document = LoadXml(file);
+                        var emissive = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        var parameterNodes = document.SelectNodes("/material/params/param");
+                        if (parameterNodes != null)
+                        {
+                            foreach (XmlNode node in parameterNodes)
+                            {
+                                var name = node.SelectSingleNode("name")?.InnerText.Trim() ?? string.Empty;
+                                if (IsSharedRepackEmissiveParameter(name) &&
+                                    node.SelectSingleNode("value") is { } valueNode)
+                                {
+                                    emissive[name.ToLowerInvariant()] = valueNode.InnerText.Trim();
+                                }
+                            }
+                        }
+
+                        material = new VanillaCoverageMaterial(
+                            path, true, true, textures,
+                            Normalize(document.SelectSingleNode("/material/shader")?.InnerText).Replace('\\', '/'),
+                            emissive);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
