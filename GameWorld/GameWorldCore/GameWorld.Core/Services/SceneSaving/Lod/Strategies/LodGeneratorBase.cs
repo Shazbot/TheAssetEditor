@@ -9,6 +9,7 @@ namespace GameWorld.Core.Services.SceneSaving.Lod.Strategies
     public abstract class LodGeneratorBase
     {
         private readonly ILogger _logger;
+        protected ILogger Logger => _logger;
 
         protected LodGeneratorBase(IScopedLogger scopedLogger)
         {

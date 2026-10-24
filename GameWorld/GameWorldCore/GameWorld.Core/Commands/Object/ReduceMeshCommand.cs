@@ -2,13 +2,14 @@
 using GameWorld.Core.Components.Selection;
 using GameWorld.Core.Rendering.Geometry;
 using GameWorld.Core.SceneNodes;
-using GameWorld.Core.Services.SceneSaving.Lod.MeshDecimatorIntegration;
+using GameWorld.Core.Services.SceneSaving.Lod.MeshOptimizerIntegration;
 using Shared.Core.Events;
 
 namespace GameWorld.Core.Commands.Object
 {
     public class ReduceMeshCommand : IAeUndoCommandCommand
     {
+        private readonly ILogger _logger = Logging.Create<ReduceMeshCommand>();
         List<Rmv2MeshNode> _meshList;
         List<MeshObject> _originalGeometry = new List<MeshObject>();
         float _factor;
@@ -38,7 +39,7 @@ namespace GameWorld.Core.Commands.Object
             {
                 var originalMesh = meshNode.Geometry;
 
-                var reducedMesh = DecimatorMeshOptimizer.GetReducedMeshCopy(originalMesh, _factor);
+                var reducedMesh = MeshReduction.Reduce(originalMesh, _factor, meshNode.Name, _logger);
                 meshNode.Geometry = reducedMesh;
                 _originalGeometry.Add(originalMesh);
             }

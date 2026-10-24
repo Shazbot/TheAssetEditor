@@ -37,6 +37,10 @@
     </ItemGroup>
 
     <ItemGroup>
+        <None Include="..\GameWorld\MeshOptimizerNative\x64\meshoptimizer.dll" Link="meshoptimizer.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <ItemGroup>
         <Content Include="..\GameWorld\ContentProject\Content\bin\Windows\Content\**\*.*">
             <Link>Content\%(RecursiveDir)%(Filename)%(Extension)</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

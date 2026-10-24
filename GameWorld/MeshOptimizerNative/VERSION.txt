@@ -1,0 +1,8 @@
+﻿Tag: v1.3
+Commit SHA: 9e1f07b159d3cb777f1c67ed31fc11fd117986f4
+Build date (UTC): 2026-10-24T13:31:11Z
+MSVC environment: call "D:\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+CMake configure command:
+"C:\Program Files\cmake\bin\cmake.exe" -S "C:\Users\tilic\AppData\Local\Temp\assedfork-meshoptimizer-v1.3-1a531e9057d14bc0acef0853a726a724\source" -B "C:\Users\tilic\AppData\Local\Temp\assedfork-meshoptimizer-v1.3-1a531e9057d14bc0acef0853a726a724\build" -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG" -DMESHOPT_BUILD_SHARED_LIBS=ON -DMESHOPT_BUILD_DEMO=OFF -DMESHOPT_BUILD_GLTFPACK=OFF -DMESHOPT_STABLE_EXPORTS=OFF -DMESHOPT_INSTALL=OFF
+CMake build command:
+"C:\Program Files\cmake\bin\cmake.exe" --build "C:\Users\tilic\AppData\Local\Temp\assedfork-meshoptimizer-v1.3-1a531e9057d14bc0acef0853a726a724\build" --config Release

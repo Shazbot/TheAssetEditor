@@ -5,6 +5,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
 		<UseWPF>true</UseWPF>
         <Nullable>enable</Nullable>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	</PropertyGroup>
 
   <ItemGroup>
@@ -14,5 +15,9 @@
     <ProjectReference Include="..\..\ContentProject\ContentProject.csproj" />
     <ProjectReference Include="..\..\MeshDecimator\MeshDecimator.csproj" />
   </ItemGroup>
+
+	<ItemGroup>
+		<None Include="..\..\MeshOptimizerNative\x64\meshoptimizer.dll" Link="meshoptimizer.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+	</ItemGroup>
 
 </Project>
