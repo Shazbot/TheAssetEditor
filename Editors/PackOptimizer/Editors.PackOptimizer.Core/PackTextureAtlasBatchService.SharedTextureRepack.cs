@@ -3085,9 +3085,16 @@ namespace Editors.PackOptimizer.Core
                     ineligibleNoted = true;
                     foreach (var item in ineligible.Values.OrderBy(item => item.Path, StringComparer.Ordinal).Take(3))
                     {
+                        // Name the gameplay roots that load a directly referenced rigid without a WSModel.
+                        var direct = state.GameplayMeshDependencyIndex?.DirectConsumersByRigid
+                            .GetValueOrDefault(Normalize(item.Path));
+                        var directText = direct is { Count: > 0 }
+                            ? $" [loaded directly by {string.Join(", ", direct.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).Take(3))}" +
+                              (direct.Count > 3 ? $" and {direct.Count - 3:N0} more" : string.Empty) + "]"
+                            : string.Empty;
                         result.ClosureNotes.Add((
                             label,
-                            $"rigid {item.Path} is not eligible ({item.Reason}); its " +
+                            $"rigid {item.Path} is not eligible ({item.Reason}){directText}; its " +
                             $"{(pseudoParts.TryGetValue(item.Path, out var byKey) ? byKey.Count : 0):N0} part(s) " +
                             "using the set's textures were dropped"));
                     }
