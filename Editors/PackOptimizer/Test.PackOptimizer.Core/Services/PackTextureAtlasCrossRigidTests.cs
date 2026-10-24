@@ -11412,7 +11412,7 @@ namespace Test.PackOptimizer.Core
                     var property = chart.GetType().GetProperty("PackX", AnyInstance)!;
                     property.SetValue(chart, (int)property.GetValue(chart)! + 16);
                 },
-                () => result = world.Run());
+                () => WithReducedPaddingDisabled(() => result = world.Run()));
 
             // The merged attempt (call 1) failed; the seed alone (call 2) was checked and built.
             // The released set was then planned on its own, not merged: part 0 of rigid 1 uses a
@@ -14615,6 +14615,7 @@ namespace Test.PackOptimizer.Core
             type.GetProperty("ReferenceWidth")!.SetValue(tuple, referenceWidth);
             type.GetProperty("ReferenceHeight")!.SetValue(tuple, referenceHeight);
             type.GetProperty("Cell")!.SetValue(tuple, 16);
+            type.GetProperty("Gutter")!.SetValue(tuple, 16);
             type.GetProperty("Align")!.SetValue(tuple, 32);
             type.GetProperty("GroupKey")!.SetValue(tuple, "key");
             var slots = Get<IDictionary>(tuple, "Slots");
@@ -14648,14 +14649,230 @@ namespace Test.PackOptimizer.Core
         }
 
         private static List<object> SrPackGroup(object tuple, int maximumSide, long minimumGroupSaving, out object split)
+            => SrPackGroup(tuple, maximumSide, minimumGroupSaving, disableReducedPadding: true, out split);
+
+        private static List<object> SrPackGroup(
+            object tuple,
+            int maximumSide,
+            long minimumGroupSaving,
+            bool disableReducedPadding,
+            out object split)
         {
             var tupleList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(GetNestedType("SharedRepackTuple")))!;
             tupleList.Add(tuple);
             var arguments = new object?[] { "variantmeshes\\a.rigid_model_v2", "id", tupleList, maximumSide, 0, minimumGroupSaving, null, null, null };
-            var pages = ((IEnumerable)GetStaticMethod("PackSharedRepackGroup").Invoke(null, arguments)!).Cast<object>().ToList();
+            var disabled = GetServiceType().GetField("SharedRepackReducedPaddingDisabled", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var previous = (bool)disabled.GetValue(null)!;
+            disabled.SetValue(null, disableReducedPadding);
+            List<object> pages;
+            try
+            {
+                pages = ((IEnumerable)GetStaticMethod("PackSharedRepackGroup").Invoke(null, arguments)!).Cast<object>().ToList();
+            }
+            finally
+            {
+                disabled.SetValue(null, previous);
+            }
+
             Assert.That(arguments[7], Is.Null, arguments[8] as string);
             split = arguments[6]!;
             return pages;
+        }
+
+        private static object SrPaddingBoxTuple(
+            int referenceWidth,
+            int referenceHeight,
+            params (int X0, int Y0, int X1, int Y1)[] boxes)
+        {
+            var tuple = SrChartTuple(referenceWidth, referenceHeight, copy: false);
+            Get<int[]>(tuple, "CellChart").AsSpan().Fill(-1);
+            tuple.GetType().GetProperty("GridX")!.SetValue(tuple, referenceWidth / 16);
+            tuple.GetType().GetProperty("GridY")!.SetValue(tuple, referenceHeight / 16);
+            var chartMethod = GetStaticMethod("CreateSharedRepackChart");
+            var charts = Get<IList>(tuple, "Charts");
+            foreach (var box in boxes)
+            {
+                var chart = chartMethod.Invoke(null, [tuple, charts.Count, box, false, -1])!;
+                charts.Add(chart);
+            }
+
+            return tuple;
+        }
+
+        private static List<object> SrPaddingCandidates(object tuple, int maximumVariantIndex)
+        {
+            var list = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(GetNestedType("SharedRepackTuple")))!;
+            list.Add(tuple);
+            return ((IEnumerable)GetStaticMethod("GetSharedRepackPaddingCandidates").Invoke(null, [list, maximumVariantIndex])!)
+                .Cast<object>().ToList();
+        }
+
+        [Test]
+        public void SharedRepack_ReducedPadding_ResizesBothLayoutsAndKeepsCellsAndSourcesInside()
+        {
+            var tuple = SrPaddingBoxTuple(2048, 2048, (20, 20, 28, 28), (50, 50, 58, 58));
+            var resize = GetStaticMethod("ResizeSharedRepackCharts");
+            var charts = Get<IList>(tuple, "Charts").Cast<object>().ToList();
+            var initial = charts.Select(chart => (
+                Get<int>(chart, "X0"), Get<int>(chart, "Y0"), Get<int>(chart, "Width"), Get<int>(chart, "Height"))).ToArray();
+
+            resize.Invoke(null, [tuple, 16, 32]);
+            Assert.That(
+                charts.Select(chart => (Get<int>(chart, "X0"), Get<int>(chart, "Y0"), Get<int>(chart, "Width"), Get<int>(chart, "Height"))),
+                Is.EqualTo(initial), "P0 reproduces the original chart rectangles");
+
+            foreach (var (gutter, align) in new[] { (16, 16), (8, 8) })
+            {
+                resize.Invoke(null, [tuple, gutter, align]);
+                foreach (var chart in charts)
+                {
+                    Assert.That(Get<int>(chart, "LayoutWidth") % align, Is.Zero);
+                    Assert.That(Get<int>(chart, "LayoutHeight") % align, Is.Zero);
+                    Assert.That(Get<int>(chart, "X0"), Is.LessThanOrEqualTo(Get<int>(chart, "CellX0") * 16));
+                    Assert.That(Get<int>(chart, "Y0"), Is.LessThanOrEqualTo(Get<int>(chart, "CellY0") * 16));
+                    Assert.That(
+                        Get<int>(chart, "X0") + Get<int>(chart, "Width"),
+                        Is.GreaterThanOrEqualTo((Get<int>(chart, "CellX1") + 1) * 16));
+                    Assert.That(
+                        Get<int>(chart, "Y0") + Get<int>(chart, "Height"),
+                        Is.GreaterThanOrEqualTo((Get<int>(chart, "CellY1") + 1) * 16));
+                    Assert.That(Get<int>(chart, "LayoutWidth"), Is.LessThanOrEqualTo(2048));
+                    Assert.That(Get<int>(chart, "LayoutHeight"), Is.LessThanOrEqualTo(2048));
+                }
+            }
+
+            for (var left = 0; left < charts.Count; left++)
+            {
+                for (var right = left + 1; right < charts.Count; right++)
+                {
+                    var overlaps = Get<int>(charts[left], "X0") < Get<int>(charts[right], "X0") + Get<int>(charts[right], "Width") &&
+                                   Get<int>(charts[right], "X0") < Get<int>(charts[left], "X0") + Get<int>(charts[left], "Width") &&
+                                   Get<int>(charts[left], "Y0") < Get<int>(charts[right], "Y0") + Get<int>(charts[right], "Height") &&
+                                   Get<int>(charts[right], "Y0") < Get<int>(charts[left], "Y0") + Get<int>(charts[left], "Height");
+                    Assert.That(overlaps, Is.False, $"source charts {left} and {right} overlap");
+                }
+            }
+
+            var tight = SrTightTuple(SrDiagonalQuads());
+            var merged = Get<IList>(tight, "MergedCharts").Cast<object>().ToList();
+            var pieces = Get<IList>(tight, "TightCharts").Cast<object>().ToList();
+            resize.Invoke(null, [tight, 8, 8]);
+            Assert.That(Get<int>(merged[0], "Width"), Is.LessThan(352));
+            Assert.That(pieces.All(piece => Get<int>(piece, "Width") < 192), Is.True);
+        }
+
+        [Test]
+        public void SharedRepack_ReducedPadding_SelectsP2ForASmallerPageAndIsDeterministic()
+        {
+            object MakeTuple() => SrPaddingBoxTuple(
+                1024, 1024,
+                (2, 2, 2, 2), (8, 2, 8, 2), (2, 8, 2, 8), (8, 8, 8, 8));
+
+            var pages = SrPackGroup(MakeTuple(), 4096, 1L << 60, disableReducedPadding: false, out var split);
+            var page = pages.Single();
+            Assert.That(Get<string>(split, "PaddingVariant"), Is.EqualTo("gutter 8 + align 8"));
+            Assert.That((Get<int>(page, "LayoutWidth"), Get<int>(page, "LayoutHeight")), Is.EqualTo((64, 64)));
+            Assert.That(Get<long>(split, "PaddingSavedBytes"), Is.GreaterThan(0));
+
+            var repeat = SrPackGroup(MakeTuple(), 4096, 1L << 60, disableReducedPadding: false, out var repeatSplit).Single();
+            Assert.That(Get<string>(repeatSplit, "PaddingVariant"), Is.EqualTo(Get<string>(split, "PaddingVariant")));
+            Assert.That(Get<long>(repeat, "BytesAfter"), Is.EqualTo(Get<long>(page, "BytesAfter")));
+            Assert.That(
+                Get<IEnumerable>(repeat, "Charts").Cast<object>().Select(chart =>
+                    (Get<int>(chart, "PackX"), Get<int>(chart, "PackY"), Get<int>(chart, "LayoutWidth"), Get<int>(chart, "LayoutHeight"))),
+                Is.EqualTo(Get<IEnumerable>(page, "Charts").Cast<object>().Select(chart =>
+                    (Get<int>(chart, "PackX"), Get<int>(chart, "PackY"), Get<int>(chart, "LayoutWidth"), Get<int>(chart, "LayoutHeight")))));
+        }
+
+        [Test]
+        public void SharedRepack_ReducedPadding_EvaluatesUniqueVariantsFromP2ToP0AndMapsDuplicatesToSafer()
+        {
+            var tuple = SrPaddingBoxTuple(1024, 1024, (10, 10, 10, 10));
+            Assert.That(SrPaddingCandidates(tuple, 2).Select(variant => Get<string>(variant, "Name")).ToList(),
+                Is.EqualTo(new[] { "gutter 8 + align 8", "align 16", "baseline" }));
+
+            tuple.GetType().GetProperty("Align")!.SetValue(tuple, 16);
+            var deduplicated = SrPaddingCandidates(tuple, 2);
+            Assert.That(deduplicated.Select(variant => Get<string>(variant, "Name")).ToList(),
+                Is.EqualTo(new[] { "gutter 8 + align 8", "baseline" }));
+
+            var full = SrPaddingBoxTuple(256, 256, (0, 0, 15, 15));
+            Assert.That(SrPaddingCandidates(full, 2).Select(variant => Get<string>(variant, "Name")).ToList(),
+                Is.EqualTo(new[] { "gutter 8 + align 8", "align 16", "baseline" }));
+            var tied = SrPackGroup(full, 4096, 1L << 60, disableReducedPadding: false, out var split).Single();
+            Assert.That(Get<string>(split, "PaddingVariant"), Is.EqualTo("baseline"));
+            Assert.That(Get<long>(split, "PaddingSavedBytes"), Is.Zero);
+            Assert.That(Get<long>(tied, "BytesAfter"), Is.GreaterThan(0));
+        }
+
+        [Test]
+        public void SharedRepack_ReducedPadding_NoGainTiesStayAtP0AndKillSwitchRestoresP0()
+        {
+            var full = SrPaddingBoxTuple(256, 256, (0, 0, 15, 15));
+            var baseline = SrPackGroup(full, 4096, 1L << 60, disableReducedPadding: true, out _).Single();
+            var tied = SrPackGroup(
+                SrPaddingBoxTuple(256, 256, (0, 0, 15, 15)),
+                4096, 1L << 60, disableReducedPadding: false, out var tieSplit).Single();
+            Assert.That(Get<string>(tieSplit, "PaddingVariant"), Is.EqualTo("baseline"));
+            Assert.That(Get<long>(tied, "BytesAfter"), Is.EqualTo(Get<long>(baseline, "BytesAfter")));
+            Assert.That(
+                Get<IEnumerable>(tied, "Charts").Cast<object>().Select(chart =>
+                    (Get<int>(chart, "PackX"), Get<int>(chart, "PackY"), Get<int>(chart, "LayoutWidth"), Get<int>(chart, "LayoutHeight"))),
+                Is.EqualTo(Get<IEnumerable>(baseline, "Charts").Cast<object>().Select(chart =>
+                    (Get<int>(chart, "PackX"), Get<int>(chart, "PackY"), Get<int>(chart, "LayoutWidth"), Get<int>(chart, "LayoutHeight")))));
+
+            var reduced = SrPackGroup(
+                SrPaddingBoxTuple(1024, 1024, (10, 10, 10, 10)),
+                4096, 1L << 60, disableReducedPadding: false, out var reducedSplit).Single();
+            var disabled = SrPackGroup(
+                SrPaddingBoxTuple(1024, 1024, (10, 10, 10, 10)),
+                4096, 1L << 60, disableReducedPadding: true, out var disabledSplit).Single();
+            Assert.That(Get<string>(disabledSplit, "PaddingVariant"), Is.EqualTo("baseline"));
+            Assert.That(Get<string>(reducedSplit, "PaddingVariant"), Is.EqualTo("gutter 8 + align 8"));
+            Assert.That(Get<long>(reduced, "BytesAfter"), Is.LessThan(Get<long>(disabled, "BytesAfter")));
+        }
+
+        [Test]
+        public void SharedRepack_ReducedPadding_UsesThreeThenTwoExactBlockLevels()
+        {
+            const string texture = "textures\\padding_levels.dds";
+            const int size = 512;
+            var dds = BuildBcDds(size, size, 10, "BC1");
+            var tuple = SrPaddingBoxTuple(size, size, (10, 10, 10, 10));
+            Get<IDictionary>(tuple, "Slots")[SrBase] = texture;
+            var layout = SrLayout(size, size);
+            Get<IDictionary>(tuple, "Layouts")[SrBase] = layout;
+
+            var page = Activator.CreateInstance(GetNestedType("SharedRepackPage"))!;
+            Get<IList>(page, "Tuples").Add(tuple);
+            var output = Activator.CreateInstance(GetNestedType("SharedRepackSlotOutput"))!;
+            output.GetType().GetProperty("Slot")!.SetValue(output, SrBase);
+            output.GetType().GetProperty("Format")!.SetValue(output, Get<string>(layout, "Format"));
+            output.GetType().GetProperty("Srgb")!.SetValue(output, Get<bool>(layout, "IsSrgb"));
+            output.GetType().GetProperty("MipLevels")!.SetValue(output, 10);
+
+            var cacheType = GetNestedType("SharedRepackSourceCache");
+            var read = (Func<string, byte[]?>)(_ => dds);
+            var cache = cacheType.GetConstructors(AnyInstance).Single().Invoke([read]);
+            cacheType.GetMethod("FromBytes", AnyInstance)!.Invoke(cache, [texture, dds]);
+            var blockLevels = GetStaticMethod("GetSharedRepackBlockLevels");
+            var exactAtLevel = GetStaticMethod("IsSharedRepackBlockCopiedAtLevel");
+
+            Get<IDictionary>(tuple, "SourceExponent")[SrBase] = (0, 0);
+            Get<int[]>(tuple, "CellChart").AsSpan().Fill(-1);
+            tuple.GetType().GetProperty("Align")!.SetValue(tuple, 16);
+            var p1 = (int)blockLevels.Invoke(null, [page, output, cache])!;
+            Assert.That(p1, Is.EqualTo(3));
+            output.GetType().GetProperty("BlockCopiedLevels")!.SetValue(output, p1);
+            Assert.That(Enumerable.Range(0, 5).Select(level => (bool)exactAtLevel.Invoke(null, [output, level])!),
+                Is.EqualTo(new[] { true, true, true, false, false }));
+
+            tuple.GetType().GetProperty("Align")!.SetValue(tuple, 8);
+            var p2 = (int)blockLevels.Invoke(null, [page, output, cache])!;
+            Assert.That(p2, Is.EqualTo(2));
+            output.GetType().GetProperty("BlockCopiedLevels")!.SetValue(output, p2);
+            Assert.That(Enumerable.Range(0, 5).Select(level => (bool)exactAtLevel.Invoke(null, [output, level])!),
+                Is.EqualTo(new[] { true, true, false, false, false }));
         }
 
         [Test]
@@ -14816,6 +15033,21 @@ namespace Test.PackOptimizer.Core
             }
         }
 
+        private static void WithReducedPaddingDisabled(Action test)
+        {
+            var field = GetServiceType().GetField("SharedRepackReducedPaddingDisabled", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var previous = (bool)field.GetValue(null)!;
+            field.SetValue(null, true);
+            try
+            {
+                test();
+            }
+            finally
+            {
+                field.SetValue(null, previous);
+            }
+        }
+
         private static (SrWorld World, Func<RmvFile> Rigid) BuildTightSrWorld(
             (double U0, double V0, double U1, double V1)[] rects, int lods = 1)
         {
@@ -14828,6 +15060,118 @@ namespace Test.PackOptimizer.Core
             var factory = lods == 1 ? SrRigidFactory(part) : SrRigidFactory(part, part);
             world.AddModel(SrRigid, SrWs, SrRoot, factory, lods == 1 ? [[mbig]] : [[mbig], [mbig]]);
             return (world, factory);
+        }
+
+        [Test]
+        public void SharedRepack_ReducedPadding_OpensTheGroupGateAndReportsNewlyBuiltGroup()
+        {
+            var small = new[] { (20.2 / 128, 20.2 / 128, 20.8 / 128, 20.8 / 128) };
+            var baselineWorld = BuildTightSrWorld(small).World;
+            object baselineResult = null!;
+            WithReducedPaddingDisabled(() => baselineResult = baselineWorld.Run(minimumSaving: 1, minimumGroupSaving: 1));
+            var baselineBuilt = SrBuilt(baselineResult).Single();
+            var baselineSaved = Get<long>(baselineBuilt, "Before") - Get<long>(baselineBuilt, "After");
+
+            var probeWorld = BuildTightSrWorld(small).World;
+            var probeResult = probeWorld.Run(minimumSaving: 1, minimumGroupSaving: 1);
+            var probeBuilt = SrBuilt(probeResult).Single();
+            var reducedSaved = Get<long>(probeBuilt, "Before") - Get<long>(probeBuilt, "After");
+            Assert.That(reducedSaved, Is.GreaterThan(baselineSaved));
+            Assert.That(BuildSharedRepackSection(Enabled(probeWorld)), Does.Contain("padding: gutter 8 + align 8"));
+
+            var gatedWorld = BuildTightSrWorld(small).World;
+            var result = gatedWorld.Run(minimumSaving: 1, minimumGroupSaving: baselineSaved + 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var report = BuildSharedRepackSection(Enabled(gatedWorld));
+            Assert.That(report, Does.Contain("[built only after reduced padding]"));
+            Assert.That(report, Does.Contain("newly built group(s)"));
+        }
+
+        [Test]
+        public void SharedRepack_PixelRetry_RestoresAttemptReportStateAndCountsOnlyTheFinalPlan()
+        {
+            var small = new[] { (20.2 / 128, 20.2 / 128, 20.8 / 128, 20.8 / 128) };
+            var baselineWorld = BuildTightSrWorld(small).World;
+            var baseline = baselineWorld.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            var retriedWorld = BuildTightSrWorld(small).World;
+            var hookCalls = 0;
+            object retried = null!;
+            WithBeforeCheckHook(
+                plan =>
+                {
+                    if (hookCalls++ != 0)
+                        return;
+
+                    var chart = Get<IEnumerable>(Get<IEnumerable>(plan, "Pages").Cast<object>().First(), "Charts")
+                        .Cast<object>().First();
+                    var packX = chart.GetType().GetProperty("PackX", AnyInstance)!;
+                    packX.SetValue(chart, (int)packX.GetValue(chart)! + 16);
+                },
+                () => retried = retriedWorld.Run(minimumSaving: 1, minimumGroupSaving: 1));
+
+            Assert.That(hookCalls, Is.GreaterThanOrEqualTo(2), "the first pixel check failed and retried");
+            Assert.That(Get<int>(retried, "PaddingPixelRetryAttempts"), Is.EqualTo(1));
+            Assert.That(Get<int>(retried, "FailedPixelCheck"), Is.Zero, SrSkips(retried));
+            Assert.That(Get<int>(retried, "Built"), Is.EqualTo(1), SrSkips(retried));
+            Assert.That(Get<IEnumerable>(retried, "PixelFailures").Cast<object>(), Is.Empty);
+
+            foreach (var name in new[] { "AtlasedUsersIgnored", "SizingErrors" })
+                Assert.That(Get<int>(retried, name), Is.EqualTo(Get<int>(baseline, name)), name);
+            foreach (var name in new[] { "PartDropReasons", "EmissiveAspectLostGroupKeys", "EmissiveAspectLostTupleKeys" })
+                Assert.That(Get<IEnumerable>(retried, name).Cast<object>().ToArray(),
+                    Is.EqualTo(Get<IEnumerable>(baseline, name).Cast<object>().ToArray()), name);
+            foreach (var name in new[] { "ClosureNotes", "SizingLog" })
+                Assert.That(Get<IEnumerable>(retried, name).Cast<object>().ToArray(),
+                    Is.EqualTo(Get<IEnumerable>(baseline, name).Cast<object>().ToArray()), name);
+            var retriedContext = Get<IEnumerable>(retried, "Outcomes").Cast<object>().Single();
+            var baselineContext = Get<IEnumerable>(baseline, "Outcomes").Cast<object>().Single();
+            Assert.That(Get<IEnumerable>(Get<object>(retriedContext, "Context"), "GroupWaste").Cast<object>().Count(),
+                Is.EqualTo(Get<IEnumerable>(Get<object>(baselineContext, "Context"), "GroupWaste").Cast<object>().Count()));
+            var report = BuildSharedRepackSection(Enabled(retriedWorld));
+            Assert.That(report, Does.Contain("Pixel-check padding retries: 1 retry pass"));
+            Assert.That(report, Does.Contain("Groups lowered by pixel check: 1 (1 emitted, 0 gated/untouched)"));
+        }
+
+        [Test]
+        public void SharedRepack_PixelRetryReportSnapshot_RestoresEveryAttemptMutation()
+        {
+            var resultType = GetNestedType("SharedTextureRepackResult");
+            var result = Activator.CreateInstance(resultType)!;
+            resultType.GetProperty("AtlasedUsersIgnored", AnyInstance)!.SetValue(result, 3);
+            resultType.GetProperty("SizingErrors", AnyInstance)!.SetValue(result, 2);
+            resultType.GetProperty("PackingSimTicks", AnyInstance)!.SetValue(result, 17L);
+            Get<IDictionary>(result, "PartDropReasons")["reason"] = 4;
+            Get<IList>(result, "ClosureNotes").Add(ValueTuple.Create("label", "note"));
+            Get<IList>(result, "SizingLog").Add(ValueTuple.Create("label", "detail"));
+            Get<IList>(result, "PixelFailures").Add(ValueTuple.Create("label", "pixel"));
+            Get<HashSet<string>>(result, "EmissiveAspectLostGroupKeys").Add("group");
+            Get<HashSet<string>>(result, "EmissiveAspectLostTupleKeys").Add("tuple");
+
+            var snapshotType = GetNestedType("SharedRepackAttemptReportSnapshot");
+            var snapshot = snapshotType.GetMethod("Capture", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)!
+                .Invoke(null, [result])!;
+            resultType.GetProperty("AtlasedUsersIgnored", AnyInstance)!.SetValue(result, 8);
+            resultType.GetProperty("SizingErrors", AnyInstance)!.SetValue(result, 6);
+            resultType.GetProperty("PackingSimTicks", AnyInstance)!.SetValue(result, 99L);
+            Get<IDictionary>(result, "PartDropReasons")["reason"] = 9;
+            Get<IList>(result, "ClosureNotes").Add(ValueTuple.Create("again", "note"));
+            Get<IList>(result, "SizingLog").Add(ValueTuple.Create("again", "detail"));
+            Get<IList>(result, "PixelFailures").Add(ValueTuple.Create("again", "pixel"));
+            Get<HashSet<string>>(result, "EmissiveAspectLostGroupKeys").Add("again");
+            Get<HashSet<string>>(result, "EmissiveAspectLostTupleKeys").Add("again");
+
+            snapshotType.GetMethod("Restore", AnyInstance)!.Invoke(snapshot, [result]);
+            Assert.That(Get<int>(result, "AtlasedUsersIgnored"), Is.EqualTo(3));
+            Assert.That(Get<int>(result, "SizingErrors"), Is.EqualTo(2));
+            Assert.That(Get<long>(result, "PackingSimTicks"), Is.EqualTo(17));
+            Assert.That(Get<IDictionary>(result, "PartDropReasons")["reason"], Is.EqualTo(4));
+            Assert.That(Get<IEnumerable>(result, "ClosureNotes").Cast<object>().Count(), Is.EqualTo(1));
+            Assert.That(Get<IEnumerable>(result, "SizingLog").Cast<object>().Count(), Is.EqualTo(1));
+            Assert.That(Get<IEnumerable>(result, "PixelFailures").Cast<object>().Count(), Is.EqualTo(1));
+            Assert.That(Get<HashSet<string>>(result, "EmissiveAspectLostGroupKeys"), Is.EquivalentTo(new[] { "group" }));
+            Assert.That(Get<HashSet<string>>(result, "EmissiveAspectLostTupleKeys"), Is.EquivalentTo(new[] { "tuple" }));
         }
 
         [Test]
@@ -15281,6 +15625,8 @@ namespace Test.PackOptimizer.Core
             // mips (gutter included) wherever a rectangle sits on whole texels, instead of box-filtering the page;
             // the repack is not among the pinned stages, so the hash is unchanged.
             [12] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 13: shared texture repack groups may choose smaller chart padding; the pinned stages do not include it.
+            [13] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

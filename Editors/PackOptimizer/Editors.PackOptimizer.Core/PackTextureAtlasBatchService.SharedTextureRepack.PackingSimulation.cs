@@ -90,11 +90,8 @@ namespace Editors.PackOptimizer.Core
             return (downshift, cellDownshift);
         }
 
-        // A chart box (cells, inclusive) as a layout rectangle: padded by the gutter, snapped
-        // outwards to the alignment, then reserved in whole alignment steps. With the planner's own
-        // gutter (one cell) and alignment this is exactly how BuildSharedRepackTuples and
-        // PackSharedRepackGroup size a chart.
-        private static (int Width, int Height) GetSharedRepackSimRectangle(
+        // A chart box (cells, inclusive) as a padded reference-pixel rectangle.
+        private static (int X0, int Y0, int Width, int Height) GetSharedRepackRectangle(
             SharedRepackTuple tuple,
             (int X0, int Y0, int X1, int Y1) box,
             int gutter,
@@ -113,7 +110,7 @@ namespace Editors.PackOptimizer.Core
                 bottom = Math.Min(tuple.ReferenceHeight, RoundUpTo(bottom, align));
             }
 
-            return (RoundUpTo(right - left, align), RoundUpTo(bottom - top, align));
+            return (left, top, right - left, bottom - top);
         }
 
         private static SharedRepackGroupSim? SimulateSharedRepackGroupPacking(
@@ -277,8 +274,8 @@ namespace Editors.PackOptimizer.Core
             {
                 foreach (var chart in tuple.Charts)
                 {
-                    var rectangle = GetSharedRepackSimRectangle(
-                        tuple, (chart.CellX0, chart.CellY0, chart.CellX1, chart.CellY1), tuple.Cell, tuple.Align);
+                    var rectangle = GetSharedRepackRectangle(
+                        tuple, (chart.CellX0, chart.CellY0, chart.CellX1, chart.CellY1), tuple.Gutter, tuple.Align);
                     var groupAlign = first.Align;
                     var width = RoundUpTo(rectangle.Width, groupAlign);
                     var height = RoundUpTo(rectangle.Height, groupAlign);
@@ -320,7 +317,7 @@ namespace Editors.PackOptimizer.Core
                     foreach (var tuple in groupTuples)
                     {
                         var (downshift, cellDownshift) = GetSharedRepackDownshifts(tuple);
-                        var gutter = strategy.Gutter < 0 ? tuple.Cell : Math.Min(tuple.Cell, strategy.Gutter << downshift);
+                        var gutter = strategy.Gutter < 0 ? tuple.Gutter : Math.Min(tuple.Cell, strategy.Gutter << downshift);
                         var align = strategy.Align == 0
                             ? tuple.Align
                             : Math.Min(tuple.Align, Math.Max(4 << cellDownshift, strategy.Align << downshift));
@@ -334,17 +331,25 @@ namespace Editors.PackOptimizer.Core
                         {
                             foreach (var chart in tuple.Charts)
                             {
-                                var rectangle = GetSharedRepackSimRectangle(
+                                var rectangle = GetSharedRepackRectangle(
                                     tuple, (chart.CellX0, chart.CellY0, chart.CellX1, chart.CellY1), gutter, align);
-                                Add(tuple, rectangle.Width, rectangle.Height, chartCluster[chartIndex[chart]]);
+                                Add(
+                                    tuple,
+                                    RoundUpTo(rectangle.Width, align),
+                                    RoundUpTo(rectangle.Height, align),
+                                    chartCluster[chartIndex[chart]]);
                             }
                         }
                         else
                         {
                             foreach (var (box, chartId) in GetComponents()[tuple])
                             {
-                                var rectangle = GetSharedRepackSimRectangle(tuple, box, gutter, align);
-                                Add(tuple, rectangle.Width, rectangle.Height, chartCluster[chartIndex[tuple.Charts[chartId]]]);
+                                var rectangle = GetSharedRepackRectangle(tuple, box, gutter, align);
+                                Add(
+                                    tuple,
+                                    RoundUpTo(rectangle.Width, align),
+                                    RoundUpTo(rectangle.Height, align),
+                                    chartCluster[chartIndex[tuple.Charts[chartId]]]);
                             }
                         }
                     }

@@ -294,8 +294,13 @@ namespace Editors.PackOptimizer.Core
             public int ReferenceWidth { get; set; }
             public int ReferenceHeight { get; set; }
             public int Cell { get; set; }
-            // Chart rectangle alignment in reference pixels (at least the cell).
+            // Active chart padding and alignment in reference pixels.
+            public int Gutter { get; set; }
             public int Align { get; set; }
+            public string PaddingVariant { get; set; } = "baseline";
+            public long PaddingBaselineBytes { get; set; }
+            public long PaddingSavedBytes { get; set; }
+            public int MaximumPaddingVariantIndex { get; set; } = 2;
             public int GridX { get; set; }
             public int GridY { get; set; }
             // The ACTIVE layout: cell -> chart id (-1 = untouched) and the charts. It is the merged-chart
@@ -376,12 +381,17 @@ namespace Editors.PackOptimizer.Core
 
         private sealed class SharedRepackGroupInfo
         {
+            public string GroupKey { get; init; } = string.Empty;
             public string Label { get; init; } = string.Empty;
             public int Tuples { get; set; }
             public int Charts { get; set; }
             public int Pages { get; set; }
             public long Before { get; set; }
             public long After { get; set; }
+            public string PaddingVariant { get; set; } = "baseline";
+            public long PaddingSavedBytes { get; set; }
+            public bool NewlyBuilt { get; set; }
+            public string? PaddingRetryFromVariant { get; set; }
             public string Status { get; set; } = "built";
             public string Sizes { get; set; } = string.Empty;
         }
@@ -416,6 +426,9 @@ namespace Editors.PackOptimizer.Core
             public long TightSavedBytes { get; set; }
             public long UnrestrictedSingleBytes { get; set; }
             public string UnrestrictedSingleSize { get; set; } = string.Empty;
+            public string PaddingVariant { get; set; } = "baseline";
+            public long PaddingBaselineBytes { get; set; }
+            public long PaddingSavedBytes { get; set; }
         }
 
         private sealed class SharedRepackSetPlan
@@ -430,6 +443,7 @@ namespace Editors.PackOptimizer.Core
             public int AspectGroups { get; set; }
             public int AspectTuples { get; set; }
             public long AspectExtraBytes { get; set; }
+            public HashSet<string> FailedPaddingGroupKeys { get; } = new(StringComparer.Ordinal);
 
         }
 
@@ -533,7 +547,20 @@ namespace Editors.PackOptimizer.Core
             long TrimmedBytes,
             long PageBytes,
             SharedRepackGroupSim? Sim = null,
-            SharedRepackSplitInfo? Split = null);
+            SharedRepackSplitInfo? Split = null,
+            string PaddingVariant = "baseline",
+            long PaddingSavedBytes = 0,
+            bool NewlyBuilt = false);
+
+        private sealed record SharedRepackPaddingVariant(
+            string Name,
+            IReadOnlyDictionary<SharedRepackTuple, (int Gutter, int Align)> Tuples);
+
+        private sealed record SharedRepackGroupRun(
+            List<SharedRepackPage> Pages,
+            SharedRepackSplitInfo Split,
+            SharedRepackTuple? ExcludeTuple,
+            string? ExcludeReason);
 
         private sealed class SharedRepackBuiltSet
         {
@@ -634,6 +661,7 @@ namespace Editors.PackOptimizer.Core
             public int NotBuildable { get; set; }
             public int FailedActualBytes { get; set; }
             public int FailedPixelCheck { get; set; }
+            public int PaddingPixelRetryAttempts { get; set; }
             // Tuples excluded because a planned size broke the sizing invariant (should stay 0).
             public int SizingErrors { get; set; }
             // Emissive distortion copy: parts moved with a copied slot, copies written (count, bytes),
@@ -688,6 +716,54 @@ namespace Editors.PackOptimizer.Core
             public List<string> OwnedPruned { get; } = [];
             public List<string> OwnedStillPresent { get; } = [];
             public bool Finalized { get; set; }
+        }
+
+        private sealed class SharedRepackAttemptReportSnapshot
+        {
+            private readonly int _atlasedUsersIgnored;
+            private readonly Dictionary<string, int> _partDropReasons;
+            private readonly List<(string Label, string Note)> _closureNotes;
+            private readonly int _sizingErrors;
+            private readonly List<(string Label, string Detail)> _sizingLog;
+            private readonly HashSet<string> _emissiveAspectLostGroupKeys;
+            private readonly HashSet<string> _emissiveAspectLostTupleKeys;
+            private readonly long _packingSimTicks;
+            private readonly List<(string Label, string Detail)> _pixelFailures;
+
+            private SharedRepackAttemptReportSnapshot(SharedTextureRepackResult result)
+            {
+                _atlasedUsersIgnored = result.AtlasedUsersIgnored;
+                _partDropReasons = new Dictionary<string, int>(result.PartDropReasons, StringComparer.Ordinal);
+                _closureNotes = result.ClosureNotes.ToList();
+                _sizingErrors = result.SizingErrors;
+                _sizingLog = result.SizingLog.ToList();
+                _emissiveAspectLostGroupKeys = result.EmissiveAspectLostGroupKeys.ToHashSet(StringComparer.Ordinal);
+                _emissiveAspectLostTupleKeys = result.EmissiveAspectLostTupleKeys.ToHashSet(StringComparer.Ordinal);
+                _packingSimTicks = result.PackingSimTicks;
+                _pixelFailures = result.PixelFailures.ToList();
+            }
+
+            public static SharedRepackAttemptReportSnapshot Capture(SharedTextureRepackResult result) => new(result);
+
+            public void Restore(SharedTextureRepackResult result)
+            {
+                result.AtlasedUsersIgnored = _atlasedUsersIgnored;
+                result.PartDropReasons.Clear();
+                foreach (var (reason, count) in _partDropReasons)
+                    result.PartDropReasons[reason] = count;
+                result.ClosureNotes.Clear();
+                result.ClosureNotes.AddRange(_closureNotes);
+                result.SizingErrors = _sizingErrors;
+                result.SizingLog.Clear();
+                result.SizingLog.AddRange(_sizingLog);
+                result.EmissiveAspectLostGroupKeys.Clear();
+                result.EmissiveAspectLostGroupKeys.UnionWith(_emissiveAspectLostGroupKeys);
+                result.EmissiveAspectLostTupleKeys.Clear();
+                result.EmissiveAspectLostTupleKeys.UnionWith(_emissiveAspectLostTupleKeys);
+                result.PackingSimTicks = _packingSimTicks;
+                result.PixelFailures.Clear();
+                result.PixelFailures.AddRange(_pixelFailures);
+            }
         }
 
         // The option is ignored (not an error) in cross-rigid-only mode, which promises never to
@@ -1448,51 +1524,114 @@ namespace Editors.PackOptimizer.Core
                 (SharedRepackBuiltSet? Built, string? Failure, string Bucket, SharedRepackMergeContext Context) Attempt(
                     bool allowMerge)
                 {
-                    var context = NewContext(allowMerge);
-                    SharedRepackSetPlan? plan;
-                    string? failure;
-                    string failureBucket;
-                    try
+                    var reportSnapshot = SharedRepackAttemptReportSnapshot.Capture(result);
+                    var paddingLimits = new Dictionary<string, int>(StringComparer.Ordinal);
+                    var loweredFrom = new Dictionary<string, string>(StringComparer.Ordinal);
+                    var retryAttempts = 0;
+                    void FinishRetries(SharedRepackBuiltSet? built)
                     {
-                        plan = PlanSharedRepackSet(
+                        result.PaddingPixelRetryAttempts += retryAttempts;
+                        if (built == null)
+                            return;
+
+                        foreach (var group in built.Groups)
+                        {
+                            if (loweredFrom.TryGetValue(group.GroupKey, out var from) && from != group.PaddingVariant)
+                                group.PaddingRetryFromVariant = from;
+                        }
+                    }
+
+                    for (var retry = 0; retry < 3; retry++)
+                    {
+                        if (retry != 0)
+                            reportSnapshot.Restore(result);
+
+                        var context = NewContext(allowMerge);
+                        SharedRepackSetPlan? plan;
+                        string? failure;
+                        string failureBucket;
+                        try
+                        {
+                            plan = PlanSharedRepackSet(
+                                state,
+                                result,
+                                coverage,
+                                context,
+                                label,
+                                setByTexture,
+                                GetPart,
+                                texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
+                                cancellationToken,
+                                paddingLimits,
+                                out failure,
+                                out failureBucket);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            plan = null;
+                            failure = $"internal error while planning ({ex.GetType().Name}: {ex.Message})";
+                            failureBucket = "build";
+                        }
+
+                        if (plan == null)
+                        {
+                            FinishRetries(null);
+                            return (null, failure ?? "unknown", failureBucket, context);
+                        }
+
+                        var built = ApplySharedRepackSetPlan(
                             state,
                             result,
-                            coverage,
                             context,
-                            label,
-                            setByTexture,
-                            GetPart,
-                            texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
+                            plan,
+                            context.Rigids.Where(item => item.Rigid != null)
+                                .ToDictionary(item => item.Path, item => item.Rigid!, StringComparer.OrdinalIgnoreCase),
+                            context.Joined.Count == 0 ? label : label + " [merged plan]",
+                            snapshots,
+                            movedParts,
                             cancellationToken,
-                            out failure,
-                            out failureBucket);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        plan = null;
-                        failure = $"internal error while planning ({ex.GetType().Name}: {ex.Message})";
-                        failureBucket = "build";
+                            out var buildFailure,
+                            out var pixelFailure);
+                        if (built != null)
+                        {
+                            FinishRetries(built);
+                            return (built, null, "built", context);
+                        }
+
+                        var lowered = false;
+                        if (pixelFailure)
+                        {
+                            foreach (var groupKey in plan.FailedPaddingGroupKeys)
+                            {
+                                var variant = plan.Splits.GetValueOrDefault(groupKey)?.PaddingVariant;
+                                var index = variant switch
+                                {
+                                    "align 16" => 1,
+                                    "gutter 8 + align 8" => 2,
+                                    _ => 0,
+                                };
+                                if (index == 0)
+                                    continue;
+
+                                if (plan.Splits.TryGetValue(groupKey, out var split))
+                                    loweredFrom.TryAdd(groupKey, split.PaddingVariant);
+                                paddingLimits[groupKey] = index - 1;
+                                lowered = true;
+                            }
+                        }
+
+                        if (lowered)
+                        {
+                            retryAttempts++;
+                            continue;
+                        }
+
+                        FinishRetries(null);
+                        return (null, buildFailure ?? "unknown", pixelFailure ? "pixel" : "build", context);
                     }
 
-                    if (plan == null)
-                        return (null, failure ?? "unknown", failureBucket, context);
-
-                    var built = ApplySharedRepackSetPlan(
-                        state,
-                        result,
-                        context,
-                        plan,
-                        context.Rigids.Where(item => item.Rigid != null)
-                            .ToDictionary(item => item.Path, item => item.Rigid!, StringComparer.OrdinalIgnoreCase),
-                        context.Joined.Count == 0 ? label : label + " [merged plan]",
-                        snapshots,
-                        movedParts,
-                        cancellationToken,
-                        out var buildFailure,
-                        out var pixelFailure);
-                    return built != null
-                        ? (built, null, "built", context)
-                        : (null, buildFailure ?? "unknown", pixelFailure ? "pixel" : "build", context);
+                    FinishRetries(null);
+                    return (null, "the reduced-padding layouts did not converge", "pixel", NewContext(allowMerge));
                 }
 
                 var dropsBefore = new Dictionary<string, int>(result.PartDropReasons, StringComparer.Ordinal);
@@ -2356,6 +2495,7 @@ namespace Editors.PackOptimizer.Core
             Func<string, RmvFile, int, int, SharedRepackPart> getPart,
             Func<string, bool> isUniform,
             CancellationToken cancellationToken,
+            IReadOnlyDictionary<string, int> paddingLimits,
             out string? failure,
             out string failureBucket)
         {
@@ -2888,7 +3028,8 @@ namespace Editors.PackOptimizer.Core
 
                 NoteOutside();
                 return BuildSharedRepackSetPlan(
-                    state, result, coverage, rigids, tuples, entryOf, label, merge, out failure, out failureBucket);
+                    state, result, coverage, rigids, tuples, entryOf, label, merge, paddingLimits,
+                    out failure, out failureBucket);
             }
 
             failure = "the set could not be closed";
@@ -2999,6 +3140,7 @@ namespace Editors.PackOptimizer.Core
                     cell,
                     NextPowerOfTwo(Math.Max(reference.Width, reference.Height) / SharedRepackMaximumCellsPerSide));
                 tuple.Cell = cell;
+                tuple.Gutter = cell;
                 tuple.Align = Math.Max(cell, SharedRepackChartAlignment << downshift);
                 // The signature set of each slot's texture is part of the key: a generated texture
                 // then only ever replaces source textures that exactly the same units load. A copied
@@ -3160,9 +3302,7 @@ namespace Editors.PackOptimizer.Core
             return tuples;
         }
 
-        // A chart rectangle for a cell box: padded by one cell but never beyond the texture itself (so
-        // a chart's rectangle in any slot is never larger than that slot's texture), snapped outward to
-        // the tuple's alignment. Merged charts and tight pieces are sized by this one formula.
+        // A chart rectangle for a cell box, snapped outward to the active alignment.
         private static SharedRepackChart CreateSharedRepackChart(
             SharedRepackTuple tuple,
             int id,
@@ -3170,20 +3310,7 @@ namespace Editors.PackOptimizer.Core
             bool piece,
             int mergedId)
         {
-            var left = Math.Max(0, (box.X0 - 1) * tuple.Cell);
-            var top = Math.Max(0, (box.Y0 - 1) * tuple.Cell);
-            var right = Math.Min(tuple.ReferenceWidth, (box.X1 + 2) * tuple.Cell);
-            var bottom = Math.Min(tuple.ReferenceHeight, (box.Y1 + 2) * tuple.Cell);
-            if (tuple.ReferenceWidth % tuple.Align == 0 && tuple.ReferenceHeight % tuple.Align == 0)
-            {
-                left = left / tuple.Align * tuple.Align;
-                top = top / tuple.Align * tuple.Align;
-                right = Math.Min(tuple.ReferenceWidth, RoundUpTo(right, tuple.Align));
-                bottom = Math.Min(tuple.ReferenceHeight, RoundUpTo(bottom, tuple.Align));
-            }
-
-            var width = right - left;
-            var height = bottom - top;
+            var rectangle = GetSharedRepackRectangle(tuple, box, tuple.Gutter, tuple.Align);
             return new SharedRepackChart
             {
                 Id = id,
@@ -3192,15 +3319,38 @@ namespace Editors.PackOptimizer.Core
                 CellY0 = box.Y0,
                 CellX1 = box.X1,
                 CellY1 = box.Y1,
-                X0 = left,
-                Y0 = top,
-                Width = width,
-                Height = height,
-                LayoutWidth = width,
-                LayoutHeight = height,
+                X0 = rectangle.X0,
+                Y0 = rectangle.Y0,
+                Width = rectangle.Width,
+                Height = rectangle.Height,
+                LayoutWidth = RoundUpTo(rectangle.Width, tuple.Align),
+                LayoutHeight = RoundUpTo(rectangle.Height, tuple.Align),
                 Piece = piece,
                 MergedId = mergedId,
             };
+        }
+
+        private static void ResizeSharedRepackCharts(SharedRepackTuple tuple, int gutter, int align)
+        {
+            tuple.Gutter = gutter;
+            tuple.Align = align;
+            foreach (var chart in EnumerateAllSharedRepackCharts(tuple).Distinct())
+            {
+                var rectangle = GetSharedRepackRectangle(
+                    tuple,
+                    (chart.CellX0, chart.CellY0, chart.CellX1, chart.CellY1),
+                    gutter,
+                    align);
+                chart.X0 = rectangle.X0;
+                chart.Y0 = rectangle.Y0;
+                chart.Width = rectangle.Width;
+                chart.Height = rectangle.Height;
+                chart.LayoutWidth = RoundUpTo(rectangle.Width, align);
+                chart.LayoutHeight = RoundUpTo(rectangle.Height, align);
+                chart.PackX = 0;
+                chart.PackY = 0;
+                chart.Page = null;
+            }
         }
 
         // Tight pieces: one chart per 8-connected component of touched cells, the same gutter and
@@ -3407,6 +3557,7 @@ namespace Editors.PackOptimizer.Core
             Dictionary<string, VanillaCoverageTexture> entryOf,
             string label,
             SharedRepackMergeContext merge,
+            IReadOnlyDictionary<string, int> paddingLimits,
             out string? failure,
             out string failureBucket)
         {
@@ -3515,6 +3666,8 @@ namespace Editors.PackOptimizer.Core
                 foreach (var group in active.GroupBy(tuple => tuple.GroupKey).OrderBy(group => group.Key, StringComparer.Ordinal))
                 {
                     var groupTuples = group.OrderBy(tuple => tuple.Index).ToList();
+                    foreach (var tuple in groupTuples)
+                        tuple.MaximumPaddingVariantIndex = paddingLimits.GetValueOrDefault(group.Key, 2);
                     var pages = PackSharedRepackGroup(
                         nameRigid, identity, groupTuples, maximumSide, plan.Pages.Count, result.MinimumGroupSavingBytes,
                         out var split, out var excludeTuple, out var excludeReason);
@@ -3537,12 +3690,19 @@ namespace Editors.PackOptimizer.Core
                         .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                     var before = textures.Sum(texture => entryOf[texture].Layout!.ChainBytes);
                     var after = pages.Sum(page => page.BytesAfter);
+                    var newlyBuilt = split.PaddingVariant != "baseline" &&
+                                     (split.PaddingBaselineBytes == 0 ||
+                                      before - split.PaddingBaselineBytes < result.MinimumGroupSavingBytes) &&
+                                     before - after >= result.MinimumGroupSavingBytes;
                     var waste = MeasureSharedRepackGroupWaste(
                         before - after <= 0 || before - after < result.MinimumGroupSavingBytes,
                         before,
-                        pages) with { Split = split };
+                        pages,
+                        split,
+                        newlyBuilt);
                     var info = new SharedRepackGroupInfo
                     {
+                        GroupKey = group.Key,
                         Sizes = DescribeSharedRepackSizes(groupTuples, pages),
                         Label = string.Join(" | ", groupTuples.Take(2).Select(DescribeSharedRepackTuple)) +
                                 (groupTuples.Count > 2 ? $" (+{groupTuples.Count - 2:N0} tuple(s))" : string.Empty),
@@ -3551,6 +3711,9 @@ namespace Editors.PackOptimizer.Core
                         Pages = pages.Count,
                         Before = before,
                         After = after,
+                        PaddingVariant = split.PaddingVariant,
+                        PaddingSavedBytes = split.PaddingSavedBytes,
+                        NewlyBuilt = newlyBuilt,
                         Status = split.Applied
                             ? $"built, split into {pages.Count:N0} page(s): {split.BestSizes} (one page would be " +
                               $"{split.SingleSize}, {split.SingleBytes:N0} bytes)"
@@ -3565,6 +3728,9 @@ namespace Editors.PackOptimizer.Core
                     {
                         info.Status += " [tight pieces not used: internal inconsistency, merged charts kept]";
                     }
+                    info.Status += $" [padding: {split.PaddingVariant}; saves {split.PaddingSavedBytes:N0} bytes vs P0]";
+                    if (newlyBuilt)
+                        info.Status += " [built only after reduced padding]";
                     // Why the pages are not smaller, for a group that is left untouched.
                     var splitNote = split.Note != null
                         ? $"; {split.Note}"
@@ -3653,12 +3819,16 @@ namespace Editors.PackOptimizer.Core
             {
                 plan.Groups.Add(new SharedRepackGroupInfo
                 {
+                    GroupKey = group.First().GroupKey,
                     Label = string.Join(" | ", group.Take(2).Select(DescribeSharedRepackTuple)) +
                             (group.Count() > 2 ? $" (+{group.Count() - 2:N0})" : string.Empty),
                     Tuples = group.Count(),
                     Before = group.SelectMany(tuple => tuple.MemberTextures).Distinct(StringComparer.OrdinalIgnoreCase)
                         .Sum(texture => entryOf[texture].Layout!.ChainBytes),
-                    Status = "left untouched: " + group.Key,
+                    PaddingVariant = group.First().PaddingVariant,
+                    PaddingSavedBytes = group.First().PaddingSavedBytes,
+                    Status = "left untouched: " + group.Key +
+                             $" [padding: {group.First().PaddingVariant}; saves {group.First().PaddingSavedBytes:N0} bytes vs P0]",
                     Sizes = string.Join(" | ", group.Take(2).Select(DescribeSharedRepackTupleSizes)),
                 });
             }
@@ -3790,22 +3960,167 @@ namespace Editors.PackOptimizer.Core
             out SharedRepackTuple? excludeTuple,
             out string? excludeReason)
         {
+            var maximumVariant = SharedRepackReducedPaddingDisabled
+                ? 0
+                : groupTuples.Min(tuple => tuple.MaximumPaddingVariantIndex);
+            var variants = GetSharedRepackPaddingCandidates(groupTuples, maximumVariant);
+
+            SharedRepackGroupRun? best = null;
+            SharedRepackPaddingVariant? bestVariant = null;
+            SharedRepackGroupRun? lastRun = null;
+            SharedRepackPaddingVariant? lastVariant = null;
+            long baselineBytes = 0;
+            long bestBytes = long.MaxValue;
+            foreach (var variant in variants)
+            {
+                ActivateSharedRepackPadding(groupTuples, variant);
+                var run = PackSharedRepackGroupVariant(
+                    nameRigid, identity, groupTuples, maximumSide, firstPageNumber, minimumGroupSaving);
+                run.Split.PaddingVariant = variant.Name;
+                lastRun = run;
+                lastVariant = variant;
+                if (variant.Name == "baseline")
+                {
+                    if (run.ExcludeTuple == null && run.Pages.Count != 0)
+                        baselineBytes = run.Pages.Sum(page => page.BytesAfter);
+                }
+
+                if (run.ExcludeTuple != null || run.Pages.Count == 0)
+                    continue;
+
+                var bytes = run.Pages.Sum(page => page.BytesAfter);
+                if (best == null || bytes <= bestBytes)
+                {
+                    best = run;
+                    bestVariant = variant;
+                    bestBytes = bytes;
+                }
+            }
+
+            var chosen = bestVariant ?? variants.Single(variant => variant.Name == "baseline");
+            var selected = ReferenceEquals(best, lastRun) || best == null && lastVariant?.Name == chosen.Name
+                ? lastRun!
+                : PackSharedRepackGroupVariantAfterPaddingActivation(
+                    nameRigid, identity, groupTuples, maximumSide, firstPageNumber, minimumGroupSaving, chosen);
+            var selectedBytes = selected.Pages.Sum(page => page.BytesAfter);
+            var saved = bestVariant?.Name == "baseline" || baselineBytes == 0
+                ? 0
+                : Math.Max(0, baselineBytes - selectedBytes);
+            selected.Split.PaddingVariant = chosen.Name;
+            selected.Split.PaddingBaselineBytes = baselineBytes;
+            selected.Split.PaddingSavedBytes = saved;
+            foreach (var tuple in groupTuples)
+            {
+                tuple.PaddingVariant = chosen.Name;
+                tuple.PaddingBaselineBytes = baselineBytes;
+                tuple.PaddingSavedBytes = saved;
+            }
+
+            split = selected.Split;
+            excludeTuple = selected.ExcludeTuple;
+            excludeReason = selected.ExcludeReason;
+            return selected.Pages;
+        }
+
+        private static SharedRepackGroupRun PackSharedRepackGroupVariantAfterPaddingActivation(
+            string nameRigid,
+            string identity,
+            List<SharedRepackTuple> groupTuples,
+            int maximumSide,
+            int firstPageNumber,
+            long minimumGroupSaving,
+            SharedRepackPaddingVariant variant)
+        {
+            ActivateSharedRepackPadding(groupTuples, variant);
+            var run = PackSharedRepackGroupVariant(
+                nameRigid, identity, groupTuples, maximumSide, firstPageNumber, minimumGroupSaving);
+            run.Split.PaddingVariant = variant.Name;
+            return run;
+        }
+
+        private static List<SharedRepackPaddingVariant> GetSharedRepackPaddingCandidates(
+            List<SharedRepackTuple> groupTuples,
+            int maximumVariantIndex)
+        {
+            var variants = GetSharedRepackPaddingVariants(groupTuples)
+                .Take(Math.Clamp(maximumVariantIndex + 1, 1, 3))
+                .ToList();
+            var unique = new List<SharedRepackPaddingVariant>();
+            foreach (var variant in variants)
+            {
+                if (unique.Any(previous => groupTuples.All(tuple => previous.Tuples[tuple] == variant.Tuples[tuple])))
+                    continue;
+                unique.Add(variant);
+            }
+
+            unique.Reverse();
+            return unique;
+        }
+
+        private static List<SharedRepackPaddingVariant> GetSharedRepackPaddingVariants(
+            List<SharedRepackTuple> groupTuples)
+        {
+            Dictionary<SharedRepackTuple, (int Gutter, int Align)> Values(
+                Func<SharedRepackTuple, int, int, (int Gutter, int Align)> choose)
+            {
+                var values = new Dictionary<SharedRepackTuple, (int Gutter, int Align)>();
+                foreach (var tuple in groupTuples)
+                {
+                    var (downshift, cellDownshift) = GetSharedRepackDownshifts(tuple);
+                    values[tuple] = choose(tuple, downshift, cellDownshift);
+                }
+
+                return values;
+            }
+
+            return
+            [
+                new("baseline", Values((tuple, _, _) => (tuple.Cell, tuple.Align))),
+                new("align 16", Values((tuple, downshift, cellDownshift) =>
+                    (tuple.Cell, Math.Min(tuple.Align, Math.Max(4 << cellDownshift, 16 << downshift))))),
+                new("gutter 8 + align 8", Values((tuple, downshift, cellDownshift) =>
+                    (Math.Min(tuple.Cell, 8 << downshift),
+                     Math.Min(tuple.Align, Math.Max(4 << cellDownshift, 8 << downshift))))),
+            ];
+        }
+
+        private static void ActivateSharedRepackPadding(
+            List<SharedRepackTuple> groupTuples,
+            SharedRepackPaddingVariant variant)
+        {
+            foreach (var tuple in groupTuples)
+            {
+                var (gutter, align) = variant.Tuples[tuple];
+                if (tuple.Gutter != gutter || tuple.Align != align)
+                    ResizeSharedRepackCharts(tuple, gutter, align);
+                tuple.PaddingVariant = variant.Name;
+            }
+        }
+
+        private static SharedRepackGroupRun PackSharedRepackGroupVariant(
+            string nameRigid,
+            string identity,
+            List<SharedRepackTuple> groupTuples,
+            int maximumSide,
+            int firstPageNumber,
+            long minimumGroupSaving)
+        {
             ActivateSharedRepackLayout(groupTuples, false);
             var mergedPages = PackSharedRepackGroupLayout(
                 nameRigid, identity, groupTuples, maximumSide, firstPageNumber, minimumGroupSaving,
-                out split, out excludeTuple, out excludeReason);
-            if (excludeTuple != null || groupTuples.All(tuple => tuple.TightCharts == null && tuple.TightInconsistent == null))
-                return mergedPages;
+                out var mergedSplit, out var mergedExclude, out var mergedReason);
+            if (mergedExclude != null || groupTuples.All(tuple => tuple.TightCharts == null && tuple.TightInconsistent == null))
+                return new(mergedPages, mergedSplit, mergedExclude, mergedReason);
 
-            split.TightTried = true;
-            split.TightMergedCharts = groupTuples.Sum(tuple => tuple.Charts.Count);
+            var mergedChartCount = groupTuples.Sum(tuple => tuple.Charts.Count);
+            mergedSplit.TightTried = true;
+            mergedSplit.TightMergedCharts = mergedChartCount;
             if (groupTuples.Any(tuple => tuple.TightInconsistent != null))
             {
-                split.TightInconsistent = true;
-                return mergedPages;
+                mergedSplit.TightInconsistent = true;
+                return new(mergedPages, mergedSplit, null, null);
             }
 
-            var mergedChartCount = split.TightMergedCharts;
             ActivateSharedRepackLayout(groupTuples, true);
             var tightPages = PackSharedRepackGroupLayout(
                 nameRigid, identity, groupTuples, maximumSide, firstPageNumber, minimumGroupSaving,
@@ -3819,20 +4134,17 @@ namespace Editors.PackOptimizer.Core
                 tightSplit.TightMergedCharts = mergedChartCount;
                 tightSplit.TightPieces = groupTuples.Sum(tuple => tuple.Charts.Count);
                 tightSplit.TightSavedBytes = mergedBytes - tightBytes;
-                split = tightSplit;
-                return tightPages;
+                return new(tightPages, tightSplit, null, null);
             }
 
-            // Tuples without pieces share their chart objects between the two runs, and the tight run
-            // moved them: lay the merged layout out again (deterministic, so identical to the first run)
-            // so every chart holds the position of the pages that are returned.
+            // Re-layout merged charts after the tight run moves shared chart objects.
             ActivateSharedRepackLayout(groupTuples, false);
             var again = PackSharedRepackGroupLayout(
                 nameRigid, identity, groupTuples, maximumSide, firstPageNumber, minimumGroupSaving,
-                out split, out excludeTuple, out excludeReason);
+                out var split, out var excludeTuple, out var excludeReason);
             split.TightTried = true;
             split.TightMergedCharts = mergedChartCount;
-            return again;
+            return new(again, split, excludeTuple, excludeReason);
         }
 
         // One layout's pages. Charts that a part uses together form a cluster and stay on one
@@ -4434,6 +4746,9 @@ namespace Editors.PackOptimizer.Core
             return levels;
         }
 
+        private static bool IsSharedRepackBlockCopiedAtLevel(SharedRepackSlotOutput output, int level)
+            => level >= 0 && level < output.BlockCopiedLevels;
+
         private static long GetSharedRepackLevelOffset(DdsLayout layout, int level)
         {
             long offset = layout.HeaderSize;
@@ -4876,6 +5191,7 @@ namespace Editors.PackOptimizer.Core
 
         // Test hook: no tight pieces are built (the merged-chart layout of an earlier output version).
         private static bool SharedRepackTightPiecesDisabled;
+        private static bool SharedRepackReducedPaddingDisabled;
 
         private static (float U, float V) ComputeSharedRepackUv(
             SharedRepackPage page,
@@ -5005,7 +5321,7 @@ namespace Editors.PackOptimizer.Core
                                     var texture = tuple.Slots[output.Slot];
                                     var source = sources.Get(texture)!;
                                     var target = generated.Get(output.Path)!;
-                                    var exact = output.BlockCopiedLevels > 0;
+                                    var exact = IsSharedRepackBlockCopiedAtLevel(output, 0);
                                     // Top level, then mip 2 and 3 on the first sample only.
                                     var levels = nominalIndex == 0 ? new[] { 0, 2, 3 } : new[] { 0 };
                                     foreach (var level in levels)
@@ -5062,7 +5378,7 @@ namespace Editors.PackOptimizer.Core
                                         else
                                         {
                                             pageLevelMax = Math.Max(pageLevelMax, error);
-                                            if (level < output.BlockCopiedLevels)
+                                            if (IsSharedRepackBlockCopiedAtLevel(output, level))
                                             {
                                                 levelExactViolation |= error != 0;
                                             }
@@ -5198,7 +5514,16 @@ namespace Editors.PackOptimizer.Core
                 SharedRepackBeforeCheckHook?.Invoke(plan);
                 var problems = new List<string>();
                 foreach (var page in plan.Pages)
-                    CheckSharedRepackPage(page, sources, generated, stats, problems);
+                {
+                    var pageProblems = new List<string>();
+                    CheckSharedRepackPage(page, sources, generated, stats, pageProblems);
+                    if (pageProblems.Count == 0)
+                        continue;
+
+                    plan.FailedPaddingGroupKeys.Add(page.GroupKey);
+                    problems.AddRange(pageProblems);
+                }
+
                 if (problems.Count != 0)
                 {
                     pixelFailure = true;
@@ -5679,7 +6004,9 @@ namespace Editors.PackOptimizer.Core
         private static SharedRepackGroupWaste MeasureSharedRepackGroupWaste(
             bool gated,
             long sourceBytes,
-            List<SharedRepackPage> pages)
+            List<SharedRepackPage> pages,
+            SharedRepackSplitInfo split,
+            bool newlyBuilt)
         {
             double used = 0, charts = 0, trimmed = 0, page = 0;
             foreach (var item in pages)
@@ -5712,7 +6039,16 @@ namespace Editors.PackOptimizer.Core
             }
 
             return new SharedRepackGroupWaste(
-                gated, sourceBytes, (long)used, (long)charts, (long)trimmed, (long)page);
+                gated,
+                sourceBytes,
+                (long)used,
+                (long)charts,
+                (long)trimmed,
+                (long)page,
+                Split: split,
+                PaddingVariant: split.PaddingVariant,
+                PaddingSavedBytes: split.PaddingSavedBytes,
+                NewlyBuilt: newlyBuilt);
         }
 
         // Where the bytes of the repacked pages go, and what pages trimmed to their packed charts
@@ -5728,8 +6064,44 @@ namespace Editors.PackOptimizer.Core
                 .Where(outcome => outcome.Context != null)
                 .SelectMany(outcome => outcome.Context!.GroupWaste.Where(waste => waste.Gated))
                 .ToList();
-            if (built.Count == 0 && gated.Count == 0)
+            var groups = result.BuiltSets.SelectMany(set => set.Groups).ToList();
+            var emittedGroups = groups.Where(group => group.Pages != 0).ToList();
+            var untouchedGroups = groups.Where(group => group.Pages == 0).ToList();
+            var loweredGroups = groups.Where(group => group.PaddingRetryFromVariant != null).ToList();
+            if (built.Count == 0 && gated.Count == 0 && result.PaddingPixelRetryAttempts == 0)
                 return;
+
+            sb.AppendLine("Reduced padding (emitted groups only; ties keep the safer option):");
+            foreach (var (variant, name) in new[]
+                     {
+                         ("baseline", "P0 baseline"),
+                         ("align 16", "P1 align 16"),
+                         ("gutter 8 + align 8", "P2 gutter 8 + align 8"),
+                     })
+            {
+                var items = emittedGroups.Where(group => group.PaddingVariant == variant).ToList();
+                sb.AppendLine(
+                    $"  {name}: {items.Count:N0} emitted group(s), {items.Count(group => group.NewlyBuilt):N0} newly built group(s), " +
+                    $"{items.Sum(group => group.PaddingSavedBytes):N0} bytes saved vs P0");
+            }
+
+            sb.AppendLine(
+                $"  Gated/untouched groups in emitted sets: {untouchedGroups.Count:N0} " +
+                $"(P0 {untouchedGroups.Count(group => group.PaddingVariant == "baseline"):N0}, " +
+                $"P1 {untouchedGroups.Count(group => group.PaddingVariant == "align 16"):N0}, " +
+                $"P2 {untouchedGroups.Count(group => group.PaddingVariant == "gutter 8 + align 8"):N0})");
+            sb.AppendLine($"  Pixel-check padding retries: {result.PaddingPixelRetryAttempts:N0} retry pass(es)");
+            sb.AppendLine(
+                $"  Groups lowered by pixel check: {loweredGroups.Count:N0} " +
+                $"({loweredGroups.Count(group => group.Pages != 0):N0} emitted, " +
+                $"{loweredGroups.Count(group => group.Pages == 0):N0} gated/untouched)");
+            foreach (var group in loweredGroups.OrderBy(group => group.Label, StringComparer.Ordinal))
+            {
+                sb.AppendLine(
+                    $"    {GetSharedRepackPaddingCode(group.PaddingRetryFromVariant!)} -> " +
+                    $"{GetSharedRepackPaddingCode(group.PaddingVariant)}: {group.Label}" +
+                    (group.Pages == 0 ? " [gated/untouched]" : string.Empty));
+            }
 
             sb.AppendLine(
                 "Page layout (output bytes at each page's bytes per reference pixel; \"trimmed\" = the same packing " +
@@ -5787,6 +6159,14 @@ namespace Editors.PackOptimizer.Core
                     $"(pieces not smaller); internal inconsistencies (merged charts kept): {tightAll.Count(split => split.TightInconsistent):N0}");
             }
         }
+
+        private static string GetSharedRepackPaddingCode(string variant)
+            => variant switch
+            {
+                "align 16" => "P1",
+                "gutter 8 + align 8" => "P2",
+                _ => "P0",
+            };
 
         // Why sets lost textures while closing. A set dropped by closure has its estimate split over
         // the causes in proportion to the chain bytes each cause removed (what stayed in the set
@@ -6001,7 +6381,9 @@ namespace Editors.PackOptimizer.Core
                 "Generated copies of vanilla materials are written to " + SharedRepackVanillaMaterialDirectory + ".");
             sb.AppendLine(
                 $"Threshold: estimated and actual saving of at least {result.MinimumSavingBytes:N0} bytes. " +
-                $"Charts: grid cells of {SharedRepackMinimumCell}+ source pixels, 8-connected, one cell of padding, " +
+                $"Charts: grid cells of {SharedRepackMinimumCell}+ source pixels, 8-connected; each group compares " +
+                "one-cell gutter/current alignment, one-cell gutter/alignment 16, and gutter 8/alignment 8 " +
+                "(coarsest-slot pixels, clamped for the group's downshift), taking the smallest pages; " +
                 $"merged while padded boxes overlap; a group whose pages get smaller with one rectangle per 8-connected " +
                 $"component (tight pieces, same padding and alignment, translated only) uses those instead. Tuples are packed together only inside a layout group (same " +
                 $"slots, formats, colour spaces and per-slot size ratios, so nothing is resampled); a group is built " +
