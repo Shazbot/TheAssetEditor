@@ -1024,6 +1024,11 @@ namespace Editors.PackOptimizer.Core
             // Source files that mention a rigid path (built once, shared by the shared texture
             // repack and the exact texture compaction).
             public Dictionary<string, HashSet<string>>? RigidReferrerIndex { get; set; }
+            // Shared repack: use of a bound WSModel (cached) and the decoded text of each incomplete root.
+            public Dictionary<string, (int Use, string? Reason)> SharedRepackWsModelUse { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, string?>? IncompleteRootTexts { get; set; }
+            public List<(string Path, string? Text)>? SourceDbTableTexts { get; set; }
             public TextureCompactionResult? TextureCompaction { get; set; }
             public VanillaTextureCoverageResult? VanillaTextureCoverage { get; set; }
             public UnitTextureRepackResult? UnitTextureRepack { get; set; }

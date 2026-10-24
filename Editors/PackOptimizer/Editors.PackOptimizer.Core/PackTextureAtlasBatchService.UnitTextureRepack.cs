@@ -42,6 +42,7 @@ namespace Editors.PackOptimizer.Core
             public int Index { get; set; }
             public TextureDownscaleRootKind? Kind { get; set; }
             public HashSet<string> WsModels { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> DirectRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<VanillaCoverageTexture, UnitRepackTextureUse> Textures { get; } = [];
             public HashSet<string> Rigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             // Rigids with a part that uses a repackable texture (they need new UVs).
@@ -315,12 +316,33 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            if (!SharedRepackDirectRigidsDisabled)
+            {
+                foreach (var (rigid, consumers) in coverage.DirectConsumersByRigid)
+                {
+                    foreach (var root in consumers)
+                    {
+                        if (!rootUnits.TryGetValue(root, out var unit))
+                        {
+                            unit = new UnitRepackUnit(root);
+                            rootUnits[root] = unit;
+                        }
+
+                        unit.DirectRigids.Add(rigid);
+                    }
+                }
+            }
+
             result.UnrootedParts = unrootedParts.Count;
             result.RootsReached = rootUnits.Count;
 
             // 2. Per-unit parts and textures; a unit needs at least one assessed part.
             var candidates = new List<UnitRepackUnit>();
-            foreach (var unit in rootUnits.Values.OrderBy(unit => unit.Root, StringComparer.OrdinalIgnoreCase))
+            // Direct-only roots come after the WSModel-reached ones, so they never shift the unit
+            // indices (and with them the set keys and generated names) of the latter.
+            foreach (var unit in rootUnits.Values
+                         .OrderBy(unit => unit.WsModels.Count == 0 ? 1 : 0)
+                         .ThenBy(unit => unit.Root, StringComparer.OrdinalIgnoreCase))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var hasAssessedPart = false;
@@ -356,6 +378,42 @@ namespace Editors.PackOptimizer.Core
                             }
 
                             use.Parts.Add(key);
+                        }
+                    }
+                }
+
+                if (!SharedRepackDirectRigidsDisabled)
+                {
+                    foreach (var rigid in unit.DirectRigids)
+                    {
+                        foreach (var (key, embedded) in coverage.EmbeddedMaterialsByPart
+                                     .Where(pair => pair.Key.Rigid.Equals(rigid, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            unit.Rigids.Add(rigid);
+                            hasAssessedPart |= coverage.PartData.ContainsKey(key);
+                            if (!embedded.Readable)
+                                continue;
+
+                            foreach (var texture in embedded.Textures)
+                            {
+                                if (!TryGetSharedRepackEmbeddedSlot(texture.TexureType, out var slot) ||
+                                    !coverage.Entries.TryGetValue(Normalize(texture.Path), out var entry))
+                                {
+                                    continue;
+                                }
+
+                                if (!unit.Textures.TryGetValue(entry, out var use))
+                                {
+                                    use = new UnitRepackTextureUse { Slot = slot };
+                                    unit.Textures[entry] = use;
+                                }
+                                else if (string.CompareOrdinal(slot, use.Slot) < 0)
+                                {
+                                    use.Slot = slot;
+                                }
+
+                                use.Parts.Add(key);
+                            }
                         }
                     }
                 }

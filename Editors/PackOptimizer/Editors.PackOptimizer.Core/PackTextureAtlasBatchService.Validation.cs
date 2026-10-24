@@ -1030,6 +1030,7 @@ namespace Editors.PackOptimizer.Core
             }
 
             ValidateDownscaledTextures(state, errors, cancellationToken);
+            ValidateDirectRigidEmbeddedTextureReferences(state, errors, cancellationToken);
             ValidateSharedTextureRepack(state, errors, cancellationToken);
             ValidateTextureCompaction(state, errors, cancellationToken);
             ValidateConsumerIntegrity(state, errors, cancellationToken);

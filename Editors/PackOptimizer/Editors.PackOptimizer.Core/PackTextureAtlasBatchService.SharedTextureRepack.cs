@@ -6,7 +6,10 @@ using System.Text.RegularExpressions;
 using System.Xml;
 using Editors.ImportExport.Dds.Native;
 using Editors.ImportExport.Dds;
+using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;
+using Shared.GameFormats.RigidModel.MaterialHeaders;
+using Shared.GameFormats.RigidModel.Types;
 
 namespace Editors.PackOptimizer.Core
 {
@@ -213,6 +216,13 @@ namespace Editors.PackOptimizer.Core
             "the part has no coverage data";
         private const string SharedRepackReasonBadPart =
             "the part is missing from the rigid or shares its model with another part";
+        private const string SharedRepackReasonEmbeddedUnreadable =
+            "the embedded material is unreadable";
+        private const string SharedRepackReasonEmbeddedTypePrefix = "embedded material type ";
+        private const string SharedRepackReasonEmbeddedUnsupported =
+            "the embedded material's sampled slots are unknown";
+        private const string SharedRepackReasonEmbeddedWsMismatch =
+            "embedded material textures disagree with the WSModel binding for the same part";
 
         private sealed class SharedRepackPart
         {
@@ -228,6 +238,11 @@ namespace Editors.PackOptimizer.Core
             public HashSet<string> CopySlots { get; } = new(StringComparer.OrdinalIgnoreCase);
             // (material, slot) pairs ignored because the material's shader never binds the slot.
             public HashSet<(string Material, string Slot)> UnreadSlots { get; } = [];
+            public bool DirectEmbeddedMaterial { get; set; }
+            public ModelMaterialEnum? EmbeddedMaterialType { get; set; }
+            public Dictionary<TextureType, string> EmbeddedTextures { get; } = [];
+            public HashSet<string> DirectConsumers { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> UnusedWsModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public string? Reason { get; set; }
             public bool GeometryChecked { get; set; }
             public double[] U { get; set; } = [];
@@ -605,6 +620,8 @@ namespace Editors.PackOptimizer.Core
             // The first rewritten rigid in ordinal order, and every rewritten rigid with its parts.
             public string Rigid { get; init; } = string.Empty;
             public List<(string Rigid, int Parts)> Rigids { get; } = [];
+            public List<(string Rigid, int Parts, string[] Consumers, string[] UnusedWsModels)> EmbeddedRigids { get; } = [];
+            public List<(string Rigid, int Parts, string[] WsModels)> UnusedWsModels { get; } = [];
             public string Label { get; init; } = string.Empty;
             public int Units { get; init; }
             public bool? HasCharacter { get; init; }
@@ -662,6 +679,13 @@ namespace Editors.PackOptimizer.Core
             long? Actual = null,
             string? Plan = null,
             SharedRepackMergeContext? Context = null);
+
+        private sealed record SharedRepackDirectRigidOutcome(
+            string Rigid,
+            string[] Consumers,
+            string[] Sets,
+            string Bucket,
+            string Detail);
 
         private sealed class SharedTextureRepackResult
         {
@@ -738,6 +762,14 @@ namespace Editors.PackOptimizer.Core
             public List<SharedRepackBuiltSet> BuiltSets { get; } = [];
             public List<string> ValidationErrors { get; } = [];
             public HashSet<string> RepackedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> EmbeddedRewrittenRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public List<(string Rigid, int Lod, int Part, TextureType Type)> EmbeddedRewrittenPaths { get; } = [];
+            public List<(string Label, string Detail)> DirectEmbeddedDrops { get; } = [];
+            public List<SharedRepackDirectRigidOutcome> DirectRigidOutcomes { get; } = [];
+            // Considered direct rigids the source pack does not own (or that override vanilla), by reason.
+            public Dictionary<string, int> DirectRigidsNotOwned { get; } = new(StringComparer.Ordinal);
+            public Dictionary<string, Dictionary<string, int>> DirectEmbeddedDropReasonsByRigid { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             public List<string> GeneratedTextures { get; } = [];
             public List<string> GeneratedMaterials { get; } = [];
             public long Samples { get; set; }
@@ -756,6 +788,8 @@ namespace Editors.PackOptimizer.Core
             private readonly int _atlasedUsersIgnored;
             private readonly Dictionary<string, int> _partDropReasons;
             private readonly List<(string Label, string Note)> _closureNotes;
+            private readonly List<(string Label, string Detail)> _directEmbeddedDrops;
+            private readonly Dictionary<string, Dictionary<string, int>> _directEmbeddedDropReasonsByRigid;
             private readonly int _sizingErrors;
             private readonly List<(string Label, string Detail)> _sizingLog;
             private readonly HashSet<string> _emissiveAspectLostGroupKeys;
@@ -768,6 +802,12 @@ namespace Editors.PackOptimizer.Core
                 _atlasedUsersIgnored = result.AtlasedUsersIgnored;
                 _partDropReasons = new Dictionary<string, int>(result.PartDropReasons, StringComparer.Ordinal);
                 _closureNotes = result.ClosureNotes.ToList();
+                _directEmbeddedDrops = result.DirectEmbeddedDrops.ToList();
+                _directEmbeddedDropReasonsByRigid = result.DirectEmbeddedDropReasonsByRigid
+                    .ToDictionary(
+                        pair => pair.Key,
+                        pair => new Dictionary<string, int>(pair.Value, StringComparer.Ordinal),
+                        StringComparer.OrdinalIgnoreCase);
                 _sizingErrors = result.SizingErrors;
                 _sizingLog = result.SizingLog.ToList();
                 _emissiveAspectLostGroupKeys = result.EmissiveAspectLostGroupKeys.ToHashSet(StringComparer.Ordinal);
@@ -786,6 +826,11 @@ namespace Editors.PackOptimizer.Core
                     result.PartDropReasons[reason] = count;
                 result.ClosureNotes.Clear();
                 result.ClosureNotes.AddRange(_closureNotes);
+                result.DirectEmbeddedDrops.Clear();
+                result.DirectEmbeddedDrops.AddRange(_directEmbeddedDrops);
+                result.DirectEmbeddedDropReasonsByRigid.Clear();
+                foreach (var (rigid, reasons) in _directEmbeddedDropReasonsByRigid)
+                    result.DirectEmbeddedDropReasonsByRigid[rigid] = new(reasons, StringComparer.Ordinal);
                 result.SizingErrors = _sizingErrors;
                 result.SizingLog.Clear();
                 result.SizingLog.AddRange(_sizingLog);
@@ -1321,10 +1366,40 @@ namespace Editors.PackOptimizer.Core
             // Shared lookups, built once.
             var partBindings = new Dictionary<(string Rigid, int Lod, int Part), List<SourceWsModelBinding>>();
             var wsByRigid = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            var unusedWsByRigid = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            var unsafeWsByDirectRigid = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
             foreach (var binding in coverage.Bindings.Concat(generatedBindings))
             {
                 if (binding.Kind == SourceWsModelBindingKind.UnreadableWsModel || binding.Geometry.Length == 0)
                     continue;
+
+                if (coverage.DirectConsumersByRigid.ContainsKey(binding.Geometry))
+                {
+                    var (wsUse, _) = ClassifySharedRepackWsModel(state, binding.WsModelPath, cancellationToken);
+                    if (wsUse == SharedRepackWsUnsafe)
+                    {
+                        if (!unsafeWsByDirectRigid.TryGetValue(binding.Geometry, out var unsafeModels))
+                        {
+                            unsafeModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            unsafeWsByDirectRigid[binding.Geometry] = unsafeModels;
+                        }
+
+                        unsafeModels.Add(binding.WsModelPath);
+                        continue;
+                    }
+
+                    if (wsUse == SharedRepackWsUnused)
+                    {
+                        if (!unusedWsByRigid.TryGetValue(binding.Geometry, out var unusedModels))
+                        {
+                            unusedModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            unusedWsByRigid[binding.Geometry] = unusedModels;
+                        }
+
+                        unusedModels.Add(binding.WsModelPath);
+                        continue;
+                    }
+                }
 
                 if (!wsByRigid.TryGetValue(binding.Geometry, out var wsSet))
                 {
@@ -1344,6 +1419,12 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 list.Add(binding);
+            }
+
+            foreach (var key in coverage.EmbeddedMaterialsByPart.Keys)
+            {
+                if (!partBindings.ContainsKey(key))
+                    partBindings[key] = [];
             }
 
             var partsByRigid = partBindings.Keys
@@ -1385,16 +1466,20 @@ namespace Editors.PackOptimizer.Core
                 var reason = generated
                     ? GetSharedRepackGeneratedRigidReason(
                         state, rigidPath, wsByRigid.GetValueOrDefault(rigidPath) ?? [], rigidReferrers)
-                    : GetRigidNotOnlyThroughOwnedWsModelsReason(
+                    : GetRigidNotOnlyThroughOwnedWsModelsReasonWithDirectGameplayConsumers(
                         state,
                         rigidPath,
                         wsByRigid.GetValueOrDefault(rigidPath) ?? [],
                         rigidReferrers,
                         () => state.AtlasChangedRigids.Contains(rigidPath)
                             ? SharedRepackReasonAtlasChangedRigid
+                            : unsafeWsByDirectRigid.TryGetValue(rigidPath, out var unsafeModels) && unsafeModels.Count != 0
+                                ? GetSharedRepackUnsafeWsModelReason(state, unsafeModels)
                             : state.ModifiedRigids.Contains(rigidPath) && !result.RepackedRigids.Contains(rigidPath)
                                 ? "the rigid was already modified by another stage"
-                                : null);
+                                : null,
+                        allowDirectGameplayConsumers: !SharedRepackDirectRigidsDisabled,
+                        ignoredWsModelReferrers: unusedWsByRigid.GetValueOrDefault(rigidPath));
 
                 if (reason == null)
                 {
@@ -1432,7 +1517,9 @@ namespace Editors.PackOptimizer.Core
                     coverage,
                     rigid,
                     new MeshKey(rigidPath, lod, part),
-                    partBindings.GetValueOrDefault(key) ?? []);
+                    partBindings.GetValueOrDefault(key) ?? [],
+                    GetDirectGameplayRigidConsumers(state, rigidPath),
+                    unusedWsByRigid.GetValueOrDefault(rigidPath) ?? []);
                 // A generated part whose material the coverage analysis does not know still
                 // counts as a user of that material's textures (it is dropped below).
                 if (cached.Reason == SharedRepackReasonMaterialUnreadable &&
@@ -1716,6 +1803,12 @@ namespace Editors.PackOptimizer.Core
 
                 var dropsBefore = new Dictionary<string, int>(result.PartDropReasons, StringComparer.Ordinal);
                 var notesBefore = result.ClosureNotes.Count;
+                var directDropsBefore = result.DirectEmbeddedDrops.Count;
+                var directReasonsBefore = result.DirectEmbeddedDropReasonsByRigid
+                    .ToDictionary(
+                        pair => pair.Key,
+                        pair => new Dictionary<string, int>(pair.Value, StringComparer.Ordinal),
+                        StringComparer.OrdinalIgnoreCase);
                 var sizingBefore = (result.SizingErrors, result.SizingLog.Count);
                 var attempt = Attempt(true);
                 string? fallbackNote = null;
@@ -1742,6 +1835,12 @@ namespace Editors.PackOptimizer.Core
                         result.PartDropReasons.Clear();
                         foreach (var (reason, count) in dropsBefore)
                             result.PartDropReasons[reason] = count;
+                        result.DirectEmbeddedDrops.RemoveRange(
+                            directDropsBefore,
+                            result.DirectEmbeddedDrops.Count - directDropsBefore);
+                        result.DirectEmbeddedDropReasonsByRigid.Clear();
+                        foreach (var (rigid, reasons) in directReasonsBefore)
+                            result.DirectEmbeddedDropReasonsByRigid[rigid] = new(reasons, StringComparer.Ordinal);
                         // Only the cap notes of the failed attempt are kept; they explain parts that
                         // the attempt could not take in.
                         var attemptNotes = result.ClosureNotes.Skip(notesBefore).ToList();
@@ -1809,6 +1908,14 @@ namespace Editors.PackOptimizer.Core
                     attempt.Context));
             }
 
+            BuildSharedRepackDirectRigidOutcomes(
+                state,
+                coverage,
+                decisions,
+                setByTexture,
+                result,
+                path => GetRigid(path).Reason);
+
             // Geometry invariants of every rewritten rigid, against the snapshots.
             foreach (var (path, snapshot) in snapshots.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
             {
@@ -1818,6 +1925,10 @@ namespace Editors.PackOptimizer.Core
                     rigid,
                     snapshot,
                     movedParts.GetValueOrDefault(path) ?? [],
+                    result.EmbeddedRewrittenPaths
+                        .Where(item => item.Rigid.Equals(path, StringComparison.OrdinalIgnoreCase))
+                        .Select(item => (item.Lod, item.Part))
+                        .ToHashSet(),
                     result.ValidationErrors);
             }
         }
@@ -2033,12 +2144,27 @@ namespace Editors.PackOptimizer.Core
             HashSet<string> boundWsModels,
             Dictionary<string, HashSet<string>> referrers,
             Func<string?>? beforeWsModelChecks = null)
+            => GetRigidNotOnlyThroughOwnedWsModelsReasonWithDirectGameplayConsumers(
+                state, rigidPath, boundWsModels, referrers, beforeWsModelChecks,
+                allowDirectGameplayConsumers: false);
+
+        private static string? GetRigidNotOnlyThroughOwnedWsModelsReasonWithDirectGameplayConsumers(
+            BatchState state,
+            string rigidPath,
+            HashSet<string> boundWsModels,
+            Dictionary<string, HashSet<string>> referrers,
+            Func<string?>? beforeWsModelChecks,
+            bool allowDirectGameplayConsumers,
+            HashSet<string>? ignoredWsModelReferrers = null)
         {
             if (!state.Source.ContainsFile(rigidPath))
                 return "the rigid is not owned by the source pack";
             if (OverridesVanillaPath(state, rigidPath))
                 return "the rigid overrides a vanilla path";
-            if (HasDirectGameplayRigidConsumer(state, rigidPath))
+            var directConsumers = allowDirectGameplayConsumers
+                ? GetDirectGameplayRigidConsumers(state, rigidPath)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (directConsumers.Count == 0 && HasDirectGameplayRigidConsumer(state, rigidPath))
                 return "the rigid is referenced directly (without a WSModel) by a VMD or other gameplay file";
             if (!IsGameplayConsumerDiscoverySafeForAsset(state, rigidPath))
                 return "gameplay consumer discovery for the rigid is incomplete";
@@ -2046,9 +2172,11 @@ namespace Editors.PackOptimizer.Core
             if (extra != null)
                 return extra;
 
-            var immutable = GetImmutableGameplayWsModelConsumersForRigid(state, rigidPath);
+            var immutable = GetImmutableGameplayWsModelConsumersForRigid(
+                state, rigidPath, "GetRigidNotOnlyThroughOwnedWsModelsReason");
             var others = (referrers.GetValueOrDefault(rigidPath) ?? [])
-                .Where(path => !boundWsModels.Contains(path))
+                .Where(path => !boundWsModels.Contains(path) && !directConsumers.Contains(path) &&
+                               ignoredWsModelReferrers?.Contains(path) != true)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList();
             if (immutable.Count != 0)
@@ -2067,6 +2195,143 @@ namespace Editors.PackOptimizer.Core
             return null;
         }
 
+        private static HashSet<string> GetDirectGameplayRigidConsumers(BatchState state, string rigidPath)
+        {
+            rigidPath = Normalize(rigidPath);
+            var consumers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (state.GameplayMeshDependencyIndex?.DirectConsumersByRigid.TryGetValue(
+                    rigidPath, out var indexed) == true)
+            {
+                consumers.UnionWith(indexed);
+            }
+
+            if (state.DirectRigidMeshMergeConsumersByRigid.TryGetValue(rigidPath, out var fallback))
+                consumers.UnionWith(fallback);
+
+            return consumers;
+        }
+
+        private static void BuildSharedRepackDirectRigidOutcomes(
+            BatchState state,
+            VanillaTextureCoverageResult coverage,
+            IReadOnlyList<UnitRepackSetDecision> decisions,
+            IReadOnlyDictionary<string, UnitRepackSignatureSet> setByTexture,
+            SharedTextureRepackResult result,
+            Func<string, string?> rigidReason)
+        {
+            var decisionBySet = decisions
+                .GroupBy(decision => decision.Set)
+                .ToDictionary(group => group.Key, group => group.First());
+            var outcomeByLabel = result.Outcomes
+                .GroupBy(outcome => outcome.Label, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            var directPartCount = coverage.EmbeddedMaterialsByPart.Keys
+                .GroupBy(key => key.Rigid, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (rigid, consumers) in coverage.DirectConsumersByRigid
+                         .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var setLabels = new SortedSet<string>(StringComparer.Ordinal);
+                foreach (var (key, material) in coverage.EmbeddedMaterialsByPart
+                             .Where(pair => pair.Key.Rigid.Equals(rigid, StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (!material.Readable)
+                        continue;
+
+                    foreach (var texture in material.Textures)
+                    {
+                        if (!TryGetSharedRepackEmbeddedSlot(texture.TexureType, out _) ||
+                            !setByTexture.TryGetValue(Normalize(texture.Path), out var set) ||
+                            !decisionBySet.TryGetValue(set, out var decision))
+                        {
+                            continue;
+                        }
+
+                        setLabels.Add(DescribeSharedRepackSet(decision));
+                    }
+                }
+
+                if (setLabels.Count == 0)
+                    continue;
+
+                // Rigids the pack does not own are only counted, by reason.
+                var notOwned = !state.Source.ContainsFile(rigid)
+                    ? "not owned by the source pack"
+                    : OverridesVanillaPath(state, rigid)
+                        ? "override a vanilla path"
+                        : null;
+                if (notOwned != null)
+                {
+                    result.DirectRigidsNotOwned[notOwned] = result.DirectRigidsNotOwned.GetValueOrDefault(notOwned) + 1;
+                    continue;
+                }
+
+                var ineligible = result.EmbeddedRewrittenRigids.Contains(rigid) ? null : rigidReason(rigid);
+                result.DirectRigidOutcomes.Add(new SharedRepackDirectRigidOutcome(
+                    rigid,
+                    consumers.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray(),
+                    setLabels.ToArray(),
+                    result.EmbeddedRewrittenRigids.Contains(rigid)
+                        ? result.DirectEmbeddedDropReasonsByRigid.ContainsKey(rigid)
+                            ? "partially rewritten"
+                            : "rewritten"
+                        : ineligible != null
+                            ? "rigid not eligible"
+                            : result.DirectEmbeddedDropReasonsByRigid.ContainsKey(rigid)
+                                ? "embedded parts dropped"
+                                : "not rewritten",
+                    ineligible != null
+                        ? ineligible
+                        : BuildDirectRigidOutcomeDetail(
+                            rigid,
+                            setLabels,
+                            outcomeByLabel,
+                            result,
+                            directPartCount.GetValueOrDefault(rigid))));
+            }
+        }
+
+        private static string BuildDirectRigidOutcomeDetail(
+            string rigid,
+            IEnumerable<string> setLabels,
+            IReadOnlyDictionary<string, SharedRepackSetOutcome> outcomeByLabel,
+            SharedTextureRepackResult result,
+            int partCount)
+        {
+            if (result.EmbeddedRewrittenRigids.Contains(rigid))
+            {
+                var rewrittenParts = result.BuiltSets
+                    .SelectMany(set => set.EmbeddedRigids)
+                    .Where(item => item.Rigid.Equals(rigid, StringComparison.OrdinalIgnoreCase))
+                    .Sum(item => item.Parts);
+                var dropped = result.DirectEmbeddedDropReasonsByRigid.GetValueOrDefault(rigid);
+                var dropText = dropped == null || dropped.Count == 0
+                    ? string.Empty
+                    : $"; dropped {string.Join(", ", dropped.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                        .Select(pair => $"{pair.Value:N0} {pair.Key}"))}";
+                return $"rewritten {rewrittenParts:N0} of {partCount:N0} embedded-material part(s){dropText}";
+            }
+
+            if (result.DirectEmbeddedDropReasonsByRigid.TryGetValue(rigid, out var reasons))
+            {
+                return "parts dropped: " + string.Join(
+                    ", ",
+                    reasons.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                        .Select(pair => $"{pair.Value:N0} {pair.Key}"));
+            }
+
+            var outcomes = setLabels
+                .Select(label => outcomeByLabel.TryGetValue(label, out var outcome)
+                    ? $"{label} -> {outcome.Bucket}{(outcome.Reason == null ? string.Empty : $" ({outcome.Reason})")}"
+                    : $"{label} -> no outcome")
+                .ToArray();
+            if (result.RepackedRigids.Contains(rigid))
+                return "UVs rewritten; no embedded texture path needed repointing";
+
+            return outcomes.Length == 0 ? "no set outcome recorded" : string.Join("; ", outcomes);
+        }
+
         private static string DescribeSharedRepackSet(UnitRepackSetDecision decision)
             => $"{decision.ExampleTexture} ({decision.Textures:N0} texture(s), {decision.SignatureSize:N0} unit(s))";
 
@@ -2074,7 +2339,7 @@ namespace Editors.PackOptimizer.Core
             BatchState state,
             CancellationToken cancellationToken)
         {
-            var pattern = new Regex(@"[^\s<>""'=,;|()]+\.rigid_model_v2", RegexOptions.IgnoreCase);
+            var pattern = new Regex(@"[^\s<>""'=,;|()]+\.(?:rigid_model_v2|wsmodel)", RegexOptions.IgnoreCase);
             var index = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
             foreach (var (rawPath, file) in state.Source.GetAllFiles())
             {
@@ -2118,6 +2383,159 @@ namespace Editors.PackOptimizer.Core
         private static bool IsSharedRepackIgnoredTexture(string slot, string texture)
             => SharedRepackPassThroughSlots.Contains(slot, StringComparer.OrdinalIgnoreCase) ||
                IsIgnorableUnresolvedAtlasTexture(slot, texture);
+
+        private static bool TryGetSharedRepackEmbeddedSlot(TextureType textureType, out string slot)
+        {
+            slot = textureType switch
+            {
+                TextureType.BaseColour => "t_xml_base_colour",
+                TextureType.MaterialMap => "t_xml_material_map",
+                TextureType.Normal => "t_xml_normal",
+                TextureType.Mask => "t_xml_mask",
+                _ => string.Empty,
+            };
+            return slot.Length != 0;
+        }
+
+        private const int SharedRepackWsUsed = 0;
+        private const int SharedRepackWsUnused = 1;
+        private const int SharedRepackWsUnsafe = 2;
+
+        private static string GetSharedRepackUnsafeWsModelReason(BatchState state, IEnumerable<string> wsModels)
+        {
+            var ws = wsModels.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).First();
+            var detail = state.SharedRepackWsModelUse.TryGetValue(Normalize(ws), out var use) ? use.Reason : null;
+            return $"gameplay consumer discovery for bound WSModel {ws} is incomplete" +
+                   (detail == null ? string.Empty : $" ({detail})");
+        }
+
+        // Used: a gameplay root reaches the WSModel. Unused: discovery is complete, or it is partial
+        // but no root, incomplete root or source file can name it. Unsafe: anything else.
+        private static (int Use, string? Reason) ClassifySharedRepackWsModel(
+            BatchState state,
+            string wsModelPath,
+            CancellationToken cancellationToken)
+        {
+            var path = Normalize(wsModelPath);
+            if (state.SharedRepackWsModelUse.TryGetValue(path, out var cached))
+                return cached;
+
+            var result = ClassifySharedRepackWsModelCore(state, path, cancellationToken);
+            state.SharedRepackWsModelUse[path] = result;
+            return result;
+        }
+
+        private static (int Use, string? Reason) ClassifySharedRepackWsModelCore(
+            BatchState state,
+            string path,
+            CancellationToken cancellationToken)
+        {
+            var index = state.GameplayMeshDependencyIndex;
+            var hasRoots = index != null &&
+                           (index.GameplayRoots.Contains(path) || index.GetRootsForAsset(path).Any());
+            if (IsGameplayConsumerDiscoverySafeForAsset(state, path))
+                return (hasRoots ? SharedRepackWsUsed : SharedRepackWsUnused, null);
+
+            if (index == null || state.UnitCategoryResolution == null ||
+                !state.UnitCategoryResolution.IsGameplayResolutionHealthy)
+            {
+                return (SharedRepackWsUnsafe, null);
+            }
+
+            if (hasRoots || index.GetIncompleteRootsForAsset(path).Count != 0)
+            {
+                var roots = index.GetIncompleteRootsForAsset(path);
+                return (SharedRepackWsUnsafe, roots.Count == 0
+                    ? null
+                    : "reached from incomplete root " + string.Join(", ", roots.Take(3)));
+            }
+
+            // Partial discovery: an incomplete root might still name the WSModel in its bytes.
+            var fileName = Path.GetFileName(path);
+            foreach (var root in index.IncompleteRoots.OrderBy(item => item, StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var text = GetSharedRepackIncompleteRootText(state, root);
+                if (text == null)
+                    return (SharedRepackWsUnsafe, $"incomplete root {root} cannot be read");
+                if (text.Contains(fileName, StringComparison.OrdinalIgnoreCase))
+                    return (SharedRepackWsUnsafe, $"incomplete root {root} mentions it");
+            }
+
+            var referrers = (state.RigidReferrerIndex ??= IndexSharedRepackRigidReferrers(state, cancellationToken))
+                .GetValueOrDefault(path);
+            var other = referrers?.Where(item => !item.Equals(path, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(item => item, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
+            if (other != null)
+                return (SharedRepackWsUnsafe, $"source file {other} mentions it");
+
+            // Binary DB tables are not text files: search their raw bytes.
+            state.SourceDbTableTexts ??= ReadSharedRepackSourceDbTables(state, cancellationToken);
+            foreach (var (tablePath, text) in state.SourceDbTableTexts)
+            {
+                if (text == null)
+                    return (SharedRepackWsUnsafe, $"DB table {tablePath} cannot be read");
+                if (text.Contains(fileName, StringComparison.OrdinalIgnoreCase))
+                    return (SharedRepackWsUnsafe, $"DB table {tablePath} mentions it");
+            }
+
+            return (SharedRepackWsUnused, null);
+        }
+
+        // Every source-pack DB table's raw bytes as Latin-1 and UTF-16 (built only when needed).
+        private static List<(string Path, string? Text)> ReadSharedRepackSourceDbTables(
+            BatchState state,
+            CancellationToken cancellationToken)
+        {
+            var tables = new List<(string Path, string? Text)>();
+            foreach (var (rawPath, file) in state.Source.GetAllFiles())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var path = Normalize(rawPath);
+                if (!path.StartsWith("db\\", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string? text = null;
+                try
+                {
+                    var data = file.DataSource.ReadData();
+                    text = Encoding.Latin1.GetString(data) + "\n" + Encoding.Unicode.GetString(data);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                }
+
+                tables.Add((path, text));
+            }
+
+            return tables;
+        }
+
+        // Raw bytes read as Latin-1 and UTF-16, once per root.
+        private static string? GetSharedRepackIncompleteRootText(BatchState state, string root)
+        {
+            var cache = state.IncompleteRootTexts ??= new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            if (cache.TryGetValue(root, out var cached))
+                return cached;
+
+            string? text = null;
+            try
+            {
+                var data = ResolveGameplayTraversalContainer(
+                        state.Source,
+                        GetGameplayTraversalContainers(state),
+                        root,
+                        state.ResolutionProviders)?.FindFile(root)?.DataSource.ReadData();
+                if (data != null)
+                    text = Encoding.Latin1.GetString(data) + "\n" + Encoding.Unicode.GetString(data);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+            }
+
+            cache[root] = text;
+            return text;
+        }
 
         // The same, plus a t_xml_ slot the material's shader never binds (see IsSlotUnreadByShader).
         private static bool IsSharedRepackIgnoredTexture(VanillaCoverageMaterial info, string slot, string texture)
@@ -2315,10 +2733,13 @@ namespace Editors.PackOptimizer.Core
             VanillaTextureCoverageResult coverage,
             RmvFile rigid,
             MeshKey key,
-            List<SourceWsModelBinding> bindings)
+            List<SourceWsModelBinding> bindings,
+            HashSet<string> directConsumers,
+            HashSet<string> unusedWsModels)
         {
             var part = new SharedRepackPart { Key = key };
             part.Bindings.AddRange(bindings);
+            part.UnusedWsModels.UnionWith(unusedWsModels);
             foreach (var binding in bindings)
             {
                 var material = Normalize(binding.Material);
@@ -2445,6 +2866,92 @@ namespace Editors.PackOptimizer.Core
                 .Count(model => ReferenceEquals(model, part.Model));
             if (shared != 1)
                 part.Reason ??= SharedRepackReasonBadPart;
+
+            if (directConsumers.Count != 0)
+            {
+                part.DirectEmbeddedMaterial = true;
+                part.DirectConsumers.UnionWith(directConsumers);
+                var embedded = part.Model.Material;
+                if (embedded == null)
+                {
+                    part.Reason ??= SharedRepackReasonEmbeddedUnreadable;
+                }
+                else
+                {
+                    part.EmbeddedMaterialType = embedded.MaterialId;
+                    if (embedded.MaterialId != ModelMaterialEnum.weighted)
+                    {
+                        part.Reason ??= $"{SharedRepackReasonEmbeddedTypePrefix}{embedded.MaterialId} is not verified (only weighted is)";
+                    }
+
+                    List<RmvTexture> textures;
+                    try
+                    {
+                        textures = embedded.GetAllTextures();
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        textures = [];
+                        part.Reason ??= SharedRepackReasonEmbeddedUnreadable;
+                    }
+
+                    if (textures.GroupBy(texture => texture.TexureType).Any(group => group.Count() > 1))
+                        part.Reason ??= SharedRepackReasonEmbeddedUnsupported;
+
+                    var wsSlots = new SortedDictionary<string, string>(part.Slots, StringComparer.OrdinalIgnoreCase);
+                    var embeddedSlots = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var texture in textures)
+                    {
+                        var texturePath = Normalize(texture.Path);
+                        if (texturePath.Length == 0)
+                            continue;
+
+                        part.EmbeddedTextures[texture.TexureType] = texturePath;
+                        if (TryGetSharedRepackEmbeddedSlot(texture.TexureType, out var slot))
+                        {
+                            if (IsSharedRepackIgnoredTexture(slot, texturePath))
+                                continue;
+
+                            part.Textures.Add(texturePath);
+                            if (embeddedSlots.TryGetValue(slot, out var old) &&
+                                !old.Equals(texturePath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                part.Reason ??= SharedRepackReasonEmbeddedUnsupported;
+                            }
+                            else
+                            {
+                                embeddedSlots[slot] = texturePath;
+                            }
+                        }
+                        else if (embedded.MaterialId == ModelMaterialEnum.weighted &&
+                                 texture.TexureType is TextureType.Diffuse or TextureType.Specular or TextureType.Gloss)
+                        {
+                            // These legacy weighted entries are never sampled by the supported shaders.
+                        }
+                        else
+                        {
+                            part.Textures.Add(texturePath);
+                            part.Reason ??= SharedRepackReasonEmbeddedUnsupported;
+                        }
+                    }
+
+                    if (bindings.Count != 0)
+                    {
+                        var slotsMatch = wsSlots.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase)
+                                .SetEquals(embeddedSlots.Keys) &&
+                            wsSlots.All(pair => embeddedSlots.TryGetValue(pair.Key, out var value) &&
+                                                value.Equals(pair.Value, StringComparison.OrdinalIgnoreCase));
+                        if (!slotsMatch)
+                            part.Reason ??= SharedRepackReasonEmbeddedWsMismatch;
+                    }
+                    else
+                    {
+                        foreach (var (slot, texturePath) in embeddedSlots)
+                            part.Slots[slot] = texturePath;
+                    }
+                }
+            }
+
             if (!coverage.PartData.ContainsKey((key.GeometryPath, key.LodIndex, key.PartIndex)))
                 part.Reason ??= SharedRepackReasonNoCoverage;
             return part;
@@ -2899,6 +3406,33 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 result.PartDropReasons[reason] = result.PartDropReasons.GetValueOrDefault(reason) + 1;
+                if (part.DirectEmbeddedMaterial)
+                {
+                    if (!result.DirectEmbeddedDropReasonsByRigid.TryGetValue(
+                            part.Key.GeometryPath,
+                            out var rigidReasons))
+                    {
+                        rigidReasons = new Dictionary<string, int>(StringComparer.Ordinal);
+                        result.DirectEmbeddedDropReasonsByRigid[part.Key.GeometryPath] = rigidReasons;
+                    }
+
+                    rigidReasons[reason] = rigidReasons.GetValueOrDefault(reason) + 1;
+                    var loaders = string.Join(
+                        ", ",
+                        part.DirectConsumers.OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
+                    var slots = part.EmbeddedTextures.Count == 0
+                        ? "no readable embedded slots"
+                        : string.Join(", ", part.EmbeddedTextures
+                            .OrderBy(pair => pair.Key)
+                            .Select(pair => $"{pair.Key}={pair.Value}"));
+                    var detail =
+                        $"direct rigid {part.Key.GeometryPath} lod {part.Key.LodIndex} part {part.Key.PartIndex} " +
+                        $"[loaded directly by {loaders}] embedded material " +
+                        $"{part.EmbeddedMaterialType?.ToString() ?? "unreadable"}; slots {slots}; dropped ({reason})";
+                    result.DirectEmbeddedDrops.Add((label, detail));
+                    result.ClosureNotes.Add((label, detail));
+                }
+
                 if (reason == SharedRepackReasonMixed || reason == SharedRepackReasonBlockedTexture)
                 {
                     // Uniform colours do not block a part, so they are not what pulled it out.
@@ -3089,8 +3623,7 @@ namespace Editors.PackOptimizer.Core
                         var direct = state.GameplayMeshDependencyIndex?.DirectConsumersByRigid
                             .GetValueOrDefault(Normalize(item.Path));
                         var directText = direct is { Count: > 0 }
-                            ? $" [loaded directly by {string.Join(", ", direct.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).Take(3))}" +
-                              (direct.Count > 3 ? $" and {direct.Count - 3:N0} more" : string.Empty) + "]"
+                            ? $" [loaded directly by {string.Join(", ", direct.OrderBy(path => path, StringComparer.OrdinalIgnoreCase))}]"
                             : string.Empty;
                         result.ClosureNotes.Add((
                             label,
@@ -5302,6 +5835,7 @@ namespace Editors.PackOptimizer.Core
                 System.Numerics.Vector2[] Uv,
                 System.Numerics.Vector2[] Uv1,
                 ushort[] Indices)>> Lods { get; } = [];
+            public List<List<(TextureType Type, string Path)[]>> MaterialTextures { get; } = [];
         }
 
         private static SharedRepackRigidSnapshot SnapshotSharedRepackRigid(RmvFile rigid)
@@ -5325,6 +5859,10 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 snapshot.Lods.Add(parts);
+                snapshot.MaterialTextures.Add(lod.Select(model =>
+                    (model.Material?.GetAllTextures() ?? [])
+                    .Select(texture => (texture.TexureType, Normalize(texture.Path)))
+                    .ToArray()).ToList());
             }
 
             return snapshot;
@@ -5337,6 +5875,7 @@ namespace Editors.PackOptimizer.Core
             RmvFile rigid,
             SharedRepackRigidSnapshot snapshot,
             HashSet<(int Lod, int Part)> moved,
+            HashSet<(int Lod, int Part)> directEmbeddedMaterialParts,
             List<string> errors)
         {
             if (rigid.ModelList.Length != snapshot.Lods.Count)
@@ -5357,6 +5896,10 @@ namespace Editors.PackOptimizer.Core
                 {
                     var model = rigid.ModelList[lod][part];
                     var before = snapshot.Lods[lod][part];
+                    var beforeTextures = snapshot.MaterialTextures[lod][part];
+                    var afterTextures = (model.Material?.GetAllTextures() ?? [])
+                        .Select(texture => (texture.TexureType, Normalize(texture.Path)))
+                        .ToArray();
                     var vertices = model.Mesh?.VertexList ?? [];
                     var indices = model.Mesh?.IndexList ?? [];
                     var where = $"{rigidPath} lod {lod} part {part}";
@@ -5370,6 +5913,15 @@ namespace Editors.PackOptimizer.Core
                         errors.Add($"Repacked {where}: index list changed");
 
                     var isMoved = moved.Contains((lod, part));
+                    var embeddedPathsMayChange = directEmbeddedMaterialParts.Contains((lod, part));
+                    if (afterTextures.Length != beforeTextures.Length ||
+                        !afterTextures.Select(item => item.TexureType).SequenceEqual(beforeTextures.Select(item => item.Type)) ||
+                        (!embeddedPathsMayChange && !afterTextures.Select(item => item.Item2)
+                            .SequenceEqual(beforeTextures.Select(item => item.Path), StringComparer.OrdinalIgnoreCase)))
+                    {
+                        errors.Add($"Repacked {where}: embedded material texture paths changed unexpectedly");
+                    }
+
                     var referenced = new bool[vertices.Length];
                     foreach (var index in indices)
                     {
@@ -5424,6 +5976,7 @@ namespace Editors.PackOptimizer.Core
         // Test hook: no tight pieces are built (the merged-chart layout of an earlier output version).
         private static bool SharedRepackTightPiecesDisabled;
         private static bool SharedRepackReducedPaddingDisabled;
+        private static bool SharedRepackDirectRigidsDisabled;
 
         private static (float U, float V) ComputeSharedRepackUv(
             SharedRepackPage page,
@@ -5713,7 +6266,10 @@ namespace Editors.PackOptimizer.Core
                 ResolveGameplayTraversalContainer(state.Source, containers, path, state.ResolutionProviders)?.FindFile(path)?.DataSource.ReadData());
             var generated = new SharedRepackSourceCache(_ => null);
             var stats = new SharedRepackPixelStats();
-            var rewrites = new List<(SharedRepackPart Part, System.Numerics.Vector2[] Uv)>();
+            var rewrites = new List<(
+                SharedRepackPart Part,
+                System.Numerics.Vector2[] Uv,
+                Dictionary<TextureType, string> EmbeddedPaths)>();
             var materialFiles = new List<(string Path, byte[] Data)>();
             var materialSources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -5829,7 +6385,52 @@ namespace Editors.PackOptimizer.Core
                                 uv[vertex] = new System.Numerics.Vector2(u, v);
                             }
 
-                            rewrites.Add((part, uv));
+                            var embeddedPaths = new Dictionary<TextureType, string>();
+                            if (part.DirectEmbeddedMaterial)
+                            {
+                                foreach (var (type, sourcePath) in part.EmbeddedTextures)
+                                {
+                                    if (TryGetSharedRepackEmbeddedSlot(type, out var slot) &&
+                                        part.Slots.TryGetValue(slot, out var partTexture) &&
+                                        partTexture.Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        var output = page.Outputs.FirstOrDefault(candidate =>
+                                            !candidate.IsCopy &&
+                                            candidate.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase) &&
+                                            candidate.Sources.Any(source => Normalize(source)
+                                                .Equals(Normalize(sourcePath), StringComparison.OrdinalIgnoreCase)));
+                                        if (output == null)
+                                        {
+                                            failure = $"no generated {slot} page containing {sourcePath} was planned for embedded material {DescribeSharedRepackPart(part)}";
+                                            return null;
+                                        }
+
+                                        embeddedPaths[type] = output.Path;
+                                    }
+                                }
+
+                                var legacyTargets = page.Outputs
+                                    .Where(output => !output.IsCopy)
+                                    .SelectMany(output => output.Sources.Select(source => (Source: Normalize(source), output.Path)))
+                                    .GroupBy(item => item.Source, StringComparer.OrdinalIgnoreCase)
+                                    .ToDictionary(group => group.Key, group => group.First().Path, StringComparer.OrdinalIgnoreCase);
+                                foreach (var (type, sourcePath) in part.EmbeddedTextures)
+                                {
+                                    if ((type is TextureType.Diffuse or TextureType.Specular or TextureType.Gloss) &&
+                                        legacyTargets.TryGetValue(Normalize(sourcePath), out var replacement))
+                                    {
+                                        embeddedPaths[type] = replacement;
+                                    }
+                                }
+
+                                if (embeddedPaths.Keys.Any(type => part.Model!.Material?.GetTexture(type).HasValue != true))
+                                {
+                                    failure = $"embedded material texture disappeared before rewrite for {DescribeSharedRepackPart(part)}";
+                                    return null;
+                                }
+                            }
+
+                            rewrites.Add((part, uv, embeddedPaths));
                         }
                     }
                 }
@@ -5883,7 +6484,7 @@ namespace Editors.PackOptimizer.Core
                 result.GeneratedMaterials.Add(path);
             }
 
-            foreach (var (part, uv) in rewrites)
+            foreach (var (part, uv, _) in rewrites)
             {
                 var vertices = part.Model!.Mesh.VertexList;
                 for (var vertex = 0; vertex < vertices.Length; vertex++)
@@ -5906,6 +6507,20 @@ namespace Editors.PackOptimizer.Core
                 state.RigidModels[path] = rigids[path];
                 state.ModifiedRigids.Add(path);
                 result.RepackedRigids.Add(path);
+            }
+
+            foreach (var (part, _, embeddedPaths) in rewrites.Where(item => item.EmbeddedPaths.Count != 0))
+            {
+                foreach (var (type, path) in embeddedPaths)
+                {
+                    part.Model!.Material!.SetTexture(type, path);
+                    result.EmbeddedRewrittenPaths.Add((
+                        part.Key.GeometryPath,
+                        part.Key.LodIndex,
+                        part.Key.PartIndex,
+                        type));
+                }
+                result.EmbeddedRewrittenRigids.Add(part.Key.GeometryPath);
             }
 
             // What was written is what was planned.
@@ -5945,6 +6560,20 @@ namespace Editors.PackOptimizer.Core
                 PiecesSampled = stats.PiecesSampled,
             };
             built.Rigids.AddRange(rewritten);
+            built.EmbeddedRigids.AddRange(rewrites
+                .Where(item => item.Part.DirectEmbeddedMaterial && item.EmbeddedPaths.Count != 0)
+                .GroupBy(item => item.Part.Key.GeometryPath, StringComparer.OrdinalIgnoreCase)
+                .Select(group => (
+                    Rigid: group.Key,
+                    Parts: group.Count(),
+                    Consumers: group.SelectMany(item => item.Part.DirectConsumers)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                        .ToArray(),
+                    UnusedWsModels: group.SelectMany(item => item.Part.UnusedWsModels)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                        .ToArray())));
             built.MergedSets.AddRange(merge.Component.Skip(1).Select(item =>
                 (DescribeSharedRepackSet(item), item.Set.Items.Count, item.SignatureSize)));
             foreach (var (path, bytes) in plan.Replaced.OrderBy(pair => pair.Key, StringComparer.Ordinal))
@@ -6200,6 +6829,12 @@ namespace Editors.PackOptimizer.Core
                              .ThenBy(item => item.Lod)
                              .ThenBy(item => item.Part))
                 {
+                    if (state.VanillaTextureCoverage?.DirectConsumersByRigid.ContainsKey(geometry) == true &&
+                        ClassifySharedRepackWsModel(state, ws, cancellationToken).Use == SharedRepackWsUnused)
+                    {
+                        continue;
+                    }
+
                     if (generatedMaterialSet.Contains(material) ||
                         state.AtlasChangedParts.Contains((geometry, lod, part)) ||
                         state.VanillaTextureCoverage?.Materials.TryGetValue(material, out var info) != true ||
@@ -6218,6 +6853,80 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            var embeddedCheckStart = errors.Count;
+            var embeddedPathCount = 0;
+            foreach (var rewrittenPath in result.EmbeddedRewrittenPaths
+                         .OrderBy(item => item.Rigid, StringComparer.OrdinalIgnoreCase)
+                         .ThenBy(item => item.Lod)
+                         .ThenBy(item => item.Part)
+                         .ThenBy(item => item.Type))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var rigidPath = rewrittenPath.Rigid;
+                var rigid = state.RigidModels.GetValueOrDefault(rigidPath);
+                if (rigid?.ModelList == null)
+                {
+                    errors.Add($"Rewritten direct rigid is unavailable for embedded material validation: {rigidPath}");
+                    continue;
+                }
+
+                var key = (GeometryPath: rigidPath, LodIndex: rewrittenPath.Lod, PartIndex: rewrittenPath.Part);
+                if (key.LodIndex < 0 || key.LodIndex >= rigid.ModelList.Length ||
+                    key.PartIndex < 0 || key.PartIndex >= rigid.ModelList[key.LodIndex].Length)
+                {
+                    errors.Add($"Rewritten direct rigid part is missing for embedded material validation: {key}");
+                    continue;
+                }
+
+                var material = rigid.ModelList[key.LodIndex][key.PartIndex].Material;
+                if (material == null)
+                {
+                    errors.Add($"Rewritten embedded material is unavailable: {rigidPath} lod {key.LodIndex} part {key.PartIndex}");
+                    continue;
+                }
+                try
+                {
+                    var matchingTextures = material.GetAllTextures()
+                        .Where(candidate => candidate.TexureType == rewrittenPath.Type)
+                        .ToArray();
+                    if (matchingTextures.Length != 1 || string.IsNullOrWhiteSpace(matchingTextures[0].Path))
+                    {
+                        errors.Add(
+                            $"Rewritten embedded material texture is missing: {rigidPath} lod {key.LodIndex} " +
+                            $"part {key.PartIndex} type {rewrittenPath.Type}");
+                        continue;
+                    }
+
+                    var texturePath = Normalize(matchingTextures[0].Path);
+                    embeddedPathCount++;
+                    var resolved = CanResolveAfterRewrite(state, texturePath) ||
+                        ResolveGameplayTraversalContainer(
+                            state.Source,
+                            GetGameplayTraversalContainers(state),
+                            texturePath,
+                            state.ResolutionProviders)?.FindFile(texturePath) != null;
+                    if (!resolved)
+                    {
+                        errors.Add(
+                            $"Rewritten embedded material texture does not resolve: {rigidPath} " +
+                            $"lod {key.LodIndex} part {key.PartIndex} -> {texturePath}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    errors.Add(
+                        $"Rewritten embedded material is unreadable: {rigidPath} lod {key.LodIndex} " +
+                        $"part {key.PartIndex} ({ex.Message})");
+                }
+            }
+
+            if (errors.Count == embeddedCheckStart && result.EmbeddedRewrittenRigids.Count != 0)
+            {
+                state.ValidationMessages.Add(
+                    $"PASS: {result.EmbeddedRewrittenRigids.Count} directly loaded rigid(s) have " +
+                    $"{embeddedPathCount:N0} rewritten embedded material texture path(s) that resolve in output or vanilla.");
+            }
+
             if (errors.Count == before && result.BuiltSets.Count != 0)
             {
                 state.ValidationMessages.Add(
@@ -6228,6 +6937,460 @@ namespace Editors.PackOptimizer.Core
                     $"WSModel still binds a material naming a replaced texture, geometry invariants " +
                     $"hold, and {result.Samples:N0} sampled texel(s) match the source (max error " +
                     $"{result.MaxError:0}, mean {(result.ErrorCount == 0 ? 0 : result.ErrorSum / result.ErrorCount):0.00}).");
+            }
+        }
+
+        private void ValidateDirectRigidEmbeddedTextureReferences(
+            BatchState state,
+            List<string> errors,
+            CancellationToken cancellationToken)
+        {
+            var dependencyIndex = state.GameplayMeshDependencyIndex;
+            if (dependencyIndex == null || dependencyIndex.DirectConsumersByRigid.Count == 0)
+                return;
+
+            var before = errors.Count;
+            var directRigidCount = 0;
+            var embeddedPathCount = 0;
+            var containers = GetGameplayTraversalContainers(state);
+            var sourceResolvedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var sourceRigids = new Dictionary<string, RmvFile>(StringComparer.OrdinalIgnoreCase);
+            var outputRigids = new Dictionary<string, RmvFile>(StringComparer.OrdinalIgnoreCase);
+            foreach (var rigidPath in dependencyIndex.DirectConsumersByRigid.Keys
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var sourceFile = state.Source.FindFile(rigidPath);
+                if (sourceFile == null)
+                    continue;
+
+                RmvFile sourceRigid;
+                try
+                {
+                    sourceRigid = ModelFactory.Create().Load(sourceFile.DataSource.ReadData());
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Direct rigid embedded material could not be read: {rigidPath} ({ex.Message})");
+                    continue;
+                }
+
+                sourceRigids[rigidPath] = sourceRigid;
+                foreach (var model in sourceRigid.ModelList.SelectMany(lod => lod))
+                {
+                    try
+                    {
+                        foreach (var texture in model.Material?.GetAllTextures() ?? [])
+                        {
+                            var path = Normalize(texture.Path);
+                            if (path.Length != 0 &&
+                                ResolveGameplayTraversalContainer(
+                                    state.Source,
+                                    containers,
+                                    path,
+                                    state.ResolutionProviders)?.FindFile(path) != null)
+                            {
+                                sourceResolvedPaths.Add(path);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add($"Direct rigid embedded material is unreadable: {rigidPath} ({ex.Message})");
+                    }
+                }
+            }
+
+            var sourcePathsByOutputPart = new Dictionary<
+                (string Rigid, int Lod, int Part, TextureType Type),
+                HashSet<string>>();
+            var sourceResolvedSlots = new HashSet<(string Rigid, int Lod, int Part, TextureType Type)>();
+            foreach (var (rigidPath, sourceRigid) in sourceRigids)
+            {
+                var outputFile = state.Output.FindFile(rigidPath);
+                if (outputFile == null)
+                    continue;
+
+                RmvFile outputRigid;
+                try
+                {
+                    outputRigid = state.RigidModels.GetValueOrDefault(rigidPath) ??
+                                  ModelFactory.Create().Load(outputFile.DataSource.ReadData());
+                    outputRigids[rigidPath] = outputRigid;
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Direct rigid embedded material could not be read from output: {rigidPath} ({ex.Message})");
+                    continue;
+                }
+
+                for (var lod = 0; lod < sourceRigid.ModelList.Length; lod++)
+                {
+                    var partMap = BuildDirectRigidOutputPartMap(
+                        state,
+                        rigidPath,
+                        sourceRigid.ModelList[lod].Length,
+                        lod,
+                        outputRigid,
+                        errors);
+                    foreach (var (sourcePart, outputPart) in partMap)
+                    {
+                        foreach (var texture in sourceRigid.ModelList[lod][sourcePart].Material?.GetAllTextures() ?? [])
+                        {
+                            var sourcePath = Normalize(texture.Path);
+                            var key = (rigidPath, lod, outputPart, texture.TexureType);
+                            if (!sourcePathsByOutputPart.TryGetValue(key, out var paths))
+                            {
+                                paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                sourcePathsByOutputPart[key] = paths;
+                            }
+
+                            paths.Add(sourcePath);
+                            if (sourceResolvedPaths.Contains(sourcePath))
+                                sourceResolvedSlots.Add(key);
+                        }
+                    }
+                }
+            }
+
+            var rewrittenOutputParts = new HashSet<(string Rigid, int Lod, int Part, TextureType Type)>();
+            var rewrittenWsModelsByPart = new Dictionary<(string Rigid, int Lod, int Part), HashSet<string>>();
+            var coverage = state.VanillaTextureCoverage;
+            if (coverage != null)
+            {
+                foreach (var binding in coverage.Bindings.Where(binding =>
+                             binding.Kind == SourceWsModelBindingKind.Complete &&
+                             sourceRigids.ContainsKey(binding.Geometry)))
+                {
+                    if (ClassifySharedRepackWsModel(state, binding.WsModelPath, cancellationToken).Use !=
+                        SharedRepackWsUsed)
+                    {
+                        continue;
+                    }
+
+                    var sourcePartCount = sourceRigids[binding.Geometry].ModelList;
+                    if (binding.Lod < 0 || binding.Lod >= sourcePartCount.Length ||
+                        binding.Part < 0 || binding.Part >= sourcePartCount[binding.Lod].Length)
+                    {
+                        continue;
+                    }
+
+                    if (!outputRigids.TryGetValue(binding.Geometry, out var outputRigid))
+                        continue;
+
+                    var partMap = BuildDirectRigidOutputPartMap(
+                        state,
+                        binding.Geometry,
+                        sourcePartCount[binding.Lod].Length,
+                        binding.Lod,
+                        outputRigid,
+                        errors);
+                    if (!partMap.TryGetValue(binding.Part, out var outputPart))
+                        continue;
+
+                    var key = (binding.Geometry, binding.Lod, outputPart);
+                    if (!rewrittenWsModelsByPart.TryGetValue(key, out var wsModels))
+                    {
+                        wsModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        rewrittenWsModelsByPart[key] = wsModels;
+                    }
+
+                    wsModels.Add(binding.WsModelPath);
+                }
+            }
+
+            foreach (var rewrittenPath in state.SharedTextureRepack?.EmbeddedRewrittenPaths ?? [])
+            {
+                if (!sourceRigids.TryGetValue(rewrittenPath.Rigid, out var sourceRigid) ||
+                    rewrittenPath.Lod < 0 || rewrittenPath.Lod >= sourceRigid.ModelList.Length ||
+                    rewrittenPath.Part < 0 || rewrittenPath.Part >= sourceRigid.ModelList[rewrittenPath.Lod].Length)
+                {
+                    errors.Add(
+                        $"Rewritten direct rigid source part is missing: {rewrittenPath.Rigid} " +
+                        $"lod {rewrittenPath.Lod} part {rewrittenPath.Part}");
+                    continue;
+                }
+
+                if (!outputRigids.TryGetValue(rewrittenPath.Rigid, out var outputRigid))
+                {
+                    errors.Add($"Rewritten direct rigid is missing from output: {rewrittenPath.Rigid}");
+                    continue;
+                }
+
+                var partMap = BuildDirectRigidOutputPartMap(
+                    state,
+                    rewrittenPath.Rigid,
+                    sourceRigid.ModelList[rewrittenPath.Lod].Length,
+                    rewrittenPath.Lod,
+                    outputRigid,
+                    errors);
+                if (partMap.TryGetValue(rewrittenPath.Part, out var outputPart))
+                {
+                    rewrittenOutputParts.Add((rewrittenPath.Rigid, rewrittenPath.Lod, outputPart, rewrittenPath.Type));
+                }
+            }
+
+            foreach (var rigidPath in dependencyIndex.DirectConsumersByRigid.Keys
+                         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!sourceRigids.ContainsKey(rigidPath))
+                    continue;
+
+                if (!outputRigids.TryGetValue(rigidPath, out var outputRigid))
+                {
+                    errors.Add($"Direct rigid is missing from output: {rigidPath}");
+                    continue;
+                }
+
+                directRigidCount++;
+                for (var lod = 0; lod < outputRigid.ModelList.Length; lod++)
+                {
+                    for (var part = 0; part < outputRigid.ModelList[lod].Length; part++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var outputMaterial = outputRigid.ModelList[lod][part].Material;
+                        if (outputMaterial == null)
+                            continue;
+
+                        try
+                        {
+                            foreach (var texture in outputMaterial.GetAllTextures())
+                            {
+                                var outputPath = Normalize(texture.Path);
+                                var key = (rigidPath, lod, part, texture.TexureType);
+                                var unchangedFromUnresolvedSource =
+                                    !sourceResolvedSlots.Contains(key) &&
+                                    sourcePathsByOutputPart.TryGetValue(key, out var originalPaths) &&
+                                    originalPaths.Contains(outputPath);
+                                if (outputPath.Length == 0 || unchangedFromUnresolvedSource)
+                                {
+                                    continue;
+                                }
+
+                                embeddedPathCount++;
+                                if (!CanResolveDirectEmbeddedTextureAfterRewrite(state, outputPath, containers))
+                                {
+                                    errors.Add(
+                                        $"Direct rigid embedded texture does not resolve after rewriting: {rigidPath} " +
+                                        $"lod {lod} part {part} {texture.TexureType} -> {outputPath}");
+                                }
+                            }
+
+                            if (rewrittenOutputParts.Any(key =>
+                                    key.Rigid.Equals(rigidPath, StringComparison.OrdinalIgnoreCase) &&
+                                    key.Lod == lod && key.Part == part) &&
+                                rewrittenWsModelsByPart.TryGetValue((rigidPath, lod, part), out var wsModels))
+                            {
+                                ValidateDirectEmbeddedWsMaterialMappings(
+                                    state,
+                                    rigidPath,
+                                    lod,
+                                    part,
+                                    outputMaterial,
+                                    wsModels,
+                                    errors);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            errors.Add(
+                                $"Direct rigid embedded material is unreadable: {rigidPath} lod {lod} " +
+                                $"part {part} ({ex.Message})");
+                        }
+                    }
+                }
+            }
+
+            if (errors.Count == before && directRigidCount != 0)
+            {
+                state.ValidationMessages.Add(
+                    $"PASS: {directRigidCount:N0} directly loaded rigid(s) keep all {embeddedPathCount:N0} " +
+                    "source-resolved embedded texture paths (modern and legacy) resolvable in output or vanilla; " +
+                    "rewritten embedded slots match their active WSModel material paths.");
+            }
+        }
+
+        private static Dictionary<int, int> BuildDirectRigidOutputPartMap(
+            BatchState state,
+            string rigidPath,
+            int sourcePartCount,
+            int lod,
+            RmvFile outputRigid,
+            List<string> errors)
+        {
+            var mergedGroups = state.MeshMergeEntries
+                .Where(entry => entry.RigidPath.Equals(rigidPath, StringComparison.OrdinalIgnoreCase) &&
+                                entry.LodIndex == lod)
+                .Select(entry => (Parts: entry.OldPartIndices, NewPart: entry.NewPartIndex))
+                .ToArray();
+            var consumed = new HashSet<int>();
+            var groups = new List<(int[] Parts, int? NewPart)>();
+            foreach (var group in mergedGroups)
+            {
+                var parts = group.Parts.Where(part => part >= 0 && part < sourcePartCount).Distinct().ToArray();
+                if (parts.Length < 2)
+                    continue;
+
+                groups.Add((parts, group.NewPart));
+                consumed.UnionWith(parts);
+            }
+
+            for (var part = 0; part < sourcePartCount; part++)
+            {
+                if (!consumed.Contains(part))
+                    groups.Add(([part], null));
+            }
+
+            groups.Sort((left, right) => left.Parts.Min().CompareTo(right.Parts.Min()));
+            if (lod < 0 || lod >= outputRigid.ModelList.Length ||
+                groups.Count != outputRigid.ModelList[lod].Length)
+            {
+                errors.Add(
+                    $"Direct rigid part mapping does not match output geometry: {rigidPath} lod {lod} " +
+                    $"({sourcePartCount} source parts -> {groups.Count} mapped groups, " +
+                    $"{(lod >= 0 && lod < outputRigid.ModelList.Length ? outputRigid.ModelList[lod].Length : 0)} output parts)");
+                return [];
+            }
+
+            var map = new Dictionary<int, int>();
+            for (var outputPart = 0; outputPart < groups.Count; outputPart++)
+            {
+                var group = groups[outputPart];
+                var target = group.NewPart ?? outputPart;
+                if (target != outputPart)
+                {
+                    errors.Add(
+                        $"Direct rigid merged part index changed unexpectedly: {rigidPath} lod {lod} " +
+                        $"mapped {group.NewPart} but output order requires {outputPart}");
+                }
+
+                foreach (var sourcePart in group.Parts)
+                    map[sourcePart] = target;
+            }
+
+            return map;
+        }
+
+        private bool CanResolveDirectEmbeddedTextureAfterRewrite(
+            BatchState state,
+            string path,
+            IReadOnlyList<IPackFileContainer> containers)
+        {
+            path = Normalize(path);
+            if (state.Output.FindFile(path) != null)
+                return true;
+            if (state.Source.FindFile(path) != null)
+                return false;
+
+            return containers.Any(container =>
+                       container.IsCaPackFile &&
+                       !ReferenceEquals(container, state.Source) &&
+                       container.FindFile(path) != null) ||
+                   state.ResolutionProviders.Find(state.Source, path) != null ||
+                   _packFileService.FindFile(path) != null;
+        }
+
+        private void ValidateDirectEmbeddedWsMaterialMappings(
+            BatchState state,
+            string rigidPath,
+            int lod,
+            int part,
+            IRmvMaterial? embeddedMaterial,
+            IEnumerable<string> activeWsModels,
+            List<string> errors)
+        {
+            var wsModels = activeWsModels.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (wsModels.Length == 0 || embeddedMaterial == null)
+                return;
+
+            IReadOnlyList<RmvTexture> embeddedTextures;
+            try
+            {
+                embeddedTextures = embeddedMaterial.GetAllTextures();
+            }
+            catch (Exception ex)
+            {
+                errors.Add(
+                    $"Could not validate direct rigid/WSModel texture mapping: {rigidPath} lod {lod} " +
+                    $"part {part} ({ex.Message})");
+                return;
+            }
+
+            foreach (var wsModelPath in wsModels)
+            {
+                var wsFile = state.Output.FindFile(wsModelPath);
+                if (wsFile == null)
+                {
+                    errors.Add($"Active WSModel is missing while validating direct rigid mapping: {wsModelPath}");
+                    continue;
+                }
+
+                try
+                {
+                    var wsDocument = state.WsDocuments.GetValueOrDefault(wsModelPath) ?? LoadXml(wsFile);
+                    var assignments = (wsDocument.SelectNodes("/model/materials/material") ?? EmptyXmlNodeList)
+                        .Cast<XmlNode>()
+                        .Where(node => TryParseIndex(node, "lod_index", out var nodeLod) && nodeLod == lod &&
+                                       TryParseIndex(node, "part_index", out var nodePart) && nodePart == part)
+                        .ToArray();
+                    if (assignments.Length != 1)
+                    {
+                        errors.Add(
+                            $"Active WSModel has no unique direct-rigid material assignment: {wsModelPath} " +
+                            $"lod {lod} part {part}");
+                        continue;
+                    }
+
+                    var materialPath = Normalize(assignments[0].InnerText);
+                    var materialFile = state.Output.FindFile(materialPath);
+                    if (materialFile == null && state.Source.FindFile(materialPath) == null)
+                    {
+                        materialFile = state.ResolutionProviders.Find(state.Source, materialPath)?.FindFile(materialPath) ??
+                                       _packFileService.FindFile(materialPath);
+                    }
+                    if (materialFile == null)
+                    {
+                        errors.Add(
+                            $"Active WSModel material is missing while validating direct rigid mapping: " +
+                            $"{wsModelPath} -> {materialPath}");
+                        continue;
+                    }
+
+                    var materialDocument = LoadXml(materialFile);
+                    var nodes = (materialDocument.SelectNodes("/material/textures/texture") ?? EmptyXmlNodeList)
+                        .Cast<XmlNode>()
+                        .ToArray();
+                    foreach (var texture in embeddedTextures)
+                    {
+                        if (string.IsNullOrWhiteSpace(texture.Path) ||
+                            !TryGetSharedRepackEmbeddedSlot(texture.TexureType, out var slot))
+                        {
+                            continue;
+                        }
+
+                        var sources = nodes
+                            .Where(node => GetTextureSlot(node).Equals(slot, StringComparison.OrdinalIgnoreCase))
+                            .Select(node => Normalize(node.SelectSingleNode("source")?.InnerText ?? node.InnerText))
+                            .ToArray();
+                        var embeddedPath = Normalize(texture.Path);
+                        if (sources.Length != 1 ||
+                            !sources[0].Equals(embeddedPath, StringComparison.OrdinalIgnoreCase))
+                        {
+                            errors.Add(
+                                $"Direct rigid embedded/WSModel texture paths disagree: {rigidPath} lod {lod} " +
+                                $"part {part} {texture.TexureType} -> {embeddedPath}; " +
+                                $"{wsModelPath} -> {materialPath} slot {slot} -> " +
+                                (sources.Length == 0 ? "(missing)" : string.Join(", ", sources)));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    errors.Add(
+                        $"Could not validate active direct-rigid WSModel mapping: {wsModelPath} " +
+                        $"lod {lod} part {part} ({ex.Message})");
+                }
             }
         }
 
@@ -6909,6 +8072,27 @@ namespace Editors.PackOptimizer.Core
 
             sb.AppendLine(
                 $"  Dropped by closure, variants, tiling, ineligible rigids or the re-estimate: {result.DroppedByClosure:N0}");
+            if (!SharedRepackDirectRigidsDisabled)
+            {
+                var directBuckets = result.DirectRigidOutcomes
+                    .GroupBy(item => item.Bucket, StringComparer.Ordinal)
+                    .Select(group => (Name: group.Key, Count: group.Count()))
+                    .Concat(result.DirectRigidsNotOwned.Select(pair => (Name: pair.Key, Count: pair.Value)))
+                    .OrderBy(item => item.Name, StringComparer.Ordinal)
+                    .Select(item => $"{item.Count:N0} {item.Name}")
+                    .ToArray();
+                sb.AppendLine(
+                    $"  Direct rigids considered in a considered signature set: " +
+                    $"{result.DirectRigidOutcomes.Count + result.DirectRigidsNotOwned.Values.Sum():N0}; " +
+                    $"outcomes: {(directBuckets.Length == 0 ? "none" : string.Join(", ", directBuckets))}");
+                sb.AppendLine(
+                    $"  Directly loaded rigids rewritten through embedded materials: {result.EmbeddedRewrittenRigids.Count:N0}; " +
+                    $"parts dropped for embedded unreadable material: {result.PartDropReasons.GetValueOrDefault(SharedRepackReasonEmbeddedUnreadable):N0}, " +
+                    $"embedded material type not verified: {result.PartDropReasons.Where(pair => pair.Key.StartsWith(SharedRepackReasonEmbeddedTypePrefix, StringComparison.Ordinal)).Sum(pair => pair.Value):N0}, " +
+                    $"unsupported embedded slots: {result.PartDropReasons.GetValueOrDefault(SharedRepackReasonEmbeddedUnsupported):N0}, " +
+                    $"embedded/WSModel texture mismatch: {result.PartDropReasons.GetValueOrDefault(SharedRepackReasonEmbeddedWsMismatch):N0}");
+            }
+
             sb.AppendLine($"  Not buildable (format, size, charts, layout, decode): {result.NotBuildable:N0}");
             sb.AppendLine($"  Failed the actual-bytes gate (group or set): {result.FailedActualBytes:N0}");
             sb.AppendLine($"  Failed the pixel check (nothing written): {result.FailedPixelCheck:N0}");
@@ -6989,6 +8173,22 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            if (result.DirectRigidOutcomes.Count != 0 || result.DirectRigidsNotOwned.Count != 0)
+            {
+                sb.AppendLine(
+                    "Directly loaded rigid outcomes (source-owned rigids whose embedded modern textures enter a considered signature set):");
+                foreach (var direct in result.DirectRigidOutcomes.OrderBy(item => item.Rigid, StringComparer.OrdinalIgnoreCase))
+                {
+                    var setsText = direct.Bucket == "not rewritten" ? string.Empty : $"sets: {string.Join(" | ", direct.Sets)}; ";
+                    sb.AppendLine(
+                        $"  [{direct.Bucket}; loaded directly by {string.Join(", ", direct.Consumers)}] " +
+                        $"{direct.Rigid}; {setsText}{direct.Detail}");
+                }
+
+                foreach (var (reason, count) in result.DirectRigidsNotOwned.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                    sb.AppendLine($"  {count:N0} {reason} (not listed)");
+            }
+
             long before = result.BuiltSets.Sum(set => set.Before);
             long after = result.BuiltSets.Sum(set => set.After);
             sb.AppendLine(
@@ -7011,6 +8211,19 @@ namespace Editors.PackOptimizer.Core
                         ? string.Empty
                         : $"{(setGenerated.Count == set.Rigids.Count ? string.Empty : "; ")}" +
                           $"{setGenerated.Count:N0} generated cross-rigid rigid(s) ({setGenerated.Sum(item => item.Parts):N0} part(s))"));
+                foreach (var embedded in set.EmbeddedRigids.OrderBy(item => item.Rigid, StringComparer.Ordinal))
+                {
+                    sb.AppendLine(
+                        $"    [embedded material, loaded directly by {string.Join(", ", embedded.Consumers)}] " +
+                        $"{embedded.Rigid} ({embedded.Parts:N0} part(s))");
+                    foreach (var unusedWs in embedded.UnusedWsModels)
+                        sb.AppendLine($"    [unused WSModel left as authored] {unusedWs} -> {embedded.Rigid}");
+                }
+                var dropLabel = set.Label.EndsWith(" [merged plan]", StringComparison.Ordinal)
+                    ? set.Label[..^" [merged plan]".Length]
+                    : set.Label;
+                foreach (var drop in result.DirectEmbeddedDrops.Where(item => item.Label == dropLabel))
+                    sb.AppendLine($"    [embedded material drop] {drop.Detail}");
                 if (set.MergedSets.Count != 0)
                 {
                     sb.AppendLine($"    merged signature sets ({set.MergedSets.Count:N0} joined the seed):");

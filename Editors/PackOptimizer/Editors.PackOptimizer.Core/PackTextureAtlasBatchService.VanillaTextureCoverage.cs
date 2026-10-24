@@ -4,6 +4,7 @@ using System.Text;
 using System.Xml;
 using Shared.Core.PackFiles.Models;
 using Shared.GameFormats.RigidModel;
+using Shared.GameFormats.RigidModel.Types;
 
 namespace Editors.PackOptimizer.Core
 {
@@ -140,6 +141,11 @@ namespace Editors.PackOptimizer.Core
             string Shader = "",
             IReadOnlyDictionary<string, string>? EmissiveParameters = null);
 
+        private sealed record VanillaCoverageEmbeddedMaterial(
+            ModelMaterialEnum MaterialType,
+            bool Readable,
+            IReadOnlyList<RmvTexture> Textures);
+
         private sealed class VanillaTextureCoverageResult
         {
             public TimeSpan AnalysisElapsed { get; set; }
@@ -156,6 +162,7 @@ namespace Editors.PackOptimizer.Core
             public int MaterialsReferenced { get; set; }
             public int MaterialsNotFound { get; set; }
             public int MaterialsUnreadable { get; set; }
+            public int WsModelTexturesReferenced { get; set; }
             public int TextFilesScanned { get; set; }
             public int TextFilesUnreadable { get; set; }
             public int RigidsRead { get; set; }
@@ -175,6 +182,10 @@ namespace Editors.PackOptimizer.Core
             public Dictionary<string, VanillaCoverageTexture> Entries { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<(string Rigid, int Lod, int Part), VanillaCoveragePart> PartData { get; } = [];
+            public Dictionary<(string Rigid, int Lod, int Part), VanillaCoverageEmbeddedMaterial>
+                EmbeddedMaterialsByPart { get; } = [];
+            public Dictionary<string, HashSet<string>> DirectConsumersByRigid { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
             // Owned texture -> every source-pack material file that mentions it.
             public Dictionary<string, HashSet<string>> OwnedMaterialMentions { get; } =
                 new(StringComparer.OrdinalIgnoreCase);
@@ -587,6 +598,7 @@ namespace Editors.PackOptimizer.Core
             var texturesByPart = new Dictionary<
                 (string Rigid, int Lod, int Part),
                 HashSet<VanillaCoverageTexture>>();
+            var directRigidCache = new Dictionary<string, RmvFile?>(StringComparer.OrdinalIgnoreCase);
             foreach (var binding in scan.Bindings)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -620,6 +632,106 @@ namespace Editors.PackOptimizer.Core
                     }
 
                     partTextures.Add(entry);
+                }
+            }
+
+            result.WsModelTexturesReferenced = textureEntries.Count;
+
+            // A direct VMD/DB reference uses the material embedded in the RMV2. Collect its
+            // atlasable channels alongside WSModel users so estimates and coverage see the same parts.
+            var directConsumersByRigid = state.GameplayMeshDependencyIndex?.DirectConsumersByRigid;
+            if (!SharedRepackDirectRigidsDisabled && directConsumersByRigid != null)
+            {
+                foreach (var (rigidPathValue, consumers) in directConsumersByRigid
+                             .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (timer.Elapsed > result.Budget)
+                    {
+                        result.BudgetExhausted = true;
+                        break;
+                    }
+
+                    var rigidPath = Normalize(rigidPathValue);
+                    result.DirectConsumersByRigid[rigidPath] = new HashSet<string>(consumers, StringComparer.OrdinalIgnoreCase);
+                    RmvFile? rigid;
+                    try
+                    {
+                        rigid = loadRigid(rigidPath);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        rigid = null;
+                    }
+
+                    directRigidCache[rigidPath] = rigid;
+                    if (rigid?.ModelList == null)
+                        continue;
+
+                    for (var lod = 0; lod < rigid.ModelList.Length; lod++)
+                    {
+                        for (var partIndex = 0; partIndex < rigid.ModelList[lod].Length; partIndex++)
+                        {
+                            var key = (rigidPath, lod, partIndex);
+                            var material = rigid.ModelList[lod][partIndex].Material;
+                            if (material == null)
+                            {
+                                result.EmbeddedMaterialsByPart[key] = new(
+                                    ModelMaterialEnum.Unkown, false, []);
+                                continue;
+                            }
+
+                            IReadOnlyList<RmvTexture> embedded;
+                            try
+                            {
+                                embedded = material.GetAllTextures().ToArray();
+                                result.EmbeddedMaterialsByPart[key] = new(material.MaterialId, true, embedded);
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                result.EmbeddedMaterialsByPart[key] = new(material.MaterialId, false, []);
+                                continue;
+                            }
+
+                            var knownWeighted = material.MaterialId == ModelMaterialEnum.weighted;
+                            foreach (var texture in embedded)
+                            {
+                                if (string.IsNullOrWhiteSpace(texture.Path))
+                                    continue;
+
+                                string slot;
+                                if (TryGetSharedRepackEmbeddedSlot(texture.TexureType, out var modernSlot))
+                                {
+                                    slot = modernSlot;
+                                }
+                                else if (knownWeighted && texture.TexureType is
+                                         TextureType.Diffuse or TextureType.Specular or TextureType.Gloss)
+                                {
+                                    // Weighted RMV2 legacy entries are not sampled by the supported shaders.
+                                    result.OwnedRemovalBlockers.Add(Normalize(texture.Path));
+                                    continue;
+                                }
+                                else
+                                {
+                                    slot = $"embedded_{texture.TexureType}";
+                                }
+
+                                var texturePath = Normalize(texture.Path);
+                                var entry = GetEntry(texturePath);
+                                entry.Materials.Add($"embedded:{rigidPath}:lod:{lod}:part:{partIndex}");
+                                if (entry.BadSlot == null && !IsTextureDownscaleSlot(slot))
+                                    entry.BadSlot = $"{slot} in embedded material {rigidPath}";
+
+                                if (!texturesByPart.TryGetValue(key, out var partTextures))
+                                {
+                                    partTextures = [];
+                                    texturesByPart[key] = partTextures;
+                                }
+
+                                partTextures.Add(entry);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -801,7 +913,7 @@ namespace Editors.PackOptimizer.Core
                 RmvFile? rigid;
                 try
                 {
-                    rigid = loadRigid(group.Key);
+                    rigid = directRigidCache.GetValueOrDefault(group.Key) ?? loadRigid(group.Key);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -951,8 +1063,10 @@ namespace Editors.PackOptimizer.Core
                 "material may live in the pack or in vanilla) and that resolve in a vanilla " +
                 "container. Parts are taken as authored from the source WSModels and fresh " +
                 "rigid reads (every LOD, UV0); parts atlased, merged or pruned in this run are " +
-                "not excluded, so the figures do not depend on the atlas options. Direct " +
-                "rigid use and embedded rigid materials are not assessed.");
+                "not excluded, so the figures do not depend on the atlas options. " +
+                (SharedRepackDirectRigidsDisabled
+                    ? "Direct rigid use and embedded rigid materials are not assessed while direct-rigid repacking is disabled."
+                    : "Direct gameplay rigid use is also assessed through every embedded material's modern texture slots."));
             sb.AppendLine(
                 $"Scanned: {result.WsModelsScanned:N0} source WSModel(s) (unreadable " +
                 $"{result.UnreadableWsModels:N0}), {result.MaterialsReferenced:N0} material(s) " +
@@ -992,7 +1106,8 @@ namespace Editors.PackOptimizer.Core
             var notCroppable = assessed.Where(texture => !texture.IsCroppable).ToList();
             sb.AppendLine(
                 $"Textures referenced through the pack's WSModel materials: " +
-                $"{result.TexturesReferenced:N0}. They split exactly into:");
+                $"{result.WsModelTexturesReferenced:N0}; distinct WSModel and direct embedded paths total " +
+                $"{result.TexturesReferenced:N0}. The total splits exactly into:");
             sb.AppendLine(
                 $"  Owned by the source pack (not assessed here): {result.OwnedBySourcePack:N0}");
             sb.AppendLine(

@@ -6,6 +6,7 @@ using System.Numerics;
 using Shared.GameFormats.RigidModel;
 using Shared.GameFormats.RigidModel.LodHeader;
 using Shared.GameFormats.RigidModel.MaterialHeaders;
+using Shared.GameFormats.RigidModel.Types;
 using Shared.GameFormats.RigidModel.Vertex;
 
 namespace Test.PackOptimizer.Core
@@ -8090,6 +8091,8 @@ namespace Test.PackOptimizer.Core
         private const string SrRoot2 = "variantmeshes\\wh_variantmodels\\hu1\\emp\\sr2\\sr2.variantmeshdefinition";
         private const string SrBase = "t_xml_base_colour";
         private const string SrNormal = "t_xml_normal";
+        private const string SrMask = "t_xml_mask";
+        private const string SrMaterialMap = "t_xml_material_map";
 
         private static readonly Dictionary<(int, string, bool, int), byte[]> SrTextureCache = [];
 
@@ -8155,6 +8158,9 @@ namespace Test.PackOptimizer.Core
             public DownscaleFixture Fixture { get; } = new();
             public Dictionary<string, Func<RmvFile>> Rigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<(string Root, string Ws)> Links { get; } = [];
+            public List<(string Root, string Rigid)> DirectLinks { get; } = [];
+            // Roots whose traversal failed (partial discovery) and the raw text of each.
+            public List<(string Root, string Text)> IncompleteRoots { get; } = [];
             public object Service { get; set; } = null!;
             public object State { get; set; } = null!;
             public bool Downscale { get; set; }
@@ -8185,11 +8191,47 @@ namespace Test.PackOptimizer.Core
                     Links.Add((root, ws));
             }
 
-            public object Analyse()
+            public void AddDirectConsumer(string rigid, string root)
+            {
+                DirectLinks.Add((root, rigid));
+                Fixture.AddText(root, $"<VARIANT_MESH><rigid>{rigid}</rigid></VARIANT_MESH>");
+            }
+
+            public void AddDirectModel(string rigid, string root, Func<RmvFile> factory)
+            {
+                Rigids[rigid] = factory;
+                Fixture.Rigids[rigid] = factory();
+                Fixture.Add(rigid, [0]);
+                AddDirectConsumer(rigid, root);
+            }
+
+            public object Analyse(bool includeDirectConsumers = true)
             {
                 (Service, State) = CreateDownscaleState(Fixture, Downscale);
+                var index = CreateDownscaleIndex(Links.ToArray());
+                var rootKind = Enum.Parse(GetNestedType("GameplayMeshDependencyRootKind"), "SourcePackVmd");
+                foreach (var (root, rigid) in includeDirectConsumers ? DirectLinks : [])
+                {
+                    index.GetType().GetMethod("RegisterRoot")!.Invoke(index, [root, rootKind]);
+                    index.GetType().GetMethod("AddDirectConsumer")!.Invoke(index, [rigid, root]);
+                }
+
+                foreach (var (root, text) in IncompleteRoots)
+                {
+                    Fixture.AddText(root, text);
+                    index.GetType().GetMethod("RegisterRoot")!.Invoke(index, [root, rootKind]);
+                    index.GetType().GetMethod("RecordFailure")!.Invoke(index,
+                    [
+                        root, root, "VMD could not be parsed",
+                        Enum.Parse(GetNestedType("GameplayMeshDependencyFailureKind"), "ParseFailure"),
+                        Enum.Parse(GetNestedType("GameplayMeshDependencyAssetScope"), "SourcePack"),
+                    ]);
+                }
+
                 InstallDownscaleGameplay(
-                    State, CreateDownscaleResolution(true), CreateDownscaleIndex(Links.ToArray()));
+                    State, CreateDownscaleResolution(true), index);
+                if (IncompleteRoots.Count != 0)
+                    SetStateProperty(State, "StructuralMergeConsumerDiscoveryComplete", false);
                 RunCoverage(Service, State, Fixture);
                 GetServiceType()
                     .GetMethod("RunUnitTextureRepack", BindingFlags.NonPublic | BindingFlags.Instance)!
@@ -8223,6 +8265,77 @@ namespace Test.PackOptimizer.Core
         }
 
         private static string SrMaterialPath(string name) => $"materials\\sr_{name}.xml.material";
+
+        private static Func<RmvFile> SrEmbeddedRigidFactory(
+            string baseColour,
+            string normal,
+            string? legacyDiffuse = null,
+            ModelMaterialEnum materialType = ModelMaterialEnum.weighted,
+            string? mask = null,
+            string? materialMap = null,
+            string? legacySpecular = null,
+            string? legacyGloss = null)
+            => () =>
+            {
+                var model = CreateUvPart(SrBlock(2, 3));
+                var material = new WeightedMaterial
+                {
+                    BinaryVertexFormat = VertexFormat.Weighted,
+                    MaterialId = materialType,
+                    ModelName = "embedded",
+                };
+                material.SetTexture(TextureType.BaseColour, baseColour);
+                material.SetTexture(TextureType.Normal, normal);
+                if (mask != null)
+                    material.SetTexture(TextureType.Mask, mask);
+                if (materialMap != null)
+                    material.SetTexture(TextureType.MaterialMap, materialMap);
+                if (legacyDiffuse != null)
+                    material.SetTexture(TextureType.Diffuse, legacyDiffuse);
+                if (legacySpecular != null)
+                    material.SetTexture(TextureType.Specular, legacySpecular);
+                if (legacyGloss != null)
+                    material.SetTexture(TextureType.Gloss, legacyGloss);
+                model.Material = material;
+                return CreateSingleLodRigid(RmvVersionEnum.RMV2_V8, model);
+            };
+
+        private static SrWorld BuildDirectEmbeddedSrWorld(bool withWsModel)
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_direct_base.dds", 1024, "BC1", true, 11);
+            world.AddTexture("textures\\sr_direct_normal.dds", 512, "BC3", false, 12);
+            world.AddTexture("textures\\sr_direct_mask.dds", 1024, "BC1", false, 13);
+            world.AddTexture("textures\\sr_direct_material_map.dds", 1024, "BC1", false, 14);
+            world.AddTexture("textures\\sr_direct_specular.dds", 16, "BC1", false, 15);
+            world.AddTexture("textures\\sr_direct_gloss.dds", 16, "BC1", false, 16);
+            var materialPath = SrMaterialPath("direct");
+            world.Fixture.AddMaterial(
+                materialPath,
+                (SrBase, "textures\\sr_direct_base.dds"),
+                (SrNormal, "textures\\sr_direct_normal.dds"),
+                (SrMask, "textures\\sr_direct_mask.dds"),
+                (SrMaterialMap, "textures\\sr_direct_material_map.dds"));
+            var rigidFactory = SrEmbeddedRigidFactory(
+                "textures\\sr_direct_base.dds",
+                "textures\\sr_direct_normal.dds",
+                legacyDiffuse: "textures\\sr_direct_base.dds",
+                mask: "textures\\sr_direct_mask.dds",
+                materialMap: "textures\\sr_direct_material_map.dds",
+                legacySpecular: "textures\\sr_direct_specular.dds",
+                legacyGloss: "textures\\sr_direct_gloss.dds");
+            if (withWsModel)
+            {
+                world.AddModel(SrRigid, SrWs, SrRoot, rigidFactory, [[materialPath]]);
+                world.AddDirectConsumer(SrRigid, SrRoot);
+            }
+            else
+            {
+                world.AddDirectModel(SrRigid, SrRoot, rigidFactory);
+            }
+
+            return world;
+        }
 
         // Rigid with two LODs; part 0 uses material m1 (base b1, normal n1), part 1 uses m2.
         // Both LODs show the same regions.
@@ -8370,6 +8483,313 @@ namespace Test.PackOptimizer.Core
                 .GetMethod("ValidateSharedTextureRepack", BindingFlags.NonPublic | BindingFlags.Instance)!
                 .Invoke(world.Service, [world.State, errors, CancellationToken.None]);
             return errors;
+        }
+
+        private static List<string> SrValidateDirectRigidEmbeddedTextures(SrWorld world)
+        {
+            var errors = new List<string>();
+            GetServiceType()
+                .GetMethod("ValidateDirectRigidEmbeddedTextureReferences", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(world.Service, [world.State, errors, CancellationToken.None]);
+            return errors;
+        }
+
+        private static void SrInstallReadableSourceRigid(SrWorld world)
+        {
+            var rigid = world.Rigids[SrRigid]();
+            foreach (var vertex in rigid.ModelList.SelectMany(lod => lod)
+                         .SelectMany(model => model.Mesh?.VertexList ?? []))
+            {
+                vertex.WeightCount = 2;
+                vertex.BoneIndex = [0, 0];
+                vertex.BoneWeight = [1f, 0f];
+            }
+
+            rigid.RecalculateOffsets();
+            var bytes = ModelFactory.Create().Save(rigid, validateByReloading: false, logProgress: false);
+            world.Fixture.Source[SrRigid] = bytes;
+            world.Fixture.Output[SrRigid] = bytes;
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigid_RewritesEmbeddedSlotsAndKeepsLegacyPathsResolvable()
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: true);
+            SrInstallReadableSourceRigid(world);
+            var original = world.Rigids[SrRigid]();
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<HashSet<string>>(result, "EmbeddedRewrittenRigids"), Is.EquivalentTo([SrRigid]));
+            Assert.That(Get<long>(result, "Samples"), Is.GreaterThan(0));
+            Assert.That(Get<IEnumerable>(Get<object>(world.State, "UnitTextureRepack"), "SetsC"), Is.Not.Empty);
+            var unit = Get<IEnumerable>(Get<object>(world.State, "UnitTextureRepack"), "Units").Cast<object>()
+                .Single(item => Get<string>(item, "Root").Equals(SrRoot, StringComparison.OrdinalIgnoreCase));
+            Assert.That(Get<HashSet<string>>(unit, "DirectRigids"), Does.Contain(SrRigid));
+            Assert.That(Get<IDictionary>(unit, "Textures"), Has.Count.EqualTo(4));
+
+            var rigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            var embedded = rigid.ModelList[0][0].Material!;
+            var generatedMaterial = new XmlDocument();
+            generatedMaterial.LoadXml(Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]));
+            string Generated(string slot)
+                => generatedMaterial.SelectNodes("/material/textures/texture")!.Cast<XmlNode>()
+                    .Single(node => node.SelectSingleNode("slot")!.InnerText.Trim() == slot)
+                    .SelectSingleNode("source")!.InnerText;
+
+            foreach (var (type, slot) in new[]
+                     {
+                         (TextureType.BaseColour, SrBase),
+                         (TextureType.Normal, SrNormal),
+                         (TextureType.Mask, SrMask),
+                         (TextureType.MaterialMap, SrMaterialMap),
+                     })
+            {
+                var path = embedded.GetTexture(type)!.Value.Path;
+                Assert.That(path, Is.EqualTo(Generated(slot)));
+                Assert.That(world.Fixture.Output.ContainsKey(path), Is.True, path);
+            }
+
+            Assert.That(embedded.GetTexture(TextureType.Diffuse)!.Value.Path,
+                Is.EqualTo(embedded.GetTexture(TextureType.BaseColour)!.Value.Path));
+            Assert.That(embedded.GetTexture(TextureType.Specular)!.Value.Path,
+                Is.EqualTo("textures\\sr_direct_specular.dds"));
+            Assert.That(embedded.GetTexture(TextureType.Gloss)!.Value.Path,
+                Is.EqualTo("textures\\sr_direct_gloss.dds"));
+            Assert.That(rigid.ModelList[0][0].Mesh!.VertexList.Select(vertex => vertex.Uv),
+                Is.Not.EqualTo(original.ModelList[0][0].Mesh!.VertexList.Select(vertex => vertex.Uv)));
+            Assert.That(BuildSharedRepackSection(Enabled(world)),
+                Does.Contain($"[embedded material, loaded directly by {SrRoot}]").And.Contain(SrRigid));
+            Assert.That(SrValidateDirectRigidEmbeddedTextures(world), Is.Empty);
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(world.State, "ValidationMessages").Cast<string>(),
+                Has.Some.Contain("PASS:").And.Contain("embedded material texture path"));
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigid_EmbeddedAndWsModelTextureMismatchDropsThePart()
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: true);
+            world.AddTexture("textures\\sr_direct_ws_base.dds", 1024, "BC1", true, 21);
+            world.Fixture.AddMaterial(
+                SrMaterialPath("direct"),
+                (SrBase, "textures\\sr_direct_ws_base.dds"),
+                (SrNormal, "textures\\sr_direct_normal.dds"),
+                (SrMask, "textures\\sr_direct_mask.dds"),
+                (SrMaterialMap, "textures\\sr_direct_material_map.dds"));
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            var drops = Get<Dictionary<string, int>>(result, "PartDropReasons");
+            Assert.That(drops.GetValueOrDefault(
+                "embedded material textures disagree with the WSModel binding for the same part"), Is.GreaterThan(0));
+            Assert.That(Get<int>(result, "Built"), Is.Zero, SrSkips(result));
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigid_UnusedWsModelDoesNotConstrainEmbeddedMaterial()
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: false);
+            world.AddTexture("textures\\sr_direct_ws_base.dds", 1024, "BC1", true, 21);
+            var materialPath = SrMaterialPath("unused_direct");
+            world.Fixture.AddMaterial(
+                materialPath,
+                (SrBase, "textures\\sr_direct_ws_base.dds"),
+                (SrNormal, "textures\\sr_direct_normal.dds"),
+                (SrMask, "textures\\sr_direct_mask.dds"),
+                (SrMaterialMap, "textures\\sr_direct_material_map.dds"));
+            world.Fixture.AddText(
+                SrWs,
+                CreateWsModelDocument(SrRigid, [[materialPath]]).OuterXml);
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<HashSet<string>>(result, "EmbeddedRewrittenRigids"), Is.EquivalentTo([SrRigid]));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedWsModels"), Does.Not.Contain(SrWs));
+            Assert.That(world.Fixture.Output[SrWs], Is.EqualTo(Encoding.UTF8.GetBytes(
+                CreateWsModelDocument(SrRigid, [[materialPath]]).OuterXml)));
+            Assert.That(BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("[unused WSModel left as authored]").And.Contain(SrWs));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        private static SrWorld BuildUnusedWsModelPartialWorld(string incompleteRootText)
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: false);
+            world.AddTexture("textures\\sr_direct_ws_base.dds", 1024, "BC1", true, 21);
+            var materialPath = SrMaterialPath("unused_direct");
+            world.Fixture.AddMaterial(
+                materialPath,
+                (SrBase, "textures\\sr_direct_ws_base.dds"),
+                (SrNormal, "textures\\sr_direct_normal.dds"),
+                (SrMask, "textures\\sr_direct_mask.dds"),
+                (SrMaterialMap, "textures\\sr_direct_material_map.dds"));
+            world.Fixture.AddText(SrWs, CreateWsModelDocument(SrRigid, [[materialPath]]).OuterXml);
+            world.IncompleteRoots.Add(("variantmeshes\\broken.variantmeshdefinition", incompleteRootText));
+            return world;
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigid_UnusedWsModelUnderPartialDiscoveryWhenNoIncompleteRootMentionsIt()
+        {
+            var world = BuildUnusedWsModelPartialWorld("<broken>unrelated</broken>");
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<HashSet<string>>(result, "EmbeddedRewrittenRigids"), Is.EquivalentTo([SrRigid]));
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("[unused WSModel left as authored]"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigid_WsModelNamedByIncompleteRootStaysBlocked()
+        {
+            var fileName = SrWs[(SrWs.LastIndexOf('\\') + 1)..].ToUpperInvariant();
+            var world = BuildUnusedWsModelPartialWorld($"<broken>{fileName}</broken>");
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            Assert.That(Get<HashSet<string>>(result, "EmbeddedRewrittenRigids"), Is.Empty);
+            Assert.That(SrSkips(result) + BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("incomplete root variantmeshes\\broken.variantmeshdefinition mentions it"));
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigid_WsModelNamedBySourceFileStaysBlockedUnderPartialDiscovery()
+        {
+            var world = BuildUnusedWsModelPartialWorld("<broken>unrelated</broken>");
+            world.Fixture.AddText("variantmeshes\\other.variantmeshdefinition", $"<x>{SrWs}</x>");
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            Assert.That(SrSkips(result) + BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("source file variantmeshes\\other.variantmeshdefinition mentions it"));
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigid_WsModelNamedByDbTableStaysBlockedUnderPartialDiscovery()
+        {
+            var world = BuildUnusedWsModelPartialWorld("<broken>unrelated</broken>");
+            var fileName = SrWs[(SrWs.LastIndexOf('\\') + 1)..];
+            world.Fixture.AddText("db\\some_tables\\data__", $"\0\0row\0{fileName.ToUpperInvariant()}\0");
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            Assert.That(SrSkips(result) + BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("DB table db\\some_tables\\data__ mentions it"));
+        }
+
+        [Test]
+        public void SharedRepack_DirectOnlyRootDoesNotShiftUnitIndicesOfOtherUnits()
+        {
+            var plain = BuildStandardSrWorld();
+            plain.Analyse();
+            var withDirect = BuildStandardSrWorld();
+            // Sorts before every other root.
+            withDirect.AddDirectModel(
+                "variantmeshes\\a_direct.rigid_model_v2",
+                "a_first.variantmeshdefinition",
+                SrEmbeddedRigidFactory("textures\\a_direct_base.dds", "textures\\a_direct_normal.dds"));
+            withDirect.AddTexture("textures\\a_direct_base.dds", 1024, "BC1", true, 31);
+            withDirect.AddTexture("textures\\a_direct_normal.dds", 512, "BC3", false, 32);
+            withDirect.Analyse();
+
+            string[] Roots(object state) => Get<IEnumerable>(Get<object>(state, "UnitTextureRepack"), "Units")
+                .Cast<object>().OrderBy(unit => Get<int>(unit, "Index"))
+                .Select(unit => Get<string>(unit, "Root")).ToArray();
+            var before = Roots(plain.State);
+            var after = Roots(withDirect.State);
+            Assert.That(after.Take(before.Length), Is.EqualTo(before));
+            Assert.That(after.Length, Is.GreaterThan(before.Length));
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigidValidationChecksLegacyPathsThatWereNotRewritten()
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: false);
+            SrInstallReadableSourceRigid(world);
+            world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+            var rigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            rigid.ModelList[0][0].Material!.SetTexture(TextureType.Gloss, "textures\\missing_legacy.dds");
+            var errors = SrValidateDirectRigidEmbeddedTextures(world);
+
+            Assert.That(errors, Has.Some.Contain("Gloss -> textures\\missing_legacy.dds"));
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigid_UnsupportedEmbeddedMaterialTypeIsRejected()
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: false);
+            var factory = SrEmbeddedRigidFactory(
+                "textures\\sr_direct_base.dds",
+                "textures\\sr_direct_normal.dds",
+                legacyDiffuse: "textures\\sr_direct_base.dds",
+                materialType: ModelMaterialEnum.default_type,
+                mask: "textures\\sr_direct_mask.dds",
+                materialMap: "textures\\sr_direct_material_map.dds");
+            world.Rigids[SrRigid] = factory;
+            world.Fixture.Rigids[SrRigid] = factory();
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            var drops = Get<Dictionary<string, int>>(result, "PartDropReasons");
+            Assert.That(drops.GetValueOrDefault(
+                    "embedded material type default_type is not verified (only weighted is)"),
+                Is.GreaterThan(0));
+            Assert.That(Get<int>(result, "Built"), Is.Zero, SrSkips(result));
+        }
+
+        [Test]
+        public void SharedRepack_DirectRigidKillSwitch_KeepsThePriorOutput()
+        {
+            var enabledWorld = BuildDirectEmbeddedSrWorld(withWsModel: false);
+            enabledWorld.Analyse();
+            var enabledCoverage = Get<object>(enabledWorld.State, "VanillaTextureCoverage");
+            Assert.That(Get<IDictionary>(enabledCoverage, "EmbeddedMaterialsByPart"), Is.Not.Empty);
+            Assert.That(Get<IDictionary>(enabledCoverage, "DirectConsumersByRigid"), Is.Not.Empty);
+            var enabledSets = Get<IEnumerable>(Get<object>(enabledWorld.State, "UnitTextureRepack"), "SetsC")
+                .Cast<object>().Count();
+
+            var legacyWorld = BuildDirectEmbeddedSrWorld(withWsModel: false);
+            legacyWorld.Analyse(includeDirectConsumers: false);
+            var legacySets = Get<IEnumerable>(Get<object>(legacyWorld.State, "UnitTextureRepack"), "SetsC")
+                .Cast<object>().Count();
+            Assert.That(enabledSets, Is.GreaterThan(legacySets),
+                "the fixture must prove direct embedded entries change the signature sets");
+            legacyWorld.Run(minimumSaving: 1, minimumGroupSaving: 1, analyse: false);
+            var expected = SrSnapshot(legacyWorld.Fixture.Output);
+
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: false);
+            var disabled = GetServiceType().GetField(
+                "SharedRepackDirectRigidsDisabled", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var old = (bool)disabled.GetValue(null)!;
+            try
+            {
+                disabled.SetValue(null, true);
+                var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+                Assert.That(Get<int>(result, "Built"), Is.Zero);
+                Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Not.Contain("Direct rigids considered"));
+                var coverage = Get<object>(world.State, "VanillaTextureCoverage");
+                Assert.That(Get<IDictionary>(coverage, "EmbeddedMaterialsByPart"), Is.Empty);
+                Assert.That(Get<IDictionary>(coverage, "DirectConsumersByRigid"), Is.Empty);
+                var units = Get<object>(world.State, "UnitTextureRepack");
+                Assert.That(Get<IEnumerable>(units, "SetsC").Cast<object>().Count(), Is.EqualTo(legacySets));
+                Assert.That(Get<IEnumerable>(units, "Units").Cast<object>()
+                    .All(unit => Get<HashSet<string>>(unit, "DirectRigids").Count == 0), Is.True);
+                Assert.That(world.Fixture.Output.Keys, Is.EquivalentTo(expected.Keys));
+                foreach (var (path, bytes) in expected)
+                    Assert.That(world.Fixture.Output[path], Is.EqualTo(bytes), path);
+            }
+            finally
+            {
+                disabled.SetValue(null, old);
+            }
         }
 
         private static Dictionary<string, byte[]> SrSnapshot(Dictionary<string, byte[]> files)
@@ -10266,27 +10686,56 @@ namespace Test.PackOptimizer.Core
             var snapshot = GetStaticMethod("SnapshotSharedRepackRigid").Invoke(null, [rigid])!;
             var errors = new List<string>();
 
-            void Compare(HashSet<(int, int)> moved)
+            void Compare(HashSet<(int, int)> moved, HashSet<(int, int)> directEmbedded)
                 => GetStaticMethod("CompareSharedRepackSnapshot")
-                    .Invoke(null, ["r", rigid, snapshot, moved, errors]);
+                    .Invoke(null, ["r", rigid, snapshot, moved, directEmbedded, errors]);
 
-            Compare([(0, 0), (0, 1)]);
+            Compare([(0, 0), (0, 1)], []);
             Assert.That(errors, Is.Empty);
 
             rigid.ModelList[0][1].Mesh.VertexList[0].Uv = new Vector2(0.5f, 0.5f);
-            Compare([(0, 0)]);
+            Compare([(0, 0)], []);
             Assert.That(errors, Has.Some.Contain("UV of an unmoved part changed"));
 
             errors.Clear();
             rigid.ModelList[0][0].Mesh.VertexList[2].Position = new Vector4(9, 9, 9, 1);
-            Compare([(0, 0), (0, 1)]);
+            Compare([(0, 0), (0, 1)], []);
             Assert.That(errors, Has.Some.Contain("position of vertex 2 changed"));
 
             errors.Clear();
             rigid.ModelList[0][0].Mesh.VertexList[1].Uv = new Vector2(1.5f, 0.2f);
             rigid.ModelList[0][0].Mesh.VertexList[2].Position = factory().ModelList[0][0].Mesh.VertexList[2].Position;
-            Compare([(0, 0), (0, 1)]);
+            Compare([(0, 0), (0, 1)], []);
             Assert.That(errors, Has.Some.Contain("outside [0, 1]"));
+        }
+
+        [Test]
+        public void SharedRepack_SnapshotOnlyAllowsEmbeddedPathChangesForDirectMaterialParts()
+        {
+            var model = CreateUvPart(SrBlock(0, 0));
+            var material = new WeightedMaterial
+            {
+                BinaryVertexFormat = VertexFormat.Weighted,
+                MaterialId = ModelMaterialEnum.weighted,
+                ModelName = "snapshot",
+            };
+            material.SetTexture(TextureType.BaseColour, "textures\\before.dds");
+            model.Material = material;
+            var rigid = CreateSingleLodRigid(RmvVersionEnum.RMV2_V8, model);
+            var snapshot = GetStaticMethod("SnapshotSharedRepackRigid").Invoke(null, [rigid])!;
+            material.SetTexture(TextureType.BaseColour, "textures\\after.dds");
+
+            var errors = new List<string>();
+            GetStaticMethod("CompareSharedRepackSnapshot")
+                .Invoke(null, ["r", rigid, snapshot, new HashSet<(int, int)> { (0, 0) },
+                    new HashSet<(int, int)>(), errors]);
+            Assert.That(errors, Has.Some.Contain("embedded material texture paths changed unexpectedly"));
+
+            errors.Clear();
+            GetStaticMethod("CompareSharedRepackSnapshot")
+                .Invoke(null, ["r", rigid, snapshot, new HashSet<(int, int)> { (0, 0) },
+                    new HashSet<(int, int)> { (0, 0) }, errors]);
+            Assert.That(errors, Is.Empty);
         }
 
         [Test]
@@ -15627,6 +16076,8 @@ namespace Test.PackOptimizer.Core
             [12] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
             // 13: shared texture repack groups may choose smaller chart padding; the pinned stages do not include it.
             [13] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 14: direct rigid embedded materials are rewritten by shared repack; the pinned pack has none.
+            [14] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
