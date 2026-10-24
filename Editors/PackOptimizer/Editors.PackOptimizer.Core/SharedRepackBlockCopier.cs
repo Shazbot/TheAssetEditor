@@ -272,4 +272,217 @@ namespace Editors.PackOptimizer.Core
             }
         }
     }
+
+    /// <summary>How the encoder input of one chart rectangle at one mip level of a sheet was produced.</summary>
+    internal enum SharedRepackMipSeed : byte
+    {
+        /// <summary>The source's own mip level, decoded and placed (gutter included).</summary>
+        SourceMip = 0,
+
+        /// <summary>The sheet's slot is scaled differently from the source's: no one-to-one level mapping.</summary>
+        ExponentDiffers = 1,
+
+        /// <summary>The rectangle does not start on a whole texel of this level, in the source or on the sheet.</summary>
+        NonIntegerPosition = 2,
+
+        /// <summary>The source has no such mip level.</summary>
+        BeyondSourceMips = 3,
+
+        /// <summary>The rectangle is smaller than one texel of this level.</summary>
+        NoWholeTexel = 4,
+    }
+
+    /// <summary>Per-cause counts, in (chart rectangle, mip level) pairs, of how a sheet's lower levels were seeded.</summary>
+    internal sealed class SharedRepackMipSeedStats
+    {
+        private static readonly int SeedCount = Enum.GetValues<SharedRepackMipSeed>().Length;
+
+        public long[] Counts { get; } = new long[SeedCount];
+
+        /// <summary>
+        /// Per level: how far (largest channel difference) the texels that were seeded from a source mip
+        /// were from what the box filter of the sheet's top level had put there (index = difference).
+        /// That is the error the previous encoder input had against the source's own level.
+        /// </summary>
+        public long[][] Differences { get; } = Enumerable.Range(0, 16).Select(_ => new long[256]).ToArray();
+
+        /// <summary>Pairs seeded from the source's mip whose last texel row or column was only partly inside the rectangle (that edge stayed box-filtered).</summary>
+        public long PartialEdge { get; set; }
+
+        public long Seeded => Counts[(int)SharedRepackMipSeed.SourceMip];
+        public long Total => Counts.Sum();
+        public long Count(SharedRepackMipSeed seed) => Counts[(int)seed];
+
+        public void Add(SharedRepackMipSeedStats other)
+        {
+            for (var index = 0; index < Counts.Length; index++)
+                Counts[index] += other.Counts[index];
+            PartialEdge += other.PartialEdge;
+            for (var level = 0; level < Differences.Length; level++)
+            {
+                for (var value = 0; value < 256; value++)
+                    Differences[level][value] += other.Differences[level][value];
+            }
+        }
+
+        /// <summary>Texel count, mean, 99th percentile, maximum and share above <paramref name="threshold"/> of the box-filter difference over levels first..last.</summary>
+        public (long Texels, double Mean, int P99, int Max, double OverShare) Summarize(int first, int last, int threshold)
+        {
+            var histogram = new long[256];
+            for (var level = Math.Max(0, first); level <= Math.Min(Differences.Length - 1, last); level++)
+            {
+                for (var value = 0; value < 256; value++)
+                    histogram[value] += Differences[level][value];
+            }
+
+            var total = histogram.Sum();
+            if (total == 0)
+                return (0, 0, 0, 0, 0);
+            double sum = 0;
+            long running = 0;
+            var p99 = 255;
+            var max = 0;
+            long over = 0;
+            for (var value = 0; value < 256; value++)
+            {
+                sum += (double)value * histogram[value];
+                if (histogram[value] != 0)
+                    max = value;
+                if (value > threshold)
+                    over += histogram[value];
+            }
+
+            for (var value = 0; value < 256; value++)
+            {
+                running += histogram[value];
+                if (running >= total * 0.99)
+                {
+                    p99 = value;
+                    break;
+                }
+            }
+
+            return (total, sum / total, p99, max, (double)over / total);
+        }
+
+        public string Describe()
+        {
+            var fallbacks = Enum.GetValues<SharedRepackMipSeed>()
+                .Where(seed => seed != SharedRepackMipSeed.SourceMip && Count(seed) != 0)
+                .Select(seed => $"{Count(seed).ToString("N0", CultureInfo.CurrentCulture)} {DescribeSeed(seed)}")
+                .ToList();
+            return $"seeded from the source's mips {Seeded.ToString("N0", CultureInfo.CurrentCulture)} of {Total.ToString("N0", CultureInfo.CurrentCulture)} " +
+                   $"(chart, level) pairs; box-filtered fallback: {(fallbacks.Count == 0 ? "none" : string.Join(", ", fallbacks))}" +
+                   (PartialEdge == 0 ? string.Empty : $"; {PartialEdge.ToString("N0", CultureInfo.CurrentCulture)} seeded pair(s) kept a box-filtered partial edge texel") +
+                   DescribeDifferences();
+        }
+
+        /// <summary>What the seeded texels differed by from the plain box filter of the top level (the error that input had against the source's own level).</summary>
+        public string DescribeDifferences()
+        {
+            var parts = new List<string>();
+            foreach (var (name, first, last) in new[] { ("mips 1-3", 1, 3), ("mips 4+", 4, 15) })
+            {
+                var (texels, mean, p99, max, over) = Summarize(first, last, 16);
+                if (texels != 0)
+                {
+                    parts.Add(string.Format(
+                        CultureInfo.CurrentCulture,
+                        "{0}: {1:N0} texel(s), box filter vs source mip max {2}, 99th percentile {3}, mean {4:0.00}, {5:P2} over 16",
+                        name, texels, max, p99, mean, over));
+                }
+            }
+
+            return parts.Count == 0 ? string.Empty : "; " + string.Join("; ", parts);
+        }
+
+        public static string DescribeSeed(SharedRepackMipSeed seed) => seed switch
+        {
+            SharedRepackMipSeed.SourceMip => "from the source's mip",
+            SharedRepackMipSeed.ExponentDiffers => "slot scale differs from the source",
+            SharedRepackMipSeed.NonIntegerPosition => "non-integer texel position",
+            SharedRepackMipSeed.BeyondSourceMips => "beyond the source's mips",
+            SharedRepackMipSeed.NoWholeTexel => "smaller than a texel",
+            _ => seed.ToString(),
+        };
+    }
+
+    /// <summary>
+    /// Seeds one chart rectangle of a sheet's mip level with the source's own, decoded mip level (instead
+    /// of leaving the box filter of the sheet's top level there). Primitives only, so it can be tested
+    /// without a pack.
+    /// </summary>
+    internal static class SharedRepackMipSeeder
+    {
+        /// <summary>
+        /// Copies the rectangle (level-0 texel units: source origin, sheet origin and size, the whole
+        /// reserved rectangle with its gutter) at <paramref name="level"/> from the source's level
+        /// <paramref name="level"/> into <paramref name="pixels"/> (the sheet's BGRA level), reading
+        /// outside the source level like the top level does (edge texels repeat). The optional histogram
+        /// counts, per seeded texel, the largest channel difference to what was there. Returns why it did
+        /// not, leaving <paramref name="pixels"/> untouched, or SourceMip.
+        /// </summary>
+        public static SharedRepackMipSeed Seed(
+            int level,
+            int shiftX,
+            int shiftY,
+            int sourceX,
+            int sourceY,
+            int destinationX,
+            int destinationY,
+            int width,
+            int height,
+            (byte[] Bgra, int Width, int Height)? sourceLevel,
+            byte[] pixels,
+            int levelWidth,
+            int levelHeight,
+            out bool partialEdge,
+            long[]? differenceHistogram = null)
+        {
+            partialEdge = false;
+            if (shiftX != 0 || shiftY != 0)
+                return SharedRepackMipSeed.ExponentDiffers;
+
+            var mask = (1 << level) - 1;
+            if (((sourceX | sourceY | destinationX | destinationY) & mask) != 0 || destinationX < 0 || destinationY < 0)
+                return SharedRepackMipSeed.NonIntegerPosition;
+
+            var wide = width >> level;
+            var high = height >> level;
+            if (wide <= 0 || high <= 0)
+                return SharedRepackMipSeed.NoWholeTexel;
+            if (sourceLevel == null)
+                return SharedRepackMipSeed.BeyondSourceMips;
+
+            var (bgra, sourceWidth, sourceHeight) = sourceLevel.Value;
+            var sx = sourceX >> level;
+            var sy = sourceY >> level;
+            var dx = destinationX >> level;
+            var dy = destinationY >> level;
+            wide = Math.Min(wide, levelWidth - dx);
+            high = Math.Min(high, levelHeight - dy);
+            partialEdge = ((width | height) & mask) != 0;
+            for (var y = 0; y < high; y++)
+            {
+                var row = Math.Clamp(sy + y, 0, sourceHeight - 1);
+                for (var x = 0; x < wide; x++)
+                {
+                    var column = Math.Clamp(sx + x, 0, sourceWidth - 1);
+                    var from = (row * sourceWidth + column) * 4;
+                    var to = ((dy + y) * levelWidth + dx + x) * 4;
+                    if (differenceHistogram != null)
+                    {
+                        var difference = 0;
+                        for (var channel = 0; channel < 4; channel++)
+                            difference = Math.Max(difference, Math.Abs(bgra[from + channel] - pixels[to + channel]));
+                        differenceHistogram[difference]++;
+                    }
+
+                    Buffer.BlockCopy(bgra, from, pixels, to, 4);
+                }
+            }
+
+            return SharedRepackMipSeed.SourceMip;
+        }
+    }
 }

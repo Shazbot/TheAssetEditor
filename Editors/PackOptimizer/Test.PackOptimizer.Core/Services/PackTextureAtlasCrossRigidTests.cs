@@ -15277,6 +15277,10 @@ namespace Test.PackOptimizer.Core
             // when that makes its pages smaller; the repack is not among the pinned stages, so the hash is
             // unchanged.
             [11] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 12: the shared texture repack seeds the lower mip levels of its pages from the sources' own decoded
+            // mips (gutter included) wherever a rectangle sits on whole texels, instead of box-filtering the page;
+            // the repack is not among the pinned stages, so the hash is unchanged.
+            [12] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

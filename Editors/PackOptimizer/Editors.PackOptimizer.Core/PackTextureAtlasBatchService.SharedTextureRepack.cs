@@ -340,6 +340,8 @@ namespace Editors.PackOptimizer.Core
             public int BlockCopiedLevels { get; set; }
             // Per level and cause: which sheet blocks are verbatim source blocks and what is left to the encoder.
             internal SharedRepackBlockStats? BlockStats { get; set; }
+            // How the lower levels' encoder input was produced (source mips or box filter), per cause.
+            internal SharedRepackMipSeedStats? MipSeedStats { get; set; }
             public DdsLayout Template { get; set; } = null!;
             // A copy of a shared texture (the emissive distortion noise): it costs bytes but replaces
             // nothing, so it is not a "replaced texture", not owned by a signature set and never pruned.
@@ -4442,7 +4444,7 @@ namespace Editors.PackOptimizer.Core
 
         // Writes the page's output: chart rectangles decoded into a canvas and encoded with a
         // full chain, then the compressed blocks of every block-aligned level copied over from
-        // the sources, and the first re-encoded level seeded from the source's own mip.
+        // the sources; the other levels' encoder input is seeded from the sources' own mips (see below).
         private static bool TryComposeSharedRepackOutput(
             SharedRepackPage page,
             SharedRepackSlotOutput output,
@@ -4500,50 +4502,47 @@ namespace Editors.PackOptimizer.Core
             }
 
             var blockLevels = GetSharedRepackBlockLevels(page, output, sources);
-            // Levels below the block-copied ones whose chart rectangles are still whole texels
-            // are seeded from the sources' own mips instead of a box filter of level 0.
-            var overlayLast = int.MaxValue;
-            foreach (var tuple in users)
-            {
-                var cellX = ScaleByExponent(tuple.Align, output.ExponentX);
-                var cellY = ScaleByExponent(tuple.Align, output.ExponentY);
-                var whole = 0;
-                while ((cellX >> (whole + 1)) >= 1 && (cellY >> (whole + 1)) >= 1)
-                    whole++;
-                overlayLast = Math.Min(overlayLast, whole);
-            }
-
-            overlayLast = Math.Min(overlayLast, output.MipLevels - 1);
+            // Every lower level of the chain is seeded, chart rectangle by chart rectangle (gutter
+            // included), with the source's own decoded mip level wherever the rectangle sits on whole
+            // texels of that level, instead of the box filter of the canvas. What cannot be seeded keeps
+            // the box-filtered texels (non-integer positions, levels the source lacks, exponent
+            // mismatches, texels outside every rectangle). Rectangles of a page never overlap, and the
+            // order (tuples, then charts) is fixed, so the result is deterministic.
+            var seedStats = new SharedRepackMipSeedStats();
             Action<int, byte[], int, int>? overlay = null;
-            if (blockLevels > 0 && blockLevels < output.MipLevels && overlayLast >= blockLevels)
+            if (output.MipLevels > 1)
             {
                 overlay = (level, pixels, levelWidth, levelHeight) =>
                 {
                     foreach (var tuple in users)
                     {
                         var source = sources.Get(tuple.Slots[output.Slot]);
-                        var levelData = source != null && source.Layout.MipCount > level
-                            ? source.Level(level)
-                            : null;
-                        if (levelData == null)
-                            continue;
-
-                        var (bgra, width, height) = levelData.Value;
-                        foreach (var item in EnumerateSharedRepackSlotCharts(page, output, tuple))
+                        var exponent = tuple.SourceExponent[output.Slot];
+                        var shiftX = output.ExponentX - exponent.X;
+                        var shiftY = output.ExponentY - exponent.Y;
+                        (byte[] Bgra, int Width, int Height)? levelData = null;
+                        var levelLoaded = false;
+                        foreach (var chart in page.Charts.Where(chart => chart.Tuple == tuple))
                         {
-                            var sx = item.SourceX >> level;
-                            var sy = item.SourceY >> level;
-                            var dx = item.DestinationX >> level;
-                            var dy = item.DestinationY >> level;
-                            var w = Math.Min(item.Width >> level, Math.Min(width - sx, levelWidth - dx));
-                            var h = Math.Min(item.Height >> level, Math.Min(height - sy, levelHeight - dy));
-                            for (var y = 0; y < h; y++)
+                            if (!levelLoaded)
                             {
-                                Buffer.BlockCopy(
-                                    bgra, ((sy + y) * width + sx) * 4,
-                                    pixels, ((dy + y) * levelWidth + dx) * 4,
-                                    Math.Max(0, w) * 4);
+                                levelLoaded = true;
+                                levelData = source != null && source.Layout.MipCount > level ? source.Level(level) : null;
                             }
+
+                            var seed = SharedRepackMipSeeder.Seed(
+                                level, shiftX, shiftY,
+                                ScaleByExponent(chart.X0, exponent.X),
+                                ScaleByExponent(chart.Y0, exponent.Y),
+                                ScaleByExponent(chart.PackX, output.ExponentX),
+                                ScaleByExponent(chart.PackY, output.ExponentY),
+                                ScaleByExponent(chart.LayoutWidth, output.ExponentX),
+                                ScaleByExponent(chart.LayoutHeight, output.ExponentY),
+                                levelData, pixels, levelWidth, levelHeight, out var partialEdge,
+                                seedStats.Differences[Math.Min(level, seedStats.Differences.Length - 1)]);
+                            seedStats.Counts[(int)seed]++;
+                            if (partialEdge && seed == SharedRepackMipSeed.SourceMip)
+                                seedStats.PartialEdge++;
                         }
                     }
                 };
@@ -4551,7 +4550,7 @@ namespace Editors.PackOptimizer.Core
 
             if (!TryEncodeSharedRepackChain(
                     canvas, output.Width, output.Height, output.Format, output.Srgb, output.Dx10,
-                    blockLevels, overlayLast, overlay, out var dds, out error))
+                    1, output.MipLevels - 1, overlay, out var dds, out error))
             {
                 return false;
             }
@@ -4659,6 +4658,7 @@ namespace Editors.PackOptimizer.Core
             }
 
             output.BlockStats = stats;
+            output.MipSeedStats = seedStats;
             if (captureFates != null)
                 DdsEncodeCapture.RecordCopyMap(output.Path, stats.LevelWidths, stats.LevelHeights, captureFates);
             output.Data = dds;
@@ -4667,7 +4667,7 @@ namespace Editors.PackOptimizer.Core
         }
 
         // Canvas -> BC chain. The levels from firstOverlayLevel to lastOverlayLevel of the
-        // box-filtered chain are overwritten by the callback (the sources' own mip crops)
+        // box-filtered chain are overwritten by the callback (the sources' own decoded mips, where they map)
         // before the chain is compressed.
         private static bool TryEncodeSharedRepackChain(
             byte[] bgra,
@@ -6243,6 +6243,9 @@ namespace Editors.PackOptimizer.Core
                             $"({(blockStats.Total == 0 ? 0 : 100.0 * blockStats.Copied / blockStats.Total):0.00} %), " +
                             $"encoded {blockStats.Encoded:N0} ({blockStats.DescribeCauses()}); copied per level: {blockStats.DescribeLevels()}");
                     }
+
+                    if (output.MipSeedStats is { Total: > 0 } seedStats)
+                        sb.AppendLine($"      encoder input of lower levels: {seedStats.Describe()}");
                 }
             }
 
@@ -6260,6 +6263,20 @@ namespace Editors.PackOptimizer.Core
                     $"Shared repack: block-copied {combined.Copied:N0} of {combined.Total:N0} blocks " +
                     $"({(combined.Total == 0 ? 0 : 100.0 * combined.Copied / combined.Total):0.00} %), encoded {combined.Encoded:N0} " +
                     $"({combined.DescribeCauses()}) over {allBlockStats.Count:N0} sheet(s).");
+            }
+
+            var allSeedStats = result.BuiltSets
+                .SelectMany(set => set.Outputs)
+                .Select(output => output.MipSeedStats)
+                .OfType<SharedRepackMipSeedStats>()
+                .Where(item => item.Total > 0)
+                .ToList();
+            if (allSeedStats.Count != 0)
+            {
+                var combinedSeeds = new SharedRepackMipSeedStats();
+                foreach (var item in allSeedStats)
+                    combinedSeeds.Add(item);
+                sb.AppendLine($"Shared repack: encoder input of the lower mip levels, {combinedSeeds.Describe()} over {allSeedStats.Count:N0} sheet(s).");
             }
 
             if (result.Samples != 0)
