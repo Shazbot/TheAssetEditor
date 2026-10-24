@@ -548,6 +548,11 @@ namespace Editors.PackOptimizer.Core
             public SharedRepackCopyWhatIf? WhatIf { get; set; }
             // Why the merged attempt failed, on the alone retry's context (report only).
             public string? FallbackReason { get; set; }
+            // Report only, on the alone retry's context: the failed merged attempt, its failure and all
+            // of its closure notes.
+            public SharedRepackMergeContext? FailedMerged { get; set; }
+            public string? FailedMergedFailure { get; set; }
+            public List<string> FailedMergedNotes { get; } = [];
         }
 
         private sealed record SharedRepackClosureRoot(string Category, string? OtherSet);
@@ -1746,7 +1751,12 @@ namespace Editors.PackOptimizer.Core
                             .Select(note => (note.Label + " [merged attempt]", note.Note)));
                         result.SizingErrors = sizingBefore.SizingErrors;
                         result.SizingLog.RemoveRange(sizingBefore.Item2, result.SizingLog.Count - sizingBefore.Item2);
+                        var failedMerged = attempt.Context;
+                        var failedMergedFailure = attempt.Failure;
                         attempt = Attempt(false);
+                        attempt.Context.FailedMerged = failedMerged;
+                        attempt.Context.FailedMergedFailure = failedMergedFailure;
+                        attempt.Context.FailedMergedNotes.AddRange(attemptNotes.Select(note => note.Note));
                     }
                 }
 
@@ -6615,6 +6625,62 @@ namespace Editors.PackOptimizer.Core
             }
         }
 
+        // Report only: every merged attempt that failed (its seed then ran alone), with the joined sets,
+        // the failure, where the texture bytes went while closing (by root cause) and its closure notes.
+        private static void AppendSharedRepackFailedMerges(StringBuilder sb, SharedTextureRepackResult result)
+        {
+            var failed = result.Outcomes.Where(outcome => outcome.Context?.FailedMerged != null).ToList();
+            if (failed.Count == 0)
+                return;
+
+            var bucketOf = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var outcome in result.Outcomes)
+                bucketOf.TryAdd(outcome.Label, outcome.Bucket);
+            sb.AppendLine(
+                $"Failed merged attempts (report only; {failed.Count:N0}): joined sets, failure, texture bytes that left " +
+                "the merged set while closing by root cause (a part pulled out by a texture outside the set is traced " +
+                "to that texture's cause), and the attempt's closure notes:");
+            foreach (var outcome in failed.OrderByDescending(outcome => outcome.Estimate).ThenBy(outcome => outcome.Label, StringComparer.Ordinal))
+            {
+                var context = outcome.Context!;
+                var merged = context.FailedMerged!;
+                sb.AppendLine($"  {outcome.Label} [now: {outcome.Bucket}; estimate {outcome.Estimate:N0}]");
+                foreach (var decision in merged.Component.Skip(1))
+                {
+                    var joined = DescribeSharedRepackSet(decision);
+                    sb.AppendLine($"    joined: {joined} [{bucketOf.GetValueOrDefault(joined, "not reported")}; estimate {decision.Saving:N0}]");
+                }
+
+                sb.AppendLine($"    failed: {Shorten(context.FailedMergedFailure ?? "unknown", 400)}");
+                var removed = merged.RemovedTextures
+                    .GroupBy(
+                        pair =>
+                        {
+                            var root = merged.RemovedRoots.GetValueOrDefault(pair.Key);
+                            return root == null
+                                ? pair.Value.Reason
+                                : root.OtherSet == null ? root.Category : $"{root.Category} ({root.OtherSet})";
+                        },
+                        StringComparer.Ordinal)
+                    .Select(group => (Root: group.Key, Bytes: group.Sum(pair => pair.Value.Bytes), Textures: group.Count()))
+                    .OrderByDescending(item => item.Bytes)
+                    .ThenBy(item => item.Root, StringComparer.Ordinal)
+                    .ToList();
+                var left = merged.PlanTextureBytes - removed.Sum(item => item.Bytes);
+                sb.AppendLine(
+                    $"    texture bytes: {merged.PlanTextureBytes:N0} taken in, {left:N0} still in the set after closing" +
+                    (merged.ClosureEstimated
+                        ? $" (last re-estimate saves {FormatSignedBytes(merged.ClosureToday - merged.ClosureEstimate)})"
+                        : string.Empty));
+                foreach (var (root, bytes, textures) in removed)
+                    sb.AppendLine($"      {bytes:N0} bytes ({textures:N0} texture(s)) left: {Shorten(root, 300)}");
+                foreach (var note in context.FailedMergedNotes.Take(10))
+                    sb.AppendLine($"      note: {Shorten(note, 300)}");
+                if (context.FailedMergedNotes.Count > 10)
+                    sb.AppendLine($"      ... {context.FailedMergedNotes.Count - 10:N0} more note(s)");
+            }
+        }
+
         private static void AppendSharedRepackEstimateFunnel(StringBuilder sb, SharedTextureRepackResult result)
         {
             if (result.Outcomes.Count == 0)
@@ -6663,6 +6729,7 @@ namespace Editors.PackOptimizer.Core
 
             AppendSharedRepackClosureCauses(sb, result, builtOutcomes);
             AppendSharedRepackMixedMaterials(sb, result, builtEstimate <= 0 ? 0 : (double)actual / builtEstimate);
+            AppendSharedRepackFailedMerges(sb, result);
 
             AppendSharedRepackPageWaste(sb, result);
             AppendSharedRepackPackingSimulation(sb, result);
