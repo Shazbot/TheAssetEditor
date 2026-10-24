@@ -534,6 +534,34 @@ namespace Editors.PackOptimizer.Core
             // Page waste of the layout groups of the plan's final layout pass, and of the groups
             // left untouched because their pages did not shrink enough.
             public List<SharedRepackGroupWaste> GroupWaste { get; } = [];
+            // Report only: the root cause behind each texture of RemovedTextures (first wins). For a
+            // part pulled out by a texture outside the set, why that texture was outside.
+            public Dictionary<string, SharedRepackClosureRoot> RemovedRoots { get; } =
+                new(StringComparer.OrdinalIgnoreCase);
+            // The closure's last re-estimate (chain bytes of the members, and their estimated crop).
+            public bool ClosureEstimated { get; set; }
+            public long ClosureToday { get; set; }
+            public long ClosureEstimate { get; set; }
+            // Report-only what-if: outside textures are cropped into the set as copies (the
+            // originals stay); planning stops at the closure's first re-estimate.
+            public bool CopyOutside { get; init; }
+            public SharedRepackCopyWhatIf? WhatIf { get; set; }
+            // Why the merged attempt failed, on the alone retry's context (report only).
+            public string? FallbackReason { get; set; }
+        }
+
+        private sealed record SharedRepackClosureRoot(string Category, string? OtherSet);
+
+        // Saving = Today - Estimate (members' chain bytes against the crop of members and copies);
+        // CopyBytes is what the copies add to the estimate.
+        private sealed record SharedRepackCopyWhatIf(
+            long Today,
+            long Estimate,
+            int Copies,
+            long CopyBytes,
+            string? Stop)
+        {
+            public long Saving => Today - Estimate;
         }
 
         // One layout group's pages in output bytes: what the touched cells, the padded and aligned
@@ -1504,12 +1532,13 @@ namespace Editors.PackOptimizer.Core
                 // may merge unprocessed signature sets that share a material with this one; if
                 // a merged attempt fails anywhere, nothing of it was written and the seed is
                 // retried alone, with the joined sets released.
-                SharedRepackMergeContext NewContext(bool allowMerge)
+                SharedRepackMergeContext NewContext(bool allowMerge, bool copyOutside = false)
                 {
                     var context = new SharedRepackMergeContext
                     {
                         Seed = decisionIndex,
                         Allow = allowMerge,
+                        CopyOutside = copyOutside,
                         Decisions = decisions,
                         IndexOfSet = indexOfSet,
                         IsAvailable = index => index > decisionIndex && !consumed.ContainsKey(index),
@@ -1634,6 +1663,52 @@ namespace Editors.PackOptimizer.Core
                     return (null, "the reduced-padding layouts did not converge", "pixel", NewContext(allowMerge));
                 }
 
+                // Report only: the seed set planned alone with its outside textures copied in, up to the
+                // closure's first re-estimate. Nothing is built and the report state is restored.
+                SharedRepackCopyWhatIf RunCopyWhatIf()
+                {
+                    var snapshot = SharedRepackAttemptReportSnapshot.Capture(result);
+                    // Geometry checks the what-if runs are undone, so later real attempts record the
+                    // same drop reasons as without it.
+                    var partsBefore = partCache.Keys.ToHashSet();
+                    var uncheckedParts = partCache.Values.Where(part => !part.GeometryChecked).ToList();
+                    var context = NewContext(false, copyOutside: true);
+                    try
+                    {
+                        PlanSharedRepackSet(
+                            state,
+                            result,
+                            coverage,
+                            context,
+                            label,
+                            setByTexture,
+                            GetPart,
+                            texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
+                            cancellationToken,
+                            new Dictionary<string, int>(StringComparer.Ordinal),
+                            out var whatIfFailure,
+                            out _);
+                        return context.WhatIf ??
+                               new(0, 0, 0, 0, whatIfFailure ?? "the closure stopped before its re-estimate");
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        return new(0, 0, 0, 0, $"internal error ({ex.GetType().Name}: {ex.Message})");
+                    }
+                    finally
+                    {
+                        snapshot.Restore(result);
+                        foreach (var part in uncheckedParts.Where(part => part.GeometryChecked))
+                        {
+                            part.GeometryChecked = false;
+                            part.Reason = null;
+                        }
+
+                        foreach (var key in partCache.Keys.Where(key => !partsBefore.Contains(key)).ToList())
+                            partCache.Remove(key);
+                    }
+                }
+
                 var dropsBefore = new Dictionary<string, int>(result.PartDropReasons, StringComparer.Ordinal);
                 var notesBefore = result.ClosureNotes.Count;
                 var sizingBefore = (result.SizingErrors, result.SizingLog.Count);
@@ -1673,6 +1748,13 @@ namespace Editors.PackOptimizer.Core
                         result.SizingLog.RemoveRange(sizingBefore.Item2, result.SizingLog.Count - sizingBefore.Item2);
                         attempt = Attempt(false);
                     }
+                }
+
+                attempt.Context.FallbackReason = fallbackNote;
+                if (attempt.Context.RemovedTextures.Values.Any(item =>
+                        item.Reason is SharedRepackReasonMixed or SharedRepackReasonBlockedTexture))
+                {
+                    attempt.Context.WhatIf = RunCopyWhatIf();
                 }
 
                 if (attempt.Built == null)
@@ -2718,13 +2800,94 @@ namespace Editors.PackOptimizer.Core
                 return merge.Allow ? string.Empty : " (merging is off for this attempt)";
             }
 
+            // Report only: why a texture outside the set is outside, ranked so that the cause a fix
+            // has to remove first comes first (a texture that cannot be re-encoded blocks every fix).
+            (int Rank, SharedRepackClosureRoot Root) ClassifyOutsideTexture(string texture)
+            {
+                const string Via = "via a dropped part: ";
+                if (removedBecause.ContainsKey(texture) && !blocked.Contains(texture))
+                {
+                    var inner = merge.RemovedRoots.TryGetValue(texture, out var root)
+                        ? root
+                        : new SharedRepackClosureRoot(
+                            merge.RemovedTextures.TryGetValue(texture, out var removed) ? removed.Reason : "unknown",
+                            null);
+                    var category = inner.Category.StartsWith(Via, StringComparison.Ordinal)
+                        ? inner.Category
+                        : Via + inner.Category;
+                    return (3, inner with { Category = category });
+                }
+
+                if (!coverage.Entries.TryGetValue(texture, out var entry))
+                    return (2, new("the outside texture is unknown to the analysis", null));
+                var layoutReason = GetSharedRepackBlockedTextureReason(merge.Effective(entry).Layout);
+                if (layoutReason != null)
+                    return (0, new("the outside texture cannot be re-encoded: " + layoutReason, null));
+                if (blocked.Contains(texture) || BlockedTextureReason(entry, texture) is not null)
+                {
+                    return (1, new("the outside texture is blocked: " +
+                                   (BlockedTextureReason(entry, texture) ?? "blocked"), null));
+                }
+
+                if (!setByTexture.TryGetValue(texture, out var other) || !merge.IndexOfSet.TryGetValue(other, out var index))
+                {
+                    return entry.IsRepackable
+                        ? (2, new("the outside texture is in no signature set", null))
+                        : (1, new("the outside texture is not repackable: " + (entry.NotCroppableReason ?? "unmeasured"), null));
+                }
+
+                if (cappedTextures.Contains(texture))
+                    return (5, new("the outside texture's set hit the merge cap", null));
+                if (inComponent.Contains(index))
+                    return (6, new("the outside texture's set is in this plan", null));
+                if (!merge.IsAvailable(index))
+                {
+                    return (4, new(
+                        "the outside texture's set was processed before this one",
+                        DescribeSharedRepackSet(merge.Decisions[index])));
+                }
+
+                return merge.Allow
+                    ? (6, new("the outside texture's set is mergeable, but the part could not join (another outside texture or its geometry)", null))
+                    : (6, new("merging is off (the alone retry after a failed merged attempt)", null));
+            }
+
+            SharedRepackClosureRoot ClassifyOutside(SharedRepackPart part)
+            {
+                SharedRepackClosureRoot? best = null;
+                var bestRank = int.MaxValue;
+                foreach (var texture in part.Textures
+                             .Where(texture => !members.Contains(texture) && !isUniform(texture))
+                             .OrderBy(texture => texture, StringComparer.Ordinal))
+                {
+                    var (rank, root) = ClassifyOutsideTexture(texture);
+                    if (rank < bestRank)
+                    {
+                        bestRank = rank;
+                        best = root;
+                    }
+                }
+
+                return best ?? new("no outside texture found", null);
+            }
+
+            var rootOfPart = new Dictionary<MeshKey, SharedRepackClosureRoot>();
+
             void Drop(SharedRepackPart part, string reason)
             {
                 dropped.Add(part.Key);
                 droppedParts.Add(part);
                 dropReasonOf[part.Key] = reason;
+                var partRoot = reason is SharedRepackReasonMixed or SharedRepackReasonBlockedTexture
+                    ? ClassifyOutside(part)
+                    : new SharedRepackClosureRoot(reason, null);
+                rootOfPart[part.Key] = partRoot;
                 foreach (var texture in part.Textures.Where(members.Contains))
+                {
                     NoteRemoved(texture, reason);
+                    merge.RemovedRoots.TryAdd(texture, partRoot);
+                }
+
                 result.PartDropReasons[reason] = result.PartDropReasons.GetValueOrDefault(reason) + 1;
                 if (reason == SharedRepackReasonMixed || reason == SharedRepackReasonBlockedTexture)
                 {
@@ -2753,12 +2916,19 @@ namespace Editors.PackOptimizer.Core
                 members.ExceptWith(part.Textures);
             }
 
+            // What-if only: an outside texture that can be re-encoded is cropped into the set as a copy.
+            bool Copyable(string texture)
+                => merge.CopyOutside &&
+                   coverage.Entries.TryGetValue(texture, out var entry) &&
+                   merge.Effective(entry).Layout is { } layout &&
+                   GetSharedRepackBlockedTextureReason(layout) == null;
+
             // Why a part's textures outside the set keep it out of it: null when each of them
             // is a uniform colour, which is kept as authored and so never blocks the part.
             string? OutsideReason(SharedRepackPart part)
             {
                 var offending = part.Textures
-                    .Where(texture => !members.Contains(texture) && !isUniform(texture))
+                    .Where(texture => !members.Contains(texture) && !isUniform(texture) && !Copyable(texture))
                     .ToList();
                 if (offending.Count == 0)
                     return null;
@@ -2864,6 +3034,7 @@ namespace Editors.PackOptimizer.Core
                                     foreach (var texture in droppedPart.Textures.Where(members.Contains))
                                     {
                                         NoteRemoved(texture, dropReasonOf[droppedPart.Key]);
+                                        merge.RemovedRoots.TryAdd(texture, rootOfPart[droppedPart.Key]);
                                         removedBecause.TryAdd(
                                             texture,
                                             $"{DescribeSharedRepackPart(droppedPart)} was dropped");
@@ -2966,6 +3137,50 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 var estimate = EstimateRepackAtlasBytes(items);
+                merge.ClosureEstimated = true;
+                merge.ClosureToday = today;
+                merge.ClosureEstimate = estimate.Rounded;
+                if (merge.CopyOutside)
+                {
+                    // The copies: outside textures the moved parts use (uniform ones stay as authored),
+                    // each cropped to its users in the set; their originals stay for everyone else.
+                    var copyItems = new List<(string Slot, DdsLayout Layout, double Coverage)>();
+                    foreach (var copy in moved
+                                 .SelectMany(part => part.Textures)
+                                 .Where(texture => !members.Contains(texture) && !isUniform(texture))
+                                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                                 .OrderBy(texture => texture, StringComparer.Ordinal))
+                    {
+                        Array.Clear(scratch);
+                        string? copySlot = null;
+                        foreach (var part in moved.Where(part => part.Textures.Contains(copy)))
+                        {
+                            copySlot ??= part.Slots
+                                .Where(pair => Normalize(pair.Value).Equals(copy, StringComparison.OrdinalIgnoreCase))
+                                .Select(pair => pair.Key)
+                                .FirstOrDefault();
+                            var data = coverage.PartData[(part.Key.GeometryPath, part.Key.LodIndex, part.Key.PartIndex)];
+                            for (var word = 0; word < scratch.Length; word++)
+                                scratch[word] |= data.Grid[word];
+                        }
+
+                        copyItems.Add((
+                            copySlot ?? "t_xml_base_colour",
+                            merge.Effective(coverage.Entries[copy]).Layout!,
+                            CountVanillaCoverage(scratch)));
+                    }
+
+                    var withCopies = copyItems.Count == 0 ? estimate : EstimateRepackAtlasBytes(items.Concat(copyItems).ToList());
+                    merge.WhatIf = new(
+                        today,
+                        withCopies.Rounded,
+                        copyItems.Count,
+                        withCopies.Rounded - estimate.Rounded,
+                        null);
+                    failure = "report-only what-if";
+                    return null;
+                }
+
                 if (today - estimate.Rounded < result.MinimumSavingBytes)
                 {
                     NoteOutside();
@@ -6230,6 +6445,176 @@ namespace Editors.PackOptimizer.Core
                 sb.AppendLine($"  {bytes:N0} bytes ({textures:N0} texture(s)): {reason}");
         }
 
+        // Report only: where the "material also uses textures outside the set" losses come from (the
+        // root cause of each such texture loss), and what the copy what-if (RunCopyWhatIf) estimates.
+        private static void AppendSharedRepackMixedMaterials(
+            StringBuilder sb,
+            SharedTextureRepackResult result,
+            double realisedShare)
+        {
+            static bool IsMixed(string reason) => reason is SharedRepackReasonMixed or SharedRepackReasonBlockedTexture;
+
+            var withContext = result.Outcomes.Where(outcome => outcome.Context != null).ToList();
+            if (!withContext.Any(outcome => outcome.Context!.RemovedTextures.Values.Any(item => IsMixed(item.Reason))))
+                return;
+
+            var bucketOf = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var outcome in result.Outcomes)
+                bucketOf.TryAdd(outcome.Label, outcome.Bucket);
+            string RootText(SharedRepackClosureRoot root)
+                => root.OtherSet == null
+                    ? root.Category
+                    : $"{root.Category} (that set: {bucketOf.GetValueOrDefault(root.OtherSet, "not reported")})";
+
+            // "Merging is off" only happens in the alone retry: the cause is why the merged attempt failed.
+            static string MergedFailure(string? reason)
+            {
+                const string Prefix = "the merged attempt with ";
+                if (reason == null || !reason.StartsWith(Prefix, StringComparison.Ordinal))
+                    return "unknown";
+                if (reason.Contains("failed (no part is left after closing", StringComparison.Ordinal))
+                    return "no part was left after closing the merged set";
+                if (reason.Contains("failed (after closing the set", StringComparison.Ordinal))
+                    return "the merged set's estimate after closing was below the threshold";
+                if (reason.Contains("failed (every texture tuple was left untouched", StringComparison.Ordinal))
+                    return "every texture tuple of the merged plan was left untouched (pages not smaller)";
+                if (reason.Contains("failed (actual bytes", StringComparison.Ordinal))
+                    return "the merged plan failed the actual-bytes gate";
+                if (reason.Contains("failed (failed the pixel check", StringComparison.Ordinal))
+                    return "the merged plan failed the pixel check";
+                return "other: " + Shorten(reason[Prefix.Length..], 80);
+            }
+
+            Dictionary<string, long> MixedBytesByRoot(SharedRepackSetOutcome outcome)
+            {
+                var context = outcome.Context!;
+                return context.RemovedTextures
+                    .Where(pair => IsMixed(pair.Value.Reason))
+                    .GroupBy(
+                        pair =>
+                        {
+                            var root = RootText(context.RemovedRoots.GetValueOrDefault(pair.Key) ?? new(pair.Value.Reason, null));
+                            return root.Contains("merging is off", StringComparison.Ordinal)
+                                ? $"{root}; the merged attempt: {MergedFailure(outcome.Reason ?? context.FallbackReason)}"
+                                : root;
+                        },
+                        StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.Sum(pair => pair.Value.Bytes), StringComparer.Ordinal);
+            }
+
+            sb.AppendLine(
+                "Mixed materials (report only): texture losses because a bound material also uses a texture outside " +
+                "the set, by the root cause of that outside texture (when a part has several, the one a fix has to " +
+                "remove first: cannot be re-encoded, blocked or not repackable, unknown or in no set, via a dropped " +
+                "part, set processed before this one, merge cap, other):");
+            var closure = new Dictionary<string, (double Estimate, long Bytes, int Sets)>(StringComparer.Ordinal);
+            foreach (var outcome in withContext.Where(outcome => outcome.Bucket == SharedRepackBucketClosure))
+            {
+                var context = outcome.Context!;
+                var whole = Math.Max(context.PlanTextureBytes, context.RemovedTextures.Values.Sum(item => item.Bytes));
+                foreach (var (root, bytes) in MixedBytesByRoot(outcome))
+                {
+                    var share = whole <= 0 ? 0 : (double)Math.Max(0, outcome.Estimate) * bytes / whole;
+                    var known = closure.GetValueOrDefault(root);
+                    closure[root] = (known.Estimate + share, known.Bytes + bytes, known.Sets + 1);
+                }
+            }
+
+            sb.AppendLine("  Dropped by closure (each set's estimate split as in the closure causes above):");
+            if (closure.Count == 0)
+                sb.AppendLine("    none");
+            foreach (var (root, (estimate, bytes, sets)) in closure
+                         .OrderByDescending(pair => pair.Value.Estimate)
+                         .ThenBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                sb.AppendLine($"    {(long)Math.Round(estimate):N0} bytes estimated ({sets:N0} set(s), {bytes:N0} texture bytes): {root}");
+            }
+
+            foreach (var (title, outcomes) in new[]
+                     {
+                         ("Built plans (texture bytes kept as authored)",
+                             withContext.Where(outcome => outcome.Bucket == SharedRepackBucketBuilt).ToList()),
+                         ("Other failed sets (actual-bytes gate, pixel check, not buildable; texture bytes)",
+                             withContext.Where(outcome => outcome.Bucket is SharedRepackBucketBytes or SharedRepackBucketPixel
+                                 or SharedRepackBucketBuild).ToList()),
+                     })
+            {
+                var byRoot = outcomes
+                    .SelectMany(MixedBytesByRoot)
+                    .GroupBy(pair => pair.Key, StringComparer.Ordinal)
+                    .Select(group => (Root: group.Key, Bytes: group.Sum(pair => pair.Value), Sets: group.Count()))
+                    .OrderByDescending(item => item.Bytes)
+                    .ThenBy(item => item.Root, StringComparer.Ordinal)
+                    .ToList();
+                sb.AppendLine($"  {title}:");
+                if (byRoot.Count == 0)
+                    sb.AppendLine("    none");
+                foreach (var (root, bytes, sets) in byRoot)
+                    sb.AppendLine($"    {bytes:N0} bytes ({sets:N0} set(s)): {root}");
+            }
+
+            var threshold = result.MinimumSavingBytes;
+            var whatIfs = withContext.Where(outcome => outcome.Context!.WhatIf != null).ToList();
+            long? Real(SharedRepackSetOutcome outcome)
+                => outcome.Context!.ClosureEstimated ? outcome.Context.ClosureToday - outcome.Context.ClosureEstimate : null;
+            long Gain(SharedRepackSetOutcome outcome)
+            {
+                // A set closure dropped gains the whole what-if saving once it reaches the threshold;
+                // a set that got past closure (built, or failed a later gate) only the improvement.
+                var whatIf = outcome.Context!.WhatIf!;
+                if (whatIf.Stop != null)
+                    return 0;
+                if (outcome.Bucket != SharedRepackBucketClosure)
+                    return Math.Max(0, whatIf.Saving - (Real(outcome) ?? 0));
+                return whatIf.Saving >= threshold ? whatIf.Saving : 0;
+            }
+
+            sb.AppendLine(
+                "Copy what-if (report only): each set with such losses planned again ALONE (no merging), with every " +
+                "outside texture that can be re-encoded cropped into the set as a copy (the original stays for its " +
+                "other users, so a copy is a cost, not a saving). Closure re-estimate only (before charts, layout and " +
+                $"the actual-bytes gate), so optimistic: built plans realised {realisedShare:P0} of their estimate. " +
+                "A built plan's real figure is its last closure re-estimate (a merged plan's includes its joined sets).");
+            var notBuilt = whatIfs.Where(outcome => outcome.Bucket == SharedRepackBucketClosure).ToList();
+            var reaching = notBuilt.Where(outcome => Gain(outcome) > 0).ToList();
+            var built = whatIfs.Where(outcome => outcome.Bucket != SharedRepackBucketClosure).ToList();
+            var improved = built.Where(outcome => Gain(outcome) > 0).ToList();
+            sb.AppendLine(
+                $"  Dropped by closure ({notBuilt.Count:N0} set(s)): {reaching.Count:N0} would reach the {threshold:N0}-byte " +
+                $"threshold, estimated {reaching.Sum(Gain):N0} bytes with {reaching.Sum(outcome => outcome.Context!.WhatIf!.Copies):N0} " +
+                $"copies costing {reaching.Sum(outcome => outcome.Context!.WhatIf!.CopyBytes):N0} bytes " +
+                $"(realistically about {(long)(reaching.Sum(Gain) * realisedShare):N0})");
+            sb.AppendLine(
+                $"  Past closure ({built.Count:N0} set(s): built, or failed a later gate, which copies do not change): " +
+                $"{improved.Count:N0} would save more, +{improved.Sum(Gain):N0} bytes " +
+                $"estimated with {improved.Sum(outcome => outcome.Context!.WhatIf!.Copies):N0} copies costing " +
+                $"{improved.Sum(outcome => outcome.Context!.WhatIf!.CopyBytes):N0} bytes " +
+                $"(realistically about {(long)(improved.Sum(Gain) * realisedShare):N0})");
+            foreach (var group in whatIfs
+                         .Where(outcome => outcome.Context!.WhatIf!.Stop != null)
+                         .GroupBy(outcome => outcome.Context!.WhatIf!.Stop!, StringComparer.Ordinal)
+                         .OrderByDescending(group => group.Count())
+                         .ThenBy(group => group.Key, StringComparer.Ordinal))
+            {
+                sb.AppendLine($"  Stopped before the re-estimate ({group.Count():N0} set(s)): {Shorten(group.Key, 160)}");
+            }
+
+            sb.AppendLine("  Sets by gain (top 20):");
+            foreach (var outcome in whatIfs
+                         .Where(outcome => Gain(outcome) > 0)
+                         .OrderByDescending(Gain)
+                         .ThenBy(outcome => outcome.Label, StringComparer.Ordinal)
+                         .Take(20))
+            {
+                var whatIf = outcome.Context!.WhatIf!;
+                var real = Real(outcome);
+                sb.AppendLine(
+                    $"    +{Gain(outcome):N0}: {Shorten(outcome.Label, 100)} [{outcome.Bucket}]: closure saving " +
+                    $"{(real == null ? "-" : FormatSignedBytes(real.Value))} -> {FormatSignedBytes(whatIf.Saving)} with " +
+                    $"{whatIf.Copies:N0} copies ({whatIf.CopyBytes:N0} bytes)");
+            }
+        }
+
         private static void AppendSharedRepackEstimateFunnel(StringBuilder sb, SharedTextureRepackResult result)
         {
             if (result.Outcomes.Count == 0)
@@ -6277,6 +6662,7 @@ namespace Editors.PackOptimizer.Core
                 (accounted == total ? "(reconciles)" : "(DOES NOT RECONCILE)"));
 
             AppendSharedRepackClosureCauses(sb, result, builtOutcomes);
+            AppendSharedRepackMixedMaterials(sb, result, builtEstimate <= 0 ? 0 : (double)actual / builtEstimate);
 
             AppendSharedRepackPageWaste(sb, result);
             AppendSharedRepackPackingSimulation(sb, result);
