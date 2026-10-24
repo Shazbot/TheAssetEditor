@@ -454,9 +454,27 @@ Rules:
 Measured (`teb-direct3`, `albion-direct3`, OutputVersion 14):
 
 - TEB: 475 considered sets, 33 shared repack sets built (28 in step 2), 130,174,832 bytes saved (step 2: 125,238,064), 12 direct rigids rewritten: `teb_borgio_ship`, `teb_lupo_ship`, `ak_lucy_circlet`, `ak_lucy_long_hair`, `ak_teb_bandaged_pilgrim`, `ak_teb_guard_kossars_acc_tasset`, `ak_teb_bandolero`, four `ak_teb_rondels_*` (loaded among others by `teb_sisters`) and `teb_gausser_scarf`. Direct rigid outcomes: 594 considered = 12 rewritten, 14 embedded parts dropped, 15 rigid not eligible, 110 not rewritten, 443 not owned by the source pack. The Sisters hoods did not build: their 94%-covered charts pack to a layout 16 bytes larger than the source. Against step 2 the output differs by 46 added / 34 removed files and 23 modified (6 WSModels, 17 rigids); the rest is identical.
-- Albion: 295 considered sets (211 in step 2), 20 built, 143,960,472 bytes saved, no direct rigid rewritten. The output is byte-identical to step 2 (0 added, 0 removed, 0 modified). The chariot `elo_albion_chariot_01` is no longer ineligible (its unused WSModel is now ignored), but its 7 sets are below the threshold or dropped by closure: each direct root counts as its own unit, so the chariot's textures are split into sets with different unit signatures than the warhorse set that used to hold them (17.8 MB estimate before, 1.5 KB now).
+- Albion: 295 considered sets (211 in step 2), 20 built, 143,960,472 bytes saved, no direct rigid rewritten. The output is byte-identical to step 2 (0 added, 0 removed, 0 modified). The chariot `elo_albion_chariot_01` is no longer ineligible (its unused WSModel is now ignored), but its 7 sets are below the threshold or dropped by closure; see the next section.
 - Both: WHMM `pack validate --full-payloads` reports the same non-texture diagnostics for source and output (teb 20 INVALID_XML, 15 IGNORED_WSMODEL_BINDING, 2 UNSUPPORTED_RMV2_PART, 1 RIGID_LOADER_SCAN_LIMIT; albion 16 INVALID_XML, 14 IGNORED_WSMODEL_BINDING, 2 UNSUPPORTED_RMV2_PART); texture-missing counts differ because vanilla packs were not supplied. The host checks pass: teb "155 directly loaded rigid(s) keep all 3,333 source-resolved embedded texture paths", "12 directly loaded rigid(s) have 206 rewritten embedded material texture path(s)"; albion "19 ... keep all 664".
 - Wall time: teb 205.6 s, albion 119.0 s.
+- In game (teb): the rewritten rondels (Sisters of Fury), Lucrezzia's circlet and hair, Lorenzo Lupo's ship and Gausser's scarf look correct.
+
+## 2026-10-24: the albion chariot cannot be repacked profitably (investigated, nothing changed)
+
+The 17.8 MB estimate of the failed merged attempt seeded by `chs_warhorse_01_base_colour.dds` (pre-step-3 reports) was never real. That set's single unit was the campaign-map VMD `campaign_alb_chariot` (`cam_alb_chariot` plus horses and charioteer), not the battle unit, and the estimate did not see the battle rigid `elo_albion_chariot_01`'s embedded use of the same textures. With that use counted (step 3), the best chariot set is `emp_blazing_sun_head_01_base_colour.dds` (3 units: campaign VMD, battle rigid, destroyed rigid; 5.5 MB estimated), and it fails too.
+
+Per part of `elo_albion_chariot_01` (lod 0), from an instrumented albion run (instrumentation reverted):
+
+- Pinned by textures that rigids the pack does not own also use: part 0 (`emp_luminark_*`, 6 vanilla luminark rigids), part 2 (`grn_grom_chariot_01_*`), part 4 (`tmb_chariot_main_normal.dds`, 11.18 MB, 12 vanilla rigids, mostly Arkhan's chariot; it shares a material with `albion_chariot_base_colour` and `tmb_chariot_main_material_map`). Copying the 11.18 MB normal map into an atlas costs more than the part would save.
+- Banner (part 3) and war shield (part 5) sets: saving 0.
+- Movable: only the `emp_blazing_sun_head_01_*` textures of part 1 (2.8 MB). They are blocked by `elo_albion_chariot_01_destroyed` parts with `default_type` materials using all 6 of the set's textures; the merged attempt with the luminark set also fails (unowned rigids, merge cap on `tmb_chariot_main_normal`). The `brt_trebuchet_base_colour.dds` set (6.3 MB estimated) has the same `default_type` block and shares `brt_trebuchet_normal` with 3 vanilla rigids.
+
+Realistic bound: 1–2 MB, and only if `default_type` were accepted (in-game test needed). Not pursued.
+
+Rejected alternatives:
+
+- Joining an engine-asset rigid to its land unit's battle VMDs (all four chariot land units share engine `elo_albion_chariot` and mount `albion_warhorse_chariot`): it does not restore the old set, whose unit was the campaign VMD, and the pinned parts stay pinned.
+- Letting a set below the 1 MiB threshold seed a merged plan (SharedTextureRepack.cs, the `MinimumSavingBytes` check in the set loop): the chariot's only seedable set is the pinned one, and the rule would touch 218 of 295 albion and 372 of 475 teb considered sets (21.6 MB / 35.7 MB estimated, 5.5 % / 7.8 %), mostly tiny gains with extra output files.
 
 ## Open issues
 
