@@ -16078,6 +16078,8 @@ namespace Test.PackOptimizer.Core
             [13] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
             // 14: direct rigid embedded materials are rewritten by shared repack; the pinned pack has none.
             [14] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 15: VMDs that only parse leniently no longer make gameplay discovery partial; the pinned pack has none.
+            [15] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

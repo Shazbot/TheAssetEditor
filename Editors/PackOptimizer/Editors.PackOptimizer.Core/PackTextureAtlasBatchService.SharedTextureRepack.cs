@@ -6940,6 +6940,33 @@ namespace Editors.PackOptimizer.Core
             }
         }
 
+        // A VMD that only parsed leniently is read for its references and must stay byte-identical.
+        private static void ValidateLenientVmdsUnchanged(BatchState state, List<string> errors)
+        {
+            var checkedCount = 0;
+            var errorsBefore = errors.Count;
+            foreach (var entry in state.LenientVmds)
+            {
+                var source = state.Source.FindFile(entry.Path);
+                if (source == null)
+                    continue;
+
+                checkedCount++;
+                var output = state.Output.FindFile(entry.Path);
+                if (output == null ||
+                    !source.DataSource.ReadData().AsSpan().SequenceEqual(output.DataSource.ReadData()))
+                {
+                    errors.Add($"Leniently parsed VMD was modified or removed: {entry.Path}");
+                }
+            }
+
+            if (checkedCount != 0 && errors.Count == errorsBefore)
+            {
+                state.ValidationMessages.Add(
+                    $"PASS: {checkedCount} leniently parsed source VMD(s) are byte-identical in the output.");
+            }
+        }
+
         private void ValidateDirectRigidEmbeddedTextureReferences(
             BatchState state,
             List<string> errors,

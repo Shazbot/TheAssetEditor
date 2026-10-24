@@ -687,14 +687,27 @@ namespace Editors.PackOptimizer.Core
 
                 var container = FindDependencyContainer(state, assetPath);
                 var file = container?.FindFile(assetPath);
-                if (container == null ||
-                    file == null ||
-                    !TryGetVmdForTraversal(
+                var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var children = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (container != null &&
+                    file != null &&
+                    TryGetVmdForTraversal(
                         state,
                         container,
                         assetPath,
                         file,
                         out var vmd))
+                {
+                    CollectVmdReferences(vmd, models, children, textures);
+                }
+                else if (container != null &&
+                         file != null &&
+                         TryReadLenientVmdReferences(state, assetPath, file, models, children))
+                {
+                    // Parsed leniently: only its references are used, the file is never touched.
+                }
+                else
                 {
                     result.IsComplete = false;
                     result.Failures.Add(
@@ -713,10 +726,7 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
-                var models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var children = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var textures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                CollectVmdReferences(vmd, models, children, textures);
+                NormalizeVmdReferenceSets(state, assetPath, models, children);
 
                 foreach (var modelValue in models)
                 {
@@ -1098,6 +1108,117 @@ namespace Editors.PackOptimizer.Core
             }
 
             return result;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex LenientVmdReferencePattern = new(
+            @"\b(model|imposter_model|definition)\s*=\s*(?:""([^""]*)""|'([^']*)')",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        // Reads the model/imposter_model/definition attribute values of a VMD that does not parse,
+        // from the raw text (BOM, UTF-8 or UTF-16). `definition` values are child references.
+        private static bool TryReadLenientVmdReferences(
+            BatchState state,
+            string vmdPath,
+            PackFile file,
+            HashSet<string> models,
+            HashSet<string> children)
+        {
+            string text;
+            try
+            {
+                var data = file.DataSource.ReadData();
+                text = data.Length >= 2 && data[0] == 0xFF && data[1] == 0xFE
+                    ? Encoding.Unicode.GetString(data, 2, data.Length - 2)
+                    : data.Length >= 2 && data[0] == 0xFE && data[1] == 0xFF
+                        ? Encoding.BigEndianUnicode.GetString(data, 2, data.Length - 2)
+                        : Encoding.UTF8.GetString(data);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return false;
+            }
+
+            // Only a document that opens and closes the root element: a truncated file may hide references.
+            var trimmed = text.Trim('\uFEFF', ' ', '\t', '\r', '\n', '\0');
+            if (!trimmed.Contains("<VARIANT_MESH", StringComparison.OrdinalIgnoreCase) ||
+                !trimmed.EndsWith("</VARIANT_MESH>", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            foreach (System.Text.RegularExpressions.Match match in LenientVmdReferencePattern.Matches(text))
+            {
+                var value = match.Groups[2].Success ? match.Groups[2].Value : match.Groups[3].Value;
+                if (string.IsNullOrWhiteSpace(value))
+                    continue;
+
+                (match.Groups[1].Value.Equals("definition", StringComparison.OrdinalIgnoreCase)
+                    ? children
+                    : models).Add(Normalize(value));
+            }
+
+            vmdPath = Normalize(vmdPath);
+            if (!state.LenientVmds.Any(entry => entry.Path.Equals(vmdPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                var reason = state.MalformedReferencedVmds
+                    .FirstOrDefault(entry => entry.Path.Equals(vmdPath, StringComparison.OrdinalIgnoreCase))?.Reason ??
+                    "the VMD does not parse";
+                state.LenientVmds.Add(new LenientVmdEntry(vmdPath, reason, models.Count, children.Count));
+            }
+
+            return true;
+        }
+
+        // A `definition` that names a WSModel or rigid is a reference to that model. A value without
+        // an extension may name stem + .rigid_model_v2, .wsmodel or .variantmeshdefinition: each that
+        // resolves is a reference (a superset of what the game loads); the rest are only reported.
+        private static void NormalizeVmdReferenceSets(
+            BatchState state,
+            string vmdPath,
+            HashSet<string> models,
+            HashSet<string> children)
+        {
+            foreach (var child in children.ToList())
+            {
+                var extension = Path.GetExtension(child);
+                if (extension.Equals(".wsmodel", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
+                {
+                    children.Remove(child);
+                    models.Add(child);
+                }
+            }
+
+            foreach (var set in new[] { models, children })
+            {
+                foreach (var value in set.ToList())
+                {
+                    var normalized = Normalize(value);
+                    if (normalized.Length == 0 || Path.GetExtension(normalized).Length != 0)
+                        continue;
+
+                    set.Remove(value);
+                    var resolved = new List<string>();
+                    foreach (var extension in new[] { ".rigid_model_v2", ".wsmodel", ".variantmeshdefinition" })
+                    {
+                        var candidate = normalized + extension;
+                        if (FindDependencyContainer(state, candidate) == null)
+                            continue;
+
+                        resolved.Add(candidate);
+                        models.Add(candidate);
+                    }
+
+                    var path = Normalize(vmdPath);
+                    if (!state.ExtensionlessVmdReferences.Any(entry =>
+                            entry.Vmd.Equals(path, StringComparison.OrdinalIgnoreCase) &&
+                            entry.Value.Equals(normalized, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        state.ExtensionlessVmdReferences.Add(
+                            new ExtensionlessVmdReference(path, normalized, resolved.ToArray()));
+                    }
+                }
+            }
         }
 
         private static bool TryGetVmdForTraversal(

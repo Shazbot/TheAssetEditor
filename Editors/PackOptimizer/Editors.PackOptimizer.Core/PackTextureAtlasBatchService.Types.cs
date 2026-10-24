@@ -888,6 +888,9 @@ namespace Editors.PackOptimizer.Core
                 new(StringComparer.OrdinalIgnoreCase);
             public List<MalformedVmdEntry> MalformedVmdRoots { get; } = [];
             public List<MalformedVmdEntry> MalformedReferencedVmds { get; } = [];
+            // Referenced VMDs whose references were read leniently (never parsed, never rewritten).
+            public List<LenientVmdEntry> LenientVmds { get; } = [];
+            public List<ExtensionlessVmdReference> ExtensionlessVmdReferences { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedWsModelsIgnored { get; } = [];
             public List<MalformedXmlAssetEntry> MalformedMaterialsIgnored { get; } = [];
             public List<string> DirectAssetSkipMessages { get; } = [];
@@ -1448,6 +1451,12 @@ namespace Editors.PackOptimizer.Core
         private sealed record MalformedVmdEntry(
             string Path,
             string Reason);
+
+        // A VMD that does not parse but whose model/definition attributes were read from the raw text.
+        private sealed record LenientVmdEntry(string Path, string Reason, int ModelCount, int DefinitionCount);
+
+        // A model/definition value without an extension and the files it may name (stem + known extensions).
+        private sealed record ExtensionlessVmdReference(string Vmd, string Value, string[] Resolved);
 
         private sealed record MalformedXmlAssetEntry(
             string Path,

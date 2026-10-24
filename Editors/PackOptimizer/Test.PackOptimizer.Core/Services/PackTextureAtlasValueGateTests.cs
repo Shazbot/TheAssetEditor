@@ -1407,7 +1407,8 @@ namespace Test.PackOptimizer.Core
 
         private static object CreateTraversalBatchState(
             IPackFileContainer source,
-            IReadOnlyList<IPackFileContainer> loadedContainers)
+            IReadOnlyList<IPackFileContainer> loadedContainers,
+            IPackFileContainer? output = null)
         {
             var assembly = Assembly.Load("Editors.PackOptimizer.Core");
             var serviceType = assembly.GetType(
@@ -1429,7 +1430,7 @@ namespace Test.PackOptimizer.Core
             var state = constructor.Invoke(
                 [
                     source,
-                    source,
+                    output ?? source,
                     packFileService.Object,
                     string.Empty,
                     string.Empty,
@@ -5971,6 +5972,158 @@ namespace Test.PackOptimizer.Core
                 Assert.That(filteredCount, Is.EqualTo(0));
                 Assert.That(model.Mesh.VertexList[0].Uv, Is.EqualTo(originalUv));
             });
+        }
+
+        private const string LenientRoot = @"variantmeshes\variantmeshdefinitions\lenient.variantmeshdefinition";
+        private const string LenientCaWsModel = @"models\ca_consumer.wsmodel";
+
+        private static object IndexLenientVmd(string vmdText, params string[] caFiles)
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [LenientRoot] = PackFile.CreateFromASCII(LenientRoot, vmdText),
+                });
+            var ca = CreateTraversalContainer(
+                isCaPackFile: true,
+                caFiles.Append(@"models\x.rigid_model_v2").ToDictionary(
+                    path => path,
+                    path => PackFile.CreateFromASCII(path, "<model><geometry>models\\x.rigid_model_v2</geometry></model>")));
+            var state = CreateTraversalBatchState(source.Object, [ca.Object]);
+            IndexImmutableMeshMergeConsumers(state, LenientRoot);
+            return state;
+        }
+
+        private static bool IndexHasRootFor(object state, string asset)
+        {
+            var index = GetGameplayDependencyIndex(state);
+            var roots = (IDictionary)index.GetType()
+                .GetProperty("RootsByAssetPath", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
+                .GetValue(index)!;
+            return roots.Contains(NormalizeTestPath(asset));
+        }
+
+        [TestCase("<VARIANT_MESH><SLOT name=\"a\"><VARIANT_MESH model=\"models\\ca_consumer.wsmodel\" /></SLOT></SLOT></VARIANT_MESH>", TestName = "LenientVmd_StrayEndTag")]
+        [TestCase("<VARIANT_MESH><SLOT name=\"a\"><VARIANT_MESH model=\"models\\ca_consumer.wsmodel\" /></SLOT><VARIANT_MESH model=\"models\\other.wsmodel\" /></SLOT></VARIANT_MESH>", TestName = "LenientVmd_MissingStartTag")]
+        public void LenientVmd_ReferencesAreReadAndTheRootIsComplete(string vmdText)
+        {
+            var state = IndexLenientVmd(vmdText, LenientCaWsModel, @"models\other.wsmodel");
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetGameplayDependencyFailureDetails(state), Is.Empty);
+                Assert.That(GetGameplayDependencyIndexCollectionCount(state, "IncompleteRoots"), Is.Zero);
+                Assert.That(IndexHasRootFor(state, LenientCaWsModel), Is.True);
+                Assert.That(GetStateProperty<IList>(state, "LenientVmds"), Has.Count.EqualTo(1));
+                Assert.That(GetStateProperty<IList>(state, "MalformedReferencedVmds"), Has.Count.EqualTo(1));
+            });
+        }
+
+        [Test]
+        public void ValidVmd_StaysOnTheStrictPath()
+        {
+            var state = IndexLenientVmd(
+                "<VARIANT_MESH><SLOT name=\"a\"><VARIANT_MESH model=\"models\\ca_consumer.wsmodel\" /></SLOT></VARIANT_MESH>",
+                LenientCaWsModel);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetGameplayDependencyFailureDetails(state), Is.Empty);
+                Assert.That(IndexHasRootFor(state, LenientCaWsModel), Is.True);
+                Assert.That(GetStateProperty<IList>(state, "LenientVmds"), Is.Empty);
+                Assert.That(GetStateProperty<IList>(state, "MalformedReferencedVmds"), Is.Empty);
+            });
+        }
+
+        [Test]
+        public void VmdReference_NamingAWsModelIsAModelReference()
+        {
+            var state = IndexLenientVmd(
+                "<VARIANT_MESH><SLOT name=\"a\"><VARIANT_MESH_REFERENCE definition=\"models\\ca_consumer.wsmodel\" /></SLOT></VARIANT_MESH>",
+                LenientCaWsModel);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetGameplayDependencyFailureDetails(state), Is.Empty);
+                Assert.That(IndexHasRootFor(state, LenientCaWsModel), Is.True);
+                Assert.That(GetStateProperty<IList>(state, "LenientVmds"), Is.Empty);
+            });
+        }
+
+        [Test]
+        public void ExtensionlessModelReference_IsASupersetOfTheFilesItMayName()
+        {
+            var state = IndexLenientVmd(
+                "<VARIANT_MESH><SLOT name=\"a\"><VARIANT_MESH model=\"models\\ca_consumer\" /></SLOT>" +
+                "<SLOT name=\"b\"><VARIANT_MESH model=\"models\\nothing_here\" /></SLOT></VARIANT_MESH>",
+                LenientCaWsModel);
+
+            var references = GetStateProperty<IList>(state, "ExtensionlessVmdReferences").Cast<object>().ToArray();
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetGameplayDependencyFailureDetails(state), Is.Empty);
+                Assert.That(IndexHasRootFor(state, LenientCaWsModel), Is.True);
+                Assert.That(references, Has.Length.EqualTo(2));
+                Assert.That(
+                    references.Select(item => GetRecordProperty<string[]>(item, "Resolved").Length).OrderBy(x => x),
+                    Is.EqualTo(new[] { 0, 1 }));
+            });
+        }
+
+        [Test]
+        public void LenientVmd_IsStillAMalformedRootForEveryStage()
+        {
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile>
+                {
+                    [LenientRoot] = PackFile.CreateFromASCII(
+                        LenientRoot,
+                        "<VARIANT_MESH><SLOT name=\"a\"><VARIANT_MESH model=\"models\\a.wsmodel\" /></SLOT></SLOT></VARIANT_MESH>"),
+                });
+            var state = CreateTraversalBatchState(source.Object, []);
+            var method = Assembly.Load("Editors.PackOptimizer.Core")
+                .GetType("Editors.PackOptimizer.Core.PackTextureAtlasBatchService", true)!
+                .GetMethod("ValidateVmdRoots", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+            var result = method.Invoke(null, [state, source.Object, new[] { LenientRoot }, CancellationToken.None, null])!;
+
+            var valid = (IList)result.GetType().GetField("Item1")!.GetValue(result)!;
+            var malformed = (IList)result.GetType().GetField("Item2")!.GetValue(result)!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(valid, Is.Empty);
+                Assert.That(malformed, Has.Count.EqualTo(1));
+            });
+        }
+
+        [Test]
+        public void LenientVmdValidation_FlagsAModifiedFile()
+        {
+            var vmdText = "<VARIANT_MESH><SLOT name=\"a\"><VARIANT_MESH model=\"models\\ca_consumer.wsmodel\" /></SLOT></SLOT></VARIANT_MESH>";
+            var source = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile> { [LenientRoot] = PackFile.CreateFromASCII(LenientRoot, vmdText) });
+            var output = CreateTraversalContainer(
+                isCaPackFile: false,
+                new Dictionary<string, PackFile> { [LenientRoot] = PackFile.CreateFromASCII(LenientRoot, vmdText + " ") });
+            var state = CreateTraversalBatchState(source.Object, [], output.Object);
+            var entryType = state.GetType().Assembly.GetType(
+                "Editors.PackOptimizer.Core.PackTextureAtlasBatchService+LenientVmdEntry", true)!;
+            GetStateProperty<IList>(state, "LenientVmds").Add(Activator.CreateInstance(entryType, LenientRoot, "x", 1, 0));
+            var method = state.GetType().DeclaringType!
+                .GetMethod("ValidateLenientVmdsUnchanged", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var errors = new List<string>();
+
+            method.Invoke(null, [state, errors]);
+            Assert.That(errors, Has.Some.Contain("Leniently parsed VMD was modified"));
+
+            errors.Clear();
+            var same = CreateTraversalBatchState(source.Object, []);
+            GetStateProperty<IList>(same, "LenientVmds").Add(Activator.CreateInstance(entryType, LenientRoot, "x", 1, 0));
+            method.Invoke(null, [same, errors]);
+            Assert.That(errors, Is.Empty);
         }
 
         [Test]

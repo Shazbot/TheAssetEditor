@@ -2954,6 +2954,30 @@ namespace Editors.PackOptimizer.Core
                 sb.AppendLine("(none)");
             sb.AppendLine();
 
+            sb.AppendLine("VMD files parsed leniently (references read from the raw text; never rewritten)");
+            sb.AppendLine("------------------------------------------------------------------------------");
+            foreach (var entry in state.LenientVmds.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine(entry.Path);
+                sb.AppendLine(
+                    $"  parsed leniently: {entry.Reason} ({entry.ModelCount:N0} model and " +
+                    $"{entry.DefinitionCount:N0} definition value(s) read)");
+            }
+            foreach (var entry in state.ExtensionlessVmdReferences
+                         .OrderBy(x => x.Vmd, StringComparer.OrdinalIgnoreCase)
+                         .ThenBy(x => x.Value, StringComparer.OrdinalIgnoreCase))
+            {
+                sb.AppendLine(entry.Vmd);
+                sb.AppendLine(
+                    $"  extensionless reference {entry.Value}: " +
+                    (entry.Resolved.Length == 0
+                        ? "no .rigid_model_v2, .wsmodel or .variantmeshdefinition of that name exists"
+                        : "treated as " + string.Join(", ", entry.Resolved)));
+            }
+            if (state.LenientVmds.Count == 0 && state.ExtensionlessVmdReferences.Count == 0)
+                sb.AppendLine("(none)");
+            sb.AppendLine();
+
             sb.AppendLine("Malformed WSModels ignored");
             sb.AppendLine("--------------------------");
             foreach (var entry in state.MalformedWsModelsIgnored.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
