@@ -257,7 +257,8 @@ class Evaluator:
         if re.match(r'^v\d+$', base):
             return poly_atom(atom('in', base, comp, taint=(base == self.uv0)))
         if re.match(r'^r\d+$', base):
-            return self.getreg(base, comp) or poly_atom(atom('undef', base, comp))
+            value = self.getreg(base, comp)
+            return value if value is not None else poly_atom(atom('undef', base, comp))
         m = re.match(r'^cb(\d+)\[(\d+)\]$', base)
         if m:
             name = self.sh.cbuf.get('cb' + m.group(1), 'cb' + m.group(1))
@@ -604,9 +605,10 @@ def disassemble(folder, cache, needles, with_siblings=False):
     names, groups = [], set()
     for f in compiled:
         with open(os.path.join(folder, f), 'rb') as fh:
-            if any(n in fh.read() for n in needles):
-                names.append(f)
-                groups.add(family_group(f.split('_xml_hlsl_')[0][len('shaders_'):]))
+            payload = fh.read()
+        if any(n in payload for n in needles):
+            names.append(f)
+            groups.add(family_group(f.split('_xml_hlsl_')[0][len('shaders_'):]))
     if with_siblings:
         names = [f for f in compiled if family_group(f.split('_xml_hlsl_')[0][len('shaders_'):]) in groups]
     lst = os.path.join(out, '_list.txt')
