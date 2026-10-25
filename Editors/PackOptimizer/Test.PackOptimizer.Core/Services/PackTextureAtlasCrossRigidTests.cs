@@ -9759,11 +9759,11 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
-        public void SharedRepack_DisagreeingMaterialVariants_MakeThePartIneligible()
+        public void SharedRepack_DisagreeingMaterialVariants_OfAnotherSize_MakeThePartIneligible()
         {
             var world = BuildStandardSrWorld(secondLod: false);
-            // A second WSModel binds part 0 with a material whose base colour differs.
-            world.AddTexture("textures\\sr_b1b.dds", 1024, "BC1", true, 8);
+            // A second WSModel binds part 0 with a material whose base colour differs in size.
+            world.AddTexture("textures\\sr_b1b.dds", 512, "BC1", true, 8);
             world.Fixture.AddMaterial(SrMaterialPath("m1b"), (SrBase, "textures\\sr_b1b.dds"), (SrNormal, "textures\\sr_n1.dds"));
             var m1b = SrMaterialPath("m1b");
             var m2 = SrMaterialPath("m2");
@@ -9776,11 +9776,166 @@ namespace Test.PackOptimizer.Core
 
             AssertFunnelReconciles(result);
             var reasons = Get<Dictionary<string, int>>(result, "PartDropReasons");
-            Assert.That(reasons.Keys, Has.Some.Contain("resolve to different textures"));
+            Assert.That(reasons.Keys, Has.Some.Contain("differs in size, mip count or format from the layout texture, slot t_xml_base_colour"));
             Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
             var replaced = string.Concat(Get<IEnumerable>(SrBuilt(result).Single(), "Replaced").Cast<object>());
             Assert.That(replaced, Does.Not.Contain("sr_b1").And.Not.Contain("sr_n1"));
             Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(SrMaterialPath("m1")));
+        }
+
+        [Test]
+        public void SharedRepack_VariantInASlotOnlySomeBindingsHave_IsRefusedWithItsOwnReason()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            // The second WSModel's material for part 0 has no normal at all.
+            world.AddTexture("textures\\sr_b1b.dds", 1024, "BC1", true, 8);
+            world.Fixture.AddMaterial(SrMaterialPath("m1b"), (SrBase, "textures\\sr_b1b.dds"));
+            world.Fixture.AddText(
+                "variantmeshes\\wh_main\\sr_variant.wsmodel",
+                CreateWsModelDocument(SrRigid, [[SrMaterialPath("m1b"), SrMaterialPath("m2")]]).OuterXml);
+            world.Links.Add((SrRoot, "variantmeshes\\wh_main\\sr_variant.wsmodel"));
+
+            var result = world.Run();
+
+            AssertFunnelReconciles(result);
+            var reasons = Get<Dictionary<string, int>>(result, "PartDropReasons");
+            Assert.That(reasons.Keys, Has.Some.Contain("bound by only some of the part's WSModel bindings"));
+            Assert.That(reasons.Keys, Has.None.Contain("differs in size"));
+            Assert.That(Get<int>(result, "VariantOutputs"), Is.Zero);
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(SrMaterialPath("m1")));
+        }
+
+        private const string SrVariantWs = "variantmeshes\\wh_main\\sr_variant.wsmodel";
+
+        private static Func<RmvFile> SrVariantFactory()
+            => SrRigidFactory([
+                (SrMaterialPath("m1"), SrBlocks((2, 3), (3, 3))), (SrMaterialPath("m2"), SrBlocks((10, 4)))]);
+
+        // The standard rigid, plus a second WSModel that binds part 0 with a material whose base colour is
+        // another texture of the same size and format (the normal is shared) and part 1 with the same material.
+        private static SrWorld BuildVariantSrWorld()
+        {
+            var world = BuildStandardSrWorld(secondLod: false);
+            world.AddTexture("textures\\sr_b1b.dds", 1024, "BC1", true, 8);
+            var m1b = SrMaterialPath("m1b");
+            world.Fixture.AddMaterial(m1b, (SrBase, "textures\\sr_b1b.dds"), (SrNormal, "textures\\sr_n1.dds"));
+            world.Fixture.AddText(SrVariantWs, CreateWsModelDocument(SrRigid, [[m1b, SrMaterialPath("m2")]]).OuterXml);
+            world.Links.Add((SrRoot, SrVariantWs));
+            return world;
+        }
+
+        private static string SrWsTexture(SrWorld world, string ws, int part, string slot)
+            => SrSlotNode(
+                    Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, ws, 0, part)]), slot)
+                .SelectSingleNode("source")?.InnerText.Trim() ?? string.Empty;
+
+        [Test]
+        public void SharedRepack_TextureVariants_OnePartTwoWsModels_KeepOneUvTransformAndTwoBasePages()
+        {
+            var world = BuildVariantSrWorld();
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            // One layout page (base, normal) and one variant page of the base colour.
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            Assert.That(outputs, Has.Count.EqualTo(3));
+            Assert.That(Get<int>(built, "VariantOutputs"), Is.EqualTo(1));
+            Assert.That(Get<int>(built, "VariantParts"), Is.EqualTo(1));
+            Assert.That(Get<long>(built, "VariantSamples"), Is.GreaterThan(0));
+            Assert.That(
+                outputs.Where(output => Get<string>(output, "Slot") == SrBase).Select(output => Get<string>(output, "Path")).Distinct().Count(),
+                Is.EqualTo(2));
+            Assert.That(outputs.Count(output => Get<string>(output, "Slot") == SrNormal), Is.EqualTo(1));
+
+            // Each WSModel's material for part 0 names its own base page and the one shared normal page.
+            var firstBase = SrWsTexture(world, SrWs, 0, SrBase);
+            var secondBase = SrWsTexture(world, SrVariantWs, 0, SrBase);
+            Assert.That(firstBase, Is.Not.EqualTo(secondBase));
+            Assert.That(SrWsTexture(world, SrWs, 0, SrNormal), Is.EqualTo(SrWsTexture(world, SrVariantWs, 0, SrNormal)));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.Not.EqualTo(SrWsMaterial(world.State, SrVariantWs, 0, 0)));
+            // Part 1 is bound by the same material in both: one generated material.
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 1), Is.EqualTo(SrWsMaterial(world.State, SrVariantWs, 0, 1)));
+
+            // The mesh has one set of UVs: every triangle shows the right colour through either binding.
+            var factory = SrVariantFactory();
+            AssertSrPixels(world, SrRigid, SrWs, factory, new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 }, (_, part) => part == 0);
+            AssertSrPixels(world, SrRigid, SrVariantWs, factory, new Dictionary<string, int> { [SrBase] = 8, [SrNormal] = 2 }, (_, part) => part == 0);
+            AssertSrPixels(world, SrRigid, SrWs, factory, SrPart1Seeds, (_, part) => part == 1);
+
+            // Both base colours are replaced (and the normal); nothing still names them.
+            var replaced = string.Concat(Get<IEnumerable>(built, "Replaced").Cast<object>());
+            Assert.That(replaced, Does.Contain("sr_b1.dds").And.Contain("sr_b1b.dds").And.Contain("sr_n1.dds"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_TextureVariants_OtherPartsRegionOfTheVariantPageIsCroppedFromItsLayoutTexture()
+        {
+            var world = BuildVariantSrWorld();
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            // Part 1 (no variants) shares the page: in the variant base page its charts still show its own
+            // base colour (seed 3), cropped from the layout source.
+            var variantPage = SrGeneratedTexture(world, SrWsMaterial(world.State, SrVariantWs, 0, 0), SrBase);
+            var after = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            var mesh = after.ModelList[0][1].Mesh;
+            var (expectedR, expectedG, expectedB) = SrColour(3, 10, 4);
+            double u = 0, v = 0;
+            for (var corner = 0; corner < 3; corner++)
+            {
+                u += mesh.VertexList[mesh.IndexList[corner]].Uv.X / 3.0;
+                v += mesh.VertexList[mesh.IndexList[corner]].Uv.Y / 3.0;
+            }
+
+            var x = Math.Clamp((int)(u * variantPage.Width), 0, variantPage.Width - 1);
+            var y = Math.Clamp((int)(v * variantPage.Height), 0, variantPage.Height - 1);
+            var pixel = (y * variantPage.Width + x) * 4;
+            Assert.That(Math.Abs(variantPage.Bgra[pixel] - expectedB), Is.LessThanOrEqualTo(12));
+            Assert.That(Math.Abs(variantPage.Bgra[pixel + 1] - expectedG), Is.LessThanOrEqualTo(12));
+            Assert.That(Math.Abs(variantPage.Bgra[pixel + 2] - expectedR), Is.LessThanOrEqualTo(12));
+        }
+
+        [Test]
+        public void SharedRepack_TextureVariants_TwoRuns_ProduceIdenticalBytes()
+        {
+            var first = BuildVariantSrWorld();
+            var second = BuildVariantSrWorld();
+            first.Run();
+            second.Run();
+
+            Assert.That(first.Fixture.Output.Keys.OrderBy(path => path), Is.EqualTo(second.Fixture.Output.Keys.OrderBy(path => path)));
+            foreach (var (path, data) in first.Fixture.Output)
+                Assert.That(second.Fixture.Output[path], Is.EqualTo(data), path);
+        }
+
+        [Test]
+        public void SharedRepack_TextureVariants_TheGateCountsTheVariantPages()
+        {
+            var first = BuildVariantSrWorld().Run();
+            Assert.That(Get<int>(first, "Built"), Is.EqualTo(1), SrSkips(first));
+            var built = SrBuilt(first).Single();
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            var variantBytes = Get<long>(built, "VariantBytes");
+            Assert.That(variantBytes, Is.GreaterThan(0));
+            Assert.That(Get<long>(built, "After"), Is.EqualTo(outputs.Sum(output => Get<long>(output, "Bytes"))));
+            Assert.That(
+                Get<IEnumerable>(built, "Groups").Cast<object>().Sum(group => Get<long>(group, "After")),
+                Is.EqualTo(Get<long>(built, "After")));
+            var saving = Get<long>(built, "Before") - Get<long>(built, "After");
+
+            // A threshold one byte above what the pages really save stops the set at the actual-bytes
+            // gate (the variant page's bytes are in After); at exactly the saving it is built.
+            var exact = BuildVariantSrWorld().Run(minimumSaving: saving);
+            Assert.That(Get<int>(exact, "Built"), Is.EqualTo(1), SrSkips(exact));
+            var above = BuildVariantSrWorld().Run(minimumSaving: saving + 1);
+            Assert.That(Get<int>(above, "Built"), Is.Zero);
+            Assert.That(Get<int>(above, "FailedActualBytes"), Is.EqualTo(1), SrSkips(above));
+            AssertFunnelReconciles(above);
         }
 
         [Test]
@@ -16896,6 +17051,10 @@ namespace Test.PackOptimizer.Core
             // 20: the shared texture repack writes identical pages of layout groups on the same geometry once;
             // the repack is not among the pinned stages, so the hash is unchanged.
             [20] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 21: the shared texture repack also repacks a part whose WSModel bindings name different textures
+            // of the same size and format (variant pages next to the layout page); the repack is not among the
+            // pinned stages, so the hash is unchanged.
+            [21] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

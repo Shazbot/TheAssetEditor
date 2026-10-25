@@ -294,8 +294,18 @@ namespace Editors.PackOptimizer.Core
                 "shaders/weighted4_dragon_dissolve_alpha_blood.xml.shader",
                 "shaders/weighted4_dragon_dissolve_blood.xml.shader",
             };
-        private const string SharedRepackReasonVariants =
-            "the part's WSModel bindings resolve to different textures";
+        private const string SharedRepackReasonVariantCopySlot =
+            "the part's WSModel bindings name different textures in a copied slot (emissive distortion or dissolve map)";
+        private const string SharedRepackReasonSlotSubset =
+            "a texture slot is bound by only some of the part's WSModel bindings";
+        private const string SharedRepackReasonVariantDirect =
+            "the part is loaded directly and its WSModel bindings name different textures";
+        private const string SharedRepackReasonVariantConstant =
+            "a texture variant is a uniform colour in one binding and a spatial texture in another, slot ";
+        private const string SharedRepackReasonVariantLayout =
+            "a texture variant differs in size, mip count or format from the layout texture, slot ";
+        private const string SharedRepackReasonVariantOutside =
+            "a texture variant is not a member of the plan (or the layout texture is only a copy), slot ";
         private const string SharedRepackReasonDuplicateSlot =
             "a bound material lists one texture slot more than once with different sources (which one the engine samples is unknown)";
         private const string SharedRepackReasonMixed =
@@ -326,7 +336,12 @@ namespace Editors.PackOptimizer.Core
             public HashSet<string> Materials { get; } = new(StringComparer.OrdinalIgnoreCase);
             // Every texture of every bound material, any slot.
             public HashSet<string> Textures { get; } = new(StringComparer.OrdinalIgnoreCase);
+            // The layout map: the first (by text) of the distinct slot maps of the part's bound materials.
             public SortedDictionary<string, string> Slots { get; } = new(StringComparer.OrdinalIgnoreCase);
+            // The slot map of each bound material, and the distinct maps other than Slots (texture
+            // variants: same slots, other textures), in text order.
+            public Dictionary<string, SortedDictionary<string, string>> MaterialSlots { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public List<SortedDictionary<string, string>> VariantSlots { get; } = [];
             // Slots of Slots that are copied (cropped per chart) but whose texture is not a set member
             // and is never replaced: the emissive distortion noise.
             public HashSet<string> CopySlots { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -350,8 +365,13 @@ namespace Editors.PackOptimizer.Core
             // tight alternative.
             public int[]? MergedVertexChart { get; set; }
             public int[]? TightVertexChart { get; set; }
-            public string TupleKey => string.Join("|", Slots.Select(slot => $"{slot.Key}={Normalize(slot.Value)}"));
+            // Parts with the same layout map and the same variant maps form a tuple.
+            public string TupleKey => FormatSharedRepackSlotMap(Slots) +
+                                      string.Concat(VariantSlots.Select(map => "#" + FormatSharedRepackSlotMap(map)));
         }
+
+        private static string FormatSharedRepackSlotMap(IEnumerable<KeyValuePair<string, string>> map)
+            => string.Join("|", map.Select(slot => $"{slot.Key}={Normalize(slot.Value)}"));
 
         private sealed class SharedRepackChart
         {
@@ -403,6 +423,11 @@ namespace Editors.PackOptimizer.Core
             // The textures this tuple replaces (its slots minus the copied ones).
             public IEnumerable<string> MemberTextures
                 => Slots.Where(pair => !CopySlots.Contains(pair.Key)).Select(pair => pair.Value);
+            // Per repacked slot: the variant textures (other bindings of the parts name them instead of
+            // the layout texture), distinct, in text order. They are members too.
+            public SortedDictionary<string, List<string>> VariantTextures { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public IEnumerable<string> AllMemberTextures
+                => MemberTextures.Concat(VariantTextures.Values.SelectMany(list => list));
             // Uniform tiny textures (e.g. a 4x4 mask): the generated material keeps them as authored.
             public SortedDictionary<string, string> ConstantSlots { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<SharedRepackPart> Parts { get; } = [];
@@ -478,6 +503,15 @@ namespace Editors.PackOptimizer.Core
             // The source textures this output replaces (all of one signature set); for a copy, the
             // texture it was cropped from.
             public List<string> Sources { get; } = [];
+            // A variant page: the layout page of the slot with the charts of the tuples in here (by index)
+            // cropped from this texture instead of their layout texture. Null for a layout page.
+            public Dictionary<int, string>? VariantSources { get; init; }
+            public bool IsVariant => VariantSources != null;
+            // The texture the charts of the tuple are cropped from in this output.
+            public string SourceOf(SharedRepackTuple tuple)
+                => VariantSources != null && VariantSources.TryGetValue(tuple.Index, out var texture)
+                    ? texture
+                    : tuple.Slots[Slot];
         }
 
         // One output texture set: a layout group, or a page of it when the charts do not
@@ -492,6 +526,9 @@ namespace Editors.PackOptimizer.Core
             public List<SharedRepackChart> Charts { get; } = [];
             public List<SharedRepackPart> Parts { get; } = [];
             public List<SharedRepackSlotOutput> Outputs { get; } = [];
+            // The variant pages of Outputs, by slot and texture (lower case): the page a material naming
+            // that texture in the slot uses. A texture not in here uses the slot's layout page.
+            public Dictionary<(string Slot, string Texture), SharedRepackSlotOutput> VariantOutputs { get; } = [];
             public int LayoutWidth { get; set; }
             public int LayoutHeight { get; set; }
             public long BytesAfter { get; set; }
@@ -597,6 +634,8 @@ namespace Editors.PackOptimizer.Core
         private sealed class SharedRepackPixelStats
         {
             public long Samples { get; set; }
+            // Top-level samples taken from variant pages (a part of Samples).
+            public long VariantSamples { get; set; }
             public long Skipped { get; set; }
             public double TopMax { get; set; }
             public double TopSum { get; set; }
@@ -761,6 +800,12 @@ namespace Editors.PackOptimizer.Core
             // direct rigids' embedded materials name.
             public int DeduplicatedOutputs { get; set; }
             public long DeduplicatedBytes { get; set; }
+            // Variant pages written (not deduplicated ones), their bytes, the parts with texture variants and
+            // the top-level samples the pixel check took from variant pages.
+            public int VariantOutputs { get; set; }
+            public long VariantBytes { get; set; }
+            public int VariantParts { get; set; }
+            public long VariantSamples { get; set; }
             public HashSet<string> EmbeddedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<SharedRepackGroupInfo> Groups { get; } = [];
             public int Tuples { get; set; }
@@ -837,6 +882,11 @@ namespace Editors.PackOptimizer.Core
             public long MinimumGroupSavingBytes { get; set; } = SharedRepackMinimumGroupSavingBytes;
             public int MaximumSide { get; set; } = SharedRepackMaximumSide;
             public TimeSpan Elapsed { get; set; }
+            // Variant pages of the built sets (see SharedRepackBuiltSet), summed.
+            public int VariantOutputs { get; set; }
+            public long VariantBytes { get; set; }
+            public int VariantParts { get; set; }
+            public long VariantSamples { get; set; }
             // Stopwatch ticks spent in the report-only packing simulation.
             public long PackingSimTicks { get; set; }
             public string? Failure { get; set; }
@@ -3041,6 +3091,9 @@ namespace Editors.PackOptimizer.Core
                     part.Reason ??= SharedRepackReasonDuplicateSlot;
                 }
 
+                // This material's slot -> texture map (the part's Slots are chosen among them below).
+                var map = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                part.MaterialSlots[material] = map;
                 var hasDistortion = info.Textures.Any(item =>
                     item.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase) &&
                     !IsSharedRepackIgnoredTexture(info, item.Slot, item.Texture));
@@ -3074,16 +3127,8 @@ namespace Editors.PackOptimizer.Core
                         }
 
                         part.CopySlots.Add(slot);
-                        if (part.Slots.TryGetValue(slot, out var copied))
-                        {
-                            if (!copied.Equals(noise, StringComparison.OrdinalIgnoreCase))
-                                part.Reason ??= SharedRepackReasonVariants;
-                        }
-                        else
-                        {
-                            part.Slots[slot] = noise;
-                        }
-
+                        // (A slot listed twice with different sources in one material is refused above.)
+                        map.TryAdd(slot, noise);
                         continue;
                     }
 
@@ -3098,31 +3143,39 @@ namespace Editors.PackOptimizer.Core
                         continue;
                     }
 
-                    if (part.Slots.TryGetValue(slot, out var existing))
-                    {
-                        if (!existing.Equals(Normalize(texture), StringComparison.OrdinalIgnoreCase))
-                            part.Reason ??= SharedRepackReasonVariants;
-                    }
-                    else
-                    {
-                        part.Slots[slot] = Normalize(texture);
-                    }
+                    map.TryAdd(slot, Normalize(texture));
                 }
             }
 
-            // A slot that only some bindings have is a disagreement too.
-            foreach (var binding in bindings)
+            // The bound materials may name different textures in the same slots (texture variants): the
+            // layout map is the first distinct map by text, the others are variants. Bindings that do
+            // not have the same slots disagree on more than textures.
+            var maps = part.MaterialSlots.Values
+                .Select(map => (Key: FormatSharedRepackSlotMap(map), Map: map))
+                .GroupBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(item => item.Key, StringComparer.Ordinal)
+                .ToList();
+            if (maps.Count != 0)
             {
-                if (!coverage.Materials.TryGetValue(Normalize(binding.Material), out var info) || !info.Readable)
-                    continue;
+                foreach (var (slot, texture) in maps[0].Map)
+                    part.Slots[slot] = texture;
+                foreach (var (_, map) in maps.Skip(1))
+                {
+                    if (!map.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(part.Slots.Keys))
+                    {
+                        part.Reason ??= SharedRepackReasonSlotSubset;
+                        continue;
+                    }
 
-                var slots = info.Textures
-                    .Where(texture => (IsTextureDownscaleSlot(texture.Slot) || IsSharedRepackCopySlot(info, texture.Slot)) &&
-                                      !IsSharedRepackIgnoredTexture(info, texture.Slot, texture.Texture))
-                    .Select(texture => texture.Slot)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                if (!slots.SetEquals(part.Slots.Keys))
-                    part.Reason ??= SharedRepackReasonVariants;
+                    if (map.Any(pair => part.CopySlots.Contains(pair.Key) &&
+                                        !pair.Value.Equals(part.Slots[pair.Key], StringComparison.OrdinalIgnoreCase)))
+                    {
+                        part.Reason ??= SharedRepackReasonVariantCopySlot;
+                    }
+
+                    part.VariantSlots.Add(map);
+                }
             }
 
             if (key.LodIndex < 0 || key.LodIndex >= rigid.ModelList.Length ||
@@ -3143,6 +3196,8 @@ namespace Editors.PackOptimizer.Core
             {
                 part.DirectEmbeddedMaterial = true;
                 part.DirectConsumers.UnionWith(directConsumers);
+                if (part.VariantSlots.Count != 0)
+                    part.Reason ??= SharedRepackReasonVariantDirect;
                 var embedded = part.Model.Material;
                 if (embedded == null)
                 {
@@ -3775,6 +3830,53 @@ namespace Editors.PackOptimizer.Core
                     : SharedRepackReasonMixed;
             }
 
+            // Uniform (kept as authored) or not, as the tuples classify a texture.
+            bool IsConstantTexture(string texture)
+            {
+                if (!members.Contains(texture))
+                    return isUniform(texture);
+
+                var layout = entryOf[texture].Layout!;
+                return layout.Width <= SharedRepackTinyTextureSide && layout.Height <= SharedRepackTinyTextureSide &&
+                       isUniform(texture);
+            }
+
+            // Why a part's texture variants cannot be repacked: each variant texture must be a member with
+            // the layout texture's size, mip count, format and colour space (or a uniform colour like the
+            // layout texture, which the variant's own generated material keeps as authored). Null when fine.
+            string? GetVariantReason(SharedRepackPart part)
+            {
+                foreach (var map in part.VariantSlots)
+                {
+                    foreach (var (slot, texture) in map)
+                    {
+                        var layoutTexture = part.Slots[slot];
+                        if (texture.Equals(layoutTexture, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var layoutConstant = IsConstantTexture(layoutTexture);
+                        if (layoutConstant != IsConstantTexture(texture))
+                            return SharedRepackReasonVariantConstant + slot.ToLowerInvariant();
+                        if (layoutConstant)
+                            continue;
+
+                        if (!members.Contains(texture) || !members.Contains(layoutTexture))
+                            return SharedRepackReasonVariantOutside + slot.ToLowerInvariant();
+
+                        var left = entryOf[layoutTexture].Layout!;
+                        var right = entryOf[texture].Layout!;
+                        if (left.Width != right.Width || left.Height != right.Height || left.MipCount != right.MipCount ||
+                            !left.Format.Equals(right.Format, StringComparison.Ordinal) || left.IsSrgb != right.IsSrgb ||
+                            GetSharedRepackBlockedTextureReason(right) != null)
+                        {
+                            return SharedRepackReasonVariantLayout + slot.ToLowerInvariant();
+                        }
+                    }
+                }
+
+                return null;
+            }
+
             // The unprocessed signature sets that hold all the offending textures, or null
             // when one of them cannot be merged (blocked, unknown, in this plan already, or
             // already processed).
@@ -3890,6 +3992,9 @@ namespace Editors.PackOptimizer.Core
                         }
                     }
 
+                    if (reason == null && part.VariantSlots.Count != 0)
+                        reason = GetVariantReason(part);
+
                     if (reason == null && !part.GeometryChecked)
                     {
                         part.Reason = AnalyzeSharedRepackGeometry(part);
@@ -3955,7 +4060,7 @@ namespace Editors.PackOptimizer.Core
                     }
 
                     NoteOutside();
-                    failure = "no part is left after closing the set (mixed materials, variants, tiling, " +
+                    failure = "no part is left after closing the set (mixed materials, texture variants, tiling, " +
                               "non-atlasable slots or ineligible rigids)";
                     return null;
                 }
@@ -4194,6 +4299,31 @@ namespace Editors.PackOptimizer.Core
 
                 foreach (var (slot, texture) in tuple.Slots)
                     tuple.Layouts[slot] = entryOf[texture].Layout!;
+                // The variant textures of the repacked slots (a uniform slot is not in Slots, and the
+                // variant's own material keeps its uniform texture; copy slots have no variants).
+                foreach (var variant in group.First().VariantSlots)
+                {
+                    foreach (var (slot, texture) in variant)
+                    {
+                        if (!tuple.Slots.TryGetValue(slot, out var layoutTexture) || tuple.CopySlots.Contains(slot) ||
+                            texture.Equals(layoutTexture, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        if (!tuple.VariantTextures.TryGetValue(slot, out var list))
+                        {
+                            list = [];
+                            tuple.VariantTextures[slot] = list;
+                        }
+
+                        if (!list.Contains(texture, StringComparer.OrdinalIgnoreCase))
+                            list.Add(texture);
+                    }
+                }
+
+                foreach (var list in tuple.VariantTextures.Values)
+                    list.Sort(StringComparer.Ordinal);
                 // Reference resolution: the base colour, else the largest slot (never the emissive noise
                 // copy; a copied base colour or other copy is a normal slot).
                 var reference = tuple.Slots.ContainsKey("t_xml_base_colour")
@@ -4246,7 +4376,17 @@ namespace Editors.PackOptimizer.Core
                         $"{tuple.SourceExponent[pair.Key].X}:{tuple.SourceExponent[pair.Key].Y}:" +
                         (tuple.CopySlots.Contains(pair.Key)
                             ? $"copy:{Normalize(tuple.Slots[pair.Key])}"
-                            : setKeyOf(tuple.Slots[pair.Key]))));
+                            : setKeyOf(tuple.Slots[pair.Key])) +
+                        // A variant texture that other units load than the layout texture keeps its tuple
+                        // apart: the page of the variant would hold crops of textures those units never loaded.
+                        (tuple.VariantTextures.TryGetValue(pair.Key, out var variantTextures)
+                            ? string.Concat(variantTextures
+                                .Select(setKeyOf)
+                                .Where(key => key != setKeyOf(tuple.Slots[pair.Key]))
+                                .Distinct(StringComparer.Ordinal)
+                                .OrderBy(key => key, StringComparer.Ordinal)
+                                .Select(key => $"<{key}"))
+                            : string.Empty)));
                 if (tuple.EmissiveCompensation)
                 {
                     var divisor = GreatestCommonDivisor(reference.Width, reference.Height);
@@ -4695,7 +4835,7 @@ namespace Editors.PackOptimizer.Core
             var owner = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (var tuple in tuples)
             {
-                foreach (var texture in tuple.MemberTextures)
+                foreach (var texture in tuple.AllMemberTextures)
                 {
                     if (owner.TryGetValue(texture, out var other))
                         parent[Find(tuple.Index)] = Find(other);
@@ -4778,7 +4918,7 @@ namespace Editors.PackOptimizer.Core
                     }
 
                     plan.Splits[group.Key] = split;
-                    var textures = groupTuples.SelectMany(tuple => tuple.MemberTextures)
+                    var textures = groupTuples.SelectMany(tuple => tuple.AllMemberTextures)
                         .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                     var before = textures.Sum(texture => entryOf[texture].Layout!.ChainBytes);
                     var after = pages.Sum(page => page.BytesAfter);
@@ -4915,7 +5055,7 @@ namespace Editors.PackOptimizer.Core
                     Label = string.Join(" | ", group.Take(2).Select(DescribeSharedRepackTuple)) +
                             (group.Count() > 2 ? $" (+{group.Count() - 2:N0})" : string.Empty),
                     Tuples = group.Count(),
-                    Before = group.SelectMany(tuple => tuple.MemberTextures).Distinct(StringComparer.OrdinalIgnoreCase)
+                    Before = group.SelectMany(tuple => tuple.AllMemberTextures).Distinct(StringComparer.OrdinalIgnoreCase)
                         .Sum(texture => entryOf[texture].Layout!.ChainBytes),
                     PaddingVariant = group.First().PaddingVariant,
                     PaddingSavedBytes = group.First().PaddingSavedBytes,
@@ -4928,7 +5068,7 @@ namespace Editors.PackOptimizer.Core
             foreach (var page in plan.Pages)
             {
                 // The copied noise is not replaced: other models keep using it.
-                foreach (var texture in page.Tuples.SelectMany(tuple => tuple.MemberTextures))
+                foreach (var texture in page.Tuples.SelectMany(tuple => tuple.AllMemberTextures))
                     plan.Replaced[texture] = entryOf[texture].Layout!.ChainBytes;
             }
 
@@ -5004,7 +5144,7 @@ namespace Editors.PackOptimizer.Core
             foreach (var tuple in page.Tuples.Where(tuple => tuple.Slots.ContainsKey(output.Slot)))
             {
                 var exponent = tuple.SourceExponent[output.Slot];
-                var head = $"{Normalize(tuple.Slots[output.Slot]).ToLowerInvariant()}|{exponent.X},{exponent.Y}|" +
+                var head = $"{Normalize(output.SourceOf(tuple)).ToLowerInvariant()}|{exponent.X},{exponent.Y}|" +
                            $"{tuple.ReferenceWidth}x{tuple.ReferenceHeight}|{tuple.Align}";
                 foreach (var chart in page.Charts.Where(chart => chart.Tuple == tuple))
                 {
@@ -5443,6 +5583,15 @@ namespace Editors.PackOptimizer.Core
                 // Power-of-two rounding can leave one page as large as the sources although the
                 // charts cover far less. Whole clusters (a part's charts stay together, nothing
                 // is duplicated) can then go onto several smaller pages.
+                // A page also costs one more output per variant texture of a slot (at most, when the
+                // whole group sits on it).
+                var variantPages = slots.ToDictionary(
+                    slot => slot,
+                    slot => groupTuples
+                        .Where(tuple => tuple.VariantTextures.ContainsKey(slot))
+                        .SelectMany(tuple => tuple.VariantTextures[slot])
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Count());
                 long PageBytes(int width, int height)
                 {
                     long total = 0;
@@ -5450,7 +5599,8 @@ namespace Editors.PackOptimizer.Core
                     {
                         var w = ScaleByExponent(width, exponents[slot].X);
                         var h = ScaleByExponent(height, exponents[slot].Y);
-                        total += EstimateDdsChainBytes(first.Layouts[slot], w, h, GetFullMipChainLength(w, h));
+                        total += EstimateDdsChainBytes(first.Layouts[slot], w, h, GetFullMipChainLength(w, h)) *
+                                 (1 + variantPages[slot]);
                     }
 
                     return total;
@@ -5461,7 +5611,11 @@ namespace Editors.PackOptimizer.Core
                 {
                     // A copied texture stays: it is not a source the pages replace.
                     foreach (var slot in slots.Where(slot => !tuple.IsGeneralCopySlot(slot)))
+                    {
                         sources[tuple.Slots[slot]] = tuple.Layouts[slot].ChainBytes;
+                        foreach (var variant in tuple.VariantTextures.GetValueOrDefault(slot) ?? [])
+                            sources[variant] = tuple.Layouts[slot].ChainBytes;
+                    }
                 }
 
                 split.BeforeBytes = sources.Values.Sum();
@@ -5613,6 +5767,7 @@ namespace Editors.PackOptimizer.Core
                     page.Outputs.Add(output);
                 }
 
+                AddSharedRepackVariantOutputs(page, nameRigid);
                 pages.Add(page);
             }
 
@@ -5642,6 +5797,74 @@ namespace Editors.PackOptimizer.Core
 
             return pages;
         }
+
+        // Variant pages. For a slot where a tuple of the page has variant textures (its parts' other
+        // materials name them), each such texture gets one more output with the layout page's size and
+        // chart positions: the tuples that have the texture as a variant crop their charts from it, every
+        // other tuple from its layout texture. A material naming the texture uses that output (same
+        // layout, same UVs), so a part keeps one UV transform for all its bindings. When every tuple's
+        // layout texture is some tuple's variant, no material names a layout page and it is dropped.
+        private static void AddSharedRepackVariantOutputs(SharedRepackPage page, string nameRigid)
+        {
+            var directParts = page.Parts.Any(part => part.DirectEmbeddedMaterial);
+            foreach (var layoutOutput in page.Outputs.ToList())
+            {
+                var slot = layoutOutput.Slot;
+                var variantTuples = page.Tuples.Where(tuple => tuple.VariantTextures.ContainsKey(slot)).ToList();
+                if (variantTuples.Count == 0)
+                    continue;
+
+                var textures = variantTuples
+                    .SelectMany(tuple => tuple.VariantTextures[slot])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(texture => texture, StringComparer.Ordinal)
+                    .ToList();
+                var suffix = Path.GetFileNameWithoutExtension(layoutOutput.Path)
+                    .Split("_repack_")[^1];
+                foreach (var texture in textures)
+                {
+                    var sources = variantTuples
+                        .Where(tuple => tuple.VariantTextures[slot].Contains(texture, StringComparer.OrdinalIgnoreCase))
+                        .ToDictionary(tuple => tuple.Index, _ => texture);
+                    var output = new SharedRepackSlotOutput
+                    {
+                        Slot = slot,
+                        VariantSources = sources,
+                        Path = Normalize(
+                            $@"{AtlasDirectory}\{SafeName(Path.GetFileNameWithoutExtension(nameRigid))}_{page.Hash}_repack_{suffix}_v{StableHash(page.Hash + "|" + slot + "|" + Normalize(texture))}.dds"),
+                        Format = layoutOutput.Format,
+                        Srgb = layoutOutput.Srgb,
+                        Dx10 = layoutOutput.Dx10,
+                        ExponentX = layoutOutput.ExponentX,
+                        ExponentY = layoutOutput.ExponentY,
+                        Width = layoutOutput.Width,
+                        Height = layoutOutput.Height,
+                        MipLevels = layoutOutput.MipLevels,
+                        Bytes = layoutOutput.Bytes,
+                        Template = layoutOutput.Template,
+                    };
+                    output.Sources.Add(texture);
+                    page.BytesAfter += output.Bytes;
+                    page.Outputs.Add(output);
+                    page.VariantOutputs[(slot.ToLowerInvariant(), Normalize(texture).ToLowerInvariant())] = output;
+                }
+
+                var variantSet = textures.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var layoutUsed = page.Tuples.Any(tuple =>
+                    tuple.Slots.TryGetValue(slot, out var layoutTexture) && !variantSet.Contains(layoutTexture));
+                if (!layoutUsed && !directParts)
+                {
+                    page.Outputs.Remove(layoutOutput);
+                    page.BytesAfter -= layoutOutput.Bytes;
+                }
+            }
+        }
+
+        // The output a material that names the texture in the slot uses on the page.
+        private static SharedRepackSlotOutput GetSharedRepackMaterialOutput(SharedRepackPage page, string slot, string texture)
+            => page.VariantOutputs.TryGetValue((slot.ToLowerInvariant(), Normalize(texture).ToLowerInvariant()), out var variant)
+                ? variant
+                : page.Outputs.Single(item => !item.IsVariant && item.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase));
 
         // Generated copies of the page's bound materials and the WSModel nodes to repoint. A
         // source material used by parts of several rigids gets one copy per page. Names already
@@ -5673,7 +5896,11 @@ namespace Editors.PackOptimizer.Core
                 var userTuple = page.Tuples.First(item => item.Parts.Contains(user));
                 foreach (var slot in userTuple.Slots.Keys)
                 {
-                    var output = page.Outputs.Single(item => item.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase));
+                    // The material's own texture of the slot picks the layout page or its variant page.
+                    var ownTexture = user.MaterialSlots.TryGetValue(material, out var own) && own.TryGetValue(slot, out var named)
+                        ? named
+                        : userTuple.Slots[slot];
+                    var output = GetSharedRepackMaterialOutput(page, slot, ownTexture);
                     SetTexturePath(document, slot, output.Path);
                 }
 
@@ -5908,7 +6135,7 @@ namespace Editors.PackOptimizer.Core
             var levels = output.MipLevels;
             foreach (var tuple in page.Tuples.Where(tuple => tuple.Slots.ContainsKey(output.Slot)))
             {
-                var source = sources.Get(tuple.Slots[output.Slot]);
+                var source = sources.Get(output.SourceOf(tuple));
                 if (source == null ||
                     !source.Layout.Format.Equals(output.Format, StringComparison.Ordinal) ||
                     source.Layout.IsSrgb != output.Srgb ||
@@ -5961,7 +6188,7 @@ namespace Editors.PackOptimizer.Core
             var users = page.Tuples.Where(tuple => tuple.Slots.ContainsKey(output.Slot)).ToList();
             foreach (var tuple in users)
             {
-                var texture = tuple.Slots[output.Slot];
+                var texture = output.SourceOf(tuple);
                 var source = sources.Get(texture);
                 var top = source?.Level(0);
                 if (source == null || top == null)
@@ -6017,7 +6244,7 @@ namespace Editors.PackOptimizer.Core
                 {
                     foreach (var tuple in users)
                     {
-                        var source = sources.Get(tuple.Slots[output.Slot]);
+                        var source = sources.Get(output.SourceOf(tuple));
                         var exponent = tuple.SourceExponent[output.Slot];
                         var shiftX = output.ExponentX - exponent.X;
                         var shiftY = output.ExponentY - exponent.Y;
@@ -6084,7 +6311,7 @@ namespace Editors.PackOptimizer.Core
                 var levelHasCharts = false;
                 foreach (var tuple in users)
                 {
-                    var source = sources.Get(tuple.Slots[output.Slot]);
+                    var source = sources.Get(output.SourceOf(tuple));
                     foreach (var item in EnumerateSharedRepackSlotCharts(page, output, tuple))
                     {
                         var width = item.Width >> level;
@@ -6490,8 +6717,15 @@ namespace Editors.PackOptimizer.Core
             // triangle stride happens to hit.
             var sampledPieces = new HashSet<SharedRepackChart>();
             stats.Pieces += page.Charts.Count(chart => chart.Piece);
+            long variantSamples = 0;
             foreach (var tuple in page.Tuples)
             {
+                // A variant page is checked where it differs from the layout page: the tuples cropped from
+                // the variant texture (the rest is the layout's crop, checked on the layout page).
+                var checkedOutputs = page.Outputs
+                    .Where(item => tuple.Slots.ContainsKey(item.Slot) &&
+                                   (!item.IsVariant || item.VariantSources!.ContainsKey(tuple.Index)))
+                    .ToList();
                 foreach (var part in tuple.Parts.Where(page.Parts.Contains))
                 {
                     var vertices = part.Model!.Mesh.VertexList;
@@ -6530,9 +6764,9 @@ namespace Editors.PackOptimizer.Core
                                 var newU = cornerUv[0].U * wa + cornerUv[1].U * wb + cornerUv[2].U * wc;
                                 var newV = cornerUv[0].V * wa + cornerUv[1].V * wb + cornerUv[2].V * wc;
                                 var sourcesOk = true;
-                                foreach (var output in page.Outputs.Where(item => tuple.Slots.ContainsKey(item.Slot)))
+                                foreach (var output in checkedOutputs)
                                 {
-                                    var source = sources.Get(tuple.Slots[output.Slot]);
+                                    var source = sources.Get(output.SourceOf(tuple));
                                     sourcesOk &= source != null &&
                                                  IsAwayFromTexelEdge(oldU * source.Layout.Width) &&
                                                  IsAwayFromTexelEdge(oldV * source.Layout.Height) &&
@@ -6547,9 +6781,9 @@ namespace Editors.PackOptimizer.Core
                                 var chart = tuple.Charts[part.VertexChart[corners[0]]];
                                 if (chart.Piece && sampledPieces.Add(chart))
                                     stats.PiecesSampled++;
-                                foreach (var output in page.Outputs.Where(item => tuple.Slots.ContainsKey(item.Slot)))
+                                foreach (var output in checkedOutputs)
                                 {
-                                    var texture = tuple.Slots[output.Slot];
+                                    var texture = output.SourceOf(tuple);
                                     var source = sources.Get(texture)!;
                                     var target = generated.Get(output.Path)!;
                                     var exact = IsSharedRepackBlockCopiedAtLevel(output, 0);
@@ -6603,6 +6837,8 @@ namespace Editors.PackOptimizer.Core
                                             pageTopMax = Math.Max(pageTopMax, error);
                                             exactViolation |= exact && error != 0;
                                             stats.Samples++;
+                                            if (output.IsVariant)
+                                                variantSamples++;
                                             pageTopSum += error;
                                             pageTopCount++;
                                         }
@@ -6649,6 +6885,7 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            stats.VariantSamples += variantSamples;
             stats.TopMax = Math.Max(stats.TopMax, pageTopMax);
             stats.TopSum += pageTopSum;
             stats.TopCount += pageTopCount;
@@ -6868,6 +7105,7 @@ namespace Editors.PackOptimizer.Core
                                         // A copied texture maps to its copy output, any other to the page that replaces it.
                                         var copiedSlot = tuple.CopySlots.Contains(slot);
                                         var output = page.Outputs.FirstOrDefault(candidate =>
+                                            !candidate.IsVariant &&
                                             candidate.IsCopy == copiedSlot &&
                                             candidate.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase) &&
                                             candidate.Sources.Any(source => Normalize(source)
@@ -6885,7 +7123,7 @@ namespace Editors.PackOptimizer.Core
                                 // Legacy entries follow the page their texture moved to, which for a copied
                                 // texture is its copy (the original stays, but the new UVs need the cropped sheet).
                                 var legacyTargets = page.Outputs
-                                    .Where(output => !IsSharedRepackNoiseSlot(output.Slot))
+                                    .Where(output => !output.IsVariant && !IsSharedRepackNoiseSlot(output.Slot))
                                     .SelectMany(output => output.Sources.Select(source => (Source: Normalize(source), output.Path)))
                                     .GroupBy(item => item.Source, StringComparer.OrdinalIgnoreCase)
                                     .ToDictionary(group => group.Key, group => group.First().Path, StringComparer.OrdinalIgnoreCase);
@@ -6935,7 +7173,7 @@ namespace Editors.PackOptimizer.Core
                     result.GeneratedTextures.Add(output.Path);
                 }
 
-                foreach (var texture in page.Tuples.SelectMany(tuple => tuple.MemberTextures).Distinct(StringComparer.OrdinalIgnoreCase))
+                foreach (var texture in page.Tuples.SelectMany(tuple => tuple.AllMemberTextures).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
                     var scaled = GetSharedRepackScaledSource(state, texture);
                     if (scaled == null)
@@ -7112,6 +7350,15 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            built.VariantOutputs = built.Outputs.Count(output => output.IsVariant);
+            built.VariantBytes = built.Outputs.Where(output => output.IsVariant).Sum(output => output.Data.LongLength);
+            built.VariantParts = plan.Pages.SelectMany(page => page.Parts).Distinct()
+                .Count(part => part.VariantSlots.Count != 0);
+            built.VariantSamples = stats.VariantSamples;
+            result.VariantOutputs += built.VariantOutputs;
+            result.VariantBytes += built.VariantBytes;
+            result.VariantParts += built.VariantParts;
+            result.VariantSamples += built.VariantSamples;
             built.CopyWon = merge.CopyRemoved && built.RemovedCopies.Count != 0;
             built.NormalSaving = merge.NormalSaving;
             built.CopyGain = built.CopyWon ? built.Before - built.After - (merge.NormalSaving ?? 0) : 0;
@@ -8856,6 +9103,14 @@ namespace Editors.PackOptimizer.Core
                     "(identical pages of layout groups on the same geometry, written once).");
             }
 
+            if (result.VariantOutputs != 0)
+            {
+                sb.AppendLine(
+                    $"Variant pages: {result.VariantOutputs:N0} output(s), {result.VariantBytes:N0} bytes, " +
+                    $"{result.VariantParts:N0} part(s) with texture variants, {result.VariantSamples:N0} pixel-checked " +
+                    "top-level sample(s) of variant pages.");
+            }
+
             foreach (var set in result.BuiltSets)
             {
                 sb.AppendLine($"  Set {set.Label}");
@@ -8903,6 +9158,13 @@ namespace Editors.PackOptimizer.Core
                     sb.AppendLine(
                         $"    deduplicated {set.DeduplicatedOutputs:N0} page(s), {set.DeduplicatedBytes:N0} bytes " +
                         "(identical to a page of another layout group of the set; written once)");
+                }
+
+                if (set.VariantOutputs != 0)
+                {
+                    sb.AppendLine(
+                        $"    variant pages: {set.VariantOutputs:N0} output(s), {set.VariantBytes:N0} bytes, " +
+                        $"parts with variants {set.VariantParts:N0}; {set.VariantSamples:N0} pixel-checked sample(s)");
                 }
 
                 foreach (var group in set.Groups)
@@ -9070,7 +9332,8 @@ namespace Editors.PackOptimizer.Core
             }
 
             sb.AppendLine(
-                "Not covered by this increment: material variants that disagree on a texture, tiled UVs, " +
+                "Not covered by this increment: material variants that differ in a copied slot, a slot only some " +
+                "bindings have, a texture of another size or format, or a directly loaded rigid, tiled UVs, " +
                 "rigids used by more than one set of units outside the pack, merging sets that no material connects, " +
                 "deleting the old textures.");
             sb.AppendLine();
