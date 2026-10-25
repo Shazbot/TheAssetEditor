@@ -83,7 +83,7 @@ namespace Editors.PackOptimizer.Core
             {
                 var shift = Math.Max(-exponent.X, -exponent.Y);
                 cellDownshift = Math.Max(cellDownshift, shift);
-                if (!tuple.CopySlots.Contains(slot))
+                if (!tuple.IsEmissiveCopySlot(slot))
                     downshift = Math.Max(downshift, shift);
             }
 
@@ -189,7 +189,7 @@ namespace Editors.PackOptimizer.Core
             var sources = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
             foreach (var tuple in groupTuples)
             {
-                foreach (var slot in slots)
+                foreach (var slot in slots.Where(slot => !tuple.IsGeneralCopySlot(slot)))
                     sources[tuple.Slots[slot]] = tuple.Layouts[slot].ChainBytes;
             }
 

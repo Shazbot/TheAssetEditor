@@ -293,8 +293,16 @@ namespace Editors.PackOptimizer.Core
             public string Key { get; init; } = string.Empty;
             // The slots that are repacked (spatial). Uniform tiny textures are not in here.
             public SortedDictionary<string, string> Slots { get; init; } = new(StringComparer.OrdinalIgnoreCase);
-            // The slots of Slots that are copy slots (see SharedRepackPart.CopySlots).
+            // The slots of Slots that are copy slots: the part's emissive noise slots, and the slots
+            // whose texture is a copy in this plan (see SharedRepackMergeContext.CopyRemoved).
             public HashSet<string> CopySlots { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+            // The emissive noise copy has layout rules of its own (never the reference, no chart
+            // alignment); any other copy lays out like a normal slot.
+            public bool IsEmissiveCopySlot(string slot)
+                => CopySlots.Contains(slot) && slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase);
+            // A copy of a texture that left this plan: not a replaced texture, but its original
+            // does not count as a source either.
+            public bool IsGeneralCopySlot(string slot) => CopySlots.Contains(slot) && !IsEmissiveCopySlot(slot);
             // The tuple's materials get the emissive scroll parameters rescaled, which is only exact
             // for equal U and V UV scales (the group's canvases are restricted to the reference aspect).
             public bool EmissiveCompensation => CopySlots.Contains(SharedRepackEmissiveDistortionSlot);
@@ -363,8 +371,9 @@ namespace Editors.PackOptimizer.Core
             // How the lower levels' encoder input was produced (source mips or box filter), per cause.
             internal SharedRepackMipSeedStats? MipSeedStats { get; set; }
             public DdsLayout Template { get; set; } = null!;
-            // A copy of a shared texture (the emissive distortion noise): it costs bytes but replaces
-            // nothing, so it is not a "replaced texture", not owned by a signature set and never pruned.
+            // A copy of a texture that stays (the emissive distortion noise, or a texture that left
+            // the plan): it costs bytes but replaces nothing, so it is not a "replaced texture", not
+            // owned by a signature set and never pruned.
             public bool IsCopy { get; init; }
             // The source textures this output replaces (all of one signature set); for a copy, the
             // texture it was cropped from.
@@ -561,6 +570,21 @@ namespace Editors.PackOptimizer.Core
             // originals stay); planning stops at the closure's first re-estimate.
             public bool CopyOutside { get; init; }
             public SharedRepackCopyWhatIf? WhatIf { get; set; }
+            // Real copies: a texture that left this plan only because a dropped part still needs the
+            // original is cropped into the pages as a copy for the parts that stay (the original is
+            // not replaced). CopyRescuable (normal plan): a part was dropped only for such textures.
+            public bool CopyRemoved { get; init; }
+            public bool CopyRescuable { get; set; }
+            // Copy plan: the copied textures with why each left the plan.
+            public Dictionary<string, string> CopiedTextures { get; } = new(StringComparer.OrdinalIgnoreCase);
+            // The set was planned both ways; the normal plan's saving (null: it failed) and the copy
+            // plan's, and whether the copy plan was the one built.
+            public bool PlannedBothWays { get; set; }
+            public long? NormalSaving { get; set; }
+            public long CopySaving { get; set; }
+            public bool CopyWon { get; set; }
+            // Why the copy plan failed (null: it was planned).
+            public string? CopyFailure { get; set; }
             // Why the merged attempt failed, on the alone retry's context (report only).
             public string? FallbackReason { get; set; }
             // Report only, on the alone retry's context: the failed merged attempt, its failure and all
@@ -658,6 +682,13 @@ namespace Editors.PackOptimizer.Core
             public int EmissiveParts { get; set; }
             public int EmissiveCopies { get; set; }
             public long EmissiveCopyBytes { get; set; }
+            // Copies of textures that left the plan (not the emissive noise): texture, slot, why it
+            // left, output bytes; and, when the copy plan was built, what the normal plan saved
+            // (null: it failed, so the set is built only thanks to the copies).
+            public List<(string Texture, string Slot, string Why, long Bytes)> RemovedCopies { get; } = [];
+            public bool CopyWon { get; set; }
+            public long? NormalSaving { get; set; }
+            public long CopyGain { get; set; }
             public List<SharedRepackSample> Worst { get; } = [];
         }
 
@@ -1624,13 +1655,14 @@ namespace Editors.PackOptimizer.Core
                 // may merge unprocessed signature sets that share a material with this one; if
                 // a merged attempt fails anywhere, nothing of it was written and the seed is
                 // retried alone, with the joined sets released.
-                SharedRepackMergeContext NewContext(bool allowMerge, bool copyOutside = false)
+                SharedRepackMergeContext NewContext(bool allowMerge, bool copyOutside = false, bool copyRemoved = false)
                 {
                     var context = new SharedRepackMergeContext
                     {
                         Seed = decisionIndex,
                         Allow = allowMerge,
                         CopyOutside = copyOutside,
+                        CopyRemoved = copyRemoved,
                         Decisions = decisions,
                         IndexOfSet = indexOfSet,
                         IsAvailable = index => index > decisionIndex && !consumed.ContainsKey(index),
@@ -1649,6 +1681,56 @@ namespace Editors.PackOptimizer.Core
                     var paddingLimits = new Dictionary<string, int>(StringComparer.Ordinal);
                     var loweredFrom = new Dictionary<string, string>(StringComparer.Ordinal);
                     var retryAttempts = 0;
+                    var skipCopy = false;
+
+                    SharedRepackSetPlan? PlanOnce(
+                        SharedRepackMergeContext planContext,
+                        out string? planFailure,
+                        out string planBucket)
+                    {
+                        try
+                        {
+                            return PlanSharedRepackSet(
+                                state,
+                                result,
+                                coverage,
+                                planContext,
+                                label,
+                                setByTexture,
+                                GetPart,
+                                texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
+                                cancellationToken,
+                                paddingLimits,
+                                out planFailure,
+                                out planBucket);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            planFailure = $"internal error while planning ({ex.GetType().Name}: {ex.Message})";
+                            planBucket = "build";
+                            return null;
+                        }
+                    }
+
+                    SharedRepackBuiltSet? ApplyPlan(
+                        SharedRepackMergeContext applyContext,
+                        SharedRepackSetPlan applyPlan,
+                        out string? applyFailure,
+                        out bool applyPixelFailure)
+                        => ApplySharedRepackSetPlan(
+                            state,
+                            result,
+                            applyContext,
+                            applyPlan,
+                            applyContext.Rigids.Where(item => item.Rigid != null)
+                                .ToDictionary(item => item.Path, item => item.Rigid!, StringComparer.OrdinalIgnoreCase),
+                            applyContext.Joined.Count == 0 ? label : label + " [merged plan]",
+                            snapshots,
+                            movedParts,
+                            cancellationToken,
+                            out applyFailure,
+                            out applyPixelFailure);
+
                     void FinishRetries(SharedRepackBuiltSet? built)
                     {
                         result.PaddingPixelRetryAttempts += retryAttempts;
@@ -1668,30 +1750,49 @@ namespace Editors.PackOptimizer.Core
                             reportSnapshot.Restore(result);
 
                         var context = NewContext(allowMerge);
-                        SharedRepackSetPlan? plan;
-                        string? failure;
-                        string failureBucket;
-                        try
+                        var plan = PlanOnce(context, out var failure, out var failureBucket);
+
+                        // Copies: when the normal plan lost a part only to textures that left the plan, the
+                        // set is planned again with those textures copied into the pages, and the plan
+                        // with the larger exact saving is kept (a tie keeps the normal plan). The loser's
+                        // side effects are undone, so a normal win leaves output and report as without
+                        // copies.
+                        if (!SharedRepackCopyRemovedDisabled && !skipCopy && context.CopyRescuable)
                         {
-                            plan = PlanSharedRepackSet(
-                                state,
-                                result,
-                                coverage,
-                                context,
-                                label,
-                                setByTexture,
-                                GetPart,
-                                texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
-                                cancellationToken,
-                                paddingLimits,
-                                out failure,
-                                out failureBucket);
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            plan = null;
-                            failure = $"internal error while planning ({ex.GetType().Name}: {ex.Message})";
-                            failureBucket = "build";
+                            var afterNormal = SharedRepackAttemptReportSnapshot.Capture(result);
+                            var normalCharts = plan == null ? [] : SnapshotSharedRepackPartCharts(plan);
+                            var partsBefore = partCache.Keys.ToHashSet();
+                            var uncheckedParts = partCache.Values.Where(part => !part.GeometryChecked).ToList();
+                            reportSnapshot.Restore(result);
+                            var copyContext = NewContext(allowMerge, copyRemoved: true);
+                            var copyPlan = PlanOnce(copyContext, out var copyFailure, out var copyBucket);
+                            long? normalSaving = plan == null ? null : GetSharedRepackPlanSaving(plan);
+                            var copySaving = copyPlan == null ? 0 : GetSharedRepackPlanSaving(copyPlan);
+                            context.PlannedBothWays = copyContext.PlannedBothWays = true;
+                            context.NormalSaving = copyContext.NormalSaving = normalSaving;
+                            context.CopySaving = copyContext.CopySaving = copySaving;
+                            context.CopyFailure = copyContext.CopyFailure = copyPlan == null ? copyFailure ?? "unknown" : null;
+                            if (copyPlan != null && (normalSaving == null || copySaving > normalSaving))
+                            {
+                                copyContext.CopyWon = true;
+                                context = copyContext;
+                                plan = copyPlan;
+                                failure = copyFailure;
+                                failureBucket = copyBucket;
+                            }
+                            else
+                            {
+                                afterNormal.Restore(result);
+                                foreach (var part in uncheckedParts.Where(part => part.GeometryChecked))
+                                {
+                                    part.GeometryChecked = false;
+                                    part.Reason = null;
+                                }
+
+                                foreach (var key in partCache.Keys.Where(key => !partsBefore.Contains(key)).ToList())
+                                    partCache.Remove(key);
+                                RestoreSharedRepackPartCharts(normalCharts);
+                            }
                         }
 
                         if (plan == null)
@@ -1700,19 +1801,7 @@ namespace Editors.PackOptimizer.Core
                             return (null, failure ?? "unknown", failureBucket, context);
                         }
 
-                        var built = ApplySharedRepackSetPlan(
-                            state,
-                            result,
-                            context,
-                            plan,
-                            context.Rigids.Where(item => item.Rigid != null)
-                                .ToDictionary(item => item.Path, item => item.Rigid!, StringComparer.OrdinalIgnoreCase),
-                            context.Joined.Count == 0 ? label : label + " [merged plan]",
-                            snapshots,
-                            movedParts,
-                            cancellationToken,
-                            out var buildFailure,
-                            out var pixelFailure);
+                        var built = ApplyPlan(context, plan, out var buildFailure, out var pixelFailure);
                         if (built != null)
                         {
                             FinishRetries(built);
@@ -1744,6 +1833,13 @@ namespace Editors.PackOptimizer.Core
                         if (lowered)
                         {
                             retryAttempts++;
+                            continue;
+                        }
+
+                        if (context.CopyWon)
+                        {
+                            // The copy plan could not be built: plan again without copies.
+                            skipCopy = true;
                             continue;
                         }
 
@@ -3467,12 +3563,33 @@ namespace Editors.PackOptimizer.Core
                    merge.Effective(entry).Layout is { } layout &&
                    GetSharedRepackBlockedTextureReason(layout) == null;
 
+            // Copy plan: a texture that left this plan because a dropped part still needs the original
+            // is cropped into the pages as a copy for the parts that stay.
+            bool RemovedCopyable(string texture)
+                => removedBecause.ContainsKey(texture) &&
+                   !blocked.Contains(texture) &&
+                   !isUniform(texture) &&
+                   entryOf.TryGetValue(texture, out var removedEntry) &&
+                   GetSharedRepackBlockedTextureReason(removedEntry.Layout) == null;
+
+            bool CopyableRemoved(string texture) => merge.CopyRemoved && RemovedCopyable(texture);
+
+            // Normal plan: a part was dropped only for textures that left the plan, which copies would keep.
+            bool CopyWouldRescue()
+                => !merge.CopyRemoved &&
+                   droppedParts.Any(part =>
+                       dropReasonOf[part.Key] == SharedRepackReasonMixed &&
+                       part.Textures.Where(texture => !members.Contains(texture) && !isUniform(texture))
+                           .ToList() is { Count: > 0 } offending &&
+                       offending.All(RemovedCopyable));
+
             // Why a part's textures outside the set keep it out of it: null when each of them
             // is a uniform colour, which is kept as authored and so never blocks the part.
             string? OutsideReason(SharedRepackPart part)
             {
                 var offending = part.Textures
-                    .Where(texture => !members.Contains(texture) && !isUniform(texture) && !Copyable(texture))
+                    .Where(texture => !members.Contains(texture) && !isUniform(texture) && !Copyable(texture) &&
+                                      !CopyableRemoved(texture))
                     .ToList();
                 if (offending.Count == 0)
                     return null;
@@ -3523,7 +3640,7 @@ namespace Editors.PackOptimizer.Core
                     if (reason == null && !part.Textures.IsSubsetOf(members))
                     {
                         var offending = part.Textures
-                            .Where(texture => !members.Contains(texture) && !isUniform(texture))
+                            .Where(texture => !members.Contains(texture) && !isUniform(texture) && !CopyableRemoved(texture))
                             .ToList();
                         var joins = offending.Count != 0 && merge.Allow ? FindJoins(offending) : null;
                         if (joins != null)
@@ -3645,6 +3762,7 @@ namespace Editors.PackOptimizer.Core
             for (var attempt = 0; attempt <= candidates.Count + 1; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                merge.CopyRescuable = CopyWouldRescue();
                 var moved = candidates
                     .Where(part => !dropped.Contains(part.Key) && part.Textures.Overlaps(members))
                     .ToList();
@@ -3690,16 +3808,12 @@ namespace Editors.PackOptimizer.Core
                 merge.ClosureEstimated = true;
                 merge.ClosureToday = today;
                 merge.ClosureEstimate = estimate.Rounded;
-                if (merge.CopyOutside)
+                // The copies: textures outside the set the moved parts use (uniform ones stay as
+                // authored), each cropped to its users in the set; their originals stay for everyone else.
+                List<(string Slot, DdsLayout Layout, double Coverage)> CropCopies(IEnumerable<string> textures)
                 {
-                    // The copies: outside textures the moved parts use (uniform ones stay as authored),
-                    // each cropped to its users in the set; their originals stay for everyone else.
                     var copyItems = new List<(string Slot, DdsLayout Layout, double Coverage)>();
-                    foreach (var copy in moved
-                                 .SelectMany(part => part.Textures)
-                                 .Where(texture => !members.Contains(texture) && !isUniform(texture))
-                                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                                 .OrderBy(texture => texture, StringComparer.Ordinal))
+                    foreach (var copy in textures.OrderBy(texture => texture, StringComparer.Ordinal))
                     {
                         Array.Clear(scratch);
                         string? copySlot = null;
@@ -3720,6 +3834,31 @@ namespace Editors.PackOptimizer.Core
                             CountVanillaCoverage(scratch)));
                     }
 
+                    return copyItems;
+                }
+
+                var copiedTextures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (merge.CopyRemoved)
+                {
+                    copiedTextures.UnionWith(moved
+                        .SelectMany(part => part.Textures)
+                        .Where(texture => !members.Contains(texture) && !isUniform(texture)));
+                    merge.CopiedTextures.Clear();
+                    foreach (var copied in copiedTextures)
+                        merge.CopiedTextures[copied] = removedBecause.GetValueOrDefault(copied, "left the plan");
+                    if (copiedTextures.Count != 0)
+                    {
+                        estimate = EstimateRepackAtlasBytes(items.Concat(CropCopies(copiedTextures)).ToList());
+                        merge.ClosureEstimate = estimate.Rounded;
+                    }
+                }
+
+                if (merge.CopyOutside)
+                {
+                    var copyItems = CropCopies(moved
+                        .SelectMany(part => part.Textures)
+                        .Where(texture => !members.Contains(texture) && !isUniform(texture))
+                        .Distinct(StringComparer.OrdinalIgnoreCase));
                     var withCopies = copyItems.Count == 0 ? estimate : EstimateRepackAtlasBytes(items.Concat(copyItems).ToList());
                     merge.WhatIf = new(
                         today,
@@ -3766,7 +3905,8 @@ namespace Editors.PackOptimizer.Core
                         entryOf[copied] = copyEntry;
                 }
 
-                var tuples = BuildSharedRepackTuples(moved, entryOf, ClassifyConstant, SetKeyOf, out var violating);
+                var tuples = BuildSharedRepackTuples(
+                    moved, entryOf, ClassifyConstant, SetKeyOf, copiedTextures, out var violating);
                 if (violating.Count != 0)
                 {
                     foreach (var part in violating)
@@ -3808,6 +3948,7 @@ namespace Editors.PackOptimizer.Core
             Dictionary<string, VanillaCoverageTexture> entryOf,
             Func<string, bool?> classifyConstant,
             Func<string, string> setKeyOf,
+            HashSet<string> copiedTextures,
             out List<SharedRepackPart> violating)
         {
             violating = [];
@@ -3825,6 +3966,13 @@ namespace Editors.PackOptimizer.Core
                         StringComparer.OrdinalIgnoreCase),
                     CopySlots = new HashSet<string>(group.First().CopySlots, StringComparer.OrdinalIgnoreCase),
                 };
+                // A texture copied in this plan is a copy slot of every tuple that uses it (the part's
+                // own copy slots are fixed; this one depends on the plan, so the part is not touched).
+                foreach (var (slot, texture) in tuple.Slots)
+                {
+                    if (copiedTextures.Contains(texture))
+                        tuple.CopySlots.Add(slot);
+                }
                 tuple.Parts.AddRange(group
                     .OrderBy(part => part.Key.GeometryPath, StringComparer.Ordinal)
                     .ThenBy(part => part.Key.LodIndex)
@@ -3839,8 +3987,8 @@ namespace Editors.PackOptimizer.Core
                 // Uniform textures (vanilla's 4x4 masks, a flat colour outside the set) cannot be
                 // cropped per chart and do not need to be: they stay as authored. A tiny
                 // texture that is not uniform cannot be repacked.
-                // A copy slot (the emissive distortion noise) is never uniform and never a member: it is
-                // always cropped, so it is not classified at all.
+                // A copy slot (the emissive distortion noise, or a texture copied in this plan) is never
+                // uniform and never a member: it is always cropped, so it is not classified at all.
                 foreach (var (slot, texture) in tuple.Slots.ToList())
                 {
                     if (tuple.CopySlots.Contains(slot))
@@ -3862,16 +4010,19 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 if (tuple.Slots.Keys.All(tuple.CopySlots.Contains))
                 {
-                    tuple.Excluded = "every texture is a uniform one (nothing to repack)";
+                    tuple.Excluded = tuple.Slots.Keys.Any(tuple.IsGeneralCopySlot)
+                        ? "every texture is a uniform one or a copy (nothing to repack)"
+                        : "every texture is a uniform one (nothing to repack)";
                     continue;
                 }
 
                 foreach (var (slot, texture) in tuple.Slots)
                     tuple.Layouts[slot] = entryOf[texture].Layout!;
-                // Reference resolution: the base colour, else the largest slot (never a copied one).
+                // Reference resolution: the base colour, else the largest slot (never the emissive noise
+                // copy; a copied base colour or other copy is a normal slot).
                 var reference = tuple.Slots.ContainsKey("t_xml_base_colour")
                     ? tuple.Layouts["t_xml_base_colour"]
-                    : tuple.Layouts.Where(pair => !tuple.CopySlots.Contains(pair.Key)).Select(pair => pair.Value)
+                    : tuple.Layouts.Where(pair => !tuple.IsEmissiveCopySlot(pair.Key)).Select(pair => pair.Value)
                         .OrderByDescending(layout => (long)layout.Width * layout.Height).First();
                 tuple.ReferenceWidth = reference.Width;
                 tuple.ReferenceHeight = reference.Height;
@@ -3886,7 +4037,7 @@ namespace Editors.PackOptimizer.Core
                     tuple.SourceExponent[slot] = exponent;
                     var shift = Math.Max(-exponent.Item1, -exponent.Item2);
                     cellDownshift = Math.Max(cellDownshift, shift);
-                    if (!tuple.CopySlots.Contains(slot))
+                    if (!tuple.IsEmissiveCopySlot(slot))
                         downshift = Math.Max(downshift, shift);
                 }
 
@@ -5060,7 +5211,8 @@ namespace Editors.PackOptimizer.Core
                 var sources = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
                 foreach (var tuple in groupTuples)
                 {
-                    foreach (var slot in slots)
+                    // A copied texture stays: it is not a source the pages replace.
+                    foreach (var slot in slots.Where(slot => !tuple.IsGeneralCopySlot(slot)))
                         sources[tuple.Slots[slot]] = tuple.Layouts[slot].ChainBytes;
                 }
 
@@ -5181,7 +5333,7 @@ namespace Editors.PackOptimizer.Core
                 foreach (var slot in slots)
                 {
                     var isCopy = first.CopySlots.Contains(slot);
-                    var suffix = isCopy
+                    var suffix = first.IsEmissiveCopySlot(slot)
                         ? SharedRepackEmissiveOutputSuffix
                         : AtlasChannels.First(item => item.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase)).Suffix;
                     var layout = first.Layouts[slot];
@@ -5977,6 +6129,31 @@ namespace Editors.PackOptimizer.Core
         private static bool SharedRepackTightPiecesDisabled;
         private static bool SharedRepackReducedPaddingDisabled;
         private static bool SharedRepackDirectRigidsDisabled;
+        // Test hook: textures that left a plan are never copied (the output of an earlier version).
+        private static bool SharedRepackCopyRemovedDisabled;
+
+        // What a plan saves, exactly: the chain bytes of the textures it replaces against its pages.
+        private static long GetSharedRepackPlanSaving(SharedRepackSetPlan plan)
+            => plan.Replaced.Values.Sum() - plan.Pages.Sum(page => page.BytesAfter);
+
+        // The chart assignment of a part is state of the part, which two plans of one set share: the
+        // plan planned first keeps its own here while the other is planned.
+        private sealed record SharedRepackPartCharts(SharedRepackPart Part, int[] Active, int[]? Merged, int[]? Tight);
+
+        private static List<SharedRepackPartCharts> SnapshotSharedRepackPartCharts(SharedRepackSetPlan plan)
+            => plan.Tuples.SelectMany(tuple => tuple.Parts).Distinct()
+                .Select(part => new SharedRepackPartCharts(part, part.VertexChart, part.MergedVertexChart, part.TightVertexChart))
+                .ToList();
+
+        private static void RestoreSharedRepackPartCharts(List<SharedRepackPartCharts> charts)
+        {
+            foreach (var item in charts)
+            {
+                item.Part.VertexChart = item.Active;
+                item.Part.MergedVertexChart = item.Merged;
+                item.Part.TightVertexChart = item.Tight;
+            }
+        }
 
         private static (float U, float V) ComputeSharedRepackUv(
             SharedRepackPage page,
@@ -6394,8 +6571,10 @@ namespace Editors.PackOptimizer.Core
                                         part.Slots.TryGetValue(slot, out var partTexture) &&
                                         partTexture.Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
                                     {
+                                        // A copied texture maps to its copy output, any other to the page that replaces it.
+                                        var copiedSlot = tuple.CopySlots.Contains(slot);
                                         var output = page.Outputs.FirstOrDefault(candidate =>
-                                            !candidate.IsCopy &&
+                                            candidate.IsCopy == copiedSlot &&
                                             candidate.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase) &&
                                             candidate.Sources.Any(source => Normalize(source)
                                                 .Equals(Normalize(sourcePath), StringComparison.OrdinalIgnoreCase)));
@@ -6409,8 +6588,10 @@ namespace Editors.PackOptimizer.Core
                                     }
                                 }
 
+                                // Legacy entries follow the page their texture moved to, which for a copied
+                                // texture is its copy (the original stays, but the new UVs need the cropped sheet).
                                 var legacyTargets = page.Outputs
-                                    .Where(output => !output.IsCopy)
+                                    .Where(output => !output.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase))
                                     .SelectMany(output => output.Sources.Select(source => (Source: Normalize(source), output.Path)))
                                     .GroupBy(item => item.Source, StringComparer.OrdinalIgnoreCase)
                                     .ToDictionary(group => group.Key, group => group.First().Path, StringComparer.OrdinalIgnoreCase);
@@ -6610,8 +6791,25 @@ namespace Editors.PackOptimizer.Core
                 inRun.Add(unreadMaterial);
             }
 
-            built.EmissiveCopies = built.Outputs.Count(output => output.IsCopy);
-            built.EmissiveCopyBytes = built.Outputs.Where(output => output.IsCopy).Sum(output => output.Data.LongLength);
+            bool IsEmissiveOutput(SharedRepackSlotOutput output)
+                => output.IsCopy && output.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase);
+            built.EmissiveCopies = built.Outputs.Count(IsEmissiveOutput);
+            built.EmissiveCopyBytes = built.Outputs.Where(IsEmissiveOutput).Sum(output => output.Data.LongLength);
+            foreach (var output in built.Outputs.Where(output => output.IsCopy && !IsEmissiveOutput(output)))
+            {
+                foreach (var texture in output.Sources)
+                {
+                    built.RemovedCopies.Add((
+                        texture,
+                        output.Slot,
+                        merge.CopiedTextures.GetValueOrDefault(texture, "left the plan"),
+                        output.Data.LongLength));
+                }
+            }
+
+            built.CopyWon = merge.CopyRemoved && built.RemovedCopies.Count != 0;
+            built.NormalSaving = merge.NormalSaving;
+            built.CopyGain = built.CopyWon ? built.Before - built.After - (merge.NormalSaving ?? 0) : 0;
             result.EmissiveParts += built.EmissiveParts;
             result.EmissiveCopies += built.EmissiveCopies;
             result.EmissiveCopyBytes += built.EmissiveCopyBytes;
@@ -6692,6 +6890,23 @@ namespace Editors.PackOptimizer.Core
                             $"Generated repack texture {output.Path} replaces source textures of " +
                             $"{(owners.Contains(null) ? "an unknown signature set and " : string.Empty)}" +
                             $"{owners.Count(owner => owner != null):N0} signature set(s), not exactly one");
+                    }
+
+                    // A copy is cropped from a texture that stays: it must still resolve.
+                    if (output.IsCopy)
+                    {
+                        // An owned source must still be in the output; any other resolves as the repack read it.
+                        foreach (var source in output.Sources.Where(source =>
+                                     state.Output.FindFile(source) == null &&
+                                     (state.Source.FindFile(source) != null ||
+                                      ResolveGameplayTraversalContainer(
+                                          state.Source, GetGameplayTraversalContainers(state), source, state.ResolutionProviders)?
+                                          .FindFile(source) == null)))
+                        {
+                            errors.Add(
+                                $"Copy repack texture {output.Path} is cropped from {source}, which is missing " +
+                                "from the output and from vanilla");
+                        }
                     }
 
                     var file = state.Output.FindFile(output.Path);
@@ -8176,6 +8391,27 @@ namespace Editors.PackOptimizer.Core
                 $"{emissiveBlocked.Sum(pair => pair.Value):N0}.");
             foreach (var (reason, count) in emissiveBlocked)
                 sb.AppendLine($"  {count:N0} x {reason}");
+            var copyWon = result.BuiltSets.Where(set => set.CopyWon).ToList();
+            sb.AppendLine(
+                "Copies of textures that left a plan: a texture that left a set only because a dropped part still needs " +
+                "the original is cropped into the pages for the parts that stay (the original stays and is not " +
+                "replaced); a set with such a texture is planned both ways and the plan with the larger exact saving " +
+                (SharedRepackCopyRemovedDisabled ? "is built (disabled in this run). " : "is built. ") +
+                $"{result.Outcomes.Count(outcome => outcome.Context?.PlannedBothWays == true):N0} set(s) planned both ways; " +
+                $"copies won in {copyWon.Count:N0} (gained {copyWon.Sum(set => set.CopyGain):N0} bytes over the plan " +
+                $"without copies, {copyWon.Sum(set => set.RemovedCopies.Count):N0} copy texture(s) of " +
+                $"{copyWon.Sum(set => set.RemovedCopies.Sum(item => item.Bytes)):N0} bytes); " +
+                $"{copyWon.Count(set => set.NormalSaving == null):N0} set(s) built only thanks to copies.");
+            foreach (var outcome in result.Outcomes.Where(outcome => outcome.Context is { PlannedBothWays: true, CopyWon: false }))
+            {
+                var context = outcome.Context!;
+                sb.AppendLine(
+                    $"  planned with copies, not built with them: {Shorten(outcome.Label, 100)} [{outcome.Bucket}]: " +
+                    (context.NormalSaving == null ? "without copies it failed" : $"without copies it saves {FormatSignedBytes(context.NormalSaving.Value)}") +
+                    (context.CopyFailure == null
+                        ? $", with copies {FormatSignedBytes(context.CopySaving)}"
+                        : $", the copy plan failed: {Shorten(context.CopyFailure, 160)}"));
+            }
             if (result.PartDropReasons.Count != 0)
             {
                 sb.AppendLine("Parts dropped from a set while closing it (a part counts once per set):");
@@ -8295,6 +8531,19 @@ namespace Editors.PackOptimizer.Core
 
                 foreach (var emissive in set.EmissiveScales)
                     sb.AppendLine($"    emissive: {emissive}");
+                if (set.RemovedCopies.Count != 0)
+                {
+                    sb.AppendLine(
+                        $"    [copies: {set.RemovedCopies.Count:N0} texture(s), {set.RemovedCopies.Sum(item => item.Bytes):N0} bytes; " +
+                        (set.NormalSaving == null
+                            ? $"built only thanks to the copies, saves {FormatSignedBytes(set.CopyGain)}"
+                            : $"saves {FormatSignedBytes(set.CopyGain)} more than without copies") + "]");
+                    foreach (var (texture, slot, why, bytes) in set.RemovedCopies.OrderBy(item => item.Texture, StringComparer.Ordinal))
+                    {
+                        sb.AppendLine(
+                            $"      copy of {texture} ({slot}, {bytes:N0} bytes): the original stays, it left the plan when {why}");
+                    }
+                }
                 sb.AppendLine(
                     $"    pixel check (before writing): top level {set.Samples:N0} sample(s), max error {set.MaxError:0}, " +
                     $"mean {set.MeanError:0.00}; mip 2/3 (source's own level) {set.LevelSamples:N0} sample(s), max " +
@@ -8317,7 +8566,11 @@ namespace Editors.PackOptimizer.Core
                         $"    -> {output.Path}: {output.Width}x{output.Height} {output.Format}" +
                         $"{(output.Srgb ? "_SRGB" : string.Empty)}, {output.Bytes:N0} bytes with mips, " +
                         $"{output.BlockCopiedLevels} of {output.MipLevels} mip level(s) block-copied" +
-                        (output.IsCopy ? $" (copy of {string.Join(", ", output.Sources)}; not a replacement)" : string.Empty));
+                        (output.IsCopy
+                            ? output.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase)
+                                ? $" (copy of {string.Join(", ", output.Sources)}; not a replacement)"
+                                : $" (copy of {string.Join(", ", output.Sources)}, which stays for the part(s) dropped from the plan; not a replacement)"
+                            : string.Empty));
                     if (output.BlockStats is { } blockStats)
                     {
                         sb.AppendLine(

@@ -8979,7 +8979,9 @@ namespace Test.PackOptimizer.Core
                 (SrNormal, "textures\\sr_n1.dds"),
                 (SrNormal, "textures\\sr_n2.dds"));
 
-            var result = world.Run();
+            // Without copies the dropped part takes the shared n2 (and so the other part) with it.
+            object result = null!;
+            WithCopyRemovedDisabled(() => result = world.Run());
 
             Assert.That(Get<int>(result, "Built"), Is.Zero, SrSkips(result));
             Assert.That(SrSkips(result), Does.Contain("no part is left after closing the set"));
@@ -9536,7 +9538,9 @@ namespace Test.PackOptimizer.Core
                 [[m1, m2, m3]]);
             world.AddModel(SrRigid2, SrWs2, SrRoot2, SrRigidFactory([(m4, SrBlocks((1, 1)))]), [[m4]]);
 
-            var result = world.Run();
+            // The cascade of earlier versions: b1 leaves with part 2 and takes part 0 with it.
+            object result = null!;
+            WithCopyRemovedDisabled(() => result = world.Run());
 
             AssertFunnelReconciles(result);
             Assert.That(Get<int>(result, "SetsConsidered"), Is.EqualTo(3), SrSkips(result));
@@ -15016,7 +15020,8 @@ namespace Test.PackOptimizer.Core
             List<object> parts,
             Dictionary<string, object> entries,
             Func<string, bool?> classify,
-            out List<object> violating)
+            out List<object> violating,
+            HashSet<string>? copied = null)
         {
             var partList = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(GetNestedType("SharedRepackPart")))!;
             foreach (var part in parts)
@@ -15026,9 +15031,9 @@ namespace Test.PackOptimizer.Core
                 StringComparer.OrdinalIgnoreCase)!;
             foreach (var (path, entry) in entries)
                 entryDictionary[path] = entry;
-            var arguments = new object?[] { partList, entryDictionary, classify, (Func<string, string>)(texture => "set:" + texture), null };
+            var arguments = new object?[] { partList, entryDictionary, classify, (Func<string, string>)(texture => "set:" + texture), copied ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase), null };
             var tuples = ((IEnumerable)GetStaticMethod("BuildSharedRepackTuples").Invoke(null, arguments)!).Cast<object>().ToList();
-            violating = ((IEnumerable)arguments[4]!).Cast<object>().ToList();
+            violating = ((IEnumerable)arguments[5]!).Cast<object>().ToList();
             return tuples;
         }
 
@@ -15524,6 +15529,22 @@ namespace Test.PackOptimizer.Core
             finally
             {
                 field.SetValue(null, false);
+            }
+        }
+
+        // The kill switch of the copies of textures that left a plan: the closure cascade of earlier versions.
+        private static void WithCopyRemovedDisabled(Action test)
+        {
+            var field = GetServiceType().GetField("SharedRepackCopyRemovedDisabled", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var previous = (bool)field.GetValue(null)!;
+            field.SetValue(null, true);
+            try
+            {
+                test();
+            }
+            finally
+            {
+                field.SetValue(null, previous);
             }
         }
 
@@ -16066,6 +16087,279 @@ namespace Test.PackOptimizer.Core
             Assert.That(Get<long>(built, "After"), Is.LessThan(Get<long>(SrBuilt(plainResult).Single(), "After")));
         }
 
+        // --- Copies of textures that left a plan -------------------------------------------------
+        //
+        // Part 2 (m3 = b1 + n3) is dropped because n3 cannot be repacked; b1 leaves the set with it, which
+        // used to take part 0 (m1 = b1 + n1) down too. With copies part 0 stays: b1 is cropped into the pages
+        // as a copy for it (the original stays for part 2), n1 is replaced as usual.
+        private static SrWorld BuildCopyCascadeSrWorld(bool wide = false)
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1, owned: true);
+            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2, owned: true);
+            world.AddTexture("textures\\sr_b2.dds", 1024, "BC1", true, 3, owned: true);
+            world.AddTexture("textures\\sr_n2.dds", 512, "BC3", false, 4, owned: true);
+            world.AddTexture("textures\\sr_n3.dds", 48, "BC3", false, 6, owned: true);
+            world.Fixture.AddMaterial(SrMaterialPath("m1"), (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n1.dds"));
+            world.Fixture.AddMaterial(SrMaterialPath("m2"), (SrBase, "textures\\sr_b2.dds"), (SrNormal, "textures\\sr_n2.dds"));
+            world.Fixture.AddMaterial(SrMaterialPath("m3"), (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n3.dds"));
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
+            var m3 = SrMaterialPath("m3");
+            // The wide part 0 covers all of b1: its copy costs more than the group saves.
+            var part0 = wide ? UvQuad(0.004, 0.004, 0.996, 0.996) : SrBlocks((2, 3), (3, 3));
+            world.AddModel(
+                SrRigid, SrWs, SrRoot,
+                SrRigidFactory([(m1, part0), (m2, SrBlocks((10, 4))), (m3, SrBlocks((3, 3)))]),
+                [[m1, m2, m3]]);
+            return world;
+        }
+
+        private static List<object> SrOutputs(object built)
+            => Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+
+        private static string SrMaterialSlotSource(SrWorld world, string materialPath, string slot)
+        {
+            var material = new XmlDocument();
+            material.LoadXml(Encoding.UTF8.GetString(world.Fixture.Output[materialPath]));
+            return material.SelectNodes("/material/textures/texture")!.Cast<XmlNode>()
+                .Single(node => node.SelectSingleNode("slot")!.InnerText.Trim() == slot)
+                .SelectSingleNode("source")!.InnerText;
+        }
+
+        [Test]
+        public void SharedRepack_CopyRemoved_KeepsThePartThatSharedATextureWithADroppedOne()
+        {
+            var world = BuildCopyCascadeSrWorld();
+            var original = world.Fixture.Source["textures\\sr_b1.dds"].ToArray();
+
+            var result = world.Run();
+
+            AssertFunnelReconciles(result);
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            var built = SrBuilt(result).Single();
+            // b1 is a copy, not a replaced texture; n1, b2 and n2 are replaced.
+            var replaced = Get<IEnumerable>(built, "Replaced").Cast<object>().Select(item => item.ToString()).ToList();
+            Assert.That(replaced, Has.Count.EqualTo(3));
+            Assert.That(string.Concat(replaced), Does.Contain("sr_n1").And.Contain("sr_b2").And.Contain("sr_n2"));
+            Assert.That(string.Concat(replaced), Does.Not.Contain("sr_b1"));
+            var outputs = SrOutputs(built);
+            var copy = outputs.Single(output => Get<bool>(output, "IsCopy"));
+            Assert.That(Get<string>(copy, "Slot"), Is.EqualTo(SrBase));
+            Assert.That(Get<IEnumerable>(copy, "Sources").Cast<string>(), Is.EqualTo(new[] { "textures\\sr_b1.dds" }));
+            // The slot's normal channel name, not the emissive one, and a cropped sheet.
+            Assert.That(Get<string>(copy, "Path"), Does.EndWith("_repack_base_colour.dds"));
+            Assert.That(Get<int>(copy, "Width"), Is.LessThan(1024));
+            Assert.That(Get<bool>(built, "CopyWon"), Is.True);
+            Assert.That(Get<IEnumerable>(built, "RemovedCopies"), Is.Not.Empty);
+            // The original stays, unchanged, and part 2 keeps its material and UVs.
+            Assert.That(world.Fixture.Output["textures\\sr_b1.dds"], Is.EqualTo(original));
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 2), Is.EqualTo(SrMaterialPath("m3")));
+            var untouched = SrRigidFactory([(SrMaterialPath("m1"), SrBlocks((2, 3), (3, 3))), (SrMaterialPath("m2"), SrBlocks((10, 4))), (SrMaterialPath("m3"), SrBlocks((3, 3)))])();
+            var rigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            Assert.That(
+                rigid.ModelList[0][2].Mesh.VertexList.Select(vertex => vertex.Uv),
+                Is.EqualTo(untouched.ModelList[0][2].Mesh.VertexList.Select(vertex => vertex.Uv)));
+            // Part 0 moved: its material points at the copy for the base colour and a page for the normal.
+            Assert.That(
+                rigid.ModelList[0][0].Mesh.VertexList.Select(vertex => vertex.Uv),
+                Is.Not.EqualTo(untouched.ModelList[0][0].Mesh.VertexList.Select(vertex => vertex.Uv)));
+            var generated = SrWsMaterial(world.State, SrWs, 0, 0);
+            Assert.That(generated, Does.Contain("_repack_"));
+            Assert.That(SrMaterialSlotSource(world, generated, SrBase), Is.EqualTo(Get<string>(copy, "Path")));
+            var normalOutput = outputs.Single(output => !Get<bool>(output, "IsCopy") &&
+                Get<IEnumerable>(output, "Sources").Cast<string>().Contains("textures\\sr_n1.dds"));
+            Assert.That(SrMaterialSlotSource(world, generated, SrNormal), Is.EqualTo(Get<string>(normalOutput, "Path")));
+            // Pixel-checked like every output, copy included.
+            Assert.That(Get<long>(built, "Samples"), Is.GreaterThan(0));
+            Assert.That(Get<double>(built, "MaxError"), Is.Zero);
+            Assert.That(Get<IEnumerable>(result, "PixelFailures"), Is.Empty);
+            var section = BuildSharedRepackSection(Enabled(world));
+            Assert.That(section, Does.Contain("[copies: 1 texture(s)").And.Contain("more than without copies")
+                .Or.Contain("built only thanks to the copies"));
+            Assert.That(section, Does.Contain("copy of textures\\sr_b1.dds").And.Contain("left the plan when"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_CopyRemoved_ValidationFindsAMissingCopySource()
+        {
+            var world = BuildCopyCascadeSrWorld();
+            world.Run();
+            Assert.That(SrValidate(world), Is.Empty);
+
+            world.Fixture.Output.Remove("textures\\sr_b1.dds");
+
+            Assert.That(SrValidate(world), Has.Some.Contain("is cropped from textures\\sr_b1.dds"));
+        }
+
+        [Test]
+        public void SharedRepack_CopyRemoved_KillSwitchRestoresTheCascade()
+        {
+            var world = BuildCopyCascadeSrWorld();
+            object result = null!;
+            WithCopyRemovedDisabled(() => result = world.Run());
+
+            var built = SrBuilt(result).Single();
+            var replaced = Get<IEnumerable>(built, "Replaced").Cast<object>().Select(item => item.ToString()).ToList();
+            Assert.That(replaced, Has.Count.EqualTo(2));
+            Assert.That(string.Concat(replaced), Does.Contain("sr_b2").And.Contain("sr_n2"));
+            Assert.That(SrOutputs(built), Has.None.Matches<object>(output => Get<bool>(output, "IsCopy")));
+            Assert.That(Get<bool>(built, "CopyWon"), Is.False);
+            Assert.That(SrWsMaterial(world.State, SrWs, 0, 0), Is.EqualTo(SrMaterialPath("m1")));
+
+            // The generated files are those of a world that never had the cascade.
+            var baseline = new SrWorld();
+            foreach (var texture in new[] { "b2", "n2" })
+                baseline.AddTexture($"textures\\sr_{texture}.dds", texture[0] == 'b' ? 1024 : 512, texture[0] == 'b' ? "BC1" : "BC3", texture[0] == 'b', texture == "b2" ? 3 : 4, owned: true);
+            baseline.Fixture.AddMaterial(SrMaterialPath("m2"), (SrBase, "textures\\sr_b2.dds"), (SrNormal, "textures\\sr_n2.dds"));
+            baseline.AddModel(
+                SrRigid, SrWs, SrRoot,
+                SrRigidFactory([(SrMaterialPath("m2"), SrBlocks((10, 4)))]),
+                [[SrMaterialPath("m2")]]);
+            baseline.Run();
+            foreach (var path in baseline.Fixture.Output.Keys.Where(path => path.Contains("_repack_")))
+            {
+                Assert.That(world.Fixture.Output.ContainsKey(path), Is.True, path);
+                Assert.That(world.Fixture.Output[path], Is.EqualTo(baseline.Fixture.Output[path]), path);
+            }
+        }
+
+        [Test]
+        public void SharedRepack_CopyRemoved_ACopyThatDoesNotPay_KeepsTheNormalPlanAndItsOutput()
+        {
+            var world = BuildCopyCascadeSrWorld(wide: true);
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(SrBuilt(result), Has.Count.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            var built = SrBuilt(result).Single();
+            // Planned both ways, the copy plan saved no more (part 0's group does not pay): the normal plan is built.
+            var outcome = Get<IEnumerable>(result, "Outcomes").Cast<object>()
+                .Single(item => Get<string>(item, "Bucket") == "built");
+            var context = Get<object>(outcome, "Context");
+            Assert.That(Get<bool>(context, "PlannedBothWays"), Is.True);
+            Assert.That(Get<bool>(context, "CopyWon"), Is.False);
+            Assert.That(Get<bool>(built, "CopyWon"), Is.False);
+            Assert.That(SrOutputs(built), Has.None.Matches<object>(output => Get<bool>(output, "IsCopy")));
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Not.Contain("[copies:"));
+
+            var switched = BuildCopyCascadeSrWorld(wide: true);
+            WithCopyRemovedDisabled(() => switched.Run(minimumSaving: 1, minimumGroupSaving: 1));
+            Assert.That(world.Fixture.Output.Keys.OrderBy(key => key), Is.EqualTo(switched.Fixture.Output.Keys.OrderBy(key => key)));
+            foreach (var (path, bytes) in switched.Fixture.Output)
+                Assert.That(world.Fixture.Output[path], Is.EqualTo(bytes), path);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_CopyRemoved_KillSwitchChangesTheOutputWhereCopiesWin()
+        {
+            var world = BuildCopyCascadeSrWorld();
+            world.Run();
+            var switched = BuildCopyCascadeSrWorld();
+            WithCopyRemovedDisabled(() => switched.Run());
+
+            Assert.That(world.Fixture.Output.Keys.OrderBy(key => key), Is.Not.EqualTo(switched.Fixture.Output.Keys.OrderBy(key => key)));
+            Assert.That(world.Fixture.Output.Keys.Count(key => key.Contains("_repack_")), Is.GreaterThan(
+                switched.Fixture.Output.Keys.Count(key => key.Contains("_repack_"))));
+        }
+
+        // A copied base colour is a normal slot for the layout: it can be the reference, raises the chart alignment
+        // like any slot and block-copies as many levels as the same slot of a replaced texture. The emissive noise
+        // copy keeps its own rules.
+        [Test]
+        public void SharedRepack_CopyRemoved_CopiedSlotLaysOutLikeANormalSlot()
+        {
+            const string baseTexture = "textures\\b.dds";
+            const string normal = "textures\\n.dds";
+            var part = SrPart(new Dictionary<string, string> { [SrBase] = baseTexture, [SrNormal] = normal });
+            var entries = new Dictionary<string, object>
+            {
+                [baseTexture] = SrEntry(baseTexture, 1024, 1024),
+                [normal] = SrEntry(normal, 128, 128),
+            };
+
+            var plain = SrBuildTuples([part], entries, _ => null, out _).Single();
+            var copiedBase = SrBuildTuples(
+                [part], entries, _ => null, out _, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { baseTexture }).Single();
+            var copiedNormal = SrBuildTuples(
+                [part], entries, _ => null, out _, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { normal }).Single();
+
+            Assert.That(Get<HashSet<string>>(copiedBase, "CopySlots"), Is.EquivalentTo(new[] { SrBase }));
+            Assert.That(Get<bool>(copiedBase, "EmissiveCompensation"), Is.False);
+            Assert.That(Get<IEnumerable>(copiedBase, "MemberTextures").Cast<string>(), Is.EqualTo(new[] { normal }));
+            foreach (var tuple in new[] { copiedBase, copiedNormal })
+            {
+                Assert.That(Get<string?>(tuple, "Excluded"), Is.Null);
+                Assert.That(Get<int>(tuple, "ReferenceWidth"), Is.EqualTo(Get<int>(plain, "ReferenceWidth")));
+                Assert.That(Get<int>(tuple, "Cell"), Is.EqualTo(Get<int>(plain, "Cell")));
+                // The normal is 8 times smaller than the reference: the alignment follows it whether or not it is copied.
+                Assert.That(Get<int>(tuple, "Align"), Is.EqualTo(Get<int>(plain, "Align")));
+            }
+
+            // A group keeps copied and replaced textures apart.
+            Assert.That(Get<string>(copiedBase, "GroupKey"), Does.Contain("copy:" + baseTexture));
+            Assert.That(Get<string>(copiedBase, "GroupKey"), Is.Not.EqualTo(Get<string>(plain, "GroupKey")));
+        }
+
+        [Test]
+        public void SharedRepack_CopyRemoved_CopiedBaseColour_BlockCopiesLikeTheOtherSlotsOfItsPage()
+        {
+            var world = BuildCopyCascadeSrWorld();
+            var built = SrBuilt(world.Run()).Single();
+            var outputs = SrOutputs(built);
+            var copy = outputs.Single(output => Get<bool>(output, "IsCopy"));
+            var normal = outputs.Single(output => Get<string>(output, "Slot") == SrNormal &&
+                Get<IEnumerable>(output, "Sources").Cast<string>().Contains("textures\\sr_n1.dds"));
+
+            // The page's alignment follows its coarsest slot whether or not the base colour is a copy: the
+            // base colour (twice the normal's size) has exactly one more block-aligned level than the normal.
+            Assert.That(Get<int>(normal, "BlockCopiedLevels"), Is.GreaterThan(0));
+            Assert.That(Get<int>(copy, "BlockCopiedLevels"), Is.EqualTo(Get<int>(normal, "BlockCopiedLevels") + 1));
+            Assert.That(Get<int>(copy, "Width"), Is.EqualTo(2 * Get<int>(normal, "Width")));
+        }
+
+        // A directly loaded rigid keeps its embedded material in step with the WSModel material: a copied slot
+        // points at the copy output, the replaced slots at their pages.
+        [Test]
+        public void SharedRepack_CopyRemoved_DirectRigidEmbeddedSlotPointsAtTheCopy()
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: false);
+            SrInstallReadableSourceRigid(world);
+            world.AddTexture("textures\\sr_direct_other_base.dds", 1024, "BC1", true, 31);
+            world.AddTexture("textures\\sr_cm.dds", 256, "BC1", true, 32);
+            // A second rigid shares the direct rigid's normal and has a slot the repack cannot move.
+            var other = SrMaterialPath("other");
+            world.Fixture.AddText(
+                other,
+                SrMaterialXml(
+                        "textures\\sr_direct_other_base.dds",
+                        "textures\\sr_direct_normal.dds",
+                        [("t_xml_colour_map", "textures\\sr_cm.dds")])
+                    .Replace(SrWeighted2Shader, "shaders/rigid_random_colours.xml.shader"));
+            world.AddModel(SrRigid2, SrWs2, SrRoot2, SrRigidFactory([(other, SrBlocks((3, 3)))]), [[other]]);
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            Assert.That(Get<HashSet<string>>(result, "EmbeddedRewrittenRigids"), Is.EquivalentTo([SrRigid]));
+            var built = SrBuilt(result).Single();
+            var outputs = SrOutputs(built);
+            var copy = outputs.Single(output => Get<bool>(output, "IsCopy"));
+            Assert.That(Get<string>(copy, "Slot"), Is.EqualTo(SrNormal));
+            Assert.That(Get<IEnumerable>(copy, "Sources").Cast<string>(), Is.EqualTo(new[] { "textures\\sr_direct_normal.dds" }));
+            var rigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            var embedded = rigid.ModelList[0][0].Material!;
+            Assert.That(embedded.GetTexture(TextureType.Normal)!.Value.Path, Is.EqualTo(Get<string>(copy, "Path")));
+            var basePage = outputs.Single(output => !Get<bool>(output, "IsCopy") && Get<string>(output, "Slot") == SrBase);
+            Assert.That(embedded.GetTexture(TextureType.BaseColour)!.Value.Path, Is.EqualTo(Get<string>(basePage, "Path")));
+            // The legacy diffuse follows the base colour's page.
+            Assert.That(embedded.GetTexture(TextureType.Diffuse)!.Value.Path, Is.EqualTo(Get<string>(basePage, "Path")));
+            Assert.That(world.Fixture.Output.ContainsKey(Get<string>(copy, "Path")), Is.True);
+            Assert.That(SrValidateDirectRigidEmbeddedTextures(world), Is.Empty);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
         // --- Output version ---------------------------------------------------------------------
         //
         // PackOptimizerVersions.OutputVersion is part of the mod manager's cache key. The golden hash of
@@ -16127,6 +16421,9 @@ namespace Test.PackOptimizer.Core
             [15] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
             // 16: the late texture downscale run uses the early run's source-state reference density; the pinned pack has none.
             [16] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 17: the shared texture repack copies a texture that left a plan into the pages of the parts that stay
+            // when that saves more; the repack is not among the pinned stages, so the hash is unchanged.
+            [17] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
