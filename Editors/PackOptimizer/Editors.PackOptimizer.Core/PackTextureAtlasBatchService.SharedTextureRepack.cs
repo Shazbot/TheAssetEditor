@@ -111,6 +111,48 @@ namespace Editors.PackOptimizer.Core
             "a bound material is a source-pack override of a vanilla material";
         private const string SharedRepackReasonSlot =
             "a bound material has a texture in the non-atlasable slot ";
+        private const string SharedRepackFlowMapSlot = "t_xml_flow_map";
+        private const string SharedRepackFlowGuidSlot = "t_xml_df7959d8_d174_49d2_88f1_ffc28b954e5f";
+        private const string SharedRepackFlowNoiseSlot = "t_xml_flow_noise";
+        private const string SharedRepackFlowNormalSlot = "t_xml_flow_normal";
+        private const string SharedRepackFlowNormal2Slot = "t_xml_flow_normal_2";
+        private const string SharedRepackFlowNoiseSpeedParameter = "flow_noise_speed";
+        private const string SharedRepackFlowNoiseTilingParameter = "flow_noise_tiling";
+        private const string SharedRepackFlowTextureTilingParameter = "flow_texture_tiling";
+        private const string SharedRepackFlowMapOutputSuffix = "flow_map";
+        private const string SharedRepackFlowGuidOutputSuffix = "flow_guid";
+        private const string SharedRepackReasonFlowShader =
+            "the material's shader is not verified for flow-overlay repacking (";
+        private const string SharedRepackReasonFlowParameter =
+            "the material lacks a usable flow parameter ";
+        private const string SharedRepackReasonFlowTexture =
+            "the flow-map texture cannot be repacked";
+        private static readonly string[] SharedRepackFlowParameters =
+        [
+            SharedRepackFlowNoiseSpeedParameter,
+            SharedRepackFlowNoiseTilingParameter,
+            SharedRepackFlowTextureTilingParameter,
+        ];
+        private static readonly string[] SharedRepackFlowPassThroughSlots =
+        [
+            SharedRepackFlowNoiseSlot,
+            SharedRepackFlowNormalSlot,
+            SharedRepackFlowNormal2Slot,
+        ];
+        // Generated from every PS variant and its FASTBIN-linked VS entrypoint by
+        // Tools/ShaderChannels/verify_slot_families_uv.py. Rigid flow is deliberately excluded.
+        private static readonly HashSet<string> SharedRepackFlowVerifiedShaders =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "shaders/weighted2_flow_overlay.xml.shader",
+                "shaders/weighted2_flow_overlay_alpha.xml.shader",
+                "shaders/weighted2_flow_overlay_alpha_blood.xml.shader",
+                "shaders/weighted2_flow_overlay_blood.xml.shader",
+                "shaders/weighted4_flow_overlay.xml.shader",
+                "shaders/weighted4_flow_overlay_alpha.xml.shader",
+                "shaders/weighted4_flow_overlay_alpha_blood.xml.shader",
+                "shaders/weighted4_flow_overlay_blood.xml.shader",
+            };
         // Auxiliary slots every standard character material carries, pointing at common
         // textures. Like the atlas stage (which only handles its four channels) they are left
         // untouched in the generated material and are not part of the set, closure or tuple.
@@ -295,7 +337,7 @@ namespace Editors.PackOptimizer.Core
                 "shaders/weighted4_dragon_dissolve_blood.xml.shader",
             };
         private const string SharedRepackReasonVariantCopySlot =
-            "the part's WSModel bindings name different textures in a copied slot (emissive distortion or dissolve map)";
+            "the part's WSModel bindings name different textures in a copied slot (emissive distortion, dissolve map or flow map)";
         private const string SharedRepackReasonSlotSubset =
             "a texture slot is bound by only some of the part's WSModel bindings";
         private const string SharedRepackReasonVariantDirect =
@@ -343,6 +385,8 @@ namespace Editors.PackOptimizer.Core
             public RmvModel? Model { get; set; }
             public List<SourceWsModelBinding> Bindings { get; } = [];
             public HashSet<string> Materials { get; } = new(StringComparer.OrdinalIgnoreCase);
+            // Verified flow materials are rescaled even when flow_map is constant or copied.
+            public HashSet<string> FlowCompensationMaterials { get; } = new(StringComparer.OrdinalIgnoreCase);
             // Every texture of every bound material, any slot.
             public HashSet<string> Textures { get; } = new(StringComparer.OrdinalIgnoreCase);
             // The layout map: the first (by text) of the distinct slot maps of the part's bound materials.
@@ -352,7 +396,7 @@ namespace Editors.PackOptimizer.Core
             public Dictionary<string, SortedDictionary<string, string>> MaterialSlots { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<SortedDictionary<string, string>> VariantSlots { get; } = [];
             // Slots of Slots that are copied (cropped per chart) but whose texture is not a set member
-            // and is never replaced: the emissive distortion noise.
+            // and is never replaced: emissive/dissolve/flow noise or a common flow map.
             public HashSet<string> CopySlots { get; } = new(StringComparer.OrdinalIgnoreCase);
             // (material, slot) pairs ignored because the material's shader never binds the slot.
             public HashSet<(string Material, string Slot)> UnreadSlots { get; } = [];
@@ -429,6 +473,8 @@ namespace Editors.PackOptimizer.Core
             // The tuple's materials get the emissive scroll parameters rescaled, which is only exact
             // for equal U and V UV scales (the group's canvases are restricted to the reference aspect).
             public bool EmissiveCompensation => CopySlots.Contains(SharedRepackEmissiveDistortionSlot);
+            public bool FlowCompensation => Parts.Any(part => part.FlowCompensationMaterials.Count != 0);
+            public bool RequiresEqualAxisScale => EmissiveCompensation || FlowCompensation;
             // The textures this tuple replaces (its slots minus the copied ones).
             public IEnumerable<string> MemberTextures
                 => Slots.Where(pair => !CopySlots.Contains(pair.Key)).Select(pair => pair.Value);
@@ -548,6 +594,7 @@ namespace Editors.PackOptimizer.Core
             public List<string> BloodScales { get; } = [];
             public List<string> DissolveScales { get; } = [];
             public List<string> EmissiveScales { get; } = [];
+            public List<string> FlowScales { get; } = [];
         }
 
         private sealed class SharedRepackGroupInfo
@@ -586,6 +633,8 @@ namespace Editors.PackOptimizer.Core
             // The group's canvases were restricted to the reference aspect ratio (exact emissive
             // compensation), and what a single page would have cost without the restriction.
             public bool AspectRestricted { get; set; }
+            public bool EmissiveAspectRestricted { get; set; }
+            public bool FlowAspectRestricted { get; set; }
             // Tight pieces: the group had merged charts to split (Tried), the pieces gave smaller pages
             // (Used: Pieces instead of MergedCharts, saving SavedBytes), or were not assignable exactly
             // (Inconsistent, the merged layout is kept).
@@ -609,11 +658,15 @@ namespace Editors.PackOptimizer.Core
             public List<SharedRepackGroupInfo> Groups { get; } = [];
             public List<SharedRepackTuple> Tuples { get; } = [];
             public Dictionary<string, long> Replaced { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, bool> ReplacedOwned { get; } = new(StringComparer.OrdinalIgnoreCase);
             // Layout groups of the final layout whose canvases were restricted to the reference aspect
             // (exact emissive compensation), their tuples, and what the restriction cost on a single page.
             public int AspectGroups { get; set; }
             public int AspectTuples { get; set; }
             public long AspectExtraBytes { get; set; }
+            public int FlowAspectGroups { get; set; }
+            public int FlowAspectTuples { get; set; }
+            public long FlowAspectExtraBytes { get; set; }
             public HashSet<string> FailedPaddingGroupKeys { get; } = new(StringComparer.Ordinal);
             // Outputs identical to an earlier output of the plan (see DeduplicateSharedRepackOutputs).
             public int DeduplicatedOutputs { get; set; }
@@ -795,6 +848,7 @@ namespace Editors.PackOptimizer.Core
             // The first rewritten rigid in ordinal order, and every rewritten rigid with its parts.
             public string Rigid { get; init; } = string.Empty;
             public List<(string Rigid, int Parts)> Rigids { get; } = [];
+            public List<(string Rigid, int Lod, int Part)> FlowMapAtlasUsers { get; } = [];
             public List<(string Rigid, int Parts, string[] Consumers, string[] UnusedWsModels)> EmbeddedRigids { get; } = [];
             public List<(string Rigid, int Parts, string[] WsModels)> UnusedWsModels { get; } = [];
             public string Label { get; init; } = string.Empty;
@@ -841,6 +895,7 @@ namespace Editors.PackOptimizer.Core
             public List<string> BloodScales { get; } = [];
             public List<string> DissolveScales { get; } = [];
             public List<string> EmissiveScales { get; } = [];
+            public List<string> FlowScales { get; } = [];
             // Parts moved with a copied emissive distortion slot, and the bytes of the copies.
             public int EmissiveParts { get; set; }
             public int EmissiveCopies { get; set; }
@@ -849,6 +904,13 @@ namespace Editors.PackOptimizer.Core
             public int DissolveParts { get; set; }
             public int DissolveCopies { get; set; }
             public long DissolveCopyBytes { get; set; }
+            public int FlowCompensationParts { get; set; }
+            public int FlowMapAtlases { get; set; }
+            public long FlowMapAtlasBytes { get; set; }
+            public int FlowMapCopies { get; set; }
+            public long FlowMapCopyBytes { get; set; }
+            public int FlowGuidCopies { get; set; }
+            public long FlowGuidCopyBytes { get; set; }
             // Copies of textures that left the plan (not the emissive noise): texture, slot, why it
             // left, output bytes; and, when the copy plan was built, what the normal plan saved
             // (null: it failed, so the set is built only thanks to the copies).
@@ -939,6 +1001,21 @@ namespace Editors.PackOptimizer.Core
             public int DissolveCopies { get; set; }
             public long DissolveCopyBytes { get; set; }
             public int DissolveMaterialsRescaled { get; set; }
+            public int FlowCompensationParts { get; set; }
+            public int FlowMapAtlases { get; set; }
+            public long FlowMapAtlasBytes { get; set; }
+            public int FlowMapCopies { get; set; }
+            public long FlowMapCopyBytes { get; set; }
+            public int FlowGuidCopies { get; set; }
+            public long FlowGuidCopyBytes { get; set; }
+            public int FlowMaterialsRescaled { get; set; }
+            public int FlowAspectGroups { get; set; }
+            public int FlowAspectTuples { get; set; }
+            public long FlowAspectExtraBytes { get; set; }
+            public HashSet<string> FlowAspectLostGroupKeys { get; } = new(StringComparer.Ordinal);
+            public HashSet<string> FlowAspectLostTupleKeys { get; } = new(StringComparer.Ordinal);
+            public int FlowAspectLostGroups => FlowAspectLostGroupKeys.Count;
+            public int FlowAspectLostTuples => FlowAspectLostTupleKeys.Count;
             public int EmissiveAspectGroups { get; set; }
             public int EmissiveAspectTuples { get; set; }
             // Groups (and tuples) the restriction alone left untouched (they would have paid without it),
@@ -1008,6 +1085,8 @@ namespace Editors.PackOptimizer.Core
             private readonly List<(string Label, string Detail)> _sizingLog;
             private readonly HashSet<string> _emissiveAspectLostGroupKeys;
             private readonly HashSet<string> _emissiveAspectLostTupleKeys;
+            private readonly HashSet<string> _flowAspectLostGroupKeys;
+            private readonly HashSet<string> _flowAspectLostTupleKeys;
             private readonly long _packingSimTicks;
             private readonly List<(string Label, string Detail)> _pixelFailures;
 
@@ -1026,6 +1105,8 @@ namespace Editors.PackOptimizer.Core
                 _sizingLog = result.SizingLog.ToList();
                 _emissiveAspectLostGroupKeys = result.EmissiveAspectLostGroupKeys.ToHashSet(StringComparer.Ordinal);
                 _emissiveAspectLostTupleKeys = result.EmissiveAspectLostTupleKeys.ToHashSet(StringComparer.Ordinal);
+                _flowAspectLostGroupKeys = result.FlowAspectLostGroupKeys.ToHashSet(StringComparer.Ordinal);
+                _flowAspectLostTupleKeys = result.FlowAspectLostTupleKeys.ToHashSet(StringComparer.Ordinal);
                 _packingSimTicks = result.PackingSimTicks;
                 _pixelFailures = result.PixelFailures.ToList();
             }
@@ -1052,6 +1133,10 @@ namespace Editors.PackOptimizer.Core
                 result.EmissiveAspectLostGroupKeys.UnionWith(_emissiveAspectLostGroupKeys);
                 result.EmissiveAspectLostTupleKeys.Clear();
                 result.EmissiveAspectLostTupleKeys.UnionWith(_emissiveAspectLostTupleKeys);
+                result.FlowAspectLostGroupKeys.Clear();
+                result.FlowAspectLostGroupKeys.UnionWith(_flowAspectLostGroupKeys);
+                result.FlowAspectLostTupleKeys.Clear();
+                result.FlowAspectLostTupleKeys.UnionWith(_flowAspectLostTupleKeys);
                 result.PackingSimTicks = _packingSimTicks;
                 result.PixelFailures.Clear();
                 result.PixelFailures.AddRange(_pixelFailures);
@@ -2822,12 +2907,44 @@ namespace Editors.PackOptimizer.Core
         private static bool IsSharedRepackIgnoredTexture(VanillaCoverageMaterial info, string slot, string texture)
             => IsSharedRepackIgnoredTexture(slot, texture) || IsSlotUnreadByShader(info.Shader, slot) ||
                (slot.Equals(SharedRepackDissolveDetailSlot, StringComparison.OrdinalIgnoreCase) &&
-                GetSharedRepackDissolveReason(info) == null);
+                GetSharedRepackDissolveReason(info) == null) ||
+               (SharedRepackFlowPassThroughSlots.Contains(slot, StringComparer.OrdinalIgnoreCase) &&
+                GetSharedRepackFlowReason(info) == null);
 
-        // The noise slots that are cropped as copies and laid out without the chart alignment.
         private static bool IsSharedRepackNoiseSlot(string slot)
             => slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase) ||
-               slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase);
+               slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase) ||
+               slot.Equals(SharedRepackFlowGuidSlot, StringComparison.OrdinalIgnoreCase);
+
+        // Keep these additions scoped to shared repack; global AtlasChannels/downscale behavior is unchanged.
+        private static bool IsSharedRepackAtlasSlot(VanillaCoverageMaterial info, string slot)
+            => (slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase) &&
+                GetSharedRepackFlowReason(info) == null) ||
+               AtlasChannels.Any(channel => channel.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase));
+
+        private static string GetSharedRepackOutputSuffix(string slot)
+        {
+            if (slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase))
+                return SharedRepackFlowMapOutputSuffix;
+            if (slot.Equals(SharedRepackFlowGuidSlot, StringComparison.OrdinalIgnoreCase))
+                return SharedRepackFlowGuidOutputSuffix;
+            if (slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase))
+                return SharedRepackDissolveOutputSuffix;
+            if (slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase))
+                return SharedRepackEmissiveOutputSuffix;
+            return AtlasChannels.First(channel => channel.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase)).Suffix;
+        }
+
+        private static bool IsSharedRepackCommonTexture(string texture)
+        {
+            var path = Normalize(texture);
+            return path.StartsWith(@"commontextures\", StringComparison.OrdinalIgnoreCase) ||
+                   path.Contains(@"\commontextures\", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsSharedRepackFlowShader(string? shader)
+            => shader?.Contains("flow_overlay", StringComparison.OrdinalIgnoreCase) == true ||
+               shader?.Contains("emissive_flow_alpha", StringComparison.OrdinalIgnoreCase) == true;
 
         private static bool IsSharedRepackDissolveSlot(string slot)
             => slot.Equals(SharedRepackDissolveDetailSlot, StringComparison.OrdinalIgnoreCase) ||
@@ -2857,7 +2974,24 @@ namespace Editors.PackOptimizer.Core
         // The material parameters the repack rewrites and the coverage stage therefore keeps.
         internal static bool IsSharedRepackCompensatedParameter(string name)
             => SharedRepackEmissiveParameters.Contains(name, StringComparer.OrdinalIgnoreCase) ||
-               name.Equals(SharedRepackDissolveScaleParameter, StringComparison.OrdinalIgnoreCase);
+               name.Equals(SharedRepackDissolveScaleParameter, StringComparison.OrdinalIgnoreCase) ||
+               SharedRepackFlowParameters.Contains(name, StringComparer.OrdinalIgnoreCase);
+
+        internal static bool IsSharedRepackFlowParameter(string name)
+            => SharedRepackFlowParameters.Contains(name, StringComparer.OrdinalIgnoreCase);
+
+        internal static string? GetSharedRepackCompensatedParameterType(string name)
+        {
+            if (name.Equals(SharedRepackEmissiveStrengthParameter, StringComparison.OrdinalIgnoreCase) ||
+                name.Equals(SharedRepackFlowNoiseSpeedParameter, StringComparison.OrdinalIgnoreCase) ||
+                name.Equals(SharedRepackFlowNoiseTilingParameter, StringComparison.OrdinalIgnoreCase))
+                return "float";
+            if (SharedRepackEmissiveParameters.Contains(name, StringComparer.OrdinalIgnoreCase) ||
+                name.Equals(SharedRepackDissolveScaleParameter, StringComparison.OrdinalIgnoreCase) ||
+                name.Equals(SharedRepackFlowTextureTilingParameter, StringComparison.OrdinalIgnoreCase))
+                return "float2";
+            return null;
+        }
 
         private static int GetSharedRepackEmissiveParameterComponents(string name)
             => name.Equals(SharedRepackEmissiveStrengthParameter, StringComparison.OrdinalIgnoreCase) ? 1 : 2;
@@ -2879,6 +3013,28 @@ namespace Editors.PackOptimizer.Core
                 {
                     return false;
                 }
+            }
+
+            values = parsed;
+            return true;
+        }
+
+        // Flow parameters use exact comma component counts: unlike the older shared parser, empty
+        // components are malformed and must not be silently discarded.
+        private static bool TryParseSharedRepackFlowFloats(string text, int count, out double[] values)
+        {
+            values = [];
+            var parts = text.Split(',');
+            if (parts.Length != count || parts.Any(part => string.IsNullOrWhiteSpace(part)))
+                return false;
+
+            var parsed = new double[count];
+            for (var index = 0; index < count; index++)
+            {
+                if (!double.TryParse(parts[index].Trim(), System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out parsed[index]) ||
+                    !double.IsFinite(parsed[index]))
+                    return false;
             }
 
             values = parsed;
@@ -2928,13 +3084,105 @@ namespace Editors.PackOptimizer.Core
             return null;
         }
 
-        // The material's noise textures (emissive distortion, dissolve map) are cropped as copy slots (see
-        // the design notes at SharedRepackEmissiveDistortionSlot and SharedRepackDissolveVerifiedShaders).
-        private static bool IsSharedRepackCopySlot(VanillaCoverageMaterial info, string slot)
+        // Null only for the eight verified weighted flow shaders with all three correctly typed finite parameters.
+        private static string? GetSharedRepackFlowReason(VanillaCoverageMaterial info)
+        {
+            if (!SharedRepackFlowVerifiedShaders.Contains(info.Shader))
+            {
+                if (info.Shader.Contains("emissive_flow_alpha", StringComparison.OrdinalIgnoreCase))
+                {
+                    var detail = info.Shader.Contains("weighted2_emissive_flow_alpha", StringComparison.OrdinalIgnoreCase)
+                        ? "; weighted2 also samples flow_texture from UV0 without a compensatable tiling parameter"
+                        : string.Empty;
+                    return "the emissive-flow shader has a fixed flow-noise scroll speed that cannot be compensated" + detail;
+                }
+
+                return SharedRepackReasonFlowShader +
+                       (info.Shader.Length == 0 ? "unknown shader" : info.Shader) + ")";
+            }
+
+            foreach (var name in SharedRepackFlowParameters)
+            {
+                var components = name.Equals(SharedRepackFlowTextureTilingParameter, StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+                if (info.Parameters == null ||
+                    !info.Parameters.TryGetValue(name, out var text) ||
+                    !TryParseSharedRepackFlowFloats(text, components, out _))
+                    return SharedRepackReasonFlowParameter + name + " (" + GetSharedRepackCompensatedParameterType(name) + ")";
+            }
+
+            return null;
+        }
+
+        // Emissive and dissolve noise are copies. Flow GUID is also a noise copy; a commontextures
+        // flow map is copied as a chart-aligned shared texture. Model-local flow maps join closure.
+        private static bool IsSharedRepackCopySlot(VanillaCoverageMaterial info, string slot, string texture)
             => (slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase) &&
                 GetSharedRepackEmissiveReason(info) == null) ||
                (slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase) &&
-                GetSharedRepackDissolveReason(info) == null);
+                GetSharedRepackDissolveReason(info) == null) ||
+               ((slot.Equals(SharedRepackFlowGuidSlot, StringComparison.OrdinalIgnoreCase) ||
+                 (slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase) &&
+                  IsSharedRepackCommonTexture(texture))) &&
+                GetSharedRepackFlowReason(info) == null);
+
+        // The verified shader samples noise UV=(UV0 + c*time*flow_noise_speed)*flow_noise_tiling,
+        // and flow normals use UV0*flow_texture_tiling plus flow/noise-derived offsets. Equal-axis
+        // s preserves their density/speed; chart phase can still change the derived flow result.
+        private static bool TryScaleSharedRepackFlowParameters(
+            XmlDocument material,
+            double scaleU,
+            double scaleV,
+            out string description)
+        {
+            description = string.Empty;
+            if (!double.IsFinite(scaleU) || !double.IsFinite(scaleV) || scaleU <= 0 || scaleV <= 0 ||
+                !(Math.Abs(scaleU - scaleV) <= 1e-9 * Math.Max(Math.Abs(scaleU), Math.Abs(scaleV))))
+            {
+                description = $"the UV scale is {scaleU:0.#####} x {scaleV:0.#####}, not equal in U and V";
+                return false;
+            }
+
+            var speedNode = FindSharedRepackParameter(material, SharedRepackFlowNoiseSpeedParameter, "float")?.SelectSingleNode("value");
+            if (speedNode == null || !TryParseSharedRepackFlowFloats(speedNode.InnerText, 1, out var speed))
+            {
+                description = "the material lacks a usable flow parameter " + SharedRepackFlowNoiseSpeedParameter;
+                return false;
+            }
+            var noiseTilingNode = FindSharedRepackParameter(material, SharedRepackFlowNoiseTilingParameter, "float")?.SelectSingleNode("value");
+            if (noiseTilingNode == null || !TryParseSharedRepackFlowFloats(noiseTilingNode.InnerText, 1, out var noiseTiling))
+            {
+                description = "the material lacks a usable flow parameter " + SharedRepackFlowNoiseTilingParameter;
+                return false;
+            }
+            var textureTilingNode = FindSharedRepackParameter(material, SharedRepackFlowTextureTilingParameter, "float2")?.SelectSingleNode("value");
+            if (textureTilingNode == null || !TryParseSharedRepackFlowFloats(textureTilingNode.InnerText, 2, out var textureTiling))
+            {
+                description = "the material lacks a usable flow parameter " + SharedRepackFlowTextureTilingParameter;
+                return false;
+            }
+
+            var newSpeed = speed[0] * scaleU;
+            var newNoiseTiling = noiseTiling[0] / scaleU;
+            var newTextureTiling = new[] { textureTiling[0] / scaleU, textureTiling[1] / scaleU };
+            if (!double.IsFinite(newSpeed) || !double.IsFinite(newNoiseTiling) ||
+                newTextureTiling.Any(value => !double.IsFinite(value)))
+            {
+                description = "flow parameter compensation produced a non-finite value";
+                return false;
+            }
+
+            var speedText = FormatSharedRepackFloats(newSpeed);
+            var noiseTilingText = FormatSharedRepackFloats(newNoiseTiling);
+            var textureTilingText = FormatSharedRepackFloats(newTextureTiling);
+            description = $"UV scale {scaleU:0.#####}: {SharedRepackFlowNoiseSpeedParameter} " +
+                          $"{FormatSharedRepackFloats(speed)} -> {speedText}, " +
+                          $"{SharedRepackFlowNoiseTilingParameter} {FormatSharedRepackFloats(noiseTiling)} -> {noiseTilingText}, " +
+                          $"{SharedRepackFlowTextureTilingParameter} {FormatSharedRepackFloats(textureTiling)} -> {textureTilingText}";
+            speedNode.InnerText = speedText;
+            noiseTilingNode.InnerText = noiseTilingText;
+            textureTilingNode.InnerText = textureTilingText;
+            return true;
+        }
 
         private static bool TryScaleSharedRepackBloodParameter(
             XmlDocument material,
@@ -3110,6 +3358,14 @@ namespace Editors.PackOptimizer.Core
                     !IsSharedRepackIgnoredTexture(info, item.Slot, item.Texture));
                 var emissiveReason = GetSharedRepackEmissiveReason(info);
                 var dissolveReason = GetSharedRepackDissolveReason(info);
+                var flowReason = GetSharedRepackFlowReason(info);
+                if (IsSharedRepackFlowShader(info.Shader))
+                {
+                    if (flowReason == null)
+                        part.FlowCompensationMaterials.Add(material);
+                    else
+                        part.Reason ??= flowReason;
+                }
                 foreach (var (slot, texture) in info.Textures)
                 {
                     if (IsSharedRepackIgnoredTexture(info, slot, texture))
@@ -3118,19 +3374,25 @@ namespace Editors.PackOptimizer.Core
                     var isDistortion = slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase);
                     var isEmissiveTexture = slot.Equals(SharedRepackEmissiveTextureSlot, StringComparison.OrdinalIgnoreCase);
                     var isDissolveMap = slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase);
+                    var isFlowMap = slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase);
+                    var isFlowGuid = slot.Equals(SharedRepackFlowGuidSlot, StringComparison.OrdinalIgnoreCase);
                     if (((isDistortion || isEmissiveTexture) && emissiveReason == null && hasDistortion) ||
-                        (isDissolveMap && dissolveReason == null))
+                        (isDissolveMap && dissolveReason == null) ||
+                        IsSharedRepackCopySlot(info, slot, texture))
                     {
                         // The glow texture stays as authored (not part of the set or a tuple); the
                         // noise (distortion, dissolve map) is cropped like a slot but never joins the closure.
                         if (isEmissiveTexture)
                             continue;
 
-                        var noiseName = isDissolveMap ? "dissolve map" : "emissive distortion";
+                        var noiseName = isDissolveMap ? "dissolve map" : isFlowGuid ? "flow GUID" :
+                            isFlowMap ? "shared flow map" : "emissive distortion";
                         var noise = Normalize(texture);
                         if (!coverage.Entries.TryGetValue(noise, out var noiseEntry) || noiseEntry.Layout == null)
                         {
-                            part.Reason ??= $"the {noiseName} texture cannot be read";
+                            part.Reason ??= isFlowGuid || isFlowMap
+                                ? SharedRepackReasonFlowTexture + " (" + noiseName + " header unreadable)"
+                                : $"the {noiseName} texture cannot be read";
                         }
                         else if (GetSharedRepackBlockedTextureReason(noiseEntry.Layout) is { } blocked)
                         {
@@ -3144,13 +3406,15 @@ namespace Editors.PackOptimizer.Core
                     }
 
                     part.Textures.Add(Normalize(texture));
-                    if (!IsTextureDownscaleSlot(slot))
+                    if (!IsTextureDownscaleSlot(slot) && !IsSharedRepackAtlasSlot(info, slot))
                     {
                         part.Reason ??= isDistortion || isEmissiveTexture
                             ? emissiveReason ?? SharedRepackReasonSlot + slot.ToLowerInvariant()
                             : IsSharedRepackDissolveSlot(slot)
                                 ? dissolveReason ?? SharedRepackReasonSlot + slot.ToLowerInvariant()
-                                : SharedRepackReasonSlot + slot.ToLowerInvariant();
+                                : isFlowMap || isFlowGuid || SharedRepackFlowPassThroughSlots.Contains(slot, StringComparer.OrdinalIgnoreCase)
+                                    ? flowReason ?? SharedRepackReasonSlot + slot.ToLowerInvariant()
+                                    : SharedRepackReasonSlot + slot.ToLowerInvariant();
                         continue;
                     }
 
@@ -3167,6 +3431,14 @@ namespace Editors.PackOptimizer.Core
                 .Select(group => group.First())
                 .OrderBy(item => item.Key, StringComparer.Ordinal)
                 .ToList();
+            var flowMapKinds = part.MaterialSlots.Values
+                .Where(map => map.ContainsKey(SharedRepackFlowMapSlot))
+                .Select(map => IsSharedRepackCommonTexture(map[SharedRepackFlowMapSlot]))
+                .Distinct()
+                .ToList();
+            if (flowMapKinds.Count > 1)
+                part.Reason ??= "the part's flow-map variants mix shared commontextures copies with model-local atlas members";
+
             if (maps.Count != 0)
             {
                 foreach (var (slot, texture) in maps[0].Map)
@@ -3629,6 +3901,151 @@ namespace Editors.PackOptimizer.Core
                 AddRigid(item);
             AddSet(merge.Decisions[merge.Seed]);
 
+            var flowMapClosureMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            void IncludeFlowMapUsers(string texture)
+            {
+                if (!coverage.Entries.TryGetValue(texture, out var flowEntry))
+                    return;
+
+                void AddPseudoUse(string rigidPath, int lod, int partIndex, string reason)
+                {
+                    if (!pseudoParts.TryGetValue(rigidPath, out var byKey))
+                    {
+                        byKey = [];
+                        pseudoParts[rigidPath] = byKey;
+                    }
+                    if (!byKey.TryGetValue((lod, partIndex), out var pseudo))
+                    {
+                        pseudo = new SharedRepackPart
+                        {
+                            Key = new MeshKey(rigidPath, lod, partIndex),
+                            Reason = SharedRepackReasonRigid + reason,
+                        };
+                        byKey[(lod, partIndex)] = pseudo;
+                        candidates.Add(pseudo);
+                    }
+                    pseudo.Textures.Add(texture);
+                }
+
+                foreach (var use in flowEntry.ModParts.Concat(flowEntry.VanillaParts)
+                             .OrderBy(use => use.Rigid, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(use => use.Lod).ThenBy(use => use.Part))
+                {
+                    if (state.AtlasChangedParts.Contains((Normalize(use.Rigid), use.Lod, use.Part)))
+                    {
+                        result.AtlasedUsersIgnored++;
+                        continue;
+                    }
+                    if (!setRigids.Contains(use.Rigid))
+                    {
+                        var rigid = merge.MakeRigid(use.Rigid);
+                        rigids.Add(rigid);
+                        AddRigid(rigid);
+                    }
+                    if (ineligible.TryGetValue(use.Rigid, out var bad))
+                        AddPseudoUse(use.Rigid, use.Lod, use.Part, bad.Reason ?? "the rigid cannot be rewritten");
+                }
+
+                foreach (var use in merge.GeneratedUsers.Where(user => user.Textures.Contains(texture))
+                             .OrderBy(user => user.Rigid, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(user => user.Lod).ThenBy(user => user.Part))
+                {
+                    if (state.AtlasChangedParts.Contains((Normalize(use.Rigid), use.Lod, use.Part)))
+                    {
+                        result.AtlasedUsersIgnored++;
+                        continue;
+                    }
+                    if (!setRigids.Contains(use.Rigid))
+                    {
+                        var rigid = merge.MakeRigid(use.Rigid);
+                        rigids.Add(rigid);
+                        AddRigid(rigid);
+                    }
+                    if (ineligible.TryGetValue(use.Rigid, out var bad))
+                        AddPseudoUse(use.Rigid, use.Lod, use.Part, bad.Reason ?? "the generated rigid cannot be rewritten");
+                }
+            }
+
+            void IncludeVerifiedFlowMapMembers()
+            {
+                var candidatesToInspect = candidates
+                    .Where(part => !droppedParts.Contains(part) && part.FlowCompensationMaterials.Count != 0)
+                    .SelectMany(part => part.MaterialSlots.Values)
+                    .Where(map => map.ContainsKey(SharedRepackFlowMapSlot))
+                    .Select(map => Normalize(map[SharedRepackFlowMapSlot]))
+                    .Where(texture => !IsSharedRepackCommonTexture(texture) && !isUniform(texture))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(texture => texture, StringComparer.Ordinal)
+                    .ToList();
+
+                foreach (var texture in candidatesToInspect)
+                {
+                    if (flowMapClosureMembers.Contains(texture))
+                        continue;
+                    var owners = candidates.Where(part => part.MaterialSlots.Values.Any(map =>
+                            map.TryGetValue(SharedRepackFlowMapSlot, out var value) &&
+                            Normalize(value).Equals(texture, StringComparison.OrdinalIgnoreCase)))
+                        .ToList();
+                    if (!coverage.Entries.TryGetValue(texture, out var entry) || entry.Layout == null)
+                    {
+                        flowMapClosureMembers.Add(texture);
+                        blocked.Add(texture);
+                        members.Remove(texture);
+                        foreach (var owner in owners)
+                            owner.Reason ??= SharedRepackReasonFlowTexture + " (header unreadable)";
+                        continue;
+                    }
+
+                    var block = BlockedTextureReason(entry, texture);
+                    if (entry.UnassessableUses != 0 || entry.NonMaterialReference != null)
+                        block ??= "the flow map has a use whose material or part could not be assessed";
+                    if (block != null)
+                    {
+                        flowMapClosureMembers.Add(texture);
+                        blocked.Add(texture);
+                        members.Remove(texture);
+                        foreach (var owner in owners)
+                            owner.Reason ??= SharedRepackReasonFlowTexture + " (" + block + ")";
+                        continue;
+                    }
+
+                    var flowUserPaths = entry.ModParts.Concat(entry.VanillaParts)
+                        .Where(use => !state.AtlasChangedParts.Contains((Normalize(use.Rigid), use.Lod, use.Part)))
+                        .Select(use => Normalize(use.Rigid))
+                        .Concat(merge.GeneratedUsers
+                            .Where(user => user.Textures.Contains(texture) &&
+                                           !state.AtlasChangedParts.Contains((Normalize(user.Rigid), user.Lod, user.Part)))
+                            .Select(user => Normalize(user.Rigid)))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var closureRigidPaths = setRigids.Concat(flowUserPaths)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var generatedRigidCount = closureRigidPaths.Count(state.CrossRigidGeneratedRigidPaths.Contains);
+                    var sourceRigidCount = closureRigidPaths.Count - generatedRigidCount;
+                    if (sourceRigidCount > SharedRepackMaximumMergedRigids ||
+                        generatedRigidCount > SharedRepackMaximumMergedGeneratedRigids)
+                    {
+                        flowMapClosureMembers.Add(texture);
+                        blocked.Add(texture);
+                        members.Remove(texture);
+                        var reason = $"including all users would exceed the closure cap ({sourceRigidCount:N0} source rigids, " +
+                                     $"{generatedRigidCount:N0} generated rigids; limits are " +
+                                     $"{SharedRepackMaximumMergedRigids:N0} and {SharedRepackMaximumMergedGeneratedRigids:N0})";
+                        foreach (var owner in owners)
+                            owner.Reason ??= SharedRepackReasonFlowTexture + " (" + reason + ")";
+                        continue;
+                    }
+
+                    flowMapClosureMembers.Add(texture);
+                    var effective = merge.Effective(entry);
+                    if (!entryOf.ContainsKey(texture))
+                        merge.PlanTextureBytes += effective.Layout?.ChainBytes ?? 0;
+                    entryOf[texture] = effective;
+                    slotOf.TryAdd(texture, SharedRepackFlowMapSlot);
+                    if (members.Add(texture))
+                        IncludeFlowMapUsers(texture);
+                }
+            }
+
             var dropped = new HashSet<MeshKey>();
             var dropReasonOf = new Dictionary<MeshKey, string>();
             var removedBecause = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -3922,6 +4339,10 @@ namespace Editors.PackOptimizer.Core
             while (changed)
             {
                 changed = false;
+                var candidateCountBeforeFlowClosure = candidates.Count;
+                IncludeVerifiedFlowMapMembers();
+                if (candidates.Count != candidateCountBeforeFlowClosure)
+                    changed = true;
                 // By index: merging a set appends the parts of its rigids.
                 for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
                 {
@@ -4058,6 +4479,7 @@ namespace Editors.PackOptimizer.Core
             for (var attempt = 0; attempt <= candidates.Count + 1; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                IncludeVerifiedFlowMapMembers();
                 merge.CopyRescuable = CopyWouldRescue();
                 var moved = candidates
                     .Where(part => !dropped.Contains(part.Key) && part.Textures.Overlaps(members))
@@ -4192,7 +4614,13 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 string SetKeyOf(string texture)
-                    => setByTexture.TryGetValue(texture, out var owner) ? GetSharedRepackSetKey(owner) : string.Empty;
+                {
+                    if (setByTexture.TryGetValue(texture, out var owner))
+                        return GetSharedRepackSetKey(owner);
+                    return flowMapClosureMembers.Contains(texture)
+                        ? "flow-map-source:" + Normalize(texture).ToLowerInvariant()
+                        : string.Empty;
+                }
 
                 // The copied emissive noise is no set member, but its layout is needed like a slot's.
                 foreach (var copied in moved.SelectMany(part => part.CopySlots.Select(slot => part.Slots[slot])))
@@ -4402,10 +4830,12 @@ namespace Editors.PackOptimizer.Core
                                 .OrderBy(key => key, StringComparer.Ordinal)
                                 .Select(key => $"<{key}"))
                             : string.Empty)));
-                if (tuple.EmissiveCompensation)
+                if (tuple.EmissiveCompensation || tuple.FlowCompensation)
                 {
                     var divisor = GreatestCommonDivisor(reference.Width, reference.Height);
                     tuple.GroupKey += $"|aspect:{reference.Width / divisor}x{reference.Height / divisor}";
+                    if (tuple.FlowCompensation)
+                        tuple.GroupKey += "|flow-compensation";
                 }
                 if (reference.Width % cell != 0 || reference.Height % cell != 0)
                 {
@@ -4893,6 +5323,8 @@ namespace Editors.PackOptimizer.Core
                 plan.Groups.Clear();
                 plan.AspectGroups = plan.AspectTuples = 0;
                 plan.AspectExtraBytes = 0;
+                plan.FlowAspectGroups = plan.FlowAspectTuples = 0;
+                plan.FlowAspectExtraBytes = 0;
                 passWaste.Clear();
                 passSimPending.Clear();
                 foreach (var tuple in tuples)
@@ -4991,9 +5423,18 @@ namespace Editors.PackOptimizer.Core
                         if (split.AspectRestricted && split.UnrestrictedSingleBytes != 0 &&
                             before - split.UnrestrictedSingleBytes >= result.MinimumGroupSavingBytes)
                         {
-                            result.EmissiveAspectLostGroupKeys.Add(label + "|" + group.Key);
-                            foreach (var lostTuple in groupTuples)
-                                result.EmissiveAspectLostTupleKeys.Add(label + "|" + lostTuple.Key);
+                            if (split.EmissiveAspectRestricted)
+                            {
+                                result.EmissiveAspectLostGroupKeys.Add(label + "|" + group.Key);
+                                foreach (var lostTuple in groupTuples)
+                                    result.EmissiveAspectLostTupleKeys.Add(label + "|" + lostTuple.Key);
+                            }
+                            if (split.FlowAspectRestricted)
+                            {
+                                result.FlowAspectLostGroupKeys.Add(label + "|" + group.Key);
+                                foreach (var lostTuple in groupTuples)
+                                    result.FlowAspectLostTupleKeys.Add(label + "|" + lostTuple.Key);
+                            }
                         }
 
                         foreach (var tuple in groupTuples)
@@ -5027,11 +5468,26 @@ namespace Editors.PackOptimizer.Core
 
                     if (split.AspectRestricted)
                     {
-                        plan.AspectGroups++;
-                        plan.AspectTuples += groupTuples.Count;
-                        if (split.UnrestrictedSingleBytes != 0 && split.SingleBytes > split.UnrestrictedSingleBytes)
-                            plan.AspectExtraBytes += split.SingleBytes - split.UnrestrictedSingleBytes;
-                        info.Status += $" [canvases keep the reference aspect for exact emissive compensation" +
+                        if (split.EmissiveAspectRestricted)
+                        {
+                            plan.AspectGroups++;
+                            plan.AspectTuples += groupTuples.Count;
+                            if (split.UnrestrictedSingleBytes != 0 && split.SingleBytes > split.UnrestrictedSingleBytes)
+                                plan.AspectExtraBytes += split.SingleBytes - split.UnrestrictedSingleBytes;
+                        }
+                        if (split.FlowAspectRestricted)
+                        {
+                            plan.FlowAspectGroups++;
+                            plan.FlowAspectTuples += groupTuples.Count;
+                            if (split.UnrestrictedSingleBytes != 0 && split.SingleBytes > split.UnrestrictedSingleBytes)
+                                plan.FlowAspectExtraBytes += split.SingleBytes - split.UnrestrictedSingleBytes;
+                        }
+                        var causes = string.Join(" and ", new[]
+                        {
+                            split.EmissiveAspectRestricted ? "emissive" : null,
+                            split.FlowAspectRestricted ? "flow" : null,
+                        }.Where(cause => cause != null));
+                        info.Status += $" [canvases keep the reference aspect for {causes} compensation" +
                                        (split.UnrestrictedSingleBytes != 0
                                            ? $"; unrestricted single page {split.UnrestrictedSingleSize} = {split.UnrestrictedSingleBytes:N0} bytes"
                                            : string.Empty) + "]";
@@ -5084,7 +5540,10 @@ namespace Editors.PackOptimizer.Core
             {
                 // The copied noise is not replaced: other models keep using it.
                 foreach (var texture in page.Tuples.SelectMany(tuple => tuple.AllMemberTextures))
+                {
                     plan.Replaced[texture] = entryOf[texture].Layout!.ChainBytes;
+                    plan.ReplacedOwned[texture] = entryOf[texture].IsOwned;
+                }
             }
 
             // Layout groups on the same geometry lay out the same charts alike: their identical pages are
@@ -5491,10 +5950,12 @@ namespace Editors.PackOptimizer.Core
             var cell = first.Align;
             // Exact emissive compensation needs equal U and V scales (reference / layout), so the
             // canvases of such a group keep the reference's aspect ratio.
-            Func<int, int, bool>? canvasAllowed = first.EmissiveCompensation
+            Func<int, int, bool>? canvasAllowed = first.RequiresEqualAxisScale
                 ? (width, height) => (long)width * first.ReferenceHeight == (long)height * first.ReferenceWidth
                 : null;
             split.AspectRestricted = canvasAllowed != null;
+            split.EmissiveAspectRestricted = first.EmissiveCompensation;
+            split.FlowAspectRestricted = first.FlowCompensation;
             var solver = CreateSharedRepackLayoutSolver(cell);
             foreach (var tuple in groupTuples)
             {
@@ -5750,11 +6211,7 @@ namespace Editors.PackOptimizer.Core
                 foreach (var slot in slots)
                 {
                     var isCopy = first.CopySlots.Contains(slot);
-                    var suffix = first.IsNoiseCopySlot(slot)
-                        ? slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase)
-                            ? SharedRepackDissolveOutputSuffix
-                            : SharedRepackEmissiveOutputSuffix
-                        : AtlasChannels.First(item => item.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase)).Suffix;
+                    var suffix = GetSharedRepackOutputSuffix(slot);
                     var layout = first.Layouts[slot];
                     var output = new SharedRepackSlotOutput
                     {
@@ -5962,6 +6419,18 @@ namespace Editors.PackOptimizer.Core
                     }
 
                     page.EmissiveScales.Add($"{material}: {emissiveText}");
+                }
+
+                if (tuple.FlowCompensation &&
+                    tuple.Parts.Any(part => part.FlowCompensationMaterials.Contains(material)))
+                {
+                    if (!TryScaleSharedRepackFlowParameters(document, scaleU, scaleV, out var flowText))
+                    {
+                        failure = $"material {material}: {flowText}";
+                        return false;
+                    }
+
+                    page.FlowScales.Add($"{material}: {flowText}");
                 }
 
                 // Source-pack materials get a copy next to them. A vanilla material is never
@@ -7310,19 +7779,30 @@ namespace Editors.PackOptimizer.Core
                 (DescribeSharedRepackSet(item), item.Set.Items.Count, item.SignatureSize)));
             foreach (var (path, bytes) in plan.Replaced.OrderBy(pair => pair.Key, StringComparer.Ordinal))
             {
-                var owned = merge.Component.SelectMany(item => item.Set.Items)
-                    .First(item => Normalize(item.Entry.Path).Equals(path, StringComparison.OrdinalIgnoreCase)).Entry.IsOwned;
-                built.Replaced.Add((path, owned, bytes));
+                built.Replaced.Add((path, plan.ReplacedOwned[path], bytes));
                 built.Before += bytes;
             }
 
             built.Groups.AddRange(plan.Groups);
             built.Splits.AddRange(plan.Splits.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Value));
             built.Outputs.AddRange(plan.Pages.SelectMany(page => page.Outputs).Where(output => output.DuplicateOf == null));
+            var flowMapAtlasSources = built.Outputs
+                .Where(output => !output.IsCopy && output.Slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase))
+                .SelectMany(output => output.Sources)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var part in plan.Pages.SelectMany(page => page.Parts).Distinct())
+            {
+                if (part.MaterialSlots.Values.Any(map => map.TryGetValue(SharedRepackFlowMapSlot, out var texture) &&
+                                                          flowMapAtlasSources.Contains(Normalize(texture))))
+                    built.FlowMapAtlasUsers.Add((Normalize(part.Key.GeometryPath), part.Key.LodIndex, part.Key.PartIndex));
+            }
             built.EmbeddedTexturePaths.UnionWith(rewrites.SelectMany(item => item.EmbeddedPaths.Values).Select(Normalize));
             built.Materials.AddRange(plan.Pages.SelectMany(page => page.MaterialMap.Values).OrderBy(path => path, StringComparer.Ordinal));
             built.BloodScales.AddRange(plan.Pages.SelectMany(page => page.BloodScales));
             built.DissolveScales.AddRange(plan.Pages.SelectMany(page => page.DissolveScales));
+            built.FlowScales.AddRange(plan.Pages.SelectMany(page => page.FlowScales));
+            built.FlowCompensationParts = plan.Pages.SelectMany(page => page.Parts).Distinct()
+                .Count(part => part.FlowCompensationMaterials.Count != 0);
             built.EmissiveScales.AddRange(plan.Pages.SelectMany(page => page.EmissiveScales));
             built.EmissiveParts = plan.Pages.SelectMany(page => page.Parts)
                 .Count(part => part.CopySlots.Contains(SharedRepackEmissiveDistortionSlot));
@@ -7351,11 +7831,24 @@ namespace Editors.PackOptimizer.Core
                 => output.IsCopy && output.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase);
             bool IsDissolveOutput(SharedRepackSlotOutput output)
                 => output.IsCopy && output.Slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase);
+            bool IsFlowMapOutput(SharedRepackSlotOutput output)
+                => output.IsCopy && output.Slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase);
+            bool IsFlowGuidOutput(SharedRepackSlotOutput output)
+                => output.IsCopy && output.Slot.Equals(SharedRepackFlowGuidSlot, StringComparison.OrdinalIgnoreCase);
             built.EmissiveCopies = built.Outputs.Count(IsEmissiveOutput);
             built.EmissiveCopyBytes = built.Outputs.Where(IsEmissiveOutput).Sum(output => output.Data.LongLength);
             built.DissolveCopies = built.Outputs.Count(IsDissolveOutput);
             built.DissolveCopyBytes = built.Outputs.Where(IsDissolveOutput).Sum(output => output.Data.LongLength);
-            foreach (var output in built.Outputs.Where(output => output.IsCopy && !IsEmissiveOutput(output) && !IsDissolveOutput(output)))
+            built.FlowMapAtlases = built.Outputs.Count(output => !output.IsCopy &&
+                output.Slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase));
+            built.FlowMapAtlasBytes = built.Outputs.Where(output => !output.IsCopy &&
+                output.Slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase)).Sum(output => output.Data.LongLength);
+            built.FlowMapCopies = built.Outputs.Count(IsFlowMapOutput);
+            built.FlowMapCopyBytes = built.Outputs.Where(IsFlowMapOutput).Sum(output => output.Data.LongLength);
+            built.FlowGuidCopies = built.Outputs.Count(IsFlowGuidOutput);
+            built.FlowGuidCopyBytes = built.Outputs.Where(IsFlowGuidOutput).Sum(output => output.Data.LongLength);
+            foreach (var output in built.Outputs.Where(output => output.IsCopy && !IsEmissiveOutput(output) &&
+                         !IsDissolveOutput(output) && !IsFlowMapOutput(output) && !IsFlowGuidOutput(output)))
             {
                 foreach (var texture in output.Sources)
                 {
@@ -7389,6 +7882,17 @@ namespace Editors.PackOptimizer.Core
             result.DissolveCopies += built.DissolveCopies;
             result.DissolveCopyBytes += built.DissolveCopyBytes;
             result.DissolveMaterialsRescaled += built.DissolveScales.Count;
+            result.FlowCompensationParts += built.FlowCompensationParts;
+            result.FlowMapAtlases += built.FlowMapAtlases;
+            result.FlowMapAtlasBytes += built.FlowMapAtlasBytes;
+            result.FlowMapCopies += built.FlowMapCopies;
+            result.FlowMapCopyBytes += built.FlowMapCopyBytes;
+            result.FlowGuidCopies += built.FlowGuidCopies;
+            result.FlowGuidCopyBytes += built.FlowGuidCopyBytes;
+            result.FlowMaterialsRescaled += built.FlowScales.Count;
+            result.FlowAspectGroups += plan.FlowAspectGroups;
+            result.FlowAspectTuples += plan.FlowAspectTuples;
+            result.FlowAspectExtraBytes += plan.FlowAspectExtraBytes;
             result.EmissiveAspectGroups += plan.AspectGroups;
             result.EmissiveAspectTuples += plan.AspectTuples;
             result.EmissiveAspectExtraBytes += plan.AspectExtraBytes;
@@ -7459,7 +7963,48 @@ namespace Editors.PackOptimizer.Core
                         .Select(source => signatureSetOf.GetValueOrDefault(source))
                         .Distinct()
                         .ToList();
-                    if (!output.IsCopy && (owners.Count != 1 || owners[0] == null))
+                    var isFlowMapAtlas = !output.IsCopy &&
+                                         output.Slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase);
+                    if (isFlowMapAtlas)
+                    {
+                        var flowMapHasUnknownProfile = owners.Contains(null)
+                            ? output.Sources.Count != 1 || owners.Count != 1
+                            : owners.Count != 1;
+                        if (flowMapHasUnknownProfile)
+                        {
+                            errors.Add($"Generated flow-map atlas {output.Path} combines sources without one verified signature-set profile");
+                        }
+                        if (state.VanillaTextureCoverage is not { } coverage)
+                        {
+                            errors.Add($"Generated flow-map atlas {output.Path} cannot be checked because texture coverage is unavailable");
+                        }
+                        else
+                        {
+                            foreach (var source in output.Sources)
+                            {
+                                if (!coverage.Entries.TryGetValue(source, out var entry))
+                                {
+                                    errors.Add($"Generated flow-map atlas {output.Path} has an unindexed source {source}");
+                                    continue;
+                                }
+
+                                if (entry.UnassessableUses != 0 || entry.NonMaterialReference != null)
+                                    errors.Add($"Generated flow-map atlas {output.Path} has an unassessable use of {source}");
+                                foreach (var use in entry.ModParts.Concat(entry.VanillaParts).Distinct())
+                                {
+                                    if (state.AtlasChangedParts.Contains((Normalize(use.Rigid), use.Lod, use.Part)))
+                                        continue;
+                                    if (!set.FlowMapAtlasUsers.Any(user =>
+                                            user.Lod == use.Lod && user.Part == use.Part &&
+                                            user.Rigid.Equals(Normalize(use.Rigid), StringComparison.OrdinalIgnoreCase)))
+                                    {
+                                        errors.Add($"Generated flow-map atlas {output.Path} leaves user {use.Rigid} lod {use.Lod} part {use.Part} on the original source {source}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else if (!output.IsCopy && (owners.Count != 1 || owners[0] == null))
                     {
                         errors.Add(
                             $"Generated repack texture {output.Path} replaces source textures of " +
@@ -8879,6 +9424,14 @@ namespace Editors.PackOptimizer.Core
                 $"{SharedRepackDissolveScaleParameter} is divided per axis by the UV scale of the page (like the blood scale). " +
                 "ASSUMPTION (check in game): the dissolve pattern is exact up to a constant per-chart phase shift of " +
                 "the detail texture; other shaders keep the part ineligible. " +
+                "Flow overlay is enabled only for the eight verified weighted2/weighted4 families: model-local " +
+                "flow_map joins the local atlas closure, a commontextures flow_map is copied per chart, GUID noise is " +
+                "copied without joining closure, and flow_noise/flow_normal/flow_normal_2 stay authored. For equal U/V " +
+                "scale s, flow_noise_tiling and flow_texture_tiling are divided by s and flow_noise_speed is multiplied " +
+                "by s. This preserves noise density/speed and normal tiling, but the chart phase changes the sampled " +
+                "noise and can alter the derived flow result spatially; this is not pixel-exact and must be checked in game. " +
+                "Rigid flow is refused because its point-shadow UV linkage is unproven. emissive_flow_alpha is refused " +
+                "because its noise scroll is fixed (weighted2 also samples flow_texture from uncompensated UV0). " +
                 "Generated copies of vanilla materials are written to " + SharedRepackVanillaMaterialDirectory + ".");
             sb.AppendLine(
                 $"Threshold: estimated and actual saving of at least {result.MinimumSavingBytes:N0} bytes. " +
@@ -9025,6 +9578,14 @@ namespace Editors.PackOptimizer.Core
                 .OrderByDescending(pair => pair.Value)
                 .ThenBy(pair => pair.Key, StringComparer.Ordinal)
                 .ToList();
+            var flowBlocked = result.PartDropReasons
+                .Where(pair => pair.Key.StartsWith(SharedRepackReasonFlowShader, StringComparison.Ordinal) ||
+                               pair.Key.StartsWith(SharedRepackReasonFlowParameter, StringComparison.Ordinal) ||
+                               pair.Key.StartsWith("the emissive-flow shader", StringComparison.Ordinal) ||
+                               pair.Key.StartsWith(SharedRepackReasonFlowTexture, StringComparison.Ordinal))
+                .OrderByDescending(pair => pair.Value)
+                .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+                .ToList();
             sb.AppendLine(
                 "Slots ignored because the material's shader never binds them (built sets): " +
                 (result.UnreadSlotMaterials.Count == 0
@@ -9054,6 +9615,17 @@ namespace Editors.PackOptimizer.Core
                 $"{SharedRepackDissolveScaleParameter}; parts still blocked by the dissolve reasons below (a part " +
                 $"counts once per set): {dissolveBlocked.Sum(pair => pair.Value):N0}.");
             foreach (var (reason, count) in dissolveBlocked)
+                sb.AppendLine($"  {count:N0} x {reason}");
+            sb.AppendLine(
+                $"Flow overlay: {result.FlowCompensationParts:N0} part(s) with verified flow compensation; " +
+                $"{result.FlowMaterialsRescaled:N0} material(s) rescaled; {result.FlowMapAtlases:N0} model flow-map atlas " +
+                $"output(s) ({result.FlowMapAtlasBytes:N0} bytes); {result.FlowMapCopies:N0} common flow-map copy/copies " +
+                $"({result.FlowMapCopyBytes:N0} bytes); {result.FlowGuidCopies:N0} GUID noise copy/copies " +
+                $"({result.FlowGuidCopyBytes:N0} bytes); {result.FlowAspectGroups:N0} equal-axis group(s), " +
+                $"{result.FlowAspectTuples:N0} tuple(s), {result.FlowAspectExtraBytes:N0} bytes single-page restriction cost; " +
+                $"{result.FlowAspectLostGroups:N0} group(s) ({result.FlowAspectLostTuples:N0} tuple(s)) lost only due to the " +
+                $"restriction; {flowBlocked.Sum(pair => pair.Value):N0} part-drop reason(s) specific to flow.");
+            foreach (var (reason, count) in flowBlocked)
                 sb.AppendLine($"  {count:N0} x {reason}");
             var copyWon = result.BuiltSets.Where(set => set.CopyWon).ToList();
             sb.AppendLine(
@@ -9233,6 +9805,16 @@ namespace Editors.PackOptimizer.Core
 
                 foreach (var dissolve in set.DissolveScales)
                     sb.AppendLine($"    dissolve: {dissolve}");
+                if (set.FlowCompensationParts != 0 || set.FlowMapAtlases != 0 || set.FlowMapCopies != 0 || set.FlowGuidCopies != 0)
+                {
+                    sb.AppendLine(
+                        $"    flow: {set.FlowCompensationParts:N0} part(s) compensated; " +
+                        $"{set.FlowMapAtlases:N0} model flow-map atlas output(s) ({set.FlowMapAtlasBytes:N0} bytes), " +
+                        $"{set.FlowMapCopies:N0} common flow-map copy/copies ({set.FlowMapCopyBytes:N0} bytes), " +
+                        $"{set.FlowGuidCopies:N0} GUID noise copy/copies ({set.FlowGuidCopyBytes:N0} bytes)");
+                }
+                foreach (var flow in set.FlowScales)
+                    sb.AppendLine($"    flow: {flow}");
                 if (set.RemovedCopies.Count != 0)
                 {
                     sb.AppendLine(
@@ -9269,8 +9851,9 @@ namespace Editors.PackOptimizer.Core
                         $"{(output.Srgb ? "_SRGB" : string.Empty)}, {output.Bytes:N0} bytes with mips, " +
                         $"{output.BlockCopiedLevels} of {output.MipLevels} mip level(s) block-copied" +
                         (output.IsCopy
-                            ? IsSharedRepackNoiseSlot(output.Slot)
-                                ? $" (copy of {string.Join(", ", output.Sources)}; not a replacement)"
+                            ? IsSharedRepackNoiseSlot(output.Slot) ||
+                              output.Slot.Equals(SharedRepackFlowMapSlot, StringComparison.OrdinalIgnoreCase)
+                                ? $" (copy of {string.Join(", ", output.Sources)}; original stays for other users, not a replacement)"
                                 : $" (copy of {string.Join(", ", output.Sources)}, which stays for the part(s) dropped from the plan; not a replacement)"
                             : string.Empty));
                     if (output.BlockStats is { } blockStats)

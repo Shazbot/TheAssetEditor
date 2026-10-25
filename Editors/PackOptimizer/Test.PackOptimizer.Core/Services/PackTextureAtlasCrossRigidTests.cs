@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Reflection;
 using System.Text;
 using System.Xml;
@@ -15659,6 +15659,415 @@ namespace Test.PackOptimizer.Core
             Assert.That(key, Does.Not.Contain("aspect"));
         }
 
+        // --- Verified weighted flow overlay -------------------------------------------------------
+
+        private const string SrFlowShader = "shaders/weighted2_flow_overlay.xml.shader";
+        private const string SrFlowMap = "t_xml_flow_map";
+        private const string SrFlowGuid = "t_xml_df7959d8_d174_49d2_88f1_ffc28b954e5f";
+        private const string SrFlowNoise = "t_xml_flow_noise";
+        private const string SrFlowNormal = "t_xml_flow_normal";
+        private const string SrFlowNormal2 = "t_xml_flow_normal_2";
+        private const string SrFlowMapTexture = "textures\\sr_flow_map.dds";
+        private const string SrFlowCommonMapTexture = "textures\\commontextures\\sr_flow_map.dds";
+        private const string SrFlowUniformMapTexture = "textures\\sr_flow_uniform.dds";
+        private const string SrFlowGuidTexture = "textures\\commontextures\\sr_flow_guid.dds";
+        private const string SrFlowNoiseTexture = "textures\\commontextures\\sr_flow_noise.dds";
+        private const string SrFlowNormalTexture = "textures\\commontextures\\sr_flow_normal.dds";
+        private const string SrFlowNormal2Texture = "textures\\commontextures\\sr_flow_normal_2.dds";
+
+        private static string SrFlowMaterialXml(
+            string shader,
+            string flowMap,
+            string? omitParameter = null,
+            string? overrideParameter = null,
+            string? overrideValue = null,
+            string overrideType = "float")
+        {
+            var textures = new List<(string Slot, string Texture)>
+            {
+                (SrBase, "textures\\sr_b1.dds"),
+                (SrNormal, "textures\\sr_n1.dds"),
+                (SrFlowMap, flowMap),
+                (SrFlowGuid, SrFlowGuidTexture),
+                (SrFlowNoise, SrFlowNoiseTexture),
+                (SrFlowNormal, SrFlowNormalTexture),
+                (SrFlowNormal2, SrFlowNormal2Texture),
+            };
+            var xml = DownscaleMaterialXml(textures.ToArray())
+                .Replace("shaders\\weighted2_character.xml.shader", shader);
+            (string Name, string Type, string Value)[] values =
+            [
+                ("flow_noise_speed", "float", "0.25"),
+                ("flow_noise_tiling", "float", "2"),
+                ("flow_texture_tiling", "float2", "1.5,0.75"),
+                ("flow_distortion_stength", "float", "0.7"),
+            ];
+            var parameters = string.Concat(values
+                .Where(item => !item.Name.Equals(omitParameter, StringComparison.OrdinalIgnoreCase))
+                .Select(item =>
+                {
+                    var changed = item.Name.Equals(overrideParameter, StringComparison.OrdinalIgnoreCase);
+                    var value = changed ? overrideValue : item.Value;
+                    var type = changed ? overrideType : item.Type;
+                    return value == null
+                        ? string.Empty
+                        : $"<param><name>{item.Name}</name><type>{type}</type><value>{value}</value></param>";
+                }));
+            return xml.Replace("</material>", $"<params>{parameters}</params></material>");
+        }
+
+        private static SrWorld BuildFlowSrWorld(
+            string shader = SrFlowShader,
+            string flowMap = SrFlowMapTexture,
+            string? omitParameter = null,
+            string? overrideParameter = null,
+            string? overrideValue = null,
+            string overrideType = "float")
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1);
+            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2);
+            if (flowMap.Equals(SrFlowUniformMapTexture, StringComparison.OrdinalIgnoreCase))
+                world.Fixture.Vanilla[flowMap] = UniformDds(4, 3);
+            else
+                world.AddTexture(flowMap, flowMap.Contains("commontextures", StringComparison.OrdinalIgnoreCase) ? 512 : 1024,
+                    "BC1", true, 3);
+            world.AddTexture(SrFlowGuidTexture, 256, "BC1", true, 4);
+            world.AddTexture(SrFlowNoiseTexture, 256, "BC1", true, 5);
+            world.AddTexture(SrFlowNormalTexture, 256, "BC3", false, 6);
+            world.AddTexture(SrFlowNormal2Texture, 256, "BC3", false, 7);
+            var material = SrMaterialPath("flow1");
+            world.Fixture.AddText(material,
+                SrFlowMaterialXml(shader, flowMap, omitParameter, overrideParameter, overrideValue, overrideType));
+            world.AddModel(SrRigid, SrWs, SrRoot,
+                SrRigidFactory([(material, SrBlocks((2, 3), (3, 3)))]), [[material]]);
+            return world;
+        }
+
+        [Test]
+        public void SharedRepack_FlowOverlay_AtlasesModelMap_CopiesGuid_AndCompensatesOnlyVerifiedMaterial()
+        {
+            var world = BuildFlowSrWorld();
+            var sourceBefore = SrSnapshot(world.Fixture.Source);
+            var vanillaBefore = SrSnapshot(world.Fixture.Vanilla);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            var flowMapAtlas = outputs.Single(output => Get<string>(output, "Slot") == SrFlowMap);
+            var guidCopy = outputs.Single(output => Get<string>(output, "Slot") == SrFlowGuid);
+            Assert.That(Get<bool>(flowMapAtlas, "IsCopy"), Is.False);
+            Assert.That(Get<string>(flowMapAtlas, "Path"), Does.EndWith("_repack_flow_map.dds"));
+            Assert.That(Get<bool>(guidCopy, "IsCopy"), Is.True);
+            Assert.That(Get<string>(guidCopy, "Path"), Does.EndWith("_repack_flow_guid.dds"));
+            Assert.That(Get<IEnumerable>(guidCopy, "Sources").Cast<string>(), Is.EqualTo(new[] { SrFlowGuidTexture }));
+            Assert.That(Get<int>(result, "FlowCompensationParts"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "FlowMapAtlases"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "FlowMapCopies"), Is.Zero);
+            Assert.That(Get<int>(result, "FlowGuidCopies"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "FlowMaterialsRescaled"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "FlowAspectGroups"), Is.GreaterThan(0));
+            Assert.That(Get<int>(built, "FlowMapAtlases"), Is.EqualTo(1));
+
+            var replaced = Get<IEnumerable>(built, "Replaced").Cast<(string Path, bool Owned, long Bytes)>()
+                .Select(item => item.Path).ToList();
+            Assert.That(replaced, Does.Contain(SrFlowMapTexture));
+            Assert.That(replaced, Does.Not.Contain(SrFlowGuidTexture));
+            Assert.That(Get<long>(built, "After"), Is.EqualTo(outputs.Sum(output => Get<long>(output, "Bytes"))));
+            foreach (var (path, bytes) in sourceBefore)
+                Assert.That(world.Fixture.Source[path], Is.EqualTo(bytes), path);
+            foreach (var (path, bytes) in vanillaBefore)
+                Assert.That(world.Fixture.Vanilla[path], Is.EqualTo(bytes), path);
+
+            var generated = Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]);
+            var original = Encoding.UTF8.GetString(world.Fixture.Source[SrMaterialPath("flow1")]);
+            foreach (var slot in new[] { SrFlowNoise, SrFlowNormal, SrFlowNormal2 })
+                Assert.That(SrSlotNode(generated, slot).OuterXml, Is.EqualTo(SrSlotNode(original, slot).OuterXml));
+            Assert.That(SrSlotNode(generated, SrFlowMap).OuterXml, Does.Contain("_repack_flow_map.dds"));
+            Assert.That(SrSlotNode(generated, SrFlowGuid).OuterXml, Does.Contain("_repack_flow_guid.dds"));
+
+            var scaleU = 1024.0 / Get<int>(built, "LayoutWidth");
+            var scaleV = 1024.0 / Get<int>(built, "LayoutHeight");
+            Assert.That(scaleU, Is.EqualTo(scaleV));
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            Assert.That(SrParamValue(generated, "flow_noise_speed"), Is.EqualTo(string.Create(invariant, $"{0.25 * scaleU:R}")));
+            Assert.That(SrParamValue(generated, "flow_noise_tiling"), Is.EqualTo(string.Create(invariant, $"{2 / scaleU:R}")));
+            Assert.That(SrParamValue(generated, "flow_texture_tiling"), Is.EqualTo(string.Create(invariant, $"{1.5 / scaleU:R},{0.75 / scaleU:R}")));
+            Assert.That(SrParamValue(generated, "flow_distortion_stength"), Is.EqualTo("0.7"));
+
+            var seeds = new Dictionary<string, int>
+            {
+                [SrBase] = 1, [SrNormal] = 2, [SrFlowMap] = 3, [SrFlowGuid] = 4,
+            };
+            var factory = SrRigidFactory([(SrMaterialPath("flow1"), SrBlocks((2, 3), (3, 3)))]);
+            var (samples, _) = AssertSrPixels(world, SrRigid, SrWs, factory, seeds);
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(SrValidate(world), Is.Empty);
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain("Flow overlay: 1 part(s) with verified flow compensation"));
+            Assert.That(report, Does.Contain("flow_map joins the local atlas closure"));
+            Assert.That(report, Does.Contain("chart phase changes the sampled noise"));
+        }
+
+        [Test]
+        public void SharedRepack_FlowOverlay_CommonMapIsCopyAndUniformMapRemainsAuthoredWithAspectConstraint()
+        {
+            var common = BuildFlowSrWorld(flowMap: SrFlowCommonMapTexture);
+            var commonResult = common.Run();
+            Assert.That(Get<int>(commonResult, "Built"), Is.EqualTo(1), SrSkips(commonResult) + SrPartDropReasons(commonResult));
+            var commonBuilt = SrBuilt(commonResult).Single();
+            var commonOutputs = Get<IEnumerable>(commonBuilt, "Outputs").Cast<object>().ToList();
+            var mapCopy = commonOutputs.Single(output => Get<string>(output, "Slot") == SrFlowMap);
+            Assert.That(Get<bool>(mapCopy, "IsCopy"), Is.True);
+            Assert.That(Get<string>(mapCopy, "Path"), Does.EndWith("_repack_flow_map.dds"));
+            Assert.That(Get<IEnumerable>(mapCopy, "Sources").Cast<string>(), Is.EqualTo(new[] { SrFlowCommonMapTexture }));
+            Assert.That(Get<IEnumerable>(commonBuilt, "Replaced").Cast<(string Path, bool Owned, long Bytes)>()
+                .Select(item => item.Path), Does.Not.Contain(SrFlowCommonMapTexture));
+            Assert.That(common.Fixture.Vanilla[SrFlowCommonMapTexture], Is.Not.Empty);
+            var commonFactory = SrRigidFactory([(SrMaterialPath("flow1"), SrBlocks((2, 3), (3, 3)))]);
+            AssertSrPixels(common, SrRigid, SrWs, commonFactory,
+                new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2, [SrFlowMap] = 3, [SrFlowGuid] = 4 });
+            Assert.That(SrValidate(common), Is.Empty);
+
+            var uniform = BuildFlowSrWorld(flowMap: SrFlowUniformMapTexture);
+            var uniformResult = uniform.Run();
+            Assert.That(Get<int>(uniformResult, "Built"), Is.EqualTo(1), SrSkips(uniformResult) + SrPartDropReasons(uniformResult));
+            var uniformBuilt = SrBuilt(uniformResult).Single();
+            Assert.That(Get<int>(uniformResult, "FlowMapAtlases"), Is.Zero);
+            Assert.That(Get<int>(uniformResult, "FlowMapCopies"), Is.Zero);
+            Assert.That(Get<int>(uniformResult, "FlowAspectGroups"), Is.GreaterThan(0));
+            var uniformMaterial = Encoding.UTF8.GetString(uniform.Fixture.Output[SrWsMaterial(uniform.State, SrWs, 0, 0)]);
+            Assert.That(SrSlotNode(uniformMaterial, SrFlowMap).SelectSingleNode("source")!.InnerText,
+                Is.EqualTo(SrFlowUniformMapTexture));
+            Assert.That(1024.0 / Get<int>(uniformBuilt, "LayoutWidth"),
+                Is.EqualTo(1024.0 / Get<int>(uniformBuilt, "LayoutHeight")));
+            Assert.That(SrValidate(uniform), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_FlowMapFromUnlistedShaderCannotEnterClosureWithVerifiedUser()
+        {
+            var world = BuildFlowSrWorld();
+            world.AddTexture("textures\\sr_b2.dds", 1024, "BC1", true, 8);
+            world.AddTexture("textures\\sr_n2.dds", 512, "BC3", false, 9);
+            var unknownMaterial = SrMaterialPath("flow_unknown");
+            var unknownXml = DownscaleMaterialXml(
+                    (SrBase, "textures\\sr_b2.dds"),
+                    (SrNormal, "textures\\sr_n2.dds"),
+                    (SrFlowMap, SrFlowMapTexture))
+                .Replace("shaders\\weighted2_character.xml.shader", "shaders/custom_flow_consumer.xml.shader");
+            world.Fixture.AddText(unknownMaterial, unknownXml);
+            world.AddModel(SrRigid2, SrWs2, SrRoot2,
+                SrRigidFactory([(unknownMaterial, SrBlocks((8, 8)))]), [[unknownMaterial]]);
+
+            var result = world.Run();
+
+            Assert.That(SrPartDropReasons(result), Does.Contain(
+                "the material's shader is not verified for flow-overlay repacking (shaders/custom_flow_consumer.xml.shader)"));
+            var repacked = Get<HashSet<string>>(result, "RepackedRigids");
+            Assert.That(repacked, Does.Not.Contain(SrRigid2));
+            Assert.That(Get<int>(result, "FlowMapAtlases"), Is.Zero);
+            Assert.That(world.Fixture.Output.Keys.Any(path => path.Contains("_repack_flow_map", StringComparison.Ordinal)),
+                Is.EqualTo(repacked.Contains(SrRigid)));
+            if (repacked.Contains(SrRigid))
+            {
+                var built = SrBuilt(result).Single();
+                var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+                var mapCopy = outputs.Single(output => Get<string>(output, "Slot") == SrFlowMap);
+                Assert.That(Get<bool>(mapCopy, "IsCopy"), Is.True);
+                Assert.That(Get<IEnumerable>(built, "Replaced").Cast<(string Path, bool Owned, long Bytes)>()
+                    .Select(item => item.Path), Does.Not.Contain(SrFlowMapTexture));
+                var generated = Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]);
+                Assert.That(SrSlotNode(generated, SrFlowMap).OuterXml, Does.Contain("_repack_flow_map.dds"));
+            }
+            Assert.That(world.Fixture.Vanilla[SrFlowMapTexture], Is.Not.Empty);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        private const string SrFlowMapTexture2 = "textures\\sr_flow_map_2.dds";
+
+        [Test]
+        public void SharedRepack_DifferentLocalFlowMapsWithoutSignatureProfilesStayInSeparateGroups()
+        {
+            var world = BuildFlowSrWorld();
+            world.AddTexture(SrFlowMapTexture2, 1024, "BC1", true, 12);
+            var material2 = SrMaterialPath("flow2");
+            world.Fixture.AddText(material2, SrFlowMaterialXml(SrFlowShader, SrFlowMapTexture2));
+            var material1 = SrMaterialPath("flow1");
+            world.AddModel(SrRigid, SrWs, SrRoot,
+                SrRigidFactory([
+                    (material1, SrBlocks((2, 3), (3, 3))),
+                    (material2, SrBlocks((10, 4))),
+                ]), [[material1, material2]]);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            var built = SrBuilt(result).Single();
+            var mapOutputs = Get<IEnumerable>(built, "Outputs").Cast<object>()
+                .Where(output => Get<string>(output, "Slot") == SrFlowMap).ToList();
+            Assert.That(mapOutputs, Has.Count.EqualTo(2));
+            Assert.That(mapOutputs.All(output => !Get<bool>(output, "IsCopy")), Is.True);
+            Assert.That(mapOutputs.SelectMany(output => Get<IEnumerable>(output, "Sources").Cast<string>()),
+                Is.EquivalentTo(new[] { SrFlowMapTexture, SrFlowMapTexture2 }));
+            Assert.That(mapOutputs.All(output => Get<IEnumerable>(output, "Sources").Cast<string>().Count() == 1), Is.True);
+            Assert.That(mapOutputs.Select(output => Get<string>(output, "Path"))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList(), Has.Count.EqualTo(2));
+            Assert.That(Get<int>(result, "FlowMapAtlases"), Is.EqualTo(2));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_FlowMapClosureCapRefusesOnlyFlowOwnersAndKeepsRegularPartBuildable()
+        {
+            var world = BuildFlowSrWorld();
+            world.AddTexture("textures\\sr_flow_cap_regular_base.dds", 1024, "BC1", true, 10);
+            world.AddTexture("textures\\sr_flow_cap_regular_normal.dds", 512, "BC3", false, 11);
+            var regularMaterial = SrMaterialPath("flow_cap_regular");
+            world.Fixture.AddMaterial(regularMaterial,
+                (SrBase, "textures\\sr_flow_cap_regular_base.dds"),
+                (SrNormal, "textures\\sr_flow_cap_regular_normal.dds"));
+            var flowMaterial = SrMaterialPath("flow1");
+            world.AddModel(SrRigid, SrWs, SrRoot,
+                SrRigidFactory([
+                    (flowMaterial, SrBlocks((2, 3), (3, 3))),
+                    (regularMaterial, SrBlocks((10, 4))),
+                ]), [[flowMaterial, regularMaterial]]);
+
+            for (var index = 1; index < 17; index++)
+            {
+                var baseTexture = $"textures\\sr_flow_cap_{index}_base.dds";
+                var normalTexture = $"textures\\sr_flow_cap_{index}_normal.dds";
+                var material = SrMaterialPath($"flow_cap_{index}");
+                world.AddTexture(baseTexture, 1024, "BC1", true, 20 + index);
+                world.AddTexture(normalTexture, 512, "BC3", false, 40 + index);
+                var xml = SrFlowMaterialXml(SrFlowShader, SrFlowMapTexture)
+                    .Replace("textures\\sr_b1.dds", baseTexture)
+                    .Replace("textures\\sr_n1.dds", normalTexture);
+                world.Fixture.AddText(material, xml);
+                var rigid = $"variantmeshes\\wh_main\\sr_flow_cap_{index}.rigid_model_v2";
+                var ws = $"variantmeshes\\wh_main\\sr_flow_cap_{index}.wsmodel";
+                var root = $"variantmeshes\\wh_variantmodels\\hu1\\emp\\sr_flow_cap_{index}.variantmeshdefinition";
+                world.AddModel(rigid, ws, root,
+                    SrRigidFactory([(material, SrBlocks((index % 16, (index * 3) % 16)))]), [[material]]);
+            }
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            AssertFunnelReconciles(result);
+            Assert.That(SrPartDropReasons(result), Does.Contain("the flow-map texture cannot be repacked"));
+            Assert.That(SrPartDropReasons(result), Does.Contain("exceed the closure cap"));
+            Assert.That(Get<int>(result, "Built"), Is.GreaterThan(0), SrSkips(result));
+            Assert.That(Get<HashSet<string>>(result, "RepackedRigids"), Does.Contain(SrRigid));
+            Assert.That(Get<int>(result, "FlowMapAtlases"), Is.Zero);
+            Assert.That(SrBuilt(result).SelectMany(built => Get<IEnumerable>(built, "Outputs").Cast<object>())
+                .Any(output => Get<string>(output, "Slot") == SrFlowMap), Is.False);
+            Assert.That(SrBuilt(result).SelectMany(built => Get<IEnumerable>(built, "Replaced").Cast<(string Path, bool Owned, long Bytes)>())
+                .Select(item => item.Path), Does.Not.Contain(SrFlowMapTexture));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [TestCase("flow_noise_speed", null, "float")]
+        [TestCase("flow_noise_speed", "0.25", "float2")]
+        [TestCase("flow_noise_tiling", "NaN", "float")]
+        [TestCase("flow_noise_speed", "0.25,", "float")]
+        [TestCase("flow_texture_tiling", "1", "float2")]
+        [TestCase("flow_texture_tiling", "1,,2", "float2")]
+        [TestCase("flow_texture_tiling", "1,Infinity", "float2")]
+        public void SharedRepack_FlowOverlay_MissingMalformedNonfiniteOrWrongTypeParameterRefusesPart(
+            string name, string? value, string type)
+        {
+            var world = BuildFlowSrWorld(
+                omitParameter: value == null ? name : null,
+                overrideParameter: value == null ? null : name,
+                overrideValue: value,
+                overrideType: type);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            Assert.That(SrPartDropReasons(result), Does.Contain("the material lacks a usable flow parameter " + name));
+            Assert.That(Get<int>(result, "FlowGuidCopies"), Is.Zero);
+            Assert.That(world.Fixture.Output.Keys.Any(path => path.Contains("_repack_")), Is.False);
+        }
+
+        [TestCase("shaders/rigid_flow_overlay.xml.shader", "the material's shader is not verified for flow-overlay repacking")]
+        [TestCase("shaders/weighted2_emissive_flow_alpha.xml.shader", "the emissive-flow shader has a fixed flow-noise scroll speed")]
+        public void SharedRepack_FlowOverlay_UnverifiedAndEmissiveFlowFamiliesRemainRefused(string shader, string reason)
+        {
+            var world = BuildFlowSrWorld(shader);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            Assert.That(SrPartDropReasons(result), Does.Contain(reason));
+            if (shader.Contains("weighted2_emissive_flow_alpha", StringComparison.Ordinal))
+                Assert.That(SrPartDropReasons(result), Does.Contain("flow_texture from UV0 without a compensatable tiling parameter"));
+            Assert.That(Get<int>(result, "FlowGuidCopies"), Is.Zero);
+            Assert.That(world.Fixture.Output.Keys.Any(path => path.Contains("_repack_")), Is.False);
+        }
+
+        [Test]
+        public void SharedRepack_FlowParameterScale_IsFiniteTypedEqualAxisAndPreservesUnrelatedParameters()
+        {
+            var document = new XmlDocument();
+            document.LoadXml(SrFlowMaterialXml(SrFlowShader, SrFlowMapTexture));
+            var args = new object?[] { document, 0.5, 0.5, null };
+            Assert.That((bool)GetStaticMethod("TryScaleSharedRepackFlowParameters").Invoke(null, args)!, Is.True);
+            Assert.That(SrParamValue(document.OuterXml, "flow_noise_speed"), Is.EqualTo("0.125"));
+            Assert.That(SrParamValue(document.OuterXml, "flow_noise_tiling"), Is.EqualTo("4"));
+            Assert.That(SrParamValue(document.OuterXml, "flow_texture_tiling"), Is.EqualTo("3,1.5"));
+            Assert.That(SrParamValue(document.OuterXml, "flow_distortion_stength"), Is.EqualTo("0.7"));
+
+            foreach (var (value, type, scaleU, scaleV) in new[]
+                     {
+                         ("0.25", "float2", 0.5, 0.5),
+                         ("bad", "float", 0.5, 0.5),
+                         ("0.25,", "float", 0.5, 0.5),
+                         ("0.25", "float", 0.5, 0.25),
+                     })
+            {
+                var invalid = new XmlDocument();
+                invalid.LoadXml(SrFlowMaterialXml(SrFlowShader, SrFlowMapTexture,
+                    overrideParameter: "flow_noise_speed", overrideValue: value, overrideType: type));
+                var before = invalid.OuterXml;
+                args = [invalid, scaleU, scaleV, null];
+                Assert.That((bool)GetStaticMethod("TryScaleSharedRepackFlowParameters").Invoke(null, args)!, Is.False);
+                Assert.That(invalid.OuterXml, Is.EqualTo(before));
+            }
+        }
+
+        [Test]
+        public void SharedRepack_FlowCompensation_RestrictsAspectWithoutAnyCopySlot()
+        {
+            const string baseTexture = "textures\\flow_aspect_base.dds";
+            const string flowMap = "textures\\flow_aspect_map.dds";
+            var part = SrPart(new Dictionary<string, string> { [SrBase] = baseTexture, [SrFlowMap] = flowMap });
+            Get<HashSet<string>>(part, "FlowCompensationMaterials").Add("materials\\flow.xml.material");
+            var entries = new Dictionary<string, object>
+            {
+                [baseTexture] = SrEntry(baseTexture, 2048, 1024),
+                [flowMap] = SrEntry(flowMap, 1024, 512),
+            };
+
+            var tuple = SrBuildTuples([part], entries, _ => null, out var violating).Single();
+
+            Assert.That(violating, Is.Empty);
+            Assert.That(Get<HashSet<string>>(tuple, "CopySlots"), Is.Empty);
+            Assert.That(Get<bool>(tuple, "FlowCompensation"), Is.True);
+            Assert.That(Get<bool>(tuple, "RequiresEqualAxisScale"), Is.True);
+            Assert.That(Get<string>(tuple, "GroupKey"), Does.Contain("aspect:2x1"));
+            var pages = SrPackGroup(tuple, 4096, 1, out var split);
+            Assert.That(Get<bool>(split, "FlowAspectRestricted"), Is.True);
+            Assert.That(Get<bool>(split, "AspectRestricted"), Is.True);
+            var page = pages.Single();
+            Assert.That((long)Get<int>(page, "LayoutWidth") * 1024,
+                Is.EqualTo((long)Get<int>(page, "LayoutHeight") * 2048));
+        }
+
         // ---- tuples and layout groups of a copy slot ----
 
         private static object SrLayout(int width, int height, string format = "BC1")
@@ -17119,6 +17528,8 @@ namespace Test.PackOptimizer.Core
             // default_type (and refuses unverified vertex formats); the repack is not among the pinned
             // stages, so the hash is unchanged.
             [22] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 23 adds shared flow-overlay rewriting; the output golden fixture has no flow shader material.
+            [23] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

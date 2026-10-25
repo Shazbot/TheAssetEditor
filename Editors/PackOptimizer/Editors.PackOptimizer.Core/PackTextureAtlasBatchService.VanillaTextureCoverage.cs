@@ -552,20 +552,43 @@ namespace Editors.PackOptimizer.Core
 
                         var document = LoadXml(file);
                         var emissive = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        var flowParametersSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         var parameterNodes = document.SelectNodes("/material/params/param");
                         if (parameterNodes != null)
                         {
                             foreach (XmlNode node in parameterNodes)
                             {
                                 var name = node.SelectSingleNode("name")?.InnerText.Trim() ?? string.Empty;
-                                // dissolve_uv_scale is only usable as a float2 (the repack rewrites that type).
+                                var parameterKey = name.ToLowerInvariant();
+                                var expectedType = GetSharedRepackCompensatedParameterType(name);
+                                if (IsSharedRepackFlowParameter(name))
+                                {
+                                    // A duplicate, missing value or wrong XML type makes the parameter
+                                    // unprovable; retain a sentinel so flow eligibility fails closed.
+                                    if (!flowParametersSeen.Add(parameterKey) ||
+                                        node.SelectSingleNode("value") is not { } flowValue ||
+                                        node.SelectSingleNode("type")?.InnerText.Trim().Equals(
+                                            expectedType, StringComparison.OrdinalIgnoreCase) != true)
+                                    {
+                                        emissive[parameterKey] = "__invalid_flow_parameter__";
+                                    }
+                                    else if (!emissive.ContainsKey(parameterKey))
+                                    {
+                                        emissive[parameterKey] = flowValue.InnerText.Trim();
+                                    }
+
+                                    continue;
+                                }
+
+                                // Preserve the existing emissive/dissolve coverage checks; the flow
+                                // parameters above have stricter typed duplicate handling of their own.
                                 if (IsSharedRepackCompensatedParameter(name) &&
                                     node.SelectSingleNode("value") is { } valueNode &&
                                     (!name.Equals(SharedRepackDissolveScaleParameter, StringComparison.OrdinalIgnoreCase) ||
                                      node.SelectSingleNode("type")?.InnerText.Trim().Equals(
                                          "float2", StringComparison.OrdinalIgnoreCase) == true))
                                 {
-                                    emissive[name.ToLowerInvariant()] = valueNode.InnerText.Trim();
+                                    emissive[parameterKey] = valueNode.InnerText.Trim();
                                 }
                             }
                         }
