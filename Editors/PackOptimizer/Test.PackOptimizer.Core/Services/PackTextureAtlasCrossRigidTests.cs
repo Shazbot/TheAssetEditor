@@ -8319,13 +8319,14 @@ namespace Test.PackOptimizer.Core
             string? mask = null,
             string? materialMap = null,
             string? legacySpecular = null,
-            string? legacyGloss = null)
+            string? legacyGloss = null,
+            VertexFormat vertexFormat = VertexFormat.Weighted)
             => () =>
             {
                 var model = CreateUvPart(SrBlock(2, 3));
                 var material = new WeightedMaterial
                 {
-                    BinaryVertexFormat = VertexFormat.Weighted,
+                    BinaryVertexFormat = vertexFormat,
                     MaterialId = materialType,
                     ModelName = "embedded",
                 };
@@ -8345,7 +8346,10 @@ namespace Test.PackOptimizer.Core
                 return CreateSingleLodRigid(RmvVersionEnum.RMV2_V8, model);
             };
 
-        private static SrWorld BuildDirectEmbeddedSrWorld(bool withWsModel)
+        private static SrWorld BuildDirectEmbeddedSrWorld(
+            bool withWsModel,
+            ModelMaterialEnum materialType = ModelMaterialEnum.weighted,
+            VertexFormat vertexFormat = VertexFormat.Weighted)
         {
             var world = new SrWorld();
             world.AddTexture("textures\\sr_direct_base.dds", 1024, "BC1", true, 11);
@@ -8368,7 +8372,9 @@ namespace Test.PackOptimizer.Core
                 mask: "textures\\sr_direct_mask.dds",
                 materialMap: "textures\\sr_direct_material_map.dds",
                 legacySpecular: "textures\\sr_direct_specular.dds",
-                legacyGloss: "textures\\sr_direct_gloss.dds");
+                legacyGloss: "textures\\sr_direct_gloss.dds",
+                materialType: materialType,
+                vertexFormat: vertexFormat);
             if (withWsModel)
             {
                 world.AddModel(SrRigid, SrWs, SrRoot, rigidFactory, [[materialPath]]);
@@ -8542,12 +8548,15 @@ namespace Test.PackOptimizer.Core
         private static void SrInstallReadableSourceRigid(SrWorld world)
         {
             var rigid = world.Rigids[SrRigid]();
-            foreach (var vertex in rigid.ModelList.SelectMany(lod => lod)
-                         .SelectMany(model => model.Mesh?.VertexList ?? []))
+            foreach (var model in rigid.ModelList.SelectMany(lod => lod))
             {
-                vertex.WeightCount = 2;
-                vertex.BoneIndex = [0, 0];
-                vertex.BoneWeight = [1f, 0f];
+                var isStatic = model.Material?.BinaryVertexFormat == VertexFormat.Static;
+                foreach (var vertex in model.Mesh?.VertexList ?? [])
+                {
+                    vertex.WeightCount = isStatic ? 0 : 2;
+                    vertex.BoneIndex = isStatic ? [] : [0, 0];
+                    vertex.BoneWeight = isStatic ? [] : [1f, 0f];
+                }
             }
 
             rigid.RecalculateOffsets();
@@ -8813,24 +8822,75 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
-        public void SharedRepack_DirectRigid_UnsupportedEmbeddedMaterialTypeIsRejected()
+        public void SharedRepack_DirectRigid_DefaultTypeEmbeddedMaterialIsRewritten()
         {
-            var world = BuildDirectEmbeddedSrWorld(withWsModel: false);
-            var factory = SrEmbeddedRigidFactory(
-                "textures\\sr_direct_base.dds",
-                "textures\\sr_direct_normal.dds",
-                legacyDiffuse: "textures\\sr_direct_base.dds",
-                materialType: ModelMaterialEnum.default_type,
-                mask: "textures\\sr_direct_mask.dds",
-                materialMap: "textures\\sr_direct_material_map.dds");
-            world.Rigids[SrRigid] = factory;
-            world.Fixture.Rigids[SrRigid] = factory();
+            var world = BuildDirectEmbeddedSrWorld(
+                withWsModel: false, ModelMaterialEnum.default_type, VertexFormat.Static);
+            SrInstallReadableSourceRigid(world);
+            var original = world.Rigids[SrRigid]();
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<HashSet<string>>(result, "EmbeddedRewrittenRigids"), Is.EquivalentTo([SrRigid]));
+            var types = Get<IDictionary>(result, "EmbeddedRewrittenPartTypes").Values.Cast<ModelMaterialEnum>();
+            Assert.That(types, Is.EqualTo(new[] { ModelMaterialEnum.default_type }));
+            var rigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            var embedded = rigid.ModelList[0][0].Material!;
+            foreach (var type in new[]
+                     {
+                         TextureType.BaseColour, TextureType.Normal, TextureType.Mask, TextureType.MaterialMap,
+                     })
+            {
+                var path = embedded.GetTexture(type)!.Value.Path;
+                Assert.That(path, Does.Not.StartWith("textures\\sr_direct_"));
+                Assert.That(world.Fixture.Output.ContainsKey(path), Is.True, path);
+            }
+
+            // Legacy entries follow only the replaced texture they named.
+            Assert.That(embedded.GetTexture(TextureType.Diffuse)!.Value.Path,
+                Is.EqualTo(embedded.GetTexture(TextureType.BaseColour)!.Value.Path));
+            Assert.That(embedded.GetTexture(TextureType.Specular)!.Value.Path,
+                Is.EqualTo("textures\\sr_direct_specular.dds"));
+            Assert.That(embedded.GetTexture(TextureType.Gloss)!.Value.Path,
+                Is.EqualTo("textures\\sr_direct_gloss.dds"));
+            Assert.That(rigid.ModelList[0][0].Mesh!.VertexList.Select(vertex => vertex.Uv),
+                Is.Not.EqualTo(original.ModelList[0][0].Mesh!.VertexList.Select(vertex => vertex.Uv)));
+            Assert.That(BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("by embedded material type: default_type 1")
+                    .And.Contain("Burn caveat"));
+            Assert.That(SrValidateDirectRigidEmbeddedTextures(world), Is.Empty);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [TestCase(ModelMaterialEnum.decal)]
+        [TestCase(ModelMaterialEnum.weighted_skin)]
+        public void SharedRepack_DirectRigid_UnsupportedEmbeddedMaterialTypeIsRejected(ModelMaterialEnum type)
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: false, type);
 
             var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
 
             var drops = Get<Dictionary<string, int>>(result, "PartDropReasons");
             Assert.That(drops.GetValueOrDefault(
-                    "embedded material type default_type is not verified (only weighted is)"),
+                    $"embedded material type {type} is not verified (only weighted and default_type are)"),
+                Is.GreaterThan(0));
+            Assert.That(Get<int>(result, "Built"), Is.Zero, SrSkips(result));
+        }
+
+        [TestCase(ModelMaterialEnum.weighted, VertexFormat.Position16_bit)]
+        [TestCase(ModelMaterialEnum.default_type, VertexFormat.CustomTerrain2)]
+        public void SharedRepack_DirectRigid_UnverifiedVertexFormatIsRejected(
+            ModelMaterialEnum type,
+            VertexFormat format)
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: false, type, format);
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            var drops = Get<Dictionary<string, int>>(result, "PartDropReasons");
+            Assert.That(drops.GetValueOrDefault(
+                    $"embedded vertex format {format} is not verified (only Static, Weighted and Cinematic are)"),
                 Is.GreaterThan(0));
             Assert.That(Get<int>(result, "Built"), Is.Zero, SrSkips(result));
         }
@@ -17055,6 +17115,10 @@ namespace Test.PackOptimizer.Core
             // of the same size and format (variant pages next to the layout page); the repack is not among the
             // pinned stages, so the hash is unchanged.
             [21] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 22: the shared texture repack also rewrites directly loaded rigids whose embedded material is
+            // default_type (and refuses unverified vertex formats); the repack is not among the pinned
+            // stages, so the hash is unchanged.
+            [22] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

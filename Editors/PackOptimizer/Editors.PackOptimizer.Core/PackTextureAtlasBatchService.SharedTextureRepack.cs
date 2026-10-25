@@ -323,6 +323,15 @@ namespace Editors.PackOptimizer.Core
         private const string SharedRepackReasonEmbeddedUnreadable =
             "the embedded material is unreadable";
         private const string SharedRepackReasonEmbeddedTypePrefix = "embedded material type ";
+        private const string SharedRepackReasonEmbeddedVertexFormatPrefix = "embedded vertex format ";
+
+        // Embedded material types whose shader channels were verified (weighted_standard_* draws both).
+        private static bool IsSharedRepackVerifiedEmbeddedType(ModelMaterialEnum type) =>
+            type is ModelMaterialEnum.weighted or ModelMaterialEnum.default_type;
+
+        // The vertex formats the direct-rigid shader dispatch evidence covers.
+        private static bool IsSharedRepackVerifiedEmbeddedVertexFormat(VertexFormat format) =>
+            format is VertexFormat.Static or VertexFormat.Weighted or VertexFormat.Cinematic;
         private const string SharedRepackReasonEmbeddedUnsupported =
             "the embedded material's sampled slots are unknown";
         private const string SharedRepackReasonEmbeddedWsMismatch =
@@ -964,6 +973,8 @@ namespace Editors.PackOptimizer.Core
             public HashSet<string> RepackedRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> EmbeddedRewrittenRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<(string Rigid, int Lod, int Part, TextureType Type)> EmbeddedRewrittenPaths { get; } = [];
+            // Embedded material type of every rewritten direct part.
+            public Dictionary<(string Rigid, int Lod, int Part), ModelMaterialEnum> EmbeddedRewrittenPartTypes { get; } = [];
             public List<(string Label, string Detail)> DirectEmbeddedDrops { get; } = [];
             public List<SharedRepackDirectRigidOutcome> DirectRigidOutcomes { get; } = [];
             // Considered direct rigids the source pack does not own (or that override vanilla), by reason.
@@ -3206,9 +3217,13 @@ namespace Editors.PackOptimizer.Core
                 else
                 {
                     part.EmbeddedMaterialType = embedded.MaterialId;
-                    if (embedded.MaterialId != ModelMaterialEnum.weighted)
+                    if (!IsSharedRepackVerifiedEmbeddedType(embedded.MaterialId))
                     {
-                        part.Reason ??= $"{SharedRepackReasonEmbeddedTypePrefix}{embedded.MaterialId} is not verified (only weighted is)";
+                        part.Reason ??= $"{SharedRepackReasonEmbeddedTypePrefix}{embedded.MaterialId} is not verified (only weighted and default_type are)";
+                    }
+                    else if (!IsSharedRepackVerifiedEmbeddedVertexFormat(embedded.BinaryVertexFormat))
+                    {
+                        part.Reason ??= $"{SharedRepackReasonEmbeddedVertexFormatPrefix}{embedded.BinaryVertexFormat} is not verified (only Static, Weighted and Cinematic are)";
                     }
 
                     List<RmvTexture> textures;
@@ -3250,7 +3265,7 @@ namespace Editors.PackOptimizer.Core
                                 embeddedSlots[slot] = texturePath;
                             }
                         }
-                        else if (embedded.MaterialId == ModelMaterialEnum.weighted &&
+                        else if (IsSharedRepackVerifiedEmbeddedType(embedded.MaterialId) &&
                                  texture.TexureType is TextureType.Diffuse or TextureType.Specular or TextureType.Gloss)
                         {
                             // These legacy weighted entries are never sampled by the supported shaders.
@@ -7234,6 +7249,8 @@ namespace Editors.PackOptimizer.Core
                         type));
                 }
                 result.EmbeddedRewrittenRigids.Add(part.Key.GeometryPath);
+                result.EmbeddedRewrittenPartTypes[(part.Key.GeometryPath, part.Key.LodIndex, part.Key.PartIndex)] =
+                    part.EmbeddedMaterialType ?? ModelMaterialEnum.Unkown;
             }
 
             // What was written is what was planned.
@@ -8950,8 +8967,21 @@ namespace Editors.PackOptimizer.Core
                     $"  Directly loaded rigids rewritten through embedded materials: {result.EmbeddedRewrittenRigids.Count:N0}; " +
                     $"parts dropped for embedded unreadable material: {result.PartDropReasons.GetValueOrDefault(SharedRepackReasonEmbeddedUnreadable):N0}, " +
                     $"embedded material type not verified: {result.PartDropReasons.Where(pair => pair.Key.StartsWith(SharedRepackReasonEmbeddedTypePrefix, StringComparison.Ordinal)).Sum(pair => pair.Value):N0}, " +
+                    $"embedded vertex format not verified: {result.PartDropReasons.Where(pair => pair.Key.StartsWith(SharedRepackReasonEmbeddedVertexFormatPrefix, StringComparison.Ordinal)).Sum(pair => pair.Value):N0}, " +
                     $"unsupported embedded slots: {result.PartDropReasons.GetValueOrDefault(SharedRepackReasonEmbeddedUnsupported):N0}, " +
                     $"embedded/WSModel texture mismatch: {result.PartDropReasons.GetValueOrDefault(SharedRepackReasonEmbeddedWsMismatch):N0}");
+                if (result.EmbeddedRewrittenPartTypes.Count != 0)
+                {
+                    sb.AppendLine(
+                        "  Directly loaded parts rewritten by embedded material type: " +
+                        string.Join(", ", result.EmbeddedRewrittenPartTypes.Values
+                            .GroupBy(type => type)
+                            .OrderBy(group => group.Key.ToString(), StringComparer.Ordinal)
+                            .Select(group => $"{group.Key} {group.Count():N0}")));
+                    sb.AppendLine(
+                        "  Burn caveat: on directly loaded rigids the burn shaders sample the common t_fire_map at " +
+                        "UV0 times shader constants, so burn pattern density follows the page UV scale.");
+                }
             }
 
             sb.AppendLine($"  Not buildable (format, size, charts, layout, decode): {result.NotBuildable:N0}");

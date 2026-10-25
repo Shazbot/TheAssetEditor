@@ -697,7 +697,7 @@ namespace Editors.PackOptimizer.Core
                                 continue;
                             }
 
-                            var knownWeighted = material.MaterialId == ModelMaterialEnum.weighted;
+                            var knownWeighted = IsSharedRepackVerifiedEmbeddedType(material.MaterialId);
                             foreach (var texture in embedded)
                             {
                                 if (string.IsNullOrWhiteSpace(texture.Path))
@@ -711,7 +711,7 @@ namespace Editors.PackOptimizer.Core
                                 else if (knownWeighted && texture.TexureType is
                                          TextureType.Diffuse or TextureType.Specular or TextureType.Gloss)
                                 {
-                                    // Weighted RMV2 legacy entries are not sampled by the supported shaders.
+                                    // Weighted and default_type RMV2 legacy entries are not sampled by the supported shaders.
                                     result.OwnedRemovalBlockers.Add(Normalize(texture.Path));
                                     continue;
                                 }
