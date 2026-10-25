@@ -8613,6 +8613,51 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void SharedRepack_DirectRigid_UniformEmbeddedMaskStaysAsAuthored_WhileOtherSlotsFollowThePages()
+        {
+            var world = BuildDirectEmbeddedSrWorld(withWsModel: true);
+            const string maskPath = "textures\\sr_direct_mask.dds";
+            world.Fixture.Vanilla[maskPath] = BuildFlatBlackDds(4);
+            SrInstallReadableSourceRigid(world);
+            var original = world.Rigids[SrRigid]();
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<HashSet<string>>(result, "EmbeddedRewrittenRigids"), Is.EquivalentTo([SrRigid]));
+            var rigid = (RmvFile)Get<IDictionary>(world.State, "RigidModels")[SrRigid]!;
+            var embedded = rigid.ModelList[0][0].Material!;
+            var generatedMaterial = new XmlDocument();
+            generatedMaterial.LoadXml(Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]));
+            string Generated(string slot)
+                => generatedMaterial.SelectNodes("/material/textures/texture")!.Cast<XmlNode>()
+                    .Single(node => node.SelectSingleNode("slot")!.InnerText.Trim() == slot)
+                    .SelectSingleNode("source")!.InnerText;
+
+            Assert.That(embedded.GetTexture(TextureType.Mask)!.Value.Path, Is.EqualTo(maskPath));
+            Assert.That(Generated(SrMask), Is.EqualTo(maskPath));
+            foreach (var (type, slot) in new[]
+                     {
+                         (TextureType.BaseColour, SrBase),
+                         (TextureType.Normal, SrNormal),
+                         (TextureType.MaterialMap, SrMaterialMap),
+                     })
+            {
+                var path = embedded.GetTexture(type)!.Value.Path;
+                Assert.That(path, Does.Contain("_repack_"));
+                Assert.That(path, Is.EqualTo(Generated(slot)));
+                Assert.That(world.Fixture.Output.ContainsKey(path), Is.True, path);
+            }
+
+            Assert.That(rigid.ModelList[0][0].Mesh!.VertexList.Select(vertex => vertex.Uv),
+                Is.Not.EqualTo(original.ModelList[0][0].Mesh!.VertexList.Select(vertex => vertex.Uv)));
+            Assert.That(SrValidateDirectRigidEmbeddedTextures(world), Is.Empty);
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(world.State, "ValidationMessages").Cast<string>(),
+                Has.Some.Contain("PASS:").And.Contain("embedded material texture path"));
+        }
+
+        [Test]
         public void SharedRepack_DirectRigid_EmbeddedAndWsModelTextureMismatchDropsThePart()
         {
             var world = BuildDirectEmbeddedSrWorld(withWsModel: true);
@@ -16424,6 +16469,9 @@ namespace Test.PackOptimizer.Core
             // 17: the shared texture repack copies a texture that left a plan into the pages of the parts that stay
             // when that saves more; the repack is not among the pinned stages, so the hash is unchanged.
             [17] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 18: direct rigid embedded slots that name a uniform texture kept as authored stay unchanged instead of
+            // failing the set; the repack is not among the pinned stages, so the hash is unchanged.
+            [18] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

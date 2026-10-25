@@ -6571,6 +6571,13 @@ namespace Editors.PackOptimizer.Core
                                         part.Slots.TryGetValue(slot, out var partTexture) &&
                                         partTexture.Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
                                     {
+                                        // A uniform texture kept as authored has no page; the generated material keeps it too.
+                                        if (tuple.ConstantSlots.TryGetValue(slot, out var constantTexture) &&
+                                            constantTexture.Equals(sourcePath, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            continue;
+                                        }
+
                                         // A copied texture maps to its copy output, any other to the page that replaces it.
                                         var copiedSlot = tuple.CopySlots.Contains(slot);
                                         var output = page.Outputs.FirstOrDefault(candidate =>
@@ -7070,6 +7077,7 @@ namespace Editors.PackOptimizer.Core
 
             var embeddedCheckStart = errors.Count;
             var embeddedPathCount = 0;
+            var mergeSourceRigids = new Dictionary<string, RmvFile>(StringComparer.OrdinalIgnoreCase);
             foreach (var rewrittenPath in result.EmbeddedRewrittenPaths
                          .OrderBy(item => item.Rigid, StringComparer.OrdinalIgnoreCase)
                          .ThenBy(item => item.Lod)
@@ -7085,7 +7093,36 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
-                var key = (GeometryPath: rigidPath, LodIndex: rewrittenPath.Lod, PartIndex: rewrittenPath.Part);
+                // The rewritten part index is the source one; mesh merging may have renumbered the parts since.
+                var outputPartIndex = rewrittenPath.Part;
+                if (state.MeshMergeEntries.Any(entry =>
+                        entry.RigidPath.Equals(rigidPath, StringComparison.OrdinalIgnoreCase) &&
+                        entry.LodIndex == rewrittenPath.Lod))
+                {
+                    var sourceFile = state.Source.FindFile(rigidPath);
+                    if (!mergeSourceRigids.TryGetValue(rigidPath, out var mergeSourceRigid) && sourceFile != null)
+                    {
+                        mergeSourceRigid = ModelFactory.Create().Load(sourceFile.DataSource.ReadData());
+                        mergeSourceRigids[rigidPath] = mergeSourceRigid;
+                    }
+
+                    if (mergeSourceRigid != null && rewrittenPath.Lod >= 0 &&
+                        rewrittenPath.Lod < mergeSourceRigid.ModelList.Length &&
+                        rewrittenPath.Lod < rigid.ModelList.Length)
+                    {
+                        var partMap = BuildDirectRigidOutputPartMap(
+                            state,
+                            rigidPath,
+                            mergeSourceRigid.ModelList[rewrittenPath.Lod].Length,
+                            rewrittenPath.Lod,
+                            rigid,
+                            errors);
+                        if (partMap.TryGetValue(rewrittenPath.Part, out var mappedPart))
+                            outputPartIndex = mappedPart;
+                    }
+                }
+
+                var key = (GeometryPath: rigidPath, LodIndex: rewrittenPath.Lod, PartIndex: outputPartIndex);
                 if (key.LodIndex < 0 || key.LodIndex >= rigid.ModelList.Length ||
                     key.PartIndex < 0 || key.PartIndex >= rigid.ModelList[key.LodIndex].Length)
                 {
