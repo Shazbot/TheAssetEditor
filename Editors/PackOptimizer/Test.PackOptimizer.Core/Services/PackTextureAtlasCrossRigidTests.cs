@@ -9129,6 +9129,144 @@ namespace Test.PackOptimizer.Core
             Assert.That(SrValidate(world), Is.Empty);
         }
 
+        // --- Duplicate pages of layout groups on the same geometry ---
+
+        // Two parts with the same UV blocks; the second material's base colour is BC3, so its tuple lands in
+        // another layout group, and both share one normal texture. With different blocks the charts differ.
+        private static SrWorld BuildSharedNormalSrWorld(bool sameGeometry, bool withDissolve = false)
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1);
+            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2);
+            world.AddTexture("textures\\sr_b2.dds", 1024, "BC3", true, 3);
+            var m1 = SrMaterialPath("m1");
+            var m2 = SrMaterialPath("m2");
+            world.Fixture.AddMaterial(m1, (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n1.dds"));
+            if (withDissolve)
+            {
+                // Same textures as m1 plus the shared dissolve map copy: another slot set, so another group.
+                world.AddTexture(SrDissolveMapTexture, 512, "BC1", true, 9);
+                world.AddTexture(SrDissolveDetailTexture, 1024, "BC1", true, 10);
+                world.Fixture.AddText(m2, SrDissolveMaterialXml(SrDissolveShader));
+            }
+            else
+            {
+                world.Fixture.AddMaterial(m2, (SrBase, "textures\\sr_b2.dds"), (SrNormal, "textures\\sr_n1.dds"));
+            }
+
+            var factory = SrRigidFactory([
+                (m1, SrBlocks((2, 3), (3, 3))),
+                (m2, sameGeometry ? SrBlocks((2, 3), (3, 3)) : SrBlocks((10, 4)))]);
+            world.AddModel(SrRigid, SrWs, SrRoot, factory, [[m1, m2]]);
+            return world;
+        }
+
+        private static string SrMaterialTexture(SrWorld world, int part, string slot)
+            => SrSlotNode(
+                    Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, part)]), slot)
+                .SelectSingleNode("source")?.InnerText.Trim() ?? string.Empty;
+
+        [Test]
+        public void SharedRepack_GroupsOnTheSameGeometry_WriteTheSharedSlotsOnce()
+        {
+            var world = BuildSharedNormalSrWorld(sameGeometry: true);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<IEnumerable>(built, "Groups").Cast<object>().Count(), Is.EqualTo(2));
+            // Base colour of each group, and one normal for both.
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            Assert.That(outputs, Has.Count.EqualTo(3));
+            var normal = outputs.Single(output => Get<string>(output, "Slot") == SrNormal);
+            Assert.That(Get<int>(built, "DeduplicatedOutputs"), Is.EqualTo(1));
+            Assert.That(Get<long>(built, "DeduplicatedBytes"), Is.EqualTo(Get<long>(normal, "Bytes")));
+            Assert.That(Get<int>(result, "DeduplicatedOutputs"), Is.EqualTo(1));
+            Assert.That(world.Fixture.Output.Keys.Count(path => path.Contains("_repack_") && path.EndsWith("_normal.dds")), Is.EqualTo(1));
+            Assert.That(Get<List<string>>(result, "GeneratedTextures"), Has.Count.EqualTo(3));
+
+            // Both materials name the one normal; the base colours stay apart.
+            Assert.That(SrMaterialTexture(world, 0, SrNormal), Is.EqualTo(Get<string>(normal, "Path")));
+            Assert.That(SrMaterialTexture(world, 1, SrNormal), Is.EqualTo(Get<string>(normal, "Path")));
+            Assert.That(SrMaterialTexture(world, 0, SrBase), Is.Not.EqualTo(SrMaterialTexture(world, 1, SrBase)));
+
+            // The gate and the set count the shared page once.
+            Assert.That(Get<long>(built, "After"), Is.EqualTo(outputs.Sum(output => Get<long>(output, "Bytes"))));
+            Assert.That(
+                Get<IEnumerable>(built, "Groups").Cast<object>().Sum(group => Get<long>(group, "After")),
+                Is.EqualTo(Get<long>(built, "After")));
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("deduplicated 1 page(s), " +
+                Get<long>(normal, "Bytes").ToString("N0")));
+
+            var factory = SrRigidFactory([
+                (SrMaterialPath("m1"), SrBlocks((2, 3), (3, 3))), (SrMaterialPath("m2"), SrBlocks((2, 3), (3, 3)))]);
+            AssertSrPixels(world, SrRigid, SrWs, factory, new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 }, (_, part) => part == 0);
+            AssertSrPixels(world, SrRigid, SrWs, factory, new Dictionary<string, int> { [SrBase] = 3, [SrNormal] = 2 }, (_, part) => part == 1);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_TupleWithACopySlot_SharesTheOtherPagesWithThePlainTuple()
+        {
+            var world = BuildSharedNormalSrWorld(sameGeometry: true, withDissolve: true);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<IEnumerable>(built, "Groups").Cast<object>().Count(), Is.EqualTo(2));
+            // base, normal and the dissolve map copy: the plain tuple's base and normal are the same pages.
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            Assert.That(outputs.Select(output => Get<string>(output, "Slot")),
+                Is.EquivalentTo(new[] { SrBase, SrNormal, SrDissolveMap }));
+            Assert.That(Get<int>(built, "DeduplicatedOutputs"), Is.EqualTo(2));
+            Assert.That(SrMaterialTexture(world, 0, SrBase), Is.EqualTo(SrMaterialTexture(world, 1, SrBase)));
+            Assert.That(SrMaterialTexture(world, 0, SrNormal), Is.EqualTo(SrMaterialTexture(world, 1, SrNormal)));
+            Assert.That(SrMaterialTexture(world, 1, SrDissolveMap), Does.EndWith("_repack_dissolve_map.dds"));
+            Assert.That(Get<long>(built, "After"), Is.EqualTo(outputs.Sum(output => Get<long>(output, "Bytes"))));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_GroupsOnDifferentGeometry_AreNotDeduplicated()
+        {
+            var world = BuildSharedNormalSrWorld(sameGeometry: false);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<IEnumerable>(built, "Groups").Cast<object>().Count(), Is.EqualTo(2));
+            Assert.That(Get<IEnumerable>(built, "Outputs").Cast<object>().Count(), Is.EqualTo(4));
+            Assert.That(Get<int>(built, "DeduplicatedOutputs"), Is.Zero);
+            Assert.That(SrMaterialTexture(world, 0, SrNormal), Is.Not.EqualTo(SrMaterialTexture(world, 1, SrNormal)));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_DuplicateThatEncodesDifferently_FailsTheSetAndWritesNothing()
+        {
+            var world = BuildSharedNormalSrWorld(sameGeometry: true);
+
+            object result = null!;
+            WithBeforeCheckHook(
+                plan =>
+                {
+                    var duplicate = HookOutputs(plan).First(output => Get<object?>(output, "DuplicateOf") != null);
+                    var data = Get<byte[]>(duplicate, "Data");
+                    data[^1] ^= 0x55;
+                },
+                () => result = world.Run());
+
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            AssertFunnelReconciles(result);
+            Assert.That(SrSkips(result), Does.Contain("encoded differently").And.Contain("signature is wrong"));
+            Assert.That(world.Fixture.Output.Keys, Has.None.Contain("_repack_"));
+            Assert.That(Get<HashSet<string>>(world.State, "ModifiedRigids"), Is.Empty);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
         // Pixels between the colour changes along the row through the first triangle's centroid.
         private static int RunLengthAround(SrWorld world, int part, byte[] bgra, int width, int height)
         {
@@ -16755,6 +16893,9 @@ namespace Test.PackOptimizer.Core
             // dissolve map (a cropped copy) and a detail texture at UV0 * dissolve_uv_scale (the scale is divided);
             // the repack is not among the pinned stages, so the hash is unchanged.
             [19] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 20: the shared texture repack writes identical pages of layout groups on the same geometry once;
+            // the repack is not among the pinned stages, so the hash is unchanged.
+            [20] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

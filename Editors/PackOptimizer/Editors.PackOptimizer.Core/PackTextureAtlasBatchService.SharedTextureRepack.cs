@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
@@ -446,7 +447,13 @@ namespace Editors.PackOptimizer.Core
         private sealed class SharedRepackSlotOutput
         {
             public string Slot { get; init; } = string.Empty;
-            public string Path { get; init; } = string.Empty;
+            // The path the output is referenced by: a duplicate takes its canonical output's path.
+            public string Path { get; set; } = string.Empty;
+            // Set for a duplicate: the earlier output of the set plan it is guaranteed to encode identically
+            // to. It is composed to verify that, then neither written nor counted.
+            public SharedRepackSlotOutput? DuplicateOf { get; set; }
+            // The path a duplicate had before it took its canonical output's.
+            public string PlannedPath { get; set; } = string.Empty;
             public string Format { get; set; } = "BC1";
             public bool Srgb { get; set; }
             public bool Dx10 { get; set; }
@@ -562,7 +569,9 @@ namespace Editors.PackOptimizer.Core
             public int AspectTuples { get; set; }
             public long AspectExtraBytes { get; set; }
             public HashSet<string> FailedPaddingGroupKeys { get; } = new(StringComparer.Ordinal);
-
+            // Outputs identical to an earlier output of the plan (see DeduplicateSharedRepackOutputs).
+            public int DeduplicatedOutputs { get; set; }
+            public long DeduplicatedBytes { get; set; }
         }
 
         private sealed record SharedRepackSample(
@@ -748,6 +757,11 @@ namespace Editors.PackOptimizer.Core
             public long Before { get; set; }
             public long After { get; set; }
             public List<SharedRepackSlotOutput> Outputs { get; } = [];
+            // Duplicate outputs that were not written, and their bytes; the texture paths the rewritten
+            // direct rigids' embedded materials name.
+            public int DeduplicatedOutputs { get; set; }
+            public long DeduplicatedBytes { get; set; }
+            public HashSet<string> EmbeddedTexturePaths { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<SharedRepackGroupInfo> Groups { get; } = [];
             public int Tuples { get; set; }
             public int Charts { get; set; }
@@ -908,6 +922,9 @@ namespace Editors.PackOptimizer.Core
                 new(StringComparer.OrdinalIgnoreCase);
             public List<string> GeneratedTextures { get; } = [];
             public List<string> GeneratedMaterials { get; } = [];
+            // Duplicate texture pages of built sets that were not written, and their bytes.
+            public int DeduplicatedOutputs { get; set; }
+            public long DeduplicatedBytes { get; set; }
             public long Samples { get; set; }
             public double MaxError { get; set; }
             public double ErrorSum { get; set; }
@@ -4915,6 +4932,10 @@ namespace Editors.PackOptimizer.Core
                     plan.Replaced[texture] = entryOf[texture].Layout!.ChainBytes;
             }
 
+            // Layout groups on the same geometry lay out the same charts alike: their identical pages are
+            // written once. The per-group gate above still judges each group on its own pages.
+            DeduplicateSharedRepackOutputs(plan);
+
             var replaced = plan.Replaced.Values.Sum();
             var newBytes = plan.Pages.Sum(page => page.BytesAfter);
             if (replaced - newBytes < result.MinimumSavingBytes)
@@ -4970,6 +4991,74 @@ namespace Editors.PackOptimizer.Core
             }
 
             return plan;
+        }
+
+        // Everything TryComposeSharedRepackOutput encodes from, as text: the output kind (slot, format,
+        // colour space, header, size, mips), and per tuple that has the slot its source texture, exponent,
+        // reference size and alignment (block-copied levels) and the rectangle of each of its charts on
+        // the page (source crop, size, place). Rectangles of a page never overlap, so the entries are
+        // sorted: tuple and chart order do not matter. Equal text means equal bytes.
+        private static string GetSharedRepackOutputSignature(SharedRepackPage page, SharedRepackSlotOutput output)
+        {
+            var entries = new List<string>();
+            foreach (var tuple in page.Tuples.Where(tuple => tuple.Slots.ContainsKey(output.Slot)))
+            {
+                var exponent = tuple.SourceExponent[output.Slot];
+                var head = $"{Normalize(tuple.Slots[output.Slot]).ToLowerInvariant()}|{exponent.X},{exponent.Y}|" +
+                           $"{tuple.ReferenceWidth}x{tuple.ReferenceHeight}|{tuple.Align}";
+                foreach (var chart in page.Charts.Where(chart => chart.Tuple == tuple))
+                {
+                    entries.Add(
+                        $"{head}|{chart.X0},{chart.Y0},{chart.Width},{chart.Height}|{chart.LayoutWidth}x{chart.LayoutHeight}" +
+                        $"@{chart.PackX},{chart.PackY}");
+                }
+            }
+
+            entries.Sort(StringComparer.Ordinal);
+            return $"{output.Slot.ToLowerInvariant()}|{output.IsCopy}|{output.Format}|{output.Srgb}|{output.Dx10}|" +
+                   $"{output.ExponentX},{output.ExponentY}|{output.Width}x{output.Height}|{output.MipLevels}|" +
+                   string.Join(";", entries);
+        }
+
+        // Marks every output that has the signature of an earlier output of the plan (plan page order,
+        // then slot order) as its duplicate: it takes the canonical output's path (so every material and
+        // embedded reference built after this names it), and its bytes leave the page and group totals.
+        private static void DeduplicateSharedRepackOutputs(SharedRepackSetPlan plan)
+        {
+            plan.DeduplicatedOutputs = 0;
+            plan.DeduplicatedBytes = 0;
+            var canonical = new Dictionary<string, SharedRepackSlotOutput>(StringComparer.Ordinal);
+            var groupBytes = new Dictionary<string, (int Count, long Bytes)>(StringComparer.Ordinal);
+            foreach (var page in plan.Pages)
+            {
+                foreach (var output in page.Outputs)
+                {
+                    var signature = GetSharedRepackOutputSignature(page, output);
+                    if (!canonical.TryGetValue(signature, out var first))
+                    {
+                        canonical[signature] = output;
+                        continue;
+                    }
+
+                    output.DuplicateOf = first;
+                    output.PlannedPath = output.Path;
+                    output.Path = first.Path;
+                    page.BytesAfter -= output.Bytes;
+                    plan.DeduplicatedOutputs++;
+                    plan.DeduplicatedBytes += output.Bytes;
+                    var (count, bytes) = groupBytes.GetValueOrDefault(page.GroupKey);
+                    groupBytes[page.GroupKey] = (count + 1, bytes + output.Bytes);
+                }
+            }
+
+            foreach (var info in plan.Groups.Where(info => info.Pages != 0))
+            {
+                if (!groupBytes.TryGetValue(info.GroupKey, out var shared))
+                    continue;
+
+                info.After -= shared.Bytes;
+                info.Status += $" [deduplicated {shared.Count:N0} page(s) shared with another group, {shared.Bytes:N0} bytes]";
+            }
         }
 
         // Several smaller pages for the clusters of a group: the cheapest (total chained bytes
@@ -6652,11 +6741,29 @@ namespace Editors.PackOptimizer.Core
                             return null;
                         }
 
-                        generated.FromBytes(output.Path, output.Data);
+                        if (output.DuplicateOf == null)
+                            generated.FromBytes(output.Path, output.Data);
                     }
                 }
 
                 SharedRepackBeforeCheckHook?.Invoke(plan);
+
+                // A duplicate must have encoded to exactly the canonical bytes (hash both); otherwise
+                // the signature missed an input. It then shares the canonical data and is not written.
+                foreach (var output in plan.Pages.SelectMany(page => page.Outputs).Where(item => item.DuplicateOf != null))
+                {
+                    var first = output.DuplicateOf!;
+                    if (!output.Data.AsSpan().SequenceEqual(first.Data))
+                    {
+                        failure = $"internal error: duplicate {output.Slot} page {output.PlannedPath} encoded differently " +
+                                  $"from {first.Path} (sha256 {Convert.ToHexString(SHA256.HashData(output.Data))[..16]} vs " +
+                                  $"{Convert.ToHexString(SHA256.HashData(first.Data))[..16]}); the duplicate signature is wrong";
+                        return null;
+                    }
+
+                    output.Data = first.Data;
+                }
+
                 var problems = new List<string>();
                 foreach (var page in plan.Pages)
                 {
@@ -6684,7 +6791,7 @@ namespace Editors.PackOptimizer.Core
                 var claimedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var page in plan.Pages)
                 {
-                    foreach (var output in page.Outputs)
+                    foreach (var output in page.Outputs.Where(item => item.DuplicateOf == null))
                     {
                         if (state.SharedRepackTexturePaths.Contains(output.Path) || !claimedPaths.Add(output.Path))
                         {
@@ -6821,7 +6928,7 @@ namespace Editors.PackOptimizer.Core
 
             foreach (var page in plan.Pages)
             {
-                foreach (var output in page.Outputs)
+                foreach (var output in page.Outputs.Where(item => item.DuplicateOf == null))
                 {
                     WriteFile(state.Output, output.Path, output.Data);
                     state.SharedRepackTexturePaths.Add(output.Path);
@@ -6908,6 +7015,8 @@ namespace Editors.PackOptimizer.Core
                 HasCharacter = decision.HasCharacter,
                 EstimatedSaving = merge.Component.Sum(item => item.Saving),
                 After = plan.Pages.Sum(page => page.BytesAfter),
+                DeduplicatedOutputs = plan.DeduplicatedOutputs,
+                DeduplicatedBytes = plan.DeduplicatedBytes,
                 Tuples = plan.Pages.SelectMany(page => page.Tuples).Distinct().Count(),
                 Charts = plan.Pages.Sum(page => page.Charts.Count),
                 Parts = plan.Pages.Sum(page => page.Parts.Count),
@@ -6954,7 +7063,8 @@ namespace Editors.PackOptimizer.Core
 
             built.Groups.AddRange(plan.Groups);
             built.Splits.AddRange(plan.Splits.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => pair.Value));
-            built.Outputs.AddRange(plan.Pages.SelectMany(page => page.Outputs));
+            built.Outputs.AddRange(plan.Pages.SelectMany(page => page.Outputs).Where(output => output.DuplicateOf == null));
+            built.EmbeddedTexturePaths.UnionWith(rewrites.SelectMany(item => item.EmbeddedPaths.Values).Select(Normalize));
             built.Materials.AddRange(plan.Pages.SelectMany(page => page.MaterialMap.Values).OrderBy(path => path, StringComparer.Ordinal));
             built.BloodScales.AddRange(plan.Pages.SelectMany(page => page.BloodScales));
             built.DissolveScales.AddRange(plan.Pages.SelectMany(page => page.DissolveScales));
@@ -7005,6 +7115,8 @@ namespace Editors.PackOptimizer.Core
             built.CopyWon = merge.CopyRemoved && built.RemovedCopies.Count != 0;
             built.NormalSaving = merge.NormalSaving;
             built.CopyGain = built.CopyWon ? built.Before - built.After - (merge.NormalSaving ?? 0) : 0;
+            result.DeduplicatedOutputs += built.DeduplicatedOutputs;
+            result.DeduplicatedBytes += built.DeduplicatedBytes;
             result.EmissiveParts += built.EmissiveParts;
             result.EmissiveCopies += built.EmissiveCopies;
             result.EmissiveCopyBytes += built.EmissiveCopyBytes;
@@ -7125,6 +7237,7 @@ namespace Editors.PackOptimizer.Core
                         errors.Add($"Generated repack texture {output.Path} {problem}");
                 }
 
+                var referencedTextures = new HashSet<string>(set.EmbeddedTexturePaths, StringComparer.OrdinalIgnoreCase);
                 foreach (var materialPath in set.Materials)
                 {
                     var file = state.Output.FindFile(materialPath);
@@ -7149,9 +7262,22 @@ namespace Editors.PackOptimizer.Core
                                     $"{texture} in slot {GetTextureSlot(node)}");
                             }
 
+                            referencedTextures.Add(texture);
                             // Only the textures the repack generated; pass-through slots are unchanged.
                             if (!set.Outputs.Any(output => output.Path.Equals(texture, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                // A generated page name must be a written page of this set (a page of another
+                                // layout group the set deduplicated against is one; a dropped duplicate's is not).
+                                if (texture.Contains("_repack_", StringComparison.Ordinal) &&
+                                    texture.StartsWith(AtlasDirectory, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    errors.Add(
+                                        $"Generated repack material {materialPath} names the repack texture {texture}, " +
+                                        "which is not a written page of its set");
+                                }
+
                                 continue;
+                            }
 
                             if (!CanResolveAfterRewrite(state, texture))
                                 errors.Add($"Generated repack material texture does not resolve: {materialPath} -> {texture}");
@@ -7161,6 +7287,14 @@ namespace Editors.PackOptimizer.Core
                     {
                         errors.Add($"Generated repack material is invalid: {materialPath} ({ex.Message})");
                     }
+                }
+
+                // No written page may be left without a user (a page whose users all point elsewhere is waste).
+                foreach (var output in set.Outputs.Where(output => !referencedTextures.Contains(Normalize(output.Path))))
+                {
+                    errors.Add(
+                        $"Generated repack texture {output.Path} is not referenced by any generated material or " +
+                        "rewritten embedded material of its set");
                 }
             }
 
@@ -8715,6 +8849,13 @@ namespace Editors.PackOptimizer.Core
                 $"{result.RepackedRigids.Count(path => state.CrossRigidGeneratedRigidPaths.Contains(path)):N0} are generated " +
                 $"cross-rigid models and {result.RepackedRigids.Count(path => state.CrossRigidChangedRigids.Contains(path)):N0} " +
                 $"are source rigids cross-rigid merging relied on.");
+            if (result.DeduplicatedOutputs != 0)
+            {
+                sb.AppendLine(
+                    $"Deduplicated {result.DeduplicatedOutputs:N0} page(s), {result.DeduplicatedBytes:N0} bytes " +
+                    "(identical pages of layout groups on the same geometry, written once).");
+            }
+
             foreach (var set in result.BuiltSets)
             {
                 sb.AppendLine($"  Set {set.Label}");
@@ -8757,6 +8898,13 @@ namespace Editors.PackOptimizer.Core
                 sb.AppendLine(
                     $"    bytes (actual) {set.Before:N0} -> {set.After:N0}, saves {FormatSignedBytes(set.Before - set.After)} " +
                     $"(estimate said {FormatSignedBytes(set.EstimatedSaving)}); {set.Pages:N0} page(s)");
+                if (set.DeduplicatedOutputs != 0)
+                {
+                    sb.AppendLine(
+                        $"    deduplicated {set.DeduplicatedOutputs:N0} page(s), {set.DeduplicatedBytes:N0} bytes " +
+                        "(identical to a page of another layout group of the set; written once)");
+                }
+
                 foreach (var group in set.Groups)
                 {
                     sb.AppendLine(
