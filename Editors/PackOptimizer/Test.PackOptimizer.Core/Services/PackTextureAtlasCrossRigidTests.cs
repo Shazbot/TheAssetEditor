@@ -5980,6 +5980,51 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void Downscale_LateRunKeepsTheEarlyReferenceWhenAStageRemovedSampleParts()
+        {
+            var fixture = new DownscaleFixture();
+            fixture.AddTexture("textures\\t_low.dds", 1024, 11);
+            fixture.AddTexture("textures\\t_mid.dds", 1024, 11);
+            fixture.AddTexture("textures\\t_half.dds", 1024, 11);
+            fixture.AddMaterial("materials\\m_low.xml.material", ("t_xml_base_colour", "textures\\t_low.dds"));
+            fixture.AddMaterial("materials\\m_mid.xml.material", ("t_xml_base_colour", "textures\\t_mid.dds"));
+            fixture.AddMaterial("materials\\m_half.xml.material", ("t_xml_base_colour", "textures\\t_half.dds"));
+            var parts = Enumerable.Repeat(("materials\\m_low.xml.material", 100.0, 1024), 4)
+                .Concat(Enumerable.Repeat(("materials\\m_mid.xml.material", 200.0, 1024), 4))
+                .Append(("materials\\m_half.xml.material", 450.0, 1024))
+                .ToArray();
+            fixture.AddModel(DownscaleRigid, DownscaleWsModel, parts);
+            var (service, state) = CreateDownscaleState(fixture, downscale: false, atlasReference: null);
+
+            var earlyPlan = Get<object>(RunEarlyDownscale(service, state, fixture), "Plan");
+            var earlyReference = Get<double?>(earlyPlan, "ReferenceDensity")!.Value;
+            // A later stage (atlas or repack) moved the four 200 parts: they no longer sample.
+            var processed = Get<object>(state, "ProcessedMeshes");
+            foreach (var part in new[] { 4, 5, 6, 7 })
+                processed.GetType().GetMethod("Add")!.Invoke(processed, [CreateMeshKey(DownscaleRigid, 0, part)]);
+
+            var plan = Get<object>(RunDownscale(service, state, fixture), "Plan");
+            Assert.That(Get<double?>(plan, "ReferenceDensity"), Is.EqualTo(earlyReference));
+            Assert.That(Get<int>(plan, "ReferenceSamples"), Is.EqualTo(Get<int>(earlyPlan, "ReferenceSamples")));
+            Assert.That(Get<string>(plan, "ReferenceOrigin"), Does.Contain("early analysis on the source state"));
+
+            var disabled = GetServiceType().GetField(
+                "TextureDownscaleReferencePinDisabled", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var old = (bool)disabled.GetValue(null)!;
+            try
+            {
+                disabled.SetValue(null, true);
+                var derived = Get<object>(RunDownscale(service, state, fixture), "Plan");
+                Assert.That(Get<string>(derived, "ReferenceOrigin"), Does.StartWith("derived here"));
+                Assert.That(Get<double?>(derived, "ReferenceDensity"), Is.Not.EqualTo(earlyReference));
+            }
+            finally
+            {
+                disabled.SetValue(null, old);
+            }
+        }
+
+        [Test]
         public void Downscale_WithoutAReferenceNothingIsACandidate()
         {
             var fixture = new DownscaleFixture();
@@ -16080,6 +16125,8 @@ namespace Test.PackOptimizer.Core
             [14] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
             // 15: VMDs that only parse leniently no longer make gameplay discovery partial; the pinned pack has none.
             [15] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 16: the late texture downscale run uses the early run's source-state reference density; the pinned pack has none.
+            [16] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

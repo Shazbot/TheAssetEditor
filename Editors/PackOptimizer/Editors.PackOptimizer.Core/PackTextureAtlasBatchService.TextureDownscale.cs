@@ -224,6 +224,10 @@ namespace Editors.PackOptimizer.Core
             public List<double> PopulationDensities { get; } = [];
             public double? AtlasReferenceDensity { get; set; }
             public int AtlasReferenceCount { get; set; }
+            // Late run only: the early analysis's reference (source state, before any stage moved
+            // parts), with its sample count.
+            public double? PinnedReferenceDensity { get; set; }
+            public int PinnedReferenceSamples { get; set; }
 
             public int MaterialsScanned { get; set; }
             public int UnreadableMaterials { get; set; }
@@ -1732,6 +1736,16 @@ namespace Editors.PackOptimizer.Core
                     "taken from the atlas stage of this run (its global value; the atlas " +
                     "stage used a per-root value for roots with at least 4 parts)";
             }
+            else if (inputs.PinnedReferenceDensity.HasValue)
+            {
+                // Derived from the parts left after atlasing and repacking, the percentile would
+                // move with whatever those stages rewrote and flip textures near the threshold.
+                plan.ReferenceDensity = inputs.PinnedReferenceDensity;
+                plan.ReferenceSamples = inputs.PinnedReferenceSamples;
+                plan.ReferenceOrigin =
+                    "taken from the early analysis on the source state (pinned, so the parts " +
+                    "that atlasing or the repack rewrote do not move it)";
+            }
             else if (inputs.PopulationDensities.Count >= 2)
             {
                 var sorted = inputs.PopulationDensities.OrderBy(value => value).ToArray();
@@ -1999,6 +2013,9 @@ namespace Editors.PackOptimizer.Core
         // Stage entry, rewrite and validation.
         // ---------------------------------------------------------------------------
 
+        // Test hook: the late run derives its own reference (an earlier output version).
+        private static bool TextureDownscaleReferencePinDisabled;
+
         private void RunTextureDownscale(
             BatchState state,
             CancellationToken cancellationToken,
@@ -2021,6 +2038,13 @@ namespace Editors.PackOptimizer.Core
                         : TimeSpan.FromSeconds(TextureDownscaleBudgetSeconds),
                     cancellationToken,
                     progress);
+                if (!TextureDownscaleReferencePinDisabled &&
+                    state.TextureDownscaleEarly?.Plan is { ReferenceDensity: { } pinned } earlyPlan)
+                {
+                    inputs.PinnedReferenceDensity = pinned;
+                    inputs.PinnedReferenceSamples = earlyPlan.ReferenceSamples;
+                }
+
                 result.Plan = PlanTextureDownscale(inputs);
                 CompareEarlyDownscaleEstimate(state, result);
             }

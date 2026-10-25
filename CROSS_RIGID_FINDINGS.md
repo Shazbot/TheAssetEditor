@@ -495,6 +495,18 @@ Measured (`teb-disc`, `albion-disc`, versus direct3): both packs report "Structu
 - Teb: output identical (6,515 files, 0 added, 0 removed, 0 modified); 130,174,832 bytes saved.
 - Albion: shared repack 143,960,472 -> 145,271,120 bytes (+1,310,648, three more rigids rewritten: 39 -> 42); texture downscale 6 -> 9 textures (`alb_damsel_01_head_base_colour` and `_mask` 2048 -> 1024 and `high_flagellants_head_01_base_colour` 1024 -> 512, 6.82 MB of texture bytes); structural mesh merging 43 -> 45 groups (`alb_flagellants_legs_01`, LOD 2 and 3, 2 parts fewer). Against direct3: 172 files added, 164 removed (88 texture renames by content hash plus 6 new textures and 2 more materials), 52 modified (43 WSModels, 6 rigids, 3 textures). Wall time 125.3 s.
 
+## 2026-10-25: the late texture downscale run pins the source-state reference density
+
+Diagnosis (merge-cap measurement, temporary instrumentation): raising the shared repack's merge caps to 2x made the albion output 0.86 MB larger although the repack saved 0.70 MB more. The late downscale run derived its reference density (75th percentile of part texel densities) from the parts still assessable on the output, so the parts that atlasing or the repack rewrote left the sample. `alb_damsel_01_head_base_colour` and `_mask` (24 users, least dense 1622.9 texels per world unit) sit on the 0.5x threshold: reference 809.54 (today's caps) halved them, 816.70 (2x caps) and the early run's source-state 816.75 kept them at full size. Users and densities were identical in all three runs; only the reference moved.
+
+Rule (`RunTextureDownscale`): when the early analysis ran and has a reference, the late run uses it (report: "taken from the early analysis on the source state"). The atlas stage's single global value still wins; without an early run the late run derives its own as before. Test hook `TextureDownscaleReferencePinDisabled`. OutputVersion 16.
+
+Measured (`teb-pinref`, `albion-pinref`, versus disc):
+
+- Teb: reference 991.98 -> 971.36, same 7 candidates; output byte-identical.
+- Albion: reference 809.54 -> 816.75; the two damsel head textures are no longer downscaled (9 -> 7 candidates, 6.29 MB texture bytes, pack +1.04 MB). Shared repack unchanged (145,271,120 bytes). WHMM validation diagnostics equal to albion-disc. The 6.3 MB was a side effect of the drift, not a decision on the source pack.
+- Measured on the way, nothing changed: the merge cap (8 sets, 16 source rigids, 64 generated per plan) costs nothing on teb (2x and uncapped: identical savings) and 0.70 MB on albion; copying textures that leave a plan instead of dropping their parts would gain about 13.4 MB estimated on teb and 2.1 MB on albion where a copy pays, but loses 14.2 / 6.6 MB if every leaving texture is copied, so it needs a per-set with/without comparison.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).
