@@ -153,6 +153,10 @@ namespace Editors.PackOptimizer.Core
         private static readonly HashSet<string> SharedRepackEmissiveVerifiedShaders =
             new(StringComparer.OrdinalIgnoreCase)
             {
+                "shaders/rigid_character_dissolve_iridescent_emissive.xml.shader",
+                "shaders/rigid_character_dissolve_iridescent_emissive_alpha.xml.shader",
+                "shaders/rigid_character_dissolve_iridescent_emissive_alpha_blood.xml.shader",
+                "shaders/rigid_character_dissolve_iridescent_emissive_blood.xml.shader",
                 "shaders/rigid_character_emissive.xml.shader",
                 "shaders/rigid_character_emissive_alpha.xml.shader",
                 "shaders/rigid_character_emissive_alpha_blood.xml.shader",
@@ -163,10 +167,20 @@ namespace Editors.PackOptimizer.Core
                 "shaders/rigid_character_iridescent_emissive_blood.xml.shader",
                 "shaders/rigid_character_tentacle_emissive.xml.shader",
                 "shaders/rigid_character_tentacle_emissive_blood.xml.shader",
+                "shaders/rigid_daemon_prince.xml.shader",
+                "shaders/rigid_daemon_prince_alpha.xml.shader",
                 "shaders/rigid_emissive.xml.shader",
                 "shaders/rigid_emissive_blood.xml.shader",
                 "shaders/weighted2_character_alphatint_emissive.xml.shader",
                 "shaders/weighted2_character_alphatint_emissive_blood.xml.shader",
+                "shaders/weighted2_character_dissolve_emissive.xml.shader",
+                "shaders/weighted2_character_dissolve_emissive_alpha.xml.shader",
+                "shaders/weighted2_character_dissolve_emissive_alpha_blood.xml.shader",
+                "shaders/weighted2_character_dissolve_emissive_blood.xml.shader",
+                "shaders/weighted2_character_dissolve_iridescent_emissive.xml.shader",
+                "shaders/weighted2_character_dissolve_iridescent_emissive_alpha.xml.shader",
+                "shaders/weighted2_character_dissolve_iridescent_emissive_alpha_blood.xml.shader",
+                "shaders/weighted2_character_dissolve_iridescent_emissive_blood.xml.shader",
                 "shaders/weighted2_character_emissive.xml.shader",
                 "shaders/weighted2_character_emissive_alpha.xml.shader",
                 "shaders/weighted2_character_emissive_alpha_blood.xml.shader",
@@ -182,8 +196,18 @@ namespace Editors.PackOptimizer.Core
                 "shaders/weighted2_character_silk_emissive_alpha.xml.shader",
                 "shaders/weighted2_character_silk_emissive_alpha_blood.xml.shader",
                 "shaders/weighted2_character_silk_emissive_blood.xml.shader",
+                "shaders/weighted2_daemon_prince.xml.shader",
+                "shaders/weighted2_daemon_prince_alpha.xml.shader",
+                "shaders/weighted2_daemon_prince_alpha_blood.xml.shader",
+                "shaders/weighted2_daemon_prince_blood.xml.shader",
                 "shaders/weighted2_emissive.xml.shader",
                 "shaders/weighted2_emissive_blood.xml.shader",
+                "shaders/weighted4_character_dissolve_emissive.xml.shader",
+                "shaders/weighted4_character_dissolve_emissive_alpha.xml.shader",
+                "shaders/weighted4_character_dissolve_emissive_alpha_blood.xml.shader",
+                "shaders/weighted4_character_dissolve_emissive_blood.xml.shader",
+                "shaders/weighted4_character_dissolve_iridescent_emissive.xml.shader",
+                "shaders/weighted4_character_dissolve_iridescent_emissive_blood.xml.shader",
                 "shaders/weighted4_character_emissive.xml.shader",
                 "shaders/weighted4_character_emissive_alpha.xml.shader",
                 "shaders/weighted4_character_emissive_alpha_blood.xml.shader",
@@ -197,8 +221,77 @@ namespace Editors.PackOptimizer.Core
                 "shaders/weighted4_character_silk_emissive_alpha.xml.shader",
                 "shaders/weighted4_character_silk_emissive_alpha_blood.xml.shader",
                 "shaders/weighted4_character_silk_emissive_blood.xml.shader",
+                "shaders/weighted4_daemon_prince.xml.shader",
+                "shaders/weighted4_daemon_prince_alpha.xml.shader",
+                "shaders/weighted4_daemon_prince_alpha_blood.xml.shader",
+                "shaders/weighted4_daemon_prince_blood.xml.shader",
                 "shaders/weighted4_emissive.xml.shader",
                 "shaders/weighted4_emissive_blood.xml.shader",
+            };
+        // Dissolve shaders. The pixel shader samples t_xml_dissolve_map at the raw UV0 and
+        // t_xml_dissolve_detail at UV0 * sp_dissolve_uv_scale (per axis, nothing else). The detail
+        // texture is kept as authored (a shared common texture) and dissolve_uv_scale is divided by the
+        // UV scale of the page like blood_uv_scale; the map (a shared common noise texture) is cropped as a
+        // noise COPY like the emissive distortion, but needs no parameter compensation.
+        private const string SharedRepackDissolveDetailSlot = "t_xml_dissolve_detail";
+        private const string SharedRepackDissolveMapSlot = "t_xml_dissolve_map";
+        private const string SharedRepackDissolveScaleParameter = "dissolve_uv_scale";
+        private const string SharedRepackDissolveOutputSuffix = "dissolve_map";
+        private const string SharedRepackReasonDissolveShader =
+            "the material's shader is not verified for dissolve repacking (";
+        private const string SharedRepackReasonDissolveParameter =
+            "the material lacks dissolve parameter ";
+        // Shaders whose every pixel shader variant (and every _alpha/_blood sibling) has the two samples
+        // above and reads UV0 nowhere else outside the cropped slots. Generated by
+        // Tools/ShaderChannels/verify_dissolve_uv.py from the game's compiled shaders; same format as the
+        // emissive list. A dissolve+emissive shader is in the emissive list too.
+        private static readonly HashSet<string> SharedRepackDissolveVerifiedShaders =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "shaders/rigid_character_dissolve.xml.shader",
+                "shaders/rigid_character_dissolve_blood.xml.shader",
+                "shaders/rigid_character_dissolve_iridescent_emissive.xml.shader",
+                "shaders/rigid_character_dissolve_iridescent_emissive_alpha.xml.shader",
+                "shaders/rigid_character_dissolve_iridescent_emissive_alpha_blood.xml.shader",
+                "shaders/rigid_character_dissolve_iridescent_emissive_blood.xml.shader",
+                "shaders/rigid_daemon_prince.xml.shader",
+                "shaders/rigid_daemon_prince_alpha.xml.shader",
+                "shaders/weighted2_character_dissolve.xml.shader",
+                "shaders/weighted2_character_dissolve_alpha.xml.shader",
+                "shaders/weighted2_character_dissolve_alpha_blood.xml.shader",
+                "shaders/weighted2_character_dissolve_blood.xml.shader",
+                "shaders/weighted2_character_dissolve_emissive.xml.shader",
+                "shaders/weighted2_character_dissolve_emissive_alpha.xml.shader",
+                "shaders/weighted2_character_dissolve_emissive_alpha_blood.xml.shader",
+                "shaders/weighted2_character_dissolve_emissive_blood.xml.shader",
+                "shaders/weighted2_character_dissolve_iridescent_emissive.xml.shader",
+                "shaders/weighted2_character_dissolve_iridescent_emissive_alpha.xml.shader",
+                "shaders/weighted2_character_dissolve_iridescent_emissive_alpha_blood.xml.shader",
+                "shaders/weighted2_character_dissolve_iridescent_emissive_blood.xml.shader",
+                "shaders/weighted2_daemon_prince.xml.shader",
+                "shaders/weighted2_daemon_prince_alpha.xml.shader",
+                "shaders/weighted2_daemon_prince_alpha_blood.xml.shader",
+                "shaders/weighted2_daemon_prince_blood.xml.shader",
+                "shaders/weighted2_dragon_dissolve.xml.shader",
+                "shaders/weighted2_dragon_dissolve_blood.xml.shader",
+                "shaders/weighted4_character_dissolve.xml.shader",
+                "shaders/weighted4_character_dissolve_alpha.xml.shader",
+                "shaders/weighted4_character_dissolve_alpha_blood.xml.shader",
+                "shaders/weighted4_character_dissolve_blood.xml.shader",
+                "shaders/weighted4_character_dissolve_emissive.xml.shader",
+                "shaders/weighted4_character_dissolve_emissive_alpha.xml.shader",
+                "shaders/weighted4_character_dissolve_emissive_alpha_blood.xml.shader",
+                "shaders/weighted4_character_dissolve_emissive_blood.xml.shader",
+                "shaders/weighted4_character_dissolve_iridescent_emissive.xml.shader",
+                "shaders/weighted4_character_dissolve_iridescent_emissive_blood.xml.shader",
+                "shaders/weighted4_daemon_prince.xml.shader",
+                "shaders/weighted4_daemon_prince_alpha.xml.shader",
+                "shaders/weighted4_daemon_prince_alpha_blood.xml.shader",
+                "shaders/weighted4_daemon_prince_blood.xml.shader",
+                "shaders/weighted4_dragon_dissolve.xml.shader",
+                "shaders/weighted4_dragon_dissolve_alpha.xml.shader",
+                "shaders/weighted4_dragon_dissolve_alpha_blood.xml.shader",
+                "shaders/weighted4_dragon_dissolve_blood.xml.shader",
             };
         private const string SharedRepackReasonVariants =
             "the part's WSModel bindings resolve to different textures";
@@ -296,13 +389,13 @@ namespace Editors.PackOptimizer.Core
             // The slots of Slots that are copy slots: the part's emissive noise slots, and the slots
             // whose texture is a copy in this plan (see SharedRepackMergeContext.CopyRemoved).
             public HashSet<string> CopySlots { get; init; } = new(StringComparer.OrdinalIgnoreCase);
-            // The emissive noise copy has layout rules of its own (never the reference, no chart
-            // alignment); any other copy lays out like a normal slot.
-            public bool IsEmissiveCopySlot(string slot)
-                => CopySlots.Contains(slot) && slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase);
+            // The noise copies (emissive distortion, dissolve map) have layout rules of their own (never
+            // the reference, no chart alignment); any other copy lays out like a normal slot.
+            public bool IsNoiseCopySlot(string slot)
+                => CopySlots.Contains(slot) && IsSharedRepackNoiseSlot(slot);
             // A copy of a texture that left this plan: not a replaced texture, but its original
             // does not count as a source either.
-            public bool IsGeneralCopySlot(string slot) => CopySlots.Contains(slot) && !IsEmissiveCopySlot(slot);
+            public bool IsGeneralCopySlot(string slot) => CopySlots.Contains(slot) && !IsNoiseCopySlot(slot);
             // The tuple's materials get the emissive scroll parameters rescaled, which is only exact
             // for equal U and V UV scales (the group's canvases are restricted to the reference aspect).
             public bool EmissiveCompensation => CopySlots.Contains(SharedRepackEmissiveDistortionSlot);
@@ -400,6 +493,7 @@ namespace Editors.PackOptimizer.Core
             public List<(XmlNode Node, string Material)> WsRepoints { get; } = [];
             public HashSet<string> WsModels { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<string> BloodScales { get; } = [];
+            public List<string> DissolveScales { get; } = [];
             public List<string> EmissiveScales { get; } = [];
         }
 
@@ -677,11 +771,16 @@ namespace Editors.PackOptimizer.Core
             public int LayoutHeight { get; set; }
             public List<string> Materials { get; } = [];
             public List<string> BloodScales { get; } = [];
+            public List<string> DissolveScales { get; } = [];
             public List<string> EmissiveScales { get; } = [];
             // Parts moved with a copied emissive distortion slot, and the bytes of the copies.
             public int EmissiveParts { get; set; }
             public int EmissiveCopies { get; set; }
             public long EmissiveCopyBytes { get; set; }
+            // The same for the dissolve map copy.
+            public int DissolveParts { get; set; }
+            public int DissolveCopies { get; set; }
+            public long DissolveCopyBytes { get; set; }
             // Copies of textures that left the plan (not the emissive noise): texture, slot, why it
             // left, output bytes; and, when the copy plan was built, what the normal plan saved
             // (null: it failed, so the set is built only thanks to the copies).
@@ -761,6 +860,12 @@ namespace Editors.PackOptimizer.Core
             public int EmissiveCopies { get; set; }
             public long EmissiveCopyBytes { get; set; }
             public int EmissiveMaterialsRescaled { get; set; }
+            // Dissolve (map copy + dissolve_uv_scale): parts moved with a copied dissolve map, copies
+            // written (count, bytes), materials with a divided dissolve_uv_scale.
+            public int DissolveParts { get; set; }
+            public int DissolveCopies { get; set; }
+            public long DissolveCopyBytes { get; set; }
+            public int DissolveMaterialsRescaled { get; set; }
             public int EmissiveAspectGroups { get; set; }
             public int EmissiveAspectTuples { get; set; }
             // Groups (and tuples) the restriction alone left untouched (they would have paid without it),
@@ -2634,8 +2739,21 @@ namespace Editors.PackOptimizer.Core
         }
 
         // The same, plus a t_xml_ slot the material's shader never binds (see IsSlotUnreadByShader).
+        // A dissolve detail texture of a verified material stays as authored too (its scale parameter is
+        // divided instead).
         private static bool IsSharedRepackIgnoredTexture(VanillaCoverageMaterial info, string slot, string texture)
-            => IsSharedRepackIgnoredTexture(slot, texture) || IsSlotUnreadByShader(info.Shader, slot);
+            => IsSharedRepackIgnoredTexture(slot, texture) || IsSlotUnreadByShader(info.Shader, slot) ||
+               (slot.Equals(SharedRepackDissolveDetailSlot, StringComparison.OrdinalIgnoreCase) &&
+                GetSharedRepackDissolveReason(info) == null);
+
+        // The noise slots that are cropped as copies and laid out without the chart alignment.
+        private static bool IsSharedRepackNoiseSlot(string slot)
+            => slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase) ||
+               slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase);
+
+        private static bool IsSharedRepackDissolveSlot(string slot)
+            => slot.Equals(SharedRepackDissolveDetailSlot, StringComparison.OrdinalIgnoreCase) ||
+               slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// True when <paramref name="shader"/> is in the generated SharedRepackShaderBoundSlots table
@@ -2658,8 +2776,10 @@ namespace Editors.PackOptimizer.Core
                    !bound.Contains(slot);
         }
 
-        internal static bool IsSharedRepackEmissiveParameter(string name)
-            => SharedRepackEmissiveParameters.Contains(name, StringComparer.OrdinalIgnoreCase);
+        // The material parameters the repack rewrites and the coverage stage therefore keeps.
+        internal static bool IsSharedRepackCompensatedParameter(string name)
+            => SharedRepackEmissiveParameters.Contains(name, StringComparer.OrdinalIgnoreCase) ||
+               name.Equals(SharedRepackDissolveScaleParameter, StringComparison.OrdinalIgnoreCase);
 
         private static int GetSharedRepackEmissiveParameterComponents(string name)
             => name.Equals(SharedRepackEmissiveStrengthParameter, StringComparison.OrdinalIgnoreCase) ? 1 : 2;
@@ -2699,8 +2819,8 @@ namespace Editors.PackOptimizer.Core
 
             foreach (var name in SharedRepackEmissiveParameters)
             {
-                if (info.EmissiveParameters == null ||
-                    !info.EmissiveParameters.TryGetValue(name, out var text) ||
+                if (info.Parameters == null ||
+                    !info.Parameters.TryGetValue(name, out var text) ||
                     !TryParseSharedRepackFloats(text, GetSharedRepackEmissiveParameterComponents(name), out _))
                 {
                     return SharedRepackReasonEmissiveParameter + name;
@@ -2710,14 +2830,47 @@ namespace Editors.PackOptimizer.Core
             return null;
         }
 
-        // The material's emissive distortion texture is cropped as a copy slot (see the design note
-        // at SharedRepackEmissiveDistortionSlot).
+        // Null when the material's dissolve shader can be repacked (its shader is verified and the float2
+        // dissolve_uv_scale the repack divides is present and parses), else why not.
+        private static string? GetSharedRepackDissolveReason(VanillaCoverageMaterial info)
+        {
+            if (!SharedRepackDissolveVerifiedShaders.Contains(info.Shader))
+            {
+                return SharedRepackReasonDissolveShader +
+                       (info.Shader.Length == 0 ? "unknown shader" : info.Shader) + ")";
+            }
+
+            if (info.Parameters == null ||
+                !info.Parameters.TryGetValue(SharedRepackDissolveScaleParameter, out var text) ||
+                !TryParseSharedRepackFloats(text, 2, out _))
+            {
+                return SharedRepackReasonDissolveParameter + SharedRepackDissolveScaleParameter;
+            }
+
+            return null;
+        }
+
+        // The material's noise textures (emissive distortion, dissolve map) are cropped as copy slots (see
+        // the design notes at SharedRepackEmissiveDistortionSlot and SharedRepackDissolveVerifiedShaders).
         private static bool IsSharedRepackCopySlot(VanillaCoverageMaterial info, string slot)
-            => slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase) &&
-               GetSharedRepackEmissiveReason(info) == null;
+            => (slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase) &&
+                GetSharedRepackEmissiveReason(info) == null) ||
+               (slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase) &&
+                GetSharedRepackDissolveReason(info) == null);
 
         private static bool TryScaleSharedRepackBloodParameter(
             XmlDocument material,
+            double scaleU,
+            double scaleV,
+            out string description)
+            => TryScaleSharedRepackFloat2Parameter(
+                material, SharedRepackBloodScaleParameter, scaleU, scaleV, out description);
+
+        // Divides a float2 material parameter per axis by the page's UV scale (parameters sampled as
+        // UV0 * parameter keep their density on the mesh).
+        private static bool TryScaleSharedRepackFloat2Parameter(
+            XmlDocument material,
+            string name,
             double scaleU,
             double scaleV,
             out string description)
@@ -2726,7 +2879,7 @@ namespace Editors.PackOptimizer.Core
             var parameter = material.SelectNodes("/material/params/param")?.Cast<XmlNode>()
                 .FirstOrDefault(node =>
                     node.SelectSingleNode("name")?.InnerText.Trim().Equals(
-                        SharedRepackBloodScaleParameter, StringComparison.OrdinalIgnoreCase) == true &&
+                        name, StringComparison.OrdinalIgnoreCase) == true &&
                     node.SelectSingleNode("type")?.InnerText.Trim().Equals(
                         "float2", StringComparison.OrdinalIgnoreCase) == true);
             var valueNode = parameter?.SelectSingleNode("value");
@@ -2875,6 +3028,7 @@ namespace Editors.PackOptimizer.Core
                     item.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase) &&
                     !IsSharedRepackIgnoredTexture(info, item.Slot, item.Texture));
                 var emissiveReason = GetSharedRepackEmissiveReason(info);
+                var dissolveReason = GetSharedRepackDissolveReason(info);
                 foreach (var (slot, texture) in info.Textures)
                 {
                     if (IsSharedRepackIgnoredTexture(info, slot, texture))
@@ -2882,21 +3036,24 @@ namespace Editors.PackOptimizer.Core
 
                     var isDistortion = slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase);
                     var isEmissiveTexture = slot.Equals(SharedRepackEmissiveTextureSlot, StringComparison.OrdinalIgnoreCase);
-                    if ((isDistortion || isEmissiveTexture) && emissiveReason == null && hasDistortion)
+                    var isDissolveMap = slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase);
+                    if (((isDistortion || isEmissiveTexture) && emissiveReason == null && hasDistortion) ||
+                        (isDissolveMap && dissolveReason == null))
                     {
                         // The glow texture stays as authored (not part of the set or a tuple); the
-                        // distortion noise is cropped like a slot but never joins the closure.
+                        // noise (distortion, dissolve map) is cropped like a slot but never joins the closure.
                         if (isEmissiveTexture)
                             continue;
 
+                        var noiseName = isDissolveMap ? "dissolve map" : "emissive distortion";
                         var noise = Normalize(texture);
                         if (!coverage.Entries.TryGetValue(noise, out var noiseEntry) || noiseEntry.Layout == null)
                         {
-                            part.Reason ??= "the emissive distortion texture cannot be read";
+                            part.Reason ??= $"the {noiseName} texture cannot be read";
                         }
                         else if (GetSharedRepackBlockedTextureReason(noiseEntry.Layout) is { } blocked)
                         {
-                            part.Reason ??= "the emissive distortion texture cannot be copied: " + blocked;
+                            part.Reason ??= $"the {noiseName} texture cannot be copied: " + blocked;
                         }
 
                         part.CopySlots.Add(slot);
@@ -2918,7 +3075,9 @@ namespace Editors.PackOptimizer.Core
                     {
                         part.Reason ??= isDistortion || isEmissiveTexture
                             ? emissiveReason ?? SharedRepackReasonSlot + slot.ToLowerInvariant()
-                            : SharedRepackReasonSlot + slot.ToLowerInvariant();
+                            : IsSharedRepackDissolveSlot(slot)
+                                ? dissolveReason ?? SharedRepackReasonSlot + slot.ToLowerInvariant()
+                                : SharedRepackReasonSlot + slot.ToLowerInvariant();
                         continue;
                     }
 
@@ -4022,7 +4181,7 @@ namespace Editors.PackOptimizer.Core
                 // copy; a copied base colour or other copy is a normal slot).
                 var reference = tuple.Slots.ContainsKey("t_xml_base_colour")
                     ? tuple.Layouts["t_xml_base_colour"]
-                    : tuple.Layouts.Where(pair => !tuple.IsEmissiveCopySlot(pair.Key)).Select(pair => pair.Value)
+                    : tuple.Layouts.Where(pair => !tuple.IsNoiseCopySlot(pair.Key)).Select(pair => pair.Value)
                         .OrderByDescending(layout => (long)layout.Width * layout.Height).First();
                 tuple.ReferenceWidth = reference.Width;
                 tuple.ReferenceHeight = reference.Height;
@@ -4037,7 +4196,7 @@ namespace Editors.PackOptimizer.Core
                     tuple.SourceExponent[slot] = exponent;
                     var shift = Math.Max(-exponent.Item1, -exponent.Item2);
                     cellDownshift = Math.Max(cellDownshift, shift);
-                    if (!tuple.IsEmissiveCopySlot(slot))
+                    if (!tuple.IsNoiseCopySlot(slot))
                         downshift = Math.Max(downshift, shift);
                 }
 
@@ -5333,8 +5492,10 @@ namespace Editors.PackOptimizer.Core
                 foreach (var slot in slots)
                 {
                     var isCopy = first.CopySlots.Contains(slot);
-                    var suffix = first.IsEmissiveCopySlot(slot)
-                        ? SharedRepackEmissiveOutputSuffix
+                    var suffix = first.IsNoiseCopySlot(slot)
+                        ? slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase)
+                            ? SharedRepackDissolveOutputSuffix
+                            : SharedRepackEmissiveOutputSuffix
                         : AtlasChannels.First(item => item.Slot.Equals(slot, StringComparison.OrdinalIgnoreCase)).Suffix;
                     var layout = first.Layouts[slot];
                     var output = new SharedRepackSlotOutput
@@ -5437,6 +5598,25 @@ namespace Editors.PackOptimizer.Core
                 {
                     page.BloodScales.Add(
                         $"{material}: UV scale {scaleU:0.#####} x {scaleV:0.#####}, {SharedRepackBloodScaleParameter} -> {bloodText}");
+                }
+
+                // The dissolve detail texture is sampled at UV0 * dissolve_uv_scale: divide the scale per axis
+                // (unequal U and V scales are fine) so the detail keeps its density on the mesh. ASSUMPTION
+                // about the shader, verified on the compiled shaders; the per-chart phase offset is checked in game.
+                if (GetTexturePath(document, SharedRepackDissolveDetailSlot).Length != 0 &&
+                    SharedRepackDissolveVerifiedShaders.Contains(
+                        Normalize(document.SelectSingleNode("/material/shader")?.InnerText).Replace('\\', '/')))
+                {
+                    if (!TryScaleSharedRepackFloat2Parameter(
+                            document, SharedRepackDissolveScaleParameter, scaleU, scaleV, out var dissolveText))
+                    {
+                        failure = $"material {material}: the material lacks a usable dissolve parameter " +
+                                  SharedRepackDissolveScaleParameter;
+                        return false;
+                    }
+
+                    page.DissolveScales.Add(
+                        $"{material}: UV scale {scaleU:0.#####} x {scaleV:0.#####}, {SharedRepackDissolveScaleParameter} -> {dissolveText}");
                 }
 
                 // The emissive glow scrolls over UV0: rescale its parameters by the same factor (equal in
@@ -6598,7 +6778,7 @@ namespace Editors.PackOptimizer.Core
                                 // Legacy entries follow the page their texture moved to, which for a copied
                                 // texture is its copy (the original stays, but the new UVs need the cropped sheet).
                                 var legacyTargets = page.Outputs
-                                    .Where(output => !output.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase))
+                                    .Where(output => !IsSharedRepackNoiseSlot(output.Slot))
                                     .SelectMany(output => output.Sources.Select(source => (Source: Normalize(source), output.Path)))
                                     .GroupBy(item => item.Source, StringComparer.OrdinalIgnoreCase)
                                     .ToDictionary(group => group.Key, group => group.First().Path, StringComparer.OrdinalIgnoreCase);
@@ -6777,8 +6957,12 @@ namespace Editors.PackOptimizer.Core
             built.Outputs.AddRange(plan.Pages.SelectMany(page => page.Outputs));
             built.Materials.AddRange(plan.Pages.SelectMany(page => page.MaterialMap.Values).OrderBy(path => path, StringComparer.Ordinal));
             built.BloodScales.AddRange(plan.Pages.SelectMany(page => page.BloodScales));
+            built.DissolveScales.AddRange(plan.Pages.SelectMany(page => page.DissolveScales));
             built.EmissiveScales.AddRange(plan.Pages.SelectMany(page => page.EmissiveScales));
-            built.EmissiveParts = plan.Pages.SelectMany(page => page.Parts).Count(part => part.CopySlots.Count != 0);
+            built.EmissiveParts = plan.Pages.SelectMany(page => page.Parts)
+                .Count(part => part.CopySlots.Contains(SharedRepackEmissiveDistortionSlot));
+            built.DissolveParts = plan.Pages.SelectMany(page => page.Parts)
+                .Count(part => part.CopySlots.Contains(SharedRepackDissolveMapSlot));
             foreach (var (unreadMaterial, unreadSlot) in plan.Pages.SelectMany(page => page.Parts)
                          .SelectMany(part => part.UnreadSlots).Distinct())
             {
@@ -6800,9 +6984,13 @@ namespace Editors.PackOptimizer.Core
 
             bool IsEmissiveOutput(SharedRepackSlotOutput output)
                 => output.IsCopy && output.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase);
+            bool IsDissolveOutput(SharedRepackSlotOutput output)
+                => output.IsCopy && output.Slot.Equals(SharedRepackDissolveMapSlot, StringComparison.OrdinalIgnoreCase);
             built.EmissiveCopies = built.Outputs.Count(IsEmissiveOutput);
             built.EmissiveCopyBytes = built.Outputs.Where(IsEmissiveOutput).Sum(output => output.Data.LongLength);
-            foreach (var output in built.Outputs.Where(output => output.IsCopy && !IsEmissiveOutput(output)))
+            built.DissolveCopies = built.Outputs.Count(IsDissolveOutput);
+            built.DissolveCopyBytes = built.Outputs.Where(IsDissolveOutput).Sum(output => output.Data.LongLength);
+            foreach (var output in built.Outputs.Where(output => output.IsCopy && !IsEmissiveOutput(output) && !IsDissolveOutput(output)))
             {
                 foreach (var texture in output.Sources)
                 {
@@ -6821,6 +7009,10 @@ namespace Editors.PackOptimizer.Core
             result.EmissiveCopies += built.EmissiveCopies;
             result.EmissiveCopyBytes += built.EmissiveCopyBytes;
             result.EmissiveMaterialsRescaled += built.EmissiveScales.Count;
+            result.DissolveParts += built.DissolveParts;
+            result.DissolveCopies += built.DissolveCopies;
+            result.DissolveCopyBytes += built.DissolveCopyBytes;
+            result.DissolveMaterialsRescaled += built.DissolveScales.Count;
             result.EmissiveAspectGroups += plan.AspectGroups;
             result.EmissiveAspectTuples += plan.AspectTuples;
             result.EmissiveAspectExtraBytes += plan.AspectExtraBytes;
@@ -8280,6 +8472,15 @@ namespace Editors.PackOptimizer.Core
                 "(check in game): the scrolling pattern is exact up to a constant per-chart phase shift (the chart " +
                 "offset times the tiling), so the glow can look shifted between charts; other shaders keep the part " +
                 "ineligible. " +
+                "Dissolve: a material whose shader is verified (" +
+                $"{SharedRepackDissolveVerifiedShaders.Count:N0} shader(s), compiled-shader analysis) and that has a float2 " +
+                $"{SharedRepackDissolveScaleParameter} keeps its {SharedRepackDissolveDetailSlot} as authored and its " +
+                $"{SharedRepackDissolveMapSlot} ({SharedRepackDissolveOutputSuffix}) becomes a cropped COPY of the shared noise " +
+                "texture like the emissive one (no parameter compensation, no aspect restriction); the pixel shader " +
+                $"samples the detail at UV0 * {SharedRepackDissolveScaleParameter} and the map at UV0, so " +
+                $"{SharedRepackDissolveScaleParameter} is divided per axis by the UV scale of the page (like the blood scale). " +
+                "ASSUMPTION (check in game): the dissolve pattern is exact up to a constant per-chart phase shift of " +
+                "the detail texture; other shaders keep the part ineligible. " +
                 "Generated copies of vanilla materials are written to " + SharedRepackVanillaMaterialDirectory + ".");
             sb.AppendLine(
                 $"Threshold: estimated and actual saving of at least {result.MinimumSavingBytes:N0} bytes. " +
@@ -8406,6 +8607,13 @@ namespace Editors.PackOptimizer.Core
                 .OrderByDescending(pair => pair.Value)
                 .ThenBy(pair => pair.Key, StringComparer.Ordinal)
                 .ToList();
+            var dissolveBlocked = result.PartDropReasons
+                .Where(pair => pair.Key.StartsWith(SharedRepackReasonDissolveShader, StringComparison.Ordinal) ||
+                               pair.Key.StartsWith(SharedRepackReasonDissolveParameter, StringComparison.Ordinal) ||
+                               pair.Key.StartsWith("the dissolve map texture", StringComparison.Ordinal))
+                .OrderByDescending(pair => pair.Value)
+                .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+                .ToList();
             sb.AppendLine(
                 "Slots ignored because the material's shader never binds them (built sets): " +
                 (result.UnreadSlotMaterials.Count == 0
@@ -8427,6 +8635,14 @@ namespace Editors.PackOptimizer.Core
                 $"parts still blocked by the emissive reasons below (a part counts once per set): " +
                 $"{emissiveBlocked.Sum(pair => pair.Value):N0}.");
             foreach (var (reason, count) in emissiveBlocked)
+                sb.AppendLine($"  {count:N0} x {reason}");
+            sb.AppendLine(
+                $"Dissolve: {result.DissolveParts:N0} part(s) moved with a copied {SharedRepackDissolveMapSlot}; " +
+                $"{result.DissolveCopies:N0} copy texture(s) written ({result.DissolveCopyBytes:N0} bytes, counted as cost, " +
+                $"not as replaced texture bytes); {result.DissolveMaterialsRescaled:N0} material(s) with a rescaled " +
+                $"{SharedRepackDissolveScaleParameter}; parts still blocked by the dissolve reasons below (a part " +
+                $"counts once per set): {dissolveBlocked.Sum(pair => pair.Value):N0}.");
+            foreach (var (reason, count) in dissolveBlocked)
                 sb.AppendLine($"  {count:N0} x {reason}");
             var copyWon = result.BuiltSets.Where(set => set.CopyWon).ToList();
             sb.AppendLine(
@@ -8568,6 +8784,15 @@ namespace Editors.PackOptimizer.Core
 
                 foreach (var emissive in set.EmissiveScales)
                     sb.AppendLine($"    emissive: {emissive}");
+                if (set.DissolveParts != 0 || set.DissolveCopies != 0)
+                {
+                    sb.AppendLine(
+                        $"    dissolve: {set.DissolveParts:N0} part(s) with a copied map slot, " +
+                        $"{set.DissolveCopies:N0} copy texture(s) of {set.DissolveCopyBytes:N0} bytes");
+                }
+
+                foreach (var dissolve in set.DissolveScales)
+                    sb.AppendLine($"    dissolve: {dissolve}");
                 if (set.RemovedCopies.Count != 0)
                 {
                     sb.AppendLine(
@@ -8604,7 +8829,7 @@ namespace Editors.PackOptimizer.Core
                         $"{(output.Srgb ? "_SRGB" : string.Empty)}, {output.Bytes:N0} bytes with mips, " +
                         $"{output.BlockCopiedLevels} of {output.MipLevels} mip level(s) block-copied" +
                         (output.IsCopy
-                            ? output.Slot.Equals(SharedRepackEmissiveDistortionSlot, StringComparison.OrdinalIgnoreCase)
+                            ? IsSharedRepackNoiseSlot(output.Slot)
                                 ? $" (copy of {string.Join(", ", output.Sources)}; not a replacement)"
                                 : $" (copy of {string.Join(", ", output.Sources)}, which stays for the part(s) dropped from the plan; not a replacement)"
                             : string.Empty));

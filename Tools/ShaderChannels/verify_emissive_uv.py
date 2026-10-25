@@ -13,6 +13,9 @@ when the pixel shader consumes UV0 in a way the repack can compensate:
     The repack divides sp_emissive_tiling by the UV scale s and multiplies strength and direction by s,
     which reproduces the original emissive UV up to a constant per-chart phase offset,
   * t_xml_blood_map is sampled at UV0 * sp_blood_uv_scale (the repack rescales sp_blood_uv_scale),
+  * dissolve shaders: t_xml_dissolve_map is sampled at the raw UV0 (cropped like the distortion noise) and
+    t_xml_dissolve_detail at exactly UV0 * sp_dissolve_uv_scale per axis (the repack divides
+    sp_dissolve_uv_scale by the UV scale; see verify_dissolve_uv.py),
   * every other texture read does not depend on UV0 (dither, screen space, ...),
   * UV0 reaches nothing else (no other ALU use, no outputs).
 
@@ -42,6 +45,8 @@ ATLAS_SLOTS = {'t_xml_base_colour', 't_xml_material_map', 't_xml_normal', 't_xml
 DIST = 't_xml_emissive_distortion'
 EMIS = 't_xml_emissive_texture'
 BLOOD = 't_xml_blood_map'
+DMAP = 't_xml_dissolve_map'
+DDET = 't_xml_dissolve_detail'
 FAMILY_RE = re.compile(r'^shaders_(.+)_xml_hlsl_[0-9a-f]+\.hlsl_compiled\.(\d+)\.asm$')
 SAMPLE_OPS = ('sample', 'gather4')
 MAX_TERMS = 48
@@ -398,7 +403,7 @@ class Evaluator:
             if not op.startswith(SAMPLE_OPS) or len(args) < 3:
                 continue
             slot = self.tex_slot(args[2])
-            if slot in ATLAS_SLOTS or slot == DIST:
+            if slot in ATLAS_SLOTS or slot in (DIST, DMAP):
                 m = re.match(r'^(v\d+)\.([xyzwrgba]+)$', args[1])
                 if m and len(m.group(2)) >= 2 and m.group(2)[:2] == 'xy':
                     cands.add(m.group(1))
@@ -515,11 +520,15 @@ class Evaluator:
         uy = poly_atom(atom('in', self.uv0, 1, taint=True)) if self.uv0 else None
         is_raw = self.uv0 is not None and uvx == ux and uvy == uy
         tainted = p_taint(uvx) or p_taint(uvy)
-        if slot in ATLAS_SLOTS or slot == DIST:
+        if slot in ATLAS_SLOTS or slot in (DIST, DMAP):
             if not is_raw:
                 raise Fail('%s not sampled at the raw UV0' % slot)
             raw = True
             self.found[slot] += 1
+        elif slot == DDET:
+            if tainted:
+                self.check_dissolve_detail(uvx, uvy)
+                self.found['dissolve_detail'] += 1
         elif slot == EMIS:
             if tainted:
                 self.check_emissive_chain(uvx, uvy)
@@ -538,6 +547,15 @@ class Evaluator:
             ch = COMP[rsw[c]] if c < len(rsw) else COMP[rsw[-1]]
             out.append(poly_atom(atom('tex', slot, key if not raw else 'rawUV0', ch)))
         self.write(dst, dcomps, out)
+
+    def check_dissolve_detail(self, uvx, uvy):
+        if self.uv0 is None:
+            raise Fail('dissolve detail without a UV0 anchor')
+        for k, uv in enumerate((uvx, uvy)):
+            U = poly_atom(atom('in', self.uv0, k, taint=True))
+            S = poly_atom(atom('sb', 'dissolve_uv_scale', k))
+            if uv != p_mul(U, S):
+                raise Fail('dissolve detail UV is not UV0 * dissolve_uv_scale (axis %d)' % k)
 
     def check_emissive_chain(self, uvx, uvy):
         if self.uv0 is None:
@@ -576,8 +594,41 @@ def analyze_file(path):
     return ev
 
 
+def disassemble(folder, cache, needles, with_siblings=False):
+    """Disassembles the compiled files of folder that contain one of the byte strings in needles (plus, with
+    with_siblings, every file of the same shader family group, see family_group). Returns the asm folder."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = cache or os.path.join(folder, '_asm')
+    os.makedirs(out, exist_ok=True)
+    compiled = [f for f in sorted(os.listdir(folder)) if f.endswith('.hlsl_compiled') and 'xml_hlsl' in f]
+    names, groups = [], set()
+    for f in compiled:
+        with open(os.path.join(folder, f), 'rb') as fh:
+            if any(n in fh.read() for n in needles):
+                names.append(f)
+                groups.add(family_group(f.split('_xml_hlsl_')[0][len('shaders_'):]))
+    if with_siblings:
+        names = [f for f in compiled if family_group(f.split('_xml_hlsl_')[0][len('shaders_'):]) in groups]
+    lst = os.path.join(out, '_list.txt')
+    with open(lst, 'w') as fh:
+        fh.write('\n'.join(names))
+    w = (lambda p: subprocess.check_output(['wslpath', '-w', p]).decode().strip()) if os.name != 'nt' else (lambda p: p)
+    subprocess.check_call(['powershell.exe', '-NoProfile', '-File', w(os.path.join(here, 'dxbc_disassemble.ps1')),
+                           '-InDir', w(folder), '-OutDir', w(out), '-List', w(lst)])
+    return out
+
+
+# The engine can swap a shader for its _alpha / _blood / _alpha_blood / _clean_alpha sibling at run time
+# (same rule as shader_bound_slots.py), so a family is only as verified as its whole group.
+VARIANT_RE = re.compile(r'(_alpha_blood|_clean_alpha|_blood|_alpha)$')
+
+
+def family_group(name):
+    return VARIANT_RE.sub('', name)
+
+
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    args =[a for a in sys.argv[1:] if not a.startswith('--')]
     verbose = '--verbose' in sys.argv
     only = sys.argv[sys.argv.index('--only') + 1] if '--only' in sys.argv else None
     cache = None
@@ -592,22 +643,7 @@ def main():
     folder = args[0]
     files = sorted(os.listdir(folder))
     if any(f.endswith('.hlsl_compiled') for f in files):
-        here = os.path.dirname(os.path.abspath(__file__))
-        out = cache or os.path.join(folder, '_asm')
-        os.makedirs(out, exist_ok=True)
-        names = []
-        for f in files:
-            if f.endswith('.hlsl_compiled') and 'xml_hlsl' in f:
-                with open(os.path.join(folder, f), 'rb') as fh:
-                    if b't_xml_emissive_distortion' in fh.read():
-                        names.append(f)
-        lst = os.path.join(out, '_list.txt')
-        with open(lst, 'w') as fh:
-            fh.write('\n'.join(names))
-        w = (lambda p: subprocess.check_output(['wslpath', '-w', p]).decode().strip()) if os.name != 'nt' else (lambda p: p)
-        subprocess.check_call(['powershell.exe', '-NoProfile', '-File', w(os.path.join(here, 'dxbc_disassemble.ps1')),
-                               '-InDir', w(folder), '-OutDir', w(out), '-List', w(lst)])
-        folder = out
+        folder = disassemble(folder, cache, [b't_xml_emissive_distortion'])
         files = sorted(os.listdir(folder))
     fams = collections.defaultdict(lambda: {'ok': 0, 'bad': 0, 'reasons': collections.Counter(), 'found': collections.Counter()})
     for f in files:

@@ -83,7 +83,7 @@ namespace Editors.PackOptimizer.Core
             {
                 var shift = Math.Max(-exponent.X, -exponent.Y);
                 cellDownshift = Math.Max(cellDownshift, shift);
-                if (!tuple.IsEmissiveCopySlot(slot))
+                if (!tuple.IsNoiseCopySlot(slot))
                     downshift = Math.Max(downshift, shift);
             }
 

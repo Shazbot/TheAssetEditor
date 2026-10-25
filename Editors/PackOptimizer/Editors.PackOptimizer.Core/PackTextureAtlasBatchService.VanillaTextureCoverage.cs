@@ -137,9 +137,9 @@ namespace Editors.PackOptimizer.Core
             IReadOnlyList<(string Slot, string Texture)> Textures,
             // The material's shader, normalised to lower case with forward slashes
             // ("shaders/weighted4_character_emissive.xml.shader"), and the raw text of the emissive
-            // scroll parameters the shared repack compensates (lower-case name -> value text).
+            // scroll and dissolve parameters the shared repack compensates (lower-case name -> value text).
             string Shader = "",
-            IReadOnlyDictionary<string, string>? EmissiveParameters = null);
+            IReadOnlyDictionary<string, string>? Parameters = null);
 
         private sealed record VanillaCoverageEmbeddedMaterial(
             ModelMaterialEnum MaterialType,
@@ -558,8 +558,12 @@ namespace Editors.PackOptimizer.Core
                             foreach (XmlNode node in parameterNodes)
                             {
                                 var name = node.SelectSingleNode("name")?.InnerText.Trim() ?? string.Empty;
-                                if (IsSharedRepackEmissiveParameter(name) &&
-                                    node.SelectSingleNode("value") is { } valueNode)
+                                // dissolve_uv_scale is only usable as a float2 (the repack rewrites that type).
+                                if (IsSharedRepackCompensatedParameter(name) &&
+                                    node.SelectSingleNode("value") is { } valueNode &&
+                                    (!name.Equals(SharedRepackDissolveScaleParameter, StringComparison.OrdinalIgnoreCase) ||
+                                     node.SelectSingleNode("type")?.InnerText.Trim().Equals(
+                                         "float2", StringComparison.OrdinalIgnoreCase) == true))
                                 {
                                     emissive[name.ToLowerInvariant()] = valueNode.InnerText.Trim();
                                 }

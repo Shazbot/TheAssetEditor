@@ -15027,6 +15027,285 @@ namespace Test.PackOptimizer.Core
             Assert.That((string)arguments[3]!, Does.Contain("emissive_direction"));
         }
 
+        // ---- dissolve shaders: detail kept + scale divided, map copied ----
+
+        private const string SrDissolveShader = "shaders/weighted4_character_dissolve.xml.shader";
+        private const string SrDissolveEmissiveShader = "shaders/weighted4_character_dissolve_emissive.xml.shader";
+        private const string SrDissolveMap = "t_xml_dissolve_map";
+        private const string SrDissolveDetail = "t_xml_dissolve_detail";
+        private const string SrDissolveMapTexture = "textures\\commontextures\\sr_dissolve_map.dds";
+        private const string SrDissolveDetailTexture = "textures\\commontextures\\sr_dissolve_detail.dds";
+
+        private static string SrDissolveMaterialXml(
+            string shader,
+            bool withEmissive = false,
+            string? scaleValue = "1,0.5",
+            string scaleType = "float2")
+        {
+            var textures = new List<(string Slot, string Texture)>
+            {
+                (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n1.dds"),
+                (SrDissolveMap, SrDissolveMapTexture), (SrDissolveDetail, SrDissolveDetailTexture),
+            };
+            if (withEmissive)
+            {
+                textures.Add((SrDistortion, SrNoise));
+                textures.Add((SrGlow, SrGlowTexture));
+            }
+
+            var xml = DownscaleMaterialXml(textures.ToArray()).Replace("shaders\\weighted2_character.xml.shader", shader);
+            var parameters = new List<string>();
+            if (scaleValue != null)
+                parameters.Add($"<param><name>dissolve_uv_scale</name><type>{scaleType}</type><value>{scaleValue}</value></param>");
+            if (withEmissive)
+            {
+                parameters.Add("<param><name>emissive_tiling</name><type>float2</type><value>2,3</value></param>");
+                parameters.Add("<param><name>emissive_distort_strength</name><type>float</type><value>0.05</value></param>");
+                parameters.Add("<param><name>emissive_direction</name><type>float2</type><value>0.5,-0.25</value></param>");
+            }
+
+            return xml.Replace("</material>", "<params>" + string.Concat(parameters) + "</params></material>");
+        }
+
+        private static SrWorld BuildDissolveSrWorld(
+            string shader = SrDissolveShader,
+            bool withEmissive = false,
+            string? scaleValue = "1,0.5",
+            string scaleType = "float2",
+            bool ownedMap = false)
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1);
+            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2);
+            world.AddTexture(SrDissolveMapTexture, 512, "BC1", true, 9, ownedMap);
+            world.AddTexture(SrDissolveDetailTexture, 1024, "BC1", true, 10);
+            if (withEmissive)
+            {
+                world.AddTexture(SrNoise, 512, "BC1", true, 7);
+                world.AddTexture(SrGlowTexture, 512, "BC1", true, 8);
+            }
+
+            var d1 = SrMaterialPath("d1");
+            world.Fixture.AddText(d1, SrDissolveMaterialXml(shader, withEmissive, scaleValue, scaleType));
+            world.AddModel(SrRigid, SrWs, SrRoot, SrRigidFactory([(d1, SrBlocks((2, 3), (3, 3)))]), [[d1]]);
+            return world;
+        }
+
+        private static readonly Dictionary<string, int> SrDissolveSeeds =
+            new() { [SrBase] = 1, [SrNormal] = 2, [SrDissolveMap] = 9 };
+
+        private static string SrParamValue(string materialXml, string name)
+        {
+            var document = new XmlDocument();
+            document.LoadXml(materialXml);
+            return document.SelectNodes("/material/params/param")!.Cast<XmlNode>()
+                .Single(node => node.SelectSingleNode("name")!.InnerText == name).SelectSingleNode("value")!.InnerText;
+        }
+
+        [Test]
+        public void SharedRepack_Dissolve_VerifiedShader_CopiesTheMapKeepsTheDetailAndDividesTheScalePerAxis()
+        {
+            var world = BuildDissolveSrWorld();
+            var sourceBefore = SrSnapshot(world.Fixture.Source);
+            var vanillaBefore = SrSnapshot(world.Fixture.Vanilla);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            Assert.That(outputs, Has.Count.EqualTo(3));
+            var copy = outputs.Single(output => Get<bool>(output, "IsCopy"));
+            Assert.That(Get<string>(copy, "Slot"), Is.EqualTo(SrDissolveMap));
+            Assert.That(Get<string>(copy, "Path"), Does.EndWith("_repack_dissolve_map.dds"));
+            Assert.That(Get<IEnumerable>(copy, "Sources").Cast<string>(), Is.EqualTo(new[] { SrDissolveMapTexture }));
+
+            // Neither the map nor the detail is a member, replaced or touched; the copy counts as cost.
+            var replaced = Get<IEnumerable>(built, "Replaced").Cast<(string Path, bool Owned, long Bytes)>().ToList();
+            Assert.That(replaced.Select(item => item.Path), Is.EquivalentTo(new[] { "textures\\sr_b1.dds", "textures\\sr_n1.dds" }));
+            Assert.That(Get<long>(built, "After"), Is.EqualTo(outputs.Sum(output => Get<long>(output, "Bytes"))));
+            foreach (var (path, bytes) in vanillaBefore)
+                Assert.That(world.Fixture.Vanilla[path], Is.EqualTo(bytes), path);
+            foreach (var (path, bytes) in sourceBefore)
+                Assert.That(world.Fixture.Source[path], Is.EqualTo(bytes), path);
+
+            // The crop shows the map at the new UVs (pixel-checked); the detail texture stays as authored.
+            var factory = SrRigidFactory([(SrMaterialPath("d1"), SrBlocks((2, 3), (3, 3)))]);
+            var (samples, _) = AssertSrPixels(world, SrRigid, SrWs, factory, SrDissolveSeeds);
+            Assert.That(samples, Is.GreaterThan(0));
+            var generated = Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]);
+            Assert.That(SrSlotNode(generated, SrDissolveMap).OuterXml, Does.Contain("_repack_dissolve_map.dds"));
+            Assert.That(generated, Does.Not.Contain(SrDissolveMapTexture));
+            Assert.That(SrSlotNode(generated, SrDissolveDetail).OuterXml, Does.Contain(SrDissolveDetailTexture));
+
+            // dissolve_uv_scale / scale per axis, with unequal U and V scales (no aspect restriction).
+            var scaleU = 1024.0 / Get<int>(built, "LayoutWidth");
+            var scaleV = 1024.0 / Get<int>(built, "LayoutHeight");
+            Assert.That(scaleU, Is.Not.EqualTo(scaleV));
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            Assert.That(
+                SrParamValue(generated, "dissolve_uv_scale"),
+                Is.EqualTo(string.Create(invariant, $"{1 / scaleU:R},{0.5 / scaleV:R}")));
+            Assert.That(Get<IEnumerable>(built, "DissolveScales").Cast<string>().Single(), Does.Contain("dissolve_uv_scale -> "));
+
+            // Counters, report and no aspect-restricted group.
+            Assert.That(Get<int>(result, "DissolveParts"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "DissolveCopies"), Is.EqualTo(1));
+            Assert.That(Get<long>(result, "DissolveCopyBytes"), Is.EqualTo(Get<byte[]>(copy, "Data").LongLength));
+            Assert.That(Get<int>(result, "DissolveMaterialsRescaled"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "EmissiveParts"), Is.EqualTo(0));
+            Assert.That(Get<int>(result, "EmissiveCopies"), Is.EqualTo(0));
+            Assert.That(Get<int>(result, "EmissiveAspectGroups"), Is.EqualTo(0));
+            var section = BuildSharedRepackSection(Enabled(world));
+            Assert.That(section, Does.Contain("Dissolve: 1 part(s) moved with a copied t_xml_dissolve_map"));
+            Assert.That(section, Does.Contain("dissolve: ").And.Contain(": UV scale").And.Contain("dissolve_uv_scale -> "));
+            Assert.That(section, Does.Contain("per-chart phase shift").And.Contain("ASSUMPTION"));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_Dissolve_OwnedMap_IsNeverReplacedOrPruned()
+        {
+            var world = BuildDissolveSrWorld(ownedMap: true);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            SetStateProperty(world.State, "SharedTextureRepackRequested", true);
+            SetStateProperty(world.State, "SharedTextureRepackEnabled", true);
+            GetStaticMethod("FinalizeSharedTextureRepack").Invoke(null, [world.State]);
+            Assert.That(Get<int>(result, "OwnedReplaced"), Is.EqualTo(0));
+            Assert.That(Get<List<string>>(result, "OwnedPruned"), Is.Empty);
+            Assert.That(world.Fixture.Output.ContainsKey(SrDissolveMapTexture), Is.True);
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_DissolveWithEmissive_AllThreeSpecialSlotsBuildInOnePart()
+        {
+            var world = BuildDissolveSrWorld(SrDissolveEmissiveShader, withEmissive: true);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            Assert.That(
+                outputs.Where(output => Get<bool>(output, "IsCopy")).Select(output => Get<string>(output, "Slot")),
+                Is.EquivalentTo(new[] { SrDissolveMap, SrDistortion }));
+            Assert.That(outputs, Has.Count.EqualTo(4));
+            Assert.That(Get<int>(result, "DissolveParts"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "EmissiveParts"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "DissolveCopies"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "EmissiveCopies"), Is.EqualTo(1));
+            // The emissive restriction applies, so the scale is equal in U and V, and both rescales ran.
+            var generated = Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]);
+            var scale = 1024.0 / Get<int>(built, "LayoutWidth");
+            Assert.That(scale, Is.EqualTo(1024.0 / Get<int>(built, "LayoutHeight")));
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            Assert.That(SrParamValue(generated, "dissolve_uv_scale"), Is.EqualTo(string.Create(invariant, $"{1 / scale:R},{0.5 / scale:R}")));
+            Assert.That(SrParamValue(generated, "emissive_tiling"), Is.EqualTo(string.Create(invariant, $"{2 / scale:R},{3 / scale:R}")));
+            Assert.That(SrSlotNode(generated, SrDissolveMap).OuterXml, Does.Contain("_repack_dissolve_map.dds"));
+            Assert.That(SrSlotNode(generated, SrDistortion).OuterXml, Does.Contain("_repack_emissive_distortion.dds"));
+            Assert.That(SrSlotNode(generated, SrDissolveDetail).OuterXml, Does.Contain(SrDissolveDetailTexture));
+            var seeds = new Dictionary<string, int>(SrDissolveSeeds) { [SrDistortion] = 7 };
+            var factory = SrRigidFactory([(SrMaterialPath("d1"), SrBlocks((2, 3), (3, 3)))]);
+            var (samples, _) = AssertSrPixels(world, SrRigid, SrWs, factory, seeds);
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [TestCase("shaders/weighted2_ethereal_dissolve_vfx.xml.shader")]
+        [TestCase("shaders/weighted2_saytang_dissolve_alpha.xml.shader")]
+        [TestCase("")]
+        public void SharedRepack_Dissolve_UnverifiedShader_KeepsThePartBlockedWithTheNewReason(string shader)
+        {
+            var world = BuildDissolveSrWorld(shader);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(0));
+            var reasons = SrPartDropReasons(result);
+            Assert.That(reasons, Does.Contain("the material's shader is not verified for dissolve repacking ("));
+            Assert.That(reasons, Does.Contain(shader.Length == 0 ? "unknown shader" : shader));
+            Assert.That(reasons, Does.Not.Contain("non-atlasable slot"));
+            Assert.That(Get<int>(result, "DissolveCopies"), Is.EqualTo(0));
+            Assert.That(world.Fixture.Output.Keys.Count(key => key.Contains("_repack_")), Is.EqualTo(0));
+            var section = BuildSharedRepackSection(Enabled(world));
+            Assert.That(section, Does.Contain("x the material's shader is not verified for dissolve repacking ("));
+        }
+
+        [TestCase(null, "float2")]
+        [TestCase("0.3", "float2")]
+        [TestCase("1,1", "float")]
+        [TestCase("1,x", "float2")]
+        public void SharedRepack_Dissolve_MissingOrMalformedScale_KeepsThePartBlockedWithTheNewReason(string? value, string type)
+        {
+            var world = BuildDissolveSrWorld(scaleValue: value, scaleType: type);
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(0));
+            Assert.That(SrPartDropReasons(result), Does.Contain("the material lacks dissolve parameter dissolve_uv_scale"));
+            Assert.That(Get<int>(result, "DissolveCopies"), Is.EqualTo(0));
+        }
+
+        [Test]
+        public void SharedRepack_Float2ParameterScale_DividesPerAxisInInvariantText()
+        {
+            var document = new XmlDocument();
+            document.LoadXml(SrDissolveMaterialXml(SrDissolveShader, scaleValue: "1,0.5"));
+            var arguments = new object?[] { document, "dissolve_uv_scale", 0.5, 0.25, null };
+            Assert.That((bool)GetStaticMethod("TryScaleSharedRepackFloat2Parameter").Invoke(null, arguments)!, Is.True);
+            Assert.That(SrParamValue(document.OuterXml, "dissolve_uv_scale"), Is.EqualTo("2,2"));
+            Assert.That((string)arguments[4]!, Is.EqualTo("2,2 (was 1,0.5)"));
+
+            foreach (var (value, type) in new[] { ("0.3", "float2"), ("1,1", "float") })
+            {
+                var bad = new XmlDocument();
+                bad.LoadXml(SrDissolveMaterialXml(SrDissolveShader, scaleValue: value, scaleType: type));
+                var before = bad.OuterXml;
+                arguments = [bad, "dissolve_uv_scale", 0.5, 0.5, null];
+                Assert.That((bool)GetStaticMethod("TryScaleSharedRepackFloat2Parameter").Invoke(null, arguments)!, Is.False);
+                Assert.That(bad.OuterXml, Is.EqualTo(before));
+            }
+        }
+
+        [Test]
+        public void SharedRepack_DissolveMapCopySlot_FollowsTheNoiseRules_WithoutEmissiveCompensation()
+        {
+            const string baseTexture = "textures\\b.dds";
+            const string noise = "textures\\commontextures\\noise_colour.dds";
+            var part = SrPart(
+                new Dictionary<string, string> { [SrBase] = baseTexture, [SrDissolveMap] = noise }, SrDissolveMap);
+            var entries = new Dictionary<string, object>
+            {
+                [baseTexture] = SrEntry(baseTexture, 2048, 1024),
+                [noise] = SrEntry(noise, 256, 256),
+            };
+
+            // Never classified (a classifier calling the noise uniform is ignored) and never a set member.
+            var tuple = SrBuildTuples([part], entries, texture => texture == noise ? true : null, out var violating).Single();
+
+            Assert.That(violating, Is.Empty);
+            Assert.That(Get<string?>(tuple, "Excluded"), Is.Null);
+            Assert.That(Get<IDictionary>(tuple, "ConstantSlots").Count, Is.EqualTo(0));
+            Assert.That(Get<HashSet<string>>(tuple, "CopySlots"), Is.EquivalentTo(new[] { SrDissolveMap }));
+            Assert.That(Get<IEnumerable>(tuple, "MemberTextures").Cast<string>(), Is.EqualTo(new[] { baseTexture }));
+            Assert.That((bool)tuple.GetType().GetMethod("IsNoiseCopySlot")!.Invoke(tuple, [SrDissolveMap])!, Is.True);
+            Assert.That((bool)tuple.GetType().GetMethod("IsGeneralCopySlot")!.Invoke(tuple, [SrDissolveMap])!, Is.False);
+            // No parameter compensation, so no aspect restriction in the group key.
+            Assert.That(Get<bool>(tuple, "EmissiveCompensation"), Is.False);
+            // Like the emissive noise: the noise decides the cell but not the alignment.
+            Assert.That(Get<int>(tuple, "Cell"), Is.EqualTo(32));
+            Assert.That(Get<int>(tuple, "Align"), Is.EqualTo(32));
+            var key = Get<string>(tuple, "GroupKey");
+            Assert.That(key, Does.Contain($"{SrDissolveMap}:BC1:True:-3:-2:copy:{noise}"));
+            Assert.That(key, Does.Not.Contain("aspect"));
+        }
+
         // ---- tuples and layout groups of a copy slot ----
 
         private static object SrLayout(int width, int height, string format = "BC1")
@@ -16472,6 +16751,10 @@ namespace Test.PackOptimizer.Core
             // 18: direct rigid embedded slots that name a uniform texture kept as authored stay unchanged instead of
             // failing the set; the repack is not among the pinned stages, so the hash is unchanged.
             [18] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 19: the shared texture repack also repacks parts whose verified dissolve shader samples a shared
+            // dissolve map (a cropped copy) and a detail texture at UV0 * dissolve_uv_scale (the scale is divided);
+            // the repack is not among the pinned stages, so the hash is unchanged.
+            [19] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
