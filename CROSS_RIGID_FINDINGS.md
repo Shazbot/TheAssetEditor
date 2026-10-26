@@ -648,6 +648,27 @@ Both output payload fingerprints matched their default-type baselines exactly (T
 
 OutputVersion 23 pins the same golden fixture hash as version 22 (`8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6`), because that fixture contains no flow-overlay material.
 
+## 2026-10-26: BC7 textures in the shared repack
+
+The shared repack now accepts BC7 (BC7_UNORM and BC7_UNORM_SRGB) next to BC1 and BC3. Before, any set holding a BC7 texture, or a material that bound one outside the set, lost its parts ("BC7 cannot be re-encoded").
+
+- **Decode.** The repack's own decoder (Pfim, `TryDecodeDdsTopLevel`) decodes BC7 byte-identically to DirectXTex (checked in `DirectXTexShimTests`), so no decoder change was needed. The pixel check and the chart canvas therefore see the same texels for BC7 as for BC1/BC3.
+- **Block copy first.** The per-level block fates (Copied, Gutter, Partial, Misaligned, Generated, ...) are now computed before encoding (`TryBuildSharedRepackBlockCopyPlan`). A chart that shrinks below one texel at a level marks its footprint Generated, which is visible content, not gutter. The real copy pass must reproduce the plan's Copied blocks exactly or the output fails.
+- **Gathered encoding, two quality classes.** BC7 is encoded only for the blocks that are not copied, in 256-block strips, with one `Parallel.For` across all levels (`TryEncodeSharedRepackChainGathered`; BC1/BC3 keep the whole-page encoder). Gutter blocks (padding between charts) use `BC7_QUICK`; every other non-copied block (Partial, Misaligned, Generated, ...) uses the default `TEX_COMPRESS_FLAGS`. The reason is cost: the DirectXTex shim has no OpenMP, so it is single-threaded, and default BC7 runs at about 900 blocks/s per core against about 18,000 for quick. A whole 2048x2048 page (about 350,000 blocks with mips) at default quality takes over 30 minutes on one thread, but in the two BC7 page sets measured 96 to 99 % of the blocks are copied or gutter (lucy page: 3,496 copied, 1,915 gutter, 52 default; sling page: 8,302 copied, 2,098 gutter, 525 default). Tests check each gathered block is byte-identical to the same block of a whole-page encode with the flags of its class.
+- **Mixed formats.** A page never mixes BC7 with BC1/BC3: the tuple group key includes each slot's format and sRGB flag, and variant pages require equal formats. A BC7 and a BC1 texture in the same slot therefore land in separate groups.
+- **Still refused.** Non-power-of-two sizes and owned overrides of vanilla textures, as before. Downscale (`TryReencodeDds`) and exact compaction still treat BC7 as not re-encodable and skip it; both unchanged.
+
+Bench outcomes against the `-slots` runs (same inputs and options, OutputVersion 24):
+
+| Pack | Built sets and realised saving | Wall time | Output pack |
+| --- | --- | --- | --- |
+| TEB | 44 sets; 226,392,072 bytes (was 222,547,352); 2,258,720 sampled texels, max error 0 | 244.9 s (was 230.2 s); shared repack 36.8 s (was 30.1 s) | `K:\projects\assedfork-bench\teb-bc7\bench_output.pack` (600,062,597 bytes; was 599,938,669) |
+| Albion | 25 sets (was 24); 193,112,120 bytes (was 189,442,136); 1,669,324 sampled texels, max error 0 | 126.9 s (was 115.5 s); shared repack 26.1 s (was 22.7 s) | `K:\projects\assedfork-bench\albion-bc7\bench_output.pack` (654,499,716 bytes; was 654,277,667) |
+
+TEB: the `ak_lucy_body` rewrite now keeps 16 of its parts (was 12): the BC7 `teb_lucrezzia_head_diffuse.dds` set builds as a 256x256 BC7_SRGB page (base colour, material map) next to BC3 mask and normal. Albion: the `3k_animated_props_replacements_01` set builds (4.19 MB to 0.52 MB, 512x256 BC7_SRGB base colour and material map); `alb_warmaiden_body_01` and the waystone sets join two merged plans, which changes those plans' pages and generated names. WHMM validation of all four packs gives identical diagnostic code counts and identical `MISSING_RMV2_TEXTURE` (path, message) pairs.
+
+OutputVersion 24 pins the same golden fixture hash as 23, because the repack is not among the pinned stages.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).

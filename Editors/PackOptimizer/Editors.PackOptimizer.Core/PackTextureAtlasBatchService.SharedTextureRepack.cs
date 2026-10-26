@@ -104,6 +104,8 @@ namespace Editors.PackOptimizer.Core
         private const double SharedRepackSampleMaximumError = 96;
         private const double SharedRepackSampleMeanLimit = 16;
         private const int SharedRepackMaximumSampleTriangles = 6000;
+        private const TEX_COMPRESS_FLAGS SharedRepackGutterCompressFlags = TEX_COMPRESS_FLAGS.BC7_QUICK;
+        private const TEX_COMPRESS_FLAGS SharedRepackVisibleCompressFlags = TEX_COMPRESS_FLAGS.DEFAULT;
 
         private const string SharedRepackReasonMaterialUnreadable =
             "a bound material is missing or unreadable";
@@ -353,7 +355,7 @@ namespace Editors.PackOptimizer.Core
         private const string SharedRepackReasonMixed =
             "a bound material also uses textures outside the set";
         private const string SharedRepackReasonBlockedTexture =
-            "a texture cannot be repacked (not BC1/BC3, not a power of two, or an owned override of a vanilla texture)";
+            "a texture cannot be repacked (not BC1/BC3/BC7, not a power of two, or an owned override of a vanilla texture)";
         private const string SharedRepackReasonAtlasChangedRigid =
             "the rigid was changed by texture atlasing";
         private const string SharedRepackReasonRigid =
@@ -567,6 +569,13 @@ namespace Editors.PackOptimizer.Core
                 => VariantSources != null && VariantSources.TryGetValue(tuple.Index, out var texture)
                     ? texture
                     : tuple.Slots[Slot];
+        }
+
+        private sealed class SharedRepackBlockCopyPlan
+        {
+            public required int BytesPerBlock { get; init; }
+            public required SharedRepackBlockFate[][] Fates { get; init; }
+            public required bool[][] Copied { get; init; }
         }
 
         // One output texture set: a layout group, or a page of it when the charts do not
@@ -1340,7 +1349,7 @@ namespace Editors.PackOptimizer.Core
         {
             if (layout == null)
                 return "header unreadable";
-            if (layout.Format is not ("BC1" or "BC3"))
+            if (layout.Format is not ("BC1" or "BC3" or "BC7"))
                 return $"{layout.Format} cannot be re-encoded";
             if (!IsPowerOfTwo(layout.Width) || !IsPowerOfTwo(layout.Height) ||
                 layout.Width < 4 || layout.Height < 4)
@@ -1364,7 +1373,7 @@ namespace Editors.PackOptimizer.Core
             return [0, 0, 0, 255];
         }
 
-        // BGRA canvas -> BC1/BC3 DDS with a complete mip chain.
+        // BGRA canvas -> BC1/BC3/BC7 DDS with a complete mip chain.
         private static bool TryEncodeSharedRepackDds(
             byte[] bgra,
             int width,
@@ -1384,6 +1393,7 @@ namespace Editors.PackOptimizer.Core
             {
                 "BC1" => srgb ? DXGI_FORMAT.BC1_UNORM_SRGB : DXGI_FORMAT.BC1_UNORM,
                 "BC3" => srgb ? DXGI_FORMAT.BC3_UNORM_SRGB : DXGI_FORMAT.BC3_UNORM,
+                "BC7" => srgb ? DXGI_FORMAT.BC7_UNORM_SRGB : DXGI_FORMAT.BC7_UNORM,
                 _ => DXGI_FORMAT.UNKNOWN,
             };
             if (compressed == DXGI_FORMAT.UNKNOWN)
@@ -6654,6 +6664,130 @@ namespace Editors.PackOptimizer.Core
             return offset;
         }
 
+        // Computes the copy fates before encoding so the gathered encoder can skip blocks that will be
+        // overwritten by the source copy. The small destination buffers only make the existing copier
+        // perform its geometric marking; the real copy and its verification still happen below.
+        private static bool TryBuildSharedRepackBlockCopyPlan(
+            SharedRepackPage page,
+            SharedRepackSlotOutput output,
+            SharedRepackSourceCache sources,
+            CancellationToken cancellationToken,
+            out SharedRepackBlockCopyPlan plan,
+            out string error)
+        {
+            plan = null!;
+            error = string.Empty;
+            var bytesPerBlock = output.Template.BytesPerBlock;
+            if (bytesPerBlock is not (8 or 16))
+            {
+                error = $"{output.Format} has unsupported block size {bytesPerBlock}";
+                return false;
+            }
+
+            var blocksWide = new int[output.MipLevels];
+            var blocksHigh = new int[output.MipLevels];
+            var fates = new SharedRepackBlockFate[output.MipLevels][];
+            var copied = new bool[output.MipLevels][];
+            var users = page.Tuples.Where(tuple => tuple.Slots.ContainsKey(output.Slot)).ToList();
+
+            for (var level = 0; level < output.MipLevels; level++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var levelWidth = Math.Max(1, output.Width >> level);
+                var levelHeight = Math.Max(1, output.Height >> level);
+                blocksWide[level] = SharedRepackBlockCopier.BlocksFor(levelWidth);
+                blocksHigh[level] = SharedRepackBlockCopier.BlocksFor(levelHeight);
+                var levelFates = new SharedRepackBlockFate[blocksWide[level] * blocksHigh[level]];
+                var scratch = new byte[checked(levelFates.Length * bytesPerBlock)];
+
+                foreach (var tuple in users)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var source = sources.Get(output.SourceOf(tuple));
+                    foreach (var item in EnumerateSharedRepackSlotCharts(page, output, tuple))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var width = item.Width >> level;
+                        var height = item.Height >> level;
+                        var destinationX = item.DestinationX >> level;
+                        var destinationY = item.DestinationY >> level;
+                        if (width <= 0 || height <= 0)
+                        {
+                            // The chart has shrunk below a texel, but the box filter still draws it: its
+                            // blocks hold visible texels, not padding.
+                            var lastX = (item.DestinationX + item.Width + (1 << level) - 1) >> level;
+                            var lastY = (item.DestinationY + item.Height + (1 << level) - 1) >> level;
+                            SharedRepackBlockCopier.Mark(
+                                levelFates, blocksWide[level], blocksHigh[level], destinationX, destinationY,
+                                Math.Max(1, lastX - destinationX), Math.Max(1, lastY - destinationY),
+                                SharedRepackBlockFate.Generated);
+                            continue;
+                        }
+
+                        var reason = SharedRepackBlockCopier.GetFallbackReason(
+                            source != null,
+                            source?.Layout.Format ?? string.Empty,
+                            source?.Layout.BytesPerBlock ?? 0,
+                            output.Format,
+                            bytesPerBlock,
+                            source?.Layout.MipCount ?? 0,
+                            source?.Dds.LongLength ?? 0,
+                            source == null ? 0 : source.Layout.HeaderSize + source.Layout.ChainBytes,
+                            level,
+                            item.SourceX,
+                            item.SourceY,
+                            item.DestinationX,
+                            item.DestinationY);
+
+                        if (reason != null)
+                        {
+                            SharedRepackBlockCopier.Mark(
+                                levelFates, blocksWide[level], blocksHigh[level], destinationX, destinationY,
+                                width, height, reason.Value);
+                            continue;
+                        }
+
+                        var sourceLayout = source!.Layout;
+                        var sourceLevelWidth = Math.Max(1, sourceLayout.Width >> level);
+                        var sourceLevelHeight = Math.Max(1, sourceLayout.Height >> level);
+                        var sourceX = item.SourceX >> level;
+                        var sourceY = item.SourceY >> level;
+                        var sourceOffset = checked((int)GetSharedRepackLevelOffset(sourceLayout, level));
+                        var sourceBlocksWide = SharedRepackBlockCopier.BlocksFor(sourceLevelWidth);
+                        var sourceBlocksHigh = SharedRepackBlockCopier.BlocksFor(sourceLevelHeight);
+                        var ignoredVerificationFailures = 0;
+                        SharedRepackBlockCopier.CopyRectangle(
+                            source.Dds.AsSpan(sourceOffset, checked((int)sourceLayout.LevelBytes(level))),
+                            sourceBlocksWide,
+                            sourceBlocksHigh,
+                            scratch,
+                            blocksWide[level],
+                            blocksHigh[level],
+                            bytesPerBlock,
+                            sourceX,
+                            sourceY,
+                            destinationX,
+                            destinationY,
+                            Math.Min(width, Math.Min(sourceLevelWidth - sourceX, levelWidth - destinationX)),
+                            Math.Min(height, Math.Min(sourceLevelHeight - sourceY, levelHeight - destinationY)),
+                            levelFates,
+                            ref ignoredVerificationFailures);
+                    }
+                }
+
+                fates[level] = levelFates;
+                copied[level] = levelFates.Select(fate => fate == SharedRepackBlockFate.Copied).ToArray();
+            }
+
+            plan = new SharedRepackBlockCopyPlan
+            {
+                BytesPerBlock = bytesPerBlock,
+                Fates = fates,
+                Copied = copied,
+            };
+            return true;
+        }
+
         // Writes the page's output: chart rectangles decoded into a canvas and encoded with a
         // full chain, then the compressed blocks of every block-aligned level copied over from
         // the sources; the other levels' encoder input is seeded from the sources' own mips (see below).
@@ -6661,9 +6795,11 @@ namespace Editors.PackOptimizer.Core
             SharedRepackPage page,
             SharedRepackSlotOutput output,
             SharedRepackSourceCache sources,
+            CancellationToken cancellationToken,
             out string error)
         {
             error = string.Empty;
+            cancellationToken.ThrowIfCancellationRequested();
             var canvas = new byte[checked(output.Width * output.Height * 4)];
             var neutral = GetSharedRepackNeutralPixel(output.Slot);
             for (var offset = 0; offset < canvas.Length; offset += 4)
@@ -6672,6 +6808,7 @@ namespace Editors.PackOptimizer.Core
             var users = page.Tuples.Where(tuple => tuple.Slots.ContainsKey(output.Slot)).ToList();
             foreach (var tuple in users)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var texture = output.SourceOf(tuple);
                 var source = sources.Get(texture);
                 var top = source?.Level(0);
@@ -6694,6 +6831,7 @@ namespace Editors.PackOptimizer.Core
                 var shiftY = output.ExponentY - exponent.Y;
                 foreach (var chart in page.Charts.Where(chart => chart.Tuple == tuple))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var destinationX = ScaleByExponent(chart.PackX, output.ExponentX);
                     var destinationY = ScaleByExponent(chart.PackY, output.ExponentY);
                     var destinationWidth = ScaleByExponent(chart.LayoutWidth, output.ExponentX);
@@ -6728,6 +6866,7 @@ namespace Editors.PackOptimizer.Core
                 {
                     foreach (var tuple in users)
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         var source = sources.Get(output.SourceOf(tuple));
                         var exponent = tuple.SourceExponent[output.Slot];
                         var shiftX = output.ExponentX - exponent.X;
@@ -6736,6 +6875,7 @@ namespace Editors.PackOptimizer.Core
                         var levelLoaded = false;
                         foreach (var chart in page.Charts.Where(chart => chart.Tuple == tuple))
                         {
+                            cancellationToken.ThrowIfCancellationRequested();
                             if (!levelLoaded)
                             {
                                 levelLoaded = true;
@@ -6760,12 +6900,22 @@ namespace Editors.PackOptimizer.Core
                 };
             }
 
-            if (!TryEncodeSharedRepackChain(
-                    canvas, output.Width, output.Height, output.Format, output.Srgb, output.Dx10,
-                    1, output.MipLevels - 1, overlay, out var dds, out error))
+            if (!TryBuildSharedRepackBlockCopyPlan(
+                    page, output, sources, cancellationToken, out var blockPlan, out error))
             {
                 return false;
             }
+
+            var encoded = output.Format.Equals("BC7", StringComparison.OrdinalIgnoreCase)
+                ? TryEncodeSharedRepackChainGathered(
+                    canvas, output.Width, output.Height, output.Format, output.Srgb, output.Dx10,
+                    1, output.MipLevels - 1, overlay, blockPlan.Fates, cancellationToken,
+                    out var dds, out error)
+                : TryEncodeSharedRepackChain(
+                    canvas, output.Width, output.Height, output.Format, output.Srgb, output.Dx10,
+                    1, output.MipLevels - 1, overlay, out dds, out error);
+            if (!encoded)
+                return false;
 
             if (!TryReadDdsLayout(dds.AsSpan(0, Math.Min(dds.Length, TextureDownscaleHeaderPeekBytes)).ToArray(), out var layout))
             {
@@ -6781,8 +6931,15 @@ namespace Editors.PackOptimizer.Core
             var captureFates = DdsEncodeCapture.Enabled ? new byte[output.MipLevels][] : null;
             var verifyFailures = 0;
             var bytesPerBlock = layout.BytesPerBlock;
+            if (bytesPerBlock != blockPlan.BytesPerBlock)
+            {
+                error = $"the encoded texture has {bytesPerBlock} bytes per block, planned {blockPlan.BytesPerBlock}";
+                return false;
+            }
+
             for (var level = 0; level < output.MipLevels; level++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var levelWidth = Math.Max(1, output.Width >> level);
                 var levelHeight = Math.Max(1, output.Height >> level);
                 var destinationBlocksWide = SharedRepackBlockCopier.BlocksFor(levelWidth);
@@ -6795,9 +6952,11 @@ namespace Editors.PackOptimizer.Core
                 var levelHasCharts = false;
                 foreach (var tuple in users)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     var source = sources.Get(output.SourceOf(tuple));
                     foreach (var item in EnumerateSharedRepackSlotCharts(page, output, tuple))
                     {
+                        cancellationToken.ThrowIfCancellationRequested();
                         var width = item.Width >> level;
                         var height = item.Height >> level;
                         if (width <= 0 || height <= 0)
@@ -6854,6 +7013,24 @@ namespace Editors.PackOptimizer.Core
                     }
                 }
 
+                var actualCopied = fates.Select(fate => fate == SharedRepackBlockFate.Copied).ToArray();
+                var plannedCopied = blockPlan.Copied[level];
+                if (actualCopied.Length != plannedCopied.Length ||
+                    !actualCopied.AsSpan().SequenceEqual(plannedCopied))
+                {
+                    var mismatch = actualCopied.Length == plannedCopied.Length
+                        ? Enumerable.Range(0, actualCopied.Length)
+                            .FirstOrDefault(index => actualCopied[index] != plannedCopied[index], -1)
+                        : -1;
+                    error = $"copy plan mismatch at mip level {level}" +
+                            (mismatch >= 0
+                                ? $": block {mismatch} was " +
+                                  (actualCopied[mismatch] ? "copied by the pass but not planned" :
+                                   "planned for copying but not copied")
+                                : $": planned {plannedCopied.Length} blocks, pass produced {actualCopied.Length}");
+                    return false;
+                }
+
                 SharedRepackBlockCopier.Tally(stats, level, fates, levelHasCharts);
                 if (captureFates != null)
                 {
@@ -6904,6 +7081,7 @@ namespace Editors.PackOptimizer.Core
             {
                 "BC1" => srgb ? DXGI_FORMAT.BC1_UNORM_SRGB : DXGI_FORMAT.BC1_UNORM,
                 "BC3" => srgb ? DXGI_FORMAT.BC3_UNORM_SRGB : DXGI_FORMAT.BC3_UNORM,
+                "BC7" => srgb ? DXGI_FORMAT.BC7_UNORM_SRGB : DXGI_FORMAT.BC7_UNORM,
                 _ => DXGI_FORMAT.UNKNOWN,
             };
             if (compressed == DXGI_FORMAT.UNKNOWN)
@@ -6952,6 +7130,286 @@ namespace Editors.PackOptimizer.Core
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 error = $"encode failed ({ex.GetType().Name}: {ex.Message})";
+                return false;
+            }
+        }
+
+        private static DXGI_FORMAT GetSharedRepackCompressedFormat(string format, bool srgb)
+            => format switch
+            {
+                "BC1" => srgb ? DXGI_FORMAT.BC1_UNORM_SRGB : DXGI_FORMAT.BC1_UNORM,
+                "BC3" => srgb ? DXGI_FORMAT.BC3_UNORM_SRGB : DXGI_FORMAT.BC3_UNORM,
+                "BC7" => srgb ? DXGI_FORMAT.BC7_UNORM_SRGB : DXGI_FORMAT.BC7_UNORM,
+                _ => DXGI_FORMAT.UNKNOWN,
+            };
+
+        private static byte[] ReadSharedRepackImage(Image image)
+        {
+            var rowBytes = checked(image.Width * 4);
+            var result = new byte[checked(rowBytes * image.Height)];
+            var pitch = checked((int)image.RowPitch);
+            for (var y = 0; y < image.Height; y++)
+                Marshal.Copy(IntPtr.Add(image.Pixels, y * pitch), result, y * rowBytes, rowBytes);
+            return result;
+        }
+
+        // Encodes only blocks the copy plan leaves behind. Each strip is independent because the
+        // DirectXTex BC encoders operate on one 4x4 block at a time.
+        private static bool TryEncodeSharedRepackChainGathered(
+            byte[] bgra,
+            int width,
+            int height,
+            string format,
+            bool srgb,
+            bool dx10,
+            int firstOverlayLevel,
+            int lastOverlayLevel,
+            Action<int, byte[], int, int>? overlay,
+            SharedRepackBlockFate[][] blockFates,
+            CancellationToken cancellationToken,
+            out byte[] result,
+            out string error)
+        {
+            result = [];
+            error = string.Empty;
+            var uncompressed = srgb ? DXGI_FORMAT.B8G8R8A8_UNORM_SRGB : DXGI_FORMAT.B8G8R8A8_UNORM;
+            var compressed = GetSharedRepackCompressedFormat(format, srgb);
+            if (compressed == DXGI_FORMAT.UNKNOWN)
+            {
+                error = $"{format} cannot be encoded";
+                return false;
+            }
+
+            try
+            {
+                using var full = TexHelper.Instance.Initialize2D(uncompressed, width, height, 1, 1, CP_FLAGS.NONE);
+                var image = full.GetImage(0, 0, 0);
+                var pitch = checked((int)image.RowPitch);
+                for (var y = 0; y < height; y++)
+                    Marshal.Copy(bgra, y * width * 4, IntPtr.Add(image.Pixels, y * pitch), width * 4);
+
+                using var chain = full.GenerateMipMaps(TEX_FILTER_FLAGS.DEFAULT, 0);
+                var mipCount = chain.GetMetadata().MipLevels;
+                if (blockFates.Length != mipCount)
+                {
+                    error = $"copy plan has {blockFates.Length} levels, chain has {mipCount}";
+                    return false;
+                }
+
+                var lastOverlay = Math.Min(lastOverlayLevel, mipCount - 1);
+                if (overlay != null && firstOverlayLevel > 0 && lastOverlay >= firstOverlayLevel)
+                {
+                    for (var level = firstOverlayLevel; level <= lastOverlay; level++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var levelImage = chain.GetImage(level, 0, 0);
+                        var levelWidth = levelImage.Width;
+                        var levelHeight = levelImage.Height;
+                        var pixels = ReadSharedRepackImage(levelImage);
+                        overlay(level, pixels, levelWidth, levelHeight);
+                        var levelPitch = checked((int)levelImage.RowPitch);
+                        for (var y = 0; y < levelHeight; y++)
+                            Marshal.Copy(
+                                pixels,
+                                y * levelWidth * 4,
+                                IntPtr.Add(levelImage.Pixels, y * levelPitch),
+                                levelWidth * 4);
+                    }
+                }
+
+                var levelPixels = new byte[mipCount][];
+                for (var level = 0; level < mipCount; level++)
+                    levelPixels[level] = ReadSharedRepackImage(chain.GetImage(level, 0, 0));
+
+                // Initialize an empty compressed chain only to obtain the exact DDS header and level layout.
+                using var empty = TexHelper.Instance.Initialize2D(compressed, width, height, 1, mipCount, CP_FLAGS.NONE);
+                using var headerStream = empty.SaveToDDSMemory(dx10 ? DDS_FLAGS.FORCE_DX10_EXT : DDS_FLAGS.NONE);
+                result = headerStream.ToArray();
+                if (!TryReadDdsLayout(
+                        result.AsSpan(0, Math.Min(result.Length, TextureDownscaleHeaderPeekBytes)).ToArray(),
+                        out var layout))
+                {
+                    error = "the gathered encoder produced an unreadable header";
+                    return false;
+                }
+                var encodedBytes = result;
+
+                var gutterFlags = format.Equals("BC7", StringComparison.OrdinalIgnoreCase)
+                    ? SharedRepackGutterCompressFlags
+                    : TEX_COMPRESS_FLAGS.DEFAULT;
+                var visibleFlags = format.Equals("BC7", StringComparison.OrdinalIgnoreCase)
+                    ? SharedRepackVisibleCompressFlags
+                    : TEX_COMPRESS_FLAGS.DEFAULT;
+                const int blocksPerChunk = 256;
+                var chunks = new List<(int Level, int[] Blocks, TEX_COMPRESS_FLAGS Flags)>();
+                void AddChunks(int level, List<int> blocks, TEX_COMPRESS_FLAGS flags)
+                {
+                    for (var first = 0; first < blocks.Count; first += blocksPerChunk)
+                    {
+                        var count = Math.Min(blocksPerChunk, blocks.Count - first);
+                        chunks.Add((level, blocks.GetRange(first, count).ToArray(), flags));
+                    }
+                }
+
+                for (var level = 0; level < mipCount; level++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var levelImage = chain.GetImage(level, 0, 0);
+                    var levelWidth = levelImage.Width;
+                    var levelHeight = levelImage.Height;
+                    var blocksWide = SharedRepackBlockCopier.BlocksFor(levelWidth);
+                    var blocksHigh = SharedRepackBlockCopier.BlocksFor(levelHeight);
+                    var blockCount = checked(blocksWide * blocksHigh);
+                    if (blockFates[level].Length != blockCount)
+                    {
+                        error = $"copy plan has {blockFates[level].Length} blocks at level {level}, expected {blockCount}";
+                        return false;
+                    }
+
+                    var pixels = levelPixels[level];
+                    if (blocksWide == 1 && blocksHigh == 1 && (levelWidth < 4 || levelHeight < 4))
+                    {
+                        if (blockFates[level][0] == SharedRepackBlockFate.Copied)
+                            continue;
+
+                        var tinyFlags = blockFates[level][0] == SharedRepackBlockFate.Gutter
+                            ? gutterFlags
+                            : visibleFlags;
+                        var levelOffset = checked((int)GetSharedRepackLevelOffset(layout, level));
+                        using var tiny = TexHelper.Instance.Initialize2D(
+                            uncompressed, levelWidth, levelHeight, 1, 1, CP_FLAGS.NONE);
+                        var tinyImage = tiny.GetImage(0, 0, 0);
+                        var tinyPitch = checked((int)tinyImage.RowPitch);
+                        for (var y = 0; y < levelHeight; y++)
+                            Marshal.Copy(
+                                pixels,
+                                y * levelWidth * 4,
+                                IntPtr.Add(tinyImage.Pixels, y * tinyPitch),
+                                levelWidth * 4);
+
+                        if (DdsEncodeCapture.Enabled)
+                        {
+                            DdsEncodeCapture.Record(
+                                "TryEncodeSharedRepackChainGathered", tiny, null, tiny, compressed,
+                                tinyFlags, 0.5f, $"gathered level {level} (one partial block)");
+                        }
+
+                        using var packedTiny = tiny.Compress(compressed, tinyFlags, 0.5f);
+                        var packedTinyImage = packedTiny.GetImage(0, 0, 0);
+                        var tinyBlock = new byte[layout.BytesPerBlock];
+                        Marshal.Copy(packedTinyImage.Pixels, tinyBlock, 0, tinyBlock.Length);
+                        tinyBlock.CopyTo(encodedBytes, levelOffset);
+                        continue;
+                    }
+
+                    var gutterBlocks = new List<int>();
+                    var visibleBlocks = new List<int>();
+                    for (var block = 0; block < blockCount; block++)
+                    {
+                        switch (blockFates[level][block])
+                        {
+                            case SharedRepackBlockFate.Copied:
+                                break;
+                            case SharedRepackBlockFate.Gutter:
+                                gutterBlocks.Add(block);
+                                break;
+                            default:
+                                visibleBlocks.Add(block);
+                                break;
+                        }
+                    }
+
+                    AddChunks(level, gutterBlocks, gutterFlags);
+                    AddChunks(level, visibleBlocks, visibleFlags);
+                }
+
+                Parallel.For(
+                    0,
+                    chunks.Count,
+                    new ParallelOptions
+                    {
+                        CancellationToken = cancellationToken,
+                        MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount),
+                    },
+                    chunkIndex =>
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var chunk = chunks[chunkIndex];
+                        var level = chunk.Level;
+                        var levelImage = chain.GetImage(level, 0, 0);
+                        var levelWidth = levelImage.Width;
+                        var levelHeight = levelImage.Height;
+                        var blocksWide = SharedRepackBlockCopier.BlocksFor(levelWidth);
+                        var stripBlocksWide = Math.Min(16, chunk.Blocks.Length);
+                        var stripBlocksHigh = (chunk.Blocks.Length + stripBlocksWide - 1) / stripBlocksWide;
+                        var stripWidth = stripBlocksWide * 4;
+                        var stripHeight = stripBlocksHigh * 4;
+                        var pixels = levelPixels[level];
+                        var stripPixels = new byte[checked(stripWidth * stripHeight * 4)];
+                        for (var index = 0; index < chunk.Blocks.Length; index++)
+                        {
+                            var destinationBlock = chunk.Blocks[index];
+                            var sourceBlockX = destinationBlock % blocksWide;
+                            var sourceBlockY = destinationBlock / blocksWide;
+                            var stripBlockX = index % stripBlocksWide;
+                            var stripBlockY = index / stripBlocksWide;
+                            for (var y = 0; y < 4; y++)
+                            {
+                                var sourceY = Math.Min(levelHeight - 1, sourceBlockY * 4 + y);
+                                var targetY = stripBlockY * 4 + y;
+                                for (var x = 0; x < 4; x++)
+                                {
+                                    var sourceX = Math.Min(levelWidth - 1, sourceBlockX * 4 + x);
+                                    var sourceOffset = (sourceY * levelWidth + sourceX) * 4;
+                                    var targetOffset = (targetY * stripWidth + stripBlockX * 4 + x) * 4;
+                                    stripPixels[targetOffset] = pixels[sourceOffset];
+                                    stripPixels[targetOffset + 1] = pixels[sourceOffset + 1];
+                                    stripPixels[targetOffset + 2] = pixels[sourceOffset + 2];
+                                    stripPixels[targetOffset + 3] = pixels[sourceOffset + 3];
+                                }
+                            }
+                        }
+
+                        using var strip = TexHelper.Instance.Initialize2D(
+                            uncompressed, stripWidth, stripHeight, 1, 1, CP_FLAGS.NONE);
+                        var stripImage = strip.GetImage(0, 0, 0);
+                        var stripPitch = checked((int)stripImage.RowPitch);
+                        for (var y = 0; y < stripHeight; y++)
+                            Marshal.Copy(
+                                stripPixels,
+                                y * stripWidth * 4,
+                                IntPtr.Add(stripImage.Pixels, y * stripPitch),
+                                stripWidth * 4);
+
+                        if (DdsEncodeCapture.Enabled)
+                        {
+                            DdsEncodeCapture.Record(
+                                "TryEncodeSharedRepackChainGathered", strip, null, strip, compressed,
+                                chunk.Flags, 0.5f, $"gathered level {level}, chunk {chunkIndex}");
+                        }
+
+                        using var packed = strip.Compress(compressed, chunk.Flags, 0.5f);
+                        var packedImage = packed.GetImage(0, 0, 0);
+                        var packedBytes = new byte[checked((int)packedImage.SlicePitch)];
+                        Marshal.Copy(packedImage.Pixels, packedBytes, 0, packedBytes.Length);
+                        var packedRowPitch = checked((int)packedImage.RowPitch);
+                        var levelOffset = checked((int)GetSharedRepackLevelOffset(layout, level));
+                        for (var index = 0; index < chunk.Blocks.Length; index++)
+                        {
+                            var destinationBlock = chunk.Blocks[index];
+                            var sourceOffset = (index / stripBlocksWide) * packedRowPitch +
+                                               (index % stripBlocksWide) * layout.BytesPerBlock;
+                            var destinationOffset = levelOffset + destinationBlock * layout.BytesPerBlock;
+                            packedBytes.AsSpan(sourceOffset, layout.BytesPerBlock)
+                                .CopyTo(encodedBytes.AsSpan(destinationOffset, layout.BytesPerBlock));
+                        }
+                    });
+
+                return true;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                error = $"gathered encode failed ({ex.GetType().Name}: {ex.Message})";
                 return false;
             }
         }
@@ -7449,7 +7907,7 @@ namespace Editors.PackOptimizer.Core
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         using var captureScope = DdsEncodeCapture.Scope("shared-repack", output.Path);
-                        if (!TryComposeSharedRepackOutput(page, output, sources, out var error))
+                        if (!TryComposeSharedRepackOutput(page, output, sources, cancellationToken, out var error))
                         {
                             failure = $"{output.Slot}: {error}";
                             return null;

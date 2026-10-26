@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Reflection;
 using Editors.ImportExport.Dds.Native;
 
 namespace Test.PackOptimizer.Core
@@ -103,6 +104,106 @@ namespace Test.PackOptimizer.Core
             });
 
             Assert.That(results.Distinct(new ByteArrayComparer()).Count(), Is.EqualTo(1));
+        }
+
+        [Test]
+        public void Bc7Decode_MatchesDirectXTexIncludingSlicedMips()
+        {
+            foreach (var (sourceFormat, compressedFormat, decodedFormat) in new[]
+                     {
+                         (DXGI_FORMAT.B8G8R8A8_UNORM, DXGI_FORMAT.BC7_UNORM, DXGI_FORMAT.B8G8R8A8_UNORM),
+                         (DXGI_FORMAT.B8G8R8A8_UNORM_SRGB, DXGI_FORMAT.BC7_UNORM_SRGB, DXGI_FORMAT.B8G8R8A8_UNORM_SRGB),
+                     })
+            {
+                using var source = Noisy(sourceFormat, 32, 16);
+                using var chain = source.GenerateMipMaps(TEX_FILTER_FLAGS.DEFAULT, 0);
+                using var compressed = chain.Compress(compressedFormat, TEX_COMPRESS_FLAGS.DEFAULT, 0.5f);
+                using var stream = compressed.SaveToDDSMemory(DDS_FLAGS.FORCE_DX10_EXT);
+                var dds = stream.ToArray();
+
+                Assert.That(BitConverter.ToUInt32(dds, 84), Is.EqualTo(0x30315844u));
+                Assert.That(BitConverter.ToInt32(dds, 128), Is.EqualTo((int)compressedFormat));
+
+                using var expectedImage = compressed.Decompress(decodedFormat);
+                var expectedTop = ReadBgra(expectedImage.GetImage(0, 0, 0));
+                using var pfimStream = new MemoryStream(dds);
+                using var pfim = Pfim.Pfimage.FromStream(pfimStream);
+                Assert.That(pfim.Format, Is.EqualTo(Pfim.ImageFormat.Rgba32));
+                Assert.That(ReadPfim(pfim), Is.EqualTo(expectedTop));
+                var decoded = InvokeDecode(dds, out var width, out var height);
+                Assert.That((width, height), Is.EqualTo((32, 16)));
+                Assert.That(decoded, Is.EqualTo(expectedTop));
+
+                var layoutArguments = new object?[] { dds.AsSpan(0, 148).ToArray(), null };
+                Assert.That(OptimizerMethod("TryReadDdsLayout").Invoke(null, layoutArguments), Is.EqualTo(true));
+                var sliceArguments = new object?[] { dds, layoutArguments[1], 1, null, null };
+                Assert.That(OptimizerMethod("TrySliceDdsMips").Invoke(null, sliceArguments), Is.EqualTo(true));
+                var sliced = (byte[])sliceArguments[3]!;
+                var expectedLevelOne = ReadBgra(expectedImage.GetImage(1, 0, 0));
+                var slicedDecoded = InvokeDecode(sliced, out width, out height);
+                Assert.That((width, height), Is.EqualTo((16, 8)));
+                Assert.That(slicedDecoded, Is.EqualTo(expectedLevelOne));
+            }
+        }
+
+        private static ScratchImage Noisy(DXGI_FORMAT format, int width, int height)
+        {
+            var random = new Random(0xBC7);
+            var image = TexHelper.Instance.Initialize2D(
+                format, width, height, 1, 1, CP_FLAGS.NONE);
+            var frame = image.GetImage(0, 0, 0);
+            var row = new byte[width * 4];
+            for (var y = 0; y < height; y++)
+            {
+                random.NextBytes(row);
+                Marshal.Copy(row, 0, IntPtr.Add(frame.Pixels, y * (int)frame.RowPitch), row.Length);
+            }
+
+            return image;
+        }
+
+        private static MethodInfo OptimizerMethod(string name)
+        {
+            var type = Assembly.Load("Editors.PackOptimizer.Core")
+                .GetType("Editors.PackOptimizer.Core.PackTextureAtlasBatchService", throwOnError: true)!;
+            return type.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(name);
+        }
+
+        private static byte[] InvokeDecode(byte[] dds, out int width, out int height)
+        {
+            var arguments = new object?[] { dds, null, 0, 0, null };
+            var decoded = (bool)OptimizerMethod("TryDecodeDdsTopLevel").Invoke(null, arguments)!;
+            Assert.That(decoded, Is.True, arguments[4] as string ?? "BC7 decode failed");
+            width = (int)arguments[2]!;
+            height = (int)arguments[3]!;
+            return (byte[])arguments[1]!;
+        }
+
+        private static byte[] ReadBgra(Image image)
+        {
+            var bytes = new byte[checked(image.Width * image.Height * 4)];
+            var rowBytes = checked(image.Width * 4);
+            var pitch = checked((int)image.RowPitch);
+            for (var y = 0; y < image.Height; y++)
+            {
+                Marshal.Copy(
+                    IntPtr.Add(image.Pixels, checked(y * pitch)),
+                    bytes,
+                    y * rowBytes,
+                    rowBytes);
+            }
+
+            return bytes;
+        }
+
+        private static byte[] ReadPfim(Pfim.IImage image)
+        {
+            var bytes = new byte[checked(image.Width * image.Height * 4)];
+            var rowBytes = checked(image.Width * 4);
+            for (var y = 0; y < image.Height; y++)
+                image.Data.AsSpan(y * image.Stride, rowBytes).CopyTo(bytes.AsSpan(y * rowBytes, rowBytes));
+            return bytes;
         }
 
         private sealed class ByteArrayComparer : IEqualityComparer<byte[]>

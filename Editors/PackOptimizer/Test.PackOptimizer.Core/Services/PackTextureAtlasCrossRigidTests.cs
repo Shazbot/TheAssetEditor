@@ -5423,7 +5423,9 @@ namespace Test.PackOptimizer.Core
                     ? dxgiFormat
                     : format == "BC1"
                         ? (srgb ? 72 : 71)
-                        : (srgb ? 78 : 77);
+                        : format == "BC7"
+                            ? (srgb ? 99 : 98)
+                            : (srgb ? 78 : 77);
                 BitConverter.GetBytes(dxgi).CopyTo(dds, 128);
                 BitConverter.GetBytes(3).CopyTo(dds, 132);
                 BitConverter.GetBytes(1).CopyTo(dds, 140);
@@ -8148,12 +8150,8 @@ namespace Test.PackOptimizer.Core
                 (byte)((blockY * 40 + seed * 29 + 20) % 256),
                 (byte)(((blockX + blockY * 3) * 30 + seed * 11) % 256));
 
-        private static byte[] BuildContentDds(int size, string format, bool srgb, int seed)
+        private static byte[] BuildContentPixels(int size, int seed)
         {
-            var key = (size, format, srgb, seed);
-            if (SrTextureCache.TryGetValue(key, out var cached))
-                return cached;
-
             var bgra = new byte[size * size * 4];
             for (var y = 0; y < size; y++)
             {
@@ -8167,11 +8165,55 @@ namespace Test.PackOptimizer.Core
                     bgra[offset + 3] = 255;
                 }
             }
+            return bgra;
+        }
+
+        private static byte[] BuildContentDds(int size, string format, bool srgb, int seed)
+        {
+            var key = (size, format, srgb, seed);
+            if (SrTextureCache.TryGetValue(key, out var cached))
+                return cached;
+
+            var bgra = BuildContentPixels(size, seed);
 
             var arguments = new object?[] { bgra, size, size, format, srgb, true, null, null };
             Assert.That((bool)GetStaticMethod("TryEncodeSharedRepackDds").Invoke(null, arguments)!, Is.True);
             SrTextureCache[key] = (byte[])arguments[6]!;
             return SrTextureCache[key];
+        }
+
+        private static readonly Dictionary<(int, bool, int), byte[]> SrQuickBc7TextureCache = [];
+
+        private static byte[] BuildQuickBc7ContentDds(int size, bool srgb, int seed)
+        {
+            var key = (size, srgb, seed);
+            if (SrQuickBc7TextureCache.TryGetValue(key, out var cached))
+                return cached;
+
+            var bgra = BuildContentPixels(size, seed);
+            var uncompressed = srgb
+                ? Editors.ImportExport.Dds.Native.DXGI_FORMAT.B8G8R8A8_UNORM_SRGB
+                : Editors.ImportExport.Dds.Native.DXGI_FORMAT.B8G8R8A8_UNORM;
+            var compressed = srgb
+                ? Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC7_UNORM_SRGB
+                : Editors.ImportExport.Dds.Native.DXGI_FORMAT.BC7_UNORM;
+            using var source = Editors.ImportExport.Dds.Native.TexHelper.Instance.Initialize2D(
+                uncompressed, size, size, 1, 1, Editors.ImportExport.Dds.Native.CP_FLAGS.NONE);
+            var image = source.GetImage(0, 0, 0);
+            var pitch = checked((int)image.RowPitch);
+            for (var y = 0; y < size; y++)
+                System.Runtime.InteropServices.Marshal.Copy(
+                    bgra, y * size * 4, IntPtr.Add(image.Pixels, y * pitch), size * 4);
+
+            using var chain = source.GenerateMipMaps(
+                Editors.ImportExport.Dds.Native.TEX_FILTER_FLAGS.DEFAULT, 0);
+            using var packed = chain.Compress(
+                compressed, Editors.ImportExport.Dds.Native.TEX_COMPRESS_FLAGS.BC7_QUICK, 0.5f);
+            using var stream = packed.SaveToDDSMemory(
+                Editors.ImportExport.Dds.Native.DDS_FLAGS.FORCE_DX10_EXT);
+            cached = stream.ToArray();
+            SrQuickBc7TextureCache[key] = cached;
+            return cached;
         }
 
         private static (byte[] Bgra, int Width, int Height) DecodeDds(byte[] dds)
@@ -8212,7 +8254,9 @@ namespace Test.PackOptimizer.Core
 
             public void AddTexture(string path, int size, string format, bool srgb, int seed, bool owned = false)
             {
-                var bytes = BuildContentDds(size, format, srgb, seed);
+                var bytes = format == "BC7"
+                    ? BuildQuickBc7ContentDds(size, srgb, seed)
+                    : BuildContentDds(size, format, srgb, seed);
                 if (owned)
                     Fixture.Add(path, bytes);
                 else
@@ -8390,13 +8434,17 @@ namespace Test.PackOptimizer.Core
 
         // Rigid with two LODs; part 0 uses material m1 (base b1, normal n1), part 1 uses m2.
         // Both LODs show the same regions.
-        private static SrWorld BuildStandardSrWorld(bool secondLod = true)
+        private static SrWorld BuildStandardSrWorld(
+            bool secondLod = true,
+            string baseFormat = "BC1",
+            bool baseSrgb = true,
+            int baseSize = 1024)
         {
             var world = new SrWorld();
-            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1);
-            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2);
-            world.AddTexture("textures\\sr_b2.dds", 1024, "BC1", true, 3);
-            world.AddTexture("textures\\sr_n2.dds", 512, "BC3", false, 4);
+            world.AddTexture("textures\\sr_b1.dds", baseSize, baseFormat, baseSrgb, 1);
+            world.AddTexture("textures\\sr_n1.dds", baseSize / 2, "BC3", false, 2);
+            world.AddTexture("textures\\sr_b2.dds", baseSize, baseFormat, baseSrgb, 3);
+            world.AddTexture("textures\\sr_n2.dds", baseSize / 2, "BC3", false, 4);
             world.Fixture.AddMaterial(SrMaterialPath("m1"), (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n1.dds"));
             world.Fixture.AddMaterial(SrMaterialPath("m2"), (SrBase, "textures\\sr_b2.dds"), (SrNormal, "textures\\sr_n2.dds"));
             var m1 = SrMaterialPath("m1");
@@ -11644,6 +11692,111 @@ namespace Test.PackOptimizer.Core
             }
 
             Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain($"{levels} of {Get<int>(baseOutput, "MipLevels")} mip level(s) block-copied"));
+        }
+
+        [TestCase(true)]
+        [TestCase(false)]
+        public void SharedRepack_Bc7Set_PreservesFormatSrgbDx10MipsAndCopiedBlocks(bool srgb)
+        {
+            var world = BuildStandardSrWorld(
+                secondLod: false,
+                baseFormat: "BC7",
+                baseSrgb: srgb,
+                baseSize: 256);
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "FailedPixelCheck"), Is.Zero, SrSkips(result));
+            var built = SrBuilt(result).Single();
+            Assert.That(Get<double>(built, "MaxError"), Is.LessThanOrEqualTo(12));
+            var baseOutputs = Get<IEnumerable>(built, "Outputs").Cast<object>()
+                .Where(output => Get<string>(output, "Slot") == SrBase)
+                .ToList();
+            Assert.That(baseOutputs, Is.Not.Empty);
+            Assert.That(baseOutputs.Select(output => Get<string>(output, "Format")), Has.All.EqualTo("BC7"));
+            var baseOutput = baseOutputs.First(output =>
+                Get<IEnumerable>(output, "Sources").Cast<string>()
+                    .Contains("textures\\sr_b1.dds", StringComparer.OrdinalIgnoreCase));
+            Assert.That(
+                (Get<string>(baseOutput, "Format"), Get<bool>(baseOutput, "Srgb"), Get<bool>(baseOutput, "Dx10")),
+                Is.EqualTo(("BC7", srgb, true)));
+            Assert.That(Get<int>(baseOutput, "BlockCopiedLevels"), Is.GreaterThan(0));
+
+            var generated = world.Fixture.Output[Get<string>(baseOutput, "Path")];
+            var info = ReadDds(generated);
+            Assert.That(
+                (info.Format, info.Srgb, info.Dx10),
+                Is.EqualTo(("BC7", srgb, true)));
+            Assert.That(
+                info.Mips,
+                Is.EqualTo(1 + int.Log2(Math.Max(info.Width, info.Height))),
+                "the generated BC7 output has a complete mip chain");
+
+            var source = world.Fixture.Vanilla["textures\\sr_b1.dds"];
+            var factory = world.Rigids[SrRigid];
+            var (old, @new) = SrFirstTriangleCentroid(world, SrRigid, factory, 0);
+            var copiedLevels = Get<int>(baseOutput, "BlockCopiedLevels");
+            for (var level = 0; level < copiedLevels; level++)
+            {
+                var sourceSize = Math.Max(1, 256 >> level);
+                var generatedWidth = Math.Max(1, info.Width >> level);
+                var generatedHeight = Math.Max(1, info.Height >> level);
+                var from = DdsBlockOffset(
+                    source, level, (int)(old.U * sourceSize) / 4, (int)(old.V * sourceSize) / 4, 16);
+                var to = DdsBlockOffset(
+                    generated, level, (int)(@new.U * generatedWidth) / 4, (int)(@new.V * generatedHeight) / 4, 16);
+                Assert.That(
+                    generated.AsSpan((int)to, 16).ToArray(),
+                    Is.EqualTo(source.AsSpan((int)from, 16).ToArray()),
+                    $"BC7 {nameof(srgb)}={srgb}, level {level}");
+            }
+
+            var (samples, max) = AssertSrPixels(
+                world, SrRigid, SrWs, factory, SrPart0Seeds, (_, part) => part == 0);
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_Bc7NonPowerOfTwoTextureIsStillRefused()
+        {
+            var layout = GetLayout(BuildBcDds(256, 192, 9, "BC7", dx10: true, srgb: true));
+            var reason = (string?)GetStaticMethod("GetSharedRepackBlockedTextureReason").Invoke(null, [layout]);
+
+            Assert.That(reason, Does.Contain("not a power of two of at least 4"));
+        }
+
+        [Test]
+        public void SharedRepack_MixedBc7AndBc1SourcesStayInSeparateFormatGroups()
+        {
+            var world = BuildStandardSrWorld(
+                secondLod: false,
+                baseSize: 256);
+            world.Fixture.Vanilla["textures\\sr_b2.dds"] =
+                BuildQuickBc7ContentDds(256, srgb: true, seed: 3);
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.GreaterThanOrEqualTo(1), SrSkips(result));
+            AssertFunnelReconciles(result);
+
+            string BaseSource(string materialPath)
+            {
+                var document = new XmlDocument();
+                document.LoadXml(Encoding.UTF8.GetString(world.Fixture.Output[materialPath]));
+                return document.SelectNodes("/material/textures/texture")!.Cast<XmlNode>()
+                    .Single(node => node.SelectSingleNode("slot")!.InnerText.Trim() == SrBase)
+                    .SelectSingleNode("source")!.InnerText;
+            }
+
+            var firstPath = BaseSource(SrWsMaterial(world.State, SrWs, 0, 0));
+            var secondPath = BaseSource(SrWsMaterial(world.State, SrWs, 0, 1));
+            Assert.That(firstPath, Is.Not.EqualTo(secondPath));
+            Assert.That(ReadDds(world.Fixture.Output[firstPath]).Format, Is.EqualTo("BC1"));
+            Assert.That(ReadDds(world.Fixture.Output[secondPath]).Format, Is.EqualTo("BC7"));
+            Assert.That(SrValidate(world), Is.Empty);
         }
 
         [Test]
@@ -17530,6 +17683,9 @@ namespace Test.PackOptimizer.Core
             [22] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
             // 23 adds shared flow-overlay rewriting; the output golden fixture has no flow shader material.
             [23] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 24: the shared texture repack accepts BC7 sets (block-copied where aligned, BC7 encoded elsewhere);
+            // the repack is not among the pinned stages, so the hash is unchanged.
+            [24] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
