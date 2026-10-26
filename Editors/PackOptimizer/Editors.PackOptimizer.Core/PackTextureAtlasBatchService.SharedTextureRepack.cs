@@ -81,9 +81,11 @@ namespace Editors.PackOptimizer.Core
         // colour such as commontextures\default_black.dds) never blocks a part and is kept as
         // authored; a larger one counts as not uniform without being decoded.
         private const int SharedRepackUniformTextureSide = 1024;
-        // A merged plan stops growing above this many signature sets or rigids.
-        private const int SharedRepackMaximumMergedSets = 8;
-        private const int SharedRepackMaximumMergedRigids = 16;
+        // A merged plan stops growing above this many signature sets or rigids (a bound on the plan's
+        // closure and layout work; measured on the two big mods, the largest plan that pays takes 26
+        // sets in 42 rigids, and 32 and 48 recover everything uncapped runs do).
+        private const int SharedRepackMaximumMergedSets = 32;
+        private const int SharedRepackMaximumMergedRigids = 48;
         // Rigids the cross-rigid writer generated count separately: one source part can be
         // copied into several generated models.
         private const int SharedRepackMaximumMergedGeneratedRigids = 64;
@@ -522,6 +524,11 @@ namespace Editors.PackOptimizer.Core
             // Tuples with the same signature can share one layout: same slots, formats,
             // colour spaces and per-slot size ratios, so no slot is ever resampled.
             public string GroupKey { get; set; } = string.Empty;
+            // The key that also separates tuples by their foreign variants (the group key falls back to
+            // it when joining them does not pay or a variant page would be bigger than its texture).
+            public string StrictGroupKey { get; set; } = string.Empty;
+            // Variant textures that other units load than the layout texture of their slot.
+            public HashSet<string> ForeignVariantTextures { get; } = new(StringComparer.OrdinalIgnoreCase);
             // Why this tuple is left untouched (null = included).
             public string? Excluded { get; set; }
         }
@@ -4822,7 +4829,14 @@ namespace Editors.PackOptimizer.Core
                 // slot is keyed by its texture instead (copies of different noise never share a page),
                 // and a tuple with emissive compensation by its reference aspect ratio (its page
                 // canvases are restricted to it, so the UV scale is equal in U and V).
-                tuple.GroupKey = $"{cell}|" + string.Join(
+                //
+                // A variant texture that other units load than the layout texture (a foreign variant)
+                // keeps its tuple apart in the strict key: the page of the variant would hold crops of
+                // textures those units never loaded. The group key leaves it out; the planner joins
+                // tuples that differ only there when it can show each foreign variant page is no
+                // bigger than the texture it replaces and the joint pages are smaller than the
+                // separate ones, else it falls back to the strict key.
+                string BuildKey(bool strict) => $"{cell}|" + string.Join(
                     ";",
                     tuple.Layouts.Select(pair =>
                         $"{pair.Key}:{pair.Value.Format}:{pair.Value.IsSrgb}:" +
@@ -4830,9 +4844,7 @@ namespace Editors.PackOptimizer.Core
                         (tuple.CopySlots.Contains(pair.Key)
                             ? $"copy:{Normalize(tuple.Slots[pair.Key])}"
                             : setKeyOf(tuple.Slots[pair.Key])) +
-                        // A variant texture that other units load than the layout texture keeps its tuple
-                        // apart: the page of the variant would hold crops of textures those units never loaded.
-                        (tuple.VariantTextures.TryGetValue(pair.Key, out var variantTextures)
+                        (strict && tuple.VariantTextures.TryGetValue(pair.Key, out var variantTextures)
                             ? string.Concat(variantTextures
                                 .Select(setKeyOf)
                                 .Where(key => key != setKeyOf(tuple.Slots[pair.Key]))
@@ -4840,12 +4852,22 @@ namespace Editors.PackOptimizer.Core
                                 .OrderBy(key => key, StringComparer.Ordinal)
                                 .Select(key => $"<{key}"))
                             : string.Empty)));
+                tuple.GroupKey = BuildKey(false);
+                tuple.StrictGroupKey = BuildKey(true);
+                foreach (var (slot, slotVariants) in tuple.VariantTextures)
+                {
+                    var layoutSet = setKeyOf(tuple.Slots[slot]);
+                    foreach (var texture in slotVariants.Where(texture => setKeyOf(texture) != layoutSet))
+                        tuple.ForeignVariantTextures.Add(texture);
+                }
+
                 if (tuple.EmissiveCompensation || tuple.FlowCompensation)
                 {
                     var divisor = GreatestCommonDivisor(reference.Width, reference.Height);
-                    tuple.GroupKey += $"|aspect:{reference.Width / divisor}x{reference.Height / divisor}";
-                    if (tuple.FlowCompensation)
-                        tuple.GroupKey += "|flow-compensation";
+                    var aspect = $"|aspect:{reference.Width / divisor}x{reference.Height / divisor}" +
+                                 (tuple.FlowCompensation ? "|flow-compensation" : string.Empty);
+                    tuple.GroupKey += aspect;
+                    tuple.StrictGroupKey += aspect;
                 }
                 if (reference.Width % cell != 0 || reference.Height % cell != 0)
                 {
@@ -5351,15 +5373,69 @@ namespace Editors.PackOptimizer.Core
                     return null;
                 }
 
+                // Tuples that differ only in foreign variants share a group key; a bucket with a single
+                // strict key joins nothing and keeps it.
+                foreach (var bucket in active.GroupBy(tuple => tuple.GroupKey).ToList())
+                {
+                    if (bucket.Select(tuple => tuple.StrictGroupKey).Distinct(StringComparer.Ordinal).Count() != 1)
+                        continue;
+                    foreach (var tuple in bucket)
+                        tuple.GroupKey = tuple.StrictGroupKey;
+                }
+
                 var restart = false;
                 foreach (var group in active.GroupBy(tuple => tuple.GroupKey).OrderBy(group => group.Key, StringComparer.Ordinal))
                 {
                     var groupTuples = group.OrderBy(tuple => tuple.Index).ToList();
                     foreach (var tuple in groupTuples)
                         tuple.MaximumPaddingVariantIndex = paddingLimits.GetValueOrDefault(group.Key, 2);
+                    // Joined tuples (different strict keys) are only kept together when every one of their
+                    // strict groups pays on its own and the joint pages are smaller than the separate ones;
+                    // the variant pages are checked below. Otherwise each tuple falls back to its strict key.
+                    var joinedGroup = groupTuples.Select(tuple => tuple.StrictGroupKey).Distinct(StringComparer.Ordinal).Count() > 1;
+                    var separateAfter = 0L;
+                    if (joinedGroup)
+                    {
+                        var separatePay = true;
+                        foreach (var separate in groupTuples.GroupBy(tuple => tuple.StrictGroupKey, StringComparer.Ordinal))
+                        {
+                            var separateTuples = separate.ToList();
+                            var separatePages = PackSharedRepackGroup(
+                                nameRigid, identity, separateTuples, maximumSide, 0, result.MinimumGroupSavingBytes,
+                                out _, out var separateExclude, out _);
+                            var separateBefore = separateTuples.SelectMany(tuple => tuple.AllMemberTextures)
+                                .Distinct(StringComparer.OrdinalIgnoreCase).Sum(texture => entryOf[texture].Layout!.ChainBytes);
+                            var separateBytes = separatePages.Sum(page => page.BytesAfter);
+                            if (separateExclude != null || separateBefore - separateBytes < result.MinimumGroupSavingBytes)
+                            {
+                                separatePay = false;
+                                break;
+                            }
+
+                            separateAfter += separateBytes;
+                        }
+
+                        if (!separatePay)
+                        {
+                            foreach (var tuple in groupTuples)
+                                tuple.GroupKey = tuple.StrictGroupKey;
+                            restart = true;
+                            break;
+                        }
+
+                    }
+
                     var pages = PackSharedRepackGroup(
                         nameRigid, identity, groupTuples, maximumSide, plan.Pages.Count, result.MinimumGroupSavingBytes,
                         out var split, out var excludeTuple, out var excludeReason);
+                    if (excludeTuple == null && joinedGroup && !AcceptSharedRepackJoinedGroup(pages, separateAfter, entryOf))
+                    {
+                        foreach (var tuple in groupTuples)
+                            tuple.GroupKey = tuple.StrictGroupKey;
+                        restart = true;
+                        break;
+                    }
+
                     if (excludeTuple != null)
                     {
                         excludeTuple.Excluded = excludeReason;
@@ -5408,6 +5484,13 @@ namespace Editors.PackOptimizer.Core
                               $"{split.SingleSize}, {split.SingleBytes:N0} bytes)"
                             : "built",
                     };
+                    if (joinedGroup)
+                    {
+                        info.Status += $" [joined {groupTuples.Select(tuple => tuple.StrictGroupKey).Distinct(StringComparer.Ordinal).Count():N0} " +
+                                       $"tuple group(s) that differ only in variant textures of other units: {pages.Sum(page => page.BytesAfter):N0} " +
+                                       $"bytes instead of {separateAfter:N0} separately]";
+                    }
+
                     if (split.TightUsed)
                     {
                         info.Status += $" [tight pieces: {split.TightPieces:N0} piece(s) instead of " +
@@ -6278,6 +6361,25 @@ namespace Editors.PackOptimizer.Core
             }
 
             return pages;
+        }
+
+        // A group of tuples that differ only in foreign variants (variant textures other units load than
+        // the layout texture) is kept when its pages are smaller than the pages of the separate groups and
+        // no variant page of a foreign texture is bigger than that texture. The units that load the
+        // texture load the page instead (and nothing else changes for them), so none of them loads more
+        // than before, whatever else the page holds (the crops of the other tuples' layout textures, which
+        // no material of those units samples there).
+        private static bool AcceptSharedRepackJoinedGroup(
+            List<SharedRepackPage> pages,
+            long separateAfter,
+            Dictionary<string, VanillaCoverageTexture> entryOf)
+        {
+            if (pages.Sum(page => page.BytesAfter) >= separateAfter)
+                return false;
+
+            return pages.All(page => page.Outputs.Where(output => output.IsVariant).All(output =>
+                !page.Tuples.Any(tuple => tuple.ForeignVariantTextures.Contains(output.Sources[0])) ||
+                output.Bytes <= entryOf[output.Sources[0]].Layout!.ChainBytes));
         }
 
         // Variant pages. For a slot where a tuple of the page has variant textures (its parts' other

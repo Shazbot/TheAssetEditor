@@ -669,6 +669,29 @@ TEB: the `ak_lucy_body` rewrite now keeps 16 of its parts (was 12): the BC7 `teb
 
 OutputVersion 24 pins the same golden fixture hash as 23, because the repack is not among the pinned stages.
 
+## 2026-10-26: merge caps 8/16/64 -> 32/48/64, and barbute pages written once
+
+Why the caps existed: introduced with the merged plans (commit `996647d75`, "A merged plan stops growing above this many signature sets or rigids"); no measurement or reason is recorded. They bound the plan's closure and layout work and the size of one plan's report. The 2026-10-25 measurement (2x and uncapped) found the cap costing nothing on teb and 0.70 MB on albion; with BC7 and the variant pages it now costs more (albion 28.66 MB estimated in 6 sets plus 4.19 + 3.44 MB, teb 4.89 + 1.40 MB).
+
+Experiment (caps overridable by an env var for the runs only, removed; sets / source rigids / generated rigids; realised repack saving in bytes, sets built, plans that hit the cap, shared repack phase, total wall, peak working set; timing and memory are noisy between runs, a rerun of the baseline in the same session is the comparison):
+
+| Caps | teb saving | sets | cap hits | phase s | wall s | peak MiB | albion saving | sets | cap hits | phase s | wall s | peak MiB |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 8/16/64 (baseline, rerun) | 226,392,072 | 44 | 1 | 33.6 | 169.5 | 6204 | 193,112,120 | 25 | 9 | 24.9 | 114.7 | 5335 |
+| 16/32/128 | 227,091,048 | 44 | 0 | 33.1 | 183.9 | 4071 | 196,366,896 | 24 | 1 (2.80 MB) | 25.8 | 115.1 | 4417 |
+| 32/64/256 | 227,091,048 | 44 | 0 | 33.9 | 178.8 | 4582 | 196,366,896 | 23 | 0 | 24.3 | 109.8 | 4673 |
+| 1000/1000/1000 | 227,091,048 | 44 | 0 | 32.1 | 164.4 | 4746 | 196,366,896 | 23 | 0 | 24.2 | 111.4 | 4903 |
+| 32/48/64 (chosen) | 227,091,048 | 44 | 0 | 34.2 | 169.4 | 6129 | 196,366,896 | 23 | 0 | 24.6 | 106.6 | 5279 |
+| 32/32/64 (albion only) | | | | | | | 196,366,896 | 24 | 1 (1.40 MB est.) | 23.7 | 108.8 | 4618 |
+
+The largest plan that pays is 26 sets in 42 rigids (albion); teb needs 10 sets. 32 sets / 48 source rigids recover everything the uncapped run does (+3.25 MB albion, +0.70 MB teb); 16 sets and 32 rigids each still cap one albion plan. The generated-rigid cap (64) was never reached in any run, so it is unchanged. No new failure mode: pixel-check failures stay 0, actual-bytes-gate failures stay 9 / 17, no set that built before fails (two albion seeds, `alb_half_giant_head_01_base_colour` and `alb_oathsworn_cav_ror_crest_01_base_colour`, are now joined into the larger plan). Time and memory are within the noise.
+
+Barbute pages (teb): the `generic_metal_material` merged plan had two layout groups with the same three layout textures (`ak_teb_barbute_base`, `generic_metal_material`, `ak_teb_barbute_normal`): the flatbrow rigid's parts (no variants) and the nasal/nonasal parts (base colour variants brass, brassband, ricco). The variant textures are loaded by other units than the base (12, 20 and 4 units against 20 for the base, not subsets), so the group key's `<variant set` clause kept the two tuples apart, and the material-map and normal pages (and a second base page) were written twice (699,104 bytes).
+
+Fix (`BuildSharedRepackTuples`, main loop of the set plan, `AcceptSharedRepackJoinedGroup`): the group key no longer has the clause; the strict key (with it) is kept as `StrictGroupKey`. A group whose tuples have different strict keys is joined only if (1) every strict group pays on its own, (2) the joint pages are smaller than the sum of the separate pages, and (3) every variant page of a foreign texture is no bigger than that texture. Otherwise every tuple goes back to the strict key (the old behaviour, same page names). Why it is exact: a material still names the page of its own texture (variant output for its own variant texture, else the layout page) and the charts and UVs are the same construction as before, so no WSModel samples anything else; the crops of the other tuples' layout textures that the variant page now holds in their chart regions are not sampled by any material using that page. A unit that loads a foreign variant texture loads its page instead (condition 3: not bigger), and the units of the layout textures load the same layout pages (same signature set per slot, as before), so no unit loads more than before. The validator's one-signature-set-per-output check is unchanged (a variant output's source is the one texture).
+
+Measured: teb realised 226,392,072 -> 227,790,152 (+698,976 from the caps, 227,091,048, and +699,104 from the barbute pages), one group of 2 tuples, 1 page of 512x1024, 3 variant pages. OutputVersion 25.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).

@@ -12562,21 +12562,102 @@ namespace Test.PackOptimizer.Core
         [Test]
         public void SharedRepack_ChainOfSetsAboveTheCap_StopsMergingAndDropsTheRest()
         {
+            var world = BuildChainSrWorld(20);
+
+            var result = world.Run(minimumSaving: 50_000, minimumGroupSaving: 5_000);
+
+            AssertFunnelReconciles(result);
+            // The cap stops every plan at 32 sets; the parts that would have pulled in a 33rd
+            // drop, and the drop takes the rest of the chain with it, as without merging.
+            Assert.That(Get<int>(result, "MergeCapHits"), Is.GreaterThanOrEqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "LargestMergeSets"), Is.EqualTo(32));
+            Assert.That(Get<int>(result, "LargestMergeRigids"), Is.LessThanOrEqualTo(48));
+            foreach (var built in SrBuilt(result))
+                Assert.That(Get<IEnumerable>(built, "MergedSets").Cast<object>().Count(), Is.LessThanOrEqualTo(31));
+            Assert.That(
+                BuildSharedRepackSection(Enabled(world)),
+                Does.Contain("merge cap reached: at most 32 sets and 48 source rigids and 64 generated rigids per plan"));
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+        }
+
+        [Test]
+        public void SharedRepack_ChainOfTenLinks_IsWithinTheCapAndMergesWhole()
+        {
+            // 20 sets in 10 rigids: over the old caps (8 sets), under the current ones.
             var world = BuildChainSrWorld(10);
 
             var result = world.Run(minimumSaving: 50_000, minimumGroupSaving: 5_000);
 
             AssertFunnelReconciles(result);
-            // The cap stops every plan at 8 sets; the parts that would have pulled in a ninth
-            // drop, and the drop takes the rest of the chain with it, as without merging.
-            Assert.That(Get<int>(result, "MergeCapHits"), Is.GreaterThanOrEqualTo(1), SrSkips(result));
-            Assert.That(Get<int>(result, "LargestMergeSets"), Is.EqualTo(8));
-            Assert.That(Get<int>(result, "LargestMergeRigids"), Is.LessThanOrEqualTo(16));
-            foreach (var built in SrBuilt(result))
-                Assert.That(Get<IEnumerable>(built, "MergedSets").Cast<object>().Count(), Is.LessThanOrEqualTo(7));
-            Assert.That(
-                BuildSharedRepackSection(Enabled(world)),
-                Does.Contain("merge cap reached: at most 8 sets and 16 source rigids and 64 generated rigids per plan"));
+            Assert.That(Get<int>(result, "MergeCapHits"), Is.Zero, SrSkips(result));
+            Assert.That(Get<int>(result, "LargestMergeSets"), Is.GreaterThan(8));
+            Assert.That(Get<int>(result, "Built"), Is.GreaterThanOrEqualTo(1), SrSkips(result));
+            Assert.That(SrValidate(world), Is.Empty);
+        }
+
+        private const string SrWsB = "variantmeshes\\wh_main\\sr_b.wsmodel";
+
+        // Two rigids on unit A: rigid 1's part has the base colour bb and the normal bn only (no variants);
+        // rigid 2's part has bb and bn too, and unit B binds it with the base colour bv instead. So bb is
+        // loaded by unit A, bv by unit B and bn by both: bv is a variant texture of another signature set
+        // than the layout texture bb, and the two parts are tuples that differ only in that variant.
+        private static (SrWorld World, Func<RmvFile> First, Func<RmvFile> Second) BuildBarbuteSrWorld()
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_bb.dds", 1024, "BC1", true, 1);
+            world.AddTexture("textures\\sr_bv.dds", 1024, "BC1", true, 8);
+            world.AddTexture("textures\\sr_bn.dds", 512, "BC3", false, 2);
+            var mx = SrMaterialPath("bx");
+            var my = SrMaterialPath("by");
+            var myv = SrMaterialPath("byv");
+            world.Fixture.AddMaterial(mx, (SrBase, "textures\\sr_bb.dds"), (SrNormal, "textures\\sr_bn.dds"));
+            world.Fixture.AddMaterial(my, (SrBase, "textures\\sr_bb.dds"), (SrNormal, "textures\\sr_bn.dds"));
+            world.Fixture.AddMaterial(myv, (SrBase, "textures\\sr_bv.dds"), (SrNormal, "textures\\sr_bn.dds"));
+            var first = SrRigidFactory([(mx, SrBlocks((2, 3), (3, 3)))]);
+            var second = SrRigidFactory([(my, SrBlocks((10, 4)))]);
+            world.AddModel(SrRigid, SrWs, SrRoot, first, [[mx]]);
+            world.AddModel(SrRigid2, SrWs2, SrRoot, second, [[my]]);
+            world.Fixture.AddText(SrWsB, CreateWsModelDocument(SrRigid2, [[myv]]).OuterXml);
+            world.Links.Add((SrRoot2, SrWsB));
+            return (world, first, second);
+        }
+
+        [Test]
+        public void SharedRepack_TuplesDifferingOnlyInAnotherSetsVariant_ShareOnePageSet_AndEachMaterialKeepsItsOwnBase()
+        {
+            var (world, first, second) = BuildBarbuteSrWorld();
+
+            var result = world.Run();
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result) + SrPartDropReasons(result));
+            AssertFunnelReconciles(result);
+            var built = SrBuilt(result).Single();
+            var outputs = Get<IEnumerable>(built, "Outputs").Cast<object>().ToList();
+            // One layout group: one normal page, one base page and the base page of the variant. Separate
+            // groups would write the normal page (and a second layout page) twice.
+            Assert.That(Get<IEnumerable>(built, "Groups").Cast<object>().Count(), Is.EqualTo(1));
+            Assert.That(outputs, Has.Count.EqualTo(3));
+            Assert.That(outputs.Count(output => Get<string>(output, "Slot") == SrNormal), Is.EqualTo(1));
+            Assert.That(Get<int>(built, "VariantOutputs"), Is.EqualTo(1));
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("differ only in variant textures of other units"));
+
+            // The two parts of unit A name the same base page, the variant binding of unit B another one;
+            // every binding names the one normal page.
+            var baseA1 = SrWsTexture(world, SrWs, 0, SrBase);
+            var baseA2 = SrWsTexture(world, SrWs2, 0, SrBase);
+            var baseB = SrWsTexture(world, SrWsB, 0, SrBase);
+            Assert.That(baseA1, Is.EqualTo(baseA2));
+            Assert.That(baseB, Is.Not.EqualTo(baseA1));
+            Assert.That(SrWsTexture(world, SrWs, 0, SrNormal), Is.EqualTo(SrWsTexture(world, SrWs2, 0, SrNormal)));
+            Assert.That(SrWsTexture(world, SrWsB, 0, SrNormal), Is.EqualTo(SrWsTexture(world, SrWs, 0, SrNormal)));
+
+            // Each material shows exactly its own texture's crops.
+            AssertSrPixels(world, SrRigid, SrWs, first, new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 });
+            AssertSrPixels(world, SrRigid2, SrWs2, second, new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 });
+            AssertSrPixels(world, SrRigid2, SrWsB, second, new Dictionary<string, int> { [SrBase] = 8, [SrNormal] = 2 });
+            var replaced = string.Concat(Get<IEnumerable>(built, "Replaced").Cast<object>());
+            Assert.That(replaced, Does.Contain("sr_bb.dds").And.Contain("sr_bv.dds").And.Contain("sr_bn.dds"));
             Assert.That(SrValidate(world), Is.Empty);
             Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
         }
@@ -16090,7 +16171,8 @@ namespace Test.PackOptimizer.Core
                     (regularMaterial, SrBlocks((10, 4))),
                 ]), [[flowMaterial, regularMaterial]]);
 
-            for (var index = 1; index < 17; index++)
+            // More flow-map users than the source rigid cap (48) allows.
+            for (var index = 1; index < 50; index++)
             {
                 var baseTexture = $"textures\\sr_flow_cap_{index}_base.dds";
                 var normalTexture = $"textures\\sr_flow_cap_{index}_normal.dds";
@@ -17686,6 +17768,10 @@ namespace Test.PackOptimizer.Core
             // 24: the shared texture repack accepts BC7 sets (block-copied where aligned, BC7 encoded elsewhere);
             // the repack is not among the pinned stages, so the hash is unchanged.
             [24] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 25: the shared texture repack's merge caps are 32 sets / 48 source rigids / 64 generated rigids, and
+            // tuples that differ only in variant textures other units load share a layout group when that pays;
+            // the repack is not among the pinned stages, so the hash is unchanged.
+            [25] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
