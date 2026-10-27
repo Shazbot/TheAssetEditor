@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Headless meshoptimizer simplification over plain arrays. No MonoGame, WPF or GameWorld.Core,
+       so the pack optimizer library can reference it. Ships the prebuilt native meshoptimizer.dll
+       (Native/; rebuild with its build.ps1) next to every consuming executable and test assembly. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>GameWorld.MeshOptimizer</RootNamespace>
+    <!-- Must differ from the native meshoptimizer.dll: Windows file names are case-insensitive. -->
+    <AssemblyName>GameWorld.MeshOptimizer</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="Native\x64\meshoptimizer.dll" Link="meshoptimizer.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -23,6 +23,7 @@
     <ProjectReference Include="..\..\..\Shared\PackFiles\Shared.PackFiles.Core\Shared.PackFiles.Core.csproj" />
     <ProjectReference Include="..\..\..\Shared\GameFiles\Shared.GameFormats.csproj" />
     <ProjectReference Include="..\..\..\Shared\Logging\Shared.Core.Logging\Shared.CoreLog.csproj" />
+    <ProjectReference Include="..\..\..\GameWorld\MeshOptimizer\MeshOptimizer.csproj" />
   </ItemGroup>
 
 </Project>

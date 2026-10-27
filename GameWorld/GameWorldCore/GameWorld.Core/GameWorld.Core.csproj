@@ -14,10 +14,8 @@
     <ProjectReference Include="..\..\..\Shared\GameFiles\Shared.GameFormats.csproj" />
     <ProjectReference Include="..\..\ContentProject\ContentProject.csproj" />
     <ProjectReference Include="..\..\MeshDecimator\MeshDecimator.csproj" />
+    <ProjectReference Include="..\..\MeshOptimizer\MeshOptimizer.csproj" />
   </ItemGroup>
 
-	<ItemGroup>
-		<None Include="..\..\MeshOptimizerNative\x64\meshoptimizer.dll" Link="meshoptimizer.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-	</ItemGroup>
 
 </Project>

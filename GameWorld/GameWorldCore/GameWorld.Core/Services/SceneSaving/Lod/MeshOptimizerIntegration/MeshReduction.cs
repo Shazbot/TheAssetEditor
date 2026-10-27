@@ -1,5 +1,6 @@
 using GameWorld.Core.Rendering.Geometry;
 using GameWorld.Core.Services.SceneSaving.Lod.MeshDecimatorIntegration;
+using GameWorld.MeshOptimizer;
 
 namespace GameWorld.Core.Services.SceneSaving.Lod.MeshOptimizerIntegration;
 

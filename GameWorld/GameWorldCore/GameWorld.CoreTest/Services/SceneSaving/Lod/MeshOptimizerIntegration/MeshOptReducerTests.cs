@@ -4,6 +4,7 @@ using GameWorld.Core.Rendering.Geometry;
 using GameWorld.Core.Services;
 using GameWorld.Core.Services.SceneSaving.Lod.MeshOptimizerIntegration;
 using GameWorld.Core.Test.TestUtility;
+using GameWorld.MeshOptimizer;
 using Microsoft.Xna.Framework;
 using Serilog;
 using Serilog.Core;

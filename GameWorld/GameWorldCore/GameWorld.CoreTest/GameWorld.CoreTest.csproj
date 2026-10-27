@@ -28,9 +28,6 @@
     <ProjectReference Include="..\..\..\Testing\Shared\Test.TestingUtility.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Include="..\..\MeshOptimizerNative\x64\meshoptimizer.dll" Link="meshoptimizer.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-  </ItemGroup>
 
   <ItemGroup>
     <Using Include="NUnit.Framework" />
