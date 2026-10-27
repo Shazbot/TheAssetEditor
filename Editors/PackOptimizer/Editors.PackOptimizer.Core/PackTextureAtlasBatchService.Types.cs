@@ -1026,6 +1026,7 @@ namespace Editors.PackOptimizer.Core
             public bool DropUnreadAlpha { get; set; }
             public bool RemakeEditorLods { get; set; }
             public float EditorLodTargetError { get; set; } = 0.02f;
+            public bool EditorLodLockBorder { get; set; } = true;
             public EditorLodRemakeResult EditorLods { get; } = new();
             // Source files that mention a rigid path (built once, shared by the shared texture
             // repack and the exact texture compaction).

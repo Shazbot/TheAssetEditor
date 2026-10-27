@@ -14,6 +14,7 @@ namespace Editors.PackOptimizer.Core
         // LOD0, the LOD count, the LOD headers and every LOD's part list and materials stay as they are;
         // only the meshes of LOD 1+ are replaced, so WSModel material tables remain valid.
         private const int EditorLodMaxLevels = 16;
+        private const float EditorLodErrorLimitedShare = 0.8f;
 
         private sealed class EditorLodRemakeResult
         {
@@ -35,8 +36,7 @@ namespace Editors.PackOptimizer.Core
             public long[] BytesBefore { get; } = new long[EditorLodMaxLevels];
             public long[] BytesAfter { get; } = new long[EditorLodMaxLevels];
             public int[] LodsReplacedByLevel { get; } = new int[EditorLodMaxLevels];
-            public List<string> Remade_Examples { get; } = [];
-            public string? NativeError { get; set; }
+                    public string? NativeError { get; set; }
 
             public void Skip(string reason) => Skipped[reason] = Skipped.GetValueOrDefault(reason) + 1;
         }
@@ -221,7 +221,7 @@ namespace Editors.PackOptimizer.Core
             CancellationToken cancellationToken)
         {
             var result = state.EditorLods;
-            var options = new MeshOptReducerOptions { TargetError = state.EditorLodTargetError };
+            var options = new MeshOptReducerOptions { TargetError = state.EditorLodTargetError, LockBorder = state.EditorLodLockBorder };
             var lod0 = rmv.ModelList[0];
             var lodCount = rmv.ModelList.Length;
             var previousTriangles = lod0.Sum(model => (long)model.Mesh.IndexList.Length / 3);
@@ -297,7 +297,10 @@ namespace Editors.PackOptimizer.Core
                     pendingRebuilt++;
                     if (!simplified.Stats.TargetReached)
                     {
-                        if (simplified.Stats.ErrorLimited)
+                        // meshoptimizer stops at the last collapse under the cap, so a result error close to
+                        // the cap (not only at it) means the cap, not the topology, ended the reduction.
+                        if (simplified.Stats.ErrorLimited ||
+                            simplified.Stats.ResultErrorRelative >= EditorLodErrorLimitedShare * state.EditorLodTargetError)
                             pendingError++;
                         else
                             pendingTopology++;
@@ -432,7 +435,7 @@ namespace Editors.PackOptimizer.Core
             sb.AppendLine("-----------------");
             sb.AppendLine(
                 $"Rigids examined (source-owned, reachable from a root): {r.Candidates:N0}; " +
-                $"error cap {r.TargetError.ToString("0.###", inv)}");
+                $"error cap {r.TargetError.ToString("0.###", inv)}, border {(state.EditorLodLockBorder ? "locked" : "free")}");
             string Tiers(Dictionary<EditorLodEvidence, int> counts)
                 => counts.Count == 0
                     ? "(none)"

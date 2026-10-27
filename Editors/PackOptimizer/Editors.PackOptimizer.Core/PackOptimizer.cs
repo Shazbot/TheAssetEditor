@@ -68,6 +68,8 @@ namespace Editors.PackOptimizer.Core
         public bool RemakeEditorLods { get; init; }
         /// <summary>Relative simplification error cap of the editor LOD rebuild (the editor's own 2 % by default).</summary>
         public float EditorLodTargetError { get; init; } = 0.02f;
+        /// <summary>Keeps open-border vertices of the editor LOD rebuild in place (the editor's own default).</summary>
+        public bool EditorLodLockBorder { get; init; } = true;
     }
 
     /// <summary>

@@ -192,6 +192,7 @@ internal static class Program
                 CompactTextures = true,
                 DropUnreadAlpha = true,
                 RemakeEditorLods = !options.GetValueOrDefault("editor-lods", "true").Equals("false", StringComparison.OrdinalIgnoreCase),
+                EditorLodLockBorder = !options.GetValueOrDefault("editor-lod-lock-border", "true").Equals("false", StringComparison.OrdinalIgnoreCase),
                 EditorLodTargetError = float.Parse(options.GetValueOrDefault("editor-lod-error", "0.02"), CultureInfo.InvariantCulture),
             },
             MissingTexturePolicy.Skip,
