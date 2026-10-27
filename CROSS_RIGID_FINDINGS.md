@@ -757,6 +757,26 @@ Measured (bench, vs `teb-boxpack`; albion was not rerun: it has 0 pixel retries,
 - teb: realised 305,880,408 -> 306,073,568 (+193,160), 56 sets, bench 206 -> 210 s. Lowered groups 3 -> 2 (`ksl_bear_armour_medium` P2 -> P0 and `ksl_streltsi_body` P2 -> P1, 1,162,272 bytes as before); kept on the power-of-two packing: `tze_ship` + lupo sails (P2, 1,147,280 -> 954,120 bytes, -193,160, now 2 pages). Built-group pages 146,621,776 -> 146,428,616.
 - Pixel check: max error 0; WHMM `pack validate --with-vanilla --baseline <boxpack>`: not regressed, 0 added, no diagnostics.
 
+## 2026-10-27: chart padding vs bounding (report only)
+
+The "chart padding/bounding/alignment" term of the Page layout report (charts - used) is now split into exactly reconciling parts per chart (cells = touched cells of the chart's bounding box, all in output bytes at the page's bytes per reference pixel): bounding-box holes (box minus touched cells), gutter band (box +/- gutter, clamped to the texture, minus the box), alignment rounding (the rest, up to the layout rectangle). The report prints "(reconciles)" and the top 10 built groups by holes. Output is unchanged (OutputVersion not bumped; the file hashes of the bench outputs match the baselines).
+
+Built groups (page bytes: Albion 141,614,448, TEB 146,428,616):
+
+| | Albion | TEB |
+|---|---|---|
+| chart padding (old term) | 57,933,964 (40.91%) | 52,507,347 (35.86%) |
+| bounding-box holes | 49,345,458 (34.84%) | 43,412,611 (29.65%) |
+| gutter band | 8,588,506 (6.06%) | 9,027,822 (6.17%) |
+| alignment rounding | 0 | 66,914 (0.05%) |
+| packing gaps | 9,696,861 | 16,331,965 |
+| upper bound, shape-aware packing (holes + gaps) | 59,042,319 (41.69%) | 59,744,576 (40.80%) |
+| estimate, charts as gutter-dilated cell masks (gaps not counted) | 37,063,038 (26.17%) | 31,631,022 (21.60%) |
+
+Left-untouched (gated) groups: Albion holes 17,763,057, gutter 320,593, alignment 13,866; TEB holes 32,703,878, gutter 907,459, alignment 112,302.
+
+The holes are the bulk of the padding (about 85%); gutter and alignment are small. The mask estimate counts each chart as its touched cells dilated by the gutter (in cells), never above the chart: it ignores packing gaps and the extra room that interlocking itself needs, so it is optimistic for the chart term and the holes plus gaps bound is the ceiling. Cell rounding (touched cells vs the area triangles cover) is not modelled.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).

@@ -850,7 +850,19 @@ namespace Editors.PackOptimizer.Core
             SharedRepackSplitInfo? Split = null,
             string PaddingVariant = "baseline",
             long PaddingSavedBytes = 0,
-            bool NewlyBuilt = false);
+            bool NewlyBuilt = false,
+            SharedRepackPaddingSplit Padding = default,
+            string Label = "");
+
+        // ChartBytes - UsedBytes split into exactly reconciling terms (report only): the holes of each chart's
+        // cell bounding box, the gutter band around the box, and the alignment rounding of the padded
+        // rectangle. MaskBytes is the same charts as gutter-dilated cell masks (what interlocking could
+        // shrink them to, never above the chart).
+        private readonly record struct SharedRepackPaddingSplit(
+            long BoundingBytes,
+            long GutterBytes,
+            long AlignBytes,
+            long MaskBytes);
 
         private sealed record SharedRepackPaddingVariant(
             string Name,
@@ -5573,7 +5585,9 @@ namespace Editors.PackOptimizer.Core
                         before,
                         pages,
                         split,
-                        newlyBuilt);
+                        newlyBuilt,
+                        string.Join(" | ", groupTuples.Take(2).Select(DescribeSharedRepackTuple)) +
+                        (groupTuples.Count > 2 ? $" (+{groupTuples.Count - 2:N0} tuple(s))" : string.Empty));
                     var info = new SharedRepackGroupInfo
                     {
                         GroupKey = group.Key,
@@ -9533,9 +9547,10 @@ namespace Editors.PackOptimizer.Core
             long sourceBytes,
             List<SharedRepackPage> pages,
             SharedRepackSplitInfo split,
-            bool newlyBuilt)
+            bool newlyBuilt,
+            string label)
         {
-            double used = 0, charts = 0, trimmed = 0, page = 0;
+            double used = 0, charts = 0, trimmed = 0, page = 0, boxed = 0, guttered = 0, masked = 0;
             foreach (var item in pages)
             {
                 var area = (double)item.LayoutWidth * item.LayoutHeight;
@@ -9561,7 +9576,44 @@ namespace Editors.PackOptimizer.Core
                         }
                     }
 
-                    used += perPixel * cells * tuple.Cell * tuple.Cell;
+                    var cellArea = (double)tuple.Cell * tuple.Cell;
+                    used += perPixel * cells * cellArea;
+                    // Bounding box, then the gutter band (clamped to the texture, no alignment), then alignment.
+                    boxed += perPixel * (chart.CellX1 - chart.CellX0 + 1) * (chart.CellY1 - chart.CellY0 + 1) * cellArea;
+                    var band = GetSharedRepackRectangle(
+                        tuple, (chart.CellX0, chart.CellY0, chart.CellX1, chart.CellY1), tuple.Gutter, 1);
+                    guttered += perPixel * band.Width * band.Height;
+                    // Mask: touched cells dilated by the gutter (in cells), clipped to the grid and the chart.
+                    var reach = (tuple.Gutter + tuple.Cell - 1) / tuple.Cell;
+                    var dilated = 0;
+                    for (var y = Math.Max(0, chart.CellY0 - reach); y <= Math.Min(tuple.GridY - 1, chart.CellY1 + reach); y++)
+                    {
+                        for (var x = Math.Max(0, chart.CellX0 - reach); x <= Math.Min(tuple.GridX - 1, chart.CellX1 + reach); x++)
+                        {
+                            var hit = false;
+                            for (var dy = -reach; dy <= reach && !hit; dy++)
+                            {
+                                var ny = y + dy;
+                                if (ny < chart.CellY0 || ny > chart.CellY1)
+                                    continue;
+                                for (var dx = -reach; dx <= reach; dx++)
+                                {
+                                    var nx = x + dx;
+                                    if (nx >= chart.CellX0 && nx <= chart.CellX1 &&
+                                        tuple.CellChart[ny * tuple.GridX + nx] == chart.Id)
+                                    {
+                                        hit = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (hit)
+                                dilated++;
+                        }
+                    }
+
+                    masked += perPixel * Math.Min(dilated * cellArea, (double)chart.LayoutWidth * chart.LayoutHeight);
                 }
             }
 
@@ -9573,6 +9625,12 @@ namespace Editors.PackOptimizer.Core
                 (long)trimmed,
                 (long)page,
                 Split: split,
+                Padding: new SharedRepackPaddingSplit(
+                    (long)boxed - (long)used,
+                    (long)guttered - (long)boxed,
+                    (long)charts - (long)guttered,
+                    (long)masked),
+                Label: label,
                 PaddingVariant: split.PaddingVariant,
                 PaddingSavedBytes: split.PaddingSavedBytes,
                 NewlyBuilt: newlyBuilt);
@@ -9654,6 +9712,7 @@ namespace Editors.PackOptimizer.Core
                     $"  Built groups ({built.Count:N0}): sources {built.Sum(waste => waste.SourceBytes):N0} -> pages " +
                     $"{page:N0} bytes = touched cells {used:N0} + chart padding/bounding/alignment {charts - used:N0} + " +
                     $"packing gaps {trimmed - charts:N0} + power-of-two rounding {page - trimmed:N0}");
+                AppendSharedRepackPaddingSplit(sb, "    ", built, page, trimmed - charts, true);
             }
 
             if (gated.Count != 0)
@@ -9675,6 +9734,7 @@ namespace Editors.PackOptimizer.Core
                 sb.AppendLine(
                     $"    their pages = touched cells {gatedUsed:N0} + chart padding/bounding/alignment " +
                     $"{gatedCharts - gatedUsed:N0} + packing gaps {trimmed - gatedCharts:N0} + power-of-two rounding {page - trimmed:N0}");
+                AppendSharedRepackPaddingSplit(sb, "      ", gated, page, trimmed - gatedCharts, false);
             }
 
             // Tight pieces: one rectangle per UV island instead of per merged chart, used by a group only
@@ -9695,6 +9755,42 @@ namespace Editors.PackOptimizer.Core
                     $"{usedGated.Sum(split => split.TightMergedCharts):N0} chart(s), pages {FormatSignedBytes(-usedGated.Sum(split => split.TightSavedBytes))} bytes); " +
                     $"{tightAll.Count(split => !split.TightUsed && !split.TightInconsistent):N0} group(s) kept the merged charts " +
                     $"(pieces not smaller); internal inconsistencies (merged charts kept): {tightAll.Count(split => split.TightInconsistent):N0}");
+            }
+        }
+
+        // The chart padding term split (report only): bounding-box holes, gutter band, alignment rounding,
+        // with the upper bounds for placing charts by their cell masks instead of as rectangles.
+        private static void AppendSharedRepackPaddingSplit(
+            StringBuilder sb,
+            string indent,
+            List<SharedRepackGroupWaste> groups,
+            long pageBytes,
+            long gaps,
+            bool topGroups)
+        {
+            var used = groups.Sum(waste => waste.UsedBytes);
+            var charts = groups.Sum(waste => waste.ChartBytes);
+            var bounding = groups.Sum(waste => waste.Padding.BoundingBytes);
+            var gutter = groups.Sum(waste => waste.Padding.GutterBytes);
+            var align = groups.Sum(waste => waste.Padding.AlignBytes);
+            var mask = groups.Sum(waste => waste.Padding.MaskBytes);
+            string Percent(long bytes) => pageBytes == 0 ? "0.00%" : $"{100.0 * bytes / pageBytes:0.00}%";
+            sb.AppendLine(
+                $"{indent}chart padding {charts - used:N0} ({Percent(charts - used)} of pages) = bounding-box holes {bounding:N0} " +
+                $"({Percent(bounding)}) + gutter band {gutter:N0} ({Percent(gutter)}) + alignment rounding {align:N0} " +
+                $"({Percent(align)}) " + (bounding + gutter + align == charts - used ? "(reconciles)" : "(DOES NOT RECONCILE)"));
+            sb.AppendLine(
+                $"{indent}shape-aware packing, upper bound (holes + packing gaps): {bounding + gaps:N0} ({Percent(bounding + gaps)}); " +
+                $"estimate (charts as gutter-dilated cell masks, gaps not counted): {charts - mask:N0} ({Percent(charts - mask)})");
+            if (!topGroups)
+                return;
+
+            foreach (var waste in groups.OrderByDescending(waste => waste.Padding.BoundingBytes).Take(10))
+            {
+                sb.AppendLine(
+                    $"{indent}  holes {waste.Padding.BoundingBytes:N0} (gutter {waste.Padding.GutterBytes:N0}, " +
+                    $"alignment {waste.Padding.AlignBytes:N0}, mask estimate {waste.ChartBytes - waste.Padding.MaskBytes:N0}) of pages " +
+                    $"{waste.PageBytes:N0}: {waste.Label}");
             }
         }
 
