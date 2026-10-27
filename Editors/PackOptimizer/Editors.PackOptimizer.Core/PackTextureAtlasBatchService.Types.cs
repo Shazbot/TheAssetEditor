@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -1024,6 +1024,9 @@ namespace Editors.PackOptimizer.Core
             public bool CompactTextures { get; set; }
             // Effective only together with CompactTextures.
             public bool DropUnreadAlpha { get; set; }
+            public bool RemakeEditorLods { get; set; }
+            public float EditorLodTargetError { get; set; } = 0.02f;
+            public EditorLodRemakeResult EditorLods { get; } = new();
             // Source files that mention a rigid path (built once, shared by the shared texture
             // repack and the exact texture compaction).
             public Dictionary<string, HashSet<string>>? RigidReferrerIndex { get; set; }

@@ -17,7 +17,7 @@ using Shared.Core.Settings;
 // Headless runner for PackOptimizer.Run, for measuring the batch tool's runtime
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
-//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--army-scope culture|subculture] [--sibling-scope model|pack]
+//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--editor-lod-error 0.02] [--army-scope culture|subculture] [--sibling-scope model|pack]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
 // --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
@@ -191,6 +191,8 @@ internal static class Program
                 SharedTextureRepack = true,
                 CompactTextures = true,
                 DropUnreadAlpha = true,
+                RemakeEditorLods = !options.GetValueOrDefault("editor-lods", "true").Equals("false", StringComparison.OrdinalIgnoreCase),
+                EditorLodTargetError = float.Parse(options.GetValueOrDefault("editor-lod-error", "0.02"), CultureInfo.InvariantCulture),
             },
             MissingTexturePolicy.Skip,
             // --cache-dir <folder> uses another folder for the vanilla consumer cache, "none" disables it.

@@ -41,6 +41,26 @@ public static class MeshOptSimplifier
     private const nuint PositionStride = 3 * sizeof(float);
     private const nuint AttributeStride = AttributeCount * sizeof(float);
 
+    /// <summary>Null when the native meshoptimizer library loads and answers; otherwise why not.</summary>
+    public static string? GetNativeLibraryError()
+    {
+        try
+        {
+            unsafe
+            {
+                var positions = stackalloc float[] { 0, 0, 0, 1, 1, 1 };
+                if (!float.IsFinite(MeshOptNative.SimplifyScale(positions, 2, PositionStride)))
+                    return "meshoptimizer.dll answered with a non-finite scale.";
+            }
+
+            return null;
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or BadImageFormatException or EntryPointNotFoundException)
+        {
+            return $"The native meshoptimizer library (meshoptimizer.dll) could not be loaded: {exception.Message}";
+        }
+    }
+
     /// <param name="positions">xyz per vertex.</param>
     /// <param name="normals">xyz per vertex, or empty to ignore normals.</param>
     /// <param name="uvs">uv per vertex, or empty to ignore texture coordinates.</param>

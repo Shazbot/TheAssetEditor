@@ -1079,6 +1079,7 @@ namespace Editors.PackOptimizer.Core
                 "TryGetStructuralMergeBlockReason" => "same-rigid merge",
                 "GetRigidNotOnlyThroughOwnedWsModelsReason" => "repack / compaction",
                 "SelectNoAtlasGeometryOptimizationRigids" => "geometry optimisation",
+                "RemakeEditorLods" => "editor LOD remake",
                 "HasUnrewritableMaterialConsumerAtlasConflict" or "IsAtlasCandidateGameplayDiscoverySafe" => "atlas",
                 "CheckUnreadAlpha" or "CompactTextures" or "CompactTexture" => "compaction",
                 "KeepVanillaOverrides" => "prune",

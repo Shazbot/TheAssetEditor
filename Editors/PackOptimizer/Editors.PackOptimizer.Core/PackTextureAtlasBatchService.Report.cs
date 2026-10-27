@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -2428,6 +2428,7 @@ namespace Editors.PackOptimizer.Core
             }
             sb.AppendLine();
 
+            AppendEditorLodsSection(sb, state);
             AppendDbSchemaSources(sb, state);
             AppendConsumerSection(sb, state);
             AppendLodAuditSection(sb, state);

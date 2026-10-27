@@ -84,6 +84,7 @@ public sealed record OptimizeOptionsRequest(
     bool? CompactTextures = null,
     bool? DropUnreadAlpha = null,
     bool? CompressRigidModels = null,
+    bool? RemakeEditorLods = null,
     string? ArmyScope = null,
     string? SiblingScope = null)
 {
@@ -106,6 +107,7 @@ public sealed record OptimizeOptionsRequest(
             CompactTextures = CompactTextures ?? defaults.CompactTextures,
             DropUnreadAlpha = DropUnreadAlpha ?? defaults.DropUnreadAlpha,
             CompressRigidModels = CompressRigidModels ?? defaults.CompressRigidModels,
+            RemakeEditorLods = RemakeEditorLods ?? defaults.RemakeEditorLods,
             ArmyScope = ParseArmyScope(ArmyScope, defaults.ArmyScope),
             SiblingScope = ParseSiblingScope(SiblingScope, defaults.SiblingScope),
         };

@@ -78,6 +78,9 @@ public class OptimizeModeTests
             new OptimizeOptionsRequest(ArmyScope: " subculture ").ToOptimizerOptions().ArmyScope,
             Is.EqualTo(Editors.PackOptimizer.Core.PackOptimizerArmyScope.Subculture));
         Assert.Throws<ArgumentException>(() => new OptimizeOptionsRequest(ArmyScope: "faction").ToOptimizerOptions());
+        Assert.That(new OptimizeOptionsRequest().ToOptimizerOptions().RemakeEditorLods, Is.False);
+        Assert.That(new OptimizeOptionsRequest(RemakeEditorLods: true).ToOptimizerOptions().RemakeEditorLods, Is.True);
+        Assert.That(GameWorld.MeshOptimizer.MeshOptSimplifier.GetNativeLibraryError(), Is.Null);
     }
 
     [Test]

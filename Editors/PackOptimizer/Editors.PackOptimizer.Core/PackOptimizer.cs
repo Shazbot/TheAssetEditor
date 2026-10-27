@@ -61,6 +61,13 @@ namespace Editors.PackOptimizer.Core
         /// content.
         /// </summary>
         public bool CompressRigidModels { get; init; }
+        /// <summary>
+        /// Rebuilds LOD 1+ of rigids that AssetEditor's old decimator generated (see EditorLodDetector) from
+        /// LOD0 with meshoptimizer. LOD0, the LOD count, headers and part lists stay as they are.
+        /// </summary>
+        public bool RemakeEditorLods { get; init; }
+        /// <summary>Relative simplification error cap of the editor LOD rebuild (the editor's own 2 % by default).</summary>
+        public float EditorLodTargetError { get; init; } = 0.02f;
     }
 
     /// <summary>
@@ -76,7 +83,7 @@ namespace Editors.PackOptimizer.Core
         /// (OutputVersionGoldenTests): it pins a hash of the output of the optimizer's deterministic output
         /// stages next to this number, so changing the output without bumping the version fails the test.
         /// </summary>
-        public const int OutputVersion = 31;
+        public const int OutputVersion = 32;
 
         /// <summary>
         /// Version of the consumer scan and probe results (what makes another mod relevant) and of the format

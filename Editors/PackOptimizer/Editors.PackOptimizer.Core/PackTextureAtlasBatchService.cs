@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -241,6 +241,8 @@ namespace Editors.PackOptimizer.Core
                 state.DownscaleTextures = downscaleTextures && !crossRigidOnly;
                 state.CompactTextures = compactTextures && !crossRigidOnly;
                 state.DropUnreadAlpha = dropUnreadAlpha && state.CompactTextures;
+                state.RemakeEditorLods = options.RemakeEditorLods;
+                state.EditorLodTargetError = options.EditorLodTargetError;
                 // The repack writes textures, so it is ignored in cross-rigid-only mode (see
                 // ResolveSharedTextureRepack); next to atlasing and cross-rigid merges it runs
                 // after them and leaves what they changed alone.
@@ -520,6 +522,15 @@ namespace Editors.PackOptimizer.Core
                 // Report-only: needs the rigids and exposure the LOD audit collected.
                 if (!crossRigidOnly)
                     RunBoneWeightAudit(state, cancellationToken, progress, null, null);
+                // Rebuilds the LODs AssetEditor's old decimator made. Runs here so every later stage
+                // (LOD-aware planning, merges, geometry optimisation, repack) sees the new LODs.
+                if (state.RemakeEditorLods && !crossRigidOnly)
+                {
+                    phaseStopwatch.Restart();
+                    RemakeEditorLods(state, cancellationToken, progress);
+                    state.PhaseDurations["Remake editor LODs"] = phaseStopwatch.Elapsed;
+                }
+
                 // Discovered before the cross-rigid stage (on the source state), processed after it.
                 List<AtlasCandidate> discoveredCandidates = [];
                 phaseStopwatch.Restart();

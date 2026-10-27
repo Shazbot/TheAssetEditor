@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Reflection;
 using System.Text;
 using System.Xml;
@@ -18094,6 +18094,243 @@ namespace Test.PackOptimizer.Core
             Assert.That(SrValidate(world), Is.Empty);
         }
 
+        // ---- Editor LOD remake ----------------------------------------------------------------------
+
+        private const string EditorLodRigidPath = "variantmeshes\\wh_variantmodels\\test\\editor_lods.rigid_model_v2";
+
+        // A weighted grid mesh (LOD0) and LODs 1-3 that sit on the editor's triangle schedule
+        // (0.75 / 0.5 / 0.25 of the LOD0 triangles), the way the old decimator left them.
+        private static RmvFile CreateEditorLodRigid(int side, int vertexPadding = 0)
+        {
+            var vertices = new List<CommonVertex>();
+            for (var y = 0; y < side; y++)
+            {
+                for (var x = 0; x < side; x++)
+                {
+                    vertices.Add(new CommonVertex
+                    {
+                        Position = new Vector4(x, y, (x * 7 + y * 3) % 5 * 0.01f, 1),
+                        Normal = Vector3.UnitZ,
+                        BiNormal = Vector3.UnitY,
+                        Tangent = Vector3.UnitX,
+                        Uv = new Vector2(x / (float)side, y / (float)side),
+                        Uv1 = new Vector2(0.25f, 0.75f),
+                        Colour = new Vector4(0.2f, 0.4f, 0.6f, 1f),
+                        BoneIndex = [(byte)(x % 3), 2],
+                        BoneWeight = [0.75f, 0.25f],
+                        WeightCount = 2,
+                    });
+                }
+            }
+
+            for (var i = 0; i < vertexPadding; i++)
+                vertices.Add(vertices[0]);
+
+            var indices = new List<ushort>();
+            for (var y = 0; y < side - 1; y++)
+            {
+                for (var x = 0; x < side - 1; x++)
+                {
+                    var o = (ushort)(y * side + x);
+                    indices.AddRange([o, (ushort)(o + 1), (ushort)(o + side), (ushort)(o + 1), (ushort)(o + side + 1), (ushort)(o + side)]);
+                }
+            }
+
+            var triangles = indices.Count / 3;
+            RmvModel Part(IEnumerable<ushort> partIndices)
+            {
+                var model = CreateWeightedModel(1f);
+                model.Mesh = new RmvMesh { VertexList = vertices.ToArray(), IndexList = partIndices.ToArray() };
+                return model;
+            }
+
+            var lods = new List<RmvModel[]> { new[] { Part(indices) } };
+            for (var lod = 1; lod < 4; lod++)
+            {
+                var factor = Editors.PackOptimizer.Core.EditorLodDetector.Factor(lod, 4);
+                var keep = (int)Math.Ceiling(triangles * factor);
+                lods.Add([Part(indices.Take(keep * 3))]);
+            }
+
+            var version = RmvVersionEnum.RMV2_V8;
+            var header = new RmvFileHeader { _fileType = "RMV2"u8.ToArray(), Version = version, LodCount = 4 };
+            header.SkeletonName = "skeleton";
+            var rigid = new RmvFile
+            {
+                Header = header,
+                LodHeaders = Enumerable.Range(0, 4)
+                    .Select(i => LodHeaderFactory.Create().CreateEmpty(version, i == 3 ? 10000 : 20 * (i + 1), (uint)i, 0))
+                    .ToArray(),
+                ModelList = [.. lods],
+            };
+            rigid.RecalculateOffsets();
+            return rigid;
+        }
+
+        private static (object Service, object State, RmvFile Rigid) RunEditorLodRemake(
+            RmvFile rigid, Action<object>? configure = null, float? error = null)
+        {
+            var state = CreateNoAtlasState();
+            SetStateProperty(state, "RemakeEditorLods", true);
+            if (error != null)
+                SetStateProperty(state, "EditorLodTargetError", error.Value);
+            GetStateProperty<IDictionary>(state, "RigidModels")[EditorLodRigidPath] = rigid;
+            GetStateProperty<HashSet<string>>(state, "SourceReachableAssetFiles").Add(EditorLodRigidPath);
+            configure?.Invoke(state);
+            var service = CreateService();
+            InvokeServiceMethod(service, "RemakeEditorLods", state, CancellationToken.None, null);
+            return (service, state, rigid);
+        }
+
+        private static Dictionary<string, int> EditorLodSkips(object state)
+            => GetStateProperty<object>(state, "EditorLods").GetType()
+                .GetProperty("Skipped", AnyInstance)!
+                .GetValue(GetStateProperty<object>(state, "EditorLods")) is Dictionary<string, int> skipped
+                ? skipped
+                : [];
+
+        [Test]
+        public void EditorLods_DetectedRigid_IsRemadeFromLod0AndKeepsItsStructure()
+        {
+            var rigid = CreateEditorLodRigid(24);
+            var lod0Mesh = rigid.ModelList[0][0].Mesh;
+            var oldHeaders = rigid.LodHeaders.Select(h => (h.LodCameraDistance, h.QualityLvl)).ToArray();
+            var materials = rigid.ModelList.Select(lod => lod[0].Material).ToArray();
+            var oldMeshes = rigid.ModelList.Select(lod => lod[0].Mesh).ToArray();
+            var triangles0 = lod0Mesh.IndexList.Length / 3;
+
+            var (_, state, _) = RunEditorLodRemake(rigid);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(GetStateProperty<HashSet<string>>(state, "ModifiedRigids"), Is.EquivalentTo(new[] { EditorLodRigidPath }));
+                Assert.That(rigid.ModelList, Has.Length.EqualTo(4));
+                Assert.That(rigid.ModelList[0][0].Mesh, Is.SameAs(lod0Mesh));
+                Assert.That(rigid.LodHeaders.Select(h => (h.LodCameraDistance, h.QualityLvl)), Is.EqualTo(oldHeaders));
+                for (var lod = 1; lod < 4; lod++)
+                {
+                    Assert.That(rigid.ModelList[lod], Has.Length.EqualTo(1));
+                    Assert.That(rigid.ModelList[lod][0].Material, Is.SameAs(materials[lod]));
+                    Assert.That(rigid.ModelList[lod][0].Mesh, Is.Not.SameAs(oldMeshes[lod]));
+                    var triangles = rigid.ModelList[lod][0].Mesh.IndexList.Length / 3;
+                    var target = Editors.PackOptimizer.Core.EditorLodDetector.Factor(lod, 4) * triangles0;
+                    Assert.That(triangles, Is.LessThanOrEqualTo(target + 3).And.GreaterThan(target * 0.5), $"LOD {lod}");
+                    // Remade from LOD0: every vertex is a LOD0 vertex and keeps its bones and colour.
+                    Assert.That(rigid.ModelList[lod][0].Mesh.VertexList.All(v => v.BoneWeight.Length == 2 && v.Colour.W == 1f), Is.True);
+                }
+
+                rigid.RecalculateOffsets();
+                var bytes = ModelFactory.Create().Save(rigid, validateByReloading: true, logProgress: false);
+                Assert.That(ModelFactory.Create().Load(bytes).ModelList.Select(l => l.Length), Is.EqualTo(new[] { 1, 1, 1, 1 }));
+            });
+        }
+
+        [Test]
+        public void EditorLods_ConsumerFrozenRigid_IsSkipped()
+        {
+            var rigid = CreateEditorLodRigid(24);
+            var old = rigid.ModelList[1][0].Mesh;
+
+            var (_, state, _) = RunEditorLodRemake(rigid, configure: s =>
+            {
+                var consumersType = GetNestedType("ConsumerReferenceIndex");
+                var packEntryType = GetNestedType("ConsumerPackEntry");
+                var index = consumersType.GetConstructors(AnyInstance).Single()
+                    .Invoke([Activator.CreateInstance(typeof(List<>).MakeGenericType(packEntryType))]);
+                ((IDictionary)consumersType.GetProperty("Frozen")!.GetValue(index)!)[EditorLodRigidPath] =
+                    Activator.CreateInstance(typeof(List<>).MakeGenericType(packEntryType));
+                SetStateProperty(s, "Consumers", index);
+            });
+
+            Assert.That(rigid.ModelList[1][0].Mesh, Is.SameAs(old));
+            Assert.That(GetStateProperty<HashSet<string>>(state, "ModifiedRigids"), Is.Empty);
+            Assert.That(EditorLodSkips(state), Does.ContainKey("consumer used or overridden"));
+        }
+
+        [Test]
+        public void EditorLods_ClothRigid_IsSkipped()
+        {
+            var rigid = CreateEditorLodRigid(24);
+            var header = rigid.ModelList[2][0].CommonHeader;
+            header.ModelTypeFlag = ModelMaterialEnum.weighted_cloth;
+            rigid.ModelList[2][0].CommonHeader = header;
+
+            var (_, state, _) = RunEditorLodRemake(rigid);
+
+            Assert.That(GetStateProperty<HashSet<string>>(state, "ModifiedRigids"), Is.Empty);
+            Assert.That(EditorLodSkips(state), Does.ContainKey("cloth model type"));
+        }
+
+        [Test]
+        public void EditorLods_NonEditorLodsAndAmbiguousPartMapping_AreLeftAlone()
+        {
+            var plain = CreateEditorLodRigid(24);
+            plain.ModelList[1][0].Mesh = new RmvMesh
+            {
+                VertexList = plain.ModelList[1][0].Mesh.VertexList,
+                IndexList = plain.ModelList[1][0].Mesh.IndexList.Take(300).ToArray(),
+            };
+            var (_, plainState, _) = RunEditorLodRemake(plain);
+            Assert.That(GetStateProperty<HashSet<string>>(plainState, "ModifiedRigids"), Is.Empty);
+            Assert.That(EditorLodSkips(plainState), Is.Empty, "a rigid that is not detected is not a skip");
+
+            // LOD2 lists two parts whose materials do not match any LOD0 grouping.
+            var ambiguous = CreateEditorLodRigid(24);
+            var extra = CreateWeightedModel(1f);
+            extra.Mesh = ambiguous.ModelList[2][0].Mesh;
+            ambiguous.ModelList[2] = [ambiguous.ModelList[2][0], extra];
+            var (_, ambiguousState, _) = RunEditorLodRemake(ambiguous);
+            Assert.That(GetStateProperty<HashSet<string>>(ambiguousState, "ModifiedRigids"), Is.Empty);
+        }
+
+        [Test]
+        public void EditorLods_RebuildThatCannotBeLighter_KeepsTheOldLods()
+        {
+            // 70000 vertices in LOD0's only part: the merged source exceeds a 16-bit index buffer, so no
+            // part can be rebuilt and every LOD stays as it was.
+            var rigid = CreateEditorLodRigid(24, vertexPadding: 70000);
+            var oldMeshes = rigid.ModelList.Select(lod => lod[0].Mesh).ToArray();
+
+            var (_, state, _) = RunEditorLodRemake(rigid);
+
+            Assert.That(GetStateProperty<HashSet<string>>(state, "ModifiedRigids"), Is.Empty);
+            Assert.That(rigid.ModelList.Select(lod => lod[0].Mesh), Is.EqualTo(oldMeshes));
+            Assert.That(EditorLodSkips(state), Does.ContainKey("no LOD became lighter than the one above"));
+        }
+
+        [Test]
+        public void EditorLods_FewerBonesInTheLod_DowngradeToTheStrongestInfluences()
+        {
+            var rigid = CreateEditorLodRigid(24);
+            foreach (var vertex in rigid.ModelList[0][0].Mesh.VertexList)
+            {
+                vertex.WeightCount = 4;
+                vertex.BoneIndex = [1, 2, 3, 4];
+                vertex.BoneWeight = [0.1f, 0.5f, 0.3f, 0.1f];
+            }
+
+            var header = rigid.ModelList[0][0].CommonHeader;
+            rigid.ModelList[0][0].Material = new WeightedMaterial { BinaryVertexFormat = VertexFormat.Cinematic };
+            RunEditorLodRemake(rigid);
+
+            var rebuilt = rigid.ModelList[1][0].Mesh.VertexList;
+            Assert.That(rebuilt, Is.Not.Empty);
+            Assert.Multiple(() =>
+            {
+                Assert.That(rebuilt.All(v => v.WeightCount == 2 && v.BoneIndex.SequenceEqual(new byte[] { 2, 3 })), Is.True);
+                Assert.That(rebuilt.All(v => Math.Abs(v.BoneWeight.Sum() - 1f) < 1e-5f), Is.True);
+                Assert.That(rebuilt[0].BoneWeight[0], Is.EqualTo(0.5f / 0.8f).Within(1e-5f));
+            });
+            _ = header;
+        }
+
+        [Test]
+        public void EditorLods_OptionDefaultsToOff_AndTheVersionIsBumped()
+        {
+            Assert.That(new Editors.PackOptimizer.Core.PackOptimizerOptions().RemakeEditorLods, Is.False);
+            Assert.That(Editors.PackOptimizer.Core.PackOptimizerVersions.OutputVersion, Is.GreaterThanOrEqualTo(32));
+        }
+
         // --- Output version ---------------------------------------------------------------------
         //
         // PackOptimizerVersions.OutputVersion is part of the mod manager's cache key. The golden hash of
@@ -18208,6 +18445,9 @@ namespace Test.PackOptimizer.Core
             // and a contact-maximizing placement; the repack is not among the pinned stages, so the hash is
             // unchanged.
             [31] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 32: rigids whose LOD 1+ AssetEditor's old decimator generated are rebuilt from LOD0 with
+            // meshoptimizer (RemakeEditorLods); the pinned hash gains an editor-LOD fixture.
+            [32] = "FD194683846C8E5B75064EAB0F41F3FC97BE900200FBDDE4A8AC09CD3927F7E6",
         };
 
         private static string ComputeOutputGoldenHash()
@@ -18296,6 +18536,12 @@ namespace Test.PackOptimizer.Core
             AddModel("geometry", optimized);
 
             AddModel("merge", MergeOwned(CreateWeightedModel(1f), CreateWeightedModel(2f)));
+
+            // Editor LODs: a rigid on the old decimator's triangle schedule, rebuilt from LOD0.
+            var editorLodRigid = CreateEditorLodRigid(24);
+            RunEditorLodRemake(editorLodRigid);
+            for (var lod = 1; lod < editorLodRigid.ModelList.Length; lod++)
+                AddModel("editorlod" + lod, editorLodRigid.ModelList[lod][0]);
 
             // Battle-presence model: two subcultures of one culture, a second culture, a unit without a
             // subculture; pack-affected and unaffected units. Built with the optimizer's default army scope.

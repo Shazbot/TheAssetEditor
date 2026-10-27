@@ -111,7 +111,7 @@ internal static class OptimizeMode
         try
         {
             _ = Editors.ImportExport.Dds.Native.TexHelper.NativeVersion;
-            return null;
+            return GameWorld.MeshOptimizer.MeshOptSimplifier.GetNativeLibraryError();
         }
         catch (Exception exception) when (exception is DllNotFoundException or BadImageFormatException or EntryPointNotFoundException)
         {
