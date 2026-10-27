@@ -9015,8 +9015,9 @@ namespace Test.PackOptimizer.Core
             Assert.That(Get<int>(result, "FailedPixelCheck"), Is.Zero);
             var built = SrBuilt(result).Single();
             var group = Get<IEnumerable>(built, "Groups").Cast<object>().Single();
-            // The power-of-two canvas is 512x512; the charts only need 480x224 (240x112 for the normal map).
-            Assert.That(Get<string>(group, "Sizes"), Is.EqualTo("base_colour 1024x1024 -> 480x224; normal 512x512 -> 240x112"));
+            // The power-of-two canvas is 512x512; packed for the cut canvas the charts need 384x224
+            // (192x112 for the normal map; the power-of-two packing would cut to 480x224).
+            Assert.That(Get<string>(group, "Sizes"), Is.EqualTo("base_colour 1024x1024 -> 384x224; normal 512x512 -> 192x112"));
             var pages = world.Fixture.Output
                 .Where(pair => pair.Key.Contains("_repack_") && pair.Key.EndsWith(".dds", StringComparison.OrdinalIgnoreCase))
                 .ToList();
@@ -9027,7 +9028,7 @@ namespace Test.PackOptimizer.Core
                 var width = BitConverter.ToInt32(bytes, 16);
                 var mips = BitConverter.ToInt32(bytes, 28);
                 var isBase = path.Contains("base_colour", StringComparison.OrdinalIgnoreCase);
-                Assert.That((width, height), Is.EqualTo(isBase ? (480, 224) : (240, 112)), path);
+                Assert.That((width, height), Is.EqualTo(isBase ? (384, 224) : (192, 112)), path);
                 Assert.That(mips, Is.EqualTo(1 + (int)Math.Floor(Math.Log2(width))), path);
             }
 
@@ -9071,6 +9072,36 @@ namespace Test.PackOptimizer.Core
             var method = GetServiceType().GetMethod("TrimSharedRepackCanvasToAspect", BindingFlags.NonPublic | BindingFlags.Static)!;
             return ((int Width, int Height)?)method.Invoke(
                 null, [extents, canvasWidth, canvasHeight, referenceWidth, referenceHeight, align, exponents.ToList()]);
+        }
+
+        [Test]
+        public void SharedRepack_TrimmedPacking_PrefersANarrowerCanvasWhenItsCutCanvasIsSmaller()
+        {
+            // Three 96x64 charts: the power-of-two 256-wide canvas packs two per row (a 192x128 box);
+            // a 96-wide canvas stacks them into 96x192, the charts' own area.
+            var sizes = new List<(int Width, int Height)> { (96, 64), (96, 64), (96, 64) };
+            var found = Editors.PackOptimizer.Core.SharedRepackRectPacker.TryPackMinimumTrimmedCanvas(
+                sizes, 32, 256, 256, (right, bottom) => (right, bottom), 32, null,
+                out var width, out var height, out var positions);
+
+            Assert.That(found, Is.True);
+            Assert.That((width, height), Is.EqualTo((96, 192)));
+            Assert.That(positions.Select(position => position.Y).OrderBy(y => y), Is.EqualTo(new[] { 0, 64, 128 }));
+            Assert.That(positions.All(position => position.X == 0), Is.True);
+        }
+
+        [Test]
+        public void SharedRepack_TrimmedPacking_SkipsLayoutsWhoseBoxHasNoCanvas()
+        {
+            var sizes = new List<(int Width, int Height)> { (96, 64), (96, 64), (96, 64) };
+            // Only a box at least 128 wide has a canvas: the stacked 96x192 is refused.
+            var found = Editors.PackOptimizer.Core.SharedRepackRectPacker.TryPackMinimumTrimmedCanvas(
+                sizes, 32, 256, 256, (right, bottom) => right >= 128 ? (right, bottom) : null, 32, null,
+                out var width, out var height, out _);
+
+            Assert.That(found, Is.True);
+            Assert.That(width, Is.GreaterThanOrEqualTo(128));
+            Assert.That((long)width * height, Is.LessThanOrEqualTo(192L * 128));
         }
 
         [Test]
@@ -17889,6 +17920,10 @@ namespace Test.PackOptimizer.Core
             // flow compensation) to its packed charts, keeping the reference aspect; the repack is not among the
             // pinned stages, so the hash is unchanged.
             [27] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 28: the shared texture repack packs each page's charts for the smallest cut canvas (several
+            // canvas widths and packers) instead of the smallest power of two; the repack is not among the
+            // pinned stages, so the hash is unchanged.
+            [28] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

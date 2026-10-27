@@ -6343,32 +6343,37 @@ namespace Editors.PackOptimizer.Core
                 var pageSizes = assignment.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
                 TryPackSharedRepackLayoutOnCanvases(
                     pageSizes, maximumWidth, maximumHeight, out var width, out var height, out var positions, canvasAllowed, solver);
-                // A group that may use any aspect gets the packed charts' bounding box as its canvas
-                // (not a power of two), where every slot's size stays a whole number of BC blocks.
-                if (canvasAllowed == null && !SharedRepackTrimmedCanvasDisabled)
+                // The canvas is cut to the packed charts (not a power of two), where every slot's size
+                // stays a whole number of BC blocks: to their bounding box, or for a group with an aspect
+                // restriction to the smallest box of the reference aspect that holds them.
+                if (!SharedRepackTrimmedCanvasDisabled)
                 {
-                    var trimmed = TrimSharedRepackCanvas(
-                        assignment.Select((index, position) => (positions[position].X + charts[index].LayoutWidth,
-                            positions[position].Y + charts[index].LayoutHeight)),
-                        cell,
-                        slots.Select(slot => exponents[slot]));
-                    if (trimmed is { } size && (size.Width < width || size.Height < height))
+                    var slotExponents = slots.Select(slot => exponents[slot]).ToList();
+                    var potWidth = width;
+                    var potHeight = height;
+                    (int Width, int Height)? Trim(int right, int bottom)
+                        => canvasAllowed == null
+                            ? TrimSharedRepackCanvas([(right, bottom)], cell, slotExponents)
+                            : TrimSharedRepackCanvasToAspect(
+                                [(right, bottom)], potWidth, potHeight, first.ReferenceWidth, first.ReferenceHeight,
+                                cell, slotExponents);
+
+                    var trimmed = Trim(
+                        assignment.Select((index, position) => positions[position].X + charts[index].LayoutWidth).Max(),
+                        assignment.Select((index, position) => positions[position].Y + charts[index].LayoutHeight).Max());
+                    // The same charts packed for the smallest cut canvas instead of the smallest power of two.
+                    if (!SharedRepackTrimmedPackingDisabled &&
+                        SharedRepackRectPacker.TryPackMinimumTrimmedCanvas(
+                            pageSizes, cell, potWidth, potHeight, Trim, SharedRepackTrimmedPackingWidths,
+                            new SharedRepackSimBudget(SharedRepackLayoutOperationBudget),
+                            out var searchedWidth, out var searchedHeight, out var searchedPositions) &&
+                        (long)searchedWidth * searchedHeight <
+                        (trimmed is { } current ? (long)current.Width * current.Height : (long)potWidth * potHeight))
                     {
-                        width = size.Width;
-                        height = size.Height;
+                        trimmed = (searchedWidth, searchedHeight);
+                        positions = searchedPositions;
                     }
-                }
-                else if (canvasAllowed != null && !SharedRepackTrimmedCanvasDisabled)
-                {
-                    var trimmed = TrimSharedRepackCanvasToAspect(
-                        assignment.Select((index, position) => (positions[position].X + charts[index].LayoutWidth,
-                            positions[position].Y + charts[index].LayoutHeight)),
-                        width,
-                        height,
-                        first.ReferenceWidth,
-                        first.ReferenceHeight,
-                        cell,
-                        slots.Select(slot => exponents[slot]).ToList());
+
                     if (trimmed is { } size && (size.Width < width || size.Height < height))
                     {
                         width = size.Width;
@@ -7774,6 +7779,10 @@ namespace Editors.PackOptimizer.Core
         private static bool SharedRepackTightPiecesDisabled;
         // Test hook: every canvas stays a power of two (the pages of an earlier output version).
         private static bool SharedRepackTrimmedCanvasDisabled;
+        // Test hook: cut canvases keep the power-of-two packing (the pages of an earlier output version).
+        private static bool SharedRepackTrimmedPackingDisabled;
+        // Canvas widths the search for the smallest cut canvas tries per page.
+        private const int SharedRepackTrimmedPackingWidths = 32;
         private static bool SharedRepackReducedPaddingDisabled;
         private static bool SharedRepackDirectRigidsDisabled;
         // Test hook: textures that left a plan are never copied (the output of an earlier version).

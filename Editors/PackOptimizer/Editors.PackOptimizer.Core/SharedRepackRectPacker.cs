@@ -371,6 +371,88 @@ namespace Editors.PackOptimizer.Core
             return false;
         }
 
+        // The layout whose trimmed canvas is smallest: every packer on canvases as tall as the given
+        // one and from the widest rectangle up to its width (at most maximumWidths widths, evenly spread).
+        // trim maps the used box (right, bottom) to the final canvas, null when it has none. Sizes,
+        // canvas and positions are in pixels and multiples of the unit. False when nothing fits.
+        public static bool TryPackMinimumTrimmedCanvas(
+            IReadOnlyList<(int Width, int Height)> sizes,
+            int unit,
+            int canvasWidth,
+            int canvasHeight,
+            Func<int, int, (int Width, int Height)?> trim,
+            int maximumWidths,
+            SharedRepackSimBudget? budget,
+            out int trimmedWidth,
+            out int trimmedHeight,
+            out (int X, int Y)[] positions)
+        {
+            trimmedWidth = trimmedHeight = 0;
+            positions = [];
+            if (sizes.Count == 0 || unit <= 0 || canvasWidth % unit != 0 || canvasHeight % unit != 0 ||
+                sizes.Any(size => size.Width % unit != 0 || size.Height % unit != 0))
+            {
+                return false;
+            }
+
+            var scaled = sizes.Select(size => (size.Width / unit, size.Height / unit)).ToList();
+            var gridHeight = canvasHeight / unit;
+            var widest = scaled.Max(size => size.Item1);
+            var gridWidth = canvasWidth / unit;
+            if (widest > gridWidth || scaled.Max(size => size.Item2) > gridHeight)
+                return false;
+
+            var widths = new SortedSet<int> { gridWidth };
+            var span = gridWidth - widest;
+            var steps = Math.Max(1, Math.Min(span, maximumWidths - 1));
+            for (var step = 0; step <= steps; step++)
+                widths.Add(widest + (int)((long)span * step / steps));
+
+            long bestArea = long.MaxValue;
+            var orders = Enumerable.Range(0, 3).Select(mode => OrderBy(scaled, mode)).ToArray();
+            foreach (var width in widths)
+            {
+                for (var attempt = 0; attempt < 10; attempt++)
+                {
+                    if (budget is { Exceeded: true })
+                        break;
+
+                    var order = orders[attempt == 0 ? 0 : (attempt - 1) / 3];
+                    (int X, int Y)[] trial;
+                    var fits = attempt == 0
+                        ? TryShelf(scaled, order, width, gridHeight, out trial)
+                        : ((attempt - 1) % 3) switch
+                        {
+                            0 => TryMaxRects(scaled, order, width, gridHeight, false, budget, out trial),
+                            1 => TryMaxRects(scaled, order, width, gridHeight, true, budget, out trial),
+                            _ => TrySkyline(scaled, order, width, gridHeight, budget, out trial),
+                        };
+                    if (!fits)
+                        continue;
+
+                    int right = 0, bottom = 0;
+                    for (var index = 0; index < trial.Length; index++)
+                    {
+                        right = Math.Max(right, trial[index].X + scaled[index].Item1);
+                        bottom = Math.Max(bottom, trial[index].Y + scaled[index].Item2);
+                    }
+
+                    if (trim(right * unit, bottom * unit) is not { } canvas)
+                        continue;
+                    var area = (long)canvas.Width * canvas.Height;
+                    if (area >= bestArea)
+                        continue;
+
+                    bestArea = area;
+                    trimmedWidth = canvas.Width;
+                    trimmedHeight = canvas.Height;
+                    positions = trial.Select(position => (position.X * unit, position.Y * unit)).ToArray();
+                }
+            }
+
+            return bestArea != long.MaxValue;
+        }
+
         private static int Log2(int value) => System.Numerics.BitOperations.Log2((uint)value);
 
         // Largest power of two dividing every size (at least 1).

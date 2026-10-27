@@ -732,7 +732,20 @@ Measured (bench, vs `albion-canvas` / `teb-canvas`):
 - Fingerprint (sorted path+hash): albion 7 removed (6 materials and `alb_staff_crystal_01_emissive.dds`, replaced by the new staff set), 16 added, 34 changed (6 pages, 4 materials, 15 rigids, 9 wsmodels); teb 0 removed, 0 added, 24 changed (14 pages, 6 materials, 4 rigids).
 - WHMM `pack validate --with-vanilla`: valid, diagnostic lines identical to the canvas packs (albion 7,217, teb 9,707), none mentions a `_repack_` texture.
 
-Tests: 971 (970 + 1 new); the emissive tight-pieces test now pins 192x192 (pieces) and 336x336 (merged charts) instead of 256 and 512, and its parameter and pixel checks pass on the trimmed pages.
+Tests: 971 (970 + 1 new); the emissive tight-pieces test now pins 192x192 (pieces) and 336x336 (merged charts) instead of 256 and 512, and its parameter and pixel checks pass on the trimmed pages (checked in game: Estragon's Pariahs, Piggolo II, the wyrd druid staff).
+
+## 2026-10-27: pages are packed for the smallest cut canvas
+
+The layout solver still picks the smallest power-of-two canvas the charts fit and the page is then cut to the charts; the shelf packer fills that canvas's whole width, so the cut mostly removes height. Now each page's charts are packed again for the cut canvas (`SharedRepackRectPacker.TryPackMinimumTrimmedCanvas`): canvases as tall as the power-of-two one and from the widest chart up to its width (32 widths), each with the shelf, MaxRects (short side and area fit) and skyline packers over the three orders; the layout whose cut canvas (`TrimSharedRepackCanvas`, or `TrimSharedRepackCanvasToAspect` for aspect-restricted groups) is smallest wins, and only when it is smaller than the cut of the power-of-two packing. Only positions change, so exactness is as before. Split decisions still use power-of-two page bytes. Test hook `SharedRepackTrimmedPackingDisabled`. OutputVersion 28.
+
+Measured (bench, vs `albion-aspect` / `teb-aspect`):
+- albion: realised 224,482,896 -> 249,706,536 (+25,223,640), 27 -> 29 sets (+`vir_forsaken_body_01 _base_colour`, +`wef_drycha_body_01_mask`; none lost), built groups 49 -> 61; built-group packing gaps 13.9 -> 9.7 MB although 12 more groups are built. Bench time 122 -> 176 s (shared repack 32.7 -> 47.8 s, prune 2.1 -> 12.9 s; most of it is the 12 more groups).
+- teb: realised 285,624,088 -> 305,880,408 (+20,256,320), 54 -> 56 sets (+`ksl_ice_guard_head_01_base_colour`, +`lzd_skink_chief_accessories_01_base_colour`; none lost), built groups 73 -> 77, packing gaps 26.4 -> 16.3 MB. Bench time 202 -> 206 s.
+- Pixel check: 0 sets failed, top-level max error 0 everywhere, worst re-encoded share over 96 0.48 % (albion) / 0.33 % (teb). Tighter neighbours make reduced padding fail the pixel check more often: teb has 3 P2 groups lowered (was 1): `tze_ship` + lupo sails P2 -> P1 (954,120 -> 1,147,280 bytes, the one group that got larger), `ksl_streltsi_body` P2 -> P1 (still 1,609,344 -> 1,162,272), `ksl_bear_armour_medium` P2 -> P0 (unchanged). Retrying the failed padding with the power-of-two packing before lowering it would recover the lupo group; not done.
+- Fingerprint (sorted path+hash): albion 16 removed (materials of newly built sets), 66 added, 191 changed (71 pages, 59 materials, 37 rigids, 24 wsmodels); teb 7 removed (4 materials and the 3 pages of the lupo group's second page, now one page), 22 added, 312 changed (136 pages, 81 materials, 90 rigids, 5 wsmodels). No original texture changed.
+- WHMM `pack validate --with-vanilla`: valid, diagnostic lines identical to the aspect packs (albion 7,217, teb 9,707), none mentions a `_repack_` texture.
+
+Tests: 973 (971 + 2 new: the narrower-canvas search and a refused box); the trimmed-canvas pixel test now pins 384x224 / 192x112 instead of 480x224 / 240x112. Checked in game on teb (custom battle, Tilea): Uvetovsk Kossars, El Cadavo, Pirazzo's Lost Legion, Estragon's Pariahs, Borgio the Besieger, Lupio Sunscryer, Pathfinder; the units were found with WHMM `pack diff --affected-units` (without vanilla; with vanilla it hits the 50,000-edge limit and finds none) plus `pack search` and `unit resolve`.
 
 ## Open issues
 
