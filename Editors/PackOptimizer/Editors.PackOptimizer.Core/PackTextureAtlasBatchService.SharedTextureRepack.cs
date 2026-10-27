@@ -608,6 +608,13 @@ namespace Editors.PackOptimizer.Core
             public int LayoutWidth { get; set; }
             public int LayoutHeight { get; set; }
             public long BytesAfter { get; set; }
+            // What the report-only cell-mask simulation needs to cut a canvas like the planner did: the
+            // trim rules, the power-of-two canvas they were applied to and the position unit. Null when
+            // the page was not cut.
+            public Func<int, int, (int Width, int Height)?>? SimTrim { get; set; }
+            public int SimCanvasWidth { get; set; }
+            public int SimCanvasHeight { get; set; }
+            public int SimUnit { get; set; }
             public Dictionary<string, string> MaterialMap { get; } = new(StringComparer.OrdinalIgnoreCase);
             public Dictionary<string, XmlDocument> MaterialDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
             public List<(XmlNode Node, string Material)> WsRepoints { get; } = [];
@@ -852,7 +859,8 @@ namespace Editors.PackOptimizer.Core
             long PaddingSavedBytes = 0,
             bool NewlyBuilt = false,
             SharedRepackPaddingSplit Padding = default,
-            string Label = "");
+            string Label = "",
+            SharedRepackMaskSim MaskSim = default);
 
         // ChartBytes - UsedBytes split into exactly reconciling terms (report only): the holes of each chart's
         // cell bounding box, the gutter band around the box, and the alignment rounding of the padded
@@ -6393,6 +6401,9 @@ namespace Editors.PackOptimizer.Core
             {
                 var pageSizes = assignment.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
                 var trimmedPacking = false;
+                Func<int, int, (int Width, int Height)?>? simTrim = null;
+                var simCanvasWidth = 0;
+                var simCanvasHeight = 0;
                 TryPackSharedRepackLayoutOnCanvases(
                     pageSizes, maximumWidth, maximumHeight, out var width, out var height, out var positions, canvasAllowed, solver);
                 // The canvas is cut to the packed charts (not a power of two), where every slot's size
@@ -6410,6 +6421,9 @@ namespace Editors.PackOptimizer.Core
                                 [(right, bottom)], potWidth, potHeight, first.ReferenceWidth, first.ReferenceHeight,
                                 cell, slotExponents);
 
+                    simTrim = Trim;
+                    simCanvasWidth = potWidth;
+                    simCanvasHeight = potHeight;
                     var trimmed = Trim(
                         assignment.Select((index, position) => positions[position].X + charts[index].LayoutWidth).Max(),
                         assignment.Select((index, position) => positions[position].Y + charts[index].LayoutHeight).Max());
@@ -6442,6 +6456,10 @@ namespace Editors.PackOptimizer.Core
                     GroupKey = first.GroupKey,
                     Index = firstPageNumber + pages.Count,
                     TrimmedPacking = trimmedPacking,
+                    SimTrim = simTrim,
+                    SimCanvasWidth = simCanvasWidth,
+                    SimCanvasHeight = simCanvasHeight,
+                    SimUnit = cell,
                     LayoutWidth = width,
                     LayoutHeight = height,
                 };
@@ -9631,6 +9649,7 @@ namespace Editors.PackOptimizer.Core
                     (long)charts - (long)guttered,
                     (long)masked),
                 Label: label,
+                MaskSim: SimulateSharedRepackMaskPacking(pages),
                 PaddingVariant: split.PaddingVariant,
                 PaddingSavedBytes: split.PaddingSavedBytes,
                 NewlyBuilt: newlyBuilt);
@@ -9713,6 +9732,7 @@ namespace Editors.PackOptimizer.Core
                     $"{page:N0} bytes = touched cells {used:N0} + chart padding/bounding/alignment {charts - used:N0} + " +
                     $"packing gaps {trimmed - charts:N0} + power-of-two rounding {page - trimmed:N0}");
                 AppendSharedRepackPaddingSplit(sb, "    ", built, page, trimmed - charts, true);
+                AppendSharedRepackMaskSim(sb, "    ", built, result.MinimumGroupSavingBytes, false, true);
             }
 
             if (gated.Count != 0)
@@ -9735,6 +9755,7 @@ namespace Editors.PackOptimizer.Core
                     $"    their pages = touched cells {gatedUsed:N0} + chart padding/bounding/alignment " +
                     $"{gatedCharts - gatedUsed:N0} + packing gaps {trimmed - gatedCharts:N0} + power-of-two rounding {page - trimmed:N0}");
                 AppendSharedRepackPaddingSplit(sb, "      ", gated, page, trimmed - gatedCharts, false);
+                AppendSharedRepackMaskSim(sb, "      ", gated, result.MinimumGroupSavingBytes, true, true);
             }
 
             // Tight pieces: one rectangle per UV island instead of per merged chart, used by a group only
