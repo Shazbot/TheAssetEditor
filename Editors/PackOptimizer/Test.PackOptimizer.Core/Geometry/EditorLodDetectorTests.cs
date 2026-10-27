@@ -62,6 +62,33 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void Analyze_TriangleScheduleWithMirroringLostInTheLastLod_IsEditorGenerated()
+        {
+            var rigid = Rigid(vertexCount: 2000, triangleCount: 4000, lodTriangles: [3000, 2000, 1000]);
+            foreach (var vertex in rigid.ModelList[0][0].Mesh.VertexList.Take(200))
+                vertex.BiNormal = -vertex.BiNormal;
+
+            var verdict = EditorLodDetector.Analyze(rigid);
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(verdict.IsEditorGenerated, Is.True);
+                Assert.That(verdict.Evidence, Is.EqualTo(EditorLodEvidence.ScheduleWithLostMirroring));
+            });
+
+            // Mirroring still present in the last LOD: a CA-style chain, report only.
+            foreach (var vertex in rigid.ModelList[3][0].Mesh.VertexList.Take(10))
+                vertex.BiNormal = -vertex.BiNormal;
+            Assert.That(EditorLodDetector.Analyze(rigid).Evidence, Is.EqualTo(EditorLodEvidence.ScheduleOnly));
+
+            // Too little mirroring in LOD0 (under 2%).
+            var few = Rigid(vertexCount: 2000, triangleCount: 4000, lodTriangles: [3000, 2000, 1000]);
+            foreach (var vertex in few.ModelList[0][0].Mesh.VertexList.Take(20))
+                vertex.BiNormal = -vertex.BiNormal;
+            Assert.That(EditorLodDetector.Analyze(few).Evidence, Is.EqualTo(EditorLodEvidence.ScheduleOnly));
+        }
+
+        [Test]
         public void Analyze_TriangleScheduleWithEditorHeaderPadding_IsEditorGenerated()
         {
             var rigid = Rigid(vertexCount: 2000, triangleCount: 4000, lodTriangles: [3000, 2000, 1000]);

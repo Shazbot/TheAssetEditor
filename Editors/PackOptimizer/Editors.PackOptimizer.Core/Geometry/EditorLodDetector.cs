@@ -60,6 +60,8 @@ namespace Editors.PackOptimizer.Core
         ScheduleOnly,
         /// <summary>Exact schedule on triangles plus an AssetEditor marker (LOD header padding 125/136/174, or black vertex colour on every vertex of every LOD).</summary>
         ScheduleWithEditorMarker,
+        /// <summary>Exact triangle schedule, more than 2% of LOD0 vertices have a mirrored tangent frame and the last LOD has none: the old decimator rebuilt B as cross(N,T).</summary>
+        ScheduleWithLostMirroring,
         /// <summary>LOD triangle counts equal ceil(factor * LOD0 vertex count) on every informative LOD: the old editor's vertex-count bug.</summary>
         VertexCountTarget,
     }
@@ -90,6 +92,8 @@ namespace Editors.PackOptimizer.Core
         /// </summary>
         public const int MinimumLods = 4;
         public const int MinimumInformativeLevels = 3;
+        /// <summary>LOD0 must have more than this share of mirrored vertices for lost mirroring to count.</summary>
+        public const double MinimumMirroredShare = 0.02;
 
         public static EditorLodVerdict Analyze(RmvFile rigid)
         {
@@ -132,9 +136,11 @@ namespace Editors.PackOptimizer.Core
             if (levels.All(x => x.TriangleTargetMatches))
             {
                 var marker = signals.HeaderPaddingMatches || (signals.Lod0BlackColourShare >= 0.999 && signals.LodsBlackColourShare >= 0.999);
-                return marker
-                    ? new EditorLodVerdict(true, EditorLodEvidence.ScheduleWithEditorMarker, "exact factor schedule on triangles with an editor marker", signals)
-                    : new EditorLodVerdict(false, EditorLodEvidence.ScheduleOnly, "exact factor schedule on triangles, no editor marker", signals);
+                if (marker)
+                    return new EditorLodVerdict(true, EditorLodEvidence.ScheduleWithEditorMarker, "exact factor schedule on triangles with an editor marker", signals);
+                if (signals.Lod0MirroredShare > MinimumMirroredShare && signals.LastLodMirroredShare == 0)
+                    return new EditorLodVerdict(true, EditorLodEvidence.ScheduleWithLostMirroring, "exact factor schedule on triangles and the tangent mirroring is gone from the last LOD", signals);
+                return new EditorLodVerdict(false, EditorLodEvidence.ScheduleOnly, "exact factor schedule on triangles, no editor marker", signals);
             }
 
             return new EditorLodVerdict(false, EditorLodEvidence.None, "no LOD target fingerprint", signals);
