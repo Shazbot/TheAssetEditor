@@ -56,7 +56,7 @@ namespace Editors.PackOptimizer.Core
     public enum EditorLodEvidence
     {
         None,
-        /// <summary>Triangle counts follow the 0.75/0.5/0.25 style schedule, but nothing ties them to AssetEditor. CA ships at least one rigid like this, so it is reported and not acted on.</summary>
+        /// <summary>Triangle counts follow the 0.75/0.5/0.25 style schedule, but nothing ties them to AssetEditor. CA ships exactly one such rigid (grn_wyvern_skullmuncher_01), which is accepted; still an acting tier.</summary>
         ScheduleOnly,
         /// <summary>Exact schedule on triangles plus an AssetEditor marker (LOD header padding 125/136/174, or black vertex colour on every vertex of every LOD).</summary>
         ScheduleWithEditorMarker,
@@ -140,7 +140,7 @@ namespace Editors.PackOptimizer.Core
                     return new EditorLodVerdict(true, EditorLodEvidence.ScheduleWithEditorMarker, "exact factor schedule on triangles with an editor marker", signals);
                 if (signals.Lod0MirroredShare > MinimumMirroredShare && signals.LastLodMirroredShare == 0)
                     return new EditorLodVerdict(true, EditorLodEvidence.ScheduleWithLostMirroring, "exact factor schedule on triangles and the tangent mirroring is gone from the last LOD", signals);
-                return new EditorLodVerdict(false, EditorLodEvidence.ScheduleOnly, "exact factor schedule on triangles, no editor marker", signals);
+                return new EditorLodVerdict(true, EditorLodEvidence.ScheduleOnly, "exact factor schedule on triangles, no editor marker", signals);
             }
 
             return new EditorLodVerdict(false, EditorLodEvidence.None, "no LOD target fingerprint", signals);

@@ -48,7 +48,7 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
-        public void Analyze_TriangleScheduleWithoutMarkers_IsReportedButNotAsserted()
+        public void Analyze_TriangleScheduleWithoutMarkers_IsTheScheduleOnlyTier()
         {
             var rigid = Rigid(vertexCount: 2000, triangleCount: 4000, lodTriangles: [3000, 2000, 1000]);
 
@@ -56,7 +56,7 @@ namespace Test.PackOptimizer.Core
 
             Assert.Multiple(() =>
             {
-                Assert.That(verdict.IsEditorGenerated, Is.False);
+                Assert.That(verdict.IsEditorGenerated, Is.True);
                 Assert.That(verdict.Evidence, Is.EqualTo(EditorLodEvidence.ScheduleOnly));
             });
         }
