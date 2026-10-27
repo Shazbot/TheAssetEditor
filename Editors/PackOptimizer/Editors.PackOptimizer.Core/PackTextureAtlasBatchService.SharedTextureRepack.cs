@@ -502,6 +502,9 @@ namespace Editors.PackOptimizer.Core
             public long PaddingBaselineBytes { get; set; }
             public long PaddingSavedBytes { get; set; }
             public int MaximumPaddingVariantIndex { get; set; } = 2;
+            // Padding variants whose pages failed the pixel check with the search for the smallest cut canvas:
+            // they are packed for the power of two instead.
+            public IReadOnlySet<string> TrimmedPackingDisabledVariants { get; set; } = new HashSet<string>();
             public int GridX { get; set; }
             public int GridY { get; set; }
             // The ACTIVE layout: cell -> chart id (-1 = untouched) and the charts. It is the merged-chart
@@ -593,6 +596,8 @@ namespace Editors.PackOptimizer.Core
             public string Hash { get; init; } = string.Empty;
             public string GroupKey { get; init; } = string.Empty;
             public int Index { get; init; }
+            // The positions came from the search for the smallest cut canvas.
+            public bool TrimmedPacking { get; set; }
             public List<SharedRepackTuple> Tuples { get; } = [];
             public List<SharedRepackChart> Charts { get; } = [];
             public List<SharedRepackPart> Parts { get; } = [];
@@ -626,6 +631,7 @@ namespace Editors.PackOptimizer.Core
             public long PaddingSavedBytes { get; set; }
             public bool NewlyBuilt { get; set; }
             public string? PaddingRetryFromVariant { get; set; }
+            public bool PowerOfTwoPackingRetry { get; set; }
             public string Status { get; set; } = "built";
             public string Sizes { get; set; } = string.Empty;
         }
@@ -684,6 +690,8 @@ namespace Editors.PackOptimizer.Core
             public int FlowAspectTuples { get; set; }
             public long FlowAspectExtraBytes { get; set; }
             public HashSet<string> FailedPaddingGroupKeys { get; } = new(StringComparer.Ordinal);
+            // The failed groups whose failed page used the search for the smallest cut canvas.
+            public HashSet<string> FailedTrimmedPackingGroupKeys { get; } = new(StringComparer.Ordinal);
             // Outputs identical to an earlier output of the plan (see DeduplicateSharedRepackOutputs).
             public int DeduplicatedOutputs { get; set; }
             public long DeduplicatedBytes { get; set; }
@@ -2037,6 +2045,10 @@ namespace Editors.PackOptimizer.Core
                     var reportSnapshot = SharedRepackAttemptReportSnapshot.Capture(result);
                     var paddingLimits = new Dictionary<string, int>(StringComparer.Ordinal);
                     var loweredFrom = new Dictionary<string, string>(StringComparer.Ordinal);
+                    // Per group, the padding variants that failed with the smallest-canvas packing and are packed
+                    // for the power of two instead; the group's variant choice then weighs them against the lower
+                    // variants.
+                    var powerOfTwoPacking = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var retryAttempts = 0;
                     var skipCopy = false;
 
@@ -2058,6 +2070,7 @@ namespace Editors.PackOptimizer.Core
                                 texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
                                 cancellationToken,
                                 paddingLimits,
+                                powerOfTwoPacking,
                                 out planFailure,
                                 out planBucket);
                         }
@@ -2098,10 +2111,13 @@ namespace Editors.PackOptimizer.Core
                         {
                             if (loweredFrom.TryGetValue(group.GroupKey, out var from) && from != group.PaddingVariant)
                                 group.PaddingRetryFromVariant = from;
+                            group.PowerOfTwoPackingRetry = powerOfTwoPacking.TryGetValue(group.GroupKey, out var banned) &&
+                                                           banned.Contains(group.PaddingVariant);
                         }
                     }
 
-                    for (var retry = 0; retry < 3; retry++)
+                    // A group can need a retry per padding variant for each of its two packings (3 x 2 = 6).
+                    for (var retry = 0; retry < 6; retry++)
                     {
                         if (retry != 0)
                             reportSnapshot.Restore(result);
@@ -2165,12 +2181,28 @@ namespace Editors.PackOptimizer.Core
                             return (built, null, "built", context);
                         }
 
-                        var lowered = false;
+                        var retried = false;
                         if (pixelFailure)
                         {
                             foreach (var groupKey in plan.FailedPaddingGroupKeys)
                             {
                                 var variant = plan.Splits.GetValueOrDefault(groupKey)?.PaddingVariant;
+                                if (variant != null)
+                                    loweredFrom.TryAdd(groupKey, variant);
+                                // The page was packed for the smallest cut canvas: only that combination is
+                                // banned, the group's variant choice then weighs this padding with the
+                                // power-of-two packing against the lower paddings.
+                                if (variant != null && plan.FailedTrimmedPackingGroupKeys.Contains(groupKey))
+                                {
+                                    if (!powerOfTwoPacking.TryGetValue(groupKey, out var banned))
+                                        powerOfTwoPacking[groupKey] = banned = new HashSet<string>(StringComparer.Ordinal);
+                                    if (banned.Add(variant))
+                                    {
+                                        retried = true;
+                                        continue;
+                                    }
+                                }
+
                                 var index = variant switch
                                 {
                                     "align 16" => 1,
@@ -2180,14 +2212,12 @@ namespace Editors.PackOptimizer.Core
                                 if (index == 0)
                                     continue;
 
-                                if (plan.Splits.TryGetValue(groupKey, out var split))
-                                    loweredFrom.TryAdd(groupKey, split.PaddingVariant);
                                 paddingLimits[groupKey] = index - 1;
-                                lowered = true;
+                                retried = true;
                             }
                         }
 
-                        if (lowered)
+                        if (retried)
                         {
                             retryAttempts++;
                             continue;
@@ -2231,6 +2261,7 @@ namespace Editors.PackOptimizer.Core
                             texture => IsSharedRepackUniformTexture(state, coverage, texture, uniformCache),
                             cancellationToken,
                             new Dictionary<string, int>(StringComparer.Ordinal),
+                            new Dictionary<string, HashSet<string>>(StringComparer.Ordinal),
                             out var whatIfFailure,
                             out _);
                         return context.WhatIf ??
@@ -3798,6 +3829,7 @@ namespace Editors.PackOptimizer.Core
             Func<string, bool> isUniform,
             CancellationToken cancellationToken,
             IReadOnlyDictionary<string, int> paddingLimits,
+            IReadOnlyDictionary<string, HashSet<string>> powerOfTwoPackingGroups,
             out string? failure,
             out string failureBucket)
         {
@@ -4747,7 +4779,7 @@ namespace Editors.PackOptimizer.Core
                 NoteOutside();
                 return BuildSharedRepackSetPlan(
                     state, result, coverage, rigids, tuples, entryOf, label, merge, paddingLimits,
-                    out failure, out failureBucket);
+                    powerOfTwoPackingGroups, out failure, out failureBucket);
             }
 
             failure = "the set could not be closed";
@@ -5339,6 +5371,7 @@ namespace Editors.PackOptimizer.Core
             string label,
             SharedRepackMergeContext merge,
             IReadOnlyDictionary<string, int> paddingLimits,
+            IReadOnlyDictionary<string, HashSet<string>> powerOfTwoPackingGroups,
             out string? failure,
             out string failureBucket)
         {
@@ -5460,7 +5493,11 @@ namespace Editors.PackOptimizer.Core
                 {
                     var groupTuples = group.OrderBy(tuple => tuple.Index).ToList();
                     foreach (var tuple in groupTuples)
+                    {
                         tuple.MaximumPaddingVariantIndex = paddingLimits.GetValueOrDefault(group.Key, 2);
+                        tuple.TrimmedPackingDisabledVariants =
+                            powerOfTwoPackingGroups.GetValueOrDefault(group.Key) ?? (IReadOnlySet<string>)new HashSet<string>();
+                    }
                     // Joined tuples (different strict keys) are only kept together when every one of their
                     // strict groups pays on its own and the joint pages are smaller than the separate ones;
                     // the variant pages are checked below. Otherwise each tuple falls back to its strict key.
@@ -6341,6 +6378,7 @@ namespace Editors.PackOptimizer.Core
             foreach (var assignment in assignments.Select(page => page.OrderBy(index => index).ToList()))
             {
                 var pageSizes = assignment.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
+                var trimmedPacking = false;
                 TryPackSharedRepackLayoutOnCanvases(
                     pageSizes, maximumWidth, maximumHeight, out var width, out var height, out var positions, canvasAllowed, solver);
                 // The canvas is cut to the packed charts (not a power of two), where every slot's size
@@ -6362,7 +6400,7 @@ namespace Editors.PackOptimizer.Core
                         assignment.Select((index, position) => positions[position].X + charts[index].LayoutWidth).Max(),
                         assignment.Select((index, position) => positions[position].Y + charts[index].LayoutHeight).Max());
                     // The same charts packed for the smallest cut canvas instead of the smallest power of two.
-                    if (!SharedRepackTrimmedPackingDisabled &&
+                    if (!SharedRepackTrimmedPackingDisabled && !first.TrimmedPackingDisabledVariants.Contains(first.PaddingVariant) &&
                         SharedRepackRectPacker.TryPackMinimumTrimmedCanvas(
                             pageSizes, cell, potWidth, potHeight, Trim, SharedRepackTrimmedPackingWidths,
                             new SharedRepackSimBudget(SharedRepackLayoutOperationBudget),
@@ -6372,6 +6410,7 @@ namespace Editors.PackOptimizer.Core
                     {
                         trimmed = (searchedWidth, searchedHeight);
                         positions = searchedPositions;
+                        trimmedPacking = true;
                     }
 
                     if (trimmed is { } size && (size.Width < width || size.Height < height))
@@ -6388,6 +6427,7 @@ namespace Editors.PackOptimizer.Core
                     Hash = hash,
                     GroupKey = first.GroupKey,
                     Index = firstPageNumber + pages.Count,
+                    TrimmedPacking = trimmedPacking,
                     LayoutWidth = width,
                     LayoutHeight = height,
                 };
@@ -8170,6 +8210,8 @@ namespace Editors.PackOptimizer.Core
                         continue;
 
                     plan.FailedPaddingGroupKeys.Add(page.GroupKey);
+                    if (page.TrimmedPacking)
+                        plan.FailedTrimmedPackingGroupKeys.Add(page.GroupKey);
                     problems.AddRange(pageProblems);
                 }
 
@@ -9554,6 +9596,7 @@ namespace Editors.PackOptimizer.Core
             var emittedGroups = groups.Where(group => group.Pages != 0).ToList();
             var untouchedGroups = groups.Where(group => group.Pages == 0).ToList();
             var loweredGroups = groups.Where(group => group.PaddingRetryFromVariant != null).ToList();
+            var powerOfTwoGroups = groups.Where(group => group.PowerOfTwoPackingRetry).ToList();
             if (built.Count == 0 && gated.Count == 0 && result.PaddingPixelRetryAttempts == 0)
                 return;
 
@@ -9586,6 +9629,15 @@ namespace Editors.PackOptimizer.Core
                 sb.AppendLine(
                     $"    {GetSharedRepackPaddingCode(group.PaddingRetryFromVariant!)} -> " +
                     $"{GetSharedRepackPaddingCode(group.PaddingVariant)}: {group.Label}" +
+                    (group.Pages == 0 ? " [gated/untouched]" : string.Empty));
+            }
+
+            sb.AppendLine(
+                $"  Groups kept on the power-of-two packing by pixel check: {powerOfTwoGroups.Count:N0}");
+            foreach (var group in powerOfTwoGroups.OrderBy(group => group.Label, StringComparer.Ordinal))
+            {
+                sb.AppendLine(
+                    $"    {GetSharedRepackPaddingCode(group.PaddingVariant)}: {group.Label}" +
                     (group.Pages == 0 ? " [gated/untouched]" : string.Empty));
             }
 

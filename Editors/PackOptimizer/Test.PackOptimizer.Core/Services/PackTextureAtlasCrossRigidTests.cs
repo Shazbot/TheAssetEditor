@@ -17108,6 +17108,68 @@ namespace Test.PackOptimizer.Core
             Assert.That(report, Does.Contain("Groups lowered by pixel check: 1 (1 emitted, 0 gated/untouched)"));
         }
 
+        // Fails the pixel check of the first `failures` plans after marking the first page as packed by the
+        // search for the smallest cut canvas; records each plan's first padding variant and packing flag.
+        private static object RunSharedRepackTrimmedPackingFailures(
+            int failures, List<(string Variant, bool PowerOfTwo)> plans, out SrWorld world)
+        {
+            var small = new[] { (20.2 / 128, 20.2 / 128, 20.8 / 128, 20.8 / 128) };
+            var retriedWorld = BuildTightSrWorld(small).World;
+            world = retriedWorld;
+            object result = null!;
+            WithBeforeCheckHook(
+                plan =>
+                {
+                    var page = Get<IEnumerable>(plan, "Pages").Cast<object>().First();
+                    var variant = Get<IDictionary>(plan, "Splits").Values.Cast<object>().Select(split => Get<string>(split, "PaddingVariant")).First();
+                    var powerOfTwo = Get<IEnumerable>(page, "Tuples").Cast<object>().Select(tuple => Get<IEnumerable>(tuple, "TrimmedPackingDisabledVariants").Cast<string>().Contains(variant)).First();
+                    plans.Add((variant, powerOfTwo));
+                    if (plans.Count > failures)
+                        return;
+
+                    page.GetType().GetProperty("TrimmedPacking", AnyInstance)!.SetValue(page, !powerOfTwo);
+                    var chart = Get<IEnumerable>(page, "Charts").Cast<object>().First();
+                    var packX = chart.GetType().GetProperty("PackX", AnyInstance)!;
+                    packX.SetValue(chart, (int)packX.GetValue(chart)! + 16);
+                },
+                () => result = retriedWorld.Run(minimumSaving: 1, minimumGroupSaving: 1));
+            return result;
+        }
+
+        [Test]
+        public void SharedRepack_PixelRetry_KeepsTheLayoutPaddingWithThePowerOfTwoPackingFirst()
+        {
+            var plans = new List<(string Variant, bool PowerOfTwo)>();
+            var result = RunSharedRepackTrimmedPackingFailures(1, plans, out var world);
+
+            Assert.That(plans, Has.Count.EqualTo(2));
+            Assert.That(plans[0].PowerOfTwo, Is.False);
+            Assert.That(plans[1].PowerOfTwo, Is.True, "the retry packs the group for the power of two");
+            Assert.That(plans[1].Variant, Is.EqualTo(plans[0].Variant), "the padding is not lowered");
+            Assert.That(Get<int>(result, "PaddingPixelRetryAttempts"), Is.EqualTo(1));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain("Groups lowered by pixel check: 0"));
+            Assert.That(report, Does.Contain("Groups kept on the power-of-two packing by pixel check: 1"));
+        }
+
+        [Test]
+        public void SharedRepack_PixelRetry_LowersThePaddingWhenThePowerOfTwoPackingFailsToo()
+        {
+            var plans = new List<(string Variant, bool PowerOfTwo)>();
+            var result = RunSharedRepackTrimmedPackingFailures(2, plans, out var world);
+
+            Assert.That(plans, Has.Count.EqualTo(3));
+            Assert.That(plans[1].PowerOfTwo, Is.True);
+            Assert.That(plans[2].PowerOfTwo, Is.False, "the lower padding starts with the search again");
+            Assert.That(plans[2].Variant, Is.Not.EqualTo(plans[0].Variant));
+            Assert.That(Get<int>(result, "PaddingPixelRetryAttempts"), Is.EqualTo(2));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain("Groups lowered by pixel check: 1"));
+            Assert.That(report, Does.Contain("Groups kept on the power-of-two packing by pixel check: 0"));
+        }
+
         [Test]
         public void SharedRepack_PixelRetryReportSnapshot_RestoresEveryAttemptMutation()
         {
@@ -17924,6 +17986,10 @@ namespace Test.PackOptimizer.Core
             // canvas widths and packers) instead of the smallest power of two; the repack is not among the
             // pinned stages, so the hash is unchanged.
             [28] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 29: a reduced padding that fails the pixel check is retried with the power-of-two packing of its
+            // group before the padding is lowered; the repack is not among the pinned stages, so the hash is
+            // unchanged.
+            [29] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
