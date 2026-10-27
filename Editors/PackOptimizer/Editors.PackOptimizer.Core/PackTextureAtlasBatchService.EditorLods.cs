@@ -31,6 +31,12 @@ namespace Editors.PackOptimizer.Core
             public int PartsMissedTargetByError { get; set; }
             public int PartsMissedTargetByTopology { get; set; }
             public IReadOnlyList<EditorLodLevelSettings> Settings { get; set; } = EditorLodLevelSettings.Default;
+            public float BoneWeight { get; set; }
+            public bool JointPriority { get; set; }
+            public int SkinnedPartsRebuilt { get; set; }
+            // Skinning-error samples per LOD level (old LODs and the rebuilt ones, same parts and vertices).
+            public List<float>[] SkinningOld { get; } = Enumerable.Range(0, EditorLodMaxLevels).Select(_ => new List<float>()).ToArray();
+            public List<float>[] SkinningNew { get; } = Enumerable.Range(0, EditorLodMaxLevels).Select(_ => new List<float>()).ToArray();
             public long[] TrianglesBefore { get; } = new long[EditorLodMaxLevels];
             public long[] TrianglesAfter { get; } = new long[EditorLodMaxLevels];
             public long[] BytesBefore { get; } = new long[EditorLodMaxLevels];
@@ -48,6 +54,8 @@ namespace Editors.PackOptimizer.Core
         {
             var result = state.EditorLods;
             result.Settings = state.EditorLodSettings;
+            result.BoneWeight = state.EditorLodBoneWeight;
+            result.JointPriority = state.EditorLodJointPriority;
             var rigidPaths = state.SourceReachableAssetFiles
                 .Where(path => path.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase) &&
                                state.Source.ContainsFile(path))
@@ -245,6 +253,7 @@ namespace Editors.PackOptimizer.Core
                 var pendingNotReduced = 0;
                 var pendingError = 0;
                 var pendingTopology = 0;
+                var pendingSkinned = 0;
 
                 for (var g = 0; g < parts.Length; g++)
                 {
@@ -283,7 +292,20 @@ namespace Editors.PackOptimizer.Core
                         indices.AddRange(source.IndexList.Select(i => (ushort)(i + vertexOffset)));
                     }
 
-                    var simplified = MeshOptSimplifier.Simplify(positions, normals, uvs, indices.ToArray(), factor, options);
+                    var indexArray = indices.ToArray();
+                    var skinned = EditorLodWeightCount(parts[g]) > 0;
+                    float[] boneEmbedding = [];
+                    byte[] jointFlags = [];
+                    if (skinned && state.EditorLodBoneWeight > 0)
+                        boneEmbedding = BuildEditorLodBoneEmbedding(vertices);
+                    if (skinned && state.EditorLodJointPriority)
+                        jointFlags = BuildEditorLodJointFlags(vertices, indexArray);
+                    if (boneEmbedding.Length != 0 || jointFlags.Length != 0)
+                        pendingSkinned++;
+
+                    var simplified = MeshOptSimplifier.Simplify(
+                        positions, normals, uvs, indexArray, factor, options,
+                        boneEmbedding, boneEmbedding.Length == 0 ? 0 : EditorLodEmbeddingSize, state.EditorLodBoneWeight, jointFlags);
                     if (simplified.Stats.ReductionSkipped)
                     {
                         pendingNotReduced++;
@@ -331,6 +353,13 @@ namespace Editors.PackOptimizer.Core
                         continue;
 
                     var model = parts[g];
+                    if (state.EditorLodReportSkinningError && EditorLodWeightCount(model) > 0)
+                    {
+                        var lod0Vertices = groups[g].SelectMany(m => lod0[m].Mesh.VertexList).ToArray();
+                        result.SkinningOld[Math.Min(lod, EditorLodMaxLevels - 1)].AddRange(SampleEditorLodSkinningError(lod0Vertices, model.Mesh));
+                        result.SkinningNew[Math.Min(lod, EditorLodMaxLevels - 1)].AddRange(SampleEditorLodSkinningError(lod0Vertices, rebuilt[g]!));
+                    }
+
                     var vertexSize = (long)vertexFactory.GetVertexSize(model.Material.BinaryVertexFormat, version);
                     result.TrianglesBefore[Math.Min(lod, EditorLodMaxLevels - 1)] += model.Mesh.IndexList.Length / 3;
                     result.BytesBefore[Math.Min(lod, EditorLodMaxLevels - 1)] +=
@@ -345,6 +374,7 @@ namespace Editors.PackOptimizer.Core
                 result.LodsReplaced++;
                 result.LodsReplacedByLevel[Math.Min(lod, EditorLodMaxLevels - 1)]++;
                 result.PartsRebuilt += pendingRebuilt;
+                result.SkinnedPartsRebuilt += pendingSkinned;
                 result.PartsKeptTooLarge += pendingTooLarge;
                 result.PartsKeptNotReduced += pendingNotReduced;
                 result.PartsMissedTargetByError += pendingError;
@@ -354,6 +384,211 @@ namespace Editors.PackOptimizer.Core
             }
 
             return anyReplaced;
+        }
+
+        private const int EditorLodEmbeddingSize = 4;
+        private const int EditorLodSkinningSamplesPerPart = 128;
+
+        /// <summary>A fixed unit vector in 4D for a bone index (splitmix64 of the index), so the output is reproducible.</summary>
+        internal static Vector4 EditorLodBoneVector(byte bone)
+        {
+            static ulong Mix(ref ulong state)
+            {
+                state += 0x9E3779B97F4A7C15UL;
+                var z = state;
+                z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+                z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+                return z ^ (z >> 31);
+            }
+
+            var seed = 0x42A1E5UL * 1000003UL + bone;
+            var vector = new Vector4(
+                (float)(Mix(ref seed) >> 40) / (1 << 23) - 1f,
+                (float)(Mix(ref seed) >> 40) / (1 << 23) - 1f,
+                (float)(Mix(ref seed) >> 40) / (1 << 23) - 1f,
+                (float)(Mix(ref seed) >> 40) / (1 << 23) - 1f);
+            return vector.LengthSquared() < 1e-6f ? Vector4.UnitX : Vector4.Normalize(vector);
+        }
+
+        // 4 attributes per vertex: sum of weight * bone vector.
+        internal static float[] BuildEditorLodBoneEmbedding(CommonVertex[] vertices)
+        {
+            var cache = new Vector4[256];
+            var known = new bool[256];
+            var result = new float[vertices.Length * EditorLodEmbeddingSize];
+            for (var i = 0; i < vertices.Length; i++)
+            {
+                var sum = Vector4.Zero;
+                var indices = vertices[i].BoneIndex ?? [];
+                var weights = vertices[i].BoneWeight ?? [];
+                for (var b = 0; b < Math.Min(indices.Length, weights.Length); b++)
+                {
+                    var bone = indices[b];
+                    if (!known[bone])
+                    {
+                        cache[bone] = EditorLodBoneVector(bone);
+                        known[bone] = true;
+                    }
+
+                    sum += weights[b] * cache[bone];
+                }
+
+                result[i * 4] = sum.X;
+                result[i * 4 + 1] = sum.Y;
+                result[i * 4 + 2] = sum.Z;
+                result[i * 4 + 3] = sum.W;
+            }
+
+            return result;
+        }
+
+        private static int EditorLodDominantBone(CommonVertex vertex)
+        {
+            var indices = vertex.BoneIndex ?? [];
+            var weights = vertex.BoneWeight ?? [];
+            var best = -1;
+            var bestWeight = 0f;
+            for (var b = 0; b < Math.Min(indices.Length, weights.Length); b++)
+            {
+                if (weights[b] > bestWeight)
+                {
+                    bestWeight = weights[b];
+                    best = indices[b];
+                }
+            }
+
+            return best;
+        }
+
+        // Vertices on an edge whose ends have different dominant bones are joint vertices: priority.
+        internal static byte[] BuildEditorLodJointFlags(CommonVertex[] vertices, ushort[] indices)
+        {
+            var dominant = vertices.Select(EditorLodDominantBone).ToArray();
+            var flags = new byte[vertices.Length];
+            for (var i = 0; i + 2 < indices.Length; i += 3)
+            {
+                for (var e = 0; e < 3; e++)
+                {
+                    var a = indices[i + e];
+                    var b = indices[i + (e + 1) % 3];
+                    if (dominant[a] != dominant[b])
+                    {
+                        flags[a] = MeshOptSimplifier.VertexPriority;
+                        flags[b] = MeshOptSimplifier.VertexPriority;
+                    }
+                }
+            }
+
+            return flags;
+        }
+
+        // L1 distance between a LOD0 vertex's bone weights and the weights interpolated at the closest point of the
+        // LOD surface, over a deterministic sample of the LOD0 vertices.
+        internal static List<float> SampleEditorLodSkinningError(CommonVertex[] lod0Vertices, RmvMesh surface)
+        {
+            var result = new List<float>();
+            if (lod0Vertices.Length == 0 || surface.IndexList.Length < 3)
+                return result;
+
+            var step = Math.Max(1, lod0Vertices.Length / EditorLodSkinningSamplesPerPart);
+            var samples = Enumerable.Range(0, lod0Vertices.Length).Where(i => i % step == 0).ToArray();
+            var positions = surface.VertexList.Select(v => new Vector3(v.Position.X, v.Position.Y, v.Position.Z)).ToArray();
+            var errors = new float[samples.Length];
+            Parallel.For(0, samples.Length, k =>
+            {
+                var vertex = lod0Vertices[samples[k]];
+                var p = new Vector3(vertex.Position.X, vertex.Position.Y, vertex.Position.Z);
+                var bestDistance = float.MaxValue;
+                var bestTriangle = 0;
+                var bestWeights = new Vector3(1, 0, 0);
+                for (var t = 0; t + 2 < surface.IndexList.Length; t += 3)
+                {
+                    var closest = ClosestPointOnTriangle(
+                        p, positions[surface.IndexList[t]], positions[surface.IndexList[t + 1]], positions[surface.IndexList[t + 2]], out var barycentric);
+                    var distance = Vector3.DistanceSquared(p, closest);
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        bestTriangle = t;
+                        bestWeights = barycentric;
+                    }
+                }
+
+                var blended = new Dictionary<byte, float>();
+                void Add(CommonVertex source, float factor)
+                {
+                    var indices = source.BoneIndex ?? [];
+                    var weights = source.BoneWeight ?? [];
+                    for (var b = 0; b < Math.Min(indices.Length, weights.Length); b++)
+                        blended[indices[b]] = blended.GetValueOrDefault(indices[b]) + factor * weights[b];
+                }
+
+                Add(surface.VertexList[surface.IndexList[bestTriangle]], bestWeights.X);
+                Add(surface.VertexList[surface.IndexList[bestTriangle + 1]], bestWeights.Y);
+                Add(surface.VertexList[surface.IndexList[bestTriangle + 2]], bestWeights.Z);
+
+                var original = new Dictionary<byte, float>();
+                var originalIndices = vertex.BoneIndex ?? [];
+                var originalWeights = vertex.BoneWeight ?? [];
+                for (var b = 0; b < Math.Min(originalIndices.Length, originalWeights.Length); b++)
+                    original[originalIndices[b]] = original.GetValueOrDefault(originalIndices[b]) + originalWeights[b];
+
+                var error = 0f;
+                foreach (var bone in original.Keys.Union(blended.Keys))
+                    error += Math.Abs(original.GetValueOrDefault(bone) - blended.GetValueOrDefault(bone));
+                errors[k] = error;
+            });
+
+            result.AddRange(errors);
+            return result;
+        }
+
+        // Ericson, Real-Time Collision Detection 5.1.5, with barycentric coordinates of the result.
+        private static Vector3 ClosestPointOnTriangle(Vector3 p, Vector3 a, Vector3 b, Vector3 c, out Vector3 barycentric)
+        {
+            var ab = b - a;
+            var ac = c - a;
+            var ap = p - a;
+            var d1 = Vector3.Dot(ab, ap);
+            var d2 = Vector3.Dot(ac, ap);
+            if (d1 <= 0 && d2 <= 0) { barycentric = new Vector3(1, 0, 0); return a; }
+            var bp = p - b;
+            var d3 = Vector3.Dot(ab, bp);
+            var d4 = Vector3.Dot(ac, bp);
+            if (d3 >= 0 && d4 <= d3) { barycentric = new Vector3(0, 1, 0); return b; }
+            var vc = d1 * d4 - d3 * d2;
+            if (vc <= 0 && d1 >= 0 && d3 <= 0)
+            {
+                var v = d1 / (d1 - d3);
+                barycentric = new Vector3(1 - v, v, 0);
+                return a + v * ab;
+            }
+
+            var cp = p - c;
+            var d5 = Vector3.Dot(ab, cp);
+            var d6 = Vector3.Dot(ac, cp);
+            if (d6 >= 0 && d5 <= d6) { barycentric = new Vector3(0, 0, 1); return c; }
+            var vb = d5 * d2 - d1 * d6;
+            if (vb <= 0 && d2 >= 0 && d6 <= 0)
+            {
+                var w = d2 / (d2 - d6);
+                barycentric = new Vector3(1 - w, 0, w);
+                return a + w * ac;
+            }
+
+            var va = d3 * d6 - d5 * d4;
+            if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0)
+            {
+                var w = (d4 - d3) / (d4 - d3 + (d5 - d6));
+                barycentric = new Vector3(0, 1 - w, w);
+                return b + w * (c - b);
+            }
+
+            var denominator = 1f / (va + vb + vc);
+            var vv = vb * denominator;
+            var ww = vc * denominator;
+            barycentric = new Vector3(1 - vv - ww, vv, ww);
+            return a + ab * vv + ac * ww;
         }
 
         private static CommonVertex ConvertEditorLodVertex(CommonVertex source, int targetWeights)
@@ -475,6 +710,34 @@ namespace Editors.PackOptimizer.Core
                     $"({Change(r.TrianglesBefore[level], r.TrianglesAfter[level]).ToString("+0.0;-0.0;0.0", inv)} %), " +
                     $"bytes {r.BytesBefore[level]:N0} -> {r.BytesAfter[level]:N0} " +
                     $"({Change(r.BytesBefore[level], r.BytesAfter[level]).ToString("+0.0;-0.0;0.0", inv)} %)");
+            }
+
+            if (r.BoneWeight > 0 || r.JointPriority)
+            {
+                sb.AppendLine(
+                    $"Bone-aware rebuild: embedding weight {r.BoneWeight.ToString("0.###", inv)}, joint priority {(r.JointPriority ? "on" : "off")}; " +
+                    $"{r.SkinnedPartsRebuilt:N0} skinned part(s) rebuilt with bone attributes");
+            }
+
+            if (state.EditorLodReportSkinningError)
+            {
+                sb.AppendLine("Skinning error (report only): L1 distance between a LOD0 vertex's bone weights and the weights interpolated at the closest point of the LOD surface; up to 128 sampled LOD0 vertices per skinned part");
+                string Stat(List<float> values)
+                {
+                    if (values.Count == 0)
+                        return "n/a";
+                    var sorted = values.Order().ToArray();
+                    return $"mean {sorted.Average().ToString("0.0000", inv)}, p95 {sorted[(int)Math.Min(sorted.Length - 1, Math.Floor(sorted.Length * 0.95))].ToString("0.0000", inv)}, max {sorted[^1].ToString("0.0000", inv)} ({sorted.Length:N0} samples)";
+                }
+
+                for (var level = 1; level < EditorLodMaxLevels; level++)
+                {
+                    if (r.SkinningOld[level].Count == 0)
+                        continue;
+
+                    sb.AppendLine($"  LOD {level}: old {Stat(r.SkinningOld[level])}");
+                    sb.AppendLine($"  LOD {level}: new {Stat(r.SkinningNew[level])}");
+                }
             }
 
             if (r.NativeError != null)

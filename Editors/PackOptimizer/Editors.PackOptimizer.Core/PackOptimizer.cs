@@ -99,6 +99,16 @@ namespace Editors.PackOptimizer.Core
         /// LOD2, 8 % with the border free from LOD3.
         /// </summary>
         public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; init; } = EditorLodLevelSettings.Default;
+        /// <summary>
+        /// Weight of the bone-embedding attributes of the editor LOD rebuild for skinned parts: each bone gets a fixed
+        /// pseudo-random 4D unit vector and each vertex carries the weight-blend of its bones' vectors, so collapses
+        /// across joint boundaries cost more. 0 (default) leaves the rebuild as it was.
+        /// </summary>
+        public float EditorLodBoneWeight { get; init; }
+        /// <summary>Marks vertices whose dominant bone differs from a neighbour's as priority vertices (off by default).</summary>
+        public bool EditorLodJointPriority { get; init; }
+        /// <summary>Samples the skinning error of the rebuilt LODs for the report (report-only, costs time; off by default).</summary>
+        public bool EditorLodReportSkinningError { get; init; }
     }
 
     /// <summary>

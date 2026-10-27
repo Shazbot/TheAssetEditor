@@ -1026,6 +1026,9 @@ namespace Editors.PackOptimizer.Core
             public bool DropUnreadAlpha { get; set; }
             public bool RemakeEditorLods { get; set; }
             public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; set; } = EditorLodLevelSettings.Default;
+            public float EditorLodBoneWeight { get; set; }
+            public bool EditorLodJointPriority { get; set; }
+            public bool EditorLodReportSkinningError { get; set; }
             public EditorLodRemakeResult EditorLods { get; } = new();
             // Rigids whose LOD 1+ the editor LOD remake rebuilt. Deliberately NOT in ModifiedRigids until the
             // save: later stages (shared texture repack, cross-rigid source/generated handling, merges) refuse

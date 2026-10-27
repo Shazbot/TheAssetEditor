@@ -36,10 +36,12 @@ public sealed record MeshOptSimplifyResult(ushort[] Indices, uint[] Remap, int V
 
 public static class MeshOptSimplifier
 {
+    /// <summary>meshopt_SimplifyVertex_Priority.</summary>
+    public const byte VertexPriority = MeshOptNative.SimplifyVertexPriority;
+
     private const int MinimumTriangleCount = 12;
     private const int AttributeCount = 5;
     private const nuint PositionStride = 3 * sizeof(float);
-    private const nuint AttributeStride = AttributeCount * sizeof(float);
 
     /// <summary>Null when the native meshoptimizer library loads and answers; otherwise why not.</summary>
     public static string? GetNativeLibraryError()
@@ -66,13 +68,19 @@ public static class MeshOptSimplifier
     /// <param name="uvs">uv per vertex, or empty to ignore texture coordinates.</param>
     /// <param name="indices">Triangle list.</param>
     /// <param name="factor">Triangle count factor; 1 or more leaves the mesh unchanged.</param>
+    /// <param name="extraAttributes">Optional extra per-vertex attributes (<paramref name="extraAttributeCount"/> floats per vertex), each weighted by <paramref name="extraAttributeWeight"/>; empty for none.</param>
+    /// <param name="vertexFlags">Optional per-vertex meshopt_SimplifyVertex_* flags (see <see cref="VertexPriority"/>); empty for none.</param>
     public static MeshOptSimplifyResult Simplify(
         ReadOnlySpan<float> positions,
         ReadOnlySpan<float> normals,
         ReadOnlySpan<float> uvs,
         ReadOnlySpan<ushort> indices,
         float factor,
-        MeshOptReducerOptions? options = null)
+        MeshOptReducerOptions? options = null,
+        ReadOnlySpan<float> extraAttributes = default,
+        int extraAttributeCount = 0,
+        float extraAttributeWeight = 0f,
+        ReadOnlySpan<byte> vertexFlags = default)
     {
         if (!float.IsFinite(factor))
             throw new ArgumentOutOfRangeException(nameof(factor), "The reduction factor must be finite.");
@@ -85,6 +93,12 @@ public static class MeshOptSimplifier
         ValidateOptions(options);
 
         var vertexCount = positions.Length / 3;
+        if (extraAttributeCount < 0 || extraAttributes.Length != extraAttributeCount * vertexCount)
+            throw new ArgumentException("Extra attributes must hold extraAttributeCount floats per vertex.", nameof(extraAttributes));
+        if (vertexFlags.Length != 0 && vertexFlags.Length != vertexCount)
+            throw new ArgumentException("Vertex flags must be empty or hold one byte per vertex.", nameof(vertexFlags));
+        var attributeCount = AttributeCount + extraAttributeCount;
+        var attributeStride = (nuint)(attributeCount * sizeof(float));
         if (normals.Length != 0 && normals.Length != vertexCount * 3)
             throw new ArgumentException("Normals must be empty or hold three floats per vertex.", nameof(normals));
         if (uvs.Length != 0 && uvs.Length != vertexCount * 2)
@@ -143,14 +157,14 @@ public static class MeshOptSimplifier
             return Unchanged(indices, vertexCount, sourceTriangleCount, requestedTriangleCount, droppedDegenerateTriangles, "The requested simplification target contains no complete triangle.");
 
         var positionArray = positions.ToArray();
-        var attributes = new float[checked(vertexCount * AttributeCount)];
+        var attributes = new float[checked(vertexCount * attributeCount)];
         var minU = float.PositiveInfinity;
         var maxU = float.NegativeInfinity;
         var minV = float.PositiveInfinity;
         var maxV = float.NegativeInfinity;
         for (var i = 0; i < vertexCount; i++)
         {
-            var attributeOffset = i * AttributeCount;
+            var attributeOffset = i * attributeCount;
             if (normals.Length != 0)
             {
                 attributes[attributeOffset] = normals[i * 3];
@@ -169,6 +183,9 @@ public static class MeshOptSimplifier
                 minV = MathF.Min(minV, v);
                 maxV = MathF.Max(maxV, v);
             }
+
+            for (var e = 0; e < extraAttributeCount; e++)
+                attributes[attributeOffset + AttributeCount + e] = extraAttributes[i * extraAttributeCount + e];
         }
 
         // meshoptimizer.h v1.3, meshopt_simplifyWithAttributes comments (lines 531-537),
@@ -178,7 +195,7 @@ public static class MeshOptSimplifier
         // UV base weight by each observed UV-axis range so a full UV span is comparable
         // to the normalized position extent; constant axes get zero weight.
         var normalWeight = normals.Length != 0 ? options.NormalWeight : 0f;
-        var attributeWeights = new[]
+        var attributeWeightList = new List<float>
         {
             normalWeight,
             normalWeight,
@@ -186,6 +203,9 @@ public static class MeshOptSimplifier
             uvs.Length != 0 ? ScaleTextureCoordinateWeight(options.TextureCoordinateWeight, (double)maxU - minU) : 0f,
             uvs.Length != 0 ? ScaleTextureCoordinateWeight(options.TextureCoordinateWeight, (double)maxV - minV) : 0f
         };
+        for (var e = 0; e < extraAttributeCount; e++)
+            attributeWeightList.Add(extraAttributeWeight);
+        var attributeWeights = attributeWeightList.ToArray();
 
         var simplifyFlags = 0u;
         if (options.LockBorder)
@@ -210,6 +230,7 @@ public static class MeshOptSimplifier
             fixed (float* positionsPointer = positionArray)
             fixed (float* attributesPointer = attributes)
             fixed (float* weightsPointer = attributeWeights)
+            fixed (byte* flagsPointer = vertexFlags)
             fixed (uint* simplifiedIndicesPointer = simplifiedIndices)
             fixed (uint* optimizedIndicesPointer = optimizedIndices)
             fixed (uint* remapPointer = vertexRemap)
@@ -222,10 +243,10 @@ public static class MeshOptSimplifier
                     (nuint)vertexCount,
                     PositionStride,
                     attributesPointer,
-                    AttributeStride,
+                    attributeStride,
                     weightsPointer,
-                    AttributeCount,
-                    null,
+                    (nuint)attributeCount,
+                    vertexFlags.Length == 0 ? null : flagsPointer,
                     (nuint)nativeRequestedIndexCount,
                     options.TargetError,
                     simplifyFlags,

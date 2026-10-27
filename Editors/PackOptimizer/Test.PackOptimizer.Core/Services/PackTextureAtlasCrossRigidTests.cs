@@ -18354,10 +18354,183 @@ namespace Test.PackOptimizer.Core
             });
         }
 
+        // ---- Bone-aware editor LOD rebuild --------------------------------------------------------
+
+        // A tube along Y (16 segments, 64 rings) skinned to two bones; the weights blend between y = 3.5 and 4.5.
+        private static (float[] Positions, float[] Normals, float[] Uvs, ushort[] Indices, CommonVertex[] Vertices) CreateBentTube()
+        {
+            const int segments = 16, rings = 64;
+            var vertices = new List<CommonVertex>();
+            for (var r = 0; r < rings; r++)
+            {
+                var y = 8f * r / (rings - 1);
+                var blend = Math.Clamp(y - 3.5f, 0f, 1f);
+                for (var s = 0; s < segments; s++)
+                {
+                    var angle = 2 * MathF.PI * s / segments;
+                    vertices.Add(new CommonVertex
+                    {
+                        Position = new Vector4(MathF.Cos(angle), y, MathF.Sin(angle), 1),
+                        Normal = new Vector3(MathF.Cos(angle), 0, MathF.Sin(angle)),
+                        Uv = new Vector2((float)s / segments, (float)r / rings),
+                        BoneIndex = [0, 1],
+                        BoneWeight = [1f - blend, blend],
+                        WeightCount = 2,
+                    });
+                }
+            }
+
+            var indices = new List<ushort>();
+            for (var r = 0; r < rings - 1; r++)
+            {
+                for (var s = 0; s < segments; s++)
+                {
+                    var a = (ushort)(r * segments + s);
+                    var b = (ushort)(r * segments + (s + 1) % segments);
+                    var c = (ushort)(a + segments);
+                    var d = (ushort)(b + segments);
+                    indices.AddRange([a, c, b, b, c, d]);
+                }
+            }
+
+            var array = vertices.ToArray();
+            return (
+                array.SelectMany(v => new[] { v.Position.X, v.Position.Y, v.Position.Z }).ToArray(),
+                array.SelectMany(v => new[] { v.Normal.X, v.Normal.Y, v.Normal.Z }).ToArray(),
+                array.SelectMany(v => new[] { v.Uv.X, v.Uv.Y }).ToArray(),
+                indices.ToArray(),
+                array);
+        }
+
+        private static T InvokeStatic<T>(string name, params object?[] arguments)
+            => (T)GetServiceType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, arguments)!;
+
+        private static int JointBandVertices(GameWorld.MeshOptimizer.MeshOptSimplifyResult result, float[] positions)
+        {
+            var kept = new HashSet<uint>(result.Indices.Select(i => (uint)i));
+            var count = 0;
+            for (var old = 0; old < result.Remap.Length; old++)
+            {
+                var y = positions[old * 3 + 1];
+                if (result.Remap[old] != uint.MaxValue && y > 3.5f && y < 4.5f)
+                    count++;
+            }
+
+            return count;
+        }
+
+        [Test]
+        public void EditorLods_BoneEmbedding_KeepsTheJointOfABentTubeThatTheDefaultMayCollapse()
+        {
+            var tube = CreateBentTube();
+            var embedding = InvokeStatic<float[]>("BuildEditorLodBoneEmbedding", new object[] { tube.Vertices });
+            var options = new GameWorld.MeshOptimizer.MeshOptReducerOptions { TargetError = 0.08f, LockBorder = false };
+
+            var off = GameWorld.MeshOptimizer.MeshOptSimplifier.Simplify(tube.Positions, tube.Normals, tube.Uvs, tube.Indices, 0.25f, options);
+            var on = GameWorld.MeshOptimizer.MeshOptSimplifier.Simplify(
+                tube.Positions, tube.Normals, tube.Uvs, tube.Indices, 0.25f, options, embedding, 4, 2f);
+
+            var offBand = JointBandVertices(off, tube.Positions);
+            var onBand = JointBandVertices(on, tube.Positions);
+            Assert.That(off.Stats.ReductionSkipped, Is.False);
+            Assert.That(on.Stats.ReductionSkipped, Is.False);
+            // 8 rings of 16 vertices blend the two bones. With the embedding the blended rings are expensive to
+            // remove, so more of them survive than without it.
+            TestContext.Out.WriteLine($"joint-band vertices kept: off {offBand}, on {onBand} (of 128)");
+            Assert.That(onBand, Is.GreaterThan(offBand));
+        }
+
+        [Test]
+        public void EditorLods_BoneEmbeddingAndJointFlags_AreDeterministic()
+        {
+            var tube = CreateBentTube();
+            var first = InvokeStatic<float[]>("BuildEditorLodBoneEmbedding", new object[] { tube.Vertices });
+            var second = InvokeStatic<float[]>("BuildEditorLodBoneEmbedding", new object[] { tube.Vertices });
+            Assert.That(second, Is.EqualTo(first));
+
+            var vectors = Enumerable.Range(0, 32).Select(i => InvokeStatic<Vector4>("EditorLodBoneVector", (byte)i)).ToArray();
+            Assert.That(vectors.All(v => Math.Abs(v.Length() - 1f) < 1e-4f), Is.True);
+            Assert.That(vectors.Distinct().Count(), Is.EqualTo(32));
+            Assert.That(InvokeStatic<Vector4>("EditorLodBoneVector", (byte)7), Is.EqualTo(vectors[7]));
+
+            var flags = InvokeStatic<byte[]>("BuildEditorLodJointFlags", tube.Vertices, tube.Indices);
+            // Flagged vertices sit where the dominant bone flips (y = 4.0).
+            var flagged = Enumerable.Range(0, flags.Length).Where(i => flags[i] != 0).Select(i => tube.Positions[i * 3 + 1]).ToArray();
+            Assert.That(flagged, Is.Not.Empty);
+            Assert.That(flagged.All(y => y > 3.8f && y < 4.2f), Is.True);
+
+            var options = new GameWorld.MeshOptimizer.MeshOptReducerOptions { TargetError = 0.08f, LockBorder = false };
+            var a = GameWorld.MeshOptimizer.MeshOptSimplifier.Simplify(tube.Positions, tube.Normals, tube.Uvs, tube.Indices, 0.25f, options, first, 4, 1f, flags);
+            var b = GameWorld.MeshOptimizer.MeshOptSimplifier.Simplify(tube.Positions, tube.Normals, tube.Uvs, tube.Indices, 0.25f, options, second, 4, 1f, flags);
+            Assert.That(b.Indices, Is.EqualTo(a.Indices));
+            Assert.That(b.Remap, Is.EqualTo(a.Remap));
+        }
+
+        [Test]
+        public void EditorLods_StaticParts_AreUnaffectedByTheBoneOptions()
+        {
+            RmvFile StaticRigid()
+            {
+                var rigid = CreateEditorLodRigid(24);
+                foreach (var model in rigid.ModelList.SelectMany(x => x))
+                {
+                    model.Material = new WeightedMaterial { BinaryVertexFormat = VertexFormat.Static };
+                    foreach (var v in model.Mesh.VertexList)
+                    {
+                        v.WeightCount = 0;
+                        v.BoneIndex = [];
+                        v.BoneWeight = [];
+                    }
+                }
+
+                return rigid;
+            }
+
+            var plain = StaticRigid();
+            RunEditorLodRemake(plain);
+            var bone = StaticRigid();
+            RunEditorLodRemake(bone, configure: s =>
+            {
+                SetStateProperty(s, "EditorLodBoneWeight", 2f);
+                SetStateProperty(s, "EditorLodJointPriority", true);
+            });
+
+            for (var lod = 1; lod < 4; lod++)
+            {
+                Assert.That(bone.ModelList[lod][0].Mesh.IndexList, Is.EqualTo(plain.ModelList[lod][0].Mesh.IndexList), $"LOD {lod}");
+                Assert.That(
+                    bone.ModelList[lod][0].Mesh.VertexList.Select(v => v.Position),
+                    Is.EqualTo(plain.ModelList[lod][0].Mesh.VertexList.Select(v => v.Position)));
+            }
+        }
+
+        [Test]
+        public void EditorLods_SkinningErrorMetric_IsZeroOnTheSourceSurfaceAndGrowsWhenAJointCollapses()
+        {
+            var tube = CreateBentTube();
+            var surface = new RmvMesh { VertexList = tube.Vertices, IndexList = tube.Indices };
+            var identical = InvokeStatic<List<float>>("SampleEditorLodSkinningError", tube.Vertices, surface);
+            Assert.That(identical, Is.Not.Empty);
+            Assert.That(identical.Max(), Is.LessThan(1e-4f));
+
+            // A surface whose bones are all swapped: every sample is off by the full L1 range.
+            var swapped = tube.Vertices.Select(v => new CommonVertex
+            {
+                Position = v.Position, Normal = v.Normal, Uv = v.Uv,
+                BoneIndex = [5, 6], BoneWeight = [1f, 0f], WeightCount = 2,
+            }).ToArray();
+            var wrong = InvokeStatic<List<float>>("SampleEditorLodSkinningError", tube.Vertices, new RmvMesh { VertexList = swapped, IndexList = tube.Indices });
+            Assert.That(wrong.Min(), Is.GreaterThan(0.9f));
+        }
+
         [Test]
         public void EditorLods_OptionDefaultsToOff_AndTheVersionIsBumped()
         {
             Assert.That(new Editors.PackOptimizer.Core.PackOptimizerOptions().RemakeEditorLods, Is.False);
+            var defaults = new Editors.PackOptimizer.Core.PackOptimizerOptions();
+            Assert.That(defaults.EditorLodBoneWeight, Is.Zero);
+            Assert.That(defaults.EditorLodJointPriority, Is.False);
+            Assert.That(defaults.EditorLodReportSkinningError, Is.False);
             Assert.That(Editors.PackOptimizer.Core.PackOptimizerVersions.OutputVersion, Is.GreaterThanOrEqualTo(32));
         }
 

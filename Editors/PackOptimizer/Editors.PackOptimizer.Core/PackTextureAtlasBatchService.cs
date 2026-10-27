@@ -243,6 +243,9 @@ namespace Editors.PackOptimizer.Core
                 state.DropUnreadAlpha = dropUnreadAlpha && state.CompactTextures;
                 state.RemakeEditorLods = options.RemakeEditorLods;
                 state.EditorLodSettings = options.EditorLodSettings;
+                state.EditorLodBoneWeight = options.EditorLodBoneWeight;
+                state.EditorLodJointPriority = options.EditorLodJointPriority;
+                state.EditorLodReportSkinningError = options.EditorLodReportSkinningError;
                 // The repack writes textures, so it is ignored in cross-rigid-only mode (see
                 // ResolveSharedTextureRepack); next to atlasing and cross-rigid merges it runs
                 // after them and leaves what they changed alone.
