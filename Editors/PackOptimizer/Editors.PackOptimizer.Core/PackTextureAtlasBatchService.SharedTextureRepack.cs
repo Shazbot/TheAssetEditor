@@ -1190,6 +1190,39 @@ namespace Editors.PackOptimizer.Core
         private static int ScaleByExponent(int value, int exponent)
             => exponent >= 0 ? value << exponent : value >> -exponent;
 
+        // The bounding box of the packed charts as a canvas, or null when a slot's size would not be
+        // a whole number of 4x4 BC blocks (or the box is not a multiple of the chart alignment, which
+        // keeps block-copied mip levels on the same grid as in a power-of-two canvas). Each slot's size
+        // is the box scaled by its exponent, and it must scale back exactly.
+        private static (int Width, int Height)? TrimSharedRepackCanvas(
+            IEnumerable<(int Right, int Bottom)> extents,
+            int align,
+            IEnumerable<(int X, int Y)> exponents)
+        {
+            int width = 0, height = 0;
+            foreach (var (right, bottom) in extents)
+            {
+                width = Math.Max(width, right);
+                height = Math.Max(height, bottom);
+            }
+
+            if (width <= 0 || height <= 0 || align <= 0 || width % align != 0 || height % align != 0)
+                return null;
+
+            foreach (var exponent in exponents)
+            {
+                var slotWidth = ScaleByExponent(width, exponent.X);
+                var slotHeight = ScaleByExponent(height, exponent.Y);
+                if (slotWidth < 4 || slotHeight < 4 || slotWidth % 4 != 0 || slotHeight % 4 != 0 ||
+                    ScaleByExponent(slotWidth, -exponent.X) != width || ScaleByExponent(slotHeight, -exponent.Y) != height)
+                {
+                    return null;
+                }
+            }
+
+            return (width, height);
+        }
+
         private static int RoundUpTo(int value, int multiple)
             => (value + multiple - 1) / multiple * multiple;
 
@@ -6271,6 +6304,22 @@ namespace Editors.PackOptimizer.Core
                 var pageSizes = assignment.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
                 TryPackSharedRepackLayoutOnCanvases(
                     pageSizes, maximumWidth, maximumHeight, out var width, out var height, out var positions, canvasAllowed, solver);
+                // A group that may use any aspect gets the packed charts' bounding box as its canvas
+                // (not a power of two), where every slot's size stays a whole number of BC blocks.
+                if (canvasAllowed == null && !SharedRepackTrimmedCanvasDisabled)
+                {
+                    var trimmed = TrimSharedRepackCanvas(
+                        assignment.Select((index, position) => (positions[position].X + charts[index].LayoutWidth,
+                            positions[position].Y + charts[index].LayoutHeight)),
+                        cell,
+                        slots.Select(slot => exponents[slot]));
+                    if (trimmed is { } size && (size.Width < width || size.Height < height))
+                    {
+                        width = size.Width;
+                        height = size.Height;
+                    }
+                }
+
                 var hash = StableHash($"{identity}|{groupTextures}|{first.GroupKey}|{pages.Count}");
                 var page = new SharedRepackPage
                 {
@@ -7667,6 +7716,8 @@ namespace Editors.PackOptimizer.Core
 
         // Test hook: no tight pieces are built (the merged-chart layout of an earlier output version).
         private static bool SharedRepackTightPiecesDisabled;
+        // Test hook: every canvas stays a power of two (the pages of an earlier output version).
+        private static bool SharedRepackTrimmedCanvasDisabled;
         private static bool SharedRepackReducedPaddingDisabled;
         private static bool SharedRepackDirectRigidsDisabled;
         // Test hook: textures that left a plan are never copied (the output of an earlier version).
@@ -9421,8 +9472,9 @@ namespace Editors.PackOptimizer.Core
         }
 
         // Where the bytes of the repacked pages go, and what pages trimmed to their packed charts
-        // (not a power of two) would change. Trimmed figures scale the page bytes by area, so they
-        // are an estimate; whether the game accepts such textures is not checked here.
+        // (not a power of two) would change. Pages of groups that may use any aspect are already
+        // trimmed when they are planned; groups that keep the reference aspect stay power of two.
+        // Trimmed figures scale the page bytes by area, so they are an estimate.
         private static void AppendSharedRepackPageWaste(StringBuilder sb, SharedTextureRepackResult result)
         {
             var built = result.Outcomes
@@ -9474,7 +9526,7 @@ namespace Editors.PackOptimizer.Core
 
             sb.AppendLine(
                 "Page layout (output bytes at each page's bytes per reference pixel; \"trimmed\" = the same packing " +
-                "packing cut to its used width and height, i.e. pages that are not a power of two):");
+                "packing cut to its used width and height; pages of groups without an aspect restriction are already cut):");
             if (built.Count != 0)
             {
                 var page = built.Sum(waste => waste.PageBytes);
@@ -9497,7 +9549,7 @@ namespace Editors.PackOptimizer.Core
                     .ToList();
                 sb.AppendLine(
                     $"  Groups left untouched because their pages did not get small enough ({gated.Count:N0}): " +
-                    $"sources {source:N0} bytes, power-of-two pages {page:N0}, trimmed pages {trimmed:N0}; " +
+                    $"sources {source:N0} bytes, pages {page:N0}, trimmed pages {trimmed:N0}; " +
                     $"{passing.Count:N0} would pass the {result.MinimumGroupSavingBytes:N0}-byte group minimum trimmed, " +
                     $"saving {passing.Sum(waste => waste.SourceBytes - waste.TrimmedBytes):N0} bytes (before the set threshold " +
                     "and the closure of their sets)");

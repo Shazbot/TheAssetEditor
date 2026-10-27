@@ -8990,6 +8990,80 @@ namespace Test.PackOptimizer.Core
             }
         }
 
+        // The planner's canvases stay powers of two while the test runs (these tests pin the split and
+        // packer choices on power-of-two pages).
+        private static IDisposable PowerOfTwoCanvases()
+        {
+            var field = GetServiceType().GetField("SharedRepackTrimmedCanvasDisabled", BindingFlags.NonPublic | BindingFlags.Static)!;
+            field.SetValue(null, true);
+            return new ActionDisposable(() => field.SetValue(null, false));
+        }
+
+        private sealed class ActionDisposable(Action dispose) : IDisposable
+        {
+            public void Dispose() => dispose();
+        }
+
+        [Test]
+        public void SharedRepack_Canvas_IsCutToThePackedCharts_AndStillSamplesTheSameColours()
+        {
+            var world = BuildMaxRectsWinsSrWorld();
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "FailedPixelCheck"), Is.Zero);
+            var built = SrBuilt(result).Single();
+            var group = Get<IEnumerable>(built, "Groups").Cast<object>().Single();
+            // The power-of-two canvas is 512x512; the charts only need 480x224 (240x112 for the normal map).
+            Assert.That(Get<string>(group, "Sizes"), Is.EqualTo("base_colour 1024x1024 -> 480x224; normal 512x512 -> 240x112"));
+            var pages = world.Fixture.Output
+                .Where(pair => pair.Key.Contains("_repack_") && pair.Key.EndsWith(".dds", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Assert.That(pages, Has.Count.EqualTo(2));
+            foreach (var (path, bytes) in pages)
+            {
+                var height = BitConverter.ToInt32(bytes, 12);
+                var width = BitConverter.ToInt32(bytes, 16);
+                var mips = BitConverter.ToInt32(bytes, 28);
+                var isBase = path.Contains("base_colour", StringComparison.OrdinalIgnoreCase);
+                Assert.That((width, height), Is.EqualTo(isBase ? (480, 224) : (240, 112)), path);
+                Assert.That(mips, Is.EqualTo(1 + (int)Math.Floor(Math.Log2(width))), path);
+            }
+
+            var (samples, max) = AssertSrPixels(
+                world, SrRigid, SrWs, BuildMaxRectsWinsSrWorld().Rigids[SrRigid], new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 });
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+        }
+
+        private static (int Width, int Height)? TrimCanvas(
+            (int Right, int Bottom)[] extents, int align, params (int X, int Y)[] exponents)
+        {
+            var method = GetServiceType().GetMethod("TrimSharedRepackCanvas", BindingFlags.NonPublic | BindingFlags.Static)!;
+            return ((int Width, int Height)?)method.Invoke(null, [extents, align, exponents]);
+        }
+
+        [Test]
+        public void SharedRepack_TrimCanvas_TakesTheBoundingBoxOfTheCharts()
+        {
+            Assert.That(TrimCanvas([(256, 96), (480, 64), (32, 224)], 32, (0, 0), (-1, -1)), Is.EqualTo((480, 224)));
+        }
+
+        [Test]
+        public void SharedRepack_TrimCanvas_RefusesASizeOffTheAlignmentOrTheBlockGrid()
+        {
+            // Not a multiple of the chart alignment: block-copied mip levels would leave their grid.
+            Assert.That(TrimCanvas([(100, 64)], 32, (0, 0)), Is.Null);
+            // A slot 8x smaller than the canvas would be 57 texels wide: not a whole number of BC blocks.
+            Assert.That(TrimCanvas([(456, 64)], 8, (-3, -3)), Is.Null);
+            // A slot that is smaller than one block.
+            Assert.That(TrimCanvas([(32, 32)], 16, (-4, -4)), Is.Null);
+            Assert.That(TrimCanvas([], 16, (0, 0)), Is.Null);
+        }
+
         private static Dictionary<string, byte[]> SrSnapshot(Dictionary<string, byte[]> files)
             => files.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
 
@@ -9066,6 +9140,7 @@ namespace Test.PackOptimizer.Core
         [Test]
         public void SharedRepack_EndToEnd_WhereMaxRectsWins_BuildsValidatesAndSamplesTheSameColours()
         {
+            using var powerOfTwo = PowerOfTwoCanvases();
             var world = BuildMaxRectsWinsSrWorld();
 
             var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
@@ -12626,6 +12701,7 @@ namespace Test.PackOptimizer.Core
         [Test]
         public void SharedRepack_TuplesDifferingOnlyInAnotherSetsVariant_ShareOnePageSet_AndEachMaterialKeepsItsOwnBase()
         {
+            using var powerOfTwo = PowerOfTwoCanvases();
             var (world, first, second) = BuildBarbuteSrWorld();
 
             var result = world.Run();
@@ -12691,6 +12767,7 @@ namespace Test.PackOptimizer.Core
         [Test]
         public void SharedRepack_TwoIndependentParts_OnePageCannotShrink_BuildAsTwoSmallerPages()
         {
+            using var powerOfTwo = PowerOfTwoCanvases();
             // Single page: 2048 x 2048 (the 1184-high chart needs a 2048 side), as big as the
             // source. Split: 1024 x 2048 + 1024 x 1024 = 75 % of the pixels.
             var (world, factory) = BuildSplitSrWorld(0.3, 0.55, 0.45);
@@ -12752,6 +12829,7 @@ namespace Test.PackOptimizer.Core
         [Test]
         public void SharedRepack_SplitSavingLessThanTheGroupThreshold_IsRejected_AndReportsTheBestSplit()
         {
+            using var powerOfTwo = PowerOfTwoCanvases();
             var (world, _) = BuildSplitSrWorld(0.3, 0.55, 0.45);
 
             // The split saves about 700 KB over nothing: under a 1 MB group minimum.
@@ -12767,6 +12845,7 @@ namespace Test.PackOptimizer.Core
         [Test]
         public void SharedRepack_GroupThatAlreadyBuilds_IsSplitWhenStrictlyCheaperByTheThreshold()
         {
+            using var powerOfTwo = PowerOfTwoCanvases();
             // Single page 2048 x 1024 already saves half; two pages 1024 x 1024 + 1024 x 512 save more.
             var (world, factory) = BuildSplitSrWorld(0.45, 0.45, 0.2);
 
@@ -12784,6 +12863,7 @@ namespace Test.PackOptimizer.Core
         [Test]
         public void SharedRepack_GroupThatAlreadyBuilds_IsNotSplitWhenTheGainIsUnderTheThreshold()
         {
+            using var powerOfTwo = PowerOfTwoCanvases();
             var (world, _) = BuildSplitSrWorld(0.45, 0.45, 0.2);
 
             // The split is about 400 KB cheaper; with a 1 MB group minimum it is not taken.
@@ -17120,6 +17200,7 @@ namespace Test.PackOptimizer.Core
         [Test]
         public void SharedRepack_TightPieces_GroupUsesThePiecesOnlyWhenTheirPagesAreSmaller()
         {
+            using var powerOfTwo = PowerOfTwoCanvases();
             // Diagonal: one 352x352 chart needs 512x512; two 192x192 pieces fit 512x256.
             var diagonal = SrTightTuple(SrDiagonalQuads());
             var pages = SrPackGroup(diagonal, 4096, 1L << 60, out var split);
@@ -17164,6 +17245,7 @@ namespace Test.PackOptimizer.Core
         [Test]
         public void SharedRepack_TightPieces_OverlappingRectangles_DuplicateTheirTexels_AndTheUvRewriteSamplesTheSourceTexels()
         {
+            using var powerOfTwo = PowerOfTwoCanvases();
             var (world, factory) = BuildTightSrWorld(SrDiagonalQuads());
             object plan = null!;
             (byte[] Bgra, int Width, int Height) page = default;
@@ -17772,6 +17854,9 @@ namespace Test.PackOptimizer.Core
             // tuples that differ only in variant textures other units load share a layout group when that pays;
             // the repack is not among the pinned stages, so the hash is unchanged.
             [25] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 26: the shared texture repack cuts the canvas of a group without an aspect restriction to its packed charts
+            // (not a power of two); the repack is not among the pinned stages, so the hash is unchanged.
+            [26] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
