@@ -22,6 +22,33 @@ namespace Editors.PackOptimizer.Core
         Pack = 1,
     }
 
+    /// <summary>Simplifier settings for one LOD level of the editor LOD rebuild.</summary>
+    public sealed record EditorLodLevelSettings(float TargetError, bool LockBorder)
+    {
+        public static readonly IReadOnlyList<EditorLodLevelSettings> Default =
+        [
+            new(0.02f, true),
+            new(0.04f, true),
+            new(0.08f, false),
+        ];
+
+        /// <summary>The settings of LOD <paramref name="lodIndex"/> (1-based); levels past the table use its last entry.</summary>
+        public static EditorLodLevelSettings For(IReadOnlyList<EditorLodLevelSettings> table, int lodIndex)
+            => table[Math.Min(Math.Max(lodIndex, 1) - 1, table.Count - 1)];
+
+        /// <summary>Parses "0.02:locked,0.04:locked,0.08:free".</summary>
+        public static IReadOnlyList<EditorLodLevelSettings> Parse(string text)
+            => text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(part =>
+                {
+                    var pieces = part.Split(':');
+                    return new EditorLodLevelSettings(
+                        float.Parse(pieces[0], System.Globalization.CultureInfo.InvariantCulture),
+                        !(pieces.Length > 1 && pieces[1].Equals("free", StringComparison.OrdinalIgnoreCase)));
+                })
+                .ToArray();
+    }
+
     /// <summary>
     /// What the optimizer does to a pack. Every flag defaults to the value the
     /// batch service has always used when a caller does not say otherwise.
@@ -66,10 +93,12 @@ namespace Editors.PackOptimizer.Core
         /// LOD0 with meshoptimizer. LOD0, the LOD count, headers and part lists stay as they are.
         /// </summary>
         public bool RemakeEditorLods { get; init; }
-        /// <summary>Relative simplification error cap of the editor LOD rebuild (the editor's own 2 % by default).</summary>
-        public float EditorLodTargetError { get; init; } = 0.02f;
-        /// <summary>Keeps open-border vertices of the editor LOD rebuild in place (the editor's own default).</summary>
-        public bool EditorLodLockBorder { get; init; } = true;
+        /// <summary>
+        /// Simplifier settings of the editor LOD rebuild per LOD level: entry 0 is LOD1, entry 1 is LOD2 and the
+        /// last entry applies to every deeper LOD. Default: 2 % error with the border locked at LOD1, 4 % locked at
+        /// LOD2, 8 % with the border free from LOD3.
+        /// </summary>
+        public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; init; } = EditorLodLevelSettings.Default;
     }
 
     /// <summary>

@@ -242,8 +242,7 @@ namespace Editors.PackOptimizer.Core
                 state.CompactTextures = compactTextures && !crossRigidOnly;
                 state.DropUnreadAlpha = dropUnreadAlpha && state.CompactTextures;
                 state.RemakeEditorLods = options.RemakeEditorLods;
-                state.EditorLodTargetError = options.EditorLodTargetError;
-                state.EditorLodLockBorder = options.EditorLodLockBorder;
+                state.EditorLodSettings = options.EditorLodSettings;
                 // The repack writes textures, so it is ignored in cross-rigid-only mode (see
                 // ResolveSharedTextureRepack); next to atlasing and cross-rigid merges it runs
                 // after them and leaves what they changed alone.

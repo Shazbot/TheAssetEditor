@@ -18168,12 +18168,12 @@ namespace Test.PackOptimizer.Core
         }
 
         private static (object Service, object State, RmvFile Rigid) RunEditorLodRemake(
-            RmvFile rigid, Action<object>? configure = null, float? error = null)
+            RmvFile rigid, Action<object>? configure = null, IReadOnlyList<Editors.PackOptimizer.Core.EditorLodLevelSettings>? settings = null)
         {
             var state = CreateNoAtlasState();
             SetStateProperty(state, "RemakeEditorLods", true);
-            if (error != null)
-                SetStateProperty(state, "EditorLodTargetError", error.Value);
+            if (settings != null)
+                SetStateProperty(state, "EditorLodSettings", settings);
             GetStateProperty<IDictionary>(state, "RigidModels")[EditorLodRigidPath] = rigid;
             GetStateProperty<HashSet<string>>(state, "SourceReachableAssetFiles").Add(EditorLodRigidPath);
             configure?.Invoke(state);
@@ -18334,6 +18334,27 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void EditorLods_SettingsTable_DefaultsToTheDecidedPerLevelValuesAndRepeatsTheLastEntry()
+        {
+            var table = new Editors.PackOptimizer.Core.PackOptimizerOptions().EditorLodSettings;
+            var settings = Editors.PackOptimizer.Core.EditorLodLevelSettings.For;
+            Assert.Multiple(() =>
+            {
+                Assert.That(settings(table, 1), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.02f, true)));
+                Assert.That(settings(table, 2), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.04f, true)));
+                Assert.That(settings(table, 3), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false)));
+                Assert.That(settings(table, 5), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false)));
+                Assert.That(
+                    Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.02:locked,0.08:free"),
+                    Is.EqualTo(new[]
+                    {
+                        new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.02f, true),
+                        new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false),
+                    }));
+            });
+        }
+
+        [Test]
         public void EditorLods_OptionDefaultsToOff_AndTheVersionIsBumped()
         {
             Assert.That(new Editors.PackOptimizer.Core.PackOptimizerOptions().RemakeEditorLods, Is.False);
@@ -18455,8 +18476,10 @@ namespace Test.PackOptimizer.Core
             // unchanged.
             [31] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
             // 32: rigids whose LOD 1+ AssetEditor's old decimator generated are rebuilt from LOD0 with
-            // meshoptimizer (RemakeEditorLods); the pinned hash gains an editor-LOD fixture.
-            [32] = "FD194683846C8E5B75064EAB0F41F3FC97BE900200FBDDE4A8AC09CD3927F7E6",
+            // meshoptimizer (RemakeEditorLods); the pinned hash gains an editor-LOD fixture. Version 32 was
+            // not released, so the per-level simplifier settings (LOD1 2 % locked, LOD2 4 % locked,
+            // LOD3+ 8 % free) updated this entry in place instead of adding 33.
+            [32] = "7673CC593E24E2AB449373CF9E410757573C612665D1717D085E4C303FAC8D2F",
         };
 
         private static string ComputeOutputGoldenHash()

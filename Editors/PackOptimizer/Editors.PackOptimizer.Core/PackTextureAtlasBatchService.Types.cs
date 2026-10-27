@@ -1025,8 +1025,7 @@ namespace Editors.PackOptimizer.Core
             // Effective only together with CompactTextures.
             public bool DropUnreadAlpha { get; set; }
             public bool RemakeEditorLods { get; set; }
-            public float EditorLodTargetError { get; set; } = 0.02f;
-            public bool EditorLodLockBorder { get; set; } = true;
+            public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; set; } = EditorLodLevelSettings.Default;
             public EditorLodRemakeResult EditorLods { get; } = new();
             // Rigids whose LOD 1+ the editor LOD remake rebuilt. Deliberately NOT in ModifiedRigids until the
             // save: later stages (shared texture repack, cross-rigid source/generated handling, merges) refuse

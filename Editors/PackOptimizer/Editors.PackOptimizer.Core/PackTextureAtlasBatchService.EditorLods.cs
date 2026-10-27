@@ -30,7 +30,7 @@ namespace Editors.PackOptimizer.Core
             public int PartsKeptNotReduced { get; set; }
             public int PartsMissedTargetByError { get; set; }
             public int PartsMissedTargetByTopology { get; set; }
-            public float TargetError { get; set; }
+            public IReadOnlyList<EditorLodLevelSettings> Settings { get; set; } = EditorLodLevelSettings.Default;
             public long[] TrianglesBefore { get; } = new long[EditorLodMaxLevels];
             public long[] TrianglesAfter { get; } = new long[EditorLodMaxLevels];
             public long[] BytesBefore { get; } = new long[EditorLodMaxLevels];
@@ -47,7 +47,7 @@ namespace Editors.PackOptimizer.Core
             IProgress<TextureAtlasPackProgress>? progress)
         {
             var result = state.EditorLods;
-            result.TargetError = state.EditorLodTargetError;
+            result.Settings = state.EditorLodSettings;
             var rigidPaths = state.SourceReachableAssetFiles
                 .Where(path => path.EndsWith(".rigid_model_v2", StringComparison.OrdinalIgnoreCase) &&
                                state.Source.ContainsFile(path))
@@ -226,7 +226,6 @@ namespace Editors.PackOptimizer.Core
             CancellationToken cancellationToken)
         {
             var result = state.EditorLods;
-            var options = new MeshOptReducerOptions { TargetError = state.EditorLodTargetError, LockBorder = state.EditorLodLockBorder };
             var lod0 = rmv.ModelList[0];
             var lodCount = rmv.ModelList.Length;
             var previousTriangles = lod0.Sum(model => (long)model.Mesh.IndexList.Length / 3);
@@ -238,6 +237,8 @@ namespace Editors.PackOptimizer.Core
                 var parts = rmv.ModelList[lod];
                 var groups = maps[lod - 1];
                 var factor = (float)EditorLodDetector.Factor(lod, lodCount);
+                var levelSettings = EditorLodLevelSettings.For(state.EditorLodSettings, lod);
+                var options = new MeshOptReducerOptions { TargetError = levelSettings.TargetError, LockBorder = levelSettings.LockBorder };
                 var rebuilt = new RmvMesh?[parts.Length];
                 var pendingRebuilt = 0;
                 var pendingTooLarge = 0;
@@ -305,7 +306,7 @@ namespace Editors.PackOptimizer.Core
                         // meshoptimizer stops at the last collapse under the cap, so a result error close to
                         // the cap (not only at it) means the cap, not the topology, ended the reduction.
                         if (simplified.Stats.ErrorLimited ||
-                            simplified.Stats.ResultErrorRelative >= EditorLodErrorLimitedShare * state.EditorLodTargetError)
+                            simplified.Stats.ResultErrorRelative >= EditorLodErrorLimitedShare * levelSettings.TargetError)
                             pendingError++;
                         else
                             pendingTopology++;
@@ -440,7 +441,11 @@ namespace Editors.PackOptimizer.Core
             sb.AppendLine("-----------------");
             sb.AppendLine(
                 $"Rigids examined (source-owned, reachable from a root): {r.Candidates:N0}; " +
-                $"error cap {r.TargetError.ToString("0.###", inv)}, border {(state.EditorLodLockBorder ? "locked" : "free")}");
+                "settings per LOD: " + string.Join(
+                    ", ",
+                    Enumerable.Range(1, r.Settings.Count).Select(level =>
+                        $"LOD{level}{(level == r.Settings.Count ? "+" : string.Empty)} {r.Settings[level - 1].TargetError.ToString("0.###", inv)} " +
+                        $"{(r.Settings[level - 1].LockBorder ? "locked" : "free")}")));
             string Tiers(Dictionary<EditorLodEvidence, int> counts)
                 => counts.Count == 0
                     ? "(none)"
