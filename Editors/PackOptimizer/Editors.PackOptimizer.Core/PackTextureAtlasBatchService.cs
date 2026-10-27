@@ -746,6 +746,7 @@ namespace Editors.PackOptimizer.Core
                     state.PhaseDurations["Optimize geometry"] = phaseStopwatch.Elapsed;
                 }
 
+                CommitEditorLodRemadeRigids(state);
                 phaseStopwatch.Restart();
                 SaveModifiedDocuments(state, cancellationToken, progress);
                 state.PhaseDurations["Write modified assets"] = phaseStopwatch.Elapsed;

@@ -18182,6 +18182,9 @@ namespace Test.PackOptimizer.Core
             return (service, state, rigid);
         }
 
+        private static void InvokeStaticServiceMethod(string name, params object?[] arguments)
+            => GetServiceType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, arguments);
+
         private static Dictionary<string, int> EditorLodSkips(object state)
             => GetStateProperty<object>(state, "EditorLods").GetType()
                 .GetProperty("Skipped", AnyInstance)!
@@ -18203,6 +18206,11 @@ namespace Test.PackOptimizer.Core
 
             Assert.Multiple(() =>
             {
+                // Not "modified by another stage" for the repack, cross-rigid and merge gates (they refuse
+                // rigids in ModifiedRigids): the remake is tracked apart and committed just before the save.
+                Assert.That(GetStateProperty<HashSet<string>>(state, "ModifiedRigids"), Is.Empty);
+                Assert.That(GetStateProperty<HashSet<string>>(state, "EditorLodRemadeRigids"), Is.EquivalentTo(new[] { EditorLodRigidPath }));
+                InvokeStaticServiceMethod("CommitEditorLodRemadeRigids", state);
                 Assert.That(GetStateProperty<HashSet<string>>(state, "ModifiedRigids"), Is.EquivalentTo(new[] { EditorLodRigidPath }));
                 Assert.That(rigid.ModelList, Has.Length.EqualTo(4));
                 Assert.That(rigid.ModelList[0][0].Mesh, Is.SameAs(lod0Mesh));
@@ -18244,6 +18252,7 @@ namespace Test.PackOptimizer.Core
 
             Assert.That(rigid.ModelList[1][0].Mesh, Is.SameAs(old));
             Assert.That(GetStateProperty<HashSet<string>>(state, "ModifiedRigids"), Is.Empty);
+            Assert.That(GetStateProperty<HashSet<string>>(state, "EditorLodRemadeRigids"), Is.Empty);
             Assert.That(EditorLodSkips(state), Does.ContainKey("consumer used or overridden"));
         }
 

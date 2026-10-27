@@ -1028,6 +1028,11 @@ namespace Editors.PackOptimizer.Core
             public float EditorLodTargetError { get; set; } = 0.02f;
             public bool EditorLodLockBorder { get; set; } = true;
             public EditorLodRemakeResult EditorLods { get; } = new();
+            // Rigids whose LOD 1+ the editor LOD remake rebuilt. Deliberately NOT in ModifiedRigids until the
+            // save: later stages (shared texture repack, cross-rigid source/generated handling, merges) refuse
+            // rigids "already modified by another stage", and a remake must not change what they may do.
+            // Stages that change such a rigid add it to ModifiedRigids themselves; all of them are saved.
+            public HashSet<string> EditorLodRemadeRigids { get; } = new(StringComparer.OrdinalIgnoreCase);
             // Source files that mention a rigid path (built once, shared by the shared texture
             // repack and the exact texture compaction).
             public Dictionary<string, HashSet<string>>? RigidReferrerIndex { get; set; }

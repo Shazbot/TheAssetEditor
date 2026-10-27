@@ -116,7 +116,7 @@ namespace Editors.PackOptimizer.Core
                 {
                     if (RebuildEditorLods(state, rmv, maps!, vertexFactory, cancellationToken))
                     {
-                        state.ModifiedRigids.Add(rigidPath);
+                        state.EditorLodRemadeRigids.Add(rigidPath);
                         result.RigidsRemade++;
                         result.Remade[verdict.Evidence] = result.Remade.GetValueOrDefault(verdict.Evidence) + 1;
                     }
@@ -134,6 +134,11 @@ namespace Editors.PackOptimizer.Core
                 }
             }
         }
+
+        // Called once, right before the modified assets are saved: from here the remade rigids are
+        // ordinary modified rigids.
+        private static void CommitEditorLodRemadeRigids(BatchState state)
+            => state.ModifiedRigids.UnionWith(state.EditorLodRemadeRigids);
 
         private static string EditorLodMaterialKey(RmvModel model)
             => model.Material == null
