@@ -9040,6 +9040,216 @@ namespace Test.PackOptimizer.Core
             Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
         }
 
+        // The cell-mask packing is off while the test runs (charts stay rectangles).
+        private static IDisposable MaskPackingDisabled()
+        {
+            var field = GetServiceType().GetField("SharedRepackMaskPackingDisabled", BindingFlags.NonPublic | BindingFlags.Static)!;
+            field.SetValue(null, true);
+            return new ActionDisposable(() => field.SetValue(null, false));
+        }
+
+        // An L-shaped island (an arm of five blocks along the top and one down the left) whose bounding
+        // rectangle has a big hole, plus three small islands far away in the UV that fit into the hole.
+        private static SrWorld BuildInterlockingChartsSrWorld()
+        {
+            var world = new SrWorld();
+            world.AddTexture("textures\\sr_b1.dds", 1024, "BC1", true, 1);
+            world.AddTexture("textures\\sr_n1.dds", 512, "BC3", false, 2);
+            world.Fixture.AddMaterial(SrMaterialPath("m1"), (SrBase, "textures\\sr_b1.dds"), (SrNormal, "textures\\sr_n1.dds"));
+            var m1 = SrMaterialPath("m1");
+            var lod0 = new[]
+            {
+                (m1, SrBlocks(
+                    (1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (1, 2), (1, 3), (1, 4), (1, 5),
+                    (9, 9), (12, 9), (9, 12))),
+            };
+            world.AddModel(SrRigid, SrWs, SrRoot, SrRigidFactory(lod0), [[m1]]);
+            return world;
+        }
+
+        [Test]
+        public void SharedRepack_MaskPacking_NestsASmallChartInAnLShapeAndStillSamplesTheSameColours()
+        {
+            var world = BuildInterlockingChartsSrWorld();
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(Get<int>(result, "FailedPixelCheck"), Is.Zero);
+            var built = SrBuilt(result).Single();
+            var group = Get<IEnumerable>(built, "Groups").Cast<object>().Single();
+            // As rectangles the L's 320x320 box and the three small charts need 352x448 (see the disabled
+            // test); with masks the small charts sit in the L's hole and the page is 352x352.
+            Assert.That(Get<string>(group, "Sizes"), Is.EqualTo("base_colour 1024x1024 -> 352x352; normal 512x512 -> 176x176"));
+            var pages = world.Fixture.Output
+                .Where(pair => pair.Key.Contains("_repack_") && pair.Key.EndsWith(".dds", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            Assert.That(pages, Has.Count.EqualTo(2));
+            foreach (var (path, bytes) in pages)
+            {
+                var height = BitConverter.ToInt32(bytes, 12);
+                var width = BitConverter.ToInt32(bytes, 16);
+                var isBase = path.Contains("base_colour", StringComparison.OrdinalIgnoreCase);
+                Assert.That((width, height), Is.EqualTo(isBase ? (352, 352) : (176, 176)), path);
+            }
+
+            var (samples, max) = AssertSrPixels(
+                world, SrRigid, SrWs, BuildInterlockingChartsSrWorld().Rigids[SrRigid], new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 });
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            Assert.That(SrValidate(world), Is.Empty);
+            Assert.That(Get<IEnumerable>(result, "ValidationErrors").Cast<object>(), Is.Empty);
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain("1 of 1 page(s) are packed as masks"));
+            Assert.That(report, Does.Not.Contain("Groups kept on rectangles (no cell-mask packing) by pixel check: 1"));
+        }
+
+        [Test]
+        public void SharedRepack_MaskPacking_WhenDisabledKeepsTheRectangleLayout()
+        {
+            using var rectangles = MaskPackingDisabled();
+            var world = BuildInterlockingChartsSrWorld();
+
+            var result = world.Run(minimumSaving: 1, minimumGroupSaving: 1);
+
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var group = Get<IEnumerable>(SrBuilt(result).Single(), "Groups").Cast<object>().Single();
+            Assert.That(Get<string>(group, "Sizes"), Is.EqualTo("base_colour 1024x1024 -> 352x448; normal 512x512 -> 176x224"));
+            var (samples, max) = AssertSrPixels(
+                world, SrRigid, SrWs, BuildInterlockingChartsSrWorld().Rigids[SrRigid], new Dictionary<string, int> { [SrBase] = 1, [SrNormal] = 2 });
+            Assert.That(samples, Is.GreaterThan(0));
+            Assert.That(max, Is.LessThanOrEqualTo(12));
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Not.Contain("page(s) are packed as masks"));
+        }
+
+        [Test]
+        public void SharedRepack_MaskPacking_MasksThatOverlapFailThePlanWithAnInternalError()
+        {
+            var world = BuildInterlockingChartsSrWorld();
+            var checkedPages = 0;
+            object result = null!;
+            WithBeforeCheckHook(
+                plan =>
+                {
+                    var page = Get<IEnumerable>(plan, "Pages").Cast<object>().First();
+                    Assert.That(Get<bool>(page, "MaskPacked"), Is.True);
+                    // Move every chart to the page's origin: their masks now overlap.
+                    foreach (var chart in Get<IEnumerable>(page, "Charts").Cast<object>())
+                    {
+                        chart.GetType().GetProperty("PackX", AnyInstance)!.SetValue(chart, 0);
+                        chart.GetType().GetProperty("PackY", AnyInstance)!.SetValue(chart, 0);
+                    }
+
+                    checkedPages++;
+                },
+                () => result = world.Run(minimumSaving: 1, minimumGroupSaving: 1));
+
+            Assert.That(checkedPages, Is.GreaterThan(0));
+            Assert.That(Get<int>(result, "Built"), Is.Zero);
+            Assert.That(SrSkips(result), Does.Contain("internal error: the cell masks of page").And.Contain("overlap"));
+            Assert.That(world.Fixture.Output.Keys.Any(key => key.Contains("_repack_")), Is.False, "nothing is written");
+        }
+
+        // Fails the pixel check of the first `failures` plans (a wrong page width moves every new UV) and
+        // records, per plan, the first padding variant, whether its page is mask-packed and the bans of
+        // that variant (cell masks, smallest cut canvas). A rectangle page is marked as packed for the
+        // smallest cut canvas, like the other retry tests do.
+        private static object RunSharedRepackMaskPackingFailures(
+            int failures, List<(string Variant, bool Masks, bool MaskBanned, bool TrimmedBanned)> plans, out SrWorld world)
+        {
+            var retriedWorld = BuildInterlockingChartsSrWorld();
+            world = retriedWorld;
+            object result = null!;
+            WithBeforeCheckHook(
+                plan =>
+                {
+                    var page = Get<IEnumerable>(plan, "Pages").Cast<object>().First();
+                    var variant = Get<IDictionary>(plan, "Splits").Values.Cast<object>().Select(split => Get<string>(split, "PaddingVariant")).First();
+                    var bans = Get<IEnumerable>(Get<IEnumerable>(page, "Tuples").Cast<object>().First(), "TrimmedPackingDisabledVariants").Cast<string>().ToList();
+                    var masks = Get<bool>(page, "MaskPacked");
+                    plans.Add((variant, masks, bans.Contains("mask|" + variant), bans.Contains(variant)));
+                    if (plans.Count > failures)
+                        return;
+
+                    if (!masks)
+                        page.GetType().GetProperty("TrimmedPacking", AnyInstance)!.SetValue(page, true);
+                    var width = page.GetType().GetProperty("LayoutWidth", AnyInstance)!;
+                    width.SetValue(page, (int)width.GetValue(page)! + 32);
+                },
+                () => result = retriedWorld.Run(minimumSaving: 1, minimumGroupSaving: 1));
+            return result;
+        }
+
+        [Test]
+        public void SharedRepack_MaskRectangles_CoverExactlyTheMaskCellsOnce()
+        {
+            // An L: a 5-wide top row and a 2-wide column below it, with a hole beside the column.
+            var mask = new Editors.PackOptimizer.Core.SharedRepackMask(5, 4);
+            mask.SetRange(0, 0, 5);
+            mask.SetRange(1, 0, 2);
+            mask.SetRange(2, 0, 2);
+            mask.SetRange(3, 0, 2);
+
+            var rectangles = mask.ToRectangles();
+
+            Assert.That(rectangles, Is.EqualTo(new[] { (0, 0, 5, 1), (0, 1, 2, 3) }));
+            var covered = new int[5, 4];
+            foreach (var (x, y, width, height) in rectangles)
+            {
+                for (var row = y; row < y + height; row++)
+                {
+                    for (var column = x; column < x + width; column++)
+                        covered[column, row]++;
+                }
+            }
+
+            for (var row = 0; row < 4; row++)
+            {
+                for (var column = 0; column < 5; column++)
+                    Assert.That(covered[column, row], Is.EqualTo(mask.Get(column, row) ? 1 : 0), $"{column},{row}");
+            }
+        }
+
+        // The plans of the padding variant the run started with, in order. (The group's variant choice weighs
+        // the other paddings against a banned one, so the plans of other variants may sit between them.)
+        private static List<(string Variant, bool Masks, bool MaskBanned, bool TrimmedBanned)> PlansOfTheFirstVariant(
+            List<(string Variant, bool Masks, bool MaskBanned, bool TrimmedBanned)> plans)
+            => plans.Where(plan => plan.Variant == plans[0].Variant).ToList();
+
+        [Test]
+        public void SharedRepack_PixelRetry_BansTheMaskPackingFirstAndKeepsThePadding()
+        {
+            var plans = new List<(string Variant, bool Masks, bool MaskBanned, bool TrimmedBanned)>();
+            var result = RunSharedRepackMaskPackingFailures(1, plans, out var world);
+
+            var first = PlansOfTheFirstVariant(plans);
+            Assert.That(first, Has.Count.EqualTo(2));
+            Assert.That(first[0], Is.EqualTo((plans[0].Variant, true, false, false)), "the first plan packs masks");
+            // The retry keeps the padding and drops only the cell masks; the smallest cut canvas stays allowed.
+            Assert.That(first[1], Is.EqualTo((plans[0].Variant, false, true, false)));
+            Assert.That(Get<int>(result, "PaddingPixelRetryAttempts"), Is.GreaterThanOrEqualTo(1));
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            var report = BuildSharedRepackSection(Enabled(world));
+            Assert.That(report, Does.Contain("Groups lowered by pixel check: 0"));
+            Assert.That(report, Does.Contain("Groups kept on rectangles (no cell-mask packing) by pixel check: 1"));
+            Assert.That(report, Does.Contain("Groups kept on the power-of-two packing by pixel check: 0"));
+        }
+
+        [Test]
+        public void SharedRepack_PixelRetry_BansTheSmallestCutCanvasAfterTheMaskPacking()
+        {
+            var plans = new List<(string Variant, bool Masks, bool MaskBanned, bool TrimmedBanned)>();
+            var result = RunSharedRepackMaskPackingFailures(3, plans, out var world);
+
+            var first = PlansOfTheFirstVariant(plans);
+            Assert.That(first, Has.Count.EqualTo(3));
+            Assert.That(first[0], Is.EqualTo((plans[0].Variant, true, false, false)));
+            Assert.That(first[1], Is.EqualTo((plans[0].Variant, false, true, false)), "cell masks banned first");
+            Assert.That(first[2], Is.EqualTo((plans[0].Variant, false, true, true)), "then the smallest cut canvas too");
+            Assert.That(Get<int>(result, "Built"), Is.EqualTo(1), SrSkips(result));
+            Assert.That(BuildSharedRepackSection(Enabled(world)), Does.Contain("Groups kept on the power-of-two packing by pixel check: 1"));
+        }
+
         private static (int Width, int Height)? TrimCanvas(
             (int Right, int Bottom)[] extents, int align, params (int X, int Y)[] exponents)
         {
@@ -17990,6 +18200,10 @@ namespace Test.PackOptimizer.Core
             // group before the padding is lowered; the repack is not among the pinned stages, so the hash is
             // unchanged.
             [29] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 30: the shared texture repack packs the charts of a page as cell masks (a chart may nest in another's
+            // holes) when that gives a smaller page; the repack is not among the pinned stages, so the hash is
+            // unchanged.
+            [30] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

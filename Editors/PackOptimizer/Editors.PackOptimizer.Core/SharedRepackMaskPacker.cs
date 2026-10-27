@@ -47,6 +47,57 @@ namespace Editors.PackOptimizer.Core
 
         public ReadOnlySpan<ulong> Row(int y) => new(bits, y * Words, Words);
 
+        // A stable digest of the shape (size and cells), for output signatures.
+        public ulong Hash()
+        {
+            var hash = 14695981039346656037UL;
+            hash = (hash ^ (ulong)Width) * 1099511628211UL;
+            hash = (hash ^ (ulong)Height) * 1099511628211UL;
+            foreach (var word in bits)
+                hash = (hash ^ word) * 1099511628211UL;
+            return hash;
+        }
+
+        // The cells as disjoint rectangles (x, y, width, height in cells): each row's runs, a run that
+        // repeats the previous row's run extends it. Rows then columns, so the order is deterministic.
+        public List<(int X, int Y, int Width, int Height)> ToRectangles()
+        {
+            var result = new List<(int X, int Y, int Width, int Height)>();
+            var open = new Dictionary<(int X, int Width), int>();
+            for (var y = 0; y < Height; y++)
+            {
+                var next = new Dictionary<(int X, int Width), int>();
+                for (var x = 0; x < Width;)
+                {
+                    if (!Get(x, y))
+                    {
+                        x++;
+                        continue;
+                    }
+
+                    var start = x;
+                    while (x < Width && Get(x, y))
+                        x++;
+                    var key = (start, x - start);
+                    if (open.TryGetValue(key, out var index))
+                    {
+                        var rectangle = result[index];
+                        result[index] = (rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height + 1);
+                        next[key] = index;
+                    }
+                    else
+                    {
+                        result.Add((start, y, x - start, 1));
+                        next[key] = result.Count - 1;
+                    }
+                }
+
+                open = next;
+            }
+
+            return result;
+        }
+
         public static SharedRepackMask Filled(int width, int height)
         {
             var mask = new SharedRepackMask(width, height);

@@ -598,6 +598,14 @@ namespace Editors.PackOptimizer.Core
             public int Index { get; init; }
             // The positions came from the search for the smallest cut canvas.
             public bool TrimmedPacking { get; set; }
+            // The charts were packed as cell masks (SharedRepackMaskPacker): a chart writes only its mask
+            // cells, so another chart may sit in its rectangle's holes. The masks and their rectangles
+            // (chart-relative reference pixels, disjoint) are kept per chart; MaskSavedBytes is what the
+            // page saves against the rectangle layout.
+            public bool MaskPacked { get; set; }
+            public long MaskSavedBytes { get; set; }
+            public Dictionary<SharedRepackChart, SharedRepackMask> ChartMasks { get; } = [];
+            public Dictionary<SharedRepackChart, List<(int X, int Y, int Width, int Height)>> ChartRectangles { get; } = [];
             public List<SharedRepackTuple> Tuples { get; } = [];
             public List<SharedRepackChart> Charts { get; } = [];
             public List<SharedRepackPart> Parts { get; } = [];
@@ -639,6 +647,7 @@ namespace Editors.PackOptimizer.Core
             public bool NewlyBuilt { get; set; }
             public string? PaddingRetryFromVariant { get; set; }
             public bool PowerOfTwoPackingRetry { get; set; }
+            public bool MaskPackingRetry { get; set; }
             public string Status { get; set; } = "built";
             public string Sizes { get; set; } = string.Empty;
         }
@@ -699,6 +708,8 @@ namespace Editors.PackOptimizer.Core
             public HashSet<string> FailedPaddingGroupKeys { get; } = new(StringComparer.Ordinal);
             // The failed groups whose failed page used the search for the smallest cut canvas.
             public HashSet<string> FailedTrimmedPackingGroupKeys { get; } = new(StringComparer.Ordinal);
+            // The failed groups whose failed page was packed as cell masks.
+            public HashSet<string> FailedMaskPackingGroupKeys { get; } = new(StringComparer.Ordinal);
             // Outputs identical to an earlier output of the plan (see DeduplicateSharedRepackOutputs).
             public int DeduplicatedOutputs { get; set; }
             public long DeduplicatedBytes { get; set; }
@@ -2067,7 +2078,8 @@ namespace Editors.PackOptimizer.Core
                     var loweredFrom = new Dictionary<string, string>(StringComparer.Ordinal);
                     // Per group, the padding variants that failed with the smallest-canvas packing and are packed
                     // for the power of two instead; the group's variant choice then weighs them against the lower
-                    // variants.
+                    // variants. A "mask|" entry bans the cell-mask packing of that variant (its pages keep the
+                    // rectangle layout, whose own packing is banned separately).
                     var powerOfTwoPacking = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var retryAttempts = 0;
                     var skipCopy = false;
@@ -2133,11 +2145,13 @@ namespace Editors.PackOptimizer.Core
                                 group.PaddingRetryFromVariant = from;
                             group.PowerOfTwoPackingRetry = powerOfTwoPacking.TryGetValue(group.GroupKey, out var banned) &&
                                                            banned.Contains(group.PaddingVariant);
+                            group.MaskPackingRetry = banned != null && banned.Contains(SharedRepackMaskBanKey(group.PaddingVariant));
                         }
                     }
 
-                    // A group can need a retry per padding variant for each of its two packings (3 x 2 = 6).
-                    for (var retry = 0; retry < 6; retry++)
+                    // A group can need a retry per padding variant for each of its three packings: cell masks,
+                    // then the smallest cut canvas, then the power of two (3 x 3 = 9 plans, the first included).
+                    for (var retry = 0; retry < 9; retry++)
                     {
                         if (retry != 0)
                             reportSnapshot.Restore(result);
@@ -2209,6 +2223,20 @@ namespace Editors.PackOptimizer.Core
                                 var variant = plan.Splits.GetValueOrDefault(groupKey)?.PaddingVariant;
                                 if (variant != null)
                                     loweredFrom.TryAdd(groupKey, variant);
+                                // A page packed as cell masks bans only that combination first: the group's
+                                // variant choice then weighs this padding with the rectangle layout against
+                                // the lower paddings.
+                                if (variant != null && plan.FailedMaskPackingGroupKeys.Contains(groupKey))
+                                {
+                                    if (!powerOfTwoPacking.TryGetValue(groupKey, out var maskBanned))
+                                        powerOfTwoPacking[groupKey] = maskBanned = new HashSet<string>(StringComparer.Ordinal);
+                                    if (maskBanned.Add(SharedRepackMaskBanKey(variant)))
+                                    {
+                                        retried = true;
+                                        continue;
+                                    }
+                                }
+
                                 // The page was packed for the smallest cut canvas: only that combination is
                                 // banned, the group's variant choice then weighs this padding with the
                                 // power-of-two packing against the lower paddings.
@@ -5834,7 +5862,7 @@ namespace Editors.PackOptimizer.Core
         // Everything TryComposeSharedRepackOutput encodes from, as text: the output kind (slot, format,
         // colour space, header, size, mips), and per tuple that has the slot its source texture, exponent,
         // reference size and alignment (block-copied levels) and the rectangle of each of its charts on
-        // the page (source crop, size, place). Rectangles of a page never overlap, so the entries are
+        // the page (source crop, size, place, and the mask of a mask-packed chart). Charts of a page never overlap, so the entries are
         // sorted: tuple and chart order do not matter. Equal text means equal bytes.
         private static string GetSharedRepackOutputSignature(SharedRepackPage page, SharedRepackSlotOutput output)
         {
@@ -5848,7 +5876,8 @@ namespace Editors.PackOptimizer.Core
                 {
                     entries.Add(
                         $"{head}|{chart.X0},{chart.Y0},{chart.Width},{chart.Height}|{chart.LayoutWidth}x{chart.LayoutHeight}" +
-                        $"@{chart.PackX},{chart.PackY}");
+                        $"@{chart.PackX},{chart.PackY}" +
+                        (page.ChartMasks.TryGetValue(chart, out var chartMask) ? $"|mask {chartMask.Hash():x16}" : string.Empty));
                 }
             }
 
@@ -6397,10 +6426,35 @@ namespace Editors.PackOptimizer.Core
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(path => path, StringComparer.Ordinal));
             var pages = new List<SharedRepackPage>();
+            var cutVariantPages = slots.ToDictionary(
+                slot => slot,
+                slot => groupTuples
+                    .Where(tuple => tuple.VariantTextures.ContainsKey(slot))
+                    .SelectMany(tuple => tuple.VariantTextures[slot])
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count());
+            // The bytes of a page at a canvas size, variant pages included (what the page's outputs sum to).
+            long CutBytes(int cutWidth, int cutHeight)
+            {
+                long total = 0;
+                foreach (var slot in slots)
+                {
+                    var w = ScaleByExponent(cutWidth, exponents[slot].X);
+                    var h = ScaleByExponent(cutHeight, exponents[slot].Y);
+                    total += EstimateDdsChainBytes(first.Layouts[slot], w, h, GetFullMipChainLength(w, h)) *
+                             (1 + cutVariantPages[slot]);
+                }
+
+                return total;
+            }
+
             foreach (var assignment in assignments.Select(page => page.OrderBy(index => index).ToList()))
             {
                 var pageSizes = assignment.Select(index => (charts[index].LayoutWidth, charts[index].LayoutHeight)).ToList();
                 var trimmedPacking = false;
+                List<SharedRepackMask>? pageMasks = null;
+                var rectWidth = 0;
+                var rectHeight = 0;
                 Func<int, int, (int Width, int Height)?>? simTrim = null;
                 var simCanvasWidth = 0;
                 var simCanvasHeight = 0;
@@ -6446,6 +6500,30 @@ namespace Editors.PackOptimizer.Core
                         width = size.Width;
                         height = size.Height;
                     }
+
+                    rectWidth = width;
+                    rectHeight = height;
+                    // The same charts as cell masks (a chart may nest in another's holes), on the same canvases
+                    // and trim rules; taken only when the cut canvas costs fewer bytes than the rectangle layout.
+                    if (!SharedRepackMaskPackingDisabled && assignment.Count > 1 &&
+                        !first.TrimmedPackingDisabledVariants.Contains(SharedRepackMaskBanKey(first.PaddingVariant)))
+                    {
+                        var masks = new List<SharedRepackMask>(assignment.Count);
+                        var emptyCharts = 0;
+                        foreach (var index in assignment)
+                            masks.Add(BuildSharedRepackChartMask(charts[index], cell, ref emptyCharts));
+                        if (SharedRepackMaskPacker.TryPackMinimumTrimmedCanvas(
+                                masks, cell, potWidth, potHeight, Trim, SharedRepackTrimmedPackingWidths,
+                                (long)width * height, new SharedRepackSimBudget(SharedRepackMaskSimBudget),
+                                out var maskWidth, out var maskHeight, out var maskPositions) &&
+                            CutBytes(maskWidth, maskHeight) < CutBytes(width, height))
+                        {
+                            width = maskWidth;
+                            height = maskHeight;
+                            positions = maskPositions;
+                            pageMasks = masks;
+                        }
+                    }
                 }
 
                 var hash = StableHash($"{identity}|{groupTextures}|{first.GroupKey}|{pages.Count}");
@@ -6470,8 +6548,16 @@ namespace Editors.PackOptimizer.Core
                     chart.PackY = positions[position].Y;
                     chart.Page = page;
                     page.Charts.Add(chart);
+                    if (pageMasks != null)
+                    {
+                        page.ChartMasks[chart] = pageMasks[position];
+                        page.ChartRectangles[chart] = pageMasks[position].ToRectangles()
+                            .Select(rectangle => (rectangle.X * cell, rectangle.Y * cell, rectangle.Width * cell, rectangle.Height * cell))
+                            .ToList();
+                    }
                 }
 
+                page.MaskPacked = pageMasks != null;
                 page.Tuples.AddRange(groupTuples.Where(tuple => tuple.Charts.Any(chart => chart.Page == page)));
                 foreach (var tuple in page.Tuples)
                 {
@@ -6515,6 +6601,8 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 AddSharedRepackVariantOutputs(page, nameRigid);
+                if (page.MaskPacked)
+                    page.MaskSavedBytes = GetSharedRepackPageBytes(page, rectWidth, rectHeight) - page.BytesAfter;
                 pages.Add(page);
             }
 
@@ -6886,24 +6974,122 @@ namespace Editors.PackOptimizer.Core
             var exponent = tuple.SourceExponent[output.Slot];
             foreach (var chart in page.Charts.Where(chart => chart.Tuple == tuple))
             {
-                var x0 = Math.Max(chart.X0, 0);
-                var y0 = Math.Max(chart.Y0, 0);
-                var x1 = Math.Min(chart.X0 + chart.Width, tuple.ReferenceWidth);
-                var y1 = Math.Min(chart.Y0 + chart.Height, tuple.ReferenceHeight);
-                if (x1 <= x0 || y1 <= y0)
-                    continue;
+                // A mask-packed chart yields one item per rectangle of its mask, so nothing outside the
+                // mask is written (another chart may sit there); otherwise its one rectangle.
+                foreach (var rectangle in GetSharedRepackChartRectangles(page, chart))
+                {
+                    var x0 = Math.Max(chart.X0 + rectangle.X, 0);
+                    var y0 = Math.Max(chart.Y0 + rectangle.Y, 0);
+                    var x1 = Math.Min(Math.Min(chart.X0 + rectangle.X + rectangle.Width, chart.X0 + chart.Width), tuple.ReferenceWidth);
+                    var y1 = Math.Min(Math.Min(chart.Y0 + rectangle.Y + rectangle.Height, chart.Y0 + chart.Height), tuple.ReferenceHeight);
+                    if (x1 <= x0 || y1 <= y0)
+                        continue;
 
-                var sourceX = ScaleByExponent(x0, exponent.X);
-                var sourceY = ScaleByExponent(y0, exponent.Y);
-                yield return (
-                    chart,
-                    sourceX,
-                    sourceY,
-                    ScaleByExponent(x1 - x0, exponent.X),
-                    ScaleByExponent(y1 - y0, exponent.Y),
-                    ScaleByExponent(chart.PackX, output.ExponentX) + (sourceX - ScaleByExponent(chart.X0, exponent.X)),
-                    ScaleByExponent(chart.PackY, output.ExponentY) + (sourceY - ScaleByExponent(chart.Y0, exponent.Y)));
+                    var sourceX = ScaleByExponent(x0, exponent.X);
+                    var sourceY = ScaleByExponent(y0, exponent.Y);
+                    yield return (
+                        chart,
+                        sourceX,
+                        sourceY,
+                        ScaleByExponent(x1 - x0, exponent.X),
+                        ScaleByExponent(y1 - y0, exponent.Y),
+                        ScaleByExponent(chart.PackX, output.ExponentX) + (sourceX - ScaleByExponent(chart.X0, exponent.X)),
+                        ScaleByExponent(chart.PackY, output.ExponentY) + (sourceY - ScaleByExponent(chart.Y0, exponent.Y)));
+                }
             }
+        }
+
+        // The rectangles a chart writes on its page, relative to the chart's own rectangle in reference
+        // pixels: the whole reserved rectangle, or for a mask-packed chart the disjoint runs of its mask.
+        private static IReadOnlyList<(int X, int Y, int Width, int Height)> GetSharedRepackChartRectangles(
+            SharedRepackPage page,
+            SharedRepackChart chart)
+            => page.ChartRectangles.TryGetValue(chart, out var rectangles)
+                ? rectangles
+                : [(0, 0, chart.LayoutWidth, chart.LayoutHeight)];
+
+        // Masks of a mask-packed page must be disjoint and inside the page, or one chart would overwrite
+        // another. Null when they are (or the page is not mask-packed), else what is wrong.
+        private static string? FindSharedRepackMaskOverlap(SharedRepackPage page)
+        {
+            if (!page.MaskPacked)
+                return null;
+
+            var unit = page.SimUnit;
+            if (unit <= 0)
+                return "the page has no packing unit";
+
+            var canvas = new SharedRepackMask(page.LayoutWidth / unit, page.LayoutHeight / unit);
+            foreach (var chart in page.Charts)
+            {
+                if (!page.ChartMasks.TryGetValue(chart, out var mask))
+                    return $"chart {chart.Label} has no mask";
+                if (chart.PackX % unit != 0 || chart.PackY % unit != 0)
+                    return $"chart {chart.Label} sits at {chart.PackX},{chart.PackY}, off the {unit}-pixel grid";
+
+                var originX = chart.PackX / unit;
+                var originY = chart.PackY / unit;
+                for (var y = 0; y < mask.Height; y++)
+                {
+                    for (var x = 0; x < mask.Width; x++)
+                    {
+                        if (!mask.Get(x, y))
+                            continue;
+                        if (originX + x >= canvas.Width || originY + y >= canvas.Height)
+                            return $"chart {chart.Label} reaches outside the {page.LayoutWidth}x{page.LayoutHeight} page";
+                        if (canvas.Get(originX + x, originY + y))
+                            return $"chart {chart.Label} overlaps another chart's mask at cell {originX + x},{originY + y}";
+                        canvas.Set(originX + x, originY + y);
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        // Lower-mip samples within two texels of the edge of the chart's shape mix in the neighbouring
+        // chart or padding, like those next to a rectangle's edge. For a mask-packed chart the shape is its mask.
+        private static bool IsSharedRepackNearMaskEdge(
+            SharedRepackPage page,
+            SharedRepackChart chart,
+            SharedRepackSlotOutput output,
+            int texelX,
+            int texelY,
+            int level)
+        {
+            if (!page.ChartMasks.TryGetValue(chart, out var mask))
+                return true;
+
+            var originX = ScaleByExponent(chart.PackX, output.ExponentX);
+            var originY = ScaleByExponent(chart.PackY, output.ExponentY);
+            var cellX = ScaleByExponent(page.SimUnit, output.ExponentX);
+            var cellY = ScaleByExponent(page.SimUnit, output.ExponentY);
+            if (cellX <= 0 || cellY <= 0)
+                return true;
+
+            bool Outside(int x, int y)
+            {
+                // The texel's first and last level-0 pixel on each axis.
+                foreach (var pixelX in new[] { x << level, ((x + 1) << level) - 1 })
+                {
+                    foreach (var pixelY in new[] { y << level, ((y + 1) << level) - 1 })
+                    {
+                        var relativeX = pixelX - originX;
+                        var relativeY = pixelY - originY;
+                        if (relativeX < 0 || relativeY < 0 ||
+                            relativeX / cellX >= mask.Width || relativeY / cellY >= mask.Height ||
+                            !mask.Get(relativeX / cellX, relativeY / cellY))
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
+
+            return Outside(texelX - 2, texelY) || Outside(texelX + 2, texelY) ||
+                   Outside(texelX, texelY - 2) || Outside(texelX, texelY + 2);
         }
 
         // Top levels whose chart rectangles are whole BC blocks at that level in the source and
@@ -7118,18 +7304,24 @@ namespace Editors.PackOptimizer.Core
                     cancellationToken.ThrowIfCancellationRequested();
                     var destinationX = ScaleByExponent(chart.PackX, output.ExponentX);
                     var destinationY = ScaleByExponent(chart.PackY, output.ExponentY);
-                    var destinationWidth = ScaleByExponent(chart.LayoutWidth, output.ExponentX);
-                    var destinationHeight = ScaleByExponent(chart.LayoutHeight, output.ExponentY);
                     var sourceX = ScaleByExponent(chart.X0, exponent.X);
                     var sourceY = ScaleByExponent(chart.Y0, exponent.Y);
-                    for (var y = 0; y < destinationHeight; y++)
+                    // Only the chart's rectangles (its mask cells on a mask-packed page) are written.
+                    foreach (var rectangle in GetSharedRepackChartRectangles(page, chart))
                     {
-                        var row = Math.Clamp(sourceY + (y >> shiftY), 0, height - 1);
-                        var target = ((destinationY + y) * output.Width + destinationX) * 4;
-                        for (var x = 0; x < destinationWidth; x++)
+                        var rectLeft = ScaleByExponent(rectangle.X, output.ExponentX);
+                        var rectRight = ScaleByExponent(rectangle.X + rectangle.Width, output.ExponentX);
+                        var rectTop = ScaleByExponent(rectangle.Y, output.ExponentY);
+                        var rectBottom = ScaleByExponent(rectangle.Y + rectangle.Height, output.ExponentY);
+                        for (var y = rectTop; y < rectBottom; y++)
                         {
-                            var column = Math.Clamp(sourceX + (x >> shiftX), 0, width - 1);
-                            Buffer.BlockCopy(bgra, (row * width + column) * 4, canvas, target + x * 4, 4);
+                            var row = Math.Clamp(sourceY + (y >> shiftY), 0, height - 1);
+                            var target = ((destinationY + y) * output.Width + destinationX) * 4;
+                            for (var x = rectLeft; x < rectRight; x++)
+                            {
+                                var column = Math.Clamp(sourceX + (x >> shiftX), 0, width - 1);
+                                Buffer.BlockCopy(bgra, (row * width + column) * 4, canvas, target + x * 4, 4);
+                            }
                         }
                     }
                 }
@@ -7137,7 +7329,7 @@ namespace Editors.PackOptimizer.Core
 
             var blockLevels = GetSharedRepackBlockLevels(page, output, sources);
             // Every lower level of the chain is seeded, chart rectangle by chart rectangle (gutter
-            // included), with the source's own decoded mip level wherever the rectangle sits on whole
+            // included; a mask-packed chart's mask cells only), with the source's own decoded mip level wherever the rectangle sits on whole
             // texels of that level, instead of the box filter of the canvas. What cannot be seeded keeps
             // the box-filtered texels (non-integer positions, levels the source lacks, exponent
             // mismatches, texels outside every rectangle). Rectangles of a page never overlap, and the
@@ -7166,19 +7358,23 @@ namespace Editors.PackOptimizer.Core
                                 levelData = source != null && source.Layout.MipCount > level ? source.Level(level) : null;
                             }
 
-                            var seed = SharedRepackMipSeeder.Seed(
-                                level, shiftX, shiftY,
-                                ScaleByExponent(chart.X0, exponent.X),
-                                ScaleByExponent(chart.Y0, exponent.Y),
-                                ScaleByExponent(chart.PackX, output.ExponentX),
-                                ScaleByExponent(chart.PackY, output.ExponentY),
-                                ScaleByExponent(chart.LayoutWidth, output.ExponentX),
-                                ScaleByExponent(chart.LayoutHeight, output.ExponentY),
-                                levelData, pixels, levelWidth, levelHeight, out var partialEdge,
-                                seedStats.Differences[Math.Min(level, seedStats.Differences.Length - 1)]);
-                            seedStats.Counts[(int)seed]++;
-                            if (partialEdge && seed == SharedRepackMipSeed.SourceMip)
-                                seedStats.PartialEdge++;
+                            // One seed per rectangle: a mask-packed chart seeds only its mask cells.
+                            foreach (var rectangle in GetSharedRepackChartRectangles(page, chart))
+                            {
+                                var seed = SharedRepackMipSeeder.Seed(
+                                    level, shiftX, shiftY,
+                                    ScaleByExponent(chart.X0 + rectangle.X, exponent.X),
+                                    ScaleByExponent(chart.Y0 + rectangle.Y, exponent.Y),
+                                    ScaleByExponent(chart.PackX + rectangle.X, output.ExponentX),
+                                    ScaleByExponent(chart.PackY + rectangle.Y, output.ExponentY),
+                                    ScaleByExponent(rectangle.Width, output.ExponentX),
+                                    ScaleByExponent(rectangle.Height, output.ExponentY),
+                                    levelData, pixels, levelWidth, levelHeight, out var partialEdge,
+                                    seedStats.Differences[Math.Min(level, seedStats.Differences.Length - 1)]);
+                                seedStats.Counts[(int)seed]++;
+                                if (partialEdge && seed == SharedRepackMipSeed.SourceMip)
+                                    seedStats.PartialEdge++;
+                            }
                         }
                     }
                 };
@@ -7853,6 +8049,12 @@ namespace Editors.PackOptimizer.Core
         private static bool SharedRepackTrimmedCanvasDisabled;
         // Test hook: cut canvases keep the power-of-two packing (the pages of an earlier output version).
         private static bool SharedRepackTrimmedPackingDisabled;
+        // Test hook: charts stay rectangles (the pages of an earlier output version).
+        private static bool SharedRepackMaskPackingDisabled;
+        // Test hook: masks are clamped to the texture, dropping the band the rectangle fills outside it.
+        private static bool SharedRepackMaskClampsToTexture;
+        // The ban entry of a padding variant's cell-mask packing (see the pixel retry).
+        private static string SharedRepackMaskBanKey(string variant) => "mask|" + variant;
         // Canvas widths the search for the smallest cut canvas tries per page.
         private const int SharedRepackTrimmedPackingWidths = 32;
         private static bool SharedRepackReducedPaddingDisabled;
@@ -8056,6 +8258,9 @@ namespace Editors.PackOptimizer.Core
                                         var edgeDistance = Math.Min(
                                             Math.Min(tx - edgeRectX, edgeRectX + edgeRectW - 1 - tx),
                                             Math.Min(ty - edgeRectY, edgeRectY + edgeRectH - 1 - ty));
+                                        // A mask-packed chart's edge is its mask's: its rectangle holds other charts.
+                                        if (page.MaskPacked && level > 0)
+                                            edgeDistance = IsSharedRepackNearMaskEdge(page, chart, output, tx, ty, level) ? 0 : 99;
                                         if (level > 0 && edgeDistance < 2)
                                         {
                                             // A lower-mip texel next to the chart edge legitimately
@@ -8217,6 +8422,18 @@ namespace Editors.PackOptimizer.Core
 
                 SharedRepackBeforeCheckHook?.Invoke(plan);
 
+                // Masks of a page never overlap (the packer guarantees it): the composed pages are in
+                // memory only, so a violation fails the plan before anything is written.
+                foreach (var page in plan.Pages)
+                {
+                    var overlap = FindSharedRepackMaskOverlap(page);
+                    if (overlap != null)
+                    {
+                        failure = $"internal error: the cell masks of page {page.Hash} overlap ({overlap})";
+                        return null;
+                    }
+                }
+
                 // A duplicate must have encoded to exactly the canonical bytes (hash both); otherwise
                 // the signature missed an input. It then shares the canonical data and is not written.
                 foreach (var output in plan.Pages.SelectMany(page => page.Outputs).Where(item => item.DuplicateOf != null))
@@ -8242,7 +8459,9 @@ namespace Editors.PackOptimizer.Core
                         continue;
 
                     plan.FailedPaddingGroupKeys.Add(page.GroupKey);
-                    if (page.TrimmedPacking)
+                    if (page.MaskPacked)
+                        plan.FailedMaskPackingGroupKeys.Add(page.GroupKey);
+                    else if (page.TrimmedPacking)
                         plan.FailedTrimmedPackingGroupKeys.Add(page.GroupKey);
                     problems.AddRange(pageProblems);
                 }
@@ -9674,6 +9893,7 @@ namespace Editors.PackOptimizer.Core
             var untouchedGroups = groups.Where(group => group.Pages == 0).ToList();
             var loweredGroups = groups.Where(group => group.PaddingRetryFromVariant != null).ToList();
             var powerOfTwoGroups = groups.Where(group => group.PowerOfTwoPackingRetry).ToList();
+            var maskBanGroups = groups.Where(group => group.MaskPackingRetry).ToList();
             if (built.Count == 0 && gated.Count == 0 && result.PaddingPixelRetryAttempts == 0)
                 return;
 
@@ -9706,6 +9926,15 @@ namespace Editors.PackOptimizer.Core
                 sb.AppendLine(
                     $"    {GetSharedRepackPaddingCode(group.PaddingRetryFromVariant!)} -> " +
                     $"{GetSharedRepackPaddingCode(group.PaddingVariant)}: {group.Label}" +
+                    (group.Pages == 0 ? " [gated/untouched]" : string.Empty));
+            }
+
+            sb.AppendLine(
+                $"  Groups kept on rectangles (no cell-mask packing) by pixel check: {maskBanGroups.Count:N0}");
+            foreach (var group in maskBanGroups.OrderBy(group => group.Label, StringComparer.Ordinal))
+            {
+                sb.AppendLine(
+                    $"    {GetSharedRepackPaddingCode(group.PaddingVariant)}: {group.Label}" +
                     (group.Pages == 0 ? " [gated/untouched]" : string.Empty));
             }
 
