@@ -1223,6 +1223,45 @@ namespace Editors.PackOptimizer.Core
             return (width, height);
         }
 
+        // The smallest canvas with the reference's aspect ratio (so the UV scale stays equal in U and
+        // V) that holds the packed charts and passes TrimSharedRepackCanvas, or null when none is
+        // smaller than the given canvas.
+        private static (int Width, int Height)? TrimSharedRepackCanvasToAspect(
+            IEnumerable<(int Right, int Bottom)> extents,
+            int canvasWidth,
+            int canvasHeight,
+            int referenceWidth,
+            int referenceHeight,
+            int align,
+            IReadOnlyList<(int X, int Y)> exponents)
+        {
+            int right = 0, bottom = 0;
+            foreach (var extent in extents)
+            {
+                right = Math.Max(right, extent.Right);
+                bottom = Math.Max(bottom, extent.Bottom);
+            }
+
+            if (right <= 0 || bottom <= 0 || referenceWidth <= 0 || referenceHeight <= 0)
+                return null;
+
+            var divisor = GreatestCommonDivisor(referenceWidth, referenceHeight);
+            var unitWidth = referenceWidth / divisor;
+            var unitHeight = referenceHeight / divisor;
+            var multiple = Math.Max((right + unitWidth - 1) / unitWidth, (bottom + unitHeight - 1) / unitHeight);
+            for (; (long)unitWidth * multiple <= canvasWidth && (long)unitHeight * multiple <= canvasHeight; multiple++)
+            {
+                var width = unitWidth * multiple;
+                var height = unitHeight * multiple;
+                if (width == canvasWidth && height == canvasHeight)
+                    return null;
+                if (TrimSharedRepackCanvas([(width, height)], align, exponents) is { } size)
+                    return size;
+            }
+
+            return null;
+        }
+
         private static int RoundUpTo(int value, int multiple)
             => (value + multiple - 1) / multiple * multiple;
 
@@ -6313,6 +6352,23 @@ namespace Editors.PackOptimizer.Core
                             positions[position].Y + charts[index].LayoutHeight)),
                         cell,
                         slots.Select(slot => exponents[slot]));
+                    if (trimmed is { } size && (size.Width < width || size.Height < height))
+                    {
+                        width = size.Width;
+                        height = size.Height;
+                    }
+                }
+                else if (canvasAllowed != null && !SharedRepackTrimmedCanvasDisabled)
+                {
+                    var trimmed = TrimSharedRepackCanvasToAspect(
+                        assignment.Select((index, position) => (positions[position].X + charts[index].LayoutWidth,
+                            positions[position].Y + charts[index].LayoutHeight)),
+                        width,
+                        height,
+                        first.ReferenceWidth,
+                        first.ReferenceHeight,
+                        cell,
+                        slots.Select(slot => exponents[slot]).ToList());
                     if (trimmed is { } size && (size.Width < width || size.Height < height))
                     {
                         width = size.Width;

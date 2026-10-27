@@ -9064,6 +9064,28 @@ namespace Test.PackOptimizer.Core
             Assert.That(TrimCanvas([], 16, (0, 0)), Is.Null);
         }
 
+        private static (int Width, int Height)? TrimCanvasToAspect(
+            (int Right, int Bottom)[] extents, int canvasWidth, int canvasHeight, int referenceWidth, int referenceHeight,
+            int align, params (int X, int Y)[] exponents)
+        {
+            var method = GetServiceType().GetMethod("TrimSharedRepackCanvasToAspect", BindingFlags.NonPublic | BindingFlags.Static)!;
+            return ((int Width, int Height)?)method.Invoke(
+                null, [extents, canvasWidth, canvasHeight, referenceWidth, referenceHeight, align, exponents.ToList()]);
+        }
+
+        [Test]
+        public void SharedRepack_TrimCanvasToAspect_KeepsTheReferenceAspectOnTheAlignmentGrid()
+        {
+            // 700x500 of charts on a square reference: the smallest square on the 32 grid is 704x704.
+            Assert.That(TrimCanvasToAspect([(700, 500)], 1024, 1024, 1024, 1024, 32, (0, 0), (-1, -1)), Is.EqualTo((704, 704)));
+            // A 2:1 reference: 768x256 of charts need 768x384.
+            Assert.That(TrimCanvasToAspect([(768, 256)], 1024, 512, 2048, 1024, 32, (0, 0)), Is.EqualTo((768, 384)));
+            // Nothing smaller than the canvas holds the charts.
+            Assert.That(TrimCanvasToAspect([(1000, 40)], 1024, 1024, 1024, 1024, 32, (0, 0)), Is.Null);
+            // A slot 16x smaller than any square below 64 is less than one block.
+            Assert.That(TrimCanvasToAspect([(40, 40)], 64, 64, 1024, 1024, 16, (-4, -4)), Is.Null);
+        }
+
         private static Dictionary<string, byte[]> SrSnapshot(Dictionary<string, byte[]> files)
             => files.ToDictionary(pair => pair.Key, pair => pair.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
 
@@ -16821,6 +16843,9 @@ namespace Test.PackOptimizer.Core
                 Is.EqualTo(charts.Select(c => (Get<int>(c, "PackX"), Get<int>(c, "PackY")))));
         }
 
+        // The 512x128 and 256x256 charts packed on a 2:1 canvas, cut to their box with the aspect kept.
+        private const int CopySlotTrimmedWidth = 512;
+
         [Test]
         public void SharedRepack_CopySlotGroup_RestrictsPageCanvasesToTheReferenceAspect()
         {
@@ -16841,6 +16866,8 @@ namespace Test.PackOptimizer.Core
                 Assert.That((long)width * 1024, Is.EqualTo((long)height * 2048), $"{width}x{height}");
                 // scaleU == scaleV for every page, which is what the exact compensation needs.
                 Assert.That(2048.0 / width, Is.EqualTo(1024.0 / height));
+                // The page is cut to the charts while it keeps the aspect (not the 1024x512 power of two).
+                Assert.That((width, height), Is.EqualTo((CopySlotTrimmedWidth, CopySlotTrimmedWidth / 2)));
             }
 
             // The restriction costs bytes against the unrestricted canvas, and is reported.
@@ -17460,7 +17487,8 @@ namespace Test.PackOptimizer.Core
             Assert.That(Get<bool>(splitInfo, "AspectRestricted"), Is.True);
             Assert.That(Get<int>(built, "Charts"), Is.EqualTo(4));
             Assert.That(Get<int>(built, "LayoutWidth"), Is.EqualTo(Get<int>(built, "LayoutHeight")));
-            Assert.That(Get<int>(built, "LayoutWidth"), Is.EqualTo(256));
+            // The square 256x256 power of two, cut to the pieces with the aspect kept.
+            Assert.That(Get<int>(built, "LayoutWidth"), Is.EqualTo(192));
             // Pieces are only translated: the scale is the page's, equal in U and V, as for any group.
             var scale = 2048.0 / Get<int>(built, "LayoutWidth");
             var generated = Encoding.UTF8.GetString(world.Fixture.Output[SrWsMaterial(world.State, SrWs, 0, 0)]);
@@ -17482,11 +17510,11 @@ namespace Test.PackOptimizer.Core
             Assert.That(section, Does.Contain("canvases keep the reference aspect"));
             Assert.That(SrValidate(world), Is.Empty);
 
-            // Without pieces the same group needs the 512x512 page.
+            // Without pieces the same group needs a 336x336 page (512x512 as a power of two).
             var plain = BuildTightEmissiveSrWorld();
             object plainResult = null!;
             WithTightPiecesDisabled(() => plainResult = plain.Run());
-            Assert.That(Get<int>(SrBuilt(plainResult).Single(), "LayoutWidth"), Is.EqualTo(512));
+            Assert.That(Get<int>(SrBuilt(plainResult).Single(), "LayoutWidth"), Is.EqualTo(336));
             Assert.That(Get<long>(built, "After"), Is.LessThan(Get<long>(SrBuilt(plainResult).Single(), "After")));
         }
 
@@ -17857,6 +17885,10 @@ namespace Test.PackOptimizer.Core
             // 26: the shared texture repack cuts the canvas of a group without an aspect restriction to its packed charts
             // (not a power of two); the repack is not among the pinned stages, so the hash is unchanged.
             [26] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 27: the shared texture repack also cuts the canvas of a group with an aspect restriction (emissive or
+            // flow compensation) to its packed charts, keeping the reference aspect; the repack is not among the
+            // pinned stages, so the hash is unchanged.
+            [27] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()

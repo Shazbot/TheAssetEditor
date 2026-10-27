@@ -717,6 +717,23 @@ Measured (bench, pack-level, same sources):
 
 Tests: 970 (967 + 3 new), the 8 that pin power-of-two split/packer choices run with the hook. Still open: in-game check, and that the packs the optimizer wrote are refused as sources by a second optimizer run (`GetSharedRepackBlockedTextureReason` requires power-of-two sources).
 
+## 2026-10-27: aspect-restricted canvases are cut too, keeping the reference aspect
+
+The trimmed canvases above passed the in-game check (albion and teb units, campaign ships, battle buildings).
+
+Split scoring with trimmed bytes was looked at first and not built: in the `*-canvas` reports only 3 groups split and 5 rejected a split, and the best rejected split (teb `vmp_master_necromancer_cape`, 3.67 MB vs 4.19 MB) is below the group minimum. What the reports still lose to rounding is in the groups with an aspect restriction (emissive or flow compensation): albion untouched groups 11.6 MB rounding (4 would pass trimmed, 10.2 MB upper bound, e.g. `alb_horned_man_head_01` at 24 % coverage on a full 1024x1024 page), teb built groups 5.4 MB.
+
+Change: `TrimSharedRepackCanvasToAspect` gives such a group the smallest canvas of the reference's aspect ratio that holds the packed charts and passes `TrimSharedRepackCanvas` (alignment and block grid). The UV scale stays equal in U and V, which is all the emissive and flow compensation needs; it already accepts scales that are not powers of two (e.g. 2.2069). Same test hook (`SharedRepackTrimmedCanvasDisabled`). OutputVersion 27.
+
+Measured (bench, vs `albion-canvas` / `teb-canvas`):
+- albion: realised 218,073,752 -> 224,482,896 (+6,409,144), 25 -> 27 sets (+`tze_crystal_pillar_01_material_map` (the wyrd druid staff), +`chs_warrior_head_01_material_map`; none lost). Emissive: 4 aspect-restricted groups built (was 2), 10 materials rescaled (was 4), no "not equal in U and V".
+- teb: realised 283,916,280 -> 285,624,088 (+1,707,808), 54 sets, same sets; aspect pages e.g. 2048x2048 -> 960x960, 2048x1024 -> 960x480.
+- Pixel check: 0 sets failed, top-level max error 0 everywhere, worst re-encoded share over 96 0.48 % (albion) / 0.40 % (teb), unchanged.
+- Fingerprint (sorted path+hash): albion 7 removed (6 materials and `alb_staff_crystal_01_emissive.dds`, replaced by the new staff set), 16 added, 34 changed (6 pages, 4 materials, 15 rigids, 9 wsmodels); teb 0 removed, 0 added, 24 changed (14 pages, 6 materials, 4 rigids).
+- WHMM `pack validate --with-vanilla`: valid, diagnostic lines identical to the canvas packs (albion 7,217, teb 9,707), none mentions a `_repack_` texture.
+
+Tests: 971 (970 + 1 new); the emissive tight-pieces test now pins 192x192 (pieces) and 336x336 (merged charts) instead of 256 and 512, and its parameter and pixel checks pass on the trimmed pages.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).
