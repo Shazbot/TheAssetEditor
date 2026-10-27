@@ -111,8 +111,67 @@ namespace Editors.PackOptimizer.Core
     // are multiples of the unit, the masks never overlap, and the work is bounded by a budget.
     internal static class SharedRepackMaskPacker
     {
-        // Masks in one of three orders (largest first, ties by index), each at the first legal place by row, then column.
-        // Canvas and mask sizes are in units. False when a mask does not fit or the budget ran out.
+        // Placement rules. FirstFit: the first legal place by row, then column. Contact: among the legal
+        // places that add the least height (rows past the used bottom are never better), the one that
+        // touches the most placed cells and canvas edges (the left and top walls count), so holes fill first.
+        public const int FirstFit = 0;
+        public const int Contact = 1;
+
+        // Orders 0-5: mask area, height, longer side, bounding-box hole area, width, perimeter (each
+        // largest first, ties by area, then index). Orders 6+ are seeded shuffles of order mode % 6.
+        public const int OrderCount = 6;
+        public const int ShuffleCount = 12;
+
+        // Variants tried in this order: (rule, order). Cheap first fits first, so a spent budget loses the dearest.
+        private static readonly (int Rule, int Order)[] Variants = BuildVariants();
+
+        private static (int Rule, int Order)[] BuildVariants()
+        {
+            var variants = new List<(int, int)>();
+            for (var order = 0; order < OrderCount + ShuffleCount; order++)
+                variants.Add((FirstFit, order));
+            variants.Add((Contact, 0));
+            variants.Add((Contact, 1));
+            return variants.ToArray();
+        }
+
+        internal static int VariantCount => Variants.Length;
+
+        // Test hook: how many leading variants TryPackMinimumTrimmedCanvas tries (all by default).
+        internal static int VariantLimit = int.MaxValue;
+
+        private static int[] OrderOf(IReadOnlyList<SharedRepackMask> masks, int[] areas, int mode)
+            => Enumerable.Range(0, masks.Count)
+                .OrderByDescending(index => OrderKey(masks[index], areas[index], index, mode))
+                .ThenByDescending(index => areas[index])
+                .ThenBy(index => index)
+                .ToArray();
+
+        // Modes 0-5 are plain keys; a higher mode takes the plain key of mode % 6 scaled by a fixed
+        // pseudo-random factor in [0.7, 1.3] drawn from (mode, index), so the order is a seeded shuffle of it.
+        private static double OrderKey(SharedRepackMask mask, int area, int index, int mode)
+        {
+            double key = (mode % OrderCount) switch
+            {
+                1 => mask.Height,
+                2 => Math.Max(mask.Width, mask.Height),
+                3 => mask.Width * mask.Height - area,
+                4 => mask.Width,
+                5 => mask.Width + mask.Height,
+                _ => area,
+            };
+            if (mode < OrderCount)
+                return key;
+            var hash = ((ulong)mode << 32 | (uint)index) * 0x9E3779B97F4A7C15UL;
+            hash = (hash ^ (hash >> 30)) * 0xBF58476D1CE4E5B9UL;
+            hash = (hash ^ (hash >> 27)) * 0x94D049BB133111EBUL;
+            hash ^= hash >> 31;
+            return key * (0.7 + 0.6 * ((hash >> 11) / (double)(1UL << 53)));
+        }
+
+        // Masks in one of the orders, each at the place its rule picks. Canvas and mask sizes are in
+        // units. areaLimit (cells, 0 = none): gives up once the used box cannot get below it (the box is
+        // at least as wide as the widest mask). False when a mask does not fit, the limit is hit or the budget ran out.
         public static bool TryPack(
             IReadOnlyList<SharedRepackMask> masks,
             int[] areas,
@@ -122,59 +181,122 @@ namespace Editors.PackOptimizer.Core
             SharedRepackSimBudget? budget,
             out (int X, int Y)[] positions,
             out int right,
-            out int bottom)
+            out int bottom,
+            int rule = FirstFit,
+            long areaLimit = 0)
         {
             positions = new (int X, int Y)[masks.Count];
             right = bottom = 0;
             var words = (width + 63) >> 6;
-            var canvas = new ulong[(height + 1) * (words + 1)];
             var stride = words + 1;
-            // Mode 0: by mask area; 1: by height; 2: by the longer side (ties by area, then index).
-            var order = Enumerable.Range(0, masks.Count)
-                .OrderByDescending(index => mode switch
-                {
-                    1 => masks[index].Height,
-                    2 => Math.Max(masks[index].Width, masks[index].Height),
-                    _ => areas[index],
-                })
-                .ThenByDescending(index => areas[index])
-                .ThenBy(index => index)
-                .ToArray();
-            foreach (var index in order)
+            var canvas = new ulong[(height + 2) * stride];
+            var widest = masks.Count == 0 ? 0 : masks.Max(mask => mask.Width);
+            var shifted = new ulong[stride + 1];
+            foreach (var index in OrderOf(masks, areas, mode))
             {
                 var mask = masks[index];
                 if (mask.Width > width || mask.Height > height)
                     return false;
 
-                var placed = false;
-                for (var y = 0; y + mask.Height <= height && !placed; y++)
-                {
-                    for (var x = 0; x + mask.Width <= width; x++)
-                    {
-                        if (budget != null)
-                        {
-                            budget.Operations++;
-                            if (budget.Exceeded)
-                                return false;
-                        }
+                if (!FindPosition(canvas, stride, mask, width, height, bottom, rule, budget, shifted, out var x, out var y))
+                    return false;
 
-                        if (!Overlaps(canvas, stride, mask, x, y, budget))
-                        {
-                            Place(canvas, stride, mask, x, y);
-                            positions[index] = (x, y);
-                            right = Math.Max(right, x + mask.Width);
-                            bottom = Math.Max(bottom, y + mask.Height);
-                            placed = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!placed)
+                Place(canvas, stride, mask, x, y);
+                positions[index] = (x, y);
+                right = Math.Max(right, x + mask.Width);
+                bottom = Math.Max(bottom, y + mask.Height);
+                if (areaLimit > 0 && (long)Math.Max(right, widest) * bottom >= areaLimit)
                     return false;
             }
 
             return true;
+        }
+
+        private static bool FindPosition(
+            ulong[] canvas, int stride, SharedRepackMask mask, int width, int height, int bottom,
+            int rule, SharedRepackSimBudget? budget, ulong[] shifted, out int bestX, out int bestY)
+        {
+            bestX = bestY = 0;
+            var found = false;
+            int bestBottom = 0, bestContact = -1;
+            // A row at or below the used bottom is empty, so nothing past it is better than it.
+            var lastRow = rule == FirstFit ? height - mask.Height : Math.Min(height - mask.Height, bottom);
+            for (var y = 0; y <= lastRow; y++)
+            {
+                var newBottom = Math.Max(bottom, y + mask.Height);
+                if (found && newBottom > bestBottom)
+                    break;
+                for (var x = 0; x + mask.Width <= width; x++)
+                {
+                    if (budget != null)
+                    {
+                        budget.Operations++;
+                        if (budget.Exceeded)
+                            return false;
+                    }
+
+                    if (Overlaps(canvas, stride, mask, x, y, budget))
+                        continue;
+
+                    if (rule == FirstFit)
+                    {
+                        bestX = x;
+                        bestY = y;
+                        return true;
+                    }
+
+                    var contact = ContactOf(canvas, stride, mask, x, y, shifted);
+                    if (budget != null)
+                        budget.Operations += mask.Height;
+                    if (found && contact <= bestContact)
+                        continue;
+                    found = true;
+                    bestBottom = newBottom;
+                    bestContact = contact;
+                    bestX = x;
+                    bestY = y;
+                }
+            }
+
+            return found;
+        }
+
+        // Edges the mask would share with placed cells; the left wall and the top wall count as placed.
+        private static int ContactOf(ulong[] canvas, int stride, SharedRepackMask mask, int x, int y, ulong[] shifted)
+        {
+            var wordShift = x >> 6;
+            var bitShift = x & 63;
+            var contact = 0;
+            for (var row = 0; row < mask.Height; row++)
+            {
+                var source = mask.Row(row);
+                Array.Clear(shifted);
+                for (var word = 0; word < source.Length; word++)
+                {
+                    var value = source[word];
+                    shifted[wordShift + word] |= value << bitShift;
+                    if (bitShift != 0)
+                        shifted[wordShift + word + 1] |= value >> (64 - bitShift);
+                }
+
+                var offset = (y + row) * stride;
+                var above = y + row - 1;
+                for (var word = wordShift; word <= wordShift + source.Length && word < stride; word++)
+                {
+                    var cells = shifted[word];
+                    if (cells == 0)
+                        continue;
+                    var here = canvas[offset + word];
+                    var before = word == 0 ? 1UL : canvas[offset + word - 1] >> 63;
+                    var after = word + 1 < stride ? canvas[offset + word + 1] << 63 : 0UL;
+                    contact += System.Numerics.BitOperations.PopCount(cells & ((here << 1) | before));
+                    contact += System.Numerics.BitOperations.PopCount(cells & ((here >> 1) | after));
+                    contact += System.Numerics.BitOperations.PopCount(cells & (above < 0 ? ulong.MaxValue : canvas[above * stride + word]));
+                    contact += System.Numerics.BitOperations.PopCount(cells & canvas[(y + row + 1) * stride + word]);
+                }
+            }
+
+            return contact;
         }
 
         private static bool Overlaps(ulong[] canvas, int stride, SharedRepackMask mask, int x, int y, SharedRepackSimBudget? budget)
@@ -260,21 +382,21 @@ namespace Editors.PackOptimizer.Core
             var best = areaLimit;
             var found = false;
             long total = areas.Sum(area => (long)area);
-            foreach (var width in widths)
+            var cellArea = (long)unit * unit;
+            for (var variant = 0; variant < Math.Min(Variants.Length, VariantLimit); variant++)
             {
-                if (budget is { Exceeded: true })
-                    break;
-
-                // A cut canvas is at least widest x used height, so it only gains below this height.
-                var cap = (int)Math.Min(gridHeight, (best - 1) / ((long)widest * unit * unit));
-                if (cap <= 0 || total > (long)width * cap)
-                    continue;
-                for (var mode = 0; mode < 3; mode++)
+                var (rule, mode) = Variants[variant];
+                foreach (var width in widths)
                 {
-                    cap = (int)Math.Min(gridHeight, (best - 1) / ((long)widest * unit * unit));
-                    if (cap <= 0 || total > (long)width * cap || budget is { Exceeded: true })
-                        break;
-                    if (!TryPack(masks, areas, mode, width, cap, budget, out var trial, out var right, out var bottom))
+                    if (budget is { Exceeded: true })
+                        return found;
+
+                    // A cut canvas is at least widest x used height, so it only gains below this height.
+                    var cap = (int)Math.Min(gridHeight, (best - 1) / ((long)widest * cellArea));
+                    if (cap <= 0 || total > (long)width * cap)
+                        continue;
+                    var limit = (best - 1) / cellArea + 1;
+                    if (!TryPack(masks, areas, mode, width, cap, budget, out var trial, out var right, out var bottom, rule, limit))
                         continue;
                     if (trim(right * unit, bottom * unit) is not { } canvas)
                         continue;

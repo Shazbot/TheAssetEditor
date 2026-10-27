@@ -816,6 +816,43 @@ Biggest mask gains (in-game check candidates), page bytes saved against the rect
 
 Checked in game (custom battle): Albion (Order of the Truthsayers) Highlanders, Defenders of Carn Mallog, Chosen of Ishernos, The Green Man, Maidenguard/Huntresses, Centaur Ogham-Warden, Albion Giant; TEB (Tilea) Gashnag, Irranan Hillmen, Shieldbearers, Lupio Sunscryer, Lucrezzia Belladonna, Borgio, the Mercenary General's golden lion. Units found with WHMM `pack diff --affected-units --format checklist` without vanilla (3.5 min on TEB; with vanilla it scans every vanilla rigid for texture changes and did not finish in 17 min).
 
+## 2026-10-27: a stronger cell-mask packer
+
+`SharedRepackMaskPacker` keeps its shape (deterministic, positions on the unit grid, bounded by `SharedRepackMaskSimBudget` = 6,000,000, taken only when the cut canvas costs strictly fewer bytes) but tries more variants per canvas width. `TryPackMinimumTrimmedCanvas` now loops variants outermost, canvas widths inside: 18 first-fit orders (area, height, longer side as before; new: bounding-box hole area, width, perimeter; and 12 seeded shuffles, each the key of order `mode % 6` scaled by a factor in [0.7, 1.3] hashed from (mode, chart index), so no RNG state), then a contact placement on orders 0 and 1. Contact placement = among the legal places that add the least height (rows past the used bottom are never better, scan stops when the height grows), the one that touches most placed cells and canvas edges (left and top walls count; computed bit-parallel per mask row). `TryPack` also gives up as soon as `max(right, widest mask) x bottom` cannot get below the best cut canvas, which makes the first fits cheaper. `OutputVersion` 30 -> 31 (golden hash unchanged).
+
+Tried (Albion, saving against the `albion-maskpack` baseline of 265,364,664 B / 50.5 s shared repack; each row is a full bench run):
+
+| variants | saving | repack phase |
+|---|---|---|
+| first fit orders 0-5 only (3 new orders) | 266,591,016 (+1.23 MB) | 49.7 s |
+| area-growth placement alone (smallest used box, then bottom, row, column; 6 orders) | 264,609,080 (-0.76 MB, worse than first fit) | 55.7 s |
+| area-growth + contact tie break alone (6 orders) | 264,254,896 (-1.11 MB) | 58.1 s |
+| first fit 0-5 + height-first contact (6 orders) | 266,709,160 (+0.12 over first fit only) | 62.3 s |
+| first fit 0-5 + pure max contact (6 orders) | 266,603,784 (+0.01) | 63.9 s |
+| first fit 0-5 + 12 seeded shuffles | 266,835,240 (+0.24) | 59.8 s |
+| everything above (42 variants) | 266,839,256 (+0.004 over the shuffles) | 61.9 s |
+| kept: first fit 0-5 + 12 shuffles + height-first contact on orders 0, 1 | 266,835,240 | 57.3 s |
+
+So the new sort orders give almost all of the gain, the shuffles add a quarter of a megabyte, and the placement rules do not pay on Albion: by-row first fit is already a bottom-left packer, and rules that minimize the box area or maximize contact alone lose to it. The contact pair is kept because it is cheap and a test shows it filling a notch where first fit extends the box, but it measured 0 B on Albion (not measured separately on TEB). Not done: swapping adjacent pairs of the best order (the shuffles cover that ground), mask-based page assignment for groups split over several pages (page counts are decided with rectangle sizes; the potential is the 2 and 3 page groups only, not measured).
+
+Measured (bench; baselines `albion-maskpack` and `teb-maskpack`):
+
+| | Albion | TEB |
+|---|---|---|
+| realised saving | 265,364,664 -> 266,835,240 (+1,470,576) | 326,226,152 -> 329,631,256 (+3,405,104) |
+| sets | 31 -> 31, none new or lost | 58 -> 59; new `dae_cultist_of_tzeentch_head_01` (4 tex, 2 units, the Sisters of Fury hoods); none lost |
+| built-group page bytes | 139,216,984 -> 137,159,624 (67 groups) | 150,917,800 (81) -> 160,794,832 (84; the new set adds 3 groups) |
+| mask-packed pages | 39 -> 42 of 68 built (19,354,952 B vs rectangles, was 17,583,864) | 56 -> 60 of 83/86 built (27,815,296 B, was 24,297,168) |
+| bounding-box holes / gaps in "Page layout" | holes 53,061,377 -> 52,611,592; packing gaps -3,118,881 -> -4,718,575 | holes 58,119,594 -> 62,787,243 (more groups); gaps -5,394,970 -> -6,994,885 |
+| pixel check | max error 0 (31 sets); worst re-encoded share 0.48% (as before) | max error 0 (59 sets); worst share 0.44% (was 0.48%) |
+| retries | 2 passes, 0 lowered, 2 kept on rectangles (as before) | 4 passes, 2 lowered, 2 kept on rectangles, 1 on the power of two (as before) |
+| shared repack phase | 50.5 -> 57.3 s (+6.8) | 50.1 -> 58.6 s (+8.5) |
+| bench process | 170.1 -> 165.9 s | 206.8 -> 212.1 s |
+
+One simulated page hit the budget in each pack (the report-only simulation of a page that kept its rectangles; the planner pages did not matter). Fingerprints: no original texture changed, added or removed in either pack. Albion: 108 files changed (49 generated atlas `.dds`, 41 generated materials, 18 generated cross-rigid models), none added or removed. TEB: 109 changed (40 atlas `.dds`, 25 generated materials, 40 rigids, 4 WSModels), 18 added (12 atlas `.dds`, 6 generated materials: the new set), 2 removed (the two original `ak_teb_lupio_helmet_weighted*` materials that the new set replaces). WHMM `pack validate --baseline --with-vanilla`: regressed false, no added diagnostics in both.
+
+Biggest page-byte changes (in-game check candidates): Albion, the Cygor accessories set: `ogr_giant_accessories_01` (-964,416 B, atlas 1672x1712 -> 1752x1496), `alb_giant_ogr_giant_accessories_01` (-160,736), `alb_stonegiant_deadogr_warrior_head_01` (-32,256), used by Albion Giant, Bologs, Albion Giant (Stone Thrower), Cachtorr (and the Grudgebringer giant); `cust_emp_jade_wizard_body_01` (-41,536) on Druidic Priestess (`wyrd_druid_body_01`); `3k_animated_props_replacements_01` (-32,928) on Young Slingers. TEB (Tilea): `def_warriors_legs_01` (-321,888, 1024x1024 -> 456x696) on Mengil Manhide's Manflayers; `emp_reiksguard_morr_torso_01` (-162,368) on Inquisitor Lord (on foot, bhorse, grif and horse variants) and Lupio Sunscryer; `vmp_manfred_von_carstein_body_01` (-127,232) on Gashnag; `cth_shugengan_body_01` (-63,712) on Estragon's Pariahs; `hef_mage_torso_01` (-40,992) on Lucrezzia Belladonna; and the new set's group on Sisters of Fury (+2,897,904 B page). Checked in game.
+
 ## Open issues
 
 1. **Joint slots exceeded five alternatives — fixed.** The writer created one `SLOT` with one wrapper per Cartesian combination, plus duplicates for optional-slot probabilities; the engine used five, and rewritten units visibly lost variety in-game. Writer-created slots are now split into at most five `VARIANT_MESH_REFERENCE` entries to generated group VMDs (`NestCrossRigidWriterSlots` in `PackTextureAtlasBatchService.CrossRigid.Emission.cs`), with a hard check at the end of emission. On this pack (combined mode): 71 slots nested, largest 3,000 alternatives, nesting depth up to 6, all splits exact, 6,542 group files reduced to 1,986 by dedupe; validation passes and the rewritten units look correct in-game. Author-written slots are left alone; three in the source pack list six alternatives (`ak_est_trooper_base` head, `ak_morion_pirazzo` bighead, `bor_strooper_base` head).

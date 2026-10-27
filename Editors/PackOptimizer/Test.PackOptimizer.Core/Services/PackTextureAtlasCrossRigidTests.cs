@@ -18204,6 +18204,10 @@ namespace Test.PackOptimizer.Core
             // holes) when that gives a smaller page; the repack is not among the pinned stages, so the hash is
             // unchanged.
             [30] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
+            // 31: the cell-mask packer tries more chart orders (hole area, width, perimeter, seeded shuffles)
+            // and a contact-maximizing placement; the repack is not among the pinned stages, so the hash is
+            // unchanged.
+            [31] = "8B7093023427E55FBF1CD767BA5C4B782EB218E82B78C68131B02BF8A58ECAE6",
         };
 
         private static string ComputeOutputGoldenHash()
