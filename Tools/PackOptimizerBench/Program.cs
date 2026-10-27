@@ -23,6 +23,8 @@ using Shared.Core.Settings;
 // --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
 // enabled mods in load order, first loads first and loses, last wins; --source-index is how many
 // of them load before the source (default: all of them). Consumers are only read.
+//   PackOptimizerBench --lodscan "<pack-or-folder>;..." [--lodscan-out <tsv>] [--lodscan-game true]
+//     runs EditorLodDetector over every .rigid_model_v2 and writes one TSV row per rigid (see LodScan.cs).
 //   PackOptimizerBench --make-synthetic-consumer <out.pack> [--source <pack>]
 //     writes a small test mod (a reskin of two source textures and a VMD reusing two WSModels).
 //
@@ -67,6 +69,15 @@ internal static class Program
         var loader = services.GetRequiredService<IPackFileContainerLoader>();
         if (options.TryGetValue("make-synthetic-consumer", out var syntheticPath))
             return MakeSyntheticConsumer(loader, source, syntheticPath);
+
+        if (options.TryGetValue("lodscan", out var lodScanInputs))
+        {
+            return LodScan.Run(
+                loader,
+                lodScanInputs,
+                options.GetValueOrDefault("lodscan-out", Path.Combine(outputRoot, "lodscan", "lodscan.tsv")),
+                options.GetValueOrDefault("lodscan-game", "false").Equals("true", StringComparison.OrdinalIgnoreCase));
+        }
 
         var consumerPaths = ReadConsumerPaths(args, options);
         var loadAllConsumerFiles = options.GetValueOrDefault("consumer-load", "filtered")
