@@ -1520,7 +1520,6 @@ namespace Editors.PackOptimizer.Core
                 return false;
             }
 
-            var encodeStart = Stopwatch.GetTimestamp();
             try
             {
                 using var full = TexHelper.Instance.Initialize2D(
@@ -1557,10 +1556,6 @@ namespace Editors.PackOptimizer.Core
             {
                 error = $"encode failed ({ex.GetType().Name}: {ex.Message})";
                 return false;
-            }
-            finally
-            {
-                Interlocked.Add(ref _sharedRepackEncodeTicks, Stopwatch.GetTimestamp() - encodeStart);
             }
         }
 
@@ -2051,9 +2046,6 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
-                // The source textures are immutable for the whole set (nothing of a failed attempt is
-                // written), so every attempt and retry of it decodes each source only once.
-                var setSources = NewSharedRepackSourceCache(state, containers);
                 var rigids = rigidPaths.Select(SetRigid).ToList();
                 if (rigids.All(item => item.Rigid == null))
                 {
@@ -2149,8 +2141,7 @@ namespace Editors.PackOptimizer.Core
                             movedParts,
                             cancellationToken,
                             out applyFailure,
-                            out applyPixelFailure,
-                            setSources);
+                            out applyPixelFailure);
 
                     void FinishRetries(SharedRepackBuiltSet? built)
                     {
@@ -7437,6 +7428,7 @@ namespace Editors.PackOptimizer.Core
                 return false;
             }
 
+            var encodeStart = Stopwatch.GetTimestamp();
             var encoded = output.Format.Equals("BC7", StringComparison.OrdinalIgnoreCase)
                 ? TryEncodeSharedRepackChainGathered(
                     canvas, output.Width, output.Height, output.Format, output.Srgb, output.Dx10,
@@ -7445,6 +7437,7 @@ namespace Editors.PackOptimizer.Core
                 : TryEncodeSharedRepackChain(
                     canvas, output.Width, output.Height, output.Format, output.Srgb, output.Dx10,
                     1, output.MipLevels - 1, overlay, out dds, out error);
+            Interlocked.Add(ref _sharedRepackEncodeTicks, Stopwatch.GetTimestamp() - encodeStart);
             if (!encoded)
                 return false;
 
@@ -8434,12 +8427,13 @@ namespace Editors.PackOptimizer.Core
             Dictionary<string, HashSet<(int Lod, int Part)>> movedParts,
             CancellationToken cancellationToken,
             out string? failure,
-            out bool pixelFailure,
-            SharedRepackSourceCache? setSources = null)
+            out bool pixelFailure)
         {
             failure = null;
             pixelFailure = false;
-            var sources = setSources ?? NewSharedRepackSourceCache(state, GetGameplayTraversalContainers(state));
+            // Per attempt on purpose: a cache shared by the retries of a set keeps the decoded levels of
+            // every source alive for the whole set; the peak working set grew with it for a small time gain.
+            var sources = NewSharedRepackSourceCache(state, GetGameplayTraversalContainers(state));
             var generated = new SharedRepackSourceCache(_ => null);
             var stats = new SharedRepackPixelStats();
             var rewrites = new List<(
