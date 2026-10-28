@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Runtime.CompilerServices;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
@@ -1645,12 +1646,90 @@ namespace Editors.PackOptimizer.Core
             return null;
         }
 
+        // One ordering of the candidates, compared by the entries' identity. The ordering search
+        // regenerates orderings it already evaluated (a seed that is already first, repeated
+        // pair orders), and an ordering's result depends on nothing but the entries' order and the
+        // read-only profiles, so the first result is reused.
+        private sealed class CrossRigidPortfolioOrderKey : IEquatable<CrossRigidPortfolioOrderKey>
+        {
+            private readonly CrossRigidPayloadSelectionEntry[] _entries;
+            private readonly int _hash;
+
+            public CrossRigidPortfolioOrderKey(IReadOnlyList<CrossRigidPayloadSelectionEntry> entries)
+            {
+                _entries = new CrossRigidPayloadSelectionEntry[entries.Count];
+                var hash = new HashCode();
+                for (var index = 0; index < _entries.Length; index++)
+                {
+                    _entries[index] = entries[index];
+                    hash.Add(RuntimeHelpers.GetHashCode(entries[index]));
+                }
+
+                _hash = hash.ToHashCode();
+            }
+
+            public bool Equals(CrossRigidPortfolioOrderKey? other)
+            {
+                if (other == null || other._hash != _hash || other._entries.Length != _entries.Length)
+                    return false;
+
+                for (var index = 0; index < _entries.Length; index++)
+                {
+                    if (!ReferenceEquals(_entries[index], other._entries[index]))
+                        return false;
+                }
+
+                return true;
+            }
+
+            public override bool Equals(object? obj) => Equals(obj as CrossRigidPortfolioOrderKey);
+
+            public override int GetHashCode() => _hash;
+        }
+
+        private static readonly ConditionalWeakTable<
+            Dictionary<string, CrossRigidPayloadRewriteConflictProfile>,
+            Dictionary<CrossRigidPortfolioOrderKey, (
+                double ExpectedDraws,
+                long GeometryBytes,
+                double ResidentBytes,
+                HashSet<string> SelectedPayloadIds)>> CrossRigidPortfolioMemo = new();
+
         private static (
             double ExpectedDraws,
             long GeometryBytes,
             double ResidentBytes,
             HashSet<string> SelectedPayloadIds)
             EvaluateCrossRigidPayloadPortfolio(
+                BatchState state,
+                IReadOnlyList<CrossRigidPayloadSelectionEntry>
+                    orderedCandidates,
+                Dictionary<string, CrossRigidPayloadRewriteConflictProfile>
+                    conflictProfiles,
+                HashSet<string> invalidProfiles,
+                Dictionary<string, XmlDocument> sourceVmdDocuments)
+        {
+            var memo = CrossRigidPortfolioMemo.GetValue(conflictProfiles, _ => new());
+            var key = new CrossRigidPortfolioOrderKey(orderedCandidates);
+            if (memo.TryGetValue(key, out var cached))
+                return cached;
+
+            var evaluated = EvaluateCrossRigidPayloadPortfolioUncached(
+                state,
+                orderedCandidates,
+                conflictProfiles,
+                invalidProfiles,
+                sourceVmdDocuments);
+            memo[key] = evaluated;
+            return evaluated;
+        }
+
+        private static (
+            double ExpectedDraws,
+            long GeometryBytes,
+            double ResidentBytes,
+            HashSet<string> SelectedPayloadIds)
+            EvaluateCrossRigidPayloadPortfolioUncached(
                 BatchState state,
                 IReadOnlyList<CrossRigidPayloadSelectionEntry>
                     orderedCandidates,
@@ -1666,9 +1745,10 @@ namespace Editors.PackOptimizer.Core
                     StringComparer.Ordinal);
             var selectedIds =
                 new HashSet<string>(StringComparer.Ordinal);
-            var pending =
-                new List<CrossRigidPayloadSelectionEntry>(
-                    orderedCandidates);
+            var pending = orderedCandidates;
+            var alive = new bool[pending.Count];
+            Array.Fill(alive, true);
+            var aliveCount = pending.Count;
             var physicalBytes = 0L;
             var residentBytes = 0.0;
             var expectedDraws = 0.0;
@@ -1676,16 +1756,20 @@ namespace Editors.PackOptimizer.Core
             // Match the final greedy writer, including budget deferrals.
             // The evaluator mutates only local selection sets and caches
             // read-only conflict profiles; it never marks rewrites for output.
-            while (pending.Count != 0)
+            while (aliveCount != 0)
             {
                 var acceptedThisPass = false;
-                for (var index = 0; index < pending.Count;)
+                for (var index = 0; index < pending.Count; index++)
                 {
+                    if (!alive[index])
+                        continue;
+
                     var candidate = pending[index];
                     if (invalidProfiles.Contains(
                             candidate.GeneratedPayloadId))
                     {
-                        pending.RemoveAt(index);
+                        alive[index] = false;
+                        aliveCount--;
                         continue;
                     }
 
@@ -1704,7 +1788,8 @@ namespace Editors.PackOptimizer.Core
                         {
                             invalidProfiles.Add(
                                 candidate.GeneratedPayloadId);
-                            pending.RemoveAt(index);
+                            alive[index] = false;
+                            aliveCount--;
                             continue;
                         }
 
@@ -1726,7 +1811,8 @@ namespace Editors.PackOptimizer.Core
                          marginalDraws <
                          MinimumCrossRigidSingleVmdExpectedArmyDraw))
                     {
-                        pending.RemoveAt(index);
+                        alive[index] = false;
+                        aliveCount--;
                         continue;
                     }
 
@@ -1734,7 +1820,8 @@ namespace Editors.PackOptimizer.Core
                             candidate,
                             marginalDraws) != null)
                     {
-                        pending.RemoveAt(index);
+                        alive[index] = false;
+                        aliveCount--;
                         continue;
                     }
 
@@ -1747,7 +1834,6 @@ namespace Editors.PackOptimizer.Core
                         projectedDraws *
                         MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw)
                     {
-                        index++;
                         continue;
                     }
 
@@ -1758,14 +1844,14 @@ namespace Editors.PackOptimizer.Core
                         projectedDraws *
                         MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw)
                     {
-                        index++;
                         continue;
                     }
 
                     if (projectedPhysical >
                         MaxCrossRigidGeneratedGeometryGrowthBytes)
                     {
-                        pending.RemoveAt(index);
+                        alive[index] = false;
+                        aliveCount--;
                         continue;
                     }
 
@@ -1786,7 +1872,8 @@ namespace Editors.PackOptimizer.Core
                         }
                     }
 
-                    pending.RemoveAt(index);
+                    alive[index] = false;
+                    aliveCount--;
                     acceptedThisPass = true;
                 }
 
