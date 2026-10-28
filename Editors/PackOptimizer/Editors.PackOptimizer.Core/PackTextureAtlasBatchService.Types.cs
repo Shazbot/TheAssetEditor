@@ -481,7 +481,16 @@ namespace Editors.PackOptimizer.Core
             double ExpectedArmyDrawCallsEliminated,
             HashSet<string> RewriteConflictKeys,
             Dictionary<string, string>
-                JointContextKeyByParentLocation);
+                JointContextKeyByParentLocation)
+        {
+            private string[]? conflictProbeKeys;
+
+            // Counterpart keys to probe in a selected set; built once.
+            public string[] ConflictProbeKeys =>
+                conflictProbeKeys ??=
+                    BuildCrossRigidConflictProbeKeys(
+                        RewriteConflictKeys);
+        }
 
         private sealed record CrossRigidSelectedRewriteConflictOwner(
             string GeneratedPayloadId,

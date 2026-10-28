@@ -1568,7 +1568,7 @@ namespace Editors.PackOptimizer.Core
                     StringComparer.Ordinal);
             return contender.Occurrences.Any(occurrence =>
                 HasCrossRigidRewriteConflict(
-                    occurrence.RewriteConflictKeys, selectedKeys) ||
+                    occurrence, selectedKeys) ||
                 occurrence.JointContextKeyByParentLocation.Any(pair =>
                     selectedContexts.TryGetValue(
                         pair.Key, out var contexts) &&
@@ -1911,10 +1911,10 @@ namespace Editors.PackOptimizer.Core
             foreach (var occurrence in profile.Occurrences)
             {
                 if (HasCrossRigidRewriteConflict(
-                        occurrence.RewriteConflictKeys,
+                        occurrence,
                         selectedRewriteConflictKeys) ||
                     HasCrossRigidRewriteConflict(
-                        occurrence.RewriteConflictKeys,
+                        occurrence,
                         localRewriteConflictKeys) ||
                     occurrence.JointContextKeyByParentLocation.Any(
                         pair =>
@@ -1951,9 +1951,8 @@ namespace Editors.PackOptimizer.Core
             return selected.ToArray();
         }
 
-        private static bool HasCrossRigidRewriteConflict(
-            IReadOnlySet<string> candidateKeys,
-            IReadOnlySet<string> selectedKeys)
+        private static string[] BuildCrossRigidConflictProbeKeys(
+            IReadOnlySet<string> candidateKeys)
         {
             const string exactStructuralPrefix =
                 "exact-structural-slot\u001f";
@@ -1962,56 +1961,50 @@ namespace Editors.PackOptimizer.Core
             const string jointTraversalPrefix =
                 "joint-traversal-slot\u001f";
 
+            var probes = new List<string>(candidateKeys.Count + 4);
             foreach (var key in candidateKeys)
             {
                 if (key.StartsWith(
                         exactStructuralPrefix,
                         StringComparison.Ordinal))
                 {
-                    if (selectedKeys.Contains(
-                            jointStructuralPrefix +
-                            key[exactStructuralPrefix.Length..]))
-                    {
-                        return true;
-                    }
-
-                    continue;
+                    probes.Add(
+                        jointStructuralPrefix +
+                        key[exactStructuralPrefix.Length..]);
                 }
-
-                if (key.StartsWith(
-                        jointStructuralPrefix,
-                        StringComparison.Ordinal))
+                else if (key.StartsWith(
+                             jointStructuralPrefix,
+                             StringComparison.Ordinal))
                 {
                     var suffix =
                         key[jointStructuralPrefix.Length..];
-                    if (selectedKeys.Contains(
-                            exactStructuralPrefix +
-                            suffix) ||
-                        selectedKeys.Contains(
-                            jointTraversalPrefix +
-                            suffix))
-                    {
-                        return true;
-                    }
-
-                    continue;
+                    probes.Add(exactStructuralPrefix + suffix);
+                    probes.Add(jointTraversalPrefix + suffix);
                 }
-
-                if (key.StartsWith(
-                        jointTraversalPrefix,
-                        StringComparison.Ordinal))
+                else if (key.StartsWith(
+                             jointTraversalPrefix,
+                             StringComparison.Ordinal))
                 {
-                    if (selectedKeys.Contains(
-                            jointStructuralPrefix +
-                            key[jointTraversalPrefix.Length..]))
-                    {
-                        return true;
-                    }
-
-                    continue;
+                    probes.Add(
+                        jointStructuralPrefix +
+                        key[jointTraversalPrefix.Length..]);
                 }
+                else
+                {
+                    probes.Add(key);
+                }
+            }
 
-                if (selectedKeys.Contains(key))
+            return probes.ToArray();
+        }
+
+        private static bool HasCrossRigidRewriteConflict(
+            CrossRigidRewriteConflictOccurrence occurrence,
+            IReadOnlySet<string> selectedKeys)
+        {
+            foreach (var probe in occurrence.ConflictProbeKeys)
+            {
+                if (selectedKeys.Contains(probe))
                     return true;
             }
 

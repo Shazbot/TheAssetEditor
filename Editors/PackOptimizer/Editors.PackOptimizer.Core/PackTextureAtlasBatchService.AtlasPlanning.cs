@@ -2064,24 +2064,56 @@ namespace Editors.PackOptimizer.Core
             IEnumerable<UnitVisualConfiguration> configurations)
         {
             var merged = new Dictionary<string, UnitVisualConfiguration>(StringComparer.Ordinal);
+            var lookup = merged.GetAlternateLookup<ReadOnlySpan<char>>();
+            var entries = new List<KeyValuePair<string, int>>();
+            var buffer = new char[256];
             foreach (var configuration in configurations)
             {
-                var key = string.Join(
-                    "\u001f",
-                    configuration.WsModelOccurrences
-                        .Where(entry => entry.Value > 0)
-                        .OrderBy(entry => entry.Key, StringComparer.OrdinalIgnoreCase)
-                        .Select(entry => $"{entry.Key}\u001e{entry.Value}"));
-                if (merged.TryGetValue(key, out var existing))
+                // Same content as string.Join("\u001f", ordered "{key}\u001e{value}"),
+                // built into a reusable buffer so only new keys allocate.
+                entries.Clear();
+                foreach (var entry in configuration.WsModelOccurrences)
                 {
-                    merged[key] = existing with
+                    if (entry.Value > 0)
+                        entries.Add(entry);
+                }
+
+                // Keys are unique under OrdinalIgnoreCase, so there are no ties
+                // and an unstable sort matches the stable OrderBy.
+                entries.Sort(static (a, b) =>
+                    StringComparer.OrdinalIgnoreCase.Compare(a.Key, b.Key));
+                var length = 0;
+                for (var i = 0; i < entries.Count; i++)
+                {
+                    var entry = entries[i];
+                    if (buffer.Length - length < entry.Key.Length + 16)
+                        Array.Resize(
+                            ref buffer,
+                            Math.Max(buffer.Length * 2, length + entry.Key.Length + 16));
+                    if (i > 0)
+                        buffer[length++] = '\u001f';
+                    entry.Key.CopyTo(0, buffer, length, entry.Key.Length);
+                    length += entry.Key.Length;
+                    buffer[length++] = '\u001e';
+                    entry.Value.TryFormat(
+                        buffer.AsSpan(length),
+                        out var written,
+                        default,
+                        System.Globalization.CultureInfo.CurrentCulture);
+                    length += written;
+                }
+
+                var keySpan = new ReadOnlySpan<char>(buffer, 0, length);
+                if (lookup.TryGetValue(keySpan, out var existing))
+                {
+                    lookup[keySpan] = existing with
                     {
                         Probability = existing.Probability + configuration.Probability,
                     };
                 }
                 else
                 {
-                    merged[key] = configuration;
+                    merged[keySpan.ToString()] = configuration;
                 }
             }
 

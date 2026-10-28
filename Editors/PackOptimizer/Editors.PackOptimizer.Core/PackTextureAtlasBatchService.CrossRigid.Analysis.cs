@@ -1417,17 +1417,33 @@ namespace Editors.PackOptimizer.Core
             string vmdPath,
             string attachmentIdentity,
             IReadOnlyList<CrossRigidAnalysisInstanceComponent> group)
-            => string.Join(
-                "\u001f",
+        {
+            // Same content as Join(US, Normalize(vmd), identity,
+            // Join(RS, ws paths stably ordered OrdinalIgnoreCase)).
+            var paths = new string[group.Count];
+            for (var i = 0; i < paths.Length; i++)
+            {
+                var path = group[i].Instance.WsModelPath;
+                var j = i;
+                // Stable insertion sort.
+                while (j > 0 &&
+                       StringComparer.OrdinalIgnoreCase.Compare(
+                           paths[j - 1], path) > 0)
+                {
+                    paths[j] = paths[j - 1];
+                    j--;
+                }
+
+                paths[j] = path;
+            }
+
+            return string.Concat(
                 Normalize(vmdPath),
+                "\u001f",
                 attachmentIdentity,
-                string.Join(
-                    "\u001e",
-                    group
-                        .Select(item => item.Instance.WsModelPath)
-                        .OrderBy(
-                            path => path,
-                            StringComparer.OrdinalIgnoreCase)));
+                "\u001f",
+                string.Join("\u001e", paths));
+        }
 
         private enum CrossRigidActivationRewriteClass
         {

@@ -7001,7 +7001,10 @@ namespace Editors.PackOptimizer.Core
             }
 
             public SharedRepackSource? Get(string path)
-                => _sources.GetOrAdd(path, key => new Lazy<SharedRepackSource?>(() => Load(key))).Value;
+                => _sources.GetOrAdd(
+                    path,
+                    static (key, self) => new Lazy<SharedRepackSource?>(() => self.Load(key)),
+                    this).Value;
 
             private SharedRepackSource? Load(string path)
             {
