@@ -1028,6 +1028,7 @@ namespace Editors.PackOptimizer.Core
             public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; set; } = EditorLodLevelSettings.Default;
             public float EditorLodBoneWeight { get; set; }
             public bool EditorLodJointPriority { get; set; }
+            public bool EditorLodUpdateNearestWeights { get; set; }
             public bool EditorLodReportSkinningError { get; set; }
             public EditorLodRemakeResult EditorLods { get; } = new();
             // Rigids whose LOD 1+ the editor LOD remake rebuilt. Deliberately NOT in ModifiedRigids until the

@@ -94,7 +94,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "dumpbin /exports failed with exit code $LASTEXITCODE."
     }
-    foreach ($symbol in @('meshopt_simplifyWithAttributes', 'meshopt_simplifyScale', 'meshopt_optimizeVertexCache', 'meshopt_optimizeVertexFetchRemap')) {
+    foreach ($symbol in @('meshopt_simplifyWithAttributes', 'meshopt_simplifyWithUpdate', 'meshopt_simplifyScale', 'meshopt_optimizeVertexCache', 'meshopt_optimizeVertexFetchRemap')) {
         if ($exports -notmatch "\b$symbol\b") {
             throw "Expected exported function was missing: $symbol"
         }
@@ -117,7 +117,7 @@ try {
     Write-Output "Copied $headerPath"
     Write-Output "DLL bytes: $((Get-Item -LiteralPath $dllPath).Length)"
     Write-Output 'Dynamic MSVC runtime imports: none'
-    Write-Output 'Verified exports: meshopt_simplifyWithAttributes, meshopt_simplifyScale, meshopt_optimizeVertexCache, meshopt_optimizeVertexFetchRemap'
+    Write-Output 'Verified exports: meshopt_simplifyWithAttributes, meshopt_simplifyWithUpdate, meshopt_simplifyScale, meshopt_optimizeVertexCache, meshopt_optimizeVertexFetchRemap'
 } finally {
     if (Test-Path -LiteralPath $temporaryRoot) {
         Remove-Item -LiteralPath $temporaryRoot -Recurse -Force

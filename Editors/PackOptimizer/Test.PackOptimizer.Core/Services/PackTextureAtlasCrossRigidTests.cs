@@ -18570,6 +18570,250 @@ namespace Test.PackOptimizer.Core
             Assert.That(b.Indices.Length / 3, Is.GreaterThan(0));
         }
 
+        // ---- simplifyWithUpdate method ---------------------------------------------------------------
+
+        private static IReadOnlyList<Editors.PackOptimizer.Core.EditorLodLevelSettings> UpdateEverywhere(bool nearest = false)
+            => [new(0.02f, true, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 1f, Editors.PackOptimizer.Core.EditorLodSimplifyMethod.Update),
+                new(0.04f, true, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 1f, Editors.PackOptimizer.Core.EditorLodSimplifyMethod.Update),
+                new(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f, Editors.PackOptimizer.Core.EditorLodSimplifyMethod.Update)];
+
+        [Test]
+        public void EditorLods_UpdateMethod_KeepsLod0_IsDeterministic_AndReplacesTheLods()
+        {
+            RmvFile Run(out CommonVertex[] lod0Copy)
+            {
+                var rigid = CreateEditorLodRigid(24);
+                lod0Copy = rigid.ModelList[0][0].Mesh.VertexList.Select(v => new CommonVertex
+                {
+                    Position = v.Position, Normal = v.Normal, Tangent = v.Tangent, BiNormal = v.BiNormal, Uv = v.Uv, Uv1 = v.Uv1,
+                    Colour = v.Colour, BoneIndex = v.BoneIndex, BoneWeight = v.BoneWeight, WeightCount = v.WeightCount,
+                }).ToArray();
+                RunEditorLodRemake(rigid, settings: UpdateEverywhere());
+                return rigid;
+            }
+
+            var first = Run(out var lod0Before);
+            var second = Run(out _);
+            Assert.Multiple(() =>
+            {
+                var lod0 = first.ModelList[0][0].Mesh.VertexList;
+                for (var i = 0; i < lod0.Length; i++)
+                {
+                    Assert.That(lod0[i].Position, Is.EqualTo(lod0Before[i].Position));
+                    Assert.That(lod0[i].Normal, Is.EqualTo(lod0Before[i].Normal));
+                    Assert.That(lod0[i].Uv, Is.EqualTo(lod0Before[i].Uv));
+                }
+
+                for (var lod = 1; lod < 4; lod++)
+                {
+                    Assert.That(second.ModelList[lod][0].Mesh.IndexList, Is.EqualTo(first.ModelList[lod][0].Mesh.IndexList), $"LOD {lod}");
+                    Assert.That(
+                        second.ModelList[lod][0].Mesh.VertexList.Select(v => (v.Position, v.Normal, v.Tangent, v.BiNormal, v.Uv)),
+                        Is.EqualTo(first.ModelList[lod][0].Mesh.VertexList.Select(v => (v.Position, v.Normal, v.Tangent, v.BiNormal, v.Uv))));
+                    Assert.That(first.ModelList[lod][0].Mesh.VertexList.All(v => v.BoneWeight.Length == 2), Is.True);
+                }
+            });
+        }
+
+        [Test]
+        public void EditorLods_UpdateMethod_KeepsSeamGroupsWeldedOnAUvSeamedCube()
+        {
+            // Six faces with their own vertices: every cube edge and corner is a position seam.
+            var positions = new List<float>();
+            var normals = new List<float>();
+            var uvs = new List<float>();
+            var indices = new List<ushort>();
+            const int n = 8;
+            float[][] faceNormals = [[0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]];
+            foreach (var normal in faceNormals)
+            {
+                var offset = (ushort)(positions.Count / 3);
+                for (var y = 0; y <= n; y++)
+                {
+                    for (var x = 0; x <= n; x++)
+                    {
+                        float u = (float)x / n - 0.5f, v = (float)y / n - 0.5f;
+                        float[] p = normal[2] != 0 ? [u, v, normal[2] * 0.5f] : normal[0] != 0 ? [normal[0] * 0.5f, u, v] : [u, normal[1] * 0.5f, v];
+                        positions.AddRange(p);
+                        normals.AddRange(normal);
+                        uvs.AddRange([(float)x / n, (float)y / n]);
+                    }
+                }
+
+                for (var y = 0; y < n; y++)
+                {
+                    for (var x = 0; x < n; x++)
+                    {
+                        var o = (ushort)(offset + y * (n + 1) + x);
+                        indices.AddRange([o, (ushort)(o + 1), (ushort)(o + n + 1), (ushort)(o + 1), (ushort)(o + n + 2), (ushort)(o + n + 1)]);
+                    }
+                }
+            }
+
+            var options = new GameWorld.MeshOptimizer.MeshOptReducerOptions { TargetError = 0.1f, LockBorder = false, UpdateVertices = true };
+            var result = GameWorld.MeshOptimizer.MeshOptSimplifier.Simplify(positions.ToArray(), normals.ToArray(), uvs.ToArray(), indices.ToArray(), 0.3f, options);
+
+            Assert.That(result.HasUpdate, Is.True);
+            var used = result.Remap.Select((m, old) => (m, old)).Where(x => x.m != uint.MaxValue).Select(x => x.old).ToArray();
+            var groups = used.GroupBy(v => (positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2])).Where(g => g.Count() > 1).ToArray();
+            Assert.That(groups, Is.Not.Empty);
+            foreach (var group in groups)
+            {
+                var first = group.First();
+                foreach (var member in group)
+                {
+                    Assert.That(result.UpdatedPositions![member * 3], Is.EqualTo(result.UpdatedPositions[first * 3]));
+                    Assert.That(result.UpdatedPositions[member * 3 + 1], Is.EqualTo(result.UpdatedPositions[first * 3 + 1]));
+                    Assert.That(result.UpdatedPositions[member * 3 + 2], Is.EqualTo(result.UpdatedPositions[first * 3 + 2]));
+                }
+            }
+
+            TestContext.Out.WriteLine($"seam groups snapped: {result.SeamViolations} of {groups.Length} multi-vertex position groups");
+        }
+
+        [Test]
+        public void EditorLods_UpdateMethod_RebuildsAnOrthonormalFrameAndKeepsTheHandedness()
+        {
+            foreach (var handedness in new[] { 1f, -1f })
+            {
+                var source = new CommonVertex
+                {
+                    Position = new Vector4(1, 2, 3, 1),
+                    Normal = Vector3.UnitZ,
+                    Tangent = Vector3.UnitX,
+                    BiNormal = Vector3.UnitY * handedness,
+                    Uv = new Vector2(0.2f, 0.3f),
+                    Uv1 = new Vector2(0.7f, 0.8f),
+                    Colour = new Vector4(0.1f, 0.2f, 0.3f, 1f),
+                    BoneIndex = [3, 4],
+                    BoneWeight = [0.6f, 0.4f],
+                    WeightCount = 2,
+                };
+                // The collapse moved the vertex and tilted (and shortened) its normal.
+                var result = new GameWorld.MeshOptimizer.MeshOptSimplifyResult(
+                    [], [0], 1, null!, [1.5f, 2.5f, 3.5f], [0.3f, 0.1f, 0.6f, 0.25f, 0.35f], 5);
+
+                var updated = InvokeStatic<CommonVertex>("BuildUpdatedEditorLodVertex", source, result, 0, 2, null);
+
+                Assert.Multiple(() =>
+                {
+                    Assert.That(updated.Position, Is.EqualTo(new Vector4(1.5f, 2.5f, 3.5f, 1f)));
+                    Assert.That(updated.Uv, Is.EqualTo(new Vector2(0.25f, 0.35f)));
+                    Assert.That(updated.Uv1, Is.EqualTo(source.Uv1));
+                    Assert.That(updated.Colour, Is.EqualTo(source.Colour));
+                    Assert.That(updated.BoneIndex, Is.EqualTo(source.BoneIndex));
+                    Assert.That(updated.BoneWeight, Is.EqualTo(source.BoneWeight));
+                    Assert.That(updated.Normal.Length(), Is.EqualTo(1f).Within(1e-5f));
+                    Assert.That(updated.Tangent.Length(), Is.EqualTo(1f).Within(1e-5f));
+                    Assert.That(updated.BiNormal.Length(), Is.EqualTo(1f).Within(1e-5f));
+                    Assert.That(Vector3.Dot(updated.Normal, updated.Tangent), Is.EqualTo(0f).Within(1e-5f));
+                    Assert.That(Vector3.Dot(updated.Normal, updated.BiNormal), Is.EqualTo(0f).Within(1e-5f));
+                    Assert.That(Math.Sign(Vector3.Dot(Vector3.Cross(updated.Normal, updated.Tangent), updated.BiNormal)), Is.EqualTo((int)handedness));
+                });
+            }
+        }
+
+        [Test]
+        public void EditorLods_UpdateMethod_StaticPartsStayValid()
+        {
+            var rigid = CreateEditorLodRigid(24);
+            foreach (var model in rigid.ModelList.SelectMany(x => x))
+            {
+                model.Material = new WeightedMaterial { BinaryVertexFormat = VertexFormat.Static };
+                foreach (var v in model.Mesh.VertexList)
+                {
+                    v.WeightCount = 0;
+                    v.BoneIndex = [];
+                    v.BoneWeight = [];
+                }
+            }
+
+            var (_, state, _) = RunEditorLodRemake(rigid, settings: UpdateEverywhere());
+
+            Assert.That(GetStateProperty<HashSet<string>>(state, "EditorLodRemadeRigids"), Is.Not.Empty);
+            for (var lod = 1; lod < 4; lod++)
+            {
+                var mesh = rigid.ModelList[lod][0].Mesh;
+                Assert.That(mesh.IndexList.All(i => i < mesh.VertexList.Length), Is.True);
+                Assert.That(mesh.VertexList.All(v => v.WeightCount == 0 && v.BoneIndex.Length == 0), Is.True);
+            }
+        }
+
+        [Test]
+        public void EditorLods_UpdateMethod_ReachesEqualOrLowerShapeErrorThanAttributesOnASphere()
+        {
+            const int longitudes = 48, latitudes = 24;
+            var positions = new List<float>();
+            var normals = new List<float>();
+            var uvs = new List<float>();
+            for (var lat = 0; lat <= latitudes; lat++)
+            {
+                for (var lon = 0; lon <= longitudes; lon++)
+                {
+                    var theta = Math.PI * lat / latitudes;
+                    var phi = 2 * Math.PI * lon / longitudes;
+                    var p = new[] { (float)(Math.Sin(theta) * Math.Cos(phi)), (float)Math.Cos(theta), (float)(Math.Sin(theta) * Math.Sin(phi)) };
+                    positions.AddRange(p);
+                    normals.AddRange(p);
+                    uvs.AddRange([(float)lon / longitudes, (float)lat / latitudes]);
+                }
+            }
+
+            var indices = new List<ushort>();
+            for (var lat = 0; lat < latitudes; lat++)
+            {
+                for (var lon = 0; lon < longitudes; lon++)
+                {
+                    var a = (ushort)(lat * (longitudes + 1) + lon);
+                    var b = (ushort)(a + 1);
+                    var c = (ushort)(a + longitudes + 1);
+                    var d = (ushort)(c + 1);
+                    indices.AddRange([a, c, b, b, c, d]);
+                }
+            }
+
+            var plain = new GameWorld.MeshOptimizer.MeshOptReducerOptions { TargetError = 0.2f, LockBorder = false };
+            var attributes = GameWorld.MeshOptimizer.MeshOptSimplifier.Simplify(positions.ToArray(), normals.ToArray(), uvs.ToArray(), indices.ToArray(), 0.25f, plain);
+            var update = GameWorld.MeshOptimizer.MeshOptSimplifier.Simplify(positions.ToArray(), normals.ToArray(), uvs.ToArray(), indices.ToArray(), 0.25f, plain with { UpdateVertices = true });
+            Assert.That(update.Stats.AchievedTriangleCount, Is.InRange(attributes.Stats.AchievedTriangleCount * 0.9, attributes.Stats.AchievedTriangleCount * 1.1));
+
+            Vector3 P(float[] source, int v) => new(source[v * 3], source[v * 3 + 1], source[v * 3 + 2]);
+            var sourcePoints = Enumerable.Range(0, positions.Count / 3).Select(v => P(positions.ToArray(), v)).ToArray();
+            var attributeSurface = Enumerable.Range(0, positions.Count / 3).Select(v => P(positions.ToArray(), v)).ToArray();
+            var updateSurface = Enumerable.Range(0, positions.Count / 3).Select(v => P(update.UpdatedPositions!, v)).ToArray();
+            // Surfaces indexed in the source vertex space: map the compact indices back through the remap.
+            ushort[] Back(GameWorld.MeshOptimizer.MeshOptSimplifyResult r)
+            {
+                var inverse = new ushort[r.VertexCount];
+                for (var old = 0; old < r.Remap.Length; old++)
+                {
+                    if (r.Remap[old] != uint.MaxValue)
+                        inverse[r.Remap[old]] = (ushort)old;
+                }
+
+                return r.Indices.Select(i => inverse[i]).ToArray();
+            }
+
+            var attributeError = InvokeStatic<float[]>("SurfaceDistances", sourcePoints, attributeSurface, Back(attributes)).Average();
+            var updateError = InvokeStatic<float[]>("SurfaceDistances", sourcePoints, updateSurface, Back(update)).Average();
+            TestContext.Out.WriteLine($"mean shape error: attributes {attributeError:0.00000}, update {updateError:0.00000}");
+            Assert.That(updateError, Is.LessThanOrEqualTo(attributeError * 1.001f));
+        }
+
+        [Test]
+        public void EditorLods_LevelSyntax_ParsesTheUpdateMethod()
+        {
+            var parsed = Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.02:locked,0.04:locked:update,0.08:free:update:attr0.5");
+            Assert.Multiple(() =>
+            {
+                Assert.That(parsed[0].Method, Is.EqualTo(Editors.PackOptimizer.Core.EditorLodSimplifyMethod.Attributes));
+                Assert.That(parsed[1].Method, Is.EqualTo(Editors.PackOptimizer.Core.EditorLodSimplifyMethod.Update));
+                Assert.That(parsed[2], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(
+                    0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f, Editors.PackOptimizer.Core.EditorLodSimplifyMethod.Update)));
+                Assert.That(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default.All(x => x.Method == Editors.PackOptimizer.Core.EditorLodSimplifyMethod.Attributes), Is.True);
+            });
+        }
+
         [Test]
         public void EditorLods_OptionDefaultsToOff_AndTheVersionIsBumped()
         {

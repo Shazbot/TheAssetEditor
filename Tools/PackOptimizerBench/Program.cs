@@ -193,6 +193,7 @@ internal static class Program
                 DropUnreadAlpha = true,
                 RemakeEditorLods = !options.GetValueOrDefault("editor-lods", "true").Equals("false", StringComparison.OrdinalIgnoreCase),
                 EditorLodBoneWeight = float.Parse(options.GetValueOrDefault("editor-lod-bone-weight", new PackOptimizerOptions().EditorLodBoneWeight.ToString(CultureInfo.InvariantCulture)), CultureInfo.InvariantCulture),
+                EditorLodUpdateNearestWeights = options.GetValueOrDefault("editor-lod-update-nearest", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
                 EditorLodJointPriority = options.GetValueOrDefault("editor-lod-joint-priority", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
                 EditorLodReportSkinningError = options.GetValueOrDefault("editor-lod-skinning-report", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
                 // --editor-lod-levels "0.02:locked,0.04:locked,0.08:free" (LOD1, LOD2, LOD3 and deeper)

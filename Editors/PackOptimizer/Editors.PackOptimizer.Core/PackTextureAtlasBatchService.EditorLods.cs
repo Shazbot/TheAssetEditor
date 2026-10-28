@@ -16,6 +16,14 @@ namespace Editors.PackOptimizer.Core
         private const int EditorLodMaxLevels = 16;
         private const float EditorLodErrorLimitedShare = 0.8f;
 
+        private sealed class ShapeSamples
+        {
+            public List<float> ForwardAbs { get; } = [];
+            public List<float> ForwardRel { get; } = [];
+            public List<float> ReverseAbs { get; } = [];
+            public List<float> ReverseRel { get; } = [];
+        }
+
         private sealed record VanishedComponent(string Rigid, int Lod, int Part, int Triangles, Vector3 Size);
 
         private sealed class EditorLodRemakeResult
@@ -41,6 +49,12 @@ namespace Editors.PackOptimizer.Core
             public long[] VanishedComponentTriangles { get; } = new long[EditorLodMaxLevels];
             public int[] SourceComponents { get; } = new int[EditorLodMaxLevels];
             public List<VanishedComponent> Vanished { get; } = [];
+            public int SeamGroupsSnapped { get; set; }
+            public int UpdatedParts { get; set; }
+            // Report-only shape error per LOD level (old LOD and rebuilt LOD, same parts): LOD0 samples to the LOD surface
+            // (forward) and LOD samples to the LOD0 surface (reverse); absolute and relative to the part's LOD0 bounding diagonal.
+            public ShapeSamples[] ShapeOld { get; } = Enumerable.Range(0, EditorLodMaxLevels).Select(_ => new ShapeSamples()).ToArray();
+            public ShapeSamples[] ShapeNew { get; } = Enumerable.Range(0, EditorLodMaxLevels).Select(_ => new ShapeSamples()).ToArray();
             // Skinning-error samples per LOD level (old LODs and the rebuilt ones, same parts and vertices).
             public List<float>[] SkinningOld { get; } = Enumerable.Range(0, EditorLodMaxLevels).Select(_ => new List<float>()).ToArray();
             public List<float>[] SkinningNew { get; } = Enumerable.Range(0, EditorLodMaxLevels).Select(_ => new List<float>()).ToArray();
@@ -263,6 +277,7 @@ namespace Editors.PackOptimizer.Core
                     RegularizeLight = levelSettings.Flags.HasFlag(EditorLodSimplifyFlags.RegularizeLight),
                     ErrorClamped = levelSettings.Flags.HasFlag(EditorLodSimplifyFlags.ErrorClamped),
                     Prune = levelSettings.Flags.HasFlag(EditorLodSimplifyFlags.Prune),
+                    UpdateVertices = levelSettings.Method == EditorLodSimplifyMethod.Update,
                     NormalWeight = defaultOptions.NormalWeight * levelSettings.AttributeScale,
                     TextureCoordinateWeight = defaultOptions.TextureCoordinateWeight * levelSettings.AttributeScale,
                 };
@@ -275,6 +290,9 @@ namespace Editors.PackOptimizer.Core
                 var pendingError = 0;
                 var pendingTopology = 0;
                 var pendingSkinned = 0;
+                var pendingSnapped = 0;
+                var pendingUpdated = 0;
+                var surfaces = new (Vector3[] Positions, ushort[] Indices)?[parts.Length];
 
                 for (var g = 0; g < parts.Length; g++)
                 {
@@ -314,6 +332,10 @@ namespace Editors.PackOptimizer.Core
                     }
 
                     var indexArray = indices.ToArray();
+                    if (state.EditorLodReportSkinningError)
+                    {
+                        surfaces[g] = (Enumerable.Range(0, vertexCount).Select(i => new Vector3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])).ToArray(), indexArray);
+                    }
                     var skinned = EditorLodWeightCount(parts[g]) > 0;
                     float[] boneEmbedding = [];
                     byte[] jointFlags = [];
@@ -342,11 +364,24 @@ namespace Editors.PackOptimizer.Core
 
                     var targetWeights = EditorLodWeightCount(parts[g]);
                     var output = new CommonVertex[simplified.VertexCount];
+                    NearestVertexGrid? nearestGrid = null;
+                    if (simplified.HasUpdate && state.EditorLodUpdateNearestWeights && targetWeights > 0)
+                        nearestGrid = new NearestVertexGrid(vertices);
                     for (var old = 0; old < simplified.Remap.Length; old++)
                     {
                         var mapped = simplified.Remap[old];
-                        if (mapped != uint.MaxValue)
-                            output[mapped] = ConvertEditorLodVertex(vertices[old], targetWeights);
+                        if (mapped == uint.MaxValue)
+                            continue;
+
+                        output[mapped] = simplified.HasUpdate
+                            ? BuildUpdatedEditorLodVertex(vertices[old], simplified, old, targetWeights, nearestGrid)
+                            : ConvertEditorLodVertex(vertices[old], targetWeights);
+                    }
+
+                    if (simplified.HasUpdate)
+                    {
+                        pendingUpdated++;
+                        pendingSnapped += simplified.SeamViolations;
                     }
 
                     rebuilt[g] = new RmvMesh { VertexList = output, IndexList = simplified.Indices };
@@ -388,6 +423,14 @@ namespace Editors.PackOptimizer.Core
                         result.SkinningNew[Math.Min(lod, EditorLodMaxLevels - 1)].AddRange(SampleEditorLodSkinningError(lod0Vertices, rebuilt[g]!));
                     }
 
+                    if (state.EditorLodReportSkinningError && surfaces[g] is { } surface)
+                    {
+                        var lod0Vertices = groups[g].SelectMany(m => lod0[m].Mesh.VertexList).ToArray();
+                        var level = Math.Min(lod, EditorLodMaxLevels - 1);
+                        AddShapeSamples(result.ShapeOld[level], lod0Vertices, surface, model.Mesh);
+                        AddShapeSamples(result.ShapeNew[level], lod0Vertices, surface, rebuilt[g]!);
+                    }
+
                     var vertexSize = (long)vertexFactory.GetVertexSize(model.Material.BinaryVertexFormat, version);
                     result.TrianglesBefore[Math.Min(lod, EditorLodMaxLevels - 1)] += model.Mesh.IndexList.Length / 3;
                     result.BytesBefore[Math.Min(lod, EditorLodMaxLevels - 1)] +=
@@ -402,6 +445,8 @@ namespace Editors.PackOptimizer.Core
                 result.LodsReplaced++;
                 result.LodsReplacedByLevel[Math.Min(lod, EditorLodMaxLevels - 1)]++;
                 result.PartsRebuilt += pendingRebuilt;
+                result.UpdatedParts += pendingUpdated;
+                result.SeamGroupsSnapped += pendingSnapped;
                 result.SourceComponents[Math.Min(lod, EditorLodMaxLevels - 1)] += pendingSourceComponents;
                 result.VanishedComponents[Math.Min(lod, EditorLodMaxLevels - 1)] += pendingVanished.Count;
                 result.VanishedComponentTriangles[Math.Min(lod, EditorLodMaxLevels - 1)] += pendingVanished.Sum(x => (long)x.Triangles);
@@ -491,6 +536,154 @@ namespace Editors.PackOptimizer.Core
                 .Where(entry => !alive.Contains(entry.Key))
                 .Select(entry => new VanishedComponent(rigidPath, lod, part, entry.Value, max[entry.Key] - min[entry.Key]))
                 .ToList();
+        }
+
+        // Rebuilds a kept vertex after meshopt_simplifyWithUpdate: position, UV0 and normal come from the updated
+        // values; the tangent frame is rebuilt from the original tangent and handedness; bones, UV1, colour and the
+        // rest come from the original record (or, optionally, bones from the nearest LOD0 vertex).
+        internal static CommonVertex BuildUpdatedEditorLodVertex(
+            CommonVertex source, MeshOptSimplifyResult result, int old, int targetWeights, NearestVertexGrid? nearest)
+        {
+            var position = new Vector4(
+                result.UpdatedPositions![old * 3], result.UpdatedPositions[old * 3 + 1], result.UpdatedPositions[old * 3 + 2], source.Position.W);
+            var a = result.AttributeCount;
+            var attributes = result.UpdatedAttributes!;
+            var normal = new Vector3(attributes[old * a], attributes[old * a + 1], attributes[old * a + 2]);
+            normal = normal.LengthSquared() < 1e-12f ? source.Normal : Vector3.Normalize(normal);
+            var uv = new Vector2(attributes[old * a + 3], attributes[old * a + 4]);
+
+            var handedness = Vector3.Dot(Vector3.Cross(source.Normal, source.Tangent), source.BiNormal) < 0 ? -1f : 1f;
+            var tangent = source.Tangent - normal * Vector3.Dot(normal, source.Tangent);
+            if (tangent.LengthSquared() < 1e-12f)
+                tangent = Vector3.Cross(normal, MathF.Abs(normal.X) < 0.9f ? Vector3.UnitX : Vector3.UnitY);
+            tangent = Vector3.Normalize(tangent);
+            var binormal = Vector3.Normalize(Vector3.Cross(normal, tangent) * handedness);
+
+            var boneSource = nearest != null ? nearest.Nearest(new Vector3(position.X, position.Y, position.Z)) : source;
+            var converted = ConvertEditorLodVertex(source, targetWeights);
+            var bones = ConvertEditorLodVertex(boneSource, targetWeights);
+            converted.Position = position;
+            converted.Normal = normal;
+            converted.Tangent = tangent;
+            converted.BiNormal = binormal;
+            converted.Uv = uv;
+            converted.BoneIndex = bones.BoneIndex;
+            converted.BoneWeight = bones.BoneWeight;
+            return converted;
+        }
+
+        // Uniform grid over the LOD0 vertices of one part, for nearest-vertex lookups.
+        internal sealed class NearestVertexGrid
+        {
+            private readonly CommonVertex[] _vertices;
+            private readonly Dictionary<(int, int, int), List<int>> _cells = [];
+            private readonly float _cell;
+
+            public NearestVertexGrid(CommonVertex[] vertices)
+            {
+                _vertices = vertices;
+                var min = new Vector3(float.MaxValue);
+                var max = new Vector3(float.MinValue);
+                foreach (var v in vertices)
+                {
+                    var p = new Vector3(v.Position.X, v.Position.Y, v.Position.Z);
+                    min = Vector3.Min(min, p);
+                    max = Vector3.Max(max, p);
+                }
+
+                var extent = Math.Max((max - min).Length(), 1e-6f);
+                _cell = extent / Math.Max(4f, MathF.Cbrt(vertices.Length));
+                for (var i = 0; i < vertices.Length; i++)
+                {
+                    var key = Key(new Vector3(vertices[i].Position.X, vertices[i].Position.Y, vertices[i].Position.Z));
+                    if (!_cells.TryGetValue(key, out var list))
+                        _cells[key] = list = [];
+                    list.Add(i);
+                }
+            }
+
+            private (int, int, int) Key(Vector3 p) => ((int)MathF.Floor(p.X / _cell), (int)MathF.Floor(p.Y / _cell), (int)MathF.Floor(p.Z / _cell));
+
+            public CommonVertex Nearest(Vector3 p)
+            {
+                var center = Key(p);
+                var best = -1;
+                var bestDistance = float.MaxValue;
+                for (var radius = 0; radius < 64; radius++)
+                {
+                    for (var x = -radius; x <= radius; x++)
+                    for (var y = -radius; y <= radius; y++)
+                    for (var z = -radius; z <= radius; z++)
+                    {
+                        if (Math.Max(Math.Abs(x), Math.Max(Math.Abs(y), Math.Abs(z))) != radius)
+                            continue;
+                        if (!_cells.TryGetValue((center.Item1 + x, center.Item2 + y, center.Item3 + z), out var list))
+                            continue;
+                        foreach (var i in list)
+                        {
+                            var d = Vector3.DistanceSquared(p, new Vector3(_vertices[i].Position.X, _vertices[i].Position.Y, _vertices[i].Position.Z));
+                            if (d < bestDistance)
+                            {
+                                bestDistance = d;
+                                best = i;
+                            }
+                        }
+                    }
+
+                    // Everything within the found distance has been seen once the ring radius passes it.
+                    if (best >= 0 && MathF.Sqrt(bestDistance) <= radius * _cell)
+                        break;
+                }
+
+                return _vertices[best >= 0 ? best : 0];
+            }
+        }
+
+        private static void AddShapeSamples(ShapeSamples target, CommonVertex[] lod0Vertices, (Vector3[] Positions, ushort[] Indices) lod0Surface, RmvMesh lod)
+        {
+            if (lod0Vertices.Length == 0 || lod.VertexList.Length == 0 || lod.IndexList.Length < 3)
+                return;
+
+            var min = new Vector3(float.MaxValue);
+            var max = new Vector3(float.MinValue);
+            foreach (var p in lod0Surface.Positions)
+            {
+                min = Vector3.Min(min, p);
+                max = Vector3.Max(max, p);
+            }
+
+            var size = Math.Max((max - min).Length(), 1e-9f);
+            var lodPositions = lod.VertexList.Select(v => new Vector3(v.Position.X, v.Position.Y, v.Position.Z)).ToArray();
+            var lod0Points = lod0Vertices.Select(v => new Vector3(v.Position.X, v.Position.Y, v.Position.Z)).ToArray();
+            var forward = SurfaceDistances(Sample(lod0Points), lodPositions, lod.IndexList);
+            var reverse = SurfaceDistances(Sample(lodPositions), lod0Surface.Positions, lod0Surface.Indices);
+            target.ForwardAbs.AddRange(forward);
+            target.ForwardRel.AddRange(forward.Select(x => x / size));
+            target.ReverseAbs.AddRange(reverse);
+            target.ReverseRel.AddRange(reverse.Select(x => x / size));
+        }
+
+        private static Vector3[] Sample(Vector3[] points)
+        {
+            var step = Math.Max(1, points.Length / EditorLodSkinningSamplesPerPart);
+            return points.Where((_, i) => i % step == 0).ToArray();
+        }
+
+        internal static float[] SurfaceDistances(Vector3[] points, Vector3[] surface, ushort[] indices)
+        {
+            var result = new float[points.Length];
+            Parallel.For(0, points.Length, k =>
+            {
+                var best = float.MaxValue;
+                for (var t = 0; t + 2 < indices.Length; t += 3)
+                {
+                    var closest = ClosestPointOnTriangle(points[k], surface[indices[t]], surface[indices[t + 1]], surface[indices[t + 2]], out _);
+                    best = Math.Min(best, Vector3.DistanceSquared(points[k], closest));
+                }
+
+                result[k] = MathF.Sqrt(best);
+            });
+            return result;
         }
 
         private const int EditorLodEmbeddingSize = 4;
@@ -789,7 +982,8 @@ namespace Editors.PackOptimizer.Core
                         $"LOD{level}{(level == r.Settings.Count ? "+" : string.Empty)} {r.Settings[level - 1].TargetError.ToString("0.###", inv)} " +
                         $"{(r.Settings[level - 1].LockBorder ? "locked" : "free")}" +
                         (r.Settings[level - 1].Flags == EditorLodSimplifyFlags.None ? string.Empty : $" [{r.Settings[level - 1].Flags}]") +
-                        (r.Settings[level - 1].AttributeScale == 1f ? string.Empty : $" attr x{r.Settings[level - 1].AttributeScale.ToString("0.###", inv)}"))));
+                        (r.Settings[level - 1].AttributeScale == 1f ? string.Empty : $" attr x{r.Settings[level - 1].AttributeScale.ToString("0.###", inv)}") +
+                        (r.Settings[level - 1].Method == EditorLodSimplifyMethod.Update ? " update" : string.Empty))));
             string Tiers(Dictionary<EditorLodEvidence, int> counts)
                 => counts.Count == 0
                     ? "(none)"
@@ -865,6 +1059,39 @@ namespace Editors.PackOptimizer.Core
                     sb.AppendLine(
                         $"  {entry.Rigid} LOD {entry.Lod} part {entry.Part}: {entry.Triangles:N0} tris, " +
                         $"{entry.Size.X.ToString("0.###", inv)} x {entry.Size.Y.ToString("0.###", inv)} x {entry.Size.Z.ToString("0.###", inv)}");
+                }
+            }
+
+            if (state.EditorLodReportSkinningError)
+            {
+                if (r.UpdatedParts != 0)
+                {
+                    sb.AppendLine(
+                        $"Update method: {r.UpdatedParts:N0} part(s) rebuilt with meshopt_simplifyWithUpdate; seam groups snapped to one position " +
+                        $"(meshoptimizer moved their members apart): {r.SeamGroupsSnapped:N0}" +
+                        (state.EditorLodUpdateNearestWeights ? "; bone weights taken from the nearest LOD0 vertex" : string.Empty));
+                }
+
+                sb.AppendLine("Shape error (report only): distance between the LOD and the LOD0 surface; forward = LOD0 sample vertices to the LOD surface, reverse = LOD vertices to the LOD0 surface; relative = fraction of the part's LOD0 bounding diagonal; up to 128 samples per part");
+                static string ShapeStat(List<float> values, string format)
+                {
+                    if (values.Count == 0)
+                        return "n/a";
+                    var sorted = values.Order().ToArray();
+                    return $"mean {sorted.Average().ToString(format, CultureInfo.InvariantCulture)}, p95 {sorted[(int)Math.Min(sorted.Length - 1, Math.Floor(sorted.Length * 0.95))].ToString(format, CultureInfo.InvariantCulture)}";
+                }
+
+                for (var level = 1; level < EditorLodMaxLevels; level++)
+                {
+                    if (r.ShapeOld[level].ForwardAbs.Count == 0)
+                        continue;
+
+                    foreach (var (label, samples) in new[] { ("old", r.ShapeOld[level]), ("new", r.ShapeNew[level]) })
+                    {
+                        sb.AppendLine(
+                            $"  LOD {level} {label}: forward rel {ShapeStat(samples.ForwardRel, "0.00000")}, abs {ShapeStat(samples.ForwardAbs, "0.00000")}; " +
+                            $"reverse rel {ShapeStat(samples.ReverseRel, "0.00000")}, abs {ShapeStat(samples.ReverseAbs, "0.00000")} ({samples.ForwardAbs.Count:N0} + {samples.ReverseAbs.Count:N0} samples)");
+                    }
                 }
             }
 

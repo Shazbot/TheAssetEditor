@@ -245,6 +245,7 @@ namespace Editors.PackOptimizer.Core
                 state.EditorLodSettings = EditorLodLevelSettings.Validate(options.EditorLodSettings);
                 state.EditorLodBoneWeight = options.EditorLodBoneWeight;
                 state.EditorLodJointPriority = options.EditorLodJointPriority;
+                state.EditorLodUpdateNearestWeights = options.EditorLodUpdateNearestWeights;
                 state.EditorLodReportSkinningError = options.EditorLodReportSkinningError;
                 // The repack writes textures, so it is ignored in cross-rigid-only mode (see
                 // ResolveSharedTextureRepack); next to atlasing and cross-rigid merges it runs

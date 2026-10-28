@@ -47,6 +47,26 @@ internal static partial class MeshOptNative
         uint options,
         float* resultError);
 
+    // Simplifies in place: indices, vertex positions and attributes are updated (kept vertices move to the
+    // collapse result's position and attribute values).
+    [LibraryImport(LibraryName, EntryPoint = "meshopt_simplifyWithUpdate")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static unsafe partial nuint SimplifyWithUpdate(
+        uint* indices,
+        nuint indexCount,
+        float* vertexPositions,
+        nuint vertexCount,
+        nuint vertexPositionsStride,
+        float* vertexAttributes,
+        nuint vertexAttributesStride,
+        float* attributeWeights,
+        nuint attributeCount,
+        byte* vertexLock,
+        nuint targetIndexCount,
+        float targetError,
+        uint options,
+        float* resultError);
+
     [LibraryImport(LibraryName, EntryPoint = "meshopt_simplifyScale")]
     [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
     internal static unsafe partial float SimplifyScale(float* vertexPositions, nuint vertexCount, nuint vertexPositionsStride);

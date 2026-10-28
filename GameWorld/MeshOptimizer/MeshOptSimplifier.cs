@@ -12,6 +12,8 @@ public sealed record MeshOptReducerOptions
     public bool RegularizeLight { get; init; }
     public bool PreserveFolds { get; init; }
     public bool ErrorClamped { get; init; }
+    /// <summary>Use meshopt_simplifyWithUpdate: kept vertices move and the result carries their updated positions and attributes.</summary>
+    public bool UpdateVertices { get; init; }
     public float NormalWeight { get; init; } = 0.5f;
     public float TextureCoordinateWeight { get; init; } = 1.0f;
 }
@@ -35,7 +37,22 @@ public sealed record MeshOptReducerStats(
 /// when the vertex is no longer used. <see cref="VertexCount"/> is the compact output vertex count.
 /// When the reduction was skipped, <see cref="Indices"/> is a copy of the input and <see cref="Remap"/> is the identity.
 /// </summary>
-public sealed record MeshOptSimplifyResult(ushort[] Indices, uint[] Remap, int VertexCount, MeshOptReducerStats Stats);
+public sealed record MeshOptSimplifyResult(
+    ushort[] Indices,
+    uint[] Remap,
+    int VertexCount,
+    MeshOptReducerStats Stats,
+    float[]? UpdatedPositions = null,
+    float[]? UpdatedAttributes = null,
+    int AttributeCount = 0,
+    int SeamViolations = 0)
+{
+    /// <summary>
+    /// Update mode only: positions (3 floats), then normal (3), UV0 (2) and any extra attributes, per SOURCE vertex.
+    /// Seam groups (vertices sharing a position in the input) were snapped to one position when meshoptimizer split them.
+    /// </summary>
+    public bool HasUpdate => UpdatedPositions != null;
+}
 
 public static class MeshOptSimplifier
 {
@@ -244,22 +261,47 @@ public static class MeshOptSimplifier
             fixed (uint* optimizedIndicesPointer = optimizedIndices)
             fixed (uint* remapPointer = vertexRemap)
             {
-                simplifiedIndexCount = MeshOptNative.SimplifyWithAttributes(
-                    simplifiedIndicesPointer,
-                    indicesPointer,
-                    (nuint)nativeIndexCount,
-                    positionsPointer,
-                    (nuint)vertexCount,
-                    PositionStride,
-                    attributesPointer,
-                    attributeStride,
-                    weightsPointer,
-                    (nuint)attributeCount,
-                    vertexFlags.Length == 0 ? null : flagsPointer,
-                    (nuint)nativeRequestedIndexCount,
-                    options.TargetError,
-                    simplifyFlags,
-                    &resultErrorRelative);
+                // The scale of the source mesh, before an update moves its vertices.
+                meshScale = MeshOptNative.SimplifyScale(positionsPointer, (nuint)vertexCount, PositionStride);
+
+                if (options.UpdateVertices)
+                {
+                    Array.Copy(nativeIndices, simplifiedIndices, nativeIndexCount);
+                    simplifiedIndexCount = MeshOptNative.SimplifyWithUpdate(
+                        simplifiedIndicesPointer,
+                        (nuint)nativeIndexCount,
+                        positionsPointer,
+                        (nuint)vertexCount,
+                        PositionStride,
+                        attributesPointer,
+                        attributeStride,
+                        weightsPointer,
+                        (nuint)attributeCount,
+                        vertexFlags.Length == 0 ? null : flagsPointer,
+                        (nuint)nativeRequestedIndexCount,
+                        options.TargetError,
+                        simplifyFlags,
+                        &resultErrorRelative);
+                }
+                else
+                {
+                    simplifiedIndexCount = MeshOptNative.SimplifyWithAttributes(
+                        simplifiedIndicesPointer,
+                        indicesPointer,
+                        (nuint)nativeIndexCount,
+                        positionsPointer,
+                        (nuint)vertexCount,
+                        PositionStride,
+                        attributesPointer,
+                        attributeStride,
+                        weightsPointer,
+                        (nuint)attributeCount,
+                        vertexFlags.Length == 0 ? null : flagsPointer,
+                        (nuint)nativeRequestedIndexCount,
+                        options.TargetError,
+                        simplifyFlags,
+                        &resultErrorRelative);
+                }
 
                 if (simplifiedIndexCount > (nuint)simplifiedIndices.Length)
                     throw new InvalidDataException("meshopt_simplifyWithAttributes returned more indices than its destination buffer can hold.");
@@ -285,7 +327,6 @@ public static class MeshOptSimplifier
                 if (compactVertexCount > (nuint)vertexCount)
                     throw new InvalidDataException("meshopt_optimizeVertexFetchRemap returned more vertices than the input buffer contains.");
 
-                meshScale = MeshOptNative.SimplifyScale(positionsPointer, (nuint)vertexCount, PositionStride);
             }
         }
 
@@ -310,6 +351,10 @@ public static class MeshOptSimplifier
         if (!float.IsFinite(resultErrorRelative) || !float.IsFinite(meshScale) || meshScale < 0)
             throw new InvalidDataException("meshoptimizer returned a non-finite simplification error or mesh scale.");
 
+        var seamViolations = 0;
+        if (options.UpdateVertices)
+            seamViolations = SnapSeamGroups(positions, positionArray, simplifiedIndices, (int)simplifiedIndexCount);
+
         var achievedTriangleCount = outputIndices.Length / 3;
         var errorLimited = IsErrorLimited(achievedTriangleCount, requestedTriangleCount, resultErrorRelative, options.TargetError);
         var targetReached = achievedTriangleCount <= requestedTriangleCount;
@@ -328,7 +373,70 @@ public static class MeshOptSimplifier
             false,
             null);
 
-        return new MeshOptSimplifyResult(outputIndices, vertexRemap, (int)compactVertexCount, stats);
+        return options.UpdateVertices
+            ? new MeshOptSimplifyResult(outputIndices, vertexRemap, (int)compactVertexCount, stats, positionArray, attributes, attributeCount, seamViolations)
+            : new MeshOptSimplifyResult(outputIndices, vertexRemap, (int)compactVertexCount, stats);
+    }
+
+    // Vertices that shared a position in the input must share one after the update (a UV or normal seam must not
+    // open). Where meshoptimizer moved the members of a group apart, snap them to the group's mean. Returns the
+    // number of groups that had to be snapped.
+    private static int SnapSeamGroups(ReadOnlySpan<float> sourcePositions, float[] updated, uint[] usedIndices, int usedCount)
+    {
+        var used = new HashSet<uint>();
+        for (var i = 0; i < usedCount; i++)
+            used.Add(usedIndices[i]);
+
+        var groups = new Dictionary<(uint, uint, uint), List<int>>();
+        for (var v = 0; v < sourcePositions.Length / 3; v++)
+        {
+            if (!used.Contains((uint)v))
+                continue;
+
+            var key = (BitConverter.SingleToUInt32Bits(sourcePositions[v * 3]), BitConverter.SingleToUInt32Bits(sourcePositions[v * 3 + 1]), BitConverter.SingleToUInt32Bits(sourcePositions[v * 3 + 2]));
+            if (!groups.TryGetValue(key, out var list))
+                groups[key] = list = [];
+            list.Add(v);
+        }
+
+        var snapped = 0;
+        foreach (var members in groups.Values)
+        {
+            if (members.Count < 2)
+                continue;
+
+            var first = members[0];
+            var differs = false;
+            foreach (var member in members)
+            {
+                if (updated[member * 3] != updated[first * 3] || updated[member * 3 + 1] != updated[first * 3 + 1] || updated[member * 3 + 2] != updated[first * 3 + 2])
+                {
+                    differs = true;
+                    break;
+                }
+            }
+
+            if (!differs)
+                continue;
+
+            snapped++;
+            double x = 0, y = 0, z = 0;
+            foreach (var member in members)
+            {
+                x += updated[member * 3];
+                y += updated[member * 3 + 1];
+                z += updated[member * 3 + 2];
+            }
+
+            foreach (var member in members)
+            {
+                updated[member * 3] = (float)(x / members.Count);
+                updated[member * 3 + 1] = (float)(y / members.Count);
+                updated[member * 3 + 2] = (float)(z / members.Count);
+            }
+        }
+
+        return snapped;
     }
 
     private static int CalculateTargetIndexCount(int indexCount, float factor)

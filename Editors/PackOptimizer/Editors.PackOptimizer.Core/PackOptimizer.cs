@@ -34,12 +34,22 @@ namespace Editors.PackOptimizer.Core
         Prune = 8,
     }
 
+    /// <summary>How an editor-LOD level simplifies.</summary>
+    public enum EditorLodSimplifyMethod
+    {
+        /// <summary>meshopt_simplifyWithAttributes: only original vertices survive (the default).</summary>
+        Attributes = 0,
+        /// <summary>meshopt_simplifyWithUpdate: kept vertices move to the collapse result; the tangent frame is rebuilt.</summary>
+        Update = 1,
+    }
+
     /// <summary>Simplifier settings for one LOD level of the editor LOD rebuild.</summary>
     public sealed record EditorLodLevelSettings(
         float TargetError,
         bool LockBorder,
         EditorLodSimplifyFlags Flags = EditorLodSimplifyFlags.None,
-        float AttributeScale = 1f)
+        float AttributeScale = 1f,
+        EditorLodSimplifyMethod Method = EditorLodSimplifyMethod.Attributes)
     {
         /// <summary>The first LOD level (1-based) on which <see cref="EditorLodSimplifyFlags.Prune"/> may be used.</summary>
         public const int FirstPruneLevel = 3;
@@ -88,8 +98,21 @@ namespace Editors.PackOptimizer.Core
                     var pieces = part.Split(':', StringSplitOptions.TrimEntries);
                     var flags = EditorLodSimplifyFlags.None;
                     var scale = 1f;
+                    var method = EditorLodSimplifyMethod.Attributes;
                     foreach (var extra in pieces.Skip(2))
                     {
+                        if (extra.Equals("update", StringComparison.OrdinalIgnoreCase))
+                        {
+                            method = EditorLodSimplifyMethod.Update;
+                            continue;
+                        }
+
+                        if (extra.Equals("attributes", StringComparison.OrdinalIgnoreCase))
+                        {
+                            method = EditorLodSimplifyMethod.Attributes;
+                            continue;
+                        }
+
                         if (extra.StartsWith("attr", StringComparison.OrdinalIgnoreCase))
                         {
                             scale = float.Parse(extra[4..], System.Globalization.CultureInfo.InvariantCulture);
@@ -113,7 +136,8 @@ namespace Editors.PackOptimizer.Core
                         float.Parse(pieces[0], System.Globalization.CultureInfo.InvariantCulture),
                         !(pieces.Length > 1 && pieces[1].Equals("free", StringComparison.OrdinalIgnoreCase)),
                         flags,
-                        scale);
+                        scale,
+                        method);
                 })
                 .ToArray();
             return Validate(table);
@@ -178,6 +202,8 @@ namespace Editors.PackOptimizer.Core
         public float EditorLodBoneWeight { get; init; } = 2f;
         /// <summary>Marks vertices whose dominant bone differs from a neighbour's as priority vertices (off by default).</summary>
         public bool EditorLodJointPriority { get; init; }
+        /// <summary>Update method only: take bone weights from the nearest LOD0 vertex of the same part instead of the collapsed vertex's own record (off by default).</summary>
+        public bool EditorLodUpdateNearestWeights { get; init; }
         /// <summary>Samples the skinning error of the rebuilt LODs for the report (report-only, costs time; off by default).</summary>
         public bool EditorLodReportSkinningError { get; init; }
     }
