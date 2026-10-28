@@ -678,12 +678,15 @@ namespace Editors.PackOptimizer.Core
                 for (var t = 0; t + 2 < indices.Length; t += 3)
                 {
                     var closest = ClosestPointOnTriangle(points[k], surface[indices[t]], surface[indices[t + 1]], surface[indices[t + 2]], out _);
-                    best = Math.Min(best, Vector3.DistanceSquared(points[k], closest));
+                    var distance = Vector3.DistanceSquared(points[k], closest);
+                    // Degenerate (zero-area) triangles give NaN; they have no surface to measure against.
+                    if (float.IsFinite(distance))
+                        best = Math.Min(best, distance);
                 }
 
-                result[k] = MathF.Sqrt(best);
+                result[k] = best == float.MaxValue ? float.NaN : MathF.Sqrt(best);
             });
-            return result;
+            return result.Where(float.IsFinite).ToArray();
         }
 
         private const int EditorLodEmbeddingSize = 4;
