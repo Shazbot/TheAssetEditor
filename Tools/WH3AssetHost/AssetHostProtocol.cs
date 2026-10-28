@@ -15,7 +15,8 @@ public sealed record AssetHostExportRequest(
     bool IncludeSkeleton = true,
     bool MirrorMesh = true,
     IReadOnlyList<AssetHostVariantMeshSelection>? VariantSelections = null,
-    IReadOnlyList<AssetHostAnimationSelection>? AnimationSelections = null);
+    IReadOnlyList<AssetHostAnimationSelection>? AnimationSelections = null,
+    bool AnimationsOnly = false);
 
 public sealed record AssetHostVariantMeshSelection(string SlotPath, int ChoiceIndex);
 
@@ -227,7 +228,7 @@ public static class AssetHostProtocol
         ?? "unknown";
 
     public static readonly IReadOnlyList<string> Capabilities =
-        ["hello", "initialize", "getAnimationCatalog", "getVariantMeshComposition", "exportModel", "exportModelBatch", "exportPaintedVariant", "paintedVariantRgba", "paintedVariantSourceOverride", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
+        ["hello", "initialize", "getAnimationCatalog", "getVariantMeshComposition", "exportModel", "exportModelBatch", "exportAnimations", "exportPaintedVariant", "paintedVariantRgba", "paintedVariantSourceOverride", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
 }
 
 /// <summary>
@@ -308,6 +309,7 @@ public sealed class AssetHostDispatcher : IDisposable
                 "getVariantMeshComposition" => HandleGetVariantMeshComposition(request, requestId),
                 "exportModel" => HandleExportModel(request, requestId),
                 "exportModelBatch" => HandleExportModelBatch(request, requestId),
+                "exportAnimations" => HandleExportAnimations(request, requestId),
                 "exportPaintedVariant" => HandleExportPaintedVariant(request, requestId),
                 "shutdown" => HandleShutdown(requestId),
                 _ => AssetHostResponse.Fail(requestId, command, "UnknownCommand", $"Unknown command '{command}'.")
@@ -326,6 +328,7 @@ public sealed class AssetHostDispatcher : IDisposable
                         ? "CompositionFailed"
                     : string.Equals(command, "exportModel", StringComparison.Ordinal)
                         || string.Equals(command, "exportModelBatch", StringComparison.Ordinal)
+                        || string.Equals(command, "exportAnimations", StringComparison.Ordinal)
                         || string.Equals(command, "exportPaintedVariant", StringComparison.Ordinal)
                         ? "ExportFailed"
                         : "RequestFailed";
@@ -585,6 +588,92 @@ public sealed class AssetHostDispatcher : IDisposable
             "exportModel",
             firstError?.Code ?? "ExportFailed",
             firstError?.Message ?? "The export failed.",
+            firstError?.Details,
+            result);
+    }
+
+    /// <summary>
+    /// Writes a GLB holding only the model's skeleton nodes and the requested
+    /// animations (no meshes, materials or textures). Each glTF animation is named
+    /// "clip{index}" after its position in animationSelections; clips that cannot be
+    /// converted are skipped and reported in the result warnings.
+    /// </summary>
+    private AssetHostResponse HandleExportAnimations(JsonElement request, string requestId)
+    {
+        const int MaxAnimationsPerRequest = 200;
+        if (_runtime == null || _outputRoot == null)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportAnimations",
+                "NotInitialized",
+                "initialize must succeed before exportAnimations.");
+        }
+
+        var assetPath = ReadString(request, "assetPath");
+        if (string.IsNullOrWhiteSpace(assetPath))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportAnimations",
+                "MissingAssetPath",
+                "exportAnimations requires assetPath.");
+        }
+
+        var relativeOutputPath = ReadString(request, "outputPath");
+        if (!TryResolveOutputPath(_outputRoot, relativeOutputPath, out var outputPath, out var outputError))
+        {
+            return AssetHostResponse.Fail(requestId, "exportAnimations", "InvalidOutputPath", outputError!);
+        }
+
+        if (!TryReadAnimationSelections(request, out var animationSelections, allowMissing: false)
+            || animationSelections.Count == 0
+            || animationSelections.Count > MaxAnimationsPerRequest)
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportAnimations",
+                "InvalidAnimationSelections",
+                $"animationSelections must contain 1-{MaxAnimationsPerRequest} path/fragment context objects.");
+        }
+
+        if (!TryReadVariantMeshSelections(request, out var variantSelections, allowMissing: true))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportAnimations",
+                "InvalidVariantMeshSelections",
+                "variantSelections must be an array of slotPath/choiceIndex objects.");
+        }
+
+        if (!TryReadBoolean(request, true, out var mirrorMesh, "mirrorMesh", "mirror"))
+        {
+            return AssetHostResponse.Fail(
+                requestId,
+                "exportAnimations",
+                "InvalidExportOptions",
+                "mirrorMesh must be a boolean value.");
+        }
+
+        var result = _runtime.ExportModel(new AssetHostExportRequest(
+            assetPath,
+            outputPath,
+            animationSelections.Select(selection => selection.Path).ToList(),
+            ExportMaterials: false,
+            IncludeSkeleton: true,
+            mirrorMesh,
+            variantSelections,
+            animationSelections,
+            AnimationsOnly: true));
+        if (result.Success)
+            return AssetHostResponse.Ok(requestId, "exportAnimations", result);
+
+        var firstError = result.Errors.FirstOrDefault();
+        return AssetHostResponse.Fail(
+            requestId,
+            "exportAnimations",
+            firstError?.Code ?? "ExportFailed",
+            firstError?.Message ?? "The animation export failed.",
             firstError?.Details,
             result);
     }

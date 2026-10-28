@@ -39,23 +39,35 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             for (var animationIndex = 0; animationIndex < settings.InputAnimationFiles.Count; animationIndex++)
             {
                 var animationPackFile = settings.InputAnimationFiles[animationIndex];
-                var animationToExport = AnimationFile.Create(animationPackFile);                
                 var metadataSelection = settings.AnimationMetadataSelections.Count > animationIndex
                     ? settings.AnimationMetadataSelections[animationIndex]
                     : null;
-                CreateFromTWAnim(
-                    animationPackFile,
-                    gltfSkeleton,
-                    animSkeleton,
-                    animationToExport,
-                    outputScene,
-                    settings,
-                    metadataSelection);
-            }            
+                var animationName = settings.AnimationNames.Count > animationIndex
+                    ? settings.AnimationNames[animationIndex]
+                    : animationPackFile.Name;
+                try
+                {
+                    var animationToExport = AnimationFile.Create(animationPackFile);
+                    CreateFromTWAnim(
+                        animationPackFile,
+                        animationName,
+                        gltfSkeleton,
+                        animSkeleton,
+                        animationToExport,
+                        outputScene,
+                        settings,
+                        metadataSelection);
+                }
+                catch (Exception exception) when (settings.AnimationsOnly && settings.AnimationWarningSink != null)
+                {
+                    settings.AnimationWarningSink.Add($"{animationName}|{animationPackFile.Name}|{exception.Message}");
+                }
+            }
         }
 
         private void CreateFromTWAnim(
             PackFile animationPackFile,
+            string animationName,
             ProcessedGltfSkeleton gltfSkeleton,
             AnimationFile skeletonAnimFile,
             AnimationFile animationToExport,
@@ -63,7 +75,6 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             RmvToGltfExporterSettings settings,
             GltfAnimationMetadataSelection? metadataSelection)
         {
-            var animationName = animationPackFile.Name;
             var doMirror = settings.MirrorMesh;
             var gameSkeleton = new GameSkeleton(skeletonAnimFile, null!);
             var animationClip = new AnimationClip(animationToExport, gameSkeleton);

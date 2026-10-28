@@ -119,7 +119,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 true,
                 outputPath,
                 CaptureAuxiliaryFiles(outputDirectory, before, outputPath),
-                Array.Empty<ExportWarning>(),
+                settings.AnimationWarningSink?
+                    .Select(message => new ExportWarning("AnimationFailed", message))
+                    .ToArray() ?? Array.Empty<ExportWarning>(),
                 Array.Empty<ExportError>());
         }
 

@@ -170,6 +170,40 @@ public sealed class AssetHostDispatcherTests
     }
 
     [Test]
+    public void ExportAnimations_RequestsAnimationsOnlyOutputAndValidatesSelections()
+    {
+        var factory = new FakeRuntimeFactory();
+        using var dispatcher = new AssetHostDispatcher(factory);
+        var root = Path.Combine(Path.GetTempPath(), "asset-host-root", Guid.NewGuid().ToString("N"));
+        dispatcher.Dispatch(Initialize(root, "base.pack"));
+
+        var response = dispatcher.Dispatch(Request(
+            "exportAnimations",
+            "animations-only",
+            "assetPath", "unit.rigid_model_v2",
+            "outputPath", "clips.glb",
+            "animationSelections", new[]
+            {
+                new { path = "animations/idle.anim" },
+                new { path = "animations/walk.anim" }
+            }));
+
+        Assert.That(response.Success, Is.True);
+        var export = factory.Created.Single().Exports.Single();
+        Assert.That(export.AnimationsOnly, Is.True);
+        Assert.That(export.ExportMaterials, Is.False);
+        Assert.That(export.AnimationPaths, Is.EqualTo(new[] { "animations/idle.anim", "animations/walk.anim" }));
+
+        var missing = dispatcher.Dispatch(Request(
+            "exportAnimations",
+            "animations-missing",
+            "assetPath", "unit.rigid_model_v2",
+            "outputPath", "clips2.glb"));
+        Assert.That(missing.Success, Is.False);
+        Assert.That(missing.Error?.Code, Is.EqualTo("InvalidAnimationSelections"));
+    }
+
+    [Test]
     public void ExportBatch_PassesAllVariantSelectionsToOneRuntime()
     {
         var factory = new FakeRuntimeFactory();

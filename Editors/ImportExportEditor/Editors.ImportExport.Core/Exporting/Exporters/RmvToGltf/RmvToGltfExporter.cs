@@ -206,6 +206,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 animationMs = phaseStopwatch.ElapsedMilliseconds;
             }
 
+            if (settings.AnimationsOnly)
+                return SaveAnimationsOnly(settings, skeleton, outputScene);
+
             var textureSession = new GltfTextureExportSession(collisionSafe: false);
             phaseStopwatch.Restart();
             var textures = _gltfTextureHandler.HandleTextures(resolvedAsset, settings, textureSession);
@@ -241,6 +244,19 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                 meshes.Count,
                 textures.Count);
 
+            return ExportExecutionResult.Completed();
+        }
+
+        private ExportExecutionResult SaveAnimationsOnly(
+            RmvToGltfExporterSettings settings,
+            ProcessedGltfSkeleton? skeleton,
+            ModelRoot outputScene)
+        {
+            if (skeleton == null)
+                throw new InvalidOperationException(
+                    $"No skeleton could be resolved for '{settings.InputModelFile.Name}'; animations cannot be exported.");
+
+            BuildGltfScene([], skeleton, settings, outputScene);
             return ExportExecutionResult.Completed();
         }
 
@@ -291,6 +307,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
                     out _);
                 phaseStopwatch.Stop();
                 skeletonMs = phaseStopwatch.ElapsedMilliseconds;
+            }
+
+            if (settings.AnimationsOnly)
+            {
+                if (skeleton != null && skeletonFile != null && settings.ExportAnimations)
+                    _gltfAnimationBuilder.Build(skeletonFile, settings, skeleton, outputScene);
+                return SaveAnimationsOnly(settings, skeleton, outputScene);
             }
 
             phaseStopwatch.Restart();

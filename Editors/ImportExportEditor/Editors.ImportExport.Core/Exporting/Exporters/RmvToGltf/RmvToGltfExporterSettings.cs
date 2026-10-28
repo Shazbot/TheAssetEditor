@@ -63,5 +63,24 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         /// preview callers can opt into bounded CPU parallelism.
         /// </summary>
         public int MaxTextureParallelism { get; init; } = 1;
+
+        /// <summary>
+        /// Writes only the shared skeleton nodes and the requested animations: no
+        /// meshes, materials or textures. Node names, hierarchy and mirroring are
+        /// identical to the full export, so clips bind to an already-loaded model.
+        /// </summary>
+        public bool AnimationsOnly { get; init; } = false;
+
+        /// <summary>
+        /// Optional glTF animation names aligned with InputAnimationFiles. Lets callers
+        /// map clips back to their request even when file names repeat.
+        /// </summary>
+        public IReadOnlyList<string> AnimationNames { get; init; } = [];
+
+        /// <summary>
+        /// When set with AnimationsOnly, a clip that fails to convert is reported here
+        /// and skipped instead of failing the whole export.
+        /// </summary>
+        public ICollection<string>? AnimationWarningSink { get; init; }
     }
 }

@@ -598,6 +598,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 
         phaseStopwatch.Restart();
         var animationFiles = new List<PackFile>();
+        var animationNames = new List<string>();
+        var animationWarnings = new List<ExportWarning>();
         var metadataSelections = new List<GltfAnimationMetadataSelection?>();
         for (var animationIndex = 0; animationIndex < request.AnimationPaths.Count; animationIndex++)
         {
@@ -618,6 +620,13 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             }
 
             var animation = PackFileService.FindFile(animationPath, selectedContainer);
+            if (animation == null && request.AnimationsOnly)
+            {
+                animationWarnings.Add(new ExportWarning(
+                    "AnimationNotFound",
+                    $"clip{animationIndex}|{animationPath}|Animation was not found in the supplied packs."));
+                continue;
+            }
             if (animation == null)
             {
                 phaseStopwatch.Stop();
@@ -633,6 +642,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
                     $"Animation '{animationPath}' was not found in the supplied packs.");
             }
             animationFiles.Add(animation);
+            animationNames.Add($"clip{animationIndex}");
             metadataSelections.Add(requestedSelection?.FragmentPath == null
                 ? null
                 : new GltfAnimationMetadataSelection(
@@ -642,6 +652,7 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
         phaseStopwatch.Stop();
         var animationLookupMs = phaseStopwatch.ElapsedMilliseconds;
 
+        var animationSink = new List<string>();
         var settings = new RmvToGltfExporterSettings(
             inputModel,
             animationFiles,
@@ -653,6 +664,9 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             MirrorMesh: request.MirrorMesh)
         {
             IncludeSkeleton = request.IncludeSkeleton,
+            AnimationsOnly = request.AnimationsOnly,
+            AnimationNames = request.AnimationsOnly ? animationNames : [],
+            AnimationWarningSink = request.AnimationsOnly ? animationSink : null,
             AnimationMetadataSelections = metadataSelections,
             VariantMeshSelections = request.VariantSelections?
                 .Select(selection => new VariantMeshSelection(selection.SlotPath, selection.ChoiceIndex))
@@ -672,6 +686,8 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
 
         phaseStopwatch.Restart();
         var result = ExportService.Export(settings);
+        if (animationWarnings.Count > 0)
+            result = result with { Warnings = [.. animationWarnings, .. result.Warnings] };
         phaseStopwatch.Stop();
         var exportMs = phaseStopwatch.ElapsedMilliseconds;
         totalStopwatch.Stop();
