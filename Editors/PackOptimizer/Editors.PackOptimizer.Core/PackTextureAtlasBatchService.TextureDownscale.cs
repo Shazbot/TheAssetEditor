@@ -604,68 +604,17 @@ namespace Editors.PackOptimizer.Core
             public void Return(byte[] data) => System.Buffers.ArrayPool<byte>.Shared.Return(data);
         }
 
-        // Exact-length byte[] pool for the big pixel buffers of one call or one attempt (decoded levels,
-        // compose canvases). Exact lengths, not size classes: every consumer reads `Length`, and textures
-        // come in few sizes, so lengths recur. Content is NOT cleared; renters overwrite every byte.
-        // Retention is capped so the pool itself cannot raise the peak. A returned array must not be
-        // referenced by anyone any more.
-        private static class PixelBufferPool
-        {
-            private const int MinimumPooledLength = 1 << 20;
-            private const long MaximumRetainedBytes = 192L << 20;
-            private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, System.Collections.Concurrent.ConcurrentStack<byte[]>> Stacks = new();
-            private static long _retained;
-
-            public static byte[] Rent(int length)
-            {
-                if (length >= MinimumPooledLength &&
-                    Stacks.TryGetValue(length, out var stack) &&
-                    stack.TryPop(out var buffer))
-                {
-                    Interlocked.Add(ref _retained, -length);
-                    return buffer;
-                }
-
-                return GC.AllocateUninitializedArray<byte>(length);
-            }
-
-            public static void Return(byte[]? buffer)
-            {
-                if (buffer == null || buffer.Length < MinimumPooledLength)
-                    return;
-
-                if (Interlocked.Add(ref _retained, buffer.Length) > MaximumRetainedBytes)
-                {
-                    Interlocked.Add(ref _retained, -buffer.Length);
-                    return;
-                }
-
-                Stacks.GetOrAdd(buffer.Length, static _ => new()).Push(buffer);
-            }
-        }
-
         private static bool TryDecodeDdsTopLevel(
             byte[] dds,
             out byte[] bgra,
             out int width,
             out int height,
             out string error)
-            => DecodeDdsTopLevelCore(dds, true, false, out bgra, out width, out height, out error);
-
-        // Same pixels, but bgra comes from PixelBufferPool: the caller owns it and hands it back with
-        // PixelBufferPool.Return once nothing references it.
-        private static bool TryDecodeDdsTopLevelPooled(
-            byte[] dds,
-            out byte[] bgra,
-            out int width,
-            out int height,
-            out string error)
-            => DecodeDdsTopLevelCore(dds, true, true, out bgra, out width, out height, out error);
+            => DecodeDdsTopLevelCore(dds, true, out bgra, out width, out height, out error);
 
         private static bool DecodeDdsTopLevelCore(
             byte[] dds,
             bool needPixels,
-            bool pooled,
             out byte[] bgra,
             out int width,
             out int height,
@@ -695,7 +644,7 @@ namespace Editors.PackOptimizer.Core
                 if (!needPixels)
                     return true;
 
-                bgra = pooled ? PixelBufferPool.Rent(checked(width * height * 4)) : new byte[checked(width * height * 4)];
+                bgra = new byte[checked(width * height * 4)];
                 var data = image.Data;
                 for (var y = 0; y < height; y++)
                 {
@@ -756,7 +705,7 @@ namespace Editors.PackOptimizer.Core
                 return false;
             }
 
-            if (!TryDecodeDdsTopLevelPooled(dds, out var bgra, out var width, out var height, out error))
+            if (!TryDecodeDdsTopLevel(dds, out var bgra, out var width, out var height, out error))
                 return false;
 
             using var full = TexHelper.Instance.Initialize2D(
@@ -772,8 +721,6 @@ namespace Editors.PackOptimizer.Core
                     IntPtr.Add(image.Pixels, y * pitch),
                     rowBytes);
             }
-
-            PixelBufferPool.Return(bgra);
 
             using var resized = full.Resize(newWidth, newHeight, TEX_FILTER_FLAGS.BOX);
             using var withMips = resized.GenerateMipMaps(TEX_FILTER_FLAGS.DEFAULT, 0);
@@ -837,7 +784,7 @@ namespace Editors.PackOptimizer.Core
 
             if (layout.Format is "BC1" or "BC2" or "BC3")
             {
-                if (!DecodeDdsTopLevelCore(dds, false, false, out _, out var width, out var height, out var decodeError))
+                if (!DecodeDdsTopLevelCore(dds, false, out _, out var width, out var height, out var decodeError))
                     return decodeError;
                 if (width != expected.NewWidth || height != expected.NewHeight)
                     return $"decodes to {width}x{height}";
