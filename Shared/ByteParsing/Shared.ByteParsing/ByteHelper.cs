@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -38,6 +39,14 @@ namespace Shared.ByteParsing
 
         public static byte[] GetBytes<T>(T data) where T : struct
         {
+            if (BlittableLayout<T>.IsBlittable)
+            {
+                // Same bytes as Marshal.StructureToPtr for a blittable struct, without the native allocation.
+                var blittableBytes = new byte[Unsafe.SizeOf<T>()];
+                Unsafe.WriteUnaligned(ref blittableBytes[0], data);
+                return blittableBytes;
+            }
+
             var size = Marshal.SizeOf(data);
             var arr = new byte[size];
 
@@ -46,6 +55,28 @@ namespace Shared.ByteParsing
             Marshal.Copy(ptr, arr, 0, size);
             Marshal.FreeHGlobal(ptr);
             return arr;
+        }
+
+        private static class BlittableLayout<T> where T : struct
+        {
+            public static readonly bool IsBlittable = Probe();
+
+            private static bool Probe()
+            {
+                if (RuntimeHelpers.IsReferenceOrContainsReferences<T>() || Unsafe.SizeOf<T>() == 0)
+                    return false;
+
+                try
+                {
+                    // Pinning a boxed instance only succeeds for blittable types.
+                    GCHandle.Alloc(default(T), GCHandleType.Pinned).Free();
+                    return Marshal.SizeOf<T>() == Unsafe.SizeOf<T>();
+                }
+                catch (ArgumentException)
+                {
+                    return false;
+                }
+            }
         }
 
         static public byte[] CreateFixLengthString(string str, int maxLength)

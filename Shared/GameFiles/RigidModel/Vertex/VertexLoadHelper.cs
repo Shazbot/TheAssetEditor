@@ -1,4 +1,6 @@
 ﻿using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using Shared.ByteParsing;
 using Shared.GameFormats.RigidModel.Transforms;
 using Half = System.Half;
@@ -224,60 +226,31 @@ namespace Shared.GameFormats.RigidModel.Vertex
             return BitConverter.UInt16BitsToHalf((ushort)(baseValue + (mantissa >> shift)));
         }
 
+        private const int HalfMantissaCount = 1024;
+
+        // testW = 1.0 + i / 1024 (exactly representable as a half, so the half round trip of W is lossless).
+        private static readonly float[] TestWTable = BuildTestWTable();
+
+        private static float[] BuildTestWTable()
+        {
+            var table = new float[HalfMantissaCount];
+            for (var i = 0; i < table.Length; i++)
+                table[i] = (float)(1.0 + ((float)i / 1024.0f));
+            return table;
+        }
+
         public static (Half X, Half Y, Half Z, Half W) ConvertertVertexToHalfExtraPrecision(Vector4 vertexOriginal)
         {
-            const uint halfMantissaMax = 1024;
+            // The input never changes inside the search, so the checks are loop invariant. The first
+            // trial uses testW == 1, which makes the normalized vertex equal to the input; later trials
+            // divide by testW > 1 and cannot introduce an infinity that is not already there.
+            if (!IsWithingFloat16Range(vertexOriginal))
+                throw new Exception("Input vertex cannot be converted to float16");
 
-            float bestValueForW = 0;
-            float currentSmallestError = float.MaxValue;
+            if (!IsResultValid(new Vector3(vertexOriginal.X, vertexOriginal.Y, vertexOriginal.Z)))
+                throw new Exception("Result is out range for conversin to float16");
 
-            // Brute force, checking all 1024 half-float mantissa values for "w"
-            for (ushort iMantissaCounter = 0; iMantissaCounter < halfMantissaMax; iMantissaCounter++)
-            {
-                if (!IsWithingFloat16Range(vertexOriginal))
-                    throw new Exception("Input vertex cannot be converted to float16");
-
-                // fill the mantissa bits with value from 1.0 to 2.0
-                float testW = (float)(1.0 + ((float)iMantissaCounter / 1024.0f));
-                
-                // Normalize the original values by dividing by w
-                var normalizedVertex = new Vector3() {
-                    X = vertexOriginal.X / testW,
-                    Y = vertexOriginal.Y / testW,
-                    Z = vertexOriginal.Z / testW
-                };
-
-                if (!IsResultValid(normalizedVertex))
-                    throw new Exception("Result is out range for conversin to float16");
-
-                // Convert normalized values to half-float            
-                var halfVertexNormalized = new MyHalfVector4()
-                {
-                    X = ConvertFloatToHalf(normalizedVertex.X),
-                    Y = ConvertFloatToHalf(normalizedVertex.Y),
-                    Z = ConvertFloatToHalf(normalizedVertex.Z),
-                    W = ConvertFloatToHalf(testW)
-                };   
-
-                // Recover the original values by multiplying by w
-                var recoveredVertex = new Vector3() {
-                    X = (float)halfVertexNormalized.X * (float)halfVertexNormalized.W, 
-                    Y = (float)halfVertexNormalized.Y * (float)halfVertexNormalized.W, 
-                    Z = (float)halfVertexNormalized.Z * (float)halfVertexNormalized.W
-                };
-                                
-                float error =
-                    Math.Abs(vertexOriginal.X - recoveredVertex.X) +
-                    Math.Abs(vertexOriginal.Y - recoveredVertex.Y) +
-                    Math.Abs(vertexOriginal.Z - recoveredVertex.Z);
-
-                // Check if this w gives a better (smaller) error
-                if (error < currentSmallestError)
-                {
-                    currentSmallestError = error;
-                    bestValueForW = testW;
-                }
-            }
+            var bestValueForW = FindBestW(vertexOriginal.X, vertexOriginal.Y, vertexOriginal.Z);
 
             // Normalize the original values by dividing by the BEST w
             var normalizedFinal = new Vector3()
@@ -295,6 +268,118 @@ namespace Shared.GameFormats.RigidModel.Vertex
             outHalfVertex.W = ConvertFloatToHalf(bestValueForW);
 
             return (outHalfVertex.X, outHalfVertex.Y, outHalfVertex.Z, outHalfVertex.W);
+        }
+
+        /// <summary>
+        /// Returns the testW with the smallest round trip error (first strict minimum, 0 when no trial
+        /// has a finite error), exactly like the original brute force loop.
+        /// </summary>
+        public static float FindBestW(float x, float y, float z)
+        {
+            if (Vector256.IsHardwareAccelerated)
+                return FindBestWVectorized(x, y, z);
+
+            return FindBestWScalar(x, y, z);
+        }
+
+        public static float FindBestWScalar(float x, float y, float z)
+        {
+            float bestValueForW = 0;
+            float currentSmallestError = float.MaxValue;
+
+            for (var i = 0; i < HalfMantissaCount; i++)
+            {
+                var testW = TestWTable[i];
+                var rx = TruncateToHalfPrecisionScalar(x / testW) * testW;
+                var ry = TruncateToHalfPrecisionScalar(y / testW) * testW;
+                var rz = TruncateToHalfPrecisionScalar(z / testW) * testW;
+
+                float error = Math.Abs(x - rx) + Math.Abs(y - ry) + Math.Abs(z - rz);
+                if (error < currentSmallestError)
+                {
+                    currentSmallestError = error;
+                    bestValueForW = testW;
+                }
+            }
+
+            return bestValueForW;
+        }
+
+        private static float TruncateToHalfPrecisionScalar(float value) => (float)ConvertFloatToHalf(value);
+
+        private static float FindBestWVectorized(float x, float y, float z)
+        {
+            const int lanes = 8;
+            var vx = Vector256.Create(x);
+            var vy = Vector256.Create(y);
+            var vz = Vector256.Create(z);
+
+            var bestError = Vector256.Create(float.MaxValue);
+            var bestIndex = Vector256.Create(-1);
+            var laneIndex = Vector256.Create(0, 1, 2, 3, 4, 5, 6, 7);
+            var step = Vector256.Create(lanes);
+
+            ref var table = ref MemoryMarshal.GetArrayDataReference(TestWTable);
+            for (var i = 0; i < HalfMantissaCount; i += lanes)
+            {
+                var w = Vector256.LoadUnsafe(ref table, (nuint)i);
+                var rx = TruncateToHalfPrecision(vx / w) * w;
+                var ry = TruncateToHalfPrecision(vy / w) * w;
+                var rz = TruncateToHalfPrecision(vz / w) * w;
+
+                var error = Vector256.Abs(vx - rx) + Vector256.Abs(vy - ry) + Vector256.Abs(vz - rz);
+                var better = Vector256.LessThan(error, bestError);
+                bestError = Vector256.ConditionalSelect(better, error, bestError);
+                bestIndex = Vector256.ConditionalSelect(better.AsInt32(), laneIndex, bestIndex);
+                laneIndex += step;
+            }
+
+            // Every lane kept the first strict minimum of its own indices; the global first strict
+            // minimum is the lowest error, with ties resolved to the lowest index.
+            var best = float.MaxValue;
+            var bestI = -1;
+            for (var lane = 0; lane < lanes; lane++)
+            {
+                var laneError = bestError.GetElement(lane);
+                var laneBestIndex = bestIndex.GetElement(lane);
+                if (laneBestIndex < 0)
+                    continue;
+
+                if (laneError < best || (laneError == best && laneBestIndex < bestI))
+                {
+                    best = laneError;
+                    bestI = laneBestIndex;
+                }
+            }
+
+            return bestI < 0 ? 0f : TestWTable[bestI];
+        }
+
+        /// <summary>
+        /// float -> ConvertFloatToHalf -> float for eight lanes. Truncates the mantissa (round toward zero),
+        /// produces half denormals/zero below 2^-14 and infinity from 2^16.
+        /// </summary>
+        private static Vector256<float> TruncateToHalfPrecision(Vector256<float> value)
+        {
+            var signMask = Vector256.Create(0x80000000u).AsSingle();
+            var sign = value & signMask;
+            var abs = value & ~signMask;
+
+            // Normal half range: keep sign, exponent and the top 10 mantissa bits.
+            var normal = (abs.AsUInt32() & Vector256.Create(0xffffe000u)).AsSingle();
+            // Half denormal range: truncate to a multiple of 2^-24 (exact power-of-two scaling).
+            var denormal = Vector256.Floor(abs * Vector256.Create(16777216.0f)) * Vector256.Create(1.0f / 16777216.0f);
+
+            var result = Vector256.ConditionalSelect(
+                Vector256.LessThan(abs, Vector256.Create(6.103515625e-05f)),
+                denormal,
+                normal);
+            result = Vector256.ConditionalSelect(
+                Vector256.GreaterThanOrEqual(abs, Vector256.Create(65536.0f)),
+                Vector256.Create(float.PositiveInfinity),
+                result);
+
+            return result | sign;
         }
 
         private static bool IsResultValid(Vector3 input)

@@ -118,7 +118,12 @@ namespace Shared.GameFormats.RigidModel
             if (logProgress)
                 _logger.Here().Information("Converting RmvFile to bytes");
 
-            using var ms = new MemoryStream();
+            long estimatedSize = 4096;
+            foreach (var lodModels in file.ModelList)
+                foreach (var lodModel in lodModels)
+                    estimatedSize += lodModel.CommonHeader.MeshSectionSize;
+
+            using var ms = new MemoryStream((int)Math.Min(estimatedSize, int.MaxValue / 2));
             using var writer = new BinaryWriter(ms);
 
             if (file.LodHeaders.Length != file.Header.LodCount)
@@ -192,7 +197,7 @@ namespace Shared.GameFormats.RigidModel
         byte[] SaveModel(RmvVersionEnum rmvVersion, RmvModel model)
         {
             var vertexFactory = VertexFactory.Create();
-            using var modelStream = new MemoryStream();
+            using var modelStream = new MemoryStream((int)Math.Min(model.CommonHeader.MeshSectionSize, int.MaxValue / 2));
             using var binaryWriter = new BinaryWriter(modelStream);
 
             if (model.CommonHeader.IndexCount != model.Mesh.IndexList.Length)
