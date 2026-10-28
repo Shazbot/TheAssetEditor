@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -1652,8 +1653,11 @@ namespace Editors.PackOptimizer.Core
             path = Normalize(path);
             if (!state.DownscaleEarlyCandidates.TryGetValue(path, out var candidate))
                 return null;
-            if (state.SharedRepackScaledSources.TryGetValue(path, out var cached))
-                return cached;
+            lock (state.SharedRepackScaledSources)
+            {
+                if (state.SharedRepackScaledSources.TryGetValue(path, out var cached))
+                    return cached;
+            }
 
             SharedRepackScaledSource? built = null;
             try
@@ -1692,16 +1696,19 @@ namespace Editors.PackOptimizer.Core
                     }
                     else
                     {
-                        state.SharedRepackScaledSourceFailures.Add($"{path}: {(ok ? "unreadable header" : error)}");
+                        lock (state.SharedRepackScaledSourceFailures)
+                            state.SharedRepackScaledSourceFailures.Add($"{path}: {(ok ? "unreadable header" : error)}");
                     }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                state.SharedRepackScaledSourceFailures.Add($"{path}: {ex.GetType().Name}: {ex.Message}");
+                lock (state.SharedRepackScaledSourceFailures)
+                    state.SharedRepackScaledSourceFailures.Add($"{path}: {ex.GetType().Name}: {ex.Message}");
             }
 
-            state.SharedRepackScaledSources[path] = built;
+            lock (state.SharedRepackScaledSources)
+                state.SharedRepackScaledSources[path] = built;
             return built;
         }
 
@@ -6916,22 +6923,30 @@ namespace Editors.PackOptimizer.Core
 
             // Decoded pixels of one mip level (the source's own level, not a resample).
             public void SeedLevel(int level, (byte[] Bgra, int Width, int Height) decoded)
-                => _levels[level] = decoded;
+            {
+                lock (_levels)
+                    _levels[level] = decoded;
+            }
 
+            // Outputs compose in parallel and share sources: one decode per level, under the source's lock
+            // (a source is decoded by whichever output asks first; the pixels are the same either way).
             public (byte[] Bgra, int Width, int Height)? Level(int level)
             {
-                if (_levels.TryGetValue(level, out var cached))
-                    return cached;
+                lock (_levels)
+                {
+                    if (_levels.TryGetValue(level, out var cached))
+                        return cached;
 
-                (byte[] Bgra, int Width, int Height)? result = null;
-                var dds = Dds;
-                var ok = true;
-                if (level > 0)
-                    ok = TrySliceDdsMips(Dds, Layout, level, out dds, out _);
-                if (ok && TryDecodeDdsTopLevel(dds, out var bgra, out var width, out var height, out _))
-                    result = (bgra, width, height);
-                _levels[level] = result;
-                return result;
+                    (byte[] Bgra, int Width, int Height)? result = null;
+                    var dds = Dds;
+                    var ok = true;
+                    if (level > 0)
+                        ok = TrySliceDdsMips(Dds, Layout, level, out dds, out _);
+                    if (ok && TryDecodeDdsTopLevel(dds, out var bgra, out var width, out var height, out _))
+                        result = (bgra, width, height);
+                    _levels[level] = result;
+                    return result;
+                }
             }
         }
 
@@ -6954,12 +6969,31 @@ namespace Editors.PackOptimizer.Core
                 => AddCrossRigidTimingDuration(_state, _name, Stopwatch.GetElapsedTime(_start));
         }
 
+        // Ticks the last TryComposeSharedRepackOutput of this thread spent in the encoder. Outputs compose
+        // in parallel, so the delta of a shared total cannot be split per output.
+        [ThreadStatic]
         private static long _sharedRepackEncodeTicks;
+
+        // Outer degree of the parallel compose; the BC7 encoder runs its own blocks in parallel inside.
+        private const int SharedRepackMaxParallelOutputs = 6;
+
+        private sealed class SharedRepackOutputResult
+        {
+            public bool Composed;
+            public string Error = string.Empty;
+            public string? Problem;
+            public (byte[] Bgra, int Width, int Height)? DecodedTopLevel;
+            public long ComposeTicks;
+            public long EncodeTicks;
+            public long CheckTicks;
+        }
 
         private sealed class SharedRepackSourceCache
         {
             private readonly Func<string, byte[]?> _read;
-            private readonly Dictionary<string, SharedRepackSource?> _sources = new(StringComparer.OrdinalIgnoreCase);
+            // Thread-safe: outputs compose in parallel. Lazy, so a source is read and decoded once.
+            private readonly ConcurrentDictionary<string, Lazy<SharedRepackSource?>> _sources =
+                new(StringComparer.OrdinalIgnoreCase);
 
             public SharedRepackSourceCache(Func<string, byte[]?> read)
             {
@@ -6967,10 +7001,10 @@ namespace Editors.PackOptimizer.Core
             }
 
             public SharedRepackSource? Get(string path)
-            {
-                if (_sources.TryGetValue(path, out var cached))
-                    return cached;
+                => _sources.GetOrAdd(path, key => new Lazy<SharedRepackSource?>(() => Load(key))).Value;
 
+            private SharedRepackSource? Load(string path)
+            {
                 SharedRepackSource? source = null;
                 var bytes = _read(path);
                 if (bytes != null &&
@@ -6981,7 +7015,6 @@ namespace Editors.PackOptimizer.Core
                     source = new SharedRepackSource { Dds = bytes, Layout = layout };
                 }
 
-                _sources[path] = source;
                 return source;
             }
 
@@ -7003,7 +7036,7 @@ namespace Editors.PackOptimizer.Core
                 var source = new SharedRepackSource { Dds = dds, Layout = layout };
                 if (topLevel != null)
                     source.SeedLevel(0, topLevel.Value);
-                _sources[key] = source;
+                _sources[key] = new Lazy<SharedRepackSource?>(source);
                 return source;
             }
         }
@@ -7311,6 +7344,7 @@ namespace Editors.PackOptimizer.Core
             out string error)
         {
             error = string.Empty;
+            _sharedRepackEncodeTicks = 0;
             cancellationToken.ThrowIfCancellationRequested();
             var canvas = new byte[checked(output.Width * output.Height * 4)];
             var neutral = GetSharedRepackNeutralPixel(output.Slot);
@@ -7437,7 +7471,7 @@ namespace Editors.PackOptimizer.Core
                 : TryEncodeSharedRepackChain(
                     canvas, output.Width, output.Height, output.Format, output.Srgb, output.Dx10,
                     1, output.MipLevels - 1, overlay, out dds, out error);
-            Interlocked.Add(ref _sharedRepackEncodeTicks, Stopwatch.GetTimestamp() - encodeStart);
+            _sharedRepackEncodeTicks = Stopwatch.GetTimestamp() - encodeStart;
             if (!encoded)
                 return false;
 
@@ -8446,46 +8480,92 @@ namespace Editors.PackOptimizer.Core
             try
             {
                 // 1. Compose and check, all in memory; nothing is changed yet.
+                // The outputs are independent (each writes only its own Data and stats, and reads shared
+                // sources through the thread-safe cache), so they compose and check in parallel, a few at a
+                // time (BC7 also parallelizes its blocks inside). The results are kept per index and walked
+                // in plan order afterwards: the first failure in that order is the failure, and the
+                // generated sources are added in that order.
+                var work = new List<(SharedRepackPage Page, SharedRepackSlotOutput Output)>();
                 foreach (var page in plan.Pages)
-                {
                     foreach (var output in page.Outputs)
+                        work.Add((page, output));
+
+                var results = new SharedRepackOutputResult[work.Count];
+                var firstFailure = int.MaxValue;
+                var degree = Math.Clamp(Environment.ProcessorCount / 2, 1, SharedRepackMaxParallelOutputs);
+                var wall = Stopwatch.StartNew();
+                try
+                {
+                    Parallel.For(
+                        0,
+                        work.Count,
+                        new ParallelOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = degree },
+                        index =>
+                        {
+                            // Later than a known failure: its result would never be read.
+                            if (index > Volatile.Read(ref firstFailure))
+                                return;
+
+                            var (page, output) = work[index];
+                            var item = new SharedRepackOutputResult();
+                            results[index] = item;
+                            cancellationToken.ThrowIfCancellationRequested();
+                            using var captureScope = DdsEncodeCapture.Scope("shared-repack", output.Path);
+                            var composeStart = Stopwatch.GetTimestamp();
+                            item.Composed = TryComposeSharedRepackOutput(page, output, sources, cancellationToken, out var error);
+                            item.Error = error;
+                            item.ComposeTicks = Stopwatch.GetTimestamp() - composeStart;
+                            item.EncodeTicks = _sharedRepackEncodeTicks;
+                            if (item.Composed)
+                            {
+                                var checkStart = Stopwatch.GetTimestamp();
+                                item.Problem = CheckSharedRepackDds(output.Data, output, out item.DecodedTopLevel);
+                                item.CheckTicks = Stopwatch.GetTimestamp() - checkStart;
+                            }
+
+                            if (!item.Composed || item.Problem != null)
+                            {
+                                int seen;
+                                while (index < (seen = Volatile.Read(ref firstFailure)) &&
+                                       Interlocked.CompareExchange(ref firstFailure, index, seen) != seen)
+                                {
+                                }
+                            }
+                        });
+                }
+                catch (AggregateException ex) when (ex.InnerExceptions.Count != 0)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
+                }
+
+                AddCrossRigidTimingDuration(state, "Shared repack: compose+check wall (parallel)", wall.Elapsed);
+                for (var index = 0; index < work.Count; index++)
+                {
+                    var item = results[index];
+                    if (item == null)
+                        break;
+
+                    var output = work[index].Output;
+                    AddCrossRigidTimingDuration(
+                        state, "Shared repack: compose (includes encode)", Stopwatch.GetElapsedTime(0, item.ComposeTicks));
+                    AddCrossRigidTimingDuration(
+                        state, "Shared repack: encode (part of compose)", Stopwatch.GetElapsedTime(0, item.EncodeTicks));
+                    if (!item.Composed)
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        using var captureScope = DdsEncodeCapture.Scope("shared-repack", output.Path);
-                        var encodeTicksBefore = Interlocked.Read(ref _sharedRepackEncodeTicks);
-                        bool composed;
-                        string error;
-                        using (SharedRepackStageTimer.Start(state, "Shared repack: compose (includes encode)"))
-                        {
-                            composed = TryComposeSharedRepackOutput(page, output, sources, cancellationToken, out error);
-                        }
-
-                        AddCrossRigidTimingDuration(
-                            state,
-                            "Shared repack: encode (part of compose)",
-                            Stopwatch.GetElapsedTime(0, Interlocked.Read(ref _sharedRepackEncodeTicks) - encodeTicksBefore));
-                        if (!composed)
-                        {
-                            failure = $"{output.Slot}: {error}";
-                            return null;
-                        }
-
-                        string? problem;
-                        (byte[] Bgra, int Width, int Height)? decodedTopLevel;
-                        using (SharedRepackStageTimer.Start(state, "Shared repack: check generated DDS"))
-                        {
-                            problem = CheckSharedRepackDds(output.Data, output, out decodedTopLevel);
-                        }
-
-                        if (problem != null)
-                        {
-                            failure = $"generated {output.Slot} texture {problem}";
-                            return null;
-                        }
-
-                        if (output.DuplicateOf == null)
-                            generated.FromDecodedBytes(output.Path, output.Data, decodedTopLevel);
+                        failure = $"{output.Slot}: {item.Error}";
+                        return null;
                     }
+
+                    AddCrossRigidTimingDuration(
+                        state, "Shared repack: check generated DDS", Stopwatch.GetElapsedTime(0, item.CheckTicks));
+                    if (item.Problem != null)
+                    {
+                        failure = $"generated {output.Slot} texture {item.Problem}";
+                        return null;
+                    }
+
+                    if (output.DuplicateOf == null)
+                        generated.FromDecodedBytes(output.Path, output.Data, item.DecodedTopLevel);
                 }
 
                 SharedRepackBeforeCheckHook?.Invoke(plan);

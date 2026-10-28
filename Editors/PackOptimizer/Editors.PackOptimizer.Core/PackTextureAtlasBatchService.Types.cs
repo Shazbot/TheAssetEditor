@@ -632,7 +632,11 @@ namespace Editors.PackOptimizer.Core
                     if (!ReferenceEquals(provider, source) && provider.ContainsFile(path))
                     {
                         if (!ReferenceEquals(this, Empty))
-                            _used.Add(provider);
+                        {
+                            lock (_used)
+                                _used.Add(provider);
+                        }
+
                         return provider;
                     }
                 }
