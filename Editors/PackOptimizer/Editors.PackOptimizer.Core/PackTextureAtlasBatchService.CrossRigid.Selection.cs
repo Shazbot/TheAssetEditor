@@ -1568,7 +1568,7 @@ namespace Editors.PackOptimizer.Core
                     StringComparer.Ordinal);
             return contender.Occurrences.Any(occurrence =>
                 HasCrossRigidRewriteConflict(
-                    occurrence, selectedKeys) ||
+                    occurrence.RewriteConflictKeys, selectedKeys) ||
                 occurrence.JointContextKeyByParentLocation.Any(pair =>
                     selectedContexts.TryGetValue(
                         pair.Key, out var contexts) &&
@@ -1911,10 +1911,10 @@ namespace Editors.PackOptimizer.Core
             foreach (var occurrence in profile.Occurrences)
             {
                 if (HasCrossRigidRewriteConflict(
-                        occurrence,
+                        occurrence.RewriteConflictKeys,
                         selectedRewriteConflictKeys) ||
                     HasCrossRigidRewriteConflict(
-                        occurrence,
+                        occurrence.RewriteConflictKeys,
                         localRewriteConflictKeys) ||
                     occurrence.JointContextKeyByParentLocation.Any(
                         pair =>
@@ -1951,8 +1951,9 @@ namespace Editors.PackOptimizer.Core
             return selected.ToArray();
         }
 
-        private static string[] BuildCrossRigidConflictProbeKeys(
-            IReadOnlySet<string> candidateKeys)
+        private static bool HasCrossRigidRewriteConflict(
+            IReadOnlySet<string> candidateKeys,
+            IReadOnlySet<string> selectedKeys)
         {
             const string exactStructuralPrefix =
                 "exact-structural-slot\u001f";
@@ -1961,54 +1962,97 @@ namespace Editors.PackOptimizer.Core
             const string jointTraversalPrefix =
                 "joint-traversal-slot\u001f";
 
-            var probes = new List<string>(candidateKeys.Count + 4);
+            // Allocation-free probing: counterpart keys are built in a
+            // stack buffer and looked up by span. Falls back to strings for
+            // sets that do not support span lookups.
+            HashSet<string>.AlternateLookup<ReadOnlySpan<char>> lookup = default;
+            var hasLookup = selectedKeys is HashSet<string> hashSet &&
+                            hashSet.TryGetAlternateLookup(out lookup);
+
             foreach (var key in candidateKeys)
             {
                 if (key.StartsWith(
                         exactStructuralPrefix,
                         StringComparison.Ordinal))
                 {
-                    probes.Add(
-                        jointStructuralPrefix +
-                        key[exactStructuralPrefix.Length..]);
+                    if (ContainsWithPrefix(
+                            selectedKeys, hasLookup, lookup,
+                            jointStructuralPrefix,
+                            key.AsSpan(exactStructuralPrefix.Length)))
+                    {
+                        return true;
+                    }
+
+                    continue;
                 }
-                else if (key.StartsWith(
-                             jointStructuralPrefix,
-                             StringComparison.Ordinal))
+
+                if (key.StartsWith(
+                        jointStructuralPrefix,
+                        StringComparison.Ordinal))
                 {
                     var suffix =
-                        key[jointStructuralPrefix.Length..];
-                    probes.Add(exactStructuralPrefix + suffix);
-                    probes.Add(jointTraversalPrefix + suffix);
-                }
-                else if (key.StartsWith(
-                             jointTraversalPrefix,
-                             StringComparison.Ordinal))
-                {
-                    probes.Add(
-                        jointStructuralPrefix +
-                        key[jointTraversalPrefix.Length..]);
-                }
-                else
-                {
-                    probes.Add(key);
-                }
-            }
+                        key.AsSpan(jointStructuralPrefix.Length);
+                    if (ContainsWithPrefix(
+                            selectedKeys, hasLookup, lookup,
+                            exactStructuralPrefix, suffix) ||
+                        ContainsWithPrefix(
+                            selectedKeys, hasLookup, lookup,
+                            jointTraversalPrefix, suffix))
+                    {
+                        return true;
+                    }
 
-            return probes.ToArray();
-        }
+                    continue;
+                }
 
-        private static bool HasCrossRigidRewriteConflict(
-            CrossRigidRewriteConflictOccurrence occurrence,
-            IReadOnlySet<string> selectedKeys)
-        {
-            foreach (var probe in occurrence.ConflictProbeKeys)
-            {
-                if (selectedKeys.Contains(probe))
+                if (key.StartsWith(
+                        jointTraversalPrefix,
+                        StringComparison.Ordinal))
+                {
+                    if (ContainsWithPrefix(
+                            selectedKeys, hasLookup, lookup,
+                            jointStructuralPrefix,
+                            key.AsSpan(jointTraversalPrefix.Length)))
+                    {
+                        return true;
+                    }
+
+                    continue;
+                }
+
+                if (selectedKeys.Contains(key))
                     return true;
             }
 
             return false;
+        }
+
+        private static bool ContainsWithPrefix(
+            IReadOnlySet<string> selectedKeys,
+            bool hasLookup,
+            HashSet<string>.AlternateLookup<ReadOnlySpan<char>> lookup,
+            string prefix,
+            ReadOnlySpan<char> suffix)
+        {
+            var length = prefix.Length + suffix.Length;
+            char[]? rented = null;
+            Span<char> buffer = length <= 512
+                ? stackalloc char[512]
+                : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(length));
+            try
+            {
+                prefix.AsSpan().CopyTo(buffer);
+                suffix.CopyTo(buffer[prefix.Length..]);
+                var probe = buffer[..length];
+                return hasLookup
+                    ? lookup.Contains(probe)
+                    : selectedKeys.Contains(probe.ToString());
+            }
+            finally
+            {
+                if (rented != null)
+                    System.Buffers.ArrayPool<char>.Shared.Return(rented);
+            }
         }
 
         private static (string Reason, string Detail)

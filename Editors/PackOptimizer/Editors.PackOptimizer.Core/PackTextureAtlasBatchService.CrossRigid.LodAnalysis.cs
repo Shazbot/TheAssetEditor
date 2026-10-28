@@ -705,19 +705,6 @@ namespace Editors.PackOptimizer.Core
                         instance.ReferenceChain.Select(hop =>
                             $"{hop.OwnerVmdPath}|{hop.ReferenceXmlPath}|{hop.ReferencedVmdPath}"))));
 
-        // Instance arrays are shared by reference across merges and are never
-        // mutated, so their joined signature is built once per array.
-        private static readonly ConditionalWeakTable<
-            CrossRigidVisualInstance[],
-            string> CrossRigidOccurrenceProvenanceSignatures = new();
-
-        private static string BuildCrossRigidOccurrenceProvenanceSignature(
-            CrossRigidVisualInstance[] instances)
-            => CrossRigidOccurrenceProvenanceSignatures.GetValue(
-                instances,
-                static array => BuildCrossRigidOccurrenceProvenanceSignature(
-                    (IEnumerable<CrossRigidVisualInstance>)array));
-
         private static string BuildCrossRigidOccurrenceProvenanceSignature(
             IEnumerable<CrossRigidVisualInstance> instances)
             => string.Join(
