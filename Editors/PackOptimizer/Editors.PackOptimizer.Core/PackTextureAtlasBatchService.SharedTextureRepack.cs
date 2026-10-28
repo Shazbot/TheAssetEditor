@@ -7148,10 +7148,12 @@ namespace Editors.PackOptimizer.Core
             bool Outside(int x, int y)
             {
                 // The texel's first and last level-0 pixel on each axis.
-                foreach (var pixelX in new[] { x << level, ((x + 1) << level) - 1 })
+                for (var i = 0; i < 2; i++)
                 {
-                    foreach (var pixelY in new[] { y << level, ((y + 1) << level) - 1 })
+                    var pixelX = i == 0 ? x << level : ((x + 1) << level) - 1;
+                    for (var j = 0; j < 2; j++)
                     {
+                        var pixelY = j == 0 ? y << level : ((y + 1) << level) - 1;
                         var relativeX = pixelX - originX;
                         var relativeY = pixelY - originY;
                         if (relativeX < 0 || relativeY < 0 ||

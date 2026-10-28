@@ -592,8 +592,29 @@ namespace Editors.PackOptimizer.Core
             return true;
         }
 
+        // Pfim's decode buffer is scratch (copied into the exact-size result below), so it is rented from
+        // the shared pool and handed back when the image is disposed. Rented arrays can be longer than
+        // asked: every read below goes through Height/Stride, never Data.Length.
+        private sealed class PooledPfimAllocator : Pfim.IImageAllocator
+        {
+            public static readonly Pfim.PfimConfig Config = new(allocator: new PooledPfimAllocator());
+
+            public byte[] Rent(int size) => System.Buffers.ArrayPool<byte>.Shared.Rent(size);
+
+            public void Return(byte[] data) => System.Buffers.ArrayPool<byte>.Shared.Return(data);
+        }
+
         private static bool TryDecodeDdsTopLevel(
             byte[] dds,
+            out byte[] bgra,
+            out int width,
+            out int height,
+            out string error)
+            => DecodeDdsTopLevelCore(dds, true, out bgra, out width, out height, out error);
+
+        private static bool DecodeDdsTopLevelCore(
+            byte[] dds,
+            bool needPixels,
             out byte[] bgra,
             out int width,
             out int height,
@@ -605,7 +626,7 @@ namespace Editors.PackOptimizer.Core
             try
             {
                 using var stream = new MemoryStream(dds);
-                using var image = Pfim.Pfimage.FromStream(stream);
+                using var image = Pfim.Pfimage.FromStream(stream, PooledPfimAllocator.Config);
                 width = image.Width;
                 height = image.Height;
                 var channels = image.Format switch
@@ -620,19 +641,27 @@ namespace Editors.PackOptimizer.Core
                     return false;
                 }
 
+                if (!needPixels)
+                    return true;
+
                 bgra = new byte[checked(width * height * 4)];
+                var data = image.Data;
                 for (var y = 0; y < height; y++)
                 {
                     var source = y * image.Stride;
                     var target = y * width * 4;
+                    if (channels == 4)
+                    {
+                        Buffer.BlockCopy(data, source, bgra, target, width * 4);
+                        continue;
+                    }
+
                     for (var x = 0; x < width; x++)
                     {
-                        bgra[target + x * 4] = image.Data[source + x * channels];
-                        bgra[target + x * 4 + 1] = image.Data[source + x * channels + 1];
-                        bgra[target + x * 4 + 2] = image.Data[source + x * channels + 2];
-                        bgra[target + x * 4 + 3] = channels == 4
-                            ? image.Data[source + x * channels + 3]
-                            : (byte)255;
+                        bgra[target + x * 4] = data[source + x * 3];
+                        bgra[target + x * 4 + 1] = data[source + x * 3 + 1];
+                        bgra[target + x * 4 + 2] = data[source + x * 3 + 2];
+                        bgra[target + x * 4 + 3] = 255;
                     }
                 }
 
@@ -755,7 +784,7 @@ namespace Editors.PackOptimizer.Core
 
             if (layout.Format is "BC1" or "BC2" or "BC3")
             {
-                if (!TryDecodeDdsTopLevel(dds, out _, out var width, out var height, out var decodeError))
+                if (!DecodeDdsTopLevelCore(dds, false, out _, out var width, out var height, out var decodeError))
                     return decodeError;
                 if (width != expected.NewWidth || height != expected.NewHeight)
                     return $"decodes to {width}x{height}";
