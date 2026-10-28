@@ -22,9 +22,28 @@ namespace Editors.PackOptimizer.Core
         Pack = 1,
     }
 
-    /// <summary>Simplifier settings for one LOD level of the editor LOD rebuild.</summary>
-    public sealed record EditorLodLevelSettings(float TargetError, bool LockBorder)
+    /// <summary>Optional meshoptimizer simplification flags of one editor-LOD level.</summary>
+    [Flags]
+    public enum EditorLodSimplifyFlags
     {
+        None = 0,
+        PreserveFolds = 1,
+        RegularizeLight = 2,
+        ErrorClamped = 4,
+        /// <summary>Drops small disconnected components; only allowed from LOD3 on.</summary>
+        Prune = 8,
+    }
+
+    /// <summary>Simplifier settings for one LOD level of the editor LOD rebuild.</summary>
+    public sealed record EditorLodLevelSettings(
+        float TargetError,
+        bool LockBorder,
+        EditorLodSimplifyFlags Flags = EditorLodSimplifyFlags.None,
+        float AttributeScale = 1f)
+    {
+        /// <summary>The first LOD level (1-based) on which <see cref="EditorLodSimplifyFlags.Prune"/> may be used.</summary>
+        public const int FirstPruneLevel = 3;
+
         public static readonly IReadOnlyList<EditorLodLevelSettings> Default =
         [
             new(0.02f, true),
@@ -36,17 +55,69 @@ namespace Editors.PackOptimizer.Core
         public static EditorLodLevelSettings For(IReadOnlyList<EditorLodLevelSettings> table, int lodIndex)
             => table[Math.Min(Math.Max(lodIndex, 1) - 1, table.Count - 1)];
 
-        /// <summary>Parses "0.02:locked,0.04:locked,0.08:free".</summary>
+        /// <summary>Throws when the table is empty, has a bad value, or prunes before <see cref="FirstPruneLevel"/>.</summary>
+        public static IReadOnlyList<EditorLodLevelSettings> Validate(IReadOnlyList<EditorLodLevelSettings> table)
+        {
+            if (table.Count == 0)
+                throw new ArgumentException("The editor LOD settings need at least one level.");
+            for (var i = 0; i < table.Count; i++)
+            {
+                var level = i + 1;
+                var entry = table[i];
+                if (!float.IsFinite(entry.TargetError) || entry.TargetError < 0)
+                    throw new ArgumentException($"Editor LOD level {level}: the error cap must be finite and not negative.");
+                if (!float.IsFinite(entry.AttributeScale) || entry.AttributeScale < 0)
+                    throw new ArgumentException($"Editor LOD level {level}: the attribute scale must be finite and not negative.");
+                if (entry.Flags.HasFlag(EditorLodSimplifyFlags.Prune) && level < FirstPruneLevel)
+                    throw new ArgumentException($"Editor LOD level {level}: prune is only allowed from LOD{FirstPruneLevel} on.");
+            }
+
+            return table;
+        }
+
+        /// <summary>
+        /// Parses "error:locked|free[:flags][:attrScale]" entries separated by commas, for example
+        /// "0.02:locked:folds+reglight,0.04:locked:folds,0.08:free:prune+clamped:attr0.5". Flags are joined with '+'
+        /// (folds, reglight, clamped, prune). The flags and the attribute scale are optional and may come in either order.
+        /// </summary>
         public static IReadOnlyList<EditorLodLevelSettings> Parse(string text)
-            => text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        {
+            var table = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(part =>
                 {
-                    var pieces = part.Split(':');
+                    var pieces = part.Split(':', StringSplitOptions.TrimEntries);
+                    var flags = EditorLodSimplifyFlags.None;
+                    var scale = 1f;
+                    foreach (var extra in pieces.Skip(2))
+                    {
+                        if (extra.StartsWith("attr", StringComparison.OrdinalIgnoreCase))
+                        {
+                            scale = float.Parse(extra[4..], System.Globalization.CultureInfo.InvariantCulture);
+                            continue;
+                        }
+
+                        foreach (var name in extra.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        {
+                            flags |= name.ToLowerInvariant() switch
+                            {
+                                "folds" or "preservefolds" => EditorLodSimplifyFlags.PreserveFolds,
+                                "reglight" or "regularizelight" => EditorLodSimplifyFlags.RegularizeLight,
+                                "clamped" or "errorclamped" => EditorLodSimplifyFlags.ErrorClamped,
+                                "prune" => EditorLodSimplifyFlags.Prune,
+                                _ => throw new ArgumentException($"Unknown editor LOD flag '{name}' in '{part}'."),
+                            };
+                        }
+                    }
+
                     return new EditorLodLevelSettings(
                         float.Parse(pieces[0], System.Globalization.CultureInfo.InvariantCulture),
-                        !(pieces.Length > 1 && pieces[1].Equals("free", StringComparison.OrdinalIgnoreCase)));
+                        !(pieces.Length > 1 && pieces[1].Equals("free", StringComparison.OrdinalIgnoreCase)),
+                        flags,
+                        scale);
                 })
                 .ToArray();
+            return Validate(table);
+        }
     }
 
     /// <summary>

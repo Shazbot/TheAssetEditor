@@ -18524,6 +18524,52 @@ namespace Test.PackOptimizer.Core
         }
 
         [Test]
+        public void EditorLods_LevelSyntax_ParsesFlagsAndAttributeScaleAndStaysBackwardCompatible()
+        {
+            var parse = Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse;
+            var flags = Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None;
+
+            var full = parse("0.02:locked:folds+reglight,0.04:locked:folds,0.08:free:prune+clamped:attr0.5");
+            Assert.Multiple(() =>
+            {
+                Assert.That(full, Has.Count.EqualTo(3));
+                Assert.That(full[0], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(
+                    0.02f, true, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.PreserveFolds | Editors.PackOptimizer.Core.EditorLodSimplifyFlags.RegularizeLight)));
+                Assert.That(full[1].Flags, Is.EqualTo(Editors.PackOptimizer.Core.EditorLodSimplifyFlags.PreserveFolds));
+                Assert.That(full[2].LockBorder, Is.False);
+                Assert.That(full[2].Flags, Is.EqualTo(Editors.PackOptimizer.Core.EditorLodSimplifyFlags.Prune | Editors.PackOptimizer.Core.EditorLodSimplifyFlags.ErrorClamped));
+                Assert.That(full[2].AttributeScale, Is.EqualTo(0.5f));
+
+                // Attribute scale first, flags second, and the old two-part syntax.
+                Assert.That(parse("0.08:free:attr2:clamped")[0], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.ErrorClamped, 2f)));
+                Assert.That(parse("0.02:locked,0.04:locked,0.08:free"), Is.EqualTo(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default));
+                Assert.That(flags, Is.EqualTo(Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None));
+
+                // Prune only from LOD3 on; unknown names are errors.
+                Assert.Throws<ArgumentException>(() => parse("0.02:locked:prune,0.04:locked,0.08:free"));
+                Assert.Throws<ArgumentException>(() => parse("0.02:locked,0.04:free:prune"));
+                Assert.Throws<ArgumentException>(() => parse("0.02:locked:wobble"));
+                Assert.DoesNotThrow(() => parse("0.02:locked,0.04:locked,0.08:free:prune"));
+                Assert.Throws<ArgumentException>(() => Editors.PackOptimizer.Core.EditorLodLevelSettings.Validate(
+                    [new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.02f, true, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.Prune)]));
+            });
+        }
+
+        [Test]
+        public void EditorLods_LevelFlags_ReachTheSimplifier()
+        {
+            var tube = CreateBentTube();
+            ushort[] indices = tube.Indices;
+            var plain = new GameWorld.MeshOptimizer.MeshOptReducerOptions { TargetError = 0.08f, LockBorder = false };
+            var clamped = plain with { ErrorClamped = true, PreserveFolds = true, RegularizeLight = true };
+            var a = GameWorld.MeshOptimizer.MeshOptSimplifier.Simplify(tube.Positions, tube.Normals, tube.Uvs, indices, 0.25f, plain);
+            var b = GameWorld.MeshOptimizer.MeshOptSimplifier.Simplify(tube.Positions, tube.Normals, tube.Uvs, indices, 0.25f, clamped);
+            Assert.That(a.Stats.ReductionSkipped, Is.False);
+            Assert.That(b.Stats.ReductionSkipped, Is.False);
+            Assert.That(b.Indices.Length / 3, Is.GreaterThan(0));
+        }
+
+        [Test]
         public void EditorLods_OptionDefaultsToOff_AndTheVersionIsBumped()
         {
             Assert.That(new Editors.PackOptimizer.Core.PackOptimizerOptions().RemakeEditorLods, Is.False);

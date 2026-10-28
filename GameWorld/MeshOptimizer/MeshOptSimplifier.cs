@@ -9,6 +9,9 @@ public sealed record MeshOptReducerOptions
     public bool LockBorder { get; init; } = true;
     public bool Prune { get; init; }
     public bool Regularize { get; init; }
+    public bool RegularizeLight { get; init; }
+    public bool PreserveFolds { get; init; }
+    public bool ErrorClamped { get; init; }
     public float NormalWeight { get; init; } = 0.5f;
     public float TextureCoordinateWeight { get; init; } = 1.0f;
 }
@@ -214,6 +217,12 @@ public static class MeshOptSimplifier
             simplifyFlags |= MeshOptNative.SimplifyPrune;
         if (options.Regularize)
             simplifyFlags |= MeshOptNative.SimplifyRegularize;
+        if (options.RegularizeLight)
+            simplifyFlags |= MeshOptNative.SimplifyRegularizeLight;
+        if (options.PreserveFolds)
+            simplifyFlags |= MeshOptNative.SimplifyPreserveFolds;
+        if (options.ErrorClamped)
+            simplifyFlags |= MeshOptNative.SimplifyErrorClamped;
 
         var simplifiedIndices = new uint[nativeIndexCount];
         var optimizedIndices = new uint[nativeIndexCount];

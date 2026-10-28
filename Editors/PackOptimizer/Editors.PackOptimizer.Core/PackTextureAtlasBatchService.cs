@@ -242,7 +242,7 @@ namespace Editors.PackOptimizer.Core
                 state.CompactTextures = compactTextures && !crossRigidOnly;
                 state.DropUnreadAlpha = dropUnreadAlpha && state.CompactTextures;
                 state.RemakeEditorLods = options.RemakeEditorLods;
-                state.EditorLodSettings = options.EditorLodSettings;
+                state.EditorLodSettings = EditorLodLevelSettings.Validate(options.EditorLodSettings);
                 state.EditorLodBoneWeight = options.EditorLodBoneWeight;
                 state.EditorLodJointPriority = options.EditorLodJointPriority;
                 state.EditorLodReportSkinningError = options.EditorLodReportSkinningError;

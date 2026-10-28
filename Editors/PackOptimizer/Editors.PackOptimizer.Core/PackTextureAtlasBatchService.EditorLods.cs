@@ -16,6 +16,8 @@ namespace Editors.PackOptimizer.Core
         private const int EditorLodMaxLevels = 16;
         private const float EditorLodErrorLimitedShare = 0.8f;
 
+        private sealed record VanishedComponent(string Rigid, int Lod, int Part, int Triangles, Vector3 Size);
+
         private sealed class EditorLodRemakeResult
         {
             public int Candidates { get; set; }
@@ -34,6 +36,11 @@ namespace Editors.PackOptimizer.Core
             public float BoneWeight { get; set; }
             public bool JointPriority { get; set; }
             public int SkinnedPartsRebuilt { get; set; }
+            // Report-only: LOD0 components (welded by position) that have no triangle left in the rebuilt part.
+            public int[] VanishedComponents { get; } = new int[EditorLodMaxLevels];
+            public long[] VanishedComponentTriangles { get; } = new long[EditorLodMaxLevels];
+            public int[] SourceComponents { get; } = new int[EditorLodMaxLevels];
+            public List<VanishedComponent> Vanished { get; } = [];
             // Skinning-error samples per LOD level (old LODs and the rebuilt ones, same parts and vertices).
             public List<float>[] SkinningOld { get; } = Enumerable.Range(0, EditorLodMaxLevels).Select(_ => new List<float>()).ToArray();
             public List<float>[] SkinningNew { get; } = Enumerable.Range(0, EditorLodMaxLevels).Select(_ => new List<float>()).ToArray();
@@ -122,7 +129,7 @@ namespace Editors.PackOptimizer.Core
 
                 try
                 {
-                    if (RebuildEditorLods(state, rmv, maps!, vertexFactory, cancellationToken))
+                    if (RebuildEditorLods(state, rigidPath, rmv, maps!, vertexFactory, cancellationToken))
                     {
                         state.EditorLodRemadeRigids.Add(rigidPath);
                         result.RigidsRemade++;
@@ -228,6 +235,7 @@ namespace Editors.PackOptimizer.Core
 
         private static bool RebuildEditorLods(
             BatchState state,
+            string rigidPath,
             RmvFile rmv,
             int[][][] maps,
             VertexFactory vertexFactory,
@@ -246,7 +254,20 @@ namespace Editors.PackOptimizer.Core
                 var groups = maps[lod - 1];
                 var factor = (float)EditorLodDetector.Factor(lod, lodCount);
                 var levelSettings = EditorLodLevelSettings.For(state.EditorLodSettings, lod);
-                var options = new MeshOptReducerOptions { TargetError = levelSettings.TargetError, LockBorder = levelSettings.LockBorder };
+                var defaultOptions = new MeshOptReducerOptions();
+                var options = new MeshOptReducerOptions
+                {
+                    TargetError = levelSettings.TargetError,
+                    LockBorder = levelSettings.LockBorder,
+                    PreserveFolds = levelSettings.Flags.HasFlag(EditorLodSimplifyFlags.PreserveFolds),
+                    RegularizeLight = levelSettings.Flags.HasFlag(EditorLodSimplifyFlags.RegularizeLight),
+                    ErrorClamped = levelSettings.Flags.HasFlag(EditorLodSimplifyFlags.ErrorClamped),
+                    Prune = levelSettings.Flags.HasFlag(EditorLodSimplifyFlags.Prune),
+                    NormalWeight = defaultOptions.NormalWeight * levelSettings.AttributeScale,
+                    TextureCoordinateWeight = defaultOptions.TextureCoordinateWeight * levelSettings.AttributeScale,
+                };
+                var pendingVanished = new List<VanishedComponent>();
+                var pendingSourceComponents = 0;
                 var rebuilt = new RmvMesh?[parts.Length];
                 var pendingRebuilt = 0;
                 var pendingTooLarge = 0;
@@ -312,6 +333,13 @@ namespace Editors.PackOptimizer.Core
                         continue;
                     }
 
+                    if (state.EditorLodReportSkinningError)
+                    {
+                        var vanished = FindVanishedComponents(vertices, indexArray, simplified, rigidPath, lod, g, out var sourceComponents);
+                        pendingVanished.AddRange(vanished);
+                        pendingSourceComponents += sourceComponents;
+                    }
+
                     var targetWeights = EditorLodWeightCount(parts[g]);
                     var output = new CommonVertex[simplified.VertexCount];
                     for (var old = 0; old < simplified.Remap.Length; old++)
@@ -374,6 +402,10 @@ namespace Editors.PackOptimizer.Core
                 result.LodsReplaced++;
                 result.LodsReplacedByLevel[Math.Min(lod, EditorLodMaxLevels - 1)]++;
                 result.PartsRebuilt += pendingRebuilt;
+                result.SourceComponents[Math.Min(lod, EditorLodMaxLevels - 1)] += pendingSourceComponents;
+                result.VanishedComponents[Math.Min(lod, EditorLodMaxLevels - 1)] += pendingVanished.Count;
+                result.VanishedComponentTriangles[Math.Min(lod, EditorLodMaxLevels - 1)] += pendingVanished.Sum(x => (long)x.Triangles);
+                result.Vanished.AddRange(pendingVanished);
                 result.SkinnedPartsRebuilt += pendingSkinned;
                 result.PartsKeptTooLarge += pendingTooLarge;
                 result.PartsKeptNotReduced += pendingNotReduced;
@@ -384,6 +416,81 @@ namespace Editors.PackOptimizer.Core
             }
 
             return anyReplaced;
+        }
+
+        // LOD0 components (vertices welded by position, then joined by triangles) that have no triangle in the
+        // simplified result: what the simplifier (or prune) made disappear.
+        private static List<VanishedComponent> FindVanishedComponents(
+            CommonVertex[] vertices, ushort[] indices, MeshOptSimplifyResult simplified, string rigidPath, int lod, int part, out int sourceComponents)
+        {
+            var parent = Enumerable.Range(0, vertices.Length).ToArray();
+            int Find(int x)
+            {
+                while (parent[x] != x)
+                {
+                    parent[x] = parent[parent[x]];
+                    x = parent[x];
+                }
+
+                return x;
+            }
+
+            void Union(int a, int b)
+            {
+                a = Find(a);
+                b = Find(b);
+                if (a != b)
+                    parent[a] = b;
+            }
+
+            var firstAtPosition = new Dictionary<(float, float, float), int>();
+            for (var i = 0; i < vertices.Length; i++)
+            {
+                var key = (vertices[i].Position.X, vertices[i].Position.Y, vertices[i].Position.Z);
+                if (firstAtPosition.TryGetValue(key, out var first))
+                    Union(i, first);
+                else
+                    firstAtPosition[key] = i;
+            }
+
+            for (var i = 0; i + 2 < indices.Length; i += 3)
+            {
+                Union(indices[i], indices[i + 1]);
+                Union(indices[i], indices[i + 2]);
+            }
+
+            var triangles = new Dictionary<int, int>();
+            var min = new Dictionary<int, Vector3>();
+            var max = new Dictionary<int, Vector3>();
+            for (var i = 0; i + 2 < indices.Length; i += 3)
+            {
+                var root = Find(indices[i]);
+                triangles[root] = triangles.GetValueOrDefault(root) + 1;
+                for (var k = 0; k < 3; k++)
+                {
+                    var v = vertices[indices[i + k]].Position;
+                    var p = new Vector3(v.X, v.Y, v.Z);
+                    min[root] = min.TryGetValue(root, out var lo) ? Vector3.Min(lo, p) : p;
+                    max[root] = max.TryGetValue(root, out var hi) ? Vector3.Max(hi, p) : p;
+                }
+            }
+
+            sourceComponents = triangles.Count;
+            var newToOld = new int[simplified.VertexCount];
+            for (var old = 0; old < simplified.Remap.Length; old++)
+            {
+                if (simplified.Remap[old] != uint.MaxValue)
+                    newToOld[simplified.Remap[old]] = old;
+            }
+
+            var alive = new HashSet<int>();
+            foreach (var index in simplified.Indices)
+                alive.Add(Find(newToOld[index]));
+
+            return triangles
+                .Where(entry => !alive.Contains(entry.Key))
+                .Select(entry => new VanishedComponent(rigidPath, lod, part, entry.Value, max[entry.Key] - min[entry.Key]))
+                .ToList();
         }
 
         private const int EditorLodEmbeddingSize = 4;
@@ -680,7 +787,9 @@ namespace Editors.PackOptimizer.Core
                     ", ",
                     Enumerable.Range(1, r.Settings.Count).Select(level =>
                         $"LOD{level}{(level == r.Settings.Count ? "+" : string.Empty)} {r.Settings[level - 1].TargetError.ToString("0.###", inv)} " +
-                        $"{(r.Settings[level - 1].LockBorder ? "locked" : "free")}")));
+                        $"{(r.Settings[level - 1].LockBorder ? "locked" : "free")}" +
+                        (r.Settings[level - 1].Flags == EditorLodSimplifyFlags.None ? string.Empty : $" [{r.Settings[level - 1].Flags}]") +
+                        (r.Settings[level - 1].AttributeScale == 1f ? string.Empty : $" attr x{r.Settings[level - 1].AttributeScale.ToString("0.###", inv)}"))));
             string Tiers(Dictionary<EditorLodEvidence, int> counts)
                 => counts.Count == 0
                     ? "(none)"
@@ -732,11 +841,30 @@ namespace Editors.PackOptimizer.Core
 
                 for (var level = 1; level < EditorLodMaxLevels; level++)
                 {
+                    if (r.SourceComponents[level] != 0)
+                    {
+                        sb.AppendLine(
+                            $"  LOD {level}: LOD0 components with no triangle left: {r.VanishedComponents[level]:N0} of {r.SourceComponents[level]:N0} " +
+                            $"({r.VanishedComponentTriangles[level]:N0} LOD0 triangles)");
+                    }
+
                     if (r.SkinningOld[level].Count == 0)
                         continue;
 
                     sb.AppendLine($"  LOD {level}: old {Stat(r.SkinningOld[level])}");
                     sb.AppendLine($"  LOD {level}: new {Stat(r.SkinningNew[level])}");
+                }
+            }
+
+            var largest = r.Vanished.Where(x => x.Lod >= 3).OrderByDescending(x => x.Triangles).ThenBy(x => x.Rigid, StringComparer.Ordinal).Take(10).ToList();
+            if (state.EditorLodReportSkinningError && largest.Count != 0)
+            {
+                sb.AppendLine("Largest LOD0 components with no triangle left at LOD3+ (rigid, LOD, part, LOD0 triangles, bounding size x/y/z):");
+                foreach (var entry in largest)
+                {
+                    sb.AppendLine(
+                        $"  {entry.Rigid} LOD {entry.Lod} part {entry.Part}: {entry.Triangles:N0} tris, " +
+                        $"{entry.Size.X.ToString("0.###", inv)} x {entry.Size.Y.ToString("0.###", inv)} x {entry.Size.Z.ToString("0.###", inv)}");
                 }
             }
 
