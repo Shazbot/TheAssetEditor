@@ -35,6 +35,8 @@ param(
     [string[]]$RichPackPaths,
     [string]$OptimizeHostPath,
     [string]$OptimizeSourcePack,
+    # Runs the optimize smoke with remakeEditorLods on and checks the report's editor-LOD section for remade rigids.
+    [switch]$OptimizeRemakeEditorLods,
     # Optional: an RPFM schema (the mod manager's schema_wh3.json.zst) passed as dbSchemaPath.
     [string]$OptimizeDbSchemaPath,
     [switch]$KeepOutput
@@ -166,6 +168,9 @@ function Invoke-OptimizeSmoke {
         reportPath = $reportFile
         options = [ordered]@{ optimizeGeometry = $true; buildAtlases = $false; lodAwareAtlasPlanning = $true }
     }
+    if ($OptimizeRemakeEditorLods) {
+        $request['options']['remakeEditorLods'] = $true
+    }
     if (-not [string]::IsNullOrWhiteSpace($OptimizeDbSchemaPath)) {
         $request['dbSchemaPath'] = $OptimizeDbSchemaPath
     }
@@ -208,6 +213,13 @@ function Invoke-OptimizeSmoke {
     }
     if (@(Get-ChildItem -LiteralPath $OutputRoot -Filter '*.optimizing*').Count -ne 0) {
         throw 'optimize left temporary files behind.'
+    }
+    if ($OptimizeRemakeEditorLods) {
+        $reportText = Get-Content -LiteralPath $reportFile -Raw
+        if ($reportText -notmatch 'Editor LOD remake') { throw 'The report has no Editor LOD remake section.' }
+        if ($reportText -notmatch 'Remade: [1-9]') { throw 'remakeEditorLods was on but no rigid was remade.' }
+        $remadeLine = ($reportText -split "`n" | Where-Object { $_ -like 'Remade:*' } | Select-Object -First 1).Trim()
+        Write-Host "PASS editor LOD remake ran in the single-file host ($remadeLine)"
     }
     Write-Host "optimize: succeeded, $($result.vmdCount) VMD root(s), $([math]::Round($result.elapsedSeconds)) s."
 }
