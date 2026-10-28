@@ -1563,9 +1563,14 @@ namespace Editors.PackOptimizer.Core
         // Structure of a generated texture against its plan: size, format, colour space,
         // complete mip chain, exact length, and that it decodes.
         private static string? CheckSharedRepackDds(byte[] dds, SharedRepackSlotOutput expected)
-            => CheckSharedRepackDds(dds, expected, out _);
+        {
+            var problem = CheckSharedRepackDds(dds, expected, out var decoded);
+            PixelBufferPool.Return(decoded?.Bgra);
+            return problem;
+        }
 
-        // decoded: the top level the check decoded, so a caller that needs the pixels again can reuse them.
+        // decoded: the top level the check decoded (from PixelBufferPool, the caller owns it), so a caller
+        // that needs the pixels again can reuse them.
         private static string? CheckSharedRepackDds(
             byte[] dds,
             SharedRepackSlotOutput expected,
@@ -1599,7 +1604,7 @@ namespace Editors.PackOptimizer.Core
 
             if (layout.ChainBytes != expected.Bytes)
                 return $"mip chain is {layout.ChainBytes:N0} bytes, planned {expected.Bytes:N0}";
-            if (!TryDecodeDdsTopLevel(dds, out var bgra, out var width, out var height, out var error))
+            if (!TryDecodeDdsTopLevelPooled(dds, out var bgra, out var width, out var height, out var error))
                 return error;
             decoded = (bgra, width, height);
             if (width != expected.Width || height != expected.Height)
@@ -6942,10 +6947,21 @@ namespace Editors.PackOptimizer.Core
                     var ok = true;
                     if (level > 0)
                         ok = TrySliceDdsMips(Dds, Layout, level, out dds, out _);
-                    if (ok && TryDecodeDdsTopLevel(dds, out var bgra, out var width, out var height, out _))
+                    if (ok && TryDecodeDdsTopLevelPooled(dds, out var bgra, out var width, out var height, out _))
                         result = (bgra, width, height);
                     _levels[level] = result;
                     return result;
+                }
+            }
+
+            // Hands the decoded levels back to the pool. Only when nothing reads this source any more.
+            public void ReleaseLevels()
+            {
+                lock (_levels)
+                {
+                    foreach (var level in _levels.Values)
+                        PixelBufferPool.Return(level?.Bgra);
+                    _levels.Clear();
                 }
             }
         }
@@ -7019,6 +7035,16 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 return source;
+            }
+
+            // End of the attempt: no compose or check runs on this cache any more.
+            public void ReleaseLevels()
+            {
+                foreach (var entry in _sources.Values)
+                {
+                    if (entry.IsValueCreated)
+                        entry.Value?.ReleaseLevels();
+                }
             }
 
             public SharedRepackSource? FromBytes(string key, byte[] dds)
@@ -7351,7 +7377,27 @@ namespace Editors.PackOptimizer.Core
             error = string.Empty;
             _sharedRepackEncodeTicks = 0;
             cancellationToken.ThrowIfCancellationRequested();
-            var canvas = new byte[checked(output.Width * output.Height * 4)];
+            // The canvas is scratch: the encoders copy it into their own image, and output.Data is a fresh array.
+            var canvas = PixelBufferPool.Rent(checked(output.Width * output.Height * 4));
+            try
+            {
+                return ComposeSharedRepackOutputCore(page, output, sources, canvas, cancellationToken, out error);
+            }
+            finally
+            {
+                PixelBufferPool.Return(canvas);
+            }
+        }
+
+        private static bool ComposeSharedRepackOutputCore(
+            SharedRepackPage page,
+            SharedRepackSlotOutput output,
+            SharedRepackSourceCache sources,
+            byte[] canvas,
+            CancellationToken cancellationToken,
+            out string error)
+        {
+            error = string.Empty;
             var neutral = GetSharedRepackNeutralPixel(output.Slot);
             for (var offset = 0; offset < canvas.Length; offset += 4)
                 Buffer.BlockCopy(neutral, 0, canvas, offset, 4);
@@ -8481,6 +8527,7 @@ namespace Editors.PackOptimizer.Core
                 Dictionary<TextureType, string> EmbeddedPaths)>();
             var materialFiles = new List<(string Path, byte[] Data)>();
             var materialSources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            SharedRepackOutputResult[]? releaseResults = null;
 
             try
             {
@@ -8496,6 +8543,7 @@ namespace Editors.PackOptimizer.Core
                         work.Add((page, output));
 
                 var results = new SharedRepackOutputResult[work.Count];
+                releaseResults = results;
                 var firstFailure = int.MaxValue;
                 var degree = Math.Clamp(Environment.ProcessorCount / 2, 1, SharedRepackMaxParallelOutputs);
                 var wall = Stopwatch.StartNew();
@@ -8570,7 +8618,13 @@ namespace Editors.PackOptimizer.Core
                     }
 
                     if (output.DuplicateOf == null)
-                        generated.FromDecodedBytes(output.Path, output.Data, item.DecodedTopLevel);
+                    {
+                        // The generated source owns the decoded top level from here on.
+                        var topLevel = item.DecodedTopLevel;
+                        item.DecodedTopLevel = null;
+                        if (generated.FromDecodedBytes(output.Path, output.Data, topLevel) == null)
+                            PixelBufferPool.Return(topLevel?.Bgra);
+                    }
                 }
 
                 SharedRepackBeforeCheckHook?.Invoke(plan);
@@ -8763,6 +8817,21 @@ namespace Editors.PackOptimizer.Core
                 pixelFailure = false;
                 failure = $"internal error while composing or checking ({ex.GetType().Name}: {ex.Message})";
                 return null;
+            }
+            finally
+            {
+                // The attempt is over (the parallel compose and the page checks have finished): hand the
+                // decoded pixels back. Nothing below reads the caches; the results kept no pixels.
+                sources.ReleaseLevels();
+                generated.ReleaseLevels();
+                if (releaseResults != null)
+                {
+                    foreach (var item in releaseResults)
+                    {
+                        if (item?.DecodedTopLevel != null)
+                            PixelBufferPool.Return(item.DecodedTopLevel.Value.Bgra);
+                    }
+                }
             }
 
             // 3. Apply: write files, rewrite UVs, repoint WSModels.
