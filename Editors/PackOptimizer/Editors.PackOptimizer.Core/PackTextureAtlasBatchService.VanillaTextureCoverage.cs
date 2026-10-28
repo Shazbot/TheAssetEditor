@@ -513,6 +513,12 @@ namespace Editors.PackOptimizer.Core
             var timer = Stopwatch.StartNew();
             var containers = GetGameplayTraversalContainers(state);
             var sourceFiles = state.Source.GetAllFiles();
+            var stepTimer = Stopwatch.StartNew();
+            void EndStep(string name)
+            {
+                state.PhaseDurations["  of which vanilla coverage, " + name] = stepTimer.Elapsed;
+                stepTimer.Restart();
+            }
 
             // 1. Bindings of the source WSModels; their materials, wherever they live.
             var scan = EnumerateSourceWsModelBindings(sourceFiles, cancellationToken);
@@ -772,6 +778,7 @@ namespace Editors.PackOptimizer.Core
             foreach (var pair in textureEntries)
                 result.Entries[pair.Key] = pair.Value;
 
+            EndStep("step 1 (bindings, materials, direct rigids)");
             // 2. Which of the referenced textures are vanilla, and their headers.
             result.TexturesReferenced = textureEntries.Count;
             var targets = new Dictionary<string, VanillaCoverageTexture>(
@@ -819,6 +826,7 @@ namespace Editors.PackOptimizer.Core
                 repackTargets[entry.Path] = entry;
             }
 
+            EndStep("step 2 (texture headers)");
             // Source-pack material files that mention an owned texture (a bound material is
             // already parsed), and owned textures that can never be called removable.
             if (repackTargets.Values.Any(entry => entry.IsOwned))
@@ -872,6 +880,7 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            EndStep("step 2b (owned texture mentions)");
             // 3. Mentions in non-material files of the pack (VMD decals, text).
             if (repackTargets.Count != 0)
             {
@@ -898,6 +907,7 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            EndStep("step 3 (text file mentions)");
             // 4. Geometry: one fresh read per rigid that has a vanilla-target user.
             var rigidGroups = texturesByPart
                 .Select(pair => (
@@ -909,119 +919,132 @@ namespace Editors.PackOptimizer.Core
                 .GroupBy(part => part.Rigid, StringComparer.OrdinalIgnoreCase)
                 .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            var scratch = CreateVanillaCoverageGrid();
-            for (var groupIndex = 0; groupIndex < rigidGroups.Count; groupIndex++)
+            // The rigids of a batch are loaded and rasterized in parallel into per-group results; the batch
+            // is then merged in group order, exactly as the serial loop did. Batches bound the memory.
+            var workers = Math.Clamp(Environment.ProcessorCount, 1, 8);
+            var batchSize = workers * 2;
+            for (var batchStart = 0; batchStart < rigidGroups.Count; batchStart += batchSize)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var group = rigidGroups[groupIndex];
-                if (groupIndex % 10 == 0 || groupIndex == rigidGroups.Count - 1)
-                {
-                    ReportProgress(
-                        progress,
-                        "Vanilla texture coverage",
-                        groupIndex + 1,
-                        rigidGroups.Count,
-                        group.Key);
-                }
-
-                if (timer.Elapsed > result.Budget)
-                {
-                    result.BudgetExhausted = true;
-                    result.RigidsSkippedForTime++;
-                    foreach (var part in group)
-                    {
-                        foreach (var entry in part.Targets)
-                            entry.NotReached = true;
-                    }
-
-                    continue;
-                }
-
-                RmvFile? rigid;
+                var batchEnd = Math.Min(rigidGroups.Count, batchStart + batchSize);
+                var batchResults = new VanillaGroupGeometry?[batchEnd - batchStart];
                 try
                 {
-                    rigid = directRigidCache.GetValueOrDefault(group.Key) ?? loadRigid(group.Key);
+                    Parallel.For(
+                        batchStart,
+                        batchEnd,
+                        new ParallelOptions { CancellationToken = cancellationToken, MaxDegreeOfParallelism = workers },
+                        index => batchResults[index - batchStart] = ReadVanillaGroupGeometry(
+                            rigidGroups[index].Key,
+                            rigidGroups[index].Select(part => (part.Lod, part.Part)).ToList(),
+                            state.Source.ContainsFile(rigidGroups[index].Key),
+                            directRigidCache,
+                            loadRigid,
+                            timer,
+                            result.Budget,
+                            cancellationToken));
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (AggregateException ex) when (ex.InnerExceptions.Count != 0)
                 {
-                    rigid = null;
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
                 }
 
-                if (rigid?.ModelList == null)
+                for (var groupIndex = batchStart; groupIndex < batchEnd; groupIndex++)
                 {
-                    result.RigidsUnavailable++;
-                    foreach (var part in group)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var group = rigidGroups[groupIndex];
+                    var groupParts = group.ToList();
+                    var geometry = batchResults[groupIndex - batchStart]!;
+                    batchResults[groupIndex - batchStart] = null;
+                    if (groupIndex % 10 == 0 || groupIndex == rigidGroups.Count - 1)
                     {
-                        result.PartsUnassessable++;
-                        foreach (var entry in part.Targets)
-                            entry.UnassessableUses++;
+                        ReportProgress(
+                            progress,
+                            "Vanilla texture coverage",
+                            groupIndex + 1,
+                            rigidGroups.Count,
+                            group.Key);
                     }
 
-                    continue;
-                }
-
-                result.RigidsRead++;
-                var modOwned = state.Source.ContainsFile(group.Key);
-                foreach (var part in group)
-                {
-                    if (part.Lod < 0 || part.Lod >= rigid.ModelList.Length ||
-                        part.Part < 0 || part.Part >= rigid.ModelList[part.Lod].Length)
+                    if (geometry.NotStarted || timer.Elapsed > result.Budget)
                     {
-                        result.PartsUnassessable++;
-                        foreach (var entry in part.Targets)
-                            entry.UnassessableUses++;
-                        continue;
-                    }
-
-                    var model = rigid.ModelList[part.Lod][part.Part];
-                    Array.Clear(scratch);
-                    if (!TryMarkVanillaPartCoverage(
-                            model, scratch, out var tiled, out var triangles, out var degenerate))
-                    {
-                        result.DegenerateTriangles += degenerate;
-                        result.PartsUnassessable++;
-                        foreach (var entry in part.Targets)
-                            entry.UnassessableUses++;
-                        continue;
-                    }
-
-                    result.PartsAssessed++;
-                    result.PartData[(group.Key, part.Lod, part.Part)] =
-                        new VanillaCoveragePart(scratch.ToArray(), tiled);
-                    result.TrianglesMarked += triangles;
-                    result.DegenerateTriangles += degenerate;
-                    UvBounds? bounds = null;
-                    try
-                    {
-                        bounds = GetUvBounds(model);
-                    }
-                    catch (InvalidOperationException)
-                    {
-                        // Cannot happen after a successful triangle pass; the rectangle
-                        // figure is then simply missing for this part.
-                    }
-
-                    foreach (var entry in part.Targets)
-                    {
-                        for (var word = 0; word < scratch.Length; word++)
-                            entry.Coverage[word] |= scratch[word];
-
-                        if (bounds.HasValue)
+                        result.BudgetExhausted = true;
+                        result.RigidsSkippedForTime++;
+                        foreach (var part in groupParts)
                         {
-                            MarkVanillaBoundingRectangle(
-                                entry.BoundingRectangles,
-                                bounds.Value,
-                                entry.Layout!.Width,
-                                entry.Layout.Height);
+                            foreach (var entry in part.Targets)
+                                entry.NotReached = true;
                         }
 
-                        entry.Tiled |= tiled;
-                        (modOwned ? entry.ModParts : entry.VanillaParts)
-                            .Add((group.Key, part.Lod, part.Part));
+                        continue;
+                    }
+
+                    if (!geometry.RigidAvailable)
+                    {
+                        result.RigidsUnavailable++;
+                        foreach (var part in groupParts)
+                        {
+                            result.PartsUnassessable++;
+                            foreach (var entry in part.Targets)
+                                entry.UnassessableUses++;
+                        }
+
+                        continue;
+                    }
+
+                    result.RigidsRead++;
+                    var modOwned = geometry.ModOwned;
+                    for (var partIndex = 0; partIndex < geometry.Parts.Length; partIndex++)
+                    {
+                        var part = geometry.Parts[partIndex];
+                        var source = groupParts[partIndex];
+                        if (part.OutOfRange)
+                        {
+                            result.PartsUnassessable++;
+                            foreach (var entry in source.Targets)
+                                entry.UnassessableUses++;
+                            continue;
+                        }
+
+                        if (!part.Assessable)
+                        {
+                            result.DegenerateTriangles += part.Degenerate;
+                            result.PartsUnassessable++;
+                            foreach (var entry in source.Targets)
+                                entry.UnassessableUses++;
+                            continue;
+                        }
+
+                        var scratch = part.Grid!;
+                        result.PartsAssessed++;
+                        result.PartData[(group.Key, source.Lod, source.Part)] =
+                            new VanillaCoveragePart(scratch, part.Tiled);
+                        result.TrianglesMarked += part.Triangles;
+                        result.DegenerateTriangles += part.Degenerate;
+                        var bounds = part.Bounds;
+                        foreach (var entry in source.Targets)
+                        {
+                            for (var word = 0; word < scratch.Length; word++)
+                                entry.Coverage[word] |= scratch[word];
+
+                            if (bounds.HasValue)
+                            {
+                                MarkVanillaBoundingRectangle(
+                                    entry.BoundingRectangles,
+                                    bounds.Value,
+                                    entry.Layout!.Width,
+                                    entry.Layout.Height);
+                            }
+
+                            entry.Tiled |= part.Tiled;
+                            (modOwned ? entry.ModParts : entry.VanillaParts)
+                                .Add((group.Key, source.Lod, source.Part));
+                        }
                     }
                 }
             }
 
+            EndStep("step 4 (geometry)");
             // 5. Per-texture figures; the targets split into not reached and assessed.
             foreach (var entry in repackTargets.Values
                          .OrderBy(entry => entry.Path, StringComparer.OrdinalIgnoreCase))
@@ -1054,6 +1077,100 @@ namespace Editors.PackOptimizer.Core
                 if (!entry.IsOwned)
                     result.Assessed.Add(entry);
             }
+            EndStep("step 5 (figures)");
+        }
+
+        private sealed class VanillaPartGeometry
+        {
+            public bool OutOfRange;
+            public bool Assessable;
+            public ulong[]? Grid;
+            public bool Tiled;
+            public int Triangles;
+            public int Degenerate;
+            public UvBounds? Bounds;
+        }
+
+        private sealed class VanillaGroupGeometry
+        {
+            public bool NotStarted;
+            public bool RigidAvailable;
+            public bool ModOwned;
+            public VanillaPartGeometry[] Parts = [];
+        }
+
+        // One rigid group's geometry, with no shared state written: safe to run for several groups at once.
+        private static VanillaGroupGeometry ReadVanillaGroupGeometry(
+            string rigidPath,
+            List<(int Lod, int Part)> parts,
+            bool modOwned,
+            Dictionary<string, RmvFile?> directRigidCache,
+            Func<string, RmvFile?> loadRigid,
+            Stopwatch timer,
+            TimeSpan budget,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (timer.Elapsed > budget)
+                return new VanillaGroupGeometry { NotStarted = true };
+
+            RmvFile? rigid;
+            try
+            {
+                rigid = directRigidCache.GetValueOrDefault(rigidPath) ?? loadRigid(rigidPath);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                rigid = null;
+            }
+
+            if (rigid?.ModelList == null)
+                return new VanillaGroupGeometry();
+
+            var geometry = new VanillaGroupGeometry
+            {
+                RigidAvailable = true,
+                ModOwned = modOwned,
+                Parts = new VanillaPartGeometry[parts.Count],
+            };
+            for (var index = 0; index < parts.Count; index++)
+            {
+                var (lod, partNumber) = parts[index];
+                var item = new VanillaPartGeometry();
+                geometry.Parts[index] = item;
+                if (lod < 0 || lod >= rigid.ModelList.Length ||
+                    partNumber < 0 || partNumber >= rigid.ModelList[lod].Length)
+                {
+                    item.OutOfRange = true;
+                    continue;
+                }
+
+                var model = rigid.ModelList[lod][partNumber];
+                var grid = CreateVanillaCoverageGrid();
+                if (!TryMarkVanillaPartCoverage(
+                        model, grid, out var tiled, out var triangles, out var degenerate))
+                {
+                    item.Degenerate = degenerate;
+                    continue;
+                }
+
+                item.Assessable = true;
+                item.Grid = grid;
+                item.Tiled = tiled;
+                item.Triangles = triangles;
+                item.Degenerate = degenerate;
+                try
+                {
+                    item.Bounds = GetUvBounds(model);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Cannot happen after a successful triangle pass; the rectangle
+                    // figure is then simply missing for this part.
+                }
+            }
+
+            return geometry;
         }
 
         // ---------------------------------------------------------------------------
