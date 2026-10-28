@@ -18342,8 +18342,8 @@ namespace Test.PackOptimizer.Core
             {
                 Assert.That(settings(table, 1), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.02f, true)));
                 Assert.That(settings(table, 2), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.04f, true)));
-                Assert.That(settings(table, 3), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false)));
-                Assert.That(settings(table, 5), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false)));
+                Assert.That(settings(table, 3), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f)));
+                Assert.That(settings(table, 5), Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None, 0.5f)));
                 Assert.That(
                     Editors.PackOptimizer.Core.EditorLodLevelSettings.Parse("0.02:locked,0.08:free"),
                     Is.EqualTo(new[]
@@ -18542,7 +18542,8 @@ namespace Test.PackOptimizer.Core
 
                 // Attribute scale first, flags second, and the old two-part syntax.
                 Assert.That(parse("0.08:free:attr2:clamped")[0], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false, Editors.PackOptimizer.Core.EditorLodSimplifyFlags.ErrorClamped, 2f)));
-                Assert.That(parse("0.02:locked,0.04:locked,0.08:free"), Is.EqualTo(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default));
+                Assert.That(parse("0.02:locked,0.04:locked,0.08:free:attr0.5"), Is.EqualTo(Editors.PackOptimizer.Core.EditorLodLevelSettings.Default));
+                Assert.That(parse("0.02:locked,0.04:locked,0.08:free")[2], Is.EqualTo(new Editors.PackOptimizer.Core.EditorLodLevelSettings(0.08f, false)));
                 Assert.That(flags, Is.EqualTo(Editors.PackOptimizer.Core.EditorLodSimplifyFlags.None));
 
                 // Prune only from LOD3 on; unknown names are errors.
@@ -18574,7 +18575,7 @@ namespace Test.PackOptimizer.Core
         {
             Assert.That(new Editors.PackOptimizer.Core.PackOptimizerOptions().RemakeEditorLods, Is.False);
             var defaults = new Editors.PackOptimizer.Core.PackOptimizerOptions();
-            Assert.That(defaults.EditorLodBoneWeight, Is.Zero);
+            Assert.That(defaults.EditorLodBoneWeight, Is.EqualTo(2f));
             Assert.That(defaults.EditorLodJointPriority, Is.False);
             Assert.That(defaults.EditorLodReportSkinningError, Is.False);
             Assert.That(Editors.PackOptimizer.Core.PackOptimizerVersions.OutputVersion, Is.GreaterThanOrEqualTo(32));
@@ -18697,8 +18698,9 @@ namespace Test.PackOptimizer.Core
             // 32: rigids whose LOD 1+ AssetEditor's old decimator generated are rebuilt from LOD0 with
             // meshoptimizer (RemakeEditorLods); the pinned hash gains an editor-LOD fixture. Version 32 was
             // not released, so the per-level simplifier settings (LOD1 2 % locked, LOD2 4 % locked,
-            // LOD3+ 8 % free) updated this entry in place instead of adding 33.
-            [32] = "7673CC593E24E2AB449373CF9E410757573C612665D1717D085E4C303FAC8D2F",
+            // LOD3+ 8 % free, normal/UV weights halved from LOD3, bone embedding weight 2) updated this entry in
+            // place instead of adding 33.
+            [32] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
         };
 
         private static string ComputeOutputGoldenHash()

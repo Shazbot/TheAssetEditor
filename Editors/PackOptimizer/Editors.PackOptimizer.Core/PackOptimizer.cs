@@ -48,7 +48,7 @@ namespace Editors.PackOptimizer.Core
         [
             new(0.02f, true),
             new(0.04f, true),
-            new(0.08f, false),
+            new(0.08f, false, EditorLodSimplifyFlags.None, 0.5f),
         ];
 
         /// <summary>The settings of LOD <paramref name="lodIndex"/> (1-based); levels past the table use its last entry.</summary>
@@ -167,15 +167,15 @@ namespace Editors.PackOptimizer.Core
         /// <summary>
         /// Simplifier settings of the editor LOD rebuild per LOD level: entry 0 is LOD1, entry 1 is LOD2 and the
         /// last entry applies to every deeper LOD. Default: 2 % error with the border locked at LOD1, 4 % locked at
-        /// LOD2, 8 % with the border free from LOD3.
+        /// LOD2, 8 % with the border free and the normal/UV weights halved from LOD3.
         /// </summary>
         public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; init; } = EditorLodLevelSettings.Default;
         /// <summary>
         /// Weight of the bone-embedding attributes of the editor LOD rebuild for skinned parts: each bone gets a fixed
         /// pseudo-random 4D unit vector and each vertex carries the weight-blend of its bones' vectors, so collapses
-        /// across joint boundaries cost more. 0 (default) leaves the rebuild as it was.
+        /// across joint boundaries cost more. 0 turns it off (default 2).
         /// </summary>
-        public float EditorLodBoneWeight { get; init; }
+        public float EditorLodBoneWeight { get; init; } = 2f;
         /// <summary>Marks vertices whose dominant bone differs from a neighbour's as priority vertices (off by default).</summary>
         public bool EditorLodJointPriority { get; init; }
         /// <summary>Samples the skinning error of the rebuilt LODs for the report (report-only, costs time; off by default).</summary>
