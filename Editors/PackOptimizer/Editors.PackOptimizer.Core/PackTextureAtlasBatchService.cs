@@ -842,10 +842,14 @@ namespace Editors.PackOptimizer.Core
                 phaseStopwatch.Restart();
                 var game = GameInformationDatabase.GetGameById(request.Game);
                 var summary = BuildSummary(state);
+                var precompressedRigids = options.CompressRigidModels
+                    ? new System.Collections.Concurrent.ConcurrentDictionary<string, FileCompression.PrecompressedLz4>(StringComparer.OrdinalIgnoreCase)
+                    : null;
                 var rigidsToCompress = options.CompressRigidModels
-                    ? SelectRigidModelsForLz4(output, cancellationToken)
+                    ? SelectRigidModelsForLz4WithFrames(output, cancellationToken, precompressedRigids)
                     : null;
                 FileCompression.ForcedLz4Files = rigidsToCompress;
+                FileCompression.ForcedLz4Precompressed = precompressedRigids;
                 FileCompression.ForcedLz4Level = RigidLz4Level;
                 try
                 {
@@ -854,6 +858,7 @@ namespace Editors.PackOptimizer.Core
                 finally
                 {
                     FileCompression.ForcedLz4Files = null;
+                    FileCompression.ForcedLz4Precompressed = null;
                     FileCompression.ForcedLz4Level = K4os.Compression.LZ4.LZ4Level.L00_FAST;
                 }
 
@@ -937,6 +942,13 @@ namespace Editors.PackOptimizer.Core
         private const K4os.Compression.LZ4.LZ4Level RigidLz4Level = K4os.Compression.LZ4.LZ4Level.L03_HC;
 
         private static HashSet<string> SelectRigidModelsForLz4(IPackFileContainer output, CancellationToken cancellationToken)
+            => SelectRigidModelsForLz4WithFrames(output, cancellationToken, null);
+
+        // When precompressed is given, the frame of every selected rigid is kept for the pack writer.
+        private static HashSet<string> SelectRigidModelsForLz4WithFrames(
+            IPackFileContainer output,
+            CancellationToken cancellationToken,
+            System.Collections.Concurrent.ConcurrentDictionary<string, FileCompression.PrecompressedLz4>? precompressed)
         {
             var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var (path, file) in output.GetAllFiles())
@@ -955,7 +967,13 @@ namespace Editors.PackOptimizer.Core
                 var compressed = FileCompression.CompressLz4(data, RigidLz4Level);
 
                 if (compressed.Length * 100.0 / data.Length <= RigidLz4MaximumRatioPercent)
+                {
                     selected.Add(path);
+                    precompressed?[path] = new FileCompression.PrecompressedLz4(
+                        data.Length,
+                        System.Security.Cryptography.SHA256.HashData(data),
+                        compressed);
+                }
             }
 
             return selected;

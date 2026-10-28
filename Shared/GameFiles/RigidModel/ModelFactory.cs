@@ -42,6 +42,44 @@ namespace Shared.GameFormats.RigidModel
             };
         }
 
+        /// <summary>
+        /// Loads the headers and the materials of every mesh, but not the vertices and indices. Meant for
+        /// callers that only need texture paths or material parameters; each model's Mesh is empty.
+        /// </summary>
+        public RmvFile LoadMaterialsOnly(byte[] bytes)
+        {
+            var file = LoadOnlyHeaders(bytes);
+
+            var modelList = new RmvModel[file.Header.LodCount][];
+            for (var lodIndex = 0; lodIndex < file.Header.LodCount; lodIndex++)
+            {
+                var header = file.LodHeaders[lodIndex];
+                var models = new RmvModel[header.MeshCount];
+                var sizeOffset = 0;
+                for (var meshIndex = 0; meshIndex < header.MeshCount; meshIndex++)
+                {
+                    var modelStartOffset = (int)header.FirstMeshOffset + sizeOffset;
+                    var commonHeader = ByteHelper.ByteArrayToStructure<RmvCommonHeader>(bytes, modelStartOffset);
+                    var materialOffset = modelStartOffset + ByteHelper.GetSize<RmvCommonHeader>();
+                    var meshStart = commonHeader.VertexOffset + modelStartOffset;
+                    var expectedMaterialSize = meshStart - materialOffset;
+
+                    models[meshIndex] = new RmvModel()
+                    {
+                        CommonHeader = commonHeader,
+                        Material = MaterialFactory.Create().LoadMaterial(bytes, materialOffset, file.Header.Version, commonHeader.ModelTypeFlag, expectedMaterialSize),
+                        Mesh = new RmvMesh() { VertexList = [], IndexList = [] }
+                    };
+                    sizeOffset += (int)commonHeader.MeshSectionSize;
+                }
+
+                modelList[lodIndex] = models;
+            }
+
+            file.ModelList = modelList;
+            return file;
+        }
+
         RmvModel[] LoadMeshInLod(byte[] modelByteData, RmvLodHeader header, RmvVersionEnum rmvVersion)
         {
             var modelList = new RmvModel[header.MeshCount];

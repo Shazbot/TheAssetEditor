@@ -409,7 +409,7 @@ namespace Editors.PackOptimizer.Core
 
                     if (extension.Equals(".rigid_model_v2", StringComparison.OrdinalIgnoreCase))
                     {
-                        var rigid = ModelFactory.Create().Load(file.DataSource.ReadData());
+                        var rigid = ModelFactory.Create().LoadMaterialsOnly(file.DataSource.ReadData());
                         foreach (var lod in rigid.ModelList)
                         {
                             foreach (var model in lod)
@@ -668,7 +668,7 @@ namespace Editors.PackOptimizer.Core
 
                 try
                 {
-                    var rigid = ModelFactory.Create().Load(rigidFile.DataSource.ReadData());
+                    var rigid = ModelFactory.Create().LoadMaterialsOnly(rigidFile.DataSource.ReadData());
                     foreach (var lod in rigid.ModelList)
                     {
                         foreach (var model in lod)
@@ -865,6 +865,9 @@ namespace Editors.PackOptimizer.Core
                 }
             }
 
+            // Modified rigids that already decoded in full below. A WSModel check only needs the
+            // part counts of its geometry, so for these the second decode can skip the vertices.
+            var fullyDecodedRigids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var validationRigids = state.ModifiedRigids.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
             for (var rigidIndex = 0; rigidIndex < validationRigids.Count; rigidIndex++)
             {
@@ -886,6 +889,7 @@ namespace Editors.PackOptimizer.Core
                 try
                 {
                     _ = ModelFactory.Create().Load(file.DataSource.ReadData());
+                    fullyDecodedRigids.Add(Normalize(rigidPath));
                 }
                 catch (Exception ex)
                 {
@@ -980,7 +984,10 @@ namespace Editors.PackOptimizer.Core
                     {
                         try
                         {
-                            var outputRmv = ModelFactory.Create().Load(geometryFile.DataSource.ReadData());
+                            var geometryBytes = geometryFile.DataSource.ReadData();
+                            var outputRmv = fullyDecodedRigids.Contains(geometryPath)
+                                ? ModelFactory.Create().LoadMaterialsOnly(geometryBytes)
+                                : ModelFactory.Create().Load(geometryBytes);
                             if (!TryReadWsMaterialAssignments(
                                     wsDoc,
                                     outputRmv,

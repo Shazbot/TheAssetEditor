@@ -121,6 +121,16 @@ namespace Shared.Core.PackFiles.Utility
         /// </summary>
         public static K4os.Compression.LZ4.LZ4Level ForcedLz4Level { get; set; } = K4os.Compression.LZ4.LZ4Level.L00_FAST;
 
+        /// <summary>The Lz4 frame of a forced file, kept from the caller's ratio check so it is not compressed twice.</summary>
+        public sealed record PrecompressedLz4(int SourceLength, byte[] SourceHash, byte[] Compressed);
+
+        /// <summary>
+        /// Optional Lz4 frames (at <see cref="ForcedLz4Level"/>) that the caller already made for some of
+        /// <see cref="ForcedLz4Files"/>. An entry is used, and dropped, only when the data being compressed
+        /// has the same length and SHA-256; otherwise the data is compressed as usual.
+        /// </summary>
+        public static System.Collections.Concurrent.ConcurrentDictionary<string, PrecompressedLz4>? ForcedLz4Precompressed { get; set; }
+
         public static byte[] Decompress(byte[] data, int outputSize, CompressionFormat compressionFormat)
         {
             using var stream = new MemoryStream(data, false);
@@ -196,7 +206,19 @@ namespace Shared.Core.PackFiles.Utility
             if(compressionFormat == CompressionFormat.Zstd)
                 return CompressZstd(data);
             else if(compressionFormat == CompressionFormat.Lz4)
-                return CompressLz4(data, fileName != null && ForcedLz4Files?.Contains(fileName) == true ? ForcedLz4Level : K4os.Compression.LZ4.LZ4Level.L00_FAST);
+            {
+                var forced = fileName != null && ForcedLz4Files?.Contains(fileName) == true;
+                if (forced &&
+                    ForcedLz4Precompressed != null &&
+                    ForcedLz4Precompressed.TryRemove(fileName!, out var precompressed) &&
+                    precompressed.SourceLength == data.Length &&
+                    System.Security.Cryptography.SHA256.HashData(data).AsSpan().SequenceEqual(precompressed.SourceHash))
+                {
+                    return precompressed.Compressed;
+                }
+
+                return CompressLz4(data, forced ? ForcedLz4Level : K4os.Compression.LZ4.LZ4Level.L00_FAST);
+            }
             else if (compressionFormat == CompressionFormat.Lzma1)
                 return CompressLzma1(data);
             else

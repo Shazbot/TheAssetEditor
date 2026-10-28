@@ -299,16 +299,19 @@ namespace Shared.Core.PackFiles.Serialization
             byte[] data;
             uint uncompressedSize = 0;
 
-            // Read file data
-            if (fileMetaData.CompressionInfo.DecompressBeforeSaving == false && packFile.DataSource is PackedFileSource packedFileSource)
-                data = packedFileSource.ReadDataWithoutDecompressing();
-            else
-                data = packFile.DataSource.ReadData();
-
-            // Compress if needed
             var shouldCompress = fileMetaData.CompressionInfo.IntendedCompressionFormat != CompressionFormat.None;
-            if (shouldCompress)
+            if (!shouldCompress)
             {
+                // Read file data
+                if (fileMetaData.CompressionInfo.DecompressBeforeSaving == false && packFile.DataSource is PackedFileSource packedFileSource)
+                    data = packedFileSource.ReadDataWithoutDecompressing();
+                else
+                    data = packFile.DataSource.ReadData();
+            }
+            else
+            {
+                // The raw (possibly already compressed) bytes are replaced below, so only the
+                // uncompressed data is read.
                 var uncompressedData = packFile.DataSource.ReadData();
                 uncompressedSize = (uint)uncompressedData.Length;
 

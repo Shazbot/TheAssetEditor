@@ -56,5 +56,32 @@ namespace Shared.CoreTest.PackFiles.Utility
                 }
             }
         }
+
+        [Test]
+        public void ForcedLz4Precompressed_IsUsedOnlyForMatchingDataAndDropped()
+        {
+            var data = Encoding.ASCII.GetBytes(new string('Z', 5_000));
+            var other = Encoding.ASCII.GetBytes(new string('Y', 5_000));
+            const string path = "a\\b.rigid_model_v2";
+            var marker = new byte[] { 1, 2, 3 };
+            var entry = new FileCompression.PrecompressedLz4(data.Length, System.Security.Cryptography.SHA256.HashData(data), marker);
+
+            FileCompression.ForcedLz4Files = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { path };
+            try
+            {
+                FileCompression.ForcedLz4Precompressed = new() { [path] = entry };
+                Assert.That(FileCompression.Compress(data, CompressionFormat.Lz4, path), Is.SameAs(marker));
+                Assert.That(FileCompression.Compress(data, CompressionFormat.Lz4, path), Is.Not.SameAs(marker));
+
+                FileCompression.ForcedLz4Precompressed = new() { [path] = entry };
+                var recompressed = FileCompression.Compress(other, CompressionFormat.Lz4, path);
+                Assert.That(FileCompression.Decompress(recompressed, other.Length, CompressionFormat.Lz4), Is.EqualTo(other));
+            }
+            finally
+            {
+                FileCompression.ForcedLz4Files = null;
+                FileCompression.ForcedLz4Precompressed = null;
+            }
+        }
     }
 }
