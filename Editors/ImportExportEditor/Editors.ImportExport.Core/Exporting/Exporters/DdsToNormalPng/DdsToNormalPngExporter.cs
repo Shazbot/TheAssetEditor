@@ -204,7 +204,7 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
             totalStopwatch.Stop();
 
             Logger.Here().Debug(
-                "KTX2 normal texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, normalConvert={NormalConvertMs:F1}ms, rgbaConvert={RgbaConvertMs:F1}ms, zstd={ZstdMs:F1}ms, save={SaveMs:F1}ms, inputBytes={InputBytes}, zstdBytes={ZstdBytes}, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
+                "KTX2 normal texture timing for {TexturePath}: total={TotalMs:F1}ms, lookup={LookupMs:F1}ms, read={ReadMs:F1}ms, ddsDecode={DdsDecodeMs:F1}ms, normalConvert={NormalConvertMs:F1}ms, rgbaConvert={RgbaConvertMs:F1}ms, zstd=0ms (raw KTX2), save={SaveMs:F1}ms, inputBytes={InputBytes}, rawBytes={RawBytes}, outputBytes={OutputBytes}, blueNormal={ConvertToBlueNormalMap}",
                 filePath,
                 totalStopwatch.Elapsed.TotalMilliseconds,
                 lookupMs,
@@ -212,10 +212,9 @@ namespace Editors.ImportExport.Exporting.Exporters.DdsToNormalPng
                 ddsDecodeMs,
                 normalConvertMs,
                 encoded.RgbaConvertMs,
-                encoded.ZstdMs,
                 saveMs,
                 bytes.Length,
-                encoded.ZstdBytes,
+                encoded.RawRgbaBytes,
                 encoded.Ktx2Data.Length,
                 convertToBlueNormalMap);
 

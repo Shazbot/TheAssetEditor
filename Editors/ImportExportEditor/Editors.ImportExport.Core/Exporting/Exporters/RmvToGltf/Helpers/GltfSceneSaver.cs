@@ -126,6 +126,10 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
         }
         else
         {
+            // Embedding would put header-only KTX2 stubs into the GLB as textures.
+            if (modelRoot.LogicalImages.Any(image => MeshImportExport.TextureHelper.IsKtx2HeaderOnly(image.Content.Content.Span)))
+                throw new InvalidOperationException(
+                    "Header-only preview KTX2 textures cannot be embedded in a GLB.");
             modelRoot.MergeImages();
             modelRoot.MergeBuffers();
         }
@@ -155,9 +159,23 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
                     Directory.CreateDirectory(directory);
 
                 var stopwatch = Stopwatch.StartNew();
-                using (var input = image.Open())
-                using (var output = File.Create(imagePath))
+                if (MeshImportExport.TextureHelper.IsKtx2HeaderOnly(image.Content.Span))
                 {
+                    // A header-only stub stands in for a sidecar the texture
+                    // exporter wrote. Copy that file; never write the stub.
+                    if (!MeshImportExport.TextureHelper.TryGetKtx2StubSidecarPath(image.Content.Span, out var sidecarPath)
+                        || !File.Exists(sidecarPath))
+                    {
+                        throw new InvalidOperationException(
+                            $"Preview texture '{assetName}' has no generated KTX2 file to copy.");
+                    }
+                    if (!string.Equals(Path.GetFullPath(sidecarPath), imagePath, StringComparison.OrdinalIgnoreCase))
+                        File.Copy(sidecarPath, imagePath, overwrite: true);
+                }
+                else
+                {
+                    using var input = image.Open();
+                    using var output = File.Create(imagePath);
                     input.CopyTo(output);
                 }
                 stopwatch.Stop();

@@ -31,6 +31,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         /// Encoded image bytes already produced by the texture exporter.
         /// Headless KTX2 exports keep these bytes so SharpGLTF can consume
         /// them directly instead of reopening the generated file from disk.
+        /// Raw KTX2 images are reduced to their header (the sidecar file holds
+        /// the pixels), which keeps SharpGLTF from hashing ~100 MB of RGBA.
         /// </summary>
         public byte[]? ImageData { get; init; }
     }
@@ -450,6 +452,8 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             string sourceVirtualPath)
         {
             session.ExportedTextureData.TryGetValue(cacheKey, out var imageData);
+            if (imageData != null)
+                imageData = MeshImportExport.TextureHelper.ToKtx2SidecarStub(imageData, systemPath);
             return new TextureResult(meshIndex, systemPath, channel)
             {
                 ImageData = imageData,
@@ -517,7 +521,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                         timing);
                     exportedPath = exportedImage.Path;
                     if (exportedImage.Data.Length > 0)
-                        session.ExportedTextureData[cacheKey] = exportedImage.Data;
+                        session.ExportedTextureData[cacheKey] = MeshImportExport.TextureHelper.ToKtx2HeaderOnly(exportedImage.Data);
                 }
                 else
                 {
@@ -567,7 +571,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                         timing);
                     exportedPath = exportedImage.Path;
                     if (exportedImage.Data.Length > 0)
-                        session.ExportedTextureData[cacheKey] = exportedImage.Data;
+                        session.ExportedTextureData[cacheKey] = MeshImportExport.TextureHelper.ToKtx2HeaderOnly(exportedImage.Data);
                 }
                 else
                 {
@@ -754,7 +758,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                             timing);
                         exportedPath = exportedImage.Path;
                         if (exportedImage.Data.Length > 0)
-                            session.ExportedTextureData[cacheKey] = exportedImage.Data;
+                            session.ExportedTextureData[cacheKey] = MeshImportExport.TextureHelper.ToKtx2HeaderOnly(exportedImage.Data);
                     }
                     else
                     {
@@ -1420,7 +1424,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         /// </summary>
         private sealed class TextureImageCache
         {
-            private const long MaximumBytes = 128L * 1024 * 1024;
+            // Raw KTX2 textures are 17-34 MB each, so this holds about two to
+            // three units' worth of converted textures.
+            private const long MaximumBytes = 512L * 1024 * 1024;
             private readonly object _sync = new();
             private readonly Dictionary<string, CacheEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
             private long _totalBytes;

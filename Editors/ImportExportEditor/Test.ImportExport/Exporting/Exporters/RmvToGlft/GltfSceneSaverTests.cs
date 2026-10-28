@@ -8,6 +8,120 @@ namespace Test.ImportExport.Exporting.Exporters.RmvToGlft;
 
 public class GltfSceneSaverTests
 {
+    private static byte[] CreateRawKtx2(byte fill) =>
+        MeshImportExport.TextureHelper.EncodeBgraToKtx2(
+            new MeshImportExport.TextureHelper.DecodedDdsImage(4, 4, Enumerable.Repeat(fill, 64).ToArray()),
+            srgb: false).Ktx2Data;
+
+    private static byte[] CreateStub(byte[] ktx2, string sidecarPath) =>
+        MeshImportExport.TextureHelper.ToKtx2SidecarStub(
+            MeshImportExport.TextureHelper.ToKtx2HeaderOnly(ktx2), sidecarPath);
+
+    [Test]
+    public void HeadlessSaverKeepsSameSizedKtx2StubsAsSeparateImages()
+    {
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-ktx2-stubs-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+        var outputPath = Path.Combine(outputDirectory, "model.glb");
+        var normalPath = Path.Combine(outputDirectory, "body_normal.ktx2");
+        var materialPath = Path.Combine(outputDirectory, "body_material_map.ktx2");
+        var normal = CreateRawKtx2(10);
+        var material = CreateRawKtx2(200);
+        File.WriteAllBytes(normalPath, normal);
+        File.WriteAllBytes(materialPath, material);
+
+        try
+        {
+            var materialBuilder = new SharpGLTF.Materials.MaterialBuilder("body").WithMetallicRoughness();
+            materialBuilder.WithChannelImage(SharpGLTF.Materials.KnownChannel.Normal, CreateStub(normal, normalPath));
+            materialBuilder.WithChannelImage(SharpGLTF.Materials.KnownChannel.MetallicRoughness, CreateStub(material, materialPath));
+            materialBuilder.UseChannel(SharpGLTF.Materials.KnownChannel.Normal).Texture.PrimaryImage.AlternateWriteFileName = "body_normal.ktx2";
+            materialBuilder.UseChannel(SharpGLTF.Materials.KnownChannel.MetallicRoughness).Texture.PrimaryImage.AlternateWriteFileName = "body_material_map.ktx2";
+
+            var mesh = new SharpGLTF.Geometry.MeshBuilder<SharpGLTF.Geometry.VertexTypes.VertexPosition>("mesh");
+            mesh.UsePrimitive(materialBuilder).AddTriangle(
+                new SharpGLTF.Geometry.VertexTypes.VertexPosition(0, 0, 0),
+                new SharpGLTF.Geometry.VertexTypes.VertexPosition(1, 0, 0),
+                new SharpGLTF.Geometry.VertexTypes.VertexPosition(0, 1, 0));
+            var scene = new SharpGLTF.Scenes.SceneBuilder();
+            scene.AddRigidMesh(mesh, System.Numerics.Matrix4x4.Identity);
+            var model = scene.ToGltf2();
+
+            // Two KTX2 images (plus SharpGLTF's PNG fallback), not one merged image.
+            Assert.That(model.LogicalImages.Count(image => image.Content.IsKtx2), Is.EqualTo(2));
+
+            new HeadlessGltfSceneSaver().Save(model, outputPath, [normalPath, materialPath]);
+
+            Assert.That(File.ReadAllBytes(normalPath), Is.EqualTo(normal));
+            Assert.That(File.ReadAllBytes(materialPath), Is.EqualTo(material));
+            var glbText = System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(outputPath));
+            Assert.That(glbText, Does.Contain("body_normal.ktx2"));
+            Assert.That(glbText, Does.Contain("body_material_map.ktx2"));
+        }
+        finally
+        {
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void HeadlessSaverCopiesSidecarInsteadOfWritingKtx2Stub()
+    {
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-ktx2-stub-copy-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+        var outputPath = Path.Combine(outputDirectory, "model.glb");
+        var sidecarPath = Path.Combine(outputDirectory, "body.ktx2");
+        var ktx2 = CreateRawKtx2(42);
+        File.WriteAllBytes(sidecarPath, ktx2);
+
+        try
+        {
+            var model = ModelRoot.CreateModel();
+            model.UseScene("default");
+            var image = model.CreateImage("renamed");
+            image.Content = new SharpGLTF.Memory.MemoryImage(CreateStub(ktx2, sidecarPath));
+            image.AlternateWriteFileName = "renamed.ktx2";
+
+            new HeadlessGltfSceneSaver().Save(model, outputPath, [sidecarPath]);
+
+            Assert.That(File.ReadAllBytes(Path.Combine(outputDirectory, "renamed.ktx2")), Is.EqualTo(ktx2));
+        }
+        finally
+        {
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public void HeadlessSaverRejectsKtx2StubWithoutSidecar()
+    {
+        var outputDirectory = Path.Combine(Path.GetTempPath(), $"asset-editor-ktx2-stub-missing-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outputDirectory);
+        var outputPath = Path.Combine(outputDirectory, "model.glb");
+        var otherGeneratedPath = Path.Combine(outputDirectory, "other.ktx2");
+        File.WriteAllBytes(otherGeneratedPath, CreateRawKtx2(1));
+
+        try
+        {
+            var model = ModelRoot.CreateModel();
+            model.UseScene("default");
+            var image = model.CreateImage("missing");
+            image.Content = new SharpGLTF.Memory.MemoryImage(
+                CreateStub(CreateRawKtx2(7), Path.Combine(outputDirectory, "missing.ktx2")));
+            image.AlternateWriteFileName = "missing.ktx2";
+
+            Assert.Throws<InvalidOperationException>(
+                () => new HeadlessGltfSceneSaver().Save(model, outputPath, [otherGeneratedPath]));
+            Assert.That(File.Exists(Path.Combine(outputDirectory, "missing.ktx2")), Is.False);
+        }
+        finally
+        {
+            if (Directory.Exists(outputDirectory))
+                Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
     [Test]
     public void SavesReloadableGlbWhenOutputUsesGlbExtension()
     {

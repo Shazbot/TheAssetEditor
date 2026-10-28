@@ -1,10 +1,10 @@
+using System.Buffers.Binary;
 using System.Drawing.Imaging;
 using System.IO.Compression;
 using System.IO;
 using System.Diagnostics;
 using Editors.ImportExport.Misc;
 using Pfim;
-using ZstdSharp;
 
 namespace MeshImportExport
 {
@@ -14,10 +14,7 @@ namespace MeshImportExport
     public readonly record struct TextureKtx2EncodeResult(
         byte[] Ktx2Data,
         int RawRgbaBytes,
-        int ZstdBytes,
         double RgbaConvertMs,
-        double ZstdMs,
-        int CompressionLevel,
         bool Srgb);
 
     public class TextureHelper
@@ -69,12 +66,23 @@ namespace MeshImportExport
                 && image.Width % 4 == 0
                 && image.Height % 4 == 0;
 
+        /// <summary>
+        /// Writes a single-level RGBA8 KTX2 with no supercompression. The
+        /// preview files stay on the local machine (OS page cache), so the
+        /// larger raw payload costs less than a zstd encode here plus the
+        /// decode in the viewer.
+        /// </summary>
         public static TextureKtx2EncodeResult EncodeBgraToKtx2(
             DecodedDdsImage image,
-            bool srgb,
-            int compressionLevel = 1)
+            bool srgb)
         {
-            var payload = CompressBgraToRgbaZstd(image, compressionLevel);
+            ArgumentNullException.ThrowIfNull(image.BgraPixels);
+            if (image.Width <= 0 || image.Height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(image), "Texture dimensions must be positive.");
+            var rawLength = checked(image.Width * image.Height * 4);
+            if (image.BgraPixels.Length < rawLength)
+                throw new ArgumentException("The pixel buffer is smaller than the requested image.", nameof(image));
+
             var dfd = BuildRgba8Dfd(srgb);
 
             const int identifierLength = 12;
@@ -82,86 +90,148 @@ namespace MeshImportExport
             const int levelIndexLength = 24;
             var dfdOffset = identifierLength + headerLength + levelIndexLength;
             var kvdOffset = checked(dfdOffset + dfd.Length);
-            var levelOffset = kvdOffset;
+            // Unsupercompressed levels must be aligned to lcm(texel size, 4).
+            var levelOffset = (kvdOffset + 3) & ~3;
 
-            using var output = new MemoryStream(
-                checked(levelOffset + payload.CompressedLength));
-            using var writer = new BinaryWriter(output, System.Text.Encoding.UTF8, leaveOpen: true);
+            var output = new byte[checked(levelOffset + rawLength)];
+            var span = output.AsSpan();
 
-            writer.Write(new byte[]
+            new byte[]
             {
                 0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
                 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A
-            });
+            }.CopyTo(span);
 
-            writer.Write(srgb ? 43u : 37u); // VK_FORMAT_R8G8B8A8_SRGB / UNORM
-            writer.Write(1u); // typeSize
-            writer.Write(checked((uint)image.Width));
-            writer.Write(checked((uint)image.Height));
-            writer.Write(0u); // pixelDepth
-            writer.Write(0u); // layerCount
-            writer.Write(1u); // faceCount
-            writer.Write(1u); // levelCount
-            writer.Write(2u); // KHR_SUPERCOMPRESSION_ZSTD
-            writer.Write(checked((uint)dfdOffset));
-            writer.Write(checked((uint)dfd.Length));
-            writer.Write(checked((uint)kvdOffset));
-            writer.Write(0u); // kvdByteLength
-            writer.Write(0UL); // sgdByteOffset
-            writer.Write(0UL); // sgdByteLength
-
-            writer.Write(checked((ulong)levelOffset));
-            writer.Write(checked((ulong)payload.CompressedLength));
-            writer.Write(checked((ulong)payload.RawRgbaBytes));
-
-            writer.Write(dfd);
-            writer.Write(payload.Compressed.AsSpan(0, payload.CompressedLength));
-            writer.Flush();
-
-            return new TextureKtx2EncodeResult(
-                output.ToArray(),
-                payload.RawRgbaBytes,
-                payload.CompressedLength,
-                payload.RgbaConvertMs,
-                payload.ZstdMs,
-                compressionLevel,
-                srgb);
-        }
-
-        private static ZstdRgbaPayload CompressBgraToRgbaZstd(
-            DecodedDdsImage image,
-            int compressionLevel)
-        {
-            var expectedLength = checked(image.Width * image.Height * 4);
-            if (image.Width <= 0 || image.Height <= 0)
-                throw new ArgumentOutOfRangeException(nameof(image), "Texture dimensions must be positive.");
-            if (image.BgraPixels == null || image.BgraPixels.Length < expectedLength)
-                throw new ArgumentException("The pixel buffer is smaller than the requested image.", nameof(image));
-
-            var convertStopwatch = Stopwatch.StartNew();
-            var rgba = new byte[expectedLength];
-            for (var index = 0; index < expectedLength; index += 4)
+            var cursor = identifierLength;
+            void WriteU32(uint value)
             {
-                rgba[index] = image.BgraPixels[index + 2];
-                rgba[index + 1] = image.BgraPixels[index + 1];
-                rgba[index + 2] = image.BgraPixels[index];
-                rgba[index + 3] = image.BgraPixels[index + 3];
+                BinaryPrimitives.WriteUInt32LittleEndian(output.AsSpan(cursor, 4), value);
+                cursor += 4;
+            }
+            void WriteU64(ulong value)
+            {
+                BinaryPrimitives.WriteUInt64LittleEndian(output.AsSpan(cursor, 8), value);
+                cursor += 8;
+            }
+
+            WriteU32(srgb ? 43u : 37u); // VK_FORMAT_R8G8B8A8_SRGB / UNORM
+            WriteU32(1u); // typeSize
+            WriteU32(checked((uint)image.Width));
+            WriteU32(checked((uint)image.Height));
+            WriteU32(0u); // pixelDepth
+            WriteU32(0u); // layerCount
+            WriteU32(1u); // faceCount
+            WriteU32(1u); // levelCount
+            WriteU32(0u); // KHR_SUPERCOMPRESSION_NONE
+            WriteU32(checked((uint)dfdOffset));
+            WriteU32(checked((uint)dfd.Length));
+            WriteU32(checked((uint)kvdOffset));
+            WriteU32(0u); // kvdByteLength
+            WriteU64(0UL); // sgdByteOffset
+            WriteU64(0UL); // sgdByteLength
+
+            WriteU64(checked((ulong)levelOffset));
+            WriteU64(checked((ulong)rawLength)); // byteLength
+            WriteU64(checked((ulong)rawLength)); // uncompressedByteLength
+
+            dfd.CopyTo(span.Slice(dfdOffset));
+
+            // BGRA -> RGBA straight into the output buffer.
+            var convertStopwatch = Stopwatch.StartNew();
+            var src = image.BgraPixels;
+            for (var index = 0; index < rawLength; index += 4)
+            {
+                var dst = levelOffset + index;
+                output[dst] = src[index + 2];
+                output[dst + 1] = src[index + 1];
+                output[dst + 2] = src[index];
+                output[dst + 3] = src[index + 3];
             }
             convertStopwatch.Stop();
 
-            var zstdStopwatch = Stopwatch.StartNew();
-            var destination = new byte[Compressor.GetCompressBound(rgba.Length)];
-            int compressedLength;
-            using (var compressor = new Compressor(compressionLevel))
-                compressedLength = compressor.Wrap(rgba, destination.AsSpan());
-            zstdStopwatch.Stop();
-
-            return new ZstdRgbaPayload(
-                destination,
-                compressedLength,
-                rgba.Length,
+            return new TextureKtx2EncodeResult(
+                output,
+                rawLength,
                 convertStopwatch.Elapsed.TotalMilliseconds,
-                zstdStopwatch.Elapsed.TotalMilliseconds);
+                srgb);
+        }
+
+        /// <summary>
+        /// Returns only the KTX2 header, level index and DFD of a single-level
+        /// raw KTX2. SharpGLTF hashes and validates image bytes while building and
+        /// saving the scene (roughly 1 s for ~150 MB of raw RGBA), but the preview
+        /// GLB only references the sidecar file, so the header is enough for it.
+        /// Anything that is not a KTX2 is returned unchanged.
+        /// </summary>
+        public static byte[] ToKtx2HeaderOnly(byte[] data)
+        {
+            ArgumentNullException.ThrowIfNull(data);
+            if (data.Length < 104
+                || data[0] != 0xAB || data[1] != 0x4B || data[2] != 0x54 || data[3] != 0x58
+                || data[4] != 0x20 || data[5] != 0x32 || data[6] != 0x30 || data[7] != 0xBB)
+                return data;
+
+            var levelOffset = BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(80, 8));
+            return levelOffset == 0 || levelOffset >= (ulong)data.Length
+                ? data
+                : data.AsSpan(0, (int)levelOffset).ToArray();
+        }
+
+        private static readonly byte[] Ktx2StubMarker = "WH3SIDECAR:"u8.ToArray();
+
+        /// <summary>
+        /// Appends the sidecar path to a header-only KTX2. SharpGLTF merges images
+        /// with equal bytes, and headers of same-sized textures are identical, so
+        /// without this two different textures would share one image. The path
+        /// also lets the GLB writer copy the real file if it has to write it.
+        /// </summary>
+        public static byte[] ToKtx2SidecarStub(byte[] headerOnly, string sidecarPath)
+        {
+            ArgumentNullException.ThrowIfNull(headerOnly);
+            ArgumentException.ThrowIfNullOrWhiteSpace(sidecarPath);
+            if (!IsKtx2HeaderOnly(headerOnly))
+                return headerOnly;
+
+            var levelOffset = (int)BinaryPrimitives.ReadUInt64LittleEndian(headerOnly.AsSpan(80, 8));
+            var pathBytes = System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(sidecarPath));
+            var stub = new byte[levelOffset + Ktx2StubMarker.Length + pathBytes.Length];
+            headerOnly.AsSpan(0, levelOffset).CopyTo(stub);
+            Ktx2StubMarker.CopyTo(stub.AsSpan(levelOffset));
+            pathBytes.CopyTo(stub.AsSpan(levelOffset + Ktx2StubMarker.Length));
+            return stub;
+        }
+
+        /// <summary>
+        /// True for a KTX2 without its pixel data: the bare header from
+        /// <see cref="ToKtx2HeaderOnly"/> or a <see cref="ToKtx2SidecarStub"/>.
+        /// </summary>
+        public static bool IsKtx2HeaderOnly(ReadOnlySpan<byte> data)
+        {
+            if (data.Length < 104
+                || data[0] != 0xAB || data[1] != 0x4B || data[2] != 0x54 || data[3] != 0x58
+                || data[4] != 0x20 || data[5] != 0x32 || data[6] != 0x30 || data[7] != 0xBB)
+                return false;
+
+            var levelOffset = BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(80, 8));
+            if (levelOffset == 0 || levelOffset > (ulong)data.Length)
+                return false;
+            return (ulong)data.Length == levelOffset || data[(int)levelOffset..].StartsWith(Ktx2StubMarker);
+        }
+
+        /// <summary>Reads the sidecar path from <see cref="ToKtx2SidecarStub"/> output.</summary>
+        public static bool TryGetKtx2StubSidecarPath(ReadOnlySpan<byte> data, out string sidecarPath)
+        {
+            sidecarPath = string.Empty;
+            if (!IsKtx2HeaderOnly(data))
+                return false;
+
+            var levelOffset = (int)BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(80, 8));
+            var tail = data[levelOffset..];
+            if (!tail.StartsWith(Ktx2StubMarker) || tail.Length == Ktx2StubMarker.Length)
+                return false;
+
+            sidecarPath = System.Text.Encoding.UTF8.GetString(tail[Ktx2StubMarker.Length..]);
+            return true;
         }
 
         private static byte[] BuildRgba8Dfd(bool srgb)
@@ -201,13 +271,6 @@ namespace MeshImportExport
 
             return dfd;
         }
-
-        private readonly record struct ZstdRgbaPayload(
-            byte[] Compressed,
-            int CompressedLength,
-            int RawRgbaBytes,
-            double RgbaConvertMs,
-            double ZstdMs);
 
         public static byte[] EncodeBgraToPng(int width, int height, byte[] bgraPixels)
         {

@@ -8,7 +8,6 @@ using Moq;
 using Shared.Core.PackFiles;
 using Shared.Core.PackFiles.Models;
 using Test.ImportExport;
-using ZstdSharp;
 
 namespace Test.ImportExport.Exporting.Exporters;
 
@@ -251,8 +250,8 @@ public sealed class DdsTextureExporterTests
         var levelOffset = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(80, 8)));
         var levelLength = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(88, 8)));
 
-        using var decompressor = new Decompressor();
-        var rgba = decompressor.Unwrap(data.AsSpan(levelOffset, levelLength));
+        // Raw KTX2: no supercompression, so the level is the RGBA pixels.
+        var rgba = data.AsSpan(levelOffset, levelLength);
         Assert.That(rgba.Length, Is.GreaterThanOrEqualTo(4));
         return new ExactPngPixel(rgba[0], rgba[1], rgba[2], rgba[3]);
     }

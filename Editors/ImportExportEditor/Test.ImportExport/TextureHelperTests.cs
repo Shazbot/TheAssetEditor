@@ -2,7 +2,6 @@ using System.IO;
 using System.Buffers.Binary;
 using System.Text;
 using MeshImportExport;
-using ZstdSharp;
 using System.Drawing;
 using Editors.ImportExport.Dds.Native;
 using Editors.ImportExport.Exporting.Exporters.DdsToMaterialPng;
@@ -96,7 +95,7 @@ public class TextureHelperTests
             0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A
         }));
         Assert.That(BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(12, 4)), Is.EqualTo(37u));
-        Assert.That(BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(44, 4)), Is.EqualTo(2u));
+        Assert.That(BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(44, 4)), Is.EqualTo(0u)); // no supercompression
 
         var dfdOffset = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(48, 4)));
         Assert.That(data[dfdOffset + 14], Is.EqualTo(1)); // linear transfer
@@ -106,14 +105,62 @@ public class TextureHelperTests
         var rawLength = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(96, 8)));
         Assert.That(rawLength, Is.EqualTo(4 * 4 * 4));
 
-        using var decompressor = new Decompressor();
-        var rgba = decompressor.Unwrap(data.AsSpan(levelOffset, levelLength)).ToArray();
+        Assert.That(levelLength, Is.EqualTo(rawLength));
+        Assert.That(levelOffset % 4, Is.EqualTo(0));
+        Assert.That(data.Length, Is.EqualTo(levelOffset + levelLength));
+        var rgba = data.AsSpan(levelOffset, levelLength).ToArray();
         Assert.That(rgba.Length, Is.EqualTo(4 * 4 * 4));
         Assert.That(rgba.AsSpan(0, 8).ToArray(), Is.EqualTo(new byte[] { 17, 34, 201, 77, 10, 20, 30, 40 }));
 
         var sharpGltfImage = new SharpGLTF.Memory.MemoryImage(data);
         Assert.That(sharpGltfImage.IsKtx2, Is.True);
         Assert.That(sharpGltfImage.IsValid, Is.True);
+    }
+
+    [Test]
+    public void ToKtx2HeaderOnlyKeepsHeaderAndDropsPixels()
+    {
+        var image = new TextureHelper.DecodedDdsImage(4, 4, new byte[4 * 4 * 4]);
+        var data = TextureHelper.EncodeBgraToKtx2(image, srgb: false).Ktx2Data;
+        var levelOffset = checked((int)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(80, 8)));
+
+        var header = TextureHelper.ToKtx2HeaderOnly(data);
+
+        Assert.That(header.Length, Is.EqualTo(levelOffset));
+        Assert.That(header, Is.EqualTo(data.AsSpan(0, levelOffset).ToArray()));
+        Assert.That(new SharpGLTF.Memory.MemoryImage(header).IsKtx2, Is.True);
+
+        var png = new byte[] { 1, 2, 3, 4, 5 };
+        Assert.That(TextureHelper.ToKtx2HeaderOnly(png), Is.SameAs(png));
+    }
+
+    [Test]
+    public void ToKtx2SidecarStubKeepsSameSizedTexturesDistinct()
+    {
+        var first = TextureHelper.EncodeBgraToKtx2(
+            new TextureHelper.DecodedDdsImage(4, 4, Enumerable.Repeat((byte)10, 64).ToArray()), srgb: false).Ktx2Data;
+        var second = TextureHelper.EncodeBgraToKtx2(
+            new TextureHelper.DecodedDdsImage(4, 4, Enumerable.Repeat((byte)200, 64).ToArray()), srgb: false).Ktx2Data;
+        var firstHeader = TextureHelper.ToKtx2HeaderOnly(first);
+        var secondHeader = TextureHelper.ToKtx2HeaderOnly(second);
+        Assert.That(firstHeader, Is.EqualTo(secondHeader), "same-sized headers are identical");
+
+        var firstPath = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "a_normal.ktx2"));
+        var secondPath = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "a_material_map.ktx2"));
+        var firstStub = TextureHelper.ToKtx2SidecarStub(firstHeader, firstPath);
+        var secondStub = TextureHelper.ToKtx2SidecarStub(secondHeader, secondPath);
+
+        Assert.That(firstStub, Is.Not.EqualTo(secondStub));
+        Assert.That(new SharpGLTF.Memory.MemoryImage(firstStub).IsKtx2, Is.True);
+        Assert.That(TextureHelper.IsKtx2HeaderOnly(firstStub), Is.True);
+        Assert.That(TextureHelper.IsKtx2HeaderOnly(first), Is.False);
+        Assert.That(TextureHelper.TryGetKtx2StubSidecarPath(firstStub, out var path), Is.True);
+        Assert.That(path, Is.EqualTo(firstPath));
+        Assert.That(TextureHelper.TryGetKtx2StubSidecarPath(firstHeader, out _), Is.False);
+
+        var png = new byte[] { 1, 2, 3, 4, 5 };
+        Assert.That(TextureHelper.ToKtx2SidecarStub(png, firstPath), Is.SameAs(png));
+        Assert.That(TextureHelper.ToKtx2SidecarStub(first, firstPath), Is.SameAs(first));
     }
 
     [Test]
