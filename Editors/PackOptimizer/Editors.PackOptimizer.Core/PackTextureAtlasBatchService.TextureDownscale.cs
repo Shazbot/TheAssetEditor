@@ -910,67 +910,101 @@ namespace Editors.PackOptimizer.Core
             IEnumerable<KeyValuePair<string, PackFile>> sourceFiles,
             CancellationToken cancellationToken)
         {
-            var bindings = new List<SourceWsModelBinding>();
-            var scanned = 0;
-            var unreadable = 0;
+            var wsModels = new List<(string Path, PackFile File)>();
             foreach (var (rawPath, file) in sourceFiles)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var path = Normalize(rawPath);
-                if (!path.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                scanned++;
-                XmlDocument document;
-                try
-                {
-                    document = LoadXml(file);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    unreadable++;
-                    var text = Encoding.UTF8.GetString(file.DataSource.ReadData());
-                    foreach (Match match in Regex.Matches(
-                                 text,
-                                 @"[^\s<>""'=,;|()]+\.xml\.material",
-                                 RegexOptions.IgnoreCase))
-                    {
-                        bindings.Add(new SourceWsModelBinding(
-                            path, string.Empty, -1, -1, Normalize(match.Value),
-                            SourceWsModelBindingKind.UnreadableWsModel));
-                    }
-
-                    continue;
-                }
-
-                var geometry = Normalize(document.SelectSingleNode("/model/geometry")?.InnerText);
-                var materialNodes = document.SelectNodes("/model/materials/material");
-                if (materialNodes == null)
-                    continue;
-
-                foreach (XmlNode node in materialNodes)
-                {
-                    var material = Normalize(node.InnerText);
-                    if (material.Length == 0)
-                        continue;
-
-                    if (geometry.Length == 0 ||
-                        !TryParseIndex(node, "lod_index", out var lod) ||
-                        !TryParseIndex(node, "part_index", out var part))
-                    {
-                        bindings.Add(new SourceWsModelBinding(
-                            path, geometry, -1, -1, material,
-                            SourceWsModelBindingKind.Incomplete));
-                        continue;
-                    }
-
-                    bindings.Add(new SourceWsModelBinding(
-                        path, geometry, lod, part, material,
-                        SourceWsModelBindingKind.Complete));
-                }
+                if (path.EndsWith(".wsmodel", StringComparison.OrdinalIgnoreCase))
+                    wsModels.Add((path, file));
             }
 
+            // Each WSModel is parsed independently (no shared state); the results are merged in file order.
+            var parsed = new (List<SourceWsModelBinding> Bindings, bool Unreadable)[wsModels.Count];
+            try
+            {
+                Parallel.For(
+                    0,
+                    wsModels.Count,
+                    new ParallelOptions
+                    {
+                        CancellationToken = cancellationToken,
+                        MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 1, 8),
+                    },
+                    index => parsed[index] = ParseSourceWsModelBindings(
+                        wsModels[index].Path, wsModels[index].File));
+            }
+            catch (AggregateException ex) when (ex.InnerExceptions.Count != 0)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerExceptions[0]).Throw();
+            }
+
+            var bindings = new List<SourceWsModelBinding>();
+            var unreadable = 0;
+            foreach (var item in parsed)
+            {
+                if (item.Unreadable)
+                    unreadable++;
+                bindings.AddRange(item.Bindings);
+            }
+
+            var scanned = wsModels.Count;
             return new SourceWsModelBindingScan(bindings, scanned, unreadable);
+        }
+
+        private static (List<SourceWsModelBinding> Bindings, bool Unreadable) ParseSourceWsModelBindings(
+            string path,
+            PackFile file)
+        {
+            var bindings = new List<SourceWsModelBinding>();
+            XmlDocument document;
+            try
+            {
+                document = LoadXml(file);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                var text = Encoding.UTF8.GetString(file.DataSource.ReadData());
+                foreach (Match match in Regex.Matches(
+                             text,
+                             @"[^\s<>""'=,;|()]+\.xml\.material",
+                             RegexOptions.IgnoreCase))
+                {
+                    bindings.Add(new SourceWsModelBinding(
+                        path, string.Empty, -1, -1, Normalize(match.Value),
+                        SourceWsModelBindingKind.UnreadableWsModel));
+                }
+
+                return (bindings, true);
+            }
+
+            var geometry = Normalize(document.SelectSingleNode("/model/geometry")?.InnerText);
+            var materialNodes = document.SelectNodes("/model/materials/material");
+            if (materialNodes == null)
+                return (bindings, false);
+
+            foreach (XmlNode node in materialNodes)
+            {
+                var material = Normalize(node.InnerText);
+                if (material.Length == 0)
+                    continue;
+
+                if (geometry.Length == 0 ||
+                    !TryParseIndex(node, "lod_index", out var lod) ||
+                    !TryParseIndex(node, "part_index", out var part))
+                {
+                    bindings.Add(new SourceWsModelBinding(
+                        path, geometry, -1, -1, material,
+                        SourceWsModelBindingKind.Incomplete));
+                    continue;
+                }
+
+                bindings.Add(new SourceWsModelBinding(
+                    path, geometry, lod, part, material,
+                    SourceWsModelBindingKind.Complete));
+            }
+
+            return (bindings, false);
         }
 
         private static TextureDownscaleInputs CollectTextureDownscaleInputs(

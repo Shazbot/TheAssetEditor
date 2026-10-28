@@ -522,6 +522,8 @@ namespace Editors.PackOptimizer.Core
 
             // 1. Bindings of the source WSModels; their materials, wherever they live.
             var scan = EnumerateSourceWsModelBindings(sourceFiles, cancellationToken);
+            var scanElapsed = stepTimer.Elapsed;
+            var materialTime = TimeSpan.Zero;
             result.WsModelsScanned = scan.WsModelsScanned;
             result.UnreadableWsModels = scan.UnreadableWsModels;
 
@@ -532,6 +534,19 @@ namespace Editors.PackOptimizer.Core
                 if (materials.TryGetValue(path, out var cached))
                     return cached;
 
+                var materialStart = Stopwatch.GetTimestamp();
+                try
+                {
+                    return GetMaterialUncached(path);
+                }
+                finally
+                {
+                    materialTime += Stopwatch.GetElapsedTime(materialStart);
+                }
+            }
+
+            VanillaCoverageMaterial GetMaterialUncached(string path)
+            {
                 var file = ResolveGameplayTraversalContainer(state.Source, containers, path, state.ResolutionProviders)?
                     .FindFile(path);
                 VanillaCoverageMaterial material;
@@ -673,12 +688,68 @@ namespace Editors.PackOptimizer.Core
             // A direct VMD/DB reference uses the material embedded in the RMV2. Collect its
             // atlasable channels alongside WSModel users so estimates and coverage see the same parts.
             var directConsumersByRigid = state.GameplayMeshDependencyIndex?.DirectConsumersByRigid;
+            var directLoadTime = TimeSpan.Zero;
+            var directLoopTime = TimeSpan.Zero;
             if (!SharedRepackDirectRigidsDisabled && directConsumersByRigid != null)
             {
-                foreach (var (rigidPathValue, consumers) in directConsumersByRigid
-                             .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+                var directOrdered = directConsumersByRigid
+                    .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var directWorkers = Math.Clamp(Environment.ProcessorCount, 1, 8);
+                var directBatchSize = directWorkers * 2;
+                var directLoopStart = Stopwatch.GetTimestamp();
+                var prefetched = new RmvFile?[directBatchSize];
+                var prefetchDone = new bool[directBatchSize];
+                for (var directIndex = 0; directIndex < directOrdered.Count; directIndex++)
                 {
+                    var (rigidPathValue, consumers) = directOrdered[directIndex];
                     cancellationToken.ThrowIfCancellationRequested();
+                    var batchSlot = directIndex % directBatchSize;
+                    if (batchSlot == 0)
+                    {
+                        // Load the next batch of rigids in parallel; the walk below stays serial and in order.
+                        Array.Clear(prefetched);
+                        Array.Clear(prefetchDone);
+                        if (timer.Elapsed <= result.Budget)
+                        {
+                            var loadStart = Stopwatch.GetTimestamp();
+                            var batchFirst = directIndex;
+                            var batchCount = Math.Min(directBatchSize, directOrdered.Count - batchFirst);
+                            try
+                            {
+                                Parallel.For(
+                                    0,
+                                    batchCount,
+                                    new ParallelOptions
+                                    {
+                                        CancellationToken = cancellationToken,
+                                        MaxDegreeOfParallelism = directWorkers,
+                                    },
+                                    offset =>
+                                    {
+                                        try
+                                        {
+                                            prefetched[offset] = loadRigid(
+                                                Normalize(directOrdered[batchFirst + offset].Key));
+                                        }
+                                        catch (Exception ex) when (ex is not OperationCanceledException)
+                                        {
+                                            prefetched[offset] = null;
+                                        }
+
+                                        prefetchDone[offset] = true;
+                                    });
+                            }
+                            catch (AggregateException ex) when (ex.InnerExceptions.Count != 0)
+                            {
+                                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(
+                                    ex.InnerExceptions[0]).Throw();
+                            }
+
+                            directLoadTime += Stopwatch.GetElapsedTime(loadStart);
+                        }
+                    }
+
                     if (timer.Elapsed > result.Budget)
                     {
                         result.BudgetExhausted = true;
@@ -688,13 +759,24 @@ namespace Editors.PackOptimizer.Core
                     var rigidPath = Normalize(rigidPathValue);
                     result.DirectConsumersByRigid[rigidPath] = new HashSet<string>(consumers, StringComparer.OrdinalIgnoreCase);
                     RmvFile? rigid;
-                    try
+                    if (prefetchDone[batchSlot])
                     {
-                        rigid = loadRigid(rigidPath);
+                        rigid = prefetched[batchSlot];
+                        prefetched[batchSlot] = null;
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    else
                     {
-                        rigid = null;
+                        var loadStart = Stopwatch.GetTimestamp();
+                        try
+                        {
+                            rigid = loadRigid(rigidPath);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            rigid = null;
+                        }
+
+                        directLoadTime += Stopwatch.GetElapsedTime(loadStart);
                     }
 
                     directRigidCache[rigidPath] = rigid;
@@ -766,6 +848,7 @@ namespace Editors.PackOptimizer.Core
                         }
                     }
                 }
+                directLoopTime = Stopwatch.GetElapsedTime(directLoopStart);
             }
 
             result.Bindings = scan.Bindings;
@@ -778,6 +861,10 @@ namespace Editors.PackOptimizer.Core
             foreach (var pair in textureEntries)
                 result.Entries[pair.Key] = pair.Value;
 
+            state.PhaseDurations["    step 1a: source WSModel scan"] = scanElapsed;
+            state.PhaseDurations["    step 1b: material XML parse (aggregate)"] = materialTime;
+            state.PhaseDurations["    step 1c: direct rigid loads (parallel batches)"] = directLoadTime;
+            state.PhaseDurations["    step 1c: direct rigid walk (rest)"] = directLoopTime - directLoadTime;
             EndStep("step 1 (bindings, materials, direct rigids)");
             // 2. Which of the referenced textures are vanilla, and their headers.
             result.TexturesReferenced = textureEntries.Count;
