@@ -1520,6 +1520,7 @@ namespace Editors.PackOptimizer.Core
                 return false;
             }
 
+            var encodeStart = Stopwatch.GetTimestamp();
             try
             {
                 using var full = TexHelper.Instance.Initialize2D(
@@ -1557,12 +1558,24 @@ namespace Editors.PackOptimizer.Core
                 error = $"encode failed ({ex.GetType().Name}: {ex.Message})";
                 return false;
             }
+            finally
+            {
+                Interlocked.Add(ref _sharedRepackEncodeTicks, Stopwatch.GetTimestamp() - encodeStart);
+            }
         }
 
         // Structure of a generated texture against its plan: size, format, colour space,
         // complete mip chain, exact length, and that it decodes.
         private static string? CheckSharedRepackDds(byte[] dds, SharedRepackSlotOutput expected)
+            => CheckSharedRepackDds(dds, expected, out _);
+
+        // decoded: the top level the check decoded, so a caller that needs the pixels again can reuse them.
+        private static string? CheckSharedRepackDds(
+            byte[] dds,
+            SharedRepackSlotOutput expected,
+            out (byte[] Bgra, int Width, int Height)? decoded)
         {
+            decoded = null;
             if (!TryReadDdsLayout(
                     dds.AsSpan(0, Math.Min(dds.Length, TextureDownscaleHeaderPeekBytes)).ToArray(),
                     out var layout))
@@ -1590,8 +1603,9 @@ namespace Editors.PackOptimizer.Core
 
             if (layout.ChainBytes != expected.Bytes)
                 return $"mip chain is {layout.ChainBytes:N0} bytes, planned {expected.Bytes:N0}";
-            if (!TryDecodeDdsTopLevel(dds, out _, out var width, out var height, out var error))
+            if (!TryDecodeDdsTopLevel(dds, out var bgra, out var width, out var height, out var error))
                 return error;
+            decoded = (bgra, width, height);
             if (width != expected.Width || height != expected.Height)
                 return $"decodes to {width}x{height}";
 
@@ -2037,6 +2051,9 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
+                // The source textures are immutable for the whole set (nothing of a failed attempt is
+                // written), so every attempt and retry of it decodes each source only once.
+                var setSources = NewSharedRepackSourceCache(state, containers);
                 var rigids = rigidPaths.Select(SetRigid).ToList();
                 if (rigids.All(item => item.Rigid == null))
                 {
@@ -2089,6 +2106,7 @@ namespace Editors.PackOptimizer.Core
                         out string? planFailure,
                         out string planBucket)
                     {
+                        using var planTimer = SharedRepackStageTimer.Start(state, "Shared repack: plan and pack");
                         try
                         {
                             return PlanSharedRepackSet(
@@ -2131,7 +2149,8 @@ namespace Editors.PackOptimizer.Core
                             movedParts,
                             cancellationToken,
                             out applyFailure,
-                            out applyPixelFailure);
+                            out applyPixelFailure,
+                            setSources);
 
                     void FinishRetries(SharedRepackBuiltSet? built)
                     {
@@ -6905,6 +6924,9 @@ namespace Editors.PackOptimizer.Core
             private readonly Dictionary<int, (byte[] Bgra, int Width, int Height)?> _levels = [];
 
             // Decoded pixels of one mip level (the source's own level, not a resample).
+            public void SeedLevel(int level, (byte[] Bgra, int Width, int Height) decoded)
+                => _levels[level] = decoded;
+
             public (byte[] Bgra, int Width, int Height)? Level(int level)
             {
                 if (_levels.TryGetValue(level, out var cached))
@@ -6921,6 +6943,27 @@ namespace Editors.PackOptimizer.Core
                 return result;
             }
         }
+
+        // Adds the time of its scope to the report's timing details (included in "Shared texture repack").
+        private sealed class SharedRepackStageTimer : IDisposable
+        {
+            private readonly BatchState _state;
+            private readonly string _name;
+            private readonly long _start = Stopwatch.GetTimestamp();
+
+            private SharedRepackStageTimer(BatchState state, string name)
+            {
+                _state = state;
+                _name = name;
+            }
+
+            public static SharedRepackStageTimer Start(BatchState state, string name) => new(state, name);
+
+            public void Dispose()
+                => AddCrossRigidTimingDuration(_state, _name, Stopwatch.GetElapsedTime(_start));
+        }
+
+        private static long _sharedRepackEncodeTicks;
 
         private sealed class SharedRepackSourceCache
         {
@@ -6952,6 +6995,12 @@ namespace Editors.PackOptimizer.Core
             }
 
             public SharedRepackSource? FromBytes(string key, byte[] dds)
+                => FromDecodedBytes(key, dds, null);
+
+            public SharedRepackSource? FromDecodedBytes(
+                string key,
+                byte[] dds,
+                (byte[] Bgra, int Width, int Height)? topLevel)
             {
                 if (!TryReadDdsLayout(
                         dds.AsSpan(0, Math.Min(dds.Length, TextureDownscaleHeaderPeekBytes)).ToArray(),
@@ -6961,6 +7010,8 @@ namespace Editors.PackOptimizer.Core
                 }
 
                 var source = new SharedRepackSource { Dds = dds, Layout = layout };
+                if (topLevel != null)
+                    source.SeedLevel(0, topLevel.Value);
                 _sources[key] = source;
                 return source;
             }
@@ -8365,6 +8416,13 @@ namespace Editors.PackOptimizer.Core
         // All or nothing: every page is composed and pixel-checked and every rewrite is
         // prepared in memory first; only then is anything written or changed. Any failure on
         // the way returns null and leaves the output, the rigids and the WSModels untouched.
+        private static SharedRepackSourceCache NewSharedRepackSourceCache(
+            BatchState state,
+            IReadOnlyList<IPackFileContainer> containers)
+            => new(path =>
+                GetSharedRepackScaledSource(state, path)?.Dds ??
+                ResolveGameplayTraversalContainer(state.Source, containers, path, state.ResolutionProviders)?.FindFile(path)?.DataSource.ReadData());
+
         private SharedRepackBuiltSet? ApplySharedRepackSetPlan(
             BatchState state,
             SharedTextureRepackResult result,
@@ -8376,14 +8434,12 @@ namespace Editors.PackOptimizer.Core
             Dictionary<string, HashSet<(int Lod, int Part)>> movedParts,
             CancellationToken cancellationToken,
             out string? failure,
-            out bool pixelFailure)
+            out bool pixelFailure,
+            SharedRepackSourceCache? setSources = null)
         {
             failure = null;
             pixelFailure = false;
-            var containers = GetGameplayTraversalContainers(state);
-            var sources = new SharedRepackSourceCache(path =>
-                GetSharedRepackScaledSource(state, path)?.Dds ??
-                ResolveGameplayTraversalContainer(state.Source, containers, path, state.ResolutionProviders)?.FindFile(path)?.DataSource.ReadData());
+            var sources = setSources ?? NewSharedRepackSourceCache(state, GetGameplayTraversalContainers(state));
             var generated = new SharedRepackSourceCache(_ => null);
             var stats = new SharedRepackPixelStats();
             var rewrites = new List<(
@@ -8402,13 +8458,31 @@ namespace Editors.PackOptimizer.Core
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         using var captureScope = DdsEncodeCapture.Scope("shared-repack", output.Path);
-                        if (!TryComposeSharedRepackOutput(page, output, sources, cancellationToken, out var error))
+                        var encodeTicksBefore = Interlocked.Read(ref _sharedRepackEncodeTicks);
+                        bool composed;
+                        string error;
+                        using (SharedRepackStageTimer.Start(state, "Shared repack: compose (includes encode)"))
+                        {
+                            composed = TryComposeSharedRepackOutput(page, output, sources, cancellationToken, out error);
+                        }
+
+                        AddCrossRigidTimingDuration(
+                            state,
+                            "Shared repack: encode (part of compose)",
+                            Stopwatch.GetElapsedTime(0, Interlocked.Read(ref _sharedRepackEncodeTicks) - encodeTicksBefore));
+                        if (!composed)
                         {
                             failure = $"{output.Slot}: {error}";
                             return null;
                         }
 
-                        var problem = CheckSharedRepackDds(output.Data, output);
+                        string? problem;
+                        (byte[] Bgra, int Width, int Height)? decodedTopLevel;
+                        using (SharedRepackStageTimer.Start(state, "Shared repack: check generated DDS"))
+                        {
+                            problem = CheckSharedRepackDds(output.Data, output, out decodedTopLevel);
+                        }
+
                         if (problem != null)
                         {
                             failure = $"generated {output.Slot} texture {problem}";
@@ -8416,7 +8490,7 @@ namespace Editors.PackOptimizer.Core
                         }
 
                         if (output.DuplicateOf == null)
-                            generated.FromBytes(output.Path, output.Data);
+                            generated.FromDecodedBytes(output.Path, output.Data, decodedTopLevel);
                     }
                 }
 
@@ -8454,7 +8528,11 @@ namespace Editors.PackOptimizer.Core
                 foreach (var page in plan.Pages)
                 {
                     var pageProblems = new List<string>();
-                    CheckSharedRepackPage(page, sources, generated, stats, pageProblems);
+                    using (SharedRepackStageTimer.Start(state, "Shared repack: check page pixels"))
+                    {
+                        CheckSharedRepackPage(page, sources, generated, stats, pageProblems);
+                    }
+
                     if (pageProblems.Count == 0)
                         continue;
 

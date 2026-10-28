@@ -274,8 +274,11 @@ namespace Editors.PackOptimizer.Core
             int canvasWidth,
             int canvasHeight,
             SharedRepackSimBudget? budget,
-            out (int X, int Y)[] positions)
+            out (int X, int Y)[] positions,
+            int[][]? orderCache = null)
         {
+            // The orders depend on the sizes only; a caller trying several canvases passes one cache.
+            orderCache ??= new int[3][];
             positions = [];
             if (budget is { Exceeded: true })
                 return false;
@@ -293,7 +296,7 @@ namespace Editors.PackOptimizer.Core
 
             for (var mode = 0; mode < 3; mode++)
             {
-                var order = OrderBy(sizes, mode);
+                var order = orderCache[mode] ??= OrderBy(sizes, mode);
                 if (TryMaxRects(sizes, order, canvasWidth, canvasHeight, false, budget, out positions) ||
                     TryMaxRects(sizes, order, canvasWidth, canvasHeight, true, budget, out positions) ||
                     TrySkyline(sizes, order, canvasWidth, canvasHeight, budget, out positions))
@@ -348,6 +351,8 @@ namespace Editors.PackOptimizer.Core
 
             var scaled = sizes.Select(size => (size.Width / unit, size.Height / unit)).ToList();
             var order = OrderBy(scaled, 0);
+            var bestOrders = new int[3][];
+            bestOrders[0] = order;
             foreach (var candidate in candidates
                          .OrderBy(item => (long)item.Width * item.Height)
                          .ThenBy(item => Math.Abs(Log2(item.Width) - Log2(item.Height)))
@@ -356,7 +361,7 @@ namespace Editors.PackOptimizer.Core
                 // The shelf result wins a tie on the canvas; when the budget is spent only it remains.
                 var fits = TryShelf(scaled, order, candidate.Width / unit, candidate.Height / unit, out positions);
                 if (!fits && kind == SharedRepackPackerKind.Best && budget is not { Exceeded: true })
-                    fits = TryBest(scaled, candidate.Width / unit, candidate.Height / unit, budget, out positions);
+                    fits = TryBest(scaled, candidate.Width / unit, candidate.Height / unit, budget, out positions, bestOrders);
                 if (fits)
                 {
                     canvasWidth = candidate.Width;
