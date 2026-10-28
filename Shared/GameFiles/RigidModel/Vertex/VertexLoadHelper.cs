@@ -1,4 +1,5 @@
-﻿using System.Numerics;
+﻿using System.Buffers.Binary;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using Shared.ByteParsing;
@@ -168,6 +169,86 @@ namespace Shared.GameFormats.RigidModel.Vertex
 
 
 
+
+
+        // ---- Span based decoders: identical arithmetic to the byte[] versions above, without allocations. ----
+
+        /// <summary>
+        /// Returns the bytes of one vertex, throwing the same exception as ByteHelper.ByteArrayToStructure when it does not fit.
+        /// </summary>
+        public static ReadOnlySpan<byte> GetVertexBytes<TData>(byte[] buffer, int offset) where TData : struct
+        {
+            var objectSize = ByteHelper.GetSize<TData>();
+            if (offset + objectSize > buffer.Length)
+                throw new Exception($"Object {typeof(TData)} does not fit into the remaining buffer [offset{offset} + Size{objectSize} => byteBuffer{buffer.Length}]");
+            return buffer.AsSpan(offset, objectSize);
+        }
+
+        static public RmvVector4 CreatVector4HalfFloat(ReadOnlySpan<byte> data)
+        {
+            var x = (float)BinaryPrimitives.ReadHalfLittleEndian(data);
+            var y = (float)BinaryPrimitives.ReadHalfLittleEndian(data.Slice(2));
+            var z = (float)BinaryPrimitives.ReadHalfLittleEndian(data.Slice(4));
+            var w = (float)BinaryPrimitives.ReadHalfLittleEndian(data.Slice(6));
+
+            if (w != 0.0f)
+            {
+                x *= w;
+                y *= w;
+                z *= w;
+                w = 0;
+            }
+
+            return new RmvVector4() { X = x, Y = y, Z = z, W = w };
+        }
+
+        static public RmvVector4 CreatVector4Float(ReadOnlySpan<byte> data)
+        {
+            var x = BinaryPrimitives.ReadSingleLittleEndian(data);
+            var y = BinaryPrimitives.ReadSingleLittleEndian(data.Slice(4));
+            var z = BinaryPrimitives.ReadSingleLittleEndian(data.Slice(8));
+            var w = BinaryPrimitives.ReadSingleLittleEndian(data.Slice(12));
+
+            if (w > 0.0f)
+            {
+                x *= w;
+                y *= w;
+                z *= w;
+                w = 0;
+            }
+
+            return new RmvVector4() { X = x, Y = y, Z = z, W = w };
+        }
+
+        static public RmvVector4 CreatVector4Byte(ReadOnlySpan<byte> data)
+        {
+            var v = new RmvVector4()
+            {
+                X = ByteToNormal(data[0]),
+                Y = ByteToNormal(data[1]),
+                Z = ByteToNormal(data[2]),
+                W = ByteToNormal(data[3])
+            };
+
+            if (v.W > 0.0f)
+            {
+                v.X *= v.W;
+                v.Y *= v.W;
+                v.Z *= v.W;
+                v.W = 0;
+            }
+
+            return v;
+        }
+
+        static public RmvVector2 CreatVector2HalfFloat(ReadOnlySpan<byte> data)
+        {
+            return new RmvVector2()
+            {
+                X = (float)BinaryPrimitives.ReadHalfLittleEndian(data),
+                Y = (float)BinaryPrimitives.ReadHalfLittleEndian(data.Slice(2))
+            };
+        }
 
 
         static public float ByteToNormal(byte b)

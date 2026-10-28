@@ -24,20 +24,19 @@ namespace Shared.GameFormats.RigidModel.Vertex.Formats
 
         CommonVertex Read(RmvVersionEnum rmvVersion, byte[] buffer, int offset, int vertexSize)
         {
-            var vertexData = ByteHelper.ByteArrayToStructure<Data>(buffer, offset);
+            var data = VertexLoadHelper.GetVertexBytes<Data>(buffer, offset);
 
             var vertex = new CommonVertex()
             {
-                Position = VertexLoadHelper.CreatVector4Float(vertexData.position).ToVector4(1),
-                Normal = VertexLoadHelper.CreatVector4Float(vertexData.normal).ToVector3(),
+                Position = VertexLoadHelper.CreatVector4Float(data.Slice(0, 16)).ToVector4(1),
+                Normal = VertexLoadHelper.CreatVector4Float(data.Slice(16, 16)).ToVector3(),
                 BiNormal = Vector3.UnitY,
                 Tangent = Vector3.UnitY,
                 Uv = Vector2.Zero,
 
-                BoneIndex = new byte[] { },
-                BoneWeight = new float[] { },
+                BoneIndex = Array.Empty<byte>(),
+                BoneWeight = Array.Empty<float>(),
                 WeightCount = 0
-
             };
 
             return vertex;

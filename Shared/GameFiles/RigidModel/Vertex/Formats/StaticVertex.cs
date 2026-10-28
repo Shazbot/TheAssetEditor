@@ -20,25 +20,26 @@ namespace Shared.GameFormats.RigidModel.Vertex.Formats
 
         CommonVertex Read(RmvVersionEnum rmvVersion, byte[] buffer, int offset, int vertexSize)
         {
-            var vertexData = ByteHelper.ByteArrayToStructure<Data>(buffer, offset);
+            var data = VertexLoadHelper.GetVertexBytes<Data>(buffer, offset);
 
             var vertex = new CommonVertex()
             {
+                // Same field offsets as the Data layout below.
                 // VertexFormat = ´default` format has X and Z swapped 
-                Position = VertexLoadHelper.CreatVector4HalfFloat(vertexData.position).ToVector4(1),
+                Position = VertexLoadHelper.CreatVector4HalfFloat(data.Slice(0, 8)).ToVector4(1),
 
                 // 'bitangent' is stored before 'tangent' when VertexFormat = ´default`
-                Normal = SwapXZ(VertexLoadHelper.CreatVector4Byte(vertexData.normal).ToVector3()),
-                Tangent = SwapXZ(VertexLoadHelper.CreatVector4Byte(vertexData.tangent).ToVector3()),
-                BiNormal = SwapXZ(VertexLoadHelper.CreatVector4Byte(vertexData.biNormal).ToVector3()),
+                Normal = SwapXZ(VertexLoadHelper.CreatVector4Byte(data.Slice(16, 4)).ToVector3()),
+                Tangent = SwapXZ(VertexLoadHelper.CreatVector4Byte(data.Slice(20, 4)).ToVector3()),
+                BiNormal = SwapXZ(VertexLoadHelper.CreatVector4Byte(data.Slice(24, 4)).ToVector3()),
 
-                Uv = VertexLoadHelper.CreatVector2HalfFloat(vertexData.uv).ToVector2(),
-                Uv1 = VertexLoadHelper.CreatVector2HalfFloat(vertexData.uvExtra).ToVector2(),
+                Uv = VertexLoadHelper.CreatVector2HalfFloat(data.Slice(8, 4)).ToVector2(),
+                Uv1 = VertexLoadHelper.CreatVector2HalfFloat(data.Slice(12, 4)).ToVector2(),
 
-                Colour = VertexLoadHelper.CreatVector4Byte(vertexData.RGBA).ToVector4(),
+                Colour = VertexLoadHelper.CreatVector4Byte(data.Slice(28, 4)).ToVector4(),
 
-                BoneIndex = new byte[0],
-                BoneWeight = new float[0]
+                BoneIndex = Array.Empty<byte>(),
+                BoneWeight = Array.Empty<float>()
             };
 
             return vertex;
