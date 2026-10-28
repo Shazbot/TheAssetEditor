@@ -4617,7 +4617,10 @@ namespace Editors.PackOptimizer.Core
                 CrossRigidVisualConfiguration configuration,
                 IReadOnlyDictionary<string, int> expectedCounts)
         {
-            var result = new List<CrossRigidRewriteOccurrenceSet>();
+            // Merged on the fly, with the key that MergeCrossRigidRewriteOccurrenceSets would derive: the
+            // instances are already ordered by their provenance signature, so the key is those signatures
+            // joined (no second sort and no second signature pass per state).
+            var merged = new Dictionary<string, CrossRigidRewriteOccurrenceSet>(StringComparer.Ordinal);
             var expectedTotal = 0;
             foreach (var count in expectedCounts.Values)
                 expectedTotal += count;
@@ -4670,17 +4673,35 @@ namespace Editors.PackOptimizer.Core
                     continue;
                 }
 
-                result.Add(
-                    new CrossRigidRewriteOccurrenceSet(
+                if (occurrenceSet.Probability <= 0)
+                    continue;
+
+                var ordered = selected
+                    .Select(instance => (
+                        Signature: BuildCrossRigidInstanceProvenanceSignature(instance),
+                        Instance: instance))
+                    .OrderBy(item => item.Signature, StringComparer.Ordinal)
+                    .ToArray();
+                var key = string.Join("\u001e", ordered.Select(item => item.Signature));
+                if (merged.TryGetValue(key, out var existing))
+                {
+                    merged[key] = existing with
+                    {
+                        Probability = existing.Probability + occurrenceSet.Probability,
+                    };
+                }
+                else
+                {
+                    merged[key] = new CrossRigidRewriteOccurrenceSet(
                         occurrenceSet.Probability,
-                        selected
-                            .OrderBy(
-                                BuildCrossRigidInstanceProvenanceSignature,
-                                StringComparer.Ordinal)
-                            .ToArray()));
+                        ordered.Select(item => item.Instance).ToArray());
+                }
             }
 
-            return MergeCrossRigidRewriteOccurrenceSets(result);
+            return merged
+                .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                .Select(entry => entry.Value)
+                .ToArray();
         }
 
         private static CrossRigidRewriteOccurrenceSet[]
