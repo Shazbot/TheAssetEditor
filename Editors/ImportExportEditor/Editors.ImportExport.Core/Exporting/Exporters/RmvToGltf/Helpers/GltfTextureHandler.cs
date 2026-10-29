@@ -35,6 +35,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
         /// the pixels), which keeps SharpGLTF from hashing ~100 MB of RGBA.
         /// </summary>
         public byte[]? ImageData { get; init; }
+
+        /// <summary>
+        /// Set only for textures written as unchanged .dds passthrough sidecars:
+        /// "normal-dxt5nm", "material-map-wh3" or "direct". Tells the viewer which
+        /// channel decoding the source pixels still need.
+        /// </summary>
+        public string? Wh3TextureEncoding { get; init; }
     }
     public record MaskTextureResult(int MeshIndex, string SystemFilePath);
 
@@ -234,7 +241,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             TextureTimingAccumulator timing)
         {
             Logger.Here().Debug(
-                "GLTF texture handling timing for {AssetName}: total={TotalMs:F1}ms, parallelism={MaxParallelism}, requests={RequestCount}, outputs={OutputCount}, sessionHits={SessionHitCount}, conversionCacheHits={ConversionCacheHitCount}, conversionCacheMisses={ConversionCacheMissCount}, cacheLookup={CacheLookupMs:F1}ms, cachedWrite={CachedWriteMs:F1}ms, exporter={ExporterMs:F1}ms, postProcess={PostProcessMs:F1}ms, cacheStore={CacheStoreMs:F1}ms, finalize={FinalizeMs:F1}ms",
+                "GLTF texture handling timing for {AssetName}: total={TotalMs:F1}ms, parallelism={MaxParallelism}, requests={RequestCount}, outputs={OutputCount}, sessionHits={SessionHitCount}, conversionCacheHits={ConversionCacheHitCount}, conversionCacheMisses={ConversionCacheMissCount}, cacheLookup={CacheLookupMs:F1}ms, cachedWrite={CachedWriteMs:F1}ms, exporter={ExporterMs:F1}ms, postProcess={PostProcessMs:F1}ms, cacheStore={CacheStoreMs:F1}ms, finalize={FinalizeMs:F1}ms, ddsPassthrough={PassthroughCount}, ddsFallback={FallbackCount}, ddsMissing={MissingCount}, ddsPassthroughBytes={PassthroughBytes}",
                 assetName,
                 totalMs,
                 timing.MaxParallelism,
@@ -248,7 +255,11 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 timing.ExporterMs,
                 timing.PostProcessMs,
                 timing.CacheStoreMs,
-                timing.FinalizeMs);
+                timing.FinalizeMs,
+                timing.PassthroughCount,
+                timing.FallbackCount,
+                timing.MissingCount,
+                timing.PassthroughBytes);
         }
         List<MaterialBuilderTextureInput> ExtractTextures(RmvModel model)
         {
@@ -340,6 +351,91 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             cacheStoreStopwatch.Stop();
             timing.CacheStoreMs += cacheStoreStopwatch.Elapsed.TotalMilliseconds;
             return exported.Path;
+        }
+
+        private static bool UsesDdsPassthrough(RmvToGltfExporterSettings settings)
+            => settings.UseDdsTextures && settings.UseKtx2Textures && !settings.ExportDisplacementMaps;
+
+        /// <summary>
+        /// Wraps a KTX2 exporter: with the DDS option on, block-compressed pack
+        /// textures are written unchanged as .dds and the exporter is skipped.
+        /// The returned path's extension tells the caller which route was taken.
+        /// </summary>
+        private Func<MeshImportExport.TextureImageExportResult> MaybePassthrough(
+            bool useDds,
+            string sourcePath,
+            string outputPath,
+            string ktx2OutputPath,
+            TextureTimingAccumulator timing,
+            Func<MeshImportExport.TextureImageExportResult> ktx2Exporter)
+        {
+            if (!useDds)
+                return ktx2Exporter;
+
+            return () =>
+            {
+                var total = Stopwatch.StartNew();
+                var packFile = _packFileLookup?.FindFile(sourcePath);
+                if (packFile == null)
+                {
+                    // Missing file: let the regular exporter report it.
+                    timing.MissingCount++;
+                    return ktx2Exporter();
+                }
+
+                var phase = Stopwatch.StartNew();
+                var bytes = packFile.DataSource.ReadData();
+                var readMs = phase.Elapsed.TotalMilliseconds;
+
+                phase.Restart();
+                MeshImportExport.DdsPassthroughInfo info = default;
+                var passthrough = bytes is { Length: > 0 }
+                    && MeshImportExport.DdsPassthrough.TryInspect(bytes, out info);
+                var inspectMs = phase.Elapsed.TotalMilliseconds;
+
+                if (!passthrough)
+                {
+                    timing.FallbackCount++;
+                    Logger.Here().Debug(
+                        "DDS texture fallback for {TexturePath}: reason=unsupportedFormat, read={ReadMs:F1}ms, inspect={InspectMs:F1}ms",
+                        sourcePath, readMs, inspectMs);
+                    return ktx2Exporter();
+                }
+
+                var ddsPath = Path.ChangeExtension(ktx2OutputPath, ".dds");
+                phase.Restart();
+                EnsureParentDirectory(ddsPath);
+                File.WriteAllBytes(ddsPath, bytes!);
+                var saveMs = phase.Elapsed.TotalMilliseconds;
+                timing.PassthroughCount++;
+                timing.PassthroughBytes += bytes!.Length;
+                total.Stop();
+
+                Logger.Here().Debug(
+                    "DDS texture timing for {TexturePath}: total={TotalMs:F1}ms, read={ReadMs:F1}ms, inspect={InspectMs:F1}ms, save={SaveMs:F1}ms, bytes={Bytes}, format={Format}, size={Width}x{Height}, mips={Mips}",
+                    sourcePath, total.Elapsed.TotalMilliseconds, readMs, inspectMs, saveMs,
+                    bytes.Length, info.FormatName, info.Width, info.Height, info.MipCount);
+                return new MeshImportExport.TextureImageExportResult(ddsPath, bytes);
+            };
+        }
+
+        private static void StoreImageData(
+            GltfTextureExportSession session,
+            string cacheKey,
+            MeshImportExport.TextureImageExportResult exported)
+        {
+            if (exported.Data.Length == 0)
+                return;
+
+            if (string.Equals(Path.GetExtension(exported.Path), ".dds", StringComparison.OrdinalIgnoreCase)
+                && MeshImportExport.DdsPassthrough.TryInspect(exported.Data, out var info))
+            {
+                // SharpGLTF only needs the header; the sidecar holds the blocks.
+                session.ExportedTextureData[cacheKey] = exported.Data.AsSpan(0, info.HeaderLength).ToArray();
+                return;
+            }
+
+            session.ExportedTextureData[cacheKey] = MeshImportExport.TextureHelper.ToKtx2HeaderOnly(exported.Data);
         }
 
         private MeshImportExport.TextureImageExportResult ExportCachedImage(
@@ -449,13 +545,20 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             int meshIndex,
             string systemPath,
             KnownChannel channel,
-            string sourceVirtualPath)
+            string sourceVirtualPath,
+            string ddsEncoding = "direct")
         {
             session.ExportedTextureData.TryGetValue(cacheKey, out var imageData);
+            var isDds = string.Equals(Path.GetExtension(systemPath), ".dds", StringComparison.OrdinalIgnoreCase);
             if (imageData != null)
-                imageData = MeshImportExport.TextureHelper.ToKtx2SidecarStub(imageData, systemPath);
+            {
+                imageData = isDds
+                    ? MeshImportExport.DdsPassthrough.ToSidecarStub(imageData, imageData.Length, systemPath)
+                    : MeshImportExport.TextureHelper.ToKtx2SidecarStub(imageData, systemPath);
+            }
             return new TextureResult(meshIndex, systemPath, channel)
             {
+                Wh3TextureEncoding = isDds ? ddsEncoding : null,
                 ImageData = imageData,
                 SourceVirtualPath = sourceVirtualPath.Replace('/', '\\').Trim().TrimStart('\\')
             };
@@ -503,8 +606,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private void DoTextureConversionMaterialMap(RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
+            var useDds = UsesDdsPassthrough(settings);
             var cacheKey = CacheKey(text, "material", settings.ConvertMaterialTextureToBlender)
-                + (settings.UseKtx2Textures ? "|ktx2" : "|png");
+                + (settings.UseKtx2Textures ? (useDds ? "|ktx2|dds" : "|ktx2") : "|png");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
                 string exportedPath;
@@ -513,15 +617,15 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                     var exportedImage = ExportCachedImage(
                         cacheKey,
                         GetMaterialTexturePath(settings.OutputPath, text.Path, useKtx2: true),
-                        () => _ddsToMaterialPngExporter.ExportKtx2WithData(
-                            text.Path,
-                            settings.OutputPath,
-                            settings.ConvertMaterialTextureToBlender,
-                            srgb: false),
+                        MaybePassthrough(useDds, text.Path, settings.OutputPath, GetMaterialTexturePath(settings.OutputPath, text.Path, useKtx2: true), timing,
+                            () => _ddsToMaterialPngExporter.ExportKtx2WithData(
+                                text.Path,
+                                settings.OutputPath,
+                                settings.ConvertMaterialTextureToBlender,
+                                srgb: false)),
                         timing);
                     exportedPath = exportedImage.Path;
-                    if (exportedImage.Data.Length > 0)
-                        session.ExportedTextureData[cacheKey] = MeshImportExport.TextureHelper.ToKtx2HeaderOnly(exportedImage.Data);
+                    StoreImageData(session, cacheKey, exportedImage);
                 }
                 else
                 {
@@ -547,14 +651,15 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             var systemPath = session.ExportedTextures[cacheKey];
             if (string.IsNullOrWhiteSpace(systemPath) == false)
-                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, KnownChannel.MetallicRoughness, text.Path));
+                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, KnownChannel.MetallicRoughness, text.Path, "material-map-wh3"));
         }
 
         private void DoTextureDefault(KnownChannel textureType, RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
             var srgb = textureType is KnownChannel.BaseColor or KnownChannel.Emissive or KnownChannel.SpecularColor;
+            var useDds = UsesDdsPassthrough(settings);
             var cacheKey = CacheKey(text, "default")
-                + (settings.UseKtx2Textures ? $"|ktx2|srgb={srgb}" : "|png");
+                + (settings.UseKtx2Textures ? $"|ktx2|srgb={srgb}" + (useDds ? "|dds" : "") : "|png");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
                 string exportedPath;
@@ -563,15 +668,15 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                     var exportedImage = ExportCachedImage(
                         cacheKey,
                         GetMaterialTexturePath(settings.OutputPath, text.Path, useKtx2: true),
-                        () => _ddsToMaterialPngExporter.ExportKtx2WithData(
-                            text.Path,
-                            settings.OutputPath,
-                            convertToBlenderFormat: false,
-                            srgb: srgb),
+                        MaybePassthrough(useDds, text.Path, settings.OutputPath, GetMaterialTexturePath(settings.OutputPath, text.Path, useKtx2: true), timing,
+                            () => _ddsToMaterialPngExporter.ExportKtx2WithData(
+                                text.Path,
+                                settings.OutputPath,
+                                convertToBlenderFormat: false,
+                                srgb: srgb)),
                         timing);
                     exportedPath = exportedImage.Path;
-                    if (exportedImage.Data.Length > 0)
-                        session.ExportedTextureData[cacheKey] = MeshImportExport.TextureHelper.ToKtx2HeaderOnly(exportedImage.Data);
+                    StoreImageData(session, cacheKey, exportedImage);
                 }
                 else
                 {
@@ -717,8 +822,9 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
         private void DoTextureConversionNormalMap(RmvToGltfExporterSettings settings, List<TextureResult> output, GltfTextureExportSession session, int meshIndex, MaterialBuilderTextureInput text, TextureTimingAccumulator timing)
         {
+            var useDds = UsesDdsPassthrough(settings);
             var cacheKey = CacheKey(text, "normal", settings.ConvertNormalTextureToBlue || settings.ExportDisplacementMaps)
-                + (settings.UseKtx2Textures && !settings.ExportDisplacementMaps ? "|ktx2" : "|png");
+                + (settings.UseKtx2Textures && !settings.ExportDisplacementMaps ? (useDds ? "|ktx2|dds" : "|ktx2") : "|png");
             if (session.ExportedTextures.ContainsKey(cacheKey) == false)
             {
                 if (settings.ExportDisplacementMaps)
@@ -751,14 +857,15 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                                 text.Path,
                                 settings.ConvertNormalTextureToBlue,
                                 useKtx2: true),
-                            () => _ddsToNormalPngExporter.ExportKtx2WithData(
-                                text.Path,
-                                settings.OutputPath,
-                                settings.ConvertNormalTextureToBlue),
+                            MaybePassthrough(useDds, text.Path, settings.OutputPath,
+                                GetNormalTexturePath(settings.OutputPath, text.Path, settings.ConvertNormalTextureToBlue, useKtx2: true), timing,
+                                () => _ddsToNormalPngExporter.ExportKtx2WithData(
+                                    text.Path,
+                                    settings.OutputPath,
+                                    settings.ConvertNormalTextureToBlue)),
                             timing);
                         exportedPath = exportedImage.Path;
-                        if (exportedImage.Data.Length > 0)
-                            session.ExportedTextureData[cacheKey] = MeshImportExport.TextureHelper.ToKtx2HeaderOnly(exportedImage.Data);
+                        StoreImageData(session, cacheKey, exportedImage);
                     }
                     else
                     {
@@ -788,7 +895,7 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
 
             var systemPath = session.ExportedTextures[cacheKey];
             if (string.IsNullOrWhiteSpace(systemPath) == false)
-                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, KnownChannel.Normal, text.Path));
+                output.Add(CreateTextureResult(session, cacheKey, meshIndex, systemPath, KnownChannel.Normal, text.Path, "normal-dxt5nm"));
         }
 
         private void ExportNormalMapVariants(string packFilePath, string outputPath, string? outputStem = null)
@@ -1400,6 +1507,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
             public double PostProcessMs { get; set; }
             public double CacheStoreMs { get; set; }
             public double FinalizeMs { get; set; }
+            public int PassthroughCount { get; set; }
+            public int FallbackCount { get; set; }
+            public int MissingCount { get; set; }
+            public long PassthroughBytes { get; set; }
 
             public void Add(TextureTimingAccumulator other)
             {
@@ -1413,6 +1524,10 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                 PostProcessMs += other.PostProcessMs;
                 CacheStoreMs += other.CacheStoreMs;
                 FinalizeMs += other.FinalizeMs;
+                PassthroughCount += other.PassthroughCount;
+                FallbackCount += other.FallbackCount;
+                MissingCount += other.MissingCount;
+                PassthroughBytes += other.PassthroughBytes;
             }
         }
 

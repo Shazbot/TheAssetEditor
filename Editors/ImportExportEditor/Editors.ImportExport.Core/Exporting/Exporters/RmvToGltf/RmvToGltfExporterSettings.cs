@@ -58,6 +58,13 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf
         public bool UseKtx2Textures { get; init; } = false;
 
         /// <summary>
+        /// With UseKtx2Textures, writes block-compressed (BC1/2/3/4/5/7) 2D pack
+        /// textures unchanged as .dds sidecars instead of decoding them to RGBA
+        /// KTX2. Other textures still use the KTX2 path. Default off.
+        /// </summary>
+        public bool UseDdsTextures { get; init; } = false;
+
+        /// <summary>
         /// Maximum number of texture conversions allowed to run concurrently.
         /// The normal AssetEditor workflow stays serial by default; headless
         /// preview callers can opt into bounded CPU parallelism.

@@ -56,7 +56,8 @@ internal static class Program
                 request.AnimationPaths,
                 request.ExportMaterials,
                 request.IncludeSkeleton,
-                request.MirrorMesh));
+                request.MirrorMesh,
+                DdsTextures: request.DdsTextures));
             Console.Out.WriteLine(JsonSerializer.Serialize(result, AssetHostJsonContext.Default.ExportResult));
             if (result.Success)
                 return 0;
@@ -678,6 +679,9 @@ internal sealed class HeadlessExportRuntime : IAssetHostRuntime
             // WHMM has a dedicated uncompressed RGBA KTX2 compatibility loader
             // for this low-latency headless preview format.
             UseKtx2Textures = true,
+            // Optional: block-compressed pack textures are written as unchanged
+            // .dds sidecars (requires a viewer with MSFT_texture_dds support).
+            UseDdsTextures = request.DdsTextures,
             // DDS decode, channel conversion and RGBA packing are independent per
             // texture. Bound parallelism so previews use available CPU cores
             // without letting a texture-heavy model monopolize the machine.
@@ -809,6 +813,8 @@ public sealed record CliRequest(
     bool MirrorMesh,
     string? Error)
 {
+    public bool DdsTextures { get; init; }
+
     public static CliRequest Parse(string[] args)
     {
         var packs = new List<string>();
@@ -818,9 +824,10 @@ public sealed record CliRequest(
         var exportMaterials = true;
         var includeSkeleton = true;
         var mirrorMesh = true;
+        var ddsTextures = false;
 
         if (args.Length == 0 || !string.Equals(args[0], "export", StringComparison.OrdinalIgnoreCase))
-            return Invalid("Usage: WH3AssetHost export --pack <path> --asset <virtual-path> --output <path> [--animation <virtual-path>] [--no-materials] [--no-skeleton] [--no-mirror]");
+            return Invalid("Usage: WH3AssetHost export --pack <path> --asset <virtual-path> --output <path> [--animation <virtual-path>] [--no-materials] [--no-skeleton] [--no-mirror] [--dds-textures]");
 
         for (var index = 1; index < args.Length; index++)
         {
@@ -850,6 +857,9 @@ public sealed record CliRequest(
                 case "--no-mirror":
                     mirrorMesh = false;
                     break;
+                case "--dds-textures":
+                    ddsTextures = true;
+                    break;
                 default:
                     return Invalid($"Unknown argument '{argument}'.");
             }
@@ -863,7 +873,10 @@ public sealed record CliRequest(
             && !extension.Equals(".gltf", StringComparison.OrdinalIgnoreCase))
             return Invalid("--output must end in .glb or .gltf.");
 
-        return new CliRequest(packs, asset, output, animations, exportMaterials, includeSkeleton, mirrorMesh, null);
+        return new CliRequest(packs, asset, output, animations, exportMaterials, includeSkeleton, mirrorMesh, null)
+        {
+            DdsTextures = ddsTextures
+        };
     }
 
     private static CliRequest Invalid(string error)

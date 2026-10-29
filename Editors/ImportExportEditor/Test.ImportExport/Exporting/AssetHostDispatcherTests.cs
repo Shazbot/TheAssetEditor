@@ -244,6 +244,46 @@ public sealed class AssetHostDispatcherTests
     }
 
     [Test]
+    public void ExportBatch_PassesDdsTexturesFlagToEveryItem()
+    {
+        var factory = new FakeRuntimeFactory();
+        using var dispatcher = new AssetHostDispatcher(factory);
+        var root = Path.Combine(Path.GetTempPath(), "asset-host-root", Guid.NewGuid().ToString("N"));
+        dispatcher.Dispatch(Initialize(root, "base.pack"));
+
+        var response = dispatcher.Dispatch(Request(
+            "exportModelBatch",
+            "dds-batch",
+            "assetPath", "unit.variantmeshdefinition",
+            "ddsTextures", true,
+            "items", new object[]
+            {
+                new { outputPath = "batch/one.glb" },
+                new { outputPath = "batch/two.glb" }
+            }));
+
+        Assert.That(response.Success, Is.True);
+        Assert.That(factory.Created.Single().Exports.Select(e => e.DdsTextures), Is.All.True);
+
+        var defaultResponse = dispatcher.Dispatch(Request(
+            "exportModelBatch",
+            "dds-batch-default",
+            "assetPath", "unit.variantmeshdefinition",
+            "items", new object[] { new { outputPath = "batch/three.glb" } }));
+        Assert.That(defaultResponse.Success, Is.True);
+        Assert.That(factory.Created.Single().Exports.Last().DdsTextures, Is.False);
+
+        var invalid = dispatcher.Dispatch(Request(
+            "exportModelBatch",
+            "dds-batch-invalid",
+            "assetPath", "unit.variantmeshdefinition",
+            "ddsTextures", "yes",
+            "items", new object[] { new { outputPath = "batch/four.glb" } }));
+        Assert.That(invalid.Success, Is.False);
+        Assert.That(invalid.Error?.Code, Is.EqualTo("InvalidExportOptions"));
+    }
+
+    [Test]
     public void GetVariantMeshComposition_PassesSelectionsAndReturnsStableBindings()
     {
         var factory = new FakeRuntimeFactory();

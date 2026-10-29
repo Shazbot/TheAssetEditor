@@ -242,12 +242,15 @@ namespace Editors.ImportExport.Exporting.Exporters.RmvToGltf.Helpers
                     if (settings.UseKtx2Textures && !string.IsNullOrWhiteSpace(texture.SourceVirtualPath))
                     {
                         image.Name = generatedFileName;
-                        image.Extras = new JsonObject
+                        var extras = new JsonObject
                         {
                             ["wh3SourceVirtualPath"] = texture.SourceVirtualPath,
                             ["wh3GeneratedFileName"] = generatedFileName,
                             ["wh3Channel"] = texture.GltfTextureType.ToString()
                         };
+                        if (!string.IsNullOrWhiteSpace(texture.Wh3TextureEncoding))
+                            extras["wh3TextureEncoding"] = texture.Wh3TextureEncoding;
+                        image.Extras = extras;
                     }
 
                     // Preserve the generated name even when the image is supplied

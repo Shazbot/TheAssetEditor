@@ -127,7 +127,9 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
         else
         {
             // Embedding would put header-only KTX2 stubs into the GLB as textures.
-            if (modelRoot.LogicalImages.Any(image => MeshImportExport.TextureHelper.IsKtx2HeaderOnly(image.Content.Content.Span)))
+            if (modelRoot.LogicalImages.Any(image =>
+                    MeshImportExport.TextureHelper.IsKtx2HeaderOnly(image.Content.Content.Span)
+                    || MeshImportExport.DdsPassthrough.IsSidecarStub(image.Content.Content.Span)))
                 throw new InvalidOperationException(
                     "Header-only preview KTX2 textures cannot be embedded in a GLB.");
             modelRoot.MergeImages();
@@ -171,6 +173,17 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
                     }
                     if (!string.Equals(Path.GetFullPath(sidecarPath), imagePath, StringComparison.OrdinalIgnoreCase))
                         File.Copy(sidecarPath, imagePath, overwrite: true);
+                }
+                else if (MeshImportExport.DdsPassthrough.IsSidecarStub(image.Content.Span))
+                {
+                    if (!MeshImportExport.DdsPassthrough.TryGetStubSidecarPath(image.Content.Span, out var ddsSidecarPath)
+                        || !File.Exists(ddsSidecarPath))
+                    {
+                        throw new InvalidOperationException(
+                            $"Preview texture '{assetName}' has no generated DDS file to copy.");
+                    }
+                    if (!string.Equals(Path.GetFullPath(ddsSidecarPath), imagePath, StringComparison.OrdinalIgnoreCase))
+                        File.Copy(ddsSidecarPath, imagePath, overwrite: true);
                 }
                 else
                 {
@@ -241,7 +254,8 @@ public sealed class HeadlessGltfSceneSaver : IGltfSceneSaver
     {
         var extension = Path.GetExtension(path);
         return string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(extension, ".ktx2", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(extension, ".ktx2", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(extension, ".dds", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ResolveOutputPath(string outputDirectory, string rawUri)

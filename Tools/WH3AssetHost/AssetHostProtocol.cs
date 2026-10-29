@@ -16,7 +16,8 @@ public sealed record AssetHostExportRequest(
     bool MirrorMesh = true,
     IReadOnlyList<AssetHostVariantMeshSelection>? VariantSelections = null,
     IReadOnlyList<AssetHostAnimationSelection>? AnimationSelections = null,
-    bool AnimationsOnly = false);
+    bool AnimationsOnly = false,
+    bool DdsTextures = false);
 
 public sealed record AssetHostVariantMeshSelection(string SlotPath, int ChoiceIndex);
 
@@ -51,7 +52,8 @@ public sealed record AssetHostBatchExportRequest(
     bool ExportMaterials = true,
     bool IncludeSkeleton = true,
     bool MirrorMesh = true,
-    IReadOnlyList<AssetHostAnimationSelection>? AnimationSelections = null);
+    IReadOnlyList<AssetHostAnimationSelection>? AnimationSelections = null,
+    bool DdsTextures = false);
 
 public sealed record AssetHostBatchExportResult(IReadOnlyList<ExportResult> Exports);
 
@@ -139,7 +141,8 @@ public interface IAssetHostRuntime : IDisposable
                     request.IncludeSkeleton,
                     request.MirrorMesh,
                     item.VariantSelections,
-                    request.AnimationSelections)))
+                    request.AnimationSelections,
+                    DdsTextures: request.DdsTextures)))
                 .ToList());
 
     AssetHostAnimationCatalog GetAnimationCatalog(string assetPath);
@@ -228,7 +231,7 @@ public static class AssetHostProtocol
         ?? "unknown";
 
     public static readonly IReadOnlyList<string> Capabilities =
-        ["hello", "initialize", "getAnimationCatalog", "getVariantMeshComposition", "exportModel", "exportModelBatch", "exportAnimations", "exportPaintedVariant", "paintedVariantRgba", "paintedVariantSourceOverride", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
+        ["hello", "initialize", "getAnimationCatalog", "getVariantMeshComposition", "exportModel", "exportModel.ddsTextures", "exportModelBatch", "exportAnimations", "exportPaintedVariant", "paintedVariantRgba", "paintedVariantSourceOverride", "variantMeshSelections", "missingSkeletonDecision", "shutdown"];
 }
 
 /// <summary>
@@ -560,13 +563,14 @@ public sealed class AssetHostDispatcher : IDisposable
 
         if (!TryReadBoolean(request, true, out var exportMaterials, "exportMaterials", "materials")
             || !TryReadBoolean(request, true, out var includeSkeleton, "includeSkeleton", "skeleton")
-            || !TryReadBoolean(request, true, out var mirrorMesh, "mirrorMesh", "mirror"))
+            || !TryReadBoolean(request, true, out var mirrorMesh, "mirrorMesh", "mirror")
+            || !TryReadBoolean(request, false, out var ddsTextures, "ddsTextures"))
         {
             return AssetHostResponse.Fail(
                 requestId,
                 "exportModel",
                 "InvalidExportOptions",
-                "exportMaterials, includeSkeleton, and mirrorMesh must be boolean values.");
+                "exportMaterials, includeSkeleton, mirrorMesh, and ddsTextures must be boolean values.");
         }
 
         var exportRequest = new AssetHostExportRequest(
@@ -577,7 +581,8 @@ public sealed class AssetHostDispatcher : IDisposable
             includeSkeleton,
             mirrorMesh,
             variantSelections,
-            animationSelections.Count == 0 ? null : animationSelections);
+            animationSelections.Count == 0 ? null : animationSelections,
+            DdsTextures: ddsTextures);
         var result = _runtime.ExportModel(exportRequest);
         if (result.Success)
             return AssetHostResponse.Ok(requestId, "exportModel", result);
@@ -783,13 +788,14 @@ public sealed class AssetHostDispatcher : IDisposable
 
         if (!TryReadBoolean(request, true, out var exportMaterials, "exportMaterials", "materials")
             || !TryReadBoolean(request, true, out var includeSkeleton, "includeSkeleton", "skeleton")
-            || !TryReadBoolean(request, true, out var mirrorMesh, "mirrorMesh", "mirror"))
+            || !TryReadBoolean(request, true, out var mirrorMesh, "mirrorMesh", "mirror")
+            || !TryReadBoolean(request, false, out var ddsTextures, "ddsTextures"))
         {
             return AssetHostResponse.Fail(
                 requestId,
                 "exportModelBatch",
                 "InvalidExportOptions",
-                "exportMaterials, includeSkeleton, and mirrorMesh must be boolean values.");
+                "exportMaterials, includeSkeleton, mirrorMesh, and ddsTextures must be boolean values.");
         }
 
         var result = _runtime.ExportModels(new AssetHostBatchExportRequest(
@@ -799,7 +805,8 @@ public sealed class AssetHostDispatcher : IDisposable
             exportMaterials,
             includeSkeleton,
             mirrorMesh,
-            animationSelections.Count == 0 ? null : animationSelections));
+            animationSelections.Count == 0 ? null : animationSelections,
+            ddsTextures));
         return AssetHostResponse.Ok(requestId, "exportModelBatch", result);
     }
 
