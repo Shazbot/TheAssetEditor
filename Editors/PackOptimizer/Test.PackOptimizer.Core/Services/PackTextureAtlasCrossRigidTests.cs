@@ -18955,6 +18955,10 @@ namespace Test.PackOptimizer.Core
             // LOD3+ 8 % free, normal/UV weights halved from LOD3, bone embedding weight 2) updated this entry in
             // place instead of adding 33.
             [32] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
+            // 33: the opt-in PruneDeadFiles and SwitchOpaqueAlphaShaders options (removal of unreachable, unmentioned
+            // source files; opaque alpha-tested character materials moved to the non-alpha twin shader). Both are off
+            // by default and neither is among the pinned stages, so the hash is unchanged.
+            [33] = "67C1E8F06801B42824381ABD721B062AC1F4CBAC3A32882A898031953AC95587",
         };
 
         private static string ComputeOutputGoldenHash()

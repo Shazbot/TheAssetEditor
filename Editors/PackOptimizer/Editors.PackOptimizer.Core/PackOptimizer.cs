@@ -201,6 +201,13 @@ namespace Editors.PackOptimizer.Core
         /// </summary>
         public bool PruneDeadFiles { get; init; }
         /// <summary>
+        /// Moves character materials on shaders\{rigid|weighted2|weighted4}_character_alpha whose base colour texture
+        /// is opaque (alpha >= 250 at every texel of every mip level) to the same shader without _alpha: no alpha
+        /// test, so early-Z and the shadow pass stay cheap, and texture compaction can then drop the unread alpha.
+        /// Off by default; it changes the output.
+        /// </summary>
+        public bool SwitchOpaqueAlphaShaders { get; init; }
+        /// <summary>
         /// Simplifier settings of the editor LOD rebuild per LOD level: entry 0 is LOD1, entry 1 is LOD2 and the
         /// last entry applies to every deeper LOD. Default: 2 % error with the border locked at LOD1, 4 % locked at
         /// LOD2, 8 % with the border free and the normal/UV weights halved from LOD3.
@@ -233,7 +240,7 @@ namespace Editors.PackOptimizer.Core
         /// (OutputVersionGoldenTests): it pins a hash of the output of the optimizer's deterministic output
         /// stages next to this number, so changing the output without bumping the version fails the test.
         /// </summary>
-        public const int OutputVersion = 32;
+        public const int OutputVersion = 33;
 
         /// <summary>
         /// Version of the consumer scan and probe results (what makes another mod relevant) and of the format

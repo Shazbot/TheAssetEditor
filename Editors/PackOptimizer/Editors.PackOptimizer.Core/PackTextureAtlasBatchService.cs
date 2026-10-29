@@ -244,6 +244,7 @@ namespace Editors.PackOptimizer.Core
                 state.RemakeEditorLods = options.RemakeEditorLods;
                 state.ReportDiagnostics = options.ReportDiagnostics;
                 state.PruneDeadFiles = options.PruneDeadFiles && !crossRigidOnly;
+                state.SwitchOpaqueAlphaShaders = options.SwitchOpaqueAlphaShaders && !crossRigidOnly;
                 state.EditorLodSettings = EditorLodLevelSettings.Validate(options.EditorLodSettings);
                 state.EditorLodBoneWeight = options.EditorLodBoneWeight;
                 state.EditorLodJointPriority = options.EditorLodJointPriority;
@@ -831,6 +832,15 @@ namespace Editors.PackOptimizer.Core
                     // Reads the post-atlas, post-merge, post-prune output. Report-only
                     // unless the downscale option is on.
                     RunTextureDownscale(state, cancellationToken, progress);
+
+                    // Opt-in: opaque alpha-tested character materials move to the non-alpha twin
+                    // shader, so compaction below sees a shader that does not read the alpha.
+                    if (state.SwitchOpaqueAlphaShaders)
+                    {
+                        phaseStopwatch.Restart();
+                        SwitchOpaqueAlphaShaders(state, cancellationToken, progress);
+                        state.PhaseDurations["Switch opaque alpha shaders"] = phaseStopwatch.Elapsed;
+                    }
 
                     // Last writer: lossless compaction of what is in the output now. Does
                     // nothing unless its option is on.

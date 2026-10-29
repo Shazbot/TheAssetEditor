@@ -1034,6 +1034,9 @@ namespace Editors.PackOptimizer.Core
             // Opt-in removal of source files nothing reaches or mentions (see DeadFiles.cs).
             public bool PruneDeadFiles { get; set; }
             public DeadFilesResult? DeadFiles { get; set; }
+            // Opt-in move of opaque alpha-tested character materials to the non-alpha twin shader.
+            public bool SwitchOpaqueAlphaShaders { get; set; }
+            public OpaqueAlphaResult? OpaqueAlpha { get; set; }
             public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; set; } = EditorLodLevelSettings.Default;
             public float EditorLodBoneWeight { get; set; }
             public bool EditorLodJointPriority { get; set; }

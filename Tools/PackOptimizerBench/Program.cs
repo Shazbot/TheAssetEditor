@@ -17,7 +17,7 @@ using Shared.Core.Settings;
 // Headless runner for PackOptimizer.Run, for measuring the batch tool's runtime
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
-//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--editor-lod-levels 0.02:locked,0.04:locked,0.08:free] [--army-scope culture|subculture] [--sibling-scope model|pack]
+//   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--switch-opaque-alpha true] [--editor-lod-levels 0.02:locked,0.04:locked,0.08:free] [--army-scope culture|subculture] [--sibling-scope model|pack]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
 // --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
@@ -191,6 +191,7 @@ internal static class Program
                 SharedTextureRepack = true,
                 CompactTextures = true,
                 DropUnreadAlpha = true,
+                SwitchOpaqueAlphaShaders = options.GetValueOrDefault("switch-opaque-alpha", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
                 PruneDeadFiles = options.GetValueOrDefault("prune-dead-files", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
                 ReportDiagnostics = !options.GetValueOrDefault("report-diagnostics", "true").Equals("false", StringComparison.OrdinalIgnoreCase),
                 RemakeEditorLods = !options.GetValueOrDefault("editor-lods", "true").Equals("false", StringComparison.OrdinalIgnoreCase),

@@ -87,6 +87,7 @@ public sealed record OptimizeOptionsRequest(
     bool? RemakeEditorLods = null,
     bool? ReportDiagnostics = null,
     bool? PruneDeadFiles = null,
+    bool? SwitchOpaqueAlphaShaders = null,
     string? ArmyScope = null,
     string? SiblingScope = null)
 {
@@ -112,6 +113,7 @@ public sealed record OptimizeOptionsRequest(
             RemakeEditorLods = RemakeEditorLods ?? defaults.RemakeEditorLods,
             ReportDiagnostics = ReportDiagnostics ?? defaults.ReportDiagnostics,
             PruneDeadFiles = PruneDeadFiles ?? defaults.PruneDeadFiles,
+            SwitchOpaqueAlphaShaders = SwitchOpaqueAlphaShaders ?? defaults.SwitchOpaqueAlphaShaders,
             ArmyScope = ParseArmyScope(ArmyScope, defaults.ArmyScope),
             SiblingScope = ParseSiblingScope(SiblingScope, defaults.SiblingScope),
         };

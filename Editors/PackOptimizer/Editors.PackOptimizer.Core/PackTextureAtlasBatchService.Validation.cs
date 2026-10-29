@@ -1041,6 +1041,7 @@ namespace Editors.PackOptimizer.Core
             ValidateLenientVmdsUnchanged(state, errors);
             ValidateSharedTextureRepack(state, errors, cancellationToken);
             ValidateTextureCompaction(state, errors, cancellationToken);
+            ValidateOpaqueAlpha(state, errors, cancellationToken);
             ValidateConsumerIntegrity(state, errors, cancellationToken);
 
             if (errors.Count != 0)
