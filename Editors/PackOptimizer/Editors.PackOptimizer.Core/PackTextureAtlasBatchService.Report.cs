@@ -2436,6 +2436,7 @@ namespace Editors.PackOptimizer.Core
             AppendBoneWeightAuditSection(sb, state);
             if (!state.CrossRigidOnly)
             {
+                AppendDeadFilesSection(sb, state);
                 AppendTextureDownscaleSection(sb, state);
                 AppendVanillaTextureCoverageSection(sb, state);
                 AppendUnitTextureRepackSection(sb, state);

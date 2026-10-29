@@ -243,6 +243,7 @@ namespace Editors.PackOptimizer.Core
                 state.DropUnreadAlpha = dropUnreadAlpha && state.CompactTextures;
                 state.RemakeEditorLods = options.RemakeEditorLods;
                 state.ReportDiagnostics = options.ReportDiagnostics;
+                state.PruneDeadFiles = options.PruneDeadFiles && !crossRigidOnly;
                 state.EditorLodSettings = EditorLodLevelSettings.Validate(options.EditorLodSettings);
                 state.EditorLodBoneWeight = options.EditorLodBoneWeight;
                 state.EditorLodJointPriority = options.EditorLodJointPriority;
@@ -782,6 +783,16 @@ namespace Editors.PackOptimizer.Core
                     state.PhaseDurations["Prune unused assets"] =
                         phaseStopwatch.Elapsed;
                     FinalizeSharedTextureRepack(state);
+
+                    // Opt-in: what the run left unreachable and nothing names. After the prune so
+                    // the superseded files are already gone, before downscale and compaction so
+                    // they skip the dead textures.
+                    if (state.PruneDeadFiles)
+                    {
+                        phaseStopwatch.Restart();
+                        PruneDeadFiles(state, currentReachable, cancellationToken, progress);
+                        state.PhaseDurations["Prune dead files"] = phaseStopwatch.Elapsed;
+                    }
 
                     // Output BCn residency only serves the atlas value accounting, so a run
                     // without atlases skips the final scan as well.

@@ -86,6 +86,7 @@ public sealed record OptimizeOptionsRequest(
     bool? CompressRigidModels = null,
     bool? RemakeEditorLods = null,
     bool? ReportDiagnostics = null,
+    bool? PruneDeadFiles = null,
     string? ArmyScope = null,
     string? SiblingScope = null)
 {
@@ -110,6 +111,7 @@ public sealed record OptimizeOptionsRequest(
             CompressRigidModels = CompressRigidModels ?? defaults.CompressRigidModels,
             RemakeEditorLods = RemakeEditorLods ?? defaults.RemakeEditorLods,
             ReportDiagnostics = ReportDiagnostics ?? defaults.ReportDiagnostics,
+            PruneDeadFiles = PruneDeadFiles ?? defaults.PruneDeadFiles,
             ArmyScope = ParseArmyScope(ArmyScope, defaults.ArmyScope),
             SiblingScope = ParseSiblingScope(SiblingScope, defaults.SiblingScope),
         };

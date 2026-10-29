@@ -194,6 +194,13 @@ namespace Editors.PackOptimizer.Core
         /// </summary>
         public bool ReportDiagnostics { get; init; } = true;
         /// <summary>
+        /// Removes files of the source pack that nothing reaches or mentions any more (authoring leftovers such as
+        /// .psd/.blend, and .dds/.rigid_model_v2/.wsmodel/.xml.material outside ui, script, db, text, audio and
+        /// animations) after every conservative check: a vanilla override, another enabled mod, or any kept file that
+        /// names the stem keeps it. Off by default; it changes the output.
+        /// </summary>
+        public bool PruneDeadFiles { get; init; }
+        /// <summary>
         /// Simplifier settings of the editor LOD rebuild per LOD level: entry 0 is LOD1, entry 1 is LOD2 and the
         /// last entry applies to every deeper LOD. Default: 2 % error with the border locked at LOD1, 4 % locked at
         /// LOD2, 8 % with the border free and the normal/UV weights halved from LOD3.

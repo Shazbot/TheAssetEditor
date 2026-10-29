@@ -11,7 +11,7 @@ using Shared.GameFormats.RigidModel.Vertex;
 
 namespace Test.PackOptimizer.Core
 {
-    public class PackTextureAtlasCrossRigidTests
+    public partial class PackTextureAtlasCrossRigidTests
     {
         private const string ComponentA = "variantmeshes\\a.wsmodel";
         private const string ComponentB = "variantmeshes\\b.wsmodel";
@@ -5688,6 +5688,16 @@ namespace Test.PackOptimizer.Core
                             var key = (entry.DirectoyPath + "\\" + entry.PackFile.Name).ToLowerInvariant();
                             fixture.Output[key] = entry.PackFile.DataSource.ReadData();
                         }
+                    });
+            packFileService
+                .Setup(service => service.DeleteFiles(
+                    Moq.It.IsAny<Shared.Core.PackFiles.Models.IPackFileContainer>(),
+                    Moq.It.IsAny<IReadOnlyCollection<string>>()))
+                .Callback<Shared.Core.PackFiles.Models.IPackFileContainer, IReadOnlyCollection<string>>(
+                    (_, paths) =>
+                    {
+                        foreach (var path in paths)
+                            fixture.Output.Remove(path);
                     });
             var service = Activator.CreateInstance(
                 GetServiceType(),

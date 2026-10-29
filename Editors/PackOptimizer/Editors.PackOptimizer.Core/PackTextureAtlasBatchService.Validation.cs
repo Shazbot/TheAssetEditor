@@ -1315,8 +1315,15 @@ namespace Editors.PackOptimizer.Core
                     .Select(Normalize)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+            // Dead-file pruning (opt-in) removes unreachable source models on purpose.
+            var deadRemoved = state.DeadFiles?.Removed.Select(candidate => candidate.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var missing in sourcePaths.Except(outputPaths, StringComparer.OrdinalIgnoreCase))
+            {
+                if (deadRemoved?.Contains(missing) == true)
+                    continue;
+
                 errors.Add($"{extension} path was removed instead of rewritten in place: {missing}");
+            }
 
             var actualAdditions = outputPaths
                 .Except(sourcePaths, StringComparer.OrdinalIgnoreCase)

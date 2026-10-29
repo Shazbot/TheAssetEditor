@@ -1031,6 +1031,9 @@ namespace Editors.PackOptimizer.Core
             public bool RemakeEditorLods { get; set; }
             // Report-only audits and ideal-merge tiers; Check mode always runs them.
             public bool ReportDiagnostics { get; set; } = true;
+            // Opt-in removal of source files nothing reaches or mentions (see DeadFiles.cs).
+            public bool PruneDeadFiles { get; set; }
+            public DeadFilesResult? DeadFiles { get; set; }
             public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; set; } = EditorLodLevelSettings.Default;
             public float EditorLodBoneWeight { get; set; }
             public bool EditorLodJointPriority { get; set; }

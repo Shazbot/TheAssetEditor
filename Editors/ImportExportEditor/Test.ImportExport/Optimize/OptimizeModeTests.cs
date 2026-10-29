@@ -82,6 +82,8 @@ public class OptimizeModeTests
         Assert.That(new OptimizeOptionsRequest(RemakeEditorLods: true).ToOptimizerOptions().RemakeEditorLods, Is.True);
         Assert.That(new OptimizeOptionsRequest().ToOptimizerOptions().ReportDiagnostics, Is.True);
         Assert.That(new OptimizeOptionsRequest(ReportDiagnostics: false).ToOptimizerOptions().ReportDiagnostics, Is.False);
+        Assert.That(new OptimizeOptionsRequest().ToOptimizerOptions().PruneDeadFiles, Is.False);
+        Assert.That(new OptimizeOptionsRequest(PruneDeadFiles: true).ToOptimizerOptions().PruneDeadFiles, Is.True);
         Assert.That(GameWorld.MeshOptimizer.MeshOptSimplifier.GetNativeLibraryError(), Is.Null);
     }
 
