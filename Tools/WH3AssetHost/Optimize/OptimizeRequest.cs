@@ -85,6 +85,7 @@ public sealed record OptimizeOptionsRequest(
     bool? DropUnreadAlpha = null,
     bool? CompressRigidModels = null,
     bool? RemakeEditorLods = null,
+    bool? ReportDiagnostics = null,
     string? ArmyScope = null,
     string? SiblingScope = null)
 {
@@ -108,6 +109,7 @@ public sealed record OptimizeOptionsRequest(
             DropUnreadAlpha = DropUnreadAlpha ?? defaults.DropUnreadAlpha,
             CompressRigidModels = CompressRigidModels ?? defaults.CompressRigidModels,
             RemakeEditorLods = RemakeEditorLods ?? defaults.RemakeEditorLods,
+            ReportDiagnostics = ReportDiagnostics ?? defaults.ReportDiagnostics,
             ArmyScope = ParseArmyScope(ArmyScope, defaults.ArmyScope),
             SiblingScope = ParseSiblingScope(SiblingScope, defaults.SiblingScope),
         };

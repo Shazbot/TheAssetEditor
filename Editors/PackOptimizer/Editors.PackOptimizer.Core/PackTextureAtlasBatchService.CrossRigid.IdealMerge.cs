@@ -57,6 +57,9 @@ namespace Editors.PackOptimizer.Core
             CrossRigidAttachmentLocalExpansionResult expansion,
             Func<string, CrossRigidAnalysisComponent?> resolveComponent)
         {
+            if (!state.ReportDiagnostics)
+                return;
+
             var timer = Stopwatch.GetTimestamp();
             state.CrossRigidIdealMergeExpectedDrawsByVmd[vmdPath] =
                 CalculateCrossRigidIdealMergeExpectedDraws(
@@ -684,6 +687,9 @@ namespace Editors.PackOptimizer.Core
             BatchState state,
             double selectedExpectedDraws)
         {
+            if (!state.ReportDiagnostics)
+                return ["Ideal cross-rigid merge potential: skipped (report diagnostics off)"];
+
             var lines = new List<string>
             {
                 "Ideal cross-rigid merge potential (per-configuration " +

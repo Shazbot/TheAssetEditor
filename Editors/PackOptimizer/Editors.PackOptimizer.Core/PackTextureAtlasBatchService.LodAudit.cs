@@ -454,6 +454,12 @@ namespace Editors.PackOptimizer.Core
 
         private static void AppendLodAuditSection(StringBuilder sb, BatchState state)
         {
+            if (!state.ReportDiagnostics)
+            {
+                sb.AppendLine("LOD audit: skipped (report diagnostics off)");
+                sb.AppendLine();
+                return;
+            }
             sb.AppendLine("LOD audit");
             sb.AppendLine("---------");
             var audit = state.LodAudit;

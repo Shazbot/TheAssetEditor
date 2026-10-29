@@ -1029,6 +1029,8 @@ namespace Editors.PackOptimizer.Core
             // Effective only together with CompactTextures.
             public bool DropUnreadAlpha { get; set; }
             public bool RemakeEditorLods { get; set; }
+            // Report-only audits and ideal-merge tiers; Check mode always runs them.
+            public bool ReportDiagnostics { get; set; } = true;
             public IReadOnlyList<EditorLodLevelSettings> EditorLodSettings { get; set; } = EditorLodLevelSettings.Default;
             public float EditorLodBoneWeight { get; set; }
             public bool EditorLodJointPriority { get; set; }

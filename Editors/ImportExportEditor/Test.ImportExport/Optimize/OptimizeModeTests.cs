@@ -80,6 +80,8 @@ public class OptimizeModeTests
         Assert.Throws<ArgumentException>(() => new OptimizeOptionsRequest(ArmyScope: "faction").ToOptimizerOptions());
         Assert.That(new OptimizeOptionsRequest().ToOptimizerOptions().RemakeEditorLods, Is.False);
         Assert.That(new OptimizeOptionsRequest(RemakeEditorLods: true).ToOptimizerOptions().RemakeEditorLods, Is.True);
+        Assert.That(new OptimizeOptionsRequest().ToOptimizerOptions().ReportDiagnostics, Is.True);
+        Assert.That(new OptimizeOptionsRequest(ReportDiagnostics: false).ToOptimizerOptions().ReportDiagnostics, Is.False);
         Assert.That(GameWorld.MeshOptimizer.MeshOptSimplifier.GetNativeLibraryError(), Is.Null);
     }
 

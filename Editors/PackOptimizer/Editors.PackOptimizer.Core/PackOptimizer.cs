@@ -189,6 +189,11 @@ namespace Editors.PackOptimizer.Core
         /// </summary>
         public bool RemakeEditorLods { get; init; }
         /// <summary>
+        /// Runs the report-only audits (LOD audit, asset checks, bone weight audit, cross-rigid ideal-merge
+        /// tiers). Turning it off leaves every output file unchanged and only drops those report sections.
+        /// </summary>
+        public bool ReportDiagnostics { get; init; } = true;
+        /// <summary>
         /// Simplifier settings of the editor LOD rebuild per LOD level: entry 0 is LOD1, entry 1 is LOD2 and the
         /// last entry applies to every deeper LOD. Default: 2 % error with the border locked at LOD1, 4 % locked at
         /// LOD2, 8 % with the border free and the normal/UV weights halved from LOD3.

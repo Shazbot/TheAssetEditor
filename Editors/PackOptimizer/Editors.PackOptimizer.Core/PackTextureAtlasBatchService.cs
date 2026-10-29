@@ -242,6 +242,7 @@ namespace Editors.PackOptimizer.Core
                 state.CompactTextures = compactTextures && !crossRigidOnly;
                 state.DropUnreadAlpha = dropUnreadAlpha && state.CompactTextures;
                 state.RemakeEditorLods = options.RemakeEditorLods;
+                state.ReportDiagnostics = options.ReportDiagnostics;
                 state.EditorLodSettings = EditorLodLevelSettings.Validate(options.EditorLodSettings);
                 state.EditorLodBoneWeight = options.EditorLodBoneWeight;
                 state.EditorLodJointPriority = options.EditorLodJointPriority;
@@ -515,17 +516,20 @@ namespace Editors.PackOptimizer.Core
                 state.PhaseDurations["Copy source pack"] = phaseStopwatch.Elapsed;
 
                 state.MalformedVmdRoots.AddRange(malformedVmdRoots);
-                // Report-only: reads the source geometry before any stage rewrites it.
-                phaseStopwatch.Restart();
-                AuditSourceLods(state, atlasVmdRoots, cancellationToken, progress);
-                state.PhaseDurations["LOD audit"] = phaseStopwatch.Elapsed;
-                phaseStopwatch.Restart();
-                // Report-only: materials and textures of the rigids the audit reached.
-                RunAssetChecks(state, cancellationToken, progress);
-                state.PhaseDurations["Asset checks"] = phaseStopwatch.Elapsed;
-                // Report-only: needs the rigids and exposure the LOD audit collected.
-                if (!crossRigidOnly)
-                    RunBoneWeightAudit(state, cancellationToken, progress, null, null);
+                if (state.ReportDiagnostics)
+                {
+                    // Report-only: reads the source geometry before any stage rewrites it.
+                    phaseStopwatch.Restart();
+                    AuditSourceLods(state, atlasVmdRoots, cancellationToken, progress);
+                    state.PhaseDurations["LOD audit"] = phaseStopwatch.Elapsed;
+                    phaseStopwatch.Restart();
+                    // Report-only: materials and textures of the rigids the audit reached.
+                    RunAssetChecks(state, cancellationToken, progress);
+                    state.PhaseDurations["Asset checks"] = phaseStopwatch.Elapsed;
+                    // Report-only: needs the rigids and exposure the LOD audit collected.
+                    if (!crossRigidOnly)
+                        RunBoneWeightAudit(state, cancellationToken, progress, null, null);
+                }
                 // Rebuilds the LODs AssetEditor's old decimator made. Runs here so every later stage
                 // (LOD-aware planning, merges, geometry optimisation, repack) sees the new LODs.
                 if (state.RemakeEditorLods && !crossRigidOnly)

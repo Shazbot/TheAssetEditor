@@ -1666,6 +1666,12 @@ namespace Editors.PackOptimizer.Core
 
         private static void AppendAssetChecksSection(StringBuilder sb, BatchState state)
         {
+            if (!state.ReportDiagnostics)
+            {
+                sb.AppendLine("Asset checks: skipped (report diagnostics off)");
+                sb.AppendLine();
+                return;
+            }
             sb.AppendLine("Asset checks");
             sb.AppendLine("------------");
             var checks = state.AssetChecks;

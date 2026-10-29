@@ -367,6 +367,12 @@ namespace Editors.PackOptimizer.Core
 
         private static void AppendBoneWeightAuditSection(StringBuilder sb, BatchState state)
         {
+            if (!state.ReportDiagnostics)
+            {
+                sb.AppendLine("Bone weight audit: skipped (report diagnostics off)");
+                sb.AppendLine();
+                return;
+            }
             sb.AppendLine("Bone weight audit");
             sb.AppendLine("-----------------");
             var result = state.BoneWeightAudit;
