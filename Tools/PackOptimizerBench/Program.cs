@@ -18,6 +18,7 @@ using Shared.Core.Settings;
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
 //   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--switch-opaque-alpha true] [--editor-lod-levels 0.02:locked,0.04:locked,0.08:free] [--army-scope culture|subculture] [--sibling-scope model|pack]
+//                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
 // --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
@@ -167,6 +168,21 @@ internal static class Program
             return 2;
         }
 
+        // Bench-only cross-rigid budget overrides (defaults = production values).
+        var xrDefaults = CrossRigidBudgetSettings.Default;
+        double XrDouble(string key, double fallback) => options.TryGetValue(key, out var text)
+            ? double.Parse(text, CultureInfo.InvariantCulture)
+            : fallback;
+        CrossRigidBudgetSettings.Current = xrDefaults with
+        {
+            GeneratedGeometryBytesPerExpectedArmyDraw = (long)(XrDouble("xr-physical-mib-per-draw", xrDefaults.GeneratedGeometryBytesPerExpectedArmyDraw / 1048576.0) * 1048576.0),
+            ExpectedResidentGeometryBytesPerExpectedArmyDraw = (long)(XrDouble("xr-resident-mib-per-draw", xrDefaults.ExpectedResidentGeometryBytesPerExpectedArmyDraw / 1048576.0) * 1048576.0),
+            GeneratedGeometryGrowthBytes = (long)(XrDouble("xr-growth-cap-mib", xrDefaults.GeneratedGeometryGrowthBytes / 1048576.0) * 1048576.0),
+            MinimumSingleVmdExpectedArmyDraw = XrDouble("xr-min-single-vmd-draws", xrDefaults.MinimumSingleVmdExpectedArmyDraw),
+        };
+        if (CrossRigidBudgetSettings.Current != xrDefaults)
+            Console.WriteLine($"Cross-rigid budget override: {CrossRigidBudgetSettings.Current}");
+
         var request = new PackOptimizerRequest(
             source,
             source_,
@@ -185,7 +201,8 @@ internal static class Program
                 ArmyScope = armyScope,
                 SiblingScope = siblingScope,
                 CrossRigidOnly = false,
-                CrossRigidMerges = true,
+                CompressRigidModels = options.GetValueOrDefault("compress-rigid-models", "false").Equals("true", StringComparison.OrdinalIgnoreCase),
+                CrossRigidMerges = !options.GetValueOrDefault("cross-rigid-merges", "true").Equals("false", StringComparison.OrdinalIgnoreCase),
                 BuildAtlases = buildAtlases,
                 DownscaleTextures = true,
                 SharedTextureRepack = true,

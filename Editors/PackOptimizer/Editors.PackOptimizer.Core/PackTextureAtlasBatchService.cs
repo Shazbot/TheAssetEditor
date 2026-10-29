@@ -74,18 +74,22 @@ namespace Editors.PackOptimizer.Core
         // without relaxing the final per-benefit limits. A hard cumulative growth cap still
         // bounds absolute pack expansion. Multi-VMD payload reuse is rewarded naturally
         // because all rewrite-plan benefit is aggregated before geometry is charged once.
-        private const long MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw =
-            512L * 1024; // 0.5 MiB
-        private const long MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw =
-            16L * 1024 * 1024; // 16 MiB
-        private const long MaxCrossRigidGeneratedGeometryGrowthBytes =
-            256L * 1024 * 1024; // 256 MiB
-        private const double MinimumCrossRigidSingleVmdExpectedArmyDraw = 0.02;
+        // Budgets come from CrossRigidBudgetSettings.Current (defaults are the
+        // production values; only the bench tool overrides them for experiments).
+        private static long MaxCrossRigidExpectedResidentGeometryBytesPerExpectedArmyDraw =>
+            CrossRigidBudgetSettings.Current.ExpectedResidentGeometryBytesPerExpectedArmyDraw;
+        private static long MaxCrossRigidGeneratedGeometryBytesPerExpectedArmyDraw =>
+            CrossRigidBudgetSettings.Current.GeneratedGeometryBytesPerExpectedArmyDraw;
+        private static long MaxCrossRigidGeneratedGeometryGrowthBytes =>
+            CrossRigidBudgetSettings.Current.GeneratedGeometryGrowthBytes;
+        private static double MinimumCrossRigidSingleVmdExpectedArmyDraw =>
+            CrossRigidBudgetSettings.Current.MinimumSingleVmdExpectedArmyDraw;
         // Per-payload ceiling relative to the portfolio budgets above: a
         // single payload may not cost more than this multiple of the
         // per-draw budget for its own marginal benefit. The portfolio
         // budgets still apply cumulatively on top of this ceiling.
-        private const double CrossRigidPerPayloadCostCeilingMultiplier = 1.0;
+        private static double CrossRigidPerPayloadCostCeilingMultiplier =>
+            CrossRigidBudgetSettings.Current.PerPayloadCostCeilingMultiplier;
         // Limit exact generated joint appearance states, not probability precision.
         // Large VMDs need more room than 512 combinations, while the
         // portfolio's geometry and residency budgets still cap output cost.

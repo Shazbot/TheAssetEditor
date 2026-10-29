@@ -26,6 +26,88 @@ namespace Editors.PackOptimizer.Core
 {
     public sealed partial class PackTextureAtlasBatchService
     {
+        // Report-only: selected payloads by ascending physical bytes per marginal
+        // expected draw, with the cumulative bytes/draws curve and percentile summary.
+        private static List<string> BuildCrossRigidPayloadCostTableLines(
+            IReadOnlyCollection<CrossRigidPayloadSelectionEntry> selectedPayloads)
+        {
+            var lines = new List<string>();
+            var rows = selectedPayloads
+                .Select(entry => (
+                    Entry: entry,
+                    Draws: entry.MarginalExpectedArmyDrawCallsEliminated,
+                    PerDraw: entry.MarginalExpectedArmyDrawCallsEliminated >
+                             AtlasValueGateExpectedDrawEpsilon
+                        ? entry.GeneratedGeometryBytes /
+                          entry.MarginalExpectedArmyDrawCallsEliminated
+                        : double.MaxValue))
+                .OrderBy(row => row.PerDraw)
+                .ThenBy(row => row.Entry.GeneratedPayloadId, StringComparer.Ordinal)
+                .ToArray();
+            var totalBytes = rows.Sum(row => (double)row.Entry.GeneratedGeometryBytes);
+            var totalDraws = rows.Sum(row => row.Draws);
+            lines.Add(
+                "Selected cross-rigid payload cost curve (cheapest physical bytes per marginal expected draw first):");
+            if (rows.Length == 0)
+            {
+                lines.Add("  (no selected payloads)");
+                return lines;
+            }
+
+            lines.Add(
+                "  rank | payload | raw geometry | resident | draws saved | bytes/draw | cum bytes (%) | cum draws (%)");
+            var cumulativeBytes = 0.0;
+            var cumulativeDraws = 0.0;
+            var curve = new List<(double Bytes, double Draws)>();
+            var rank = 0;
+            foreach (var row in rows)
+            {
+                rank++;
+                cumulativeBytes += row.Entry.GeneratedGeometryBytes;
+                cumulativeDraws += row.Draws;
+                curve.Add((cumulativeBytes, cumulativeDraws));
+                lines.Add(
+                    $"  {rank,4} | {row.Entry.GeneratedPayloadId} | " +
+                    $"{FormatMiB(row.Entry.GeneratedGeometryBytes, 3)} | " +
+                    $"{FormatMiB(row.Entry.ExpectedResidentGeneratedGeometryBytes, 3)} | " +
+                    $"{row.Draws:0.####} | " +
+                    $"{(row.PerDraw == double.MaxValue ? "inf" : FormatMiB(row.PerDraw, 3))} | " +
+                    $"{FormatMiB(cumulativeBytes, 2)} ({(totalBytes > 0 ? cumulativeBytes / totalBytes : 0):P1}) | " +
+                    $"{cumulativeDraws:0.###} ({(totalDraws > AtlasValueGateExpectedDrawEpsilon ? cumulativeDraws / totalDraws : 0):P1})");
+            }
+
+            foreach (var fraction in new[] { 0.10, 0.25, 0.50, 0.75 })
+            {
+                var drawsAtFraction = 0.0;
+                var bytesAtFraction = 0.0;
+                var count = 0;
+                foreach (var point in curve)
+                {
+                    if (point.Bytes > totalBytes * fraction)
+                        break;
+                    drawsAtFraction = point.Draws;
+                    bytesAtFraction = point.Bytes;
+                    count++;
+                }
+
+                lines.Add(
+                    $"  Cheapest {fraction:P0} of bytes ({FormatMiB(bytesAtFraction, 1)}, {count:N0} payload(s)) " +
+                    $"capture {drawsAtFraction:0.###} of {totalDraws:0.###} draws " +
+                    $"({(totalDraws > AtlasValueGateExpectedDrawEpsilon ? drawsAtFraction / totalDraws : 0):P1})");
+            }
+
+            foreach (var fraction in new[] { 0.50, 0.80, 0.90, 0.95 })
+            {
+                var point = curve.FirstOrDefault(
+                    item => item.Draws >= totalDraws * fraction);
+                lines.Add(
+                    $"  {fraction:P0} of draws are reached at {FormatMiB(point.Bytes, 1)} " +
+                    $"({(totalBytes > 0 ? point.Bytes / totalBytes : 0):P1} of bytes)");
+            }
+
+            return lines;
+        }
+
         private static string FormatMiB(double bytes, int decimals = 1)
             => $"{(bytes / (1024.0 * 1024.0)).ToString($"N{decimals}")} MiB";
 
@@ -1802,6 +1884,12 @@ namespace Editors.PackOptimizer.Core
                 sb.AppendLine(
                     $"Selected resident geometry per expected draw: " +
                     $"{FormatMiB(selectedExpectedDraws > AtlasValueGateExpectedDrawEpsilon ? selectedExpectedResidentGeometryBytes / selectedExpectedDraws : 0, 2)}");
+
+                foreach (var line in BuildCrossRigidPayloadCostTableLines(
+                             selectedPayloads))
+                {
+                    sb.AppendLine(line);
+                }
 
                 // Report marginal, conflict-deduplicated benefit rather than
                 // the overlap-inclusive standalone benefit when explaining
