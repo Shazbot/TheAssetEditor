@@ -10,7 +10,8 @@ namespace Editors.PackOptimizer.Core
         long GeneratedGeometryBytesPerExpectedArmyDraw = 16L * 1024 * 1024,
         long GeneratedGeometryGrowthBytes = 256L * 1024 * 1024,
         double MinimumSingleVmdExpectedArmyDraw = 0.02,
-        double PerPayloadCostCeilingMultiplier = 1.0)
+        double PerPayloadCostCeilingMultiplier = 1.0,
+        int MaxJointStateCombinations = 4096)
     {
         public static CrossRigidBudgetSettings Default { get; } = new();
 

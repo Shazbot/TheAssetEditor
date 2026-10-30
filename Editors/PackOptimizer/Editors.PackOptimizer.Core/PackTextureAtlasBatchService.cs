@@ -99,7 +99,8 @@ namespace Editors.PackOptimizer.Core
         // component groups in high-variation VMDs. Permit a bounded wider
         // search; emitted geometry still passes the full portfolio value
         // and residency gates, and no probabilities are approximated.
-        private const int MaxCrossRigidJointStateCombinations = 4096;
+        private static int MaxCrossRigidJointStateCombinations =>
+            CrossRigidBudgetSettings.Current.MaxJointStateCombinations;
         // The game engine shows at most this many alternatives per SLOT
         // (RenderDoc captures); extra alternatives are never selected.
         // More variety has to come from nesting child VMD references.

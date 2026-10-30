@@ -18,7 +18,7 @@ using Shared.Core.Settings;
 // and checking that an optimisation leaves its output unchanged (fingerprint.txt).
 //
 //   PackOptimizerBench [--source <pack>] [--game-dir <data folder>] [--out <folder>] [--tag <name>] [--atlases true] [--editor-lods false] [--report-diagnostics false] [--prune-dead-files true] [--switch-opaque-alpha true] [--editor-lod-levels 0.02:locked,0.04:locked,0.08:free] [--army-scope culture|subculture] [--sibling-scope model|pack]
-//                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N] [--lod-weights w0,w1,w2,w3]
+//                      [--cross-rigid-merges false] [--xr-physical-mib-per-draw N] [--xr-resident-mib-per-draw N] [--xr-growth-cap-mib N] [--xr-min-single-vmd-draws N] [--lod-weights w0,w1,w2,w3] [--xr-joint-cap N]
 //                      [--consumer <pack>]... [--consumer-list <file>] [--source-index <n>]
 //
 // --consumer (repeatable) and --consumer-list (one pack path per line, # comments) name the other
@@ -179,6 +179,7 @@ internal static class Program
             ExpectedResidentGeometryBytesPerExpectedArmyDraw = (long)(XrDouble("xr-resident-mib-per-draw", xrDefaults.ExpectedResidentGeometryBytesPerExpectedArmyDraw / 1048576.0) * 1048576.0),
             GeneratedGeometryGrowthBytes = (long)(XrDouble("xr-growth-cap-mib", xrDefaults.GeneratedGeometryGrowthBytes / 1048576.0) * 1048576.0),
             MinimumSingleVmdExpectedArmyDraw = XrDouble("xr-min-single-vmd-draws", xrDefaults.MinimumSingleVmdExpectedArmyDraw),
+            MaxJointStateCombinations = (int)XrDouble("xr-joint-cap", xrDefaults.MaxJointStateCombinations),
         };
         if (CrossRigidBudgetSettings.Current != xrDefaults)
             Console.WriteLine($"Cross-rigid budget override: {CrossRigidBudgetSettings.Current}");
